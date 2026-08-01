@@ -10,7 +10,16 @@
 
 # Vendored binaries: the pinned tesseract + tessdata and the bundled
 # llama-server. Fetched by the packaging step, never committed.
-/vendor/
+#
+# The PIN, though, is code. vendor/tesseract/manifest.json records the expected
+# version and the tessdata sha256s and src/scan/tesseract.ts verifies against it
+# before reading a page, so it and its README are re-included. Directory-first:
+# git cannot re-include a file whose parent directory is excluded, so
+# `!/vendor/tesseract/` has to come before the files inside it.
+/vendor/**
+!/vendor/tesseract/
+!/vendor/tesseract/manifest.json
+!/vendor/tesseract/README.md
 
 node_modules/
 dist/
