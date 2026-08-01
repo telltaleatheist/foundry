@@ -62,6 +62,31 @@ exists. That is deliberate: a fixture set of ordinary pages proves the ordinary
 path and nothing else, and every rule in that file was bought with a specific
 page.
 
+## `ocr/` — the reference for the Tesseract invocation
+
+`ocr/<name>.json` is what BookForge's `run-book.py` read for the same page: one
+tesseract per page over an image list, `--psm 7`, TSV, a `--psm 13` rescue for a
+crop that read as nothing. `test/scan/tesseract.test.ts` compares text,
+confidence and *which psm produced each line*, so the port of the invocation is
+held to the same standard as the port of the geometry. Those cases skip — by
+name, loudly — when no verified Tesseract is vendored for the platform.
+
+## Beyond the committed ten
+
+The ten pages here are what a checkout can re-verify. During the port a wider
+sweep ran the same comparison over **61 further pages across seven books**
+(deathstalker, deathstalker-rebellion, michelle-remembers, was-hitler-an-atheist,
+gods-people, understanding-jehovahs-witnesses, rise-and-fall) — 2,299 bands, and
+**zero disagreements**, including every deskewed page in the sample. Those pages
+are not committed because they are another 60 MB of raster and they proved a
+point rather than guarding one. Re-run it by pointing
+`tools/scan-make-fixtures.py` at a longer list.
+
+One page in that sweep, `understanding-jehovahs-witnesses` page 316, is refused
+by `bands.py` with *"no ink found after border masking"*. `bands.ts` refuses it
+the same way, with the page number attached. That contract is tested directly in
+`test/scan/bands.contract.test.ts`.
+
 ## What the port had to reproduce, and what it caught
 
 The geometry is arithmetic, so the port is arithmetic — including numpy's and

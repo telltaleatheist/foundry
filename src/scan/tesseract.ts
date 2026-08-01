@@ -22,6 +22,7 @@ import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { pyRoundTo, type Band } from './bands.js';
@@ -141,9 +142,15 @@ export function platformKey(): string {
   return `${process.platform}-${process.arch}`;
 }
 
+/**
+ * `<root>/vendor/tesseract`, relative to this source file.
+ *
+ * fileURLToPath, not `url.pathname`: on Windows the latter yields `/C:/…`,
+ * which is not a path. A packaged build resolves its own vendor directory and
+ * passes `vendorDir` explicitly; this is the checkout's default.
+ */
 function defaultVendorDir(): string {
-  // src/scan/tesseract.ts -> <root>/vendor/tesseract
-  return path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'vendor', 'tesseract');
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'vendor', 'tesseract');
 }
 
 /**
