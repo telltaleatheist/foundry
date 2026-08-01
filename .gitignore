@@ -1,0 +1,29 @@
+# Weights. These live on HuggingFace (owner: owenmorgan) and are pulled on
+# first run with sha256 verification. A multi-gigabyte GGUF has no business in
+# git, and a weight file in a diff is a sign something resolved to the wrong
+# directory.
+*.gguf
+*.safetensors
+models/
+
+# Vendored binaries: the pinned tesseract + tessdata and the bundled
+# llama-server. Fetched by the packaging step, never committed.
+vendor/
+
+node_modules/
+dist/
+build/
+
+# Bun. The lockfile is NOT ignored — this ships as a binary, so the dependency
+# set has to be reproducible.
+.bun/
+
+# Scratch
+*.log
+tmp/
+.cache/
+
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
