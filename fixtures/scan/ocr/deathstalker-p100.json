@@ -1,0 +1,502 @@
+{
+ "heightPx": 1289,
+ "lines": [
+  {
+   "bbox": [
+    16,
+    14,
+    25,
+    22
+   ],
+   "conf": 25.76,
+   "psm": 7,
+   "text": "q"
+  },
+  {
+   "bbox": [
+    16,
+    44,
+    748,
+    63
+   ],
+   "conf": 67.01,
+   "psm": 7,
+   "text": "7 DEATHSTALKER 99"
+  },
+  {
+   "bbox": [
+    16,
+    84,
+    747,
+    110
+   ],
+   "conf": 95.98,
+   "psm": 7,
+   "text": "men, clones, espers and aliens. Fodder for the never-ending"
+  },
+  {
+   "bbox": [
+    16,
+    112,
+    310,
+    133
+   ],
+   "conf": 96.4,
+   "psm": 7,
+   "text": "hunger of the crowds."
+  },
+  {
+   "bbox": [
+    17,
+    138,
+    748,
+    164
+   ],
+   "conf": 96.53,
+   "psm": 7,
+   "text": "People come from all over the Empire to see blood and"
+  },
+  {
+   "bbox": [
+    57,
+    165,
+    747,
+    191
+   ],
+   "conf": 96.64,
+   "psm": 7,
+   "text": "suffering in the Arena, to see life and death played out by"
+  },
+  {
+   "bbox": [
+    16,
+    192,
+    748,
+    213
+   ],
+   "conf": 96.06,
+   "psm": 7,
+   "text": "the ancient rules. Billions more watch it all on their"
+  },
+  {
+   "bbox": [
+    57,
+    219,
+    747,
+    244
+   ],
+   "conf": 95.58,
+   "psm": 7,
+   "text": "holoscreens every night, but for the true fans, the connois-"
+  },
+  {
+   "bbox": [
+    57,
+    247,
+    748,
+    272
+   ],
+   "conf": 95.49,
+   "psm": 7,
+   "text": "seurs, seeing is not enough. They need to be there, in per-"
+  },
+  {
+   "bbox": [
+    17,
+    273,
+    748,
+    298
+   ],
+   "conf": 96.74,
+   "psm": 7,
+   "text": "son, to see with their own eyes, drink in the atmosphere, and"
+  },
+  {
+   "bbox": [
+    17,
+    301,
+    747,
+    321
+   ],
+   "conf": 95.75,
+   "psm": 7,
+   "text": "smell the bloodlust on the air as the crowd cheers their fa-"
+  },
+  {
+   "bbox": [
+    56,
+    328,
+    746,
+    353
+   ],
+   "conf": 96.2,
+   "psm": 7,
+   "text": "vorites, boos the incompetent, and bays for another death."
+  },
+  {
+   "bbox": [
+    56,
+    355,
+    748,
+    375
+   ],
+   "conf": 95.37,
+   "psm": 7,
+   "text": "The crowd always has is favorites, but as a rule they don\u2019t"
+  },
+  {
+   "bbox": [
+    56,
+    382,
+    747,
+    407
+   ],
+   "conf": 87.87,
+   "psm": 7,
+   "text": "last long. That\u2019s why it\u2019s called the Parade of the Endless:"
+  },
+  {
+   "bbox": [
+    20,
+    409,
+    651,
+    434
+   ],
+   "conf": 96.44,
+   "psm": 7,
+   "text": "heroes come and go, but the Games go on forever."
+  },
+  {
+   "bbox": [
+    18,
+    436,
+    748,
+    462
+   ],
+   "conf": 96.13,
+   "psm": 7,
+   "text": "The city is also unique in being the only city on Golgotha"
+  },
+  {
+   "bbox": [
+    56,
+    463,
+    747,
+    488
+   ],
+   "conf": 96.62,
+   "psm": 7,
+   "text": "now owned or dominated by a single Clan. The Empress"
+  },
+  {
+   "bbox": [
+    56,
+    491,
+    747,
+    516
+   ],
+   "conf": 96.41,
+   "psm": 7,
+   "text": "sees to that, through subtle pressure and not so subtle"
+  },
+  {
+   "bbox": [
+    55,
+    518,
+    746,
+    543
+   ],
+   "conf": 96.58,
+   "psm": 7,
+   "text": "purges, to ensure that the Games remain fair and unbiased."
+  },
+  {
+   "bbox": [
+    56,
+    545,
+    747,
+    570
+   ],
+   "conf": 96.56,
+   "psm": 7,
+   "text": "Everyone has an equal chance to die on the bloody sands."
+  },
+  {
+   "bbox": [
+    56,
+    572,
+    747,
+    592
+   ],
+   "conf": 95.38,
+   "psm": 7,
+   "text": "Otherwise there\u2019d be no fun to it. The Parade of the Endless"
+  },
+  {
+   "bbox": [
+    56,
+    599,
+    748,
+    625
+   ],
+   "conf": 96.37,
+   "psm": 7,
+   "text": "has thus become a safe neutral ground, a meeting place for"
+  },
+  {
+   "bbox": [
+    56,
+    627,
+    747,
+    647
+   ],
+   "conf": 95.78,
+   "psm": 7,
+   "text": "Families who could not otherwise, with honor, communi-"
+  },
+  {
+   "bbox": [
+    55,
+    653,
+    748,
+    679
+   ],
+   "conf": 96.71,
+   "psm": 7,
+   "text": "cate. Instead, the Clans settle their differences through their"
+  },
+  {
+   "bbox": [
+    55,
+    681,
+    747,
+    706
+   ],
+   "conf": 96.14,
+   "psm": 7,
+   "text": "champions in the Arena. Face is upheld and honor is satis-"
+  },
+  {
+   "bbox": [
+    56,
+    708,
+    747,
+    730
+   ],
+   "conf": 96.42,
+   "psm": 7,
+   "text": "fied. And if it tends to be rather hard on the champions,"
+  },
+  {
+   "bbox": [
+    56,
+    735,
+    747,
+    760
+   ],
+   "conf": 96.02,
+   "psm": 7,
+   "text": "well, no one really gives a damn, or at least no one who mat-"
+  },
+  {
+   "bbox": [
+    21,
+    768,
+    101,
+    782
+   ],
+   "conf": 96.16,
+   "psm": 7,
+   "text": "ters."
+  },
+  {
+   "bbox": [
+    83,
+    790,
+    747,
+    815
+   ],
+   "conf": 96.26,
+   "psm": 7,
+   "text": "In return for this outlet, the Families provide generous"
+  },
+  {
+   "bbox": [
+    56,
+    817,
+    747,
+    842
+   ],
+   "conf": 96.58,
+   "psm": 7,
+   "text": "contributions to the upkeep of the Arena and its staff. Even"
+  },
+  {
+   "bbox": [
+    56,
+    844,
+    748,
+    869
+   ],
+   "conf": 95.83,
+   "psm": 7,
+   "text": "more of their money flows into the Arena\u2019s coffers through"
+  },
+  {
+   "bbox": [
+    56,
+    871,
+    747,
+    896
+   ],
+   "conf": 96.48,
+   "psm": 7,
+   "text": "the Families\u2019 never-ending appetite for gambling. Fortunes"
+  },
+  {
+   "bbox": [
+    56,
+    898,
+    748,
+    924
+   ],
+   "conf": 96.84,
+   "psm": 7,
+   "text": "are won and lost daily as the Clans plunge heavily in support"
+  },
+  {
+   "bbox": [
+    56,
+    925,
+    747,
+    951
+   ],
+   "conf": 95.86,
+   "psm": 7,
+   "text": "of their champions and their honor. The champions are al-"
+  },
+  {
+   "bbox": [
+    56,
+    953,
+    748,
+    978
+   ],
+   "conf": 96.53,
+   "psm": 7,
+   "text": "ways paid men. Members of the Families would never"
+  },
+  {
+   "bbox": [
+    56,
+    979,
+    747,
+    1005
+   ],
+   "conf": 96.59,
+   "psm": 7,
+   "text": "dream of fighting in person. To risk one\u2019s life in a formal"
+  },
+  {
+   "bbox": [
+    56,
+    1007,
+    760,
+    1032
+   ],
+   "conf": 95.71,
+   "psm": 7,
+   "text": "duel was one thing; to lower oneself to perform for the plea-"
+  },
+  {
+   "bbox": [
+    57,
+    1034,
+    748,
+    1054
+   ],
+   "conf": 95.77,
+   "psm": 7,
+   "text": "sure of the crowd was quite another. Besides, it wouldn\u2019t do"
+  },
+  {
+   "bbox": [
+    56,
+    1061,
+    748,
+    1086
+   ],
+   "conf": 96.65,
+   "psm": 7,
+   "text": "for the lower orders to see the aristocracy dying. It might"
+  },
+  {
+   "bbox": [
+    58,
+    1088,
+    244,
+    1108
+   ],
+   "conf": 96.28,
+   "psm": 7,
+   "text": "give them ideas."
+  },
+  {
+   "bbox": [
+    84,
+    1115,
+    747,
+    1140
+   ],
+   "conf": 95.66,
+   "psm": 7,
+   "text": "Around the Arena, in ever-expanding circles, live the cit-"
+  },
+  {
+   "bbox": [
+    57,
+    1142,
+    748,
+    1162
+   ],
+   "conf": 96.31,
+   "psm": 7,
+   "text": "izens of the Parade of the Endless: the traders, the service"
+  },
+  {
+   "bbox": [
+    57,
+    1169,
+    747,
+    1195
+   ],
+   "conf": 96.52,
+   "psm": 7,
+   "text": "industries, and those who have fought, or plan to fight, on"
+  },
+  {
+   "bbox": [
+    57,
+    1196,
+    747,
+    1222
+   ],
+   "conf": 95.7,
+   "psm": 7,
+   "text": "the bloody sands. The Games are open to all, the crowd\u2019s"
+  },
+  {
+   "bbox": [
+    57,
+    1223,
+    748,
+    1248
+   ],
+   "conf": 96.63,
+   "psm": 7,
+   "text": "appetite is boundless, and there is always a need for fresh"
+  }
+ ],
+ "page": 100,
+ "widthPx": 787
+}

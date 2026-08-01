@@ -1,0 +1,381 @@
+{
+ "heightPx": 1257,
+ "lines": [
+  {
+   "bbox": [
+    225,
+    45,
+    526,
+    73
+   ],
+   "conf": 95.17,
+   "psm": 7,
+   "text": "CHAPTER THREE"
+  },
+  {
+   "bbox": [
+    228,
+    125,
+    524,
+    180
+   ],
+   "conf": 96.35,
+   "psm": 7,
+   "text": "Drowning Men"
+  },
+  {
+   "bbox": [
+    45,
+    343,
+    706,
+    368
+   ],
+   "conf": 96.06,
+   "psm": 7,
+   "text": "Finlay Campbell, outlaw and terrorist, once the most fabled"
+  },
+  {
+   "bbox": [
+    45,
+    370,
+    705,
+    395
+   ],
+   "conf": 91.46,
+   "psm": 7,
+   "text": "fop and dandy of his age, and under another name secretly"
+  },
+  {
+   "bbox": [
+    45,
+    396,
+    706,
+    424
+   ],
+   "conf": 96.58,
+   "psm": 7,
+   "text": "the Masked Gladiator, darling of the bloodthirsty Arena"
+  },
+  {
+   "bbox": [
+    45,
+    424,
+    706,
+    450
+   ],
+   "conf": 96.61,
+   "psm": 7,
+   "text": "fans, hung upside down on the end of his rope and wondered"
+  },
+  {
+   "bbox": [
+    45,
+    450,
+    706,
+    474
+   ],
+   "conf": 96.57,
+   "psm": 7,
+   "text": "if perhaps he was getting a little too old for heroics. Spread"
+  },
+  {
+   "bbox": [
+    45,
+    475,
+    708,
+    499
+   ],
+   "conf": 96.54,
+   "psm": 7,
+   "text": "out below him lay the wide streets and bristling avenues of"
+  },
+  {
+   "bbox": [
+    45,
+    500,
+    705,
+    524
+   ],
+   "conf": 95.33,
+   "psm": 7,
+   "text": "Golgotha\u2019s main city, the Parade of the Endless. It took its"
+  },
+  {
+   "bbox": [
+    45,
+    526,
+    705,
+    551
+   ],
+   "conf": 96.36,
+   "psm": 7,
+   "text": "name from the endless supply of would-be heroes who came"
+  },
+  {
+   "bbox": [
+    45,
+    552,
+    706,
+    577
+   ],
+   "conf": 96.28,
+   "psm": 7,
+   "text": "thronging every year to try their strength and courage in the"
+  },
+  {
+   "bbox": [
+    45,
+    578,
+    705,
+    603
+   ],
+   "conf": 96.79,
+   "psm": 7,
+   "text": "Arena the city hosted. The aristocracy lived in the city, too,"
+  },
+  {
+   "bbox": [
+    45,
+    604,
+    705,
+    628
+   ],
+   "conf": 92.83,
+   "psm": 7,
+   "text": "in their tightly guarded pastel towers, because after all this"
+  },
+  {
+   "bbox": [
+    45,
+    630,
+    706,
+    654
+   ],
+   "conf": 96.78,
+   "psm": 7,
+   "text": "was the very best place to be, to see and be seen, in all the"
+  },
+  {
+   "bbox": [
+    45,
+    655,
+    705,
+    680
+   ],
+   "conf": 89.8,
+   "psm": 7,
+   "text": "Empire. Apart from. Lionstone\u2019s Court in the Imperial Pal-"
+  },
+  {
+   "bbox": [
+    45,
+    682,
+    705,
+    707
+   ],
+   "conf": 96.56,
+   "psm": 7,
+   "text": "ace, but you went there only when summoned. And if you"
+  },
+  {
+   "bbox": [
+    45,
+    709,
+    705,
+    734
+   ],
+   "conf": 96.36,
+   "psm": 7,
+   "text": "were wise, you made out your will before you went. Just in"
+  },
+  {
+   "bbox": [
+    44,
+    740,
+    96,
+    753
+   ],
+   "conf": 92.56,
+   "psm": 7,
+   "text": "case."
+  },
+  {
+   "bbox": [
+    71,
+    761,
+    705,
+    787
+   ],
+   "conf": 95.89,
+   "psm": 7,
+   "text": "Finlay decided that his thoughts were drifting in unneces-"
+  },
+  {
+   "bbox": [
+    45,
+    788,
+    705,
+    815
+   ],
+   "conf": 96.71,
+   "psm": 7,
+   "text": "sary directions. Hanging upside down with the blood rushing"
+  },
+  {
+   "bbox": [
+    45,
+    815,
+    706,
+    842
+   ],
+   "conf": 96.62,
+   "psm": 7,
+   "text": "to your head will do that to you. He sighed once, reached up"
+  },
+  {
+   "bbox": [
+    44,
+    842,
+    705,
+    868
+   ],
+   "conf": 92.37,
+   "psm": 7,
+   "text": "and_took a firm grip on his line, and hauled himself back up,"
+  },
+  {
+   "bbox": [
+    45,
+    868,
+    705,
+    894
+   ],
+   "conf": 96.6,
+   "psm": 7,
+   "text": "hand over hand, till he reached a convenient resting place on"
+  },
+  {
+   "bbox": [
+    44,
+    894,
+    705,
+    919
+   ],
+   "conf": 86.67,
+   "psm": 7,
+   "text": "the side of Tower Silvestri. Luckily, the Silvestri. Family"
+  },
+  {
+   "bbox": [
+    45,
+    920,
+    707,
+    945
+   ],
+   "conf": 96.75,
+   "psm": 7,
+   "text": "went in for rococo design, so that the sides of their tower"
+  },
+  {
+   "bbox": [
+    45,
+    947,
+    706,
+    968
+   ],
+   "conf": 96.41,
+   "psm": 7,
+   "text": "were crusted with hundreds of niches and unexpected"
+  },
+  {
+   "bbox": [
+    44,
+    972,
+    723,
+    1001
+   ],
+   "conf": 93.42,
+   "psm": 7,
+   "text": "curves, full of ugly little statues. with exaggerated genitals 5"
+  },
+  {
+   "bbox": [
+    45,
+    1001,
+    705,
+    1025
+   ],
+   "conf": 96.04,
+   "psm": 7,
+   "text": "and faces only a mother could love. Finlay squeezed in be-"
+  },
+  {
+   "bbox": [
+    45,
+    1026,
+    706,
+    1053
+   ],
+   "conf": 95.74,
+   "psm": 7,
+   "text": "side a particularly well-endowed gargoyle with dyspepsia"
+  },
+  {
+   "bbox": [
+    44,
+    1053,
+    723,
+    1080
+   ],
+   "conf": 88.42,
+   "psm": 7,
+   "text": "and got his breath back. All this time and trouble just to ~"
+  },
+  {
+   "bbox": [
+    44,
+    1080,
+    704,
+    1106
+   ],
+   "conf": 90.38,
+   "psm": 7,
+   "text": "climb a nine hundred-foot tower. Definitely getting past it."
+  },
+  {
+   "bbox": [
+    45,
+    1106,
+    422,
+    1129
+   ],
+   "conf": 96.49,
+   "psm": 7,
+   "text": "Be taking milk in his coffee next."
+  },
+  {
+   "bbox": [
+    71,
+    1131,
+    705,
+    1155
+   ],
+   "conf": 94.57,
+   "psm": 7,
+   "text": "If it hadn\u2019t been for his safely line, he\u2019d have made a re-"
+  },
+  {
+   "bbox": [
+    44,
+    1157,
+    729,
+    1187
+   ],
+   "conf": 96.19,
+   "psm": 7,
+   "text": "ally nasty sploch on the ground below. That was what you"
+  }
+ ],
+ "page": 103,
+ "widthPx": 732
+}

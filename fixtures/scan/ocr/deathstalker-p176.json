@@ -1,0 +1,491 @@
+{
+ "heightPx": 1289,
+ "lines": [
+  {
+   "bbox": [
+    313,
+    43,
+    737,
+    63
+   ],
+   "conf": 75.45,
+   "psm": 7,
+   "text": "DEATHSTALKER 175"
+  },
+  {
+   "bbox": [
+    76,
+    84,
+    738,
+    109
+   ],
+   "conf": 96.61,
+   "psm": 7,
+   "text": "And then he moved too slowly, anticipated too late, and"
+  },
+  {
+   "bbox": [
+    49,
+    111,
+    737,
+    132
+   ],
+   "conf": 95.99,
+   "psm": 7,
+   "text": "Abbott\u2019s hand closed around his wrist like a vise. The"
+  },
+  {
+   "bbox": [
+    49,
+    138,
+    740,
+    164
+   ],
+   "conf": 95.58,
+   "psm": 7,
+   "text": "Wampyr\u2019s hand tightened, and all the feeling went out of"
+  },
+  {
+   "bbox": [
+    49,
+    165,
+    738,
+    190
+   ],
+   "conf": 96.13,
+   "psm": 7,
+   "text": "Owen\u2019s hand. The sword fell from his numb fingers, and"
+  },
+  {
+   "bbox": [
+    49,
+    192,
+    737,
+    218
+   ],
+   "conf": 96.48,
+   "psm": 7,
+   "text": "Abbott laughed softly. Owen dropped his free hand to his"
+  },
+  {
+   "bbox": [
+    48,
+    219,
+    737,
+    245
+   ],
+   "conf": 96.15,
+   "psm": 7,
+   "text": "boot, pulled out the dagger he kept there and rammed it be-"
+  },
+  {
+   "bbox": [
+    49,
+    246,
+    737,
+    272
+   ],
+   "conf": 95.76,
+   "psm": 7,
+   "text": "tween the Wampyr\u2019s ribs. Black blood ran for a moment,"
+  },
+  {
+   "bbox": [
+    49,
+    274,
+    738,
+    300
+   ],
+   "conf": 95.42,
+   "psm": 7,
+   "text": "and then stopped. The Wampyr smiled, and threw Owen"
+  },
+  {
+   "bbox": [
+    49,
+    301,
+    738,
+    322
+   ],
+   "conf": 95.85,
+   "psm": 7,
+   "text": "twenty feet. The crowd scrambled to avoid him, and he hit"
+  },
+  {
+   "bbox": [
+    49,
+    328,
+    737,
+    354
+   ],
+   "conf": 93.68,
+   "psm": 7,
+   "text": "the packed snow hard, driving the breath from his lungs. He"
+  },
+  {
+   "bbox": [
+    48,
+    355,
+    738,
+    381
+   ],
+   "conf": 95.86,
+   "psm": 7,
+   "text": "rolled over slowly, biting back a groan. His hand was com-"
+  },
+  {
+   "bbox": [
+    48,
+    382,
+    737,
+    410
+   ],
+   "conf": 95.8,
+   "psm": 7,
+   "text": "pletely numb. Abbott was walking unhurriedly toward him,"
+  },
+  {
+   "bbox": [
+    49,
+    410,
+    678,
+    435
+   ],
+   "conf": 96.5,
+   "psm": 7,
+   "text": "still smiling, the knife jutting unnoticed from his ribs."
+  },
+  {
+   "bbox": [
+    75,
+    437,
+    738,
+    458
+   ],
+   "conf": 95.98,
+   "psm": 7,
+   "text": "Owen lurched up onto one knee and crouched there for a"
+  },
+  {
+   "bbox": [
+    49,
+    464,
+    738,
+    490
+   ],
+   "conf": 96.3,
+   "psm": 7,
+   "text": "moment, breathing hard. And then his good hand brushed"
+  },
+  {
+   "bbox": [
+    49,
+    491,
+    738,
+    517
+   ],
+   "conf": 96.3,
+   "psm": 7,
+   "text": "against something in the snow, and his heart missed a beat as"
+  },
+  {
+   "bbox": [
+    48,
+    518,
+    737,
+    544
+   ],
+   "conf": 96.54,
+   "psm": 7,
+   "text": "he recognized what it was. Luck had finally smiled on him,"
+  },
+  {
+   "bbox": [
+    49,
+    546,
+    737,
+    566
+   ],
+   "conf": 96.39,
+   "psm": 7,
+   "text": "and he was back in with a chance. Abbott loomed over him,"
+  },
+  {
+   "bbox": [
+    49,
+    573,
+    740,
+    593
+   ],
+   "conf": 95.19,
+   "psm": 7,
+   "text": "grabbed Owen\u2019s shirtfront with both hands and lifted him off"
+  },
+  {
+   "bbox": [
+    48,
+    600,
+    739,
+    626
+   ],
+   "conf": 96.79,
+   "psm": 7,
+   "text": "the ground. His feet kicked helplessly, six inches above the"
+  },
+  {
+   "bbox": [
+    49,
+    633,
+    108,
+    647
+   ],
+   "conf": 96.11,
+   "psm": 7,
+   "text": "snow."
+  },
+  {
+   "bbox": [
+    75,
+    654,
+    482,
+    675
+   ],
+   "conf": 92.26,
+   "psm": 7,
+   "text": "\u201cIt\u2019s over, little man,\u201d said Abbott."
+  },
+  {
+   "bbox": [
+    76,
+    682,
+    738,
+    708
+   ],
+   "conf": 96.59,
+   "psm": 7,
+   "text": "\u201cBet your ass,\u201d said Owen. And he brought up the hand"
+  },
+  {
+   "bbox": [
+    48,
+    709,
+    738,
+    735
+   ],
+   "conf": 94.98,
+   "psm": 7,
+   "text": "holding Hazel\u2019s lost gun, thrust it into Abbott\u2019s gaping"
+  },
+  {
+   "bbox": [
+    48,
+    736,
+    738,
+    762
+   ],
+   "conf": 96.42,
+   "psm": 7,
+   "text": "mouth, and pressed the stud. The energy blast blew the"
+  },
+  {
+   "bbox": [
+    48,
+    763,
+    738,
+    789
+   ],
+   "conf": 96.32,
+   "psm": 7,
+   "text": "Wampyr\u2019s head apart like a rotten fruit, and black blood and"
+  },
+  {
+   "bbox": [
+    48,
+    791,
+    738,
+    811
+   ],
+   "conf": 95.38,
+   "psm": 7,
+   "text": "brains flew across the air. Abbott\u2019s hands slowly released"
+  },
+  {
+   "bbox": [
+    49,
+    818,
+    737,
+    844
+   ],
+   "conf": 95.7,
+   "psm": 7,
+   "text": "Owen, letting him fall back onto the blood-spattered snow."
+  },
+  {
+   "bbox": [
+    48,
+    845,
+    739,
+    871
+   ],
+   "conf": 95.95,
+   "psm": 7,
+   "text": "He scrambled quickly away, tucked Hazel\u2019s gun into his belt"
+  },
+  {
+   "bbox": [
+    49,
+    872,
+    738,
+    898
+   ],
+   "conf": 96.51,
+   "psm": 7,
+   "text": "and scooped up his sword with his good hand, beating the"
+  },
+  {
+   "bbox": [
+    48,
+    899,
+    738,
+    927
+   ],
+   "conf": 96.77,
+   "psm": 7,
+   "text": "other against his thigh to get the feeling back again. And"
+  },
+  {
+   "bbox": [
+    49,
+    927,
+    569,
+    952
+   ],
+   "conf": 95.54,
+   "psm": 7,
+   "text": "then, finally, Abbott\u2019s body fell and lay still."
+  },
+  {
+   "bbox": [
+    75,
+    953,
+    738,
+    975
+   ],
+   "conf": 96.31,
+   "psm": 7,
+   "text": "The crowd of onlookers surged forward and fell on it like"
+  },
+  {
+   "bbox": [
+    49,
+    981,
+    738,
+    1007
+   ],
+   "conf": 95.65,
+   "psm": 7,
+   "text": "rats on a day-old corpse. They tore the Wampyr\u2019s clothes"
+  },
+  {
+   "bbox": [
+    49,
+    1008,
+    738,
+    1034
+   ],
+   "conf": 96.69,
+   "psm": 7,
+   "text": "apart, cut the flesh with their weapons and sucked at the"
+  },
+  {
+   "bbox": [
+    49,
+    1035,
+    738,
+    1063
+   ],
+   "conf": 96.41,
+   "psm": 7,
+   "text": "black blood like leeches, their mouths working greedily"
+  },
+  {
+   "bbox": [
+    49,
+    1063,
+    737,
+    1090
+   ],
+   "conf": 96.65,
+   "psm": 7,
+   "text": "against the pale flesh. Others fought over the blood spilling"
+  },
+  {
+   "bbox": [
+    49,
+    1090,
+    738,
+    1117
+   ],
+   "conf": 96.65,
+   "psm": 7,
+   "text": "sluggishly from the severed neck. Owen staggered over to"
+  },
+  {
+   "bbox": [
+    49,
+    1117,
+    737,
+    1142
+   ],
+   "conf": 95.95,
+   "psm": 7,
+   "text": "Hazel, who was back on her feet and shaking her head daz-"
+  },
+  {
+   "bbox": [
+    49,
+    1143,
+    738,
+    1170
+   ],
+   "conf": 96.68,
+   "psm": 7,
+   "text": "edly. She looked up sharply as he approached, then looked"
+  },
+  {
+   "bbox": [
+    50,
+    1171,
+    515,
+    1196
+   ],
+   "conf": 96.84,
+   "psm": 7,
+   "text": "across at the feeding frenzy of the mob."
+  },
+  {
+   "bbox": [
+    77,
+    1197,
+    738,
+    1223
+   ],
+   "conf": 93.2,
+   "psm": 7,
+   "text": "\u201cT really think we should get out of here, Hazel,\u201d said"
+  },
+  {
+   "bbox": [
+    50,
+    1224,
+    737,
+    1251
+   ],
+   "conf": 95.22,
+   "psm": 7,
+   "text": "Owen. He flexed his hand, grimacing at the pins and nee-"
+  }
+ ],
+ "page": 176,
+ "widthPx": 787
+}

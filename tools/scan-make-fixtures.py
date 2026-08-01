@@ -83,6 +83,7 @@ def main(argv=None):
     bands = load_bands_module(args.bands)
     pages_dir = os.path.join(args.out, "pages")
     ref_dir = os.path.join(args.out, "reference")
+    ocr_dir = os.path.join(args.out, "ocr")
     os.makedirs(pages_dir, exist_ok=True)
     os.makedirs(ref_dir, exist_ok=True)
 
@@ -106,6 +107,18 @@ def main(argv=None):
             result = bands.process_page(png_path, page)
             with open(os.path.join(ref_dir, name + ".json"), "w") as fh:
                 json.dump(result, fh, indent=1, sort_keys=True)
+
+            # If the lab already read this page with run-book.py, keep its answer
+            # too: it is the reference for the Tesseract INVOCATION (one process
+            # per page over an image list, --psm 7, TSV, the --psm 13 rescue),
+            # and it is what src/scan/tesseract.ts has to reproduce line for line.
+            read = os.path.join(args.lab, book, "ocr-bands", "page-%d.json" % page)
+            if os.path.exists(read):
+                os.makedirs(ocr_dir, exist_ok=True)
+                with open(read) as fh:
+                    lines = json.load(fh)
+                with open(os.path.join(ocr_dir, name + ".json"), "w") as fh:
+                    json.dump(lines, fh, indent=1, sort_keys=True)
 
             size = os.path.getsize(pgm_path)
             total += size

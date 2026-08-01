@@ -1,0 +1,491 @@
+{
+ "heightPx": 1259,
+ "lines": [
+  {
+   "bbox": [
+    57,
+    63,
+    663,
+    82
+   ],
+   "conf": 83.68,
+   "psm": 7,
+   "text": "294 Simon A. Green"
+  },
+  {
+   "bbox": [
+    57,
+    101,
+    715,
+    126
+   ],
+   "conf": 95.63,
+   "psm": 7,
+   "text": "what they\u2019re doing, even when I\u2019ve no way of knowing it."
+  },
+  {
+   "bbox": [
+    57,
+    127,
+    715,
+    153
+   ],
+   "conf": 96.21,
+   "psm": 7,
+   "text": "Are we becoming a gestalt, do you think? A group mind?\u201d"
+  },
+  {
+   "bbox": [
+    83,
+    154,
+    719,
+    176
+   ],
+   "conf": 86.86,
+   "psm": 7,
+   "text": "\u201cT don\u2019t think so,\u201d said Giles. \u201cWe\u2019re still capable of"
+  },
+  {
+   "bbox": [
+    57,
+    180,
+    690,
+    206
+   ],
+   "conf": 95.79,
+   "psm": 7,
+   "text": "keeping secrets from each other. Isn\u2019t that right, Hazel?\u201d"
+  },
+  {
+   "bbox": [
+    84,
+    206,
+    715,
+    230
+   ],
+   "conf": 96.47,
+   "psm": 7,
+   "text": "Her heart jumped, but she kept her face relaxed. \u201cWhat"
+  },
+  {
+   "bbox": [
+    57,
+    232,
+    317,
+    256
+   ],
+   "conf": 96.34,
+   "psm": 7,
+   "text": "are you talking about?\u201d"
+  },
+  {
+   "bbox": [
+    84,
+    257,
+    716,
+    282
+   ],
+   "conf": 88.22,
+   "psm": 7,
+   "text": "\u201cPerhaps you'd care to tell us why you\u2019ve been spending"
+  },
+  {
+   "bbox": [
+    58,
+    284,
+    601,
+    307
+   ],
+   "conf": 95.57,
+   "psm": 7,
+   "text": "so much time in the Hadenman city,\u201d said Giles."
+  },
+  {
+   "bbox": [
+    84,
+    310,
+    524,
+    334
+   ],
+   "conf": 95.69,
+   "psm": 7,
+   "text": "\u201cThat\u2019s my business,\u201d said Hazel flatly."
+  },
+  {
+   "bbox": [
+    84,
+    336,
+    664,
+    358
+   ],
+   "conf": 95.59,
+   "psm": 7,
+   "text": "\u201cWe\u2019re all entitled to our private lives,\u201d said Owen."
+  },
+  {
+   "bbox": [
+    84,
+    363,
+    411,
+    382
+   ],
+   "conf": 91.74,
+   "psm": 7,
+   "text": "\u201cTI want to know,\u201d said Giles."
+  },
+  {
+   "bbox": [
+    84,
+    388,
+    716,
+    413
+   ],
+   "conf": 95.87,
+   "psm": 7,
+   "text": "\u201cShe\u2019s been seeing Tobias Moon, all right?\u201d said Owen."
+  },
+  {
+   "bbox": [
+    58,
+    414,
+    717,
+    434
+   ],
+   "conf": 95.29,
+   "psm": 7,
+   "text": "\u201cIf she didn\u2019t want to tell us, that was her business. Just be-"
+  },
+  {
+   "bbox": [
+    57,
+    441,
+    718,
+    465
+   ],
+   "conf": 95.71,
+   "psm": 7,
+   "text": "cause we\u2019re close now, it doesn\u2019t mean we have to open up"
+  },
+  {
+   "bbox": [
+    58,
+    468,
+    331,
+    487
+   ],
+   "conf": 96.35,
+   "psm": 7,
+   "text": "our souls to each other.\u201d"
+  },
+  {
+   "bbox": [
+    84,
+    492,
+    718,
+    516
+   ],
+   "conf": 96.6,
+   "psm": 7,
+   "text": "\u201cWe may not have any choice,\u201d said Giles. \u201cIf the link"
+  },
+  {
+   "bbox": [
+    58,
+    519,
+    445,
+    543
+   ],
+   "conf": 96.52,
+   "psm": 7,
+   "text": "continues to grow and strengthen.\u201d"
+  },
+  {
+   "bbox": [
+    85,
+    544,
+    718,
+    568
+   ],
+   "conf": 95.58,
+   "psm": 7,
+   "text": "\u201cWhich sounds to me like a damn good reason for split-"
+  },
+  {
+   "bbox": [
+    58,
+    570,
+    718,
+    594
+   ],
+   "conf": 95.13,
+   "psm": 7,
+   "text": "ting up and putting some distance between us,\u201d said Ran-"
+  },
+  {
+   "bbox": [
+    58,
+    596,
+    717,
+    620
+   ],
+   "conf": 96.64,
+   "psm": 7,
+   "text": "dom. \u201cNo offense, people, but the only person I want in my"
+  },
+  {
+   "bbox": [
+    58,
+    622,
+    197,
+    641
+   ],
+   "conf": 96.4,
+   "psm": 7,
+   "text": "head is me.\u201d"
+  },
+  {
+   "bbox": [
+    85,
+    647,
+    718,
+    671
+   ],
+   "conf": 95.82,
+   "psm": 7,
+   "text": "\u201cRight,\u201d said Hazel. \u201cAnd besides, I don\u2019t think humani-"
+  },
+  {
+   "bbox": [
+    59,
+    673,
+    591,
+    697
+   ],
+   "conf": 96.0,
+   "psm": 7,
+   "text": "ty\u2019s ready to cope with Ruby Journey the god.\u201d"
+  },
+  {
+   "bbox": [
+    85,
+    699,
+    572,
+    723
+   ],
+   "conf": 95.44,
+   "psm": 7,
+   "text": "\u201cYou have no ambition,\u201d said Ruby calmly."
+  },
+  {
+   "bbox": [
+    80,
+    725,
+    718,
+    750
+   ],
+   "conf": 85.23,
+   "psm": 7,
+   "text": "\u201cBut we\u2019re a lot more powerful together,\u201d said Owen."
+  },
+  {
+   "bbox": [
+    59,
+    752,
+    719,
+    772
+   ],
+   "conf": 95.28,
+   "psm": 7,
+   "text": "\u201cRemember the force shield we raised against Silence\u2019s"
+  },
+  {
+   "bbox": [
+    58,
+    778,
+    719,
+    803
+   ],
+   "conf": 95.27,
+   "psm": 7,
+   "text": "troops? They couldn\u2019t touch us with anything they had. I"
+  },
+  {
+   "bbox": [
+    58,
+    805,
+    720,
+    829
+   ],
+   "conf": 96.54,
+   "psm": 7,
+   "text": "don\u2019t think any of us could do that separately. There might"
+  },
+  {
+   "bbox": [
+    59,
+    831,
+    719,
+    856
+   ],
+   "conf": 96.56,
+   "psm": 7,
+   "text": "be other things we could learn to do together. Powerful"
+  },
+  {
+   "bbox": [
+    59,
+    857,
+    719,
+    882
+   ],
+   "conf": 91.65,
+   "psm": 7,
+   "text": "things. Don\u2019t we have a responsibility to the rebellion to be-"
+  },
+  {
+   "bbox": [
+    59,
+    884,
+    721,
+    909
+   ],
+   "conf": 94.22,
+   "psm": 7,
+   "text": "come as powerful as possible? We\u2019re the rebellion\u2019s secret"
+  },
+  {
+   "bbox": [
+    59,
+    910,
+    721,
+    935
+   ],
+   "conf": 95.8,
+   "psm": 7,
+   "text": "weapon, the ace in the hole; we\u2019re the one thing that might"
+  },
+  {
+   "bbox": [
+    60,
+    937,
+    719,
+    962
+   ],
+   "conf": 96.17,
+   "psm": 7,
+   "text": "tip the coming war in our favor. Are we being selfish in val-"
+  },
+  {
+   "bbox": [
+    60,
+    963,
+    676,
+    987
+   ],
+   "conf": 94.8,
+   "psm": 7,
+   "text": "uing our own individuality over the rebellion\u2019s needs?\u201d"
+  },
+  {
+   "bbox": [
+    86,
+    989,
+    721,
+    1014
+   ],
+   "conf": 89.22,
+   "psm": 7,
+   "text": "\u201cPerhaps some of. what we\u2019re fighting for is everyone\u2019s"
+  },
+  {
+   "bbox": [
+    59,
+    1016,
+    720,
+    1039
+   ],
+   "conf": 95.68,
+   "psm": 7,
+   "text": "right to be an individual,\u201d said Random. \u201cWe can\u2019t save hu-"
+  },
+  {
+   "bbox": [
+    60,
+    1042,
+    720,
+    1067
+   ],
+   "conf": 95.57,
+   "psm": 7,
+   "text": "manity by becoming inhuman. The only other people to sur-"
+  },
+  {
+   "bbox": [
+    60,
+    1068,
+    721,
+    1093
+   ],
+   "conf": 96.63,
+   "psm": 7,
+   "text": "vive passing through the Madness Maze were the scientists"
+  },
+  {
+   "bbox": [
+    60,
+    1095,
+    721,
+    1120
+   ],
+   "conf": 95.85,
+   "psm": 7,
+   "text": "who created the Hadenmen. Do we want something like that"
+  },
+  {
+   "bbox": [
+    60,
+    1121,
+    457,
+    1146
+   ],
+   "conf": 49.5,
+   "psm": 13,
+   "text": "as our legacy?\u201d .- ee"
+  },
+  {
+   "bbox": [
+    86,
+    1147,
+    720,
+    1172
+   ],
+   "conf": 93.65,
+   "psm": 7,
+   "text": "\u201cHe\u2019s right,\u201d said Giles. \u201cWe all have monsters within us."
+  },
+  {
+   "bbox": [
+    59,
+    1173,
+    721,
+    1199
+   ],
+   "conf": 96.43,
+   "psm": 7,
+   "text": "What if our growing power let them out, let them run loose?"
+  },
+  {
+   "bbox": [
+    60,
+    1200,
+    484,
+    1225
+   ],
+   "conf": 96.51,
+   "psm": 7,
+   "text": "Who knows what we might become?\u201d"
+  }
+ ],
+ "page": 295,
+ "widthPx": 739
+}

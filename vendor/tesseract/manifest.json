@@ -1,0 +1,29 @@
+{
+  "dpi": 200,
+  "expectedVersion": "5.5.1",
+  "platforms": {
+    "darwin-arm64": {
+      "binary": "darwin-arm64/tesseract",
+      "binarySha256": "6517c9cf1b17280201af3e48880517bbfafd24b5876aacb75d5643bafff1c414",
+      "note": "dynamically linked against 3 non-system libraries (/opt/homebrew/Cellar/tesseract/5.5.1/lib/libtesseract.5.dylib /opt/homebrew/opt/leptonica/lib/libleptonica.6.dylib /opt/homebrew/opt/libarchive/lib/libarchive.13.dylib...); runs on this machine only. See vendor/tesseract/README.md.",
+      "portable": false,
+      "recorded": "2026-08-01",
+      "recordedFrom": {
+        "binary": "/opt/homebrew/Cellar/tesseract/5.5.1/bin/tesseract",
+        "tessdata": "/opt/homebrew/Cellar/tesseract/5.5.1/share/tessdata"
+      },
+      "tessdata": {
+        "configs/tsv": {
+          "bytes": 22,
+          "sha256": "59d079bb75d8b3d7c839a3564580cb559e362c93a9d70f234e421c0c3e767e04"
+        },
+        "eng.traineddata": {
+          "bytes": 4113088,
+          "sha256": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2"
+        }
+      },
+      "tessdataDir": "darwin-arm64/tessdata",
+      "versionLine": "tesseract 5.5.1"
+    }
+  }
+}

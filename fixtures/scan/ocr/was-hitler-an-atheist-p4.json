@@ -1,0 +1,249 @@
+{
+ "heightPx": 1800,
+ "lines": [
+  {
+   "bbox": [
+    221,
+    187,
+    483,
+    210
+   ],
+   "conf": 96.31,
+   "psm": 7,
+   "text": "The Hidden Encyclical"
+  },
+  {
+   "bbox": [
+    220,
+    227,
+    390,
+    249
+   ],
+   "conf": 96.6,
+   "psm": 7,
+   "text": "New Relations"
+  },
+  {
+   "bbox": [
+    221,
+    266,
+    553,
+    296
+   ],
+   "conf": 96.86,
+   "psm": 7,
+   "text": "The Plan to Kidnap the Pope"
+  },
+  {
+   "bbox": [
+    220,
+    305,
+    527,
+    330
+   ],
+   "conf": 96.58,
+   "psm": 7,
+   "text": "Acts of Virtue, Acts of Evil"
+  },
+  {
+   "bbox": [
+    193,
+    368,
+    463,
+    387
+   ],
+   "conf": 81.99,
+   "psm": 7,
+   "text": "8. DENAZIFICATION"
+  },
+  {
+   "bbox": [
+    221,
+    406,
+    542,
+    428
+   ],
+   "conf": 93.71,
+   "psm": 7,
+   "text": "The End of the Third Reich"
+  },
+  {
+   "bbox": [
+    221,
+    446,
+    447,
+    476
+   ],
+   "conf": 94.98,
+   "psm": 7,
+   "text": "Denazifying Politics"
+  },
+  {
+   "bbox": [
+    221,
+    485,
+    497,
+    515
+   ],
+   "conf": 95.36,
+   "psm": 7,
+   "text": "Denazifying the Church"
+  },
+  {
+   "bbox": [
+    220,
+    554,
+    591,
+    584
+   ],
+   "conf": 96.64,
+   "psm": 7,
+   "text": "Appendix A: A Note on Sources"
+  },
+  {
+   "bbox": [
+    220,
+    594,
+    561,
+    624
+   ],
+   "conf": 94.86,
+   "psm": 7,
+   "text": "Appendix B: Master Timeline"
+  },
+  {
+   "bbox": [
+    221,
+    633,
+    328,
+    655
+   ],
+   "conf": 96.69,
+   "psm": 7,
+   "text": "Endnotes"
+  },
+  {
+   "bbox": [
+    916,
+    188,
+    953,
+    213
+   ],
+   "conf": 96.85,
+   "psm": 7,
+   "text": "148"
+  },
+  {
+   "bbox": [
+    916,
+    235,
+    953,
+    253
+   ],
+   "conf": 94.94,
+   "psm": 7,
+   "text": "153"
+  },
+  {
+   "bbox": [
+    916,
+    274,
+    954,
+    292
+   ],
+   "conf": 91.73,
+   "psm": 7,
+   "text": "157"
+  },
+  {
+   "bbox": [
+    916,
+    306,
+    954,
+    325
+   ],
+   "conf": 96.19,
+   "psm": 7,
+   "text": "160"
+  },
+  {
+   "bbox": [
+    916,
+    367,
+    953,
+    392
+   ],
+   "conf": 96.77,
+   "psm": 7,
+   "text": "165"
+  },
+  {
+   "bbox": [
+    916,
+    407,
+    954,
+    426
+   ],
+   "conf": 96.35,
+   "psm": 7,
+   "text": "166"
+  },
+  {
+   "bbox": [
+    916,
+    453,
+    954,
+    471
+   ],
+   "conf": 89.91,
+   "psm": 7,
+   "text": "177"
+  },
+  {
+   "bbox": [
+    916,
+    485,
+    954,
+    510
+   ],
+   "conf": 96.79,
+   "psm": 7,
+   "text": "184"
+  },
+  {
+   "bbox": [
+    916,
+    562,
+    953,
+    580
+   ],
+   "conf": 94.38,
+   "psm": 7,
+   "text": "193"
+  },
+  {
+   "bbox": [
+    916,
+    601,
+    954,
+    619
+   ],
+   "conf": 92.17,
+   "psm": 7,
+   "text": "197"
+  },
+  {
+   "bbox": [
+    913,
+    641,
+    951,
+    653
+   ],
+   "conf": 88.38,
+   "psm": 7,
+   "text": "211"
+  }
+ ],
+ "page": 4,
+ "widthPx": 1200
+}

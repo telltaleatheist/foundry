@@ -1,0 +1,480 @@
+{
+ "heightPx": 1289,
+ "lines": [
+  {
+   "bbox": [
+    46,
+    43,
+    479,
+    63
+   ],
+   "conf": 93.04,
+   "psm": 7,
+   "text": "520 Simon R. Green"
+  },
+  {
+   "bbox": [
+    45,
+    83,
+    733,
+    109
+   ],
+   "conf": 83.45,
+   "psm": 7,
+   "text": "you\u2019 ll live long enough to face trial and execution on Golgo-"
+  },
+  {
+   "bbox": [
+    45,
+    111,
+    97,
+    131
+   ],
+   "conf": 96.66,
+   "psm": 7,
+   "text": "tha.\u201d"
+  },
+  {
+   "bbox": [
+    72,
+    138,
+    466,
+    159
+   ],
+   "conf": 80.35,
+   "psm": 7,
+   "text": "\u201c\u00a5\u2019d rather rush him,\u201d said Owen."
+  },
+  {
+   "bbox": [
+    72,
+    166,
+    732,
+    191
+   ],
+   "conf": 96.66,
+   "psm": 7,
+   "text": "\u201cRelax, everybody,\u201d said a different voice in all their ears."
+  },
+  {
+   "bbox": [
+    45,
+    194,
+    734,
+    220
+   ],
+   "conf": 95.84,
+   "psm": 7,
+   "text": "\u201cThis is Wulf, on the pinnace. I\u2019ve just taken control of the"
+  },
+  {
+   "bbox": [
+    44,
+    222,
+    733,
+    248
+   ],
+   "conf": 95.49,
+   "psm": 7,
+   "text": "weapons systems away from the somewhat excitable gentle-"
+  },
+  {
+   "bbox": [
+    44,
+    250,
+    734,
+    275
+   ],
+   "conf": 95.46,
+   "psm": 7,
+   "text": "man who was in charge. He\u2019s currently having a little lie"
+  },
+  {
+   "bbox": [
+    44,
+    278,
+    125,
+    297
+   ],
+   "conf": 95.22,
+   "psm": 7,
+   "text": "down.\u201d"
+  },
+  {
+   "bbox": [
+    71,
+    305,
+    726,
+    326
+   ],
+   "conf": 95.15,
+   "psm": 7,
+   "text": "\u201cWho the hell\u2019s Wulf?\u201d said Frost. \u201cDid we miss one?\u201d"
+  },
+  {
+   "bbox": [
+    71,
+    333,
+    384,
+    358
+   ],
+   "conf": 96.62,
+   "psm": 7,
+   "text": "\u201cApparently,\u201d said Silence."
+  },
+  {
+   "bbox": [
+    71,
+    361,
+    734,
+    387
+   ],
+   "conf": 95.8,
+   "psm": 7,
+   "text": "\u201cAll right, Wulf,\u201d said Owen. \u201cWhat happened to you?"
+  },
+  {
+   "bbox": [
+    44,
+    388,
+    708,
+    409
+   ],
+   "conf": 95.59,
+   "psm": 7,
+   "text": "Why weren\u2019t you killed when the Maze was destroyed?\u201d"
+  },
+  {
+   "bbox": [
+    72,
+    416,
+    734,
+    442
+   ],
+   "conf": 94.18,
+   "psm": 7,
+   "text": "\u201cT had my own way out of the Maze,\u201d said the Wolfling"
+  },
+  {
+   "bbox": [
+    43,
+    444,
+    733,
+    470
+   ],
+   "conf": 96.42,
+   "psm": 7,
+   "text": "calmly. \u201cI\u2019ve been through it before. By the time I realized"
+  },
+  {
+   "bbox": [
+    44,
+    472,
+    733,
+    497
+   ],
+   "conf": 96.05,
+   "psm": 7,
+   "text": "you were in trouble, it was all over bar the shouting. Luck-"
+  },
+  {
+   "bbox": [
+    44,
+    500,
+    748,
+    526
+   ],
+   "conf": 90.17,
+   "psm": 7,
+   "text": "ily, I decided to see if there was anything useful on the pin-\u2014"
+  },
+  {
+   "bbox": [
+    44,
+    534,
+    112,
+    548
+   ],
+   "conf": 23.18,
+   "psm": 7,
+   "text": "nace."
+  },
+  {
+   "bbox": [
+    71,
+    556,
+    734,
+    581
+   ],
+   "conf": 96.16,
+   "psm": 7,
+   "text": "\u201cWell, now that our hearts have all started beating again,\u201d"
+  },
+  {
+   "bbox": [
+    44,
+    583,
+    735,
+    609
+   ],
+   "conf": 95.64,
+   "psm": 7,
+   "text": "said Owen, \u201chand your prisoner over to the Hadenmen. I"
+  },
+  {
+   "bbox": [
+    44,
+    611,
+    734,
+    637
+   ],
+   "conf": 95.21,
+   "psm": 7,
+   "text": "think you\u2019d better stay aboard the pinnace until it\u2019s ready to"
+  },
+  {
+   "bbox": [
+    44,
+    639,
+    734,
+    659
+   ],
+   "conf": 95.76,
+   "psm": 7,
+   "text": "leave, and make sure the fire controls are taken off-line be-"
+  },
+  {
+   "bbox": [
+    44,
+    667,
+    733,
+    693
+   ],
+   "conf": 96.46,
+   "psm": 7,
+   "text": "fore we let the Captain or the Investigator anywhere near it."
+  },
+  {
+   "bbox": [
+    44,
+    695,
+    732,
+    715
+   ],
+   "conf": 96.0,
+   "psm": 7,
+   "text": "I don\u2019t think I could stand another surprise at the moment.\u201d"
+  },
+  {
+   "bbox": [
+    72,
+    723,
+    497,
+    748
+   ],
+   "conf": 95.19,
+   "psm": 7,
+   "text": "\u201cUnderstandable,\u201d said the Wolfling."
+  },
+  {
+   "bbox": [
+    71,
+    751,
+    734,
+    776
+   ],
+   "conf": 95.54,
+   "psm": 7,
+   "text": "Owen sighed heavily and looked round to see Giles beck-"
+  },
+  {
+   "bbox": [
+    44,
+    778,
+    734,
+    804
+   ],
+   "conf": 96.3,
+   "psm": 7,
+   "text": "oning to him. He moved over, with Hazel at his side. Giles"
+  },
+  {
+   "bbox": [
+    44,
+    806,
+    297,
+    827
+   ],
+   "conf": 96.15,
+   "psm": 7,
+   "text": "looked at him sternly."
+  },
+  {
+   "bbox": [
+    72,
+    834,
+    735,
+    855
+   ],
+   "conf": 96.19,
+   "psm": 7,
+   "text": "\u201cYou still have a decision to make, kinsman. What are"
+  },
+  {
+   "bbox": [
+    44,
+    862,
+    735,
+    888
+   ],
+   "conf": 95.88,
+   "psm": 7,
+   "text": "you going to do about the Darkvoid Device? Will you use it"
+  },
+  {
+   "bbox": [
+    45,
+    890,
+    570,
+    916
+   ],
+   "conf": 96.12,
+   "psm": 7,
+   "text": "against the Empire? Will billions die again?\u201d"
+  },
+  {
+   "bbox": [
+    72,
+    918,
+    734,
+    938
+   ],
+   "conf": 96.35,
+   "psm": 7,
+   "text": "\u201cYou created it,\u201d said Owen. \u201cAnd you used it. What do"
+  },
+  {
+   "bbox": [
+    45,
+    946,
+    347,
+    966
+   ],
+   "conf": 96.53,
+   "psm": 7,
+   "text": "you think we should do?\u201d"
+  },
+  {
+   "bbox": [
+    72,
+    973,
+    736,
+    994
+   ],
+   "conf": 95.2,
+   "psm": 7,
+   "text": "\u201cNo,\u201d said Giles. \u201cI won\u2019t make that kind of decision ever"
+  },
+  {
+   "bbox": [
+    45,
+    1002,
+    218,
+    1022
+   ],
+   "conf": 96.05,
+   "psm": 7,
+   "text": "again. I can\u2019t.\u201d"
+  },
+  {
+   "bbox": [
+    72,
+    1029,
+    734,
+    1054
+   ],
+   "conf": 94.81,
+   "psm": 7,
+   "text": "\u201cThen I say no,\u201d said Owen. \u201cYou can\u2019t fight evil by be-"
+  },
+  {
+   "bbox": [
+    45,
+    1057,
+    735,
+    1082
+   ],
+   "conf": 94.48,
+   "psm": 7,
+   "text": "coming evil. Too many have died already. If I\u2019ve become a"
+  },
+  {
+   "bbox": [
+    45,
+    1085,
+    735,
+    1110
+   ],
+   "conf": 96.79,
+   "psm": 7,
+   "text": "rebel and a traitor against the Empire, it\u2019s to save and protect"
+  },
+  {
+   "bbox": [
+    45,
+    1112,
+    734,
+    1137
+   ],
+   "conf": 95.17,
+   "psm": 7,
+   "text": "lives, not to take them. But we won\u2019t destroy the baby, ei-"
+  },
+  {
+   "bbox": [
+    45,
+    1140,
+    734,
+    1166
+   ],
+   "conf": 96.7,
+   "psm": 7,
+   "text": "ther. Let it sleep. And who knows, perhaps in years to come"
+  },
+  {
+   "bbox": [
+    46,
+    1168,
+    510,
+    1194
+   ],
+   "conf": 96.54,
+   "psm": 7,
+   "text": "it will grow into something wonderful.\u201d"
+  },
+  {
+   "bbox": [
+    73,
+    1195,
+    734,
+    1220
+   ],
+   "conf": 95.19,
+   "psm": 7,
+   "text": "\u201cWell done, aristo,\u201d said Hazel. \u201cYou finally got it right.\u201d"
+  },
+  {
+   "bbox": [
+    72,
+    1223,
+    734,
+    1247
+   ],
+   "conf": 96.57,
+   "psm": 7,
+   "text": "They smiled at each other, and then Owen looked away at"
+  }
+ ],
+ "page": 521,
+ "widthPx": 778
+}
