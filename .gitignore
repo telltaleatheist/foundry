@@ -4,11 +4,13 @@
 # directory.
 *.gguf
 *.safetensors
-models/
+# ANCHORED, deliberately. An unanchored `models/` also matches `src/models/`,
+# which is the catalog/download/paths CODE — git silently refused to stage it.
+/models/
 
 # Vendored binaries: the pinned tesseract + tessdata and the bundled
 # llama-server. Fetched by the packaging step, never committed.
-vendor/
+/vendor/
 
 node_modules/
 dist/
