@@ -6,10 +6,16 @@
  *   > No fallbacks: a page that cannot be segmented raises, is reported by
  *   > number, and makes the run exit nonzero.
  *
- * So a page with no ink is not "a page with zero bands" and a black page is not
- * "a page whose paper is dark". Both are errors carrying the page number, and
- * the failure messages below are the Python implementation's, verified against
- * it on the same synthetic rasters.
+ * One place that contract drew the line wrong, and this port has since
+ * corrected it: a page with zero ink is BLANK, not unsegmentable. Real books
+ * carry blank endpapers, and under the Python rule one clean endpaper aborted a
+ * whole 360-page run (Michelle Remembers p8, Aug 2 2026). A blank page now
+ * comes out as a zero-band page, exactly like the near-blank pages that always
+ * squeaked through on a few pixels of dirt. A black page is still an error —
+ * that is a bad render, not a page.
+ *
+ * Error messages count pages 1-based to match the scan log; the `page` field
+ * keeps the artifacts' 0-based index.
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -21,27 +27,31 @@ function flat(value: number, width = 180, height = 200): GrayRaster {
   return { width, height, data: new Uint8Array(width * height).fill(value) };
 }
 
-describe('a page that cannot be segmented raises, carrying its page number', () => {
-  test('a blank page has no ink, and that is an error', () => {
-    // Verified against bands.py: ValueError("no ink found after border masking")
-    expect(() => processPage(flat(255), 42)).toThrow(PageSegmentationError);
-    try {
-      processPage(flat(255), 42);
-      throw new Error('unreachable');
-    } catch (err) {
-      const e = err as PageSegmentationError;
-      expect(e.page).toBe(42);
-      expect(e.message).toBe('page 42: no ink found after border masking');
-    }
+describe('blank pages are pages, unreadable pages are errors', () => {
+  test('a blank page segments to zero bands', () => {
+    const r = processPage(flat(255), 42);
+    expect(r.page).toBe(42);
+    expect(r.bands).toEqual([]);
+    expect(r.stats.inkPx).toBe(0);
+    expect(r.deskewDeg).toBe(0);
   });
 
-  test('flat mid-grey is the same failure — no ink is no ink', () => {
-    expect(() => processPage(flat(128), 3)).toThrow('page 3: no ink found after border masking');
+  test('flat mid-grey is the same page — uniform tone is no ink', () => {
+    const r = processPage(flat(128), 3);
+    expect(r.bands).toEqual([]);
+    expect(r.stats.inkPx).toBe(0);
   });
 
   test('a black page names its paper tone rather than segmenting it', () => {
     // Verified against bands.py: ValueError("page is black (paper tone 0) - not a scan?")
-    expect(() => processPage(flat(0), 9)).toThrow('page 9: page is black (paper tone 0) - not a scan?');
+    // 0-based index 9 = the log's page 10.
+    expect(() => processPage(flat(0), 9)).toThrow('page 10: page is black (paper tone 0) - not a scan?');
+    try {
+      processPage(flat(0), 9);
+      throw new Error('unreachable');
+    } catch (err) {
+      expect((err as PageSegmentationError).page).toBe(9);
+    }
   });
 });
 

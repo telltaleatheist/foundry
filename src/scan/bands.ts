@@ -137,10 +137,18 @@ export interface PageBands {
   bands: Band[];
 }
 
-/** A page that could not be segmented, carrying the page number with it. */
+/**
+ * A page that could not be segmented, carrying the page number with it.
+ *
+ * `page` is the 0-based index, the same identity the artifacts use. The MESSAGE
+ * speaks 1-based, because that is how the scan log counts ("page 8/360") and the
+ * two must name the same page: an error saying "page 7" while the log's page
+ * 7/360 had already succeeded sent a real diagnosis to the wrong page (Michelle
+ * Remembers, Aug 2 2026).
+ */
 export class PageSegmentationError extends Error {
   constructor(readonly page: number, readonly reason: string) {
-    super(`page ${page}: ${reason}`);
+    super(`page ${page + 1}: ${reason}`);
     this.name = 'PageSegmentationError';
   }
 }
@@ -1361,7 +1369,35 @@ function segment(raster: GrayRaster, page: number): PageBands {
   rect = trim.rect;
   let totalInk = 0;
   for (let i = 0; i < ink.length; i++) totalInk += ink[i]!;
-  if (totalInk === 0) throw new PageSegmentationError(page, 'no ink found after border masking');
+  if (totalInk === 0) {
+    // A page with zero ink is BLANK, not unsegmentable. Real books carry them —
+    // endpapers, the verso of a half-title, the blank after a part divider —
+    // and bands.py's "no ink is an error" contract made one clean endpaper
+    // abort a whole 360-page run (Michelle Remembers p8, Aug 2 2026). Most
+    // blanks squeak through on a few pixels of dirt and already come out as
+    // zero-band pages; a scan clean enough to mask to exactly zero is the same
+    // page, only cleaner. summarize() flags every zero-band page, so a masking
+    // failure that blanked a page full of type would still surface there.
+    return {
+      page,
+      widthPx: w,
+      heightPx: h,
+      columns: 1,
+      contentRect: [rect.x0, rect.x1, rect.y0, rect.y1],
+      stats: {
+        medianPitch: 0.0,
+        inkThreshold: 0.0,
+        minBandH: 0,
+        medianBandH: 0.0,
+        xHeightPx: 0.0,
+        inkPx: 0,
+        trimmedInkPx: trim.trimmed,
+        coverageMissed: 0.0,
+      },
+      deskewDeg,
+      bands: [],
+    };
+  }
 
   const bandColumns = (spans: Array<[number, number]>) =>
     spans.map(([xa, xb]) => ({ xa, xb, ...bandRegion(ink, w, h, rect, xa, xb) }));
