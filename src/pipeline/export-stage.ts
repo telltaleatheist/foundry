@@ -39,7 +39,8 @@ import {
   epubPath, hasArtifact, readBlocks, readFootnoteDeletions, readOcrLines, readRun, readScanLines,
   writeArtifact,
 } from './artifacts.js';
-import type { Block, CalibrationVerdict, ScanLine } from './artifacts.js';
+import type { Block, CalibrationVerdict, FootnoteBlockDeletions, ScanLine } from './artifacts.js';
+import { applyFootnoteDeletions } from '../footnotes/applier.js';
 import { attestationFromLines } from '../paragraphs/hyphen.js';
 import { buildEpub, type BuildEpubResult, type EpubMetadata } from '../export/epub.js';
 import type { ExclusionRequest } from '../export/exclude.js';
@@ -111,16 +112,33 @@ function collectBlockText(runDir: string, blocks: readonly Block[]): {
 
   // The footnotes stage rewrites BLOCK text, not line text, so its output
   // replaces the block's units wholesale.
-  const stripped = new Map<string, string>();
+  const stripped = new Map<string, FootnoteBlockDeletions>();
   if (hasArtifact(runDir, 'footnoteDeletions')) {
-    for (const b of readFootnoteDeletions(runDir).blocks) stripped.set(b.blockId, b.text);
+    for (const b of readFootnoteDeletions(runDir).blocks) stripped.set(b.blockId, b);
   }
 
   const blockText = new Map<string, string[]>();
   for (const b of blocks) {
     const marked = stripped.get(b.id);
     if (marked !== undefined) {
-      blockText.set(b.id, [marked]);
+      // Integrity: the footnotes stage's rewrite replaces this block WHOLESALE,
+      // so it must have been derived from the text that is shipping now. The
+      // 2-page end-to-end run caught the violation this guards against: dagger
+      // ran against the raw scan, ocr ran too, and every marker-bearing block
+      // silently shipped raw text minus markers — OCR corrections discarded.
+      // The rewrite must be reproducible: current line text + the recorded
+      // deletions must equal the recorded result, or the footnotes artifact is
+      // stale against this run directory.
+      const base = b.lineIds.map(id => text.get(id)).join('\n');
+      const replay = applyFootnoteDeletions(base, marked.applied);
+      if (replay.rejected > 0 || replay.text !== marked.text) {
+        throw new ExportStageError(
+          `footnotes/deletions.json for block ${b.id} does not derive from the current text `
+          + `of its lines — it was produced against a different text base (usually: the ocr `
+          + `stage ran after footnotes). Re-run the footnotes stage.`,
+        );
+      }
+      blockText.set(b.id, [marked.text]);
       continue;
     }
     const units = b.lineIds.map(id => {

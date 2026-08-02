@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { runExportStage, deriveMetadata, ExportStageError } from '../../src/pipeline/export-stage.js';
 import { readBlocks, readRun, readScanLines, writeArtifact, artifactPath } from '../../src/pipeline/artifacts.js';
 import { buildRun, runDirFor } from '../../fixtures/export/generate.js';
+import { applyFootnoteDeletions } from '../../src/footnotes/applier.js';
 import { unzipMap } from '../export/unzip.js';
 
 const METADATA = { title: 'A Synthetic Book', language: 'en', identifier: 'urn:uuid:test' };
@@ -88,13 +89,45 @@ test('a PARTIAL ocr artifact throws rather than mixing corrected and uncorrected
 test('footnotes/deletions.json replaces a block\'s text wholesale', () => {
   const { runDir, cleanup } = scratchRun();
   try {
+    // The artifact must DERIVE from the block's current lines — the export
+    // replays the recorded deletions and refuses a rewrite it cannot
+    // reproduce. So build it the way the footnotes stage does: apply a real
+    // deletion to the real text.
     const target = readBlocks(runDir).blocks.find(b => b.category === 'footnote')!;
+    const lines = readScanLines(runDir).lines;
+    const byId = new Map(lines.map(l => [l.id, l.text]));
+    const base = target.lineIds.map(id => byId.get(id)!).join('\n');
+    const applied = [{ before: '1. A', after: 'A' }];
+    const stripped = applyFootnoteDeletions(base, applied);
+    assert.equal(stripped.rejected, 0);
     writeArtifact(runDir, 'footnoteDeletions', {
-      blocks: [{ blockId: target.id, applied: [{ before: '1. A', after: 'A' }], rejected: 0, text: 'A footnote with its marker gone.' }],
+      blocks: [{ blockId: target.id, applied, rejected: 0, text: stripped.text }],
     });
     const r = runExportStage({ runDir, metadata: METADATA, log: () => {} });
-    assert.match(prose(r.zip), /A footnote with its marker gone\./);
+    assert.match(prose(r.zip), /A footnote at the foot/);
     assert.equal(prose(r.zip).includes('1. A footnote at the foot'), false);
+  } finally { cleanup(); }
+});
+
+test('a footnotes rewrite that does not derive from the current lines is refused', () => {
+  // The bug the 2-page end-to-end run caught, pinned: dagger derived its
+  // deletions from the RAW scan text, ocr corrected the lines afterwards, and
+  // the export silently shipped raw text minus markers for every block dagger
+  // touched — OCR corrections discarded. Now the export replays the recorded
+  // deletions against the shipping text and refuses a rewrite that does not
+  // reproduce.
+  const { runDir, cleanup } = scratchRun();
+  try {
+    const target = readBlocks(runDir).blocks.find(b => b.category === 'footnote')!;
+    writeArtifact(runDir, 'footnoteDeletions', {
+      blocks: [{ blockId: target.id, applied: [{ before: '1. A', after: 'A' }], rejected: 0, text: 'A stale rewrite from another text base.' }],
+    });
+    assert.throws(() => runExportStage({ runDir, metadata: METADATA, log: () => {} }), (e: unknown) => {
+      assert.ok(e instanceof ExportStageError);
+      assert.match(e.message, /does not derive from the current text/);
+      assert.match(e.message, /Re-run the footnotes stage/);
+      return true;
+    });
   } finally { cleanup(); }
 });
 

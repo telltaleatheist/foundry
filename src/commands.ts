@@ -92,6 +92,7 @@ import {
   type Block,
   type BlockGeometry,
   type FootnoteBlockDeletions,
+  readOcrLines,
   type OcrLine,
   type CalibrationVerdict,
   type RunArtifact,
@@ -1070,6 +1071,33 @@ const NON_PROSE: ReadonlySet<string> = new Set([
  * in `scan/lines.json`, and a block holding its own copy would be a second
  * source of truth for what the book says. So every consumer joins.
  */
+/**
+ * The text the footnotes stage must judge is the text the book will SHIP —
+ * the ocr-corrected lines, when that stage has run. Deriving deletions against
+ * the raw scan and then replacing the block wholesale at export was the first
+ * bug the 2-page end-to-end run caught: every block dagger touched shipped its
+ * RAW text minus markers, silently discarding its OCR corrections ("Miiller"
+ * back in the EPUB while ocr/lines.json held "Müller").
+ *
+ * Coverage is all-or-nothing for the same reason as the exporter's check: a
+ * partially-populated overlay would mix corrected and uncorrected text with no
+ * way to tell which is which.
+ */
+function correctedScanLines(runDir: string): ScanLine[] {
+  const lines = readScanLines(runDir).lines;
+  if (!hasArtifact(runDir, 'ocrLines')) return [...lines];
+  const corrected = new Map(readOcrLines(runDir).lines.map((l) => [l.id, l.text]));
+  const missing = lines.filter((l) => !corrected.has(l.id));
+  if (missing.length > 0) {
+    throw new Error(
+      `ocr/lines.json is present but does not cover ${missing.length} scan line(s) `
+      + `(first: ${missing.slice(0, 5).map((l) => l.id).join(', ')}). `
+      + `Re-run the ocr stage over the whole book.`,
+    );
+  }
+  return lines.map((l) => ({ ...l, text: corrected.get(l.id)! }));
+}
+
 function blockTexts(blocks: readonly Block[], lines: readonly ScanLine[]): Map<string, string> {
   const byId = new Map(lines.map((l) => [l.id, l]));
   const out = new Map<string, string>();
@@ -1095,7 +1123,7 @@ async function runFootnotes(args: ParsedArgs): Promise<void> {
 
   await withStageRecord(runDir, 'footnotes', async () => {
     const blocks = readBlocks(runDir).blocks;
-    const texts = blockTexts(blocks, readScanLines(runDir).lines);
+    const texts = blockTexts(blocks, correctedScanLines(runDir));
     const candidates = blocks.filter(
       (b) => !NON_PROSE.has(b.category) && (texts.get(b.id) ?? '').trim().length > 0,
     );
