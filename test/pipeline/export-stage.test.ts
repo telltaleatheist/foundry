@@ -261,3 +261,211 @@ test('a non-English tessdata pin produces a non-English dc:language', () => {
     assert.match(unzipMap(r.zip).get('EPUB/package.opf')!.text(), /<dc:language>de<\/dc:language>/);
   } finally { cleanup(); }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Overrides — the user's own text and category decisions
+//
+// This is how a heading retyped in BookForge's pdf-picker reaches the book.
+// Block formation splits a display heading into one block per line and the scan
+// misreads its edges, so the person looking at the page is the only participant
+// who can say what the chapter is actually called. `--overrides` is that
+// sentence, and it sits above every stage in the text ladder.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const nav = (zip: Uint8Array): string[] =>
+  [...unzipMap(zip).get('EPUB/nav.xhtml')!.text().matchAll(/<a href="[^"]+">([^<]+)<\/a>/g)]
+    .map(m => m[1]);
+
+test('a text override renames a chapter — the heading AND its nav label follow', () => {
+  const { runDir, cleanup } = scratchRun();
+  try {
+    const r = runExportStage({
+      runDir,
+      metadata: METADATA,
+      overrides: { blocks: [{ id: 'b0009', text: 'The Lost Empire' }] },
+      log: () => {},
+    });
+    assert.deepEqual(r.overrides, { text: 1, category: 0 });
+
+    // The TOC entry is the user's line, not the scan's.
+    assert.ok(nav(r.zip).includes('The Lost Empire'), `nav is ${JSON.stringify(nav(r.zip))}`);
+    assert.equal(nav(r.zip).includes('Chapter One'), false);
+
+    // And so is the h1 in the section it opens.
+    const text = prose(r.zip);
+    assert.match(text, /<h1>The Lost Empire<\/h1>/);
+    assert.equal(text.includes('Chapter One'), false);
+    // Chapter Two was not touched.
+    assert.match(text, /<h1>Chapter Two<\/h1>/);
+  } finally { cleanup(); }
+});
+
+test('a text override lands before the metadata is derived from the book', () => {
+  const { runDir, cleanup } = scratchRun();
+  try {
+    const r = runExportStage({
+      runDir,
+      overrides: { blocks: [{ id: 'b0002', text: 'A Retyped Title' }] },
+      log: () => {},
+    });
+    assert.match(unzipMap(r.zip).get('EPUB/package.opf')!.text(),
+      /<dc:title>A Retyped Title<\/dc:title>/);
+  } finally { cleanup(); }
+});
+
+test('a text override replaces the whole block as ONE line, lines and all', () => {
+  const { runDir, cleanup } = scratchRun();
+  try {
+    // b0016 is the three-item list; one line per <li> normally.
+    const r = runExportStage({
+      runDir,
+      metadata: METADATA,
+      overrides: { blocks: [{ id: 'b0016', text: 'One replacement line', category: 'body' }] },
+      log: () => {},
+    });
+    assert.deepEqual(r.overrides, { text: 1, category: 1 });
+    const text = prose(r.zip);
+    assert.match(text, /<p>One replacement line<\/p>/);
+    assert.equal(text.includes('The first item'), false);
+    assert.equal(text.includes('<li>'), false);
+  } finally { cleanup(); }
+});
+
+test('a category override moves how the block renders', () => {
+  const { runDir, cleanup } = scratchRun();
+  try {
+    const before = prose(runExportStage({ runDir, metadata: METADATA, log: () => {} }).zip);
+    assert.match(before, /<p class="caption">Figure 1\./);
+
+    const r = runExportStage({
+      runDir,
+      metadata: METADATA,
+      overrides: { blocks: [{ id: 'b0015', category: 'heading' }] },
+      log: () => {},
+    });
+    assert.deepEqual(r.overrides, { text: 0, category: 1 });
+    const text = prose(r.zip);
+    assert.match(text, /<h2>Figure 1\. A caption belonging to a plate\.<\/h2>/);
+    assert.equal(text.includes('<p class="caption">Figure 1.'), false);
+  } finally { cleanup(); }
+});
+
+test('a category override to chapter opens a section and a TOC entry', () => {
+  const { runDir, cleanup } = scratchRun();
+  try {
+    // b0021 is body prose in the middle of page 3 — nothing adjacent to merge
+    // with, so promoting it is a new spine item and a new TOC entry.
+    const r = runExportStage({
+      runDir,
+      metadata: METADATA,
+      overrides: { blocks: [{ id: 'b0021', category: 'chapter', text: 'A Promoted Heading' }] },
+      log: () => {},
+    });
+    assert.ok(nav(r.zip).includes('A Promoted Heading'), `nav is ${JSON.stringify(nav(r.zip))}`);
+    assert.match(prose(r.zip), /<h1>A Promoted Heading<\/h1>/);
+  } finally { cleanup(); }
+});
+
+test('a block promoted next to a real chapter joins it — the merge net still holds', () => {
+  // The exporter's same-page opener rule (heading-merge.test.ts) is the safety
+  // net under BookForge's own merge, and an override does not slip past it:
+  // b0010 sits immediately under "Chapter One" on the same page, so promoting
+  // it EXTENDS that section rather than splitting the chapter in two.
+  const { runDir, cleanup } = scratchRun();
+  try {
+    const r = runExportStage({
+      runDir,
+      metadata: METADATA,
+      overrides: { blocks: [{ id: 'b0010', category: 'chapter', text: 'A Promoted Heading' }] },
+      log: () => {},
+    });
+    assert.ok(nav(r.zip).includes('Chapter One A Promoted Heading'),
+      `nav is ${JSON.stringify(nav(r.zip))}`);
+  } finally { cleanup(); }
+});
+
+test('an override naming a block that is not in the run refuses, and says which id', () => {
+  const { runDir, cleanup } = scratchRun();
+  try {
+    assert.throws(
+      () => runExportStage({
+        runDir,
+        metadata: METADATA,
+        overrides: { blocks: [{ id: 'b0009', text: 'fine' }, { id: 'b9999', text: 'nowhere' }] },
+        log: () => {},
+      }),
+      (e: unknown) => {
+        assert.ok(e instanceof ExportStageError);
+        assert.match((e as Error).message, /b9999/);
+        assert.match((e as Error).message, /different run of the blocks stage/);
+        // The one that WOULD have applied is not silently applied anyway.
+        assert.equal((e as Error).message.includes('b0009'), false);
+        return true;
+      },
+    );
+  } finally { cleanup(); }
+});
+
+test('an override asking for a category that does not exist refuses with the legal list', () => {
+  const { runDir, cleanup } = scratchRun();
+  try {
+    assert.throws(
+      () => runExportStage({
+        runDir,
+        metadata: METADATA,
+        overrides: { blocks: [{ id: 'b0015', category: 'captoins' }] },
+        log: () => {},
+      }),
+      (e: unknown) => {
+        assert.ok(e instanceof ExportStageError);
+        assert.match((e as Error).message, /captoins/);
+        assert.match((e as Error).message, /Legal categories are: body, title, chapter/);
+        return true;
+      },
+    );
+  } finally { cleanup(); }
+});
+
+test('an override that asks for nothing, or for empty text, is a mistake and says so', () => {
+  const { runDir, cleanup } = scratchRun();
+  try {
+    assert.throws(
+      () => runExportStage({
+        runDir, metadata: METADATA, overrides: { blocks: [{ id: 'b0009' }] }, log: () => {},
+      }),
+      /neither text nor category/,
+    );
+    assert.throws(
+      () => runExportStage({
+        runDir, metadata: METADATA, overrides: { blocks: [{ id: 'b0009', text: '   ' }] }, log: () => {},
+      }),
+      /replaces its text with nothing.*--exclude-ids/s,
+    );
+  } finally { cleanup(); }
+});
+
+test('overrides and exclusions compose — an edited block can still be dropped by category', () => {
+  const { runDir, cleanup } = scratchRun();
+  try {
+    const r = runExportStage({
+      runDir,
+      metadata: METADATA,
+      overrides: { blocks: [{ id: 'b0015', text: 'A caption nobody will read' }] },
+      exclude: { categories: ['captions'] },
+      log: () => {},
+    });
+    assert.equal(prose(r.zip).includes('A caption nobody will read'), false);
+  } finally { cleanup(); }
+});
+
+test('no overrides changes nothing — the same run exports the same bytes', () => {
+  const { runDir, cleanup } = scratchRun();
+  try {
+    const plain = runExportStage({ runDir, metadata: METADATA, log: () => {} });
+    const empty = runExportStage({
+      runDir, metadata: METADATA, overrides: { blocks: [] }, log: () => {},
+    });
+    assert.deepEqual(empty.overrides, { text: 0, category: 0 });
+    assert.deepEqual([...empty.zip], [...plain.zip]);
+  } finally { cleanup(); }
+});

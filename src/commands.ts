@@ -101,7 +101,7 @@ import {
   type StageName,
   type StageState,
 } from './pipeline/artifacts.js';
-import { runExportStage } from './pipeline/export-stage.js';
+import { runExportStage, type BlockOverride, type OverrideRequest } from './pipeline/export-stage.js';
 import { applyDeskew, processPage, type Box } from './scan/bands.js';
 import { readPgm } from './scan/pgm.js';
 import { OCR_DPI, recognizeBands, resolveTesseract } from './scan/tesseract.js';
@@ -204,6 +204,13 @@ const EXCLUDE_IDS: OptionSpec = {
   type: 'string',
   placeholder: '<file>',
   describe: 'File of block ids to drop, one per line (BookForge writes this from pdf-picker).',
+};
+
+const OVERRIDES: OptionSpec = {
+  name: 'overrides',
+  type: 'string',
+  placeholder: '<file>',
+  describe: 'JSON of per-block text/category edits: { "blocks": [{ "id", "text?", "category?" }] }.',
 };
 
 export interface Command {
@@ -1214,22 +1221,92 @@ function readExcludeIds(file: string | undefined): string[] {
   return raw.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
 }
 
+/**
+ * Read `--overrides`: `{ "blocks": [{ "id", "text?", "category?" }] }`.
+ *
+ * SHAPE is checked here, because a malformed file is a fact about the file and
+ * this is the only place that has read it. MEANING is not: whether an id exists
+ * and whether a category is legal belong to the export stage, which owns the
+ * blocks and the taxonomy — the same division `--exclude-ids` already follows.
+ *
+ * The check is strict about types rather than about extra keys. A caller
+ * serializing `text: null` to mean "no change" would otherwise get a chapter
+ * heading replaced by the word "null" in a shipped book.
+ */
+function readOverrides(file: string | undefined): OverrideRequest | undefined {
+  if (!file) return undefined;
+  let raw: string;
+  try {
+    raw = fs.readFileSync(file, 'utf-8');
+  } catch {
+    throw new Error(`--overrides: no such file: ${file}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`--overrides: ${file} is not valid JSON: ${(e as Error).message}`);
+  }
+
+  const shape = `expected { "blocks": [{ "id": string, "text"?: string, "category"?: string }] }`;
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`--overrides: ${file} is not an object — ${shape}`);
+  }
+  const blocksValue = (parsed as { blocks?: unknown }).blocks;
+  if (!Array.isArray(blocksValue)) {
+    throw new Error(`--overrides: ${file} has no "blocks" array — ${shape}`);
+  }
+
+  const blocks: BlockOverride[] = blocksValue.map((entry, i) => {
+    const where = `--overrides: ${file}, blocks[${i}]`;
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      throw new Error(`${where} is not an object — ${shape}`);
+    }
+    const { id, text, category } = entry as Record<string, unknown>;
+    if (typeof id !== 'string' || id.length === 0) {
+      throw new Error(`${where} has no "id" string — every override names the block it changes`);
+    }
+    if (text !== undefined && typeof text !== 'string') {
+      throw new Error(`${where} ("${id}") has a "text" that is not a string`);
+    }
+    if (category !== undefined && typeof category !== 'string') {
+      throw new Error(`${where} ("${id}") has a "category" that is not a string`);
+    }
+    return {
+      id,
+      ...(text === undefined ? {} : { text }),
+      ...(category === undefined ? {} : { category }),
+    };
+  });
+
+  return { blocks };
+}
+
 async function runExport(args: ParsedArgs): Promise<void> {
   const runDir = path.resolve(requireString(args, 'run', 'the run directory to export from'));
   const output = optionalString(args, 'output');
   const categories = stringList(args, 'exclude');
   const blockIds = readExcludeIds(optionalString(args, 'exclude-ids'));
+  const overrides = readOverrides(optionalString(args, 'overrides'));
   loadRun(runDir);
 
   await withStageRecord(runDir, 'export', async () => {
     const result = runExportStage({
       runDir,
       exclude: { categories, blockIds },
+      ...(overrides ? { overrides } : {}),
       ...(output ? { outputPath: path.resolve(output) } : {}),
       log,
     });
 
     const { exclusions } = result;
+    if (result.overrides.text > 0 || result.overrides.category > 0) {
+      log(
+        `export: applied ${result.overrides.text} text override(s) and `
+        + `${result.overrides.category} category override(s)`,
+      );
+    }
     log(
       `export: ${exclusions.keptBlocks} of ${exclusions.totalBlocks} blocks kept — `
       + `${result.sections.length} sections, ${result.healedHyphens} hyphens healed, `
@@ -1525,6 +1602,18 @@ export const COMMANDS: readonly Command[] = [
       'second is how BookForge exports after a user deletes individual boxes in',
       'pdf-picker.',
       '',
+      '--overrides <file> carries the user\'s own edits into the book:',
+      '',
+      '    { "blocks": [ { "id": "b0007", "text": "The Lost Empire" },',
+      '                  { "id": "b0031", "category": "caption" } ] }',
+      '',
+      'A "text" replaces that block\'s text entirely, as one line — this is how a',
+      'chapter heading retyped in pdf-picker reaches the EPUB, whether it was',
+      'split across three blocks by block formation or misread by the scan. A',
+      '"category" relabels the block before grouping, so a block corrected to',
+      'chapter opens a section and a TOC entry like any other. Every id must be in',
+      'blocks/blocks.json; one that is not stops the export and is named.',
+      '',
       'Re-export is cheap by construction: it reads the run directory and touches',
       'no upstream stage, so editing the exclusions and re-running costs no',
       're-scan and no re-inference. That is the pdf-picker interaction — delete',
@@ -1535,7 +1624,7 @@ export const COMMANDS: readonly Command[] = [
       'detectable paragraph convention still exports, with few or no breaks, and',
       'says so loudly — that is the one sanctioned degradation in the pipeline.',
     ].join('\n'),
-    options: [RUN_DIR, OUTPUT_EPUB, EXCLUDE, EXCLUDE_IDS],
+    options: [RUN_DIR, OUTPUT_EPUB, EXCLUDE, EXCLUDE_IDS, OVERRIDES],
     run: runExport,
   },
   {

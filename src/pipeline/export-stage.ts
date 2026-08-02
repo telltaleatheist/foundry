@@ -14,16 +14,38 @@
  * output supersedes the one before it, and a stage that ran must have covered
  * everything it claims to.
  *
- *   1. `footnotes/deletions.json`, when it has a record for the block — the
+ *   1. `--overrides`, when the caller names the block — the USER's text, taken
+ *      as ONE unit. Above every stage, because a person looked at the page.
+ *   2. `footnotes/deletions.json`, when it has a record for the block — the
  *      marker-stripped text, already joined, taken as ONE unit.
- *   2. `ocr/lines.json`, when it exists — the corrected line text.
- *   3. `scan/lines.json` — what Tesseract read.
+ *   3. `ocr/lines.json`, when it exists — the corrected line text.
+ *   4. `scan/lines.json` — what Tesseract read.
  *
  * The strictness that makes it not a fallback: **if `ocr/lines.json` exists, it
  * must contain every line the blocks reference.** A partially-populated OCR
  * artifact silently mixing corrected and uncorrected lines is exactly the
  * quiet degradation the no-fallbacks rule exists to prevent, so a missing line
  * throws and names it.
+ *
+ * ## Overrides: the user's edit, carried into the book
+ *
+ * `--overrides <file>` is `{ blocks: [{ id, text?, category? }] }`, and it is
+ * how a decision made in BookForge's pdf-picker reaches the EPUB. A user who
+ * retypes a chapter heading — because block formation split it across three
+ * blocks, or because the scan read "The Lost Empire t" — is correcting the
+ * book, and that correction has to survive the trip through the CLI.
+ *
+ * It rides at the TOP of the ladder rather than beside the exclusions because
+ * it is the same kind of statement the stages make ("this block's text is X"),
+ * made by the one participant who can actually see the page. `category` is the
+ * matching statement about what the block IS, and it lands before grouping, so
+ * a block relabelled `chapter` opens a section exactly as a labelled one would.
+ *
+ * Every id must exist in `blocks/blocks.json`. An id that does not is a stop
+ * naming it — an overrides file written against a different run of the blocks
+ * stage is the same failure as a stale `--exclude-ids` list, and applying the
+ * half of it that still matches would put a user's chapter title on whatever
+ * block inherited the name.
  *
  * ## The one sanctioned degradation
  *
@@ -44,6 +66,7 @@ import { applyFootnoteDeletions } from '../footnotes/applier.js';
 import { attestationFromLines } from '../paragraphs/hyphen.js';
 import { buildEpub, type BuildEpubResult, type EpubMetadata } from '../export/epub.js';
 import type { ExclusionRequest } from '../export/exclude.js';
+import { BLOCKS_CATEGORIES_V6, type BlocksCategory } from '../blocks/encoder.js';
 
 export class ExportStageError extends Error {
   constructor(message: string) {
@@ -52,11 +75,33 @@ export class ExportStageError extends Error {
   }
 }
 
+/**
+ * One user decision about one block.
+ *
+ * Both fields are optional individually, but an entry carrying neither is a
+ * no-op instruction — almost always a serialization bug on the caller's side —
+ * and is refused rather than counted as applied.
+ */
+export interface BlockOverride {
+  /** A block id from `blocks/blocks.json`. Must exist. */
+  id: string;
+  /** Replaces the block's text ENTIRELY, as one unit. */
+  text?: string;
+  /** Replaces the block's category. Validated against the legal list. */
+  category?: string;
+}
+
+export interface OverrideRequest {
+  readonly blocks: readonly BlockOverride[];
+}
+
 export interface ExportStageOptions {
   runDir: string;
   /** Omitted, it is derived from the run directory — see `deriveMetadata`. */
   metadata?: EpubMetadata;
   exclude?: ExclusionRequest;
+  /** The user's own text and category decisions — see the ladder above. */
+  overrides?: OverrideRequest;
   /**
    * An extra destination for the same bytes (`--output`). The canonical
    * `<run>/export/book.epub` is ALWAYS written regardless: the run directory is
@@ -74,6 +119,84 @@ export interface ExportStageResult extends BuildEpubResult {
   outputPath: string;
   /** True iff the book had no detectable paragraph convention. */
   degraded: boolean;
+  /** How many blocks the caller's overrides retyped, and how many they relabelled. */
+  overrides: { text: number; category: number };
+}
+
+const LEGAL_CATEGORIES = new Set<string>(BLOCKS_CATEGORIES_V6);
+
+/**
+ * Apply the caller's overrides to the blocks and their text.
+ *
+ * Returns fresh blocks and a fresh text map: the artifacts on disk are never
+ * touched, so the run directory still describes what the pipeline decided and
+ * the override file is the complete record of what the user changed on top.
+ *
+ * Nothing here is lenient. An unknown id, an unknown category, an entry that
+ * says nothing and an empty replacement text are all stops that name the block,
+ * because every one of them means the caller believes it changed something that
+ * did not change — and the user would find out by reading the finished book.
+ */
+function applyOverrides(
+  blocks: readonly Block[],
+  blockText: ReadonlyMap<string, readonly string[]>,
+  request: OverrideRequest | undefined,
+): { blocks: Block[]; blockText: Map<string, string[]>; counts: { text: number; category: number } } {
+  const nextText = new Map<string, string[]>(
+    [...blockText].map(([id, units]) => [id, [...units]] as [string, string[]]),
+  );
+  const counts = { text: 0, category: 0 };
+  const entries = request?.blocks ?? [];
+  if (entries.length === 0) return { blocks: [...blocks], blockText: nextText, counts };
+
+  const byId = new Map(blocks.map(b => [b.id, b] as const));
+  const unknown = entries.filter(o => !byId.has(o.id)).map(o => o.id);
+  if (unknown.length > 0) {
+    throw new ExportStageError(
+      `${unknown.length} override(s) name block id(s) that are not in blocks/blocks.json:`
+      + ` ${unknown.slice(0, 10).join(', ')}${unknown.length > 10 ? ', …' : ''}.`
+      + ' The overrides were written against a different run of the blocks stage; re-export from'
+      + ' the blocks that are actually there rather than editing text nothing will read.',
+    );
+  }
+
+  const category = new Map<string, BlocksCategory>();
+  for (const o of entries) {
+    if (o.text === undefined && o.category === undefined) {
+      throw new ExportStageError(
+        `the override for block ${o.id} sets neither text nor category, so it asks for nothing.`
+        + ' Give it a `text`, a `category`, or leave the block out of the file.',
+      );
+    }
+    if (o.category !== undefined) {
+      if (!LEGAL_CATEGORIES.has(o.category)) {
+        throw new ExportStageError(
+          `the override for block ${o.id} asks for category "${o.category}", which is not a`
+          + ` category. Legal categories are: ${BLOCKS_CATEGORIES_V6.join(', ')}`,
+        );
+      }
+      category.set(o.id, o.category as BlocksCategory);
+      counts.category++;
+    }
+    if (o.text !== undefined) {
+      if (o.text.trim().length === 0) {
+        throw new ExportStageError(
+          `the override for block ${o.id} replaces its text with nothing. A block with no text is`
+          + ' a block that should not ship — drop it with --exclude-ids instead.',
+        );
+      }
+      // ONE unit: the user typed a finished line, so there is no wrap hyphen in
+      // it to prove and nothing for the line-join rules to decide.
+      nextText.set(o.id, [o.text]);
+      counts.text++;
+    }
+  }
+
+  const next = blocks.map(b => {
+    const c = category.get(b.id);
+    return c === undefined ? b : { ...b, category: c };
+  });
+  return { blocks: next, blockText: nextText, counts };
 }
 
 /**
@@ -236,12 +359,17 @@ export function runExportStage(options: ExportStageOptions): ExportStageResult {
   const { runDir } = options;
   const log = options.log ?? ((m: string) => { console.error(m); });
 
-  const { blocks, calibration } = readBlocks(runDir);
-  if (blocks.length === 0) {
+  const { blocks: labelled, calibration } = readBlocks(runDir);
+  if (labelled.length === 0) {
     throw new ExportStageError('blocks/blocks.json contains no blocks — there is no book to export');
   }
 
-  const { blockText, allLines, lines } = collectBlockText(runDir, blocks);
+  const { blockText: stageText, allLines, lines } = collectBlockText(runDir, labelled);
+
+  // The user's edits land here, above every stage and before grouping — so a
+  // retyped heading is the title in the nav, and a relabelled block opens a
+  // section the same way a labelled one does.
+  const { blocks, blockText, counts } = applyOverrides(labelled, stageText, options.overrides);
 
   const result = buildEpub({
     blocks,
@@ -279,5 +407,6 @@ export function runExportStage(options: ExportStageOptions): ExportStageResult {
     epubPath: canonical,
     outputPath: extra ?? canonical,
     degraded: result.grouping.degraded,
+    overrides: counts,
   };
 }
