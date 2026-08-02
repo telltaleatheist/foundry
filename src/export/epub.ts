@@ -335,6 +335,15 @@ export function buildEpub(input: BuildEpubInput): BuildEpubResult {
   // before the first one goes into a leading section of its own, because a book
   // whose front matter preceded its first chapter would otherwise have nowhere
   // to put it.
+  //
+  // CONSECUTIVE same-category openers on the SAME PAGE are one display heading,
+  // not several sections. Block formation splits a multi-line title into one
+  // block per line (the gap splitter cannot see that "Nationalism, Nazism, and"
+  // / "the Churches:" / "The Early Period" is one heading), and opening a
+  // section per fragment gave the Barnett book seven garbage "chapters" from
+  // its title page. They extend the open section and its label instead. The
+  // page bound is deliberate: a part divider ("OMENS") on its own page ahead of
+  // a chapter opening keeps its own TOC entry.
   const sections: EpubSection[] = [];
   const openSection = (label: string): EpubSection => {
     const n = sections.length + 1;
@@ -350,12 +359,20 @@ export function buildEpub(input: BuildEpubInput): BuildEpubResult {
   };
 
   let current: EpubSection | null = null;
+  let openerRun: { category: BlocksCategory; page: number } | null = null;
   for (const group of groups) {
     if (SECTION_OPENERS.has(group.category)) {
       const label = rendered.get(group.id)!.text.trim();
-      current = openSection(label.length > 0 ? label : `Section ${sections.length + 1}`);
-    } else if (current === null) {
-      current = openSection('Front matter');
+      if (current !== null && openerRun !== null
+        && openerRun.category === group.category && openerRun.page === group.page) {
+        if (label.length > 0) current.label = `${current.label} ${label}`.trim();
+      } else {
+        current = openSection(label.length > 0 ? label : `Section ${sections.length + 1}`);
+      }
+      openerRun = { category: group.category, page: group.page };
+    } else {
+      if (current === null) current = openSection('Front matter');
+      openerRun = null;
     }
     if (group.category === 'footnote') current.footnoteGroupIds.push(group.id);
     else current.groupIds.push(group.id);
