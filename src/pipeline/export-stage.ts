@@ -33,10 +33,10 @@
  * exception and it is never quiet.
  */
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 
 import {
-  epubPath, hasArtifact, readBlocks, readFootnoteDeletions, readOcrLines, readScanLines,
+  epubPath, hasArtifact, readBlocks, readFootnoteDeletions, readOcrLines, readRun, readScanLines,
   writeArtifact,
 } from './artifacts.js';
 import type { Block, CalibrationVerdict, ScanLine } from './artifacts.js';
@@ -53,15 +53,24 @@ export class ExportStageError extends Error {
 
 export interface ExportStageOptions {
   runDir: string;
-  metadata: EpubMetadata;
+  /** Omitted, it is derived from the run directory — see `deriveMetadata`. */
+  metadata?: EpubMetadata;
   exclude?: ExclusionRequest;
+  /**
+   * An extra destination for the same bytes (`--output`). The canonical
+   * `<run>/export/book.epub` is ALWAYS written regardless: the run directory is
+   * the contract, and a copy somewhere convenient does not replace it.
+   */
+  outputPath?: string;
   /** Where the loud verdict goes. Defaults to stderr. */
   log?: (message: string) => void;
 }
 
 export interface ExportStageResult extends BuildEpubResult {
-  /** Where the EPUB was written. */
+  /** The canonical `<run>/export/book.epub`, always written. */
   epubPath: string;
+  /** Where `--output` asked for it; equal to `epubPath` when it did not ask. */
+  outputPath: string;
   /** True iff the book had no detectable paragraph convention. */
   degraded: boolean;
 }
@@ -135,6 +144,60 @@ function collectBlockText(runDir: string, blocks: readonly Block[]): {
   return { blockText, allLines, lines: scan.lines.map(l => ({ ...l, text: text.get(l.id) ?? l.text })) };
 }
 
+/**
+ * Build the EPUB metadata from the run directory itself.
+ *
+ * EPUB requires `dc:identifier`, `dc:title` and `dc:language`; none of the
+ * three can simply be omitted. Each is DERIVED, not guessed:
+ *
+ *  - **identifier**: `urn:sha256:<input hash>`, from run.json. Stable across
+ *    re-exports of the same source and different for a different source, which
+ *    is the whole job of a publication identifier.
+ *  - **title**: the book's own `title` block if it has one, else its first
+ *    `chapter` block, else the input filename. The first two are what the
+ *    labeller decided the title is, which is a better answer than anything this
+ *    function could invent.
+ *  - **language**: the tessdata the book was RECOGNIZED with, mapped from
+ *    ISO 639-2 to the two-letter form readers expect. This is not a default —
+ *    a book OCR'd with `deu` is German, and the pin in run.json is the record
+ *    of that decision. A language with no two-letter form keeps its three.
+ *
+ * A caller with better information passes `metadata` and none of this runs.
+ */
+export function deriveMetadata(
+  runDir: string, blocks: readonly Block[], blockText: ReadonlyMap<string, readonly string[]>,
+): EpubMetadata {
+  const run = readRun(runDir);
+
+  const titleBlock = blocks.find(b => b.category === 'title')
+    ?? blocks.find(b => b.category === 'chapter');
+  const fromBlock = titleBlock
+    ? (blockText.get(titleBlock.id) ?? []).join(' ').trim()
+    : '';
+  const fromFile = basename(run.input.path).replace(/\.[^.]+$/, '').trim();
+
+  const lang = run.tesseract.tessdata[0] ?? '';
+  return {
+    title: fromBlock.length > 0 ? fromBlock : (fromFile.length > 0 ? fromFile : run.runId),
+    language: ISO_639_2_TO_1[lang] ?? (lang.length > 0 ? lang : 'und'),
+    identifier: `urn:sha256:${run.input.sha256}`,
+  };
+}
+
+/**
+ * Only the languages a pinned tessdata can plausibly carry. Not a general
+ * table: an unknown code passes through unchanged rather than being mangled,
+ * and a missing one becomes `und`, which is the ISO code that means exactly
+ * "undetermined" and is legal in `dc:language`.
+ */
+const ISO_639_2_TO_1: Record<string, string> = {
+  eng: 'en', deu: 'de', ger: 'de', fra: 'fr', fre: 'fr', spa: 'es', ita: 'it',
+  nld: 'nl', dut: 'nl', por: 'pt', swe: 'sv', dan: 'da', nor: 'no', fin: 'fi',
+  pol: 'pl', rus: 'ru', ces: 'cs', cze: 'cs', ell: 'el', gre: 'el', lat: 'la',
+  jpn: 'ja', kor: 'ko', chi_sim: 'zh', chi_tra: 'zh', ara: 'ar', heb: 'he',
+  tur: 'tr', hun: 'hu', ron: 'ro', rum: 'ro', ukr: 'uk', cat: 'ca',
+};
+
 /** Format the calibration + grouping verdict for the log. */
 function verdictBanner(calibration: CalibrationVerdict, result: BuildEpubResult): string {
   const bar = '─'.repeat(72);
@@ -152,7 +215,7 @@ function verdictBanner(calibration: CalibrationVerdict, result: BuildEpubResult)
  * formatted.
  */
 export function runExportStage(options: ExportStageOptions): ExportStageResult {
-  const { runDir, metadata } = options;
+  const { runDir } = options;
   const log = options.log ?? ((m: string) => { console.error(m); });
 
   const { blocks, calibration } = readBlocks(runDir);
@@ -167,22 +230,36 @@ export function runExportStage(options: ExportStageOptions): ExportStageResult {
     lines,
     blockText,
     calibration,
-    metadata,
+    metadata: options.metadata ?? deriveMetadata(runDir, blocks, blockText),
     attestation: attestationFromLines(allLines),
     exclude: options.exclude,
   });
 
-  const target = epubPath(runDir);
-  mkdirSync(dirname(target), { recursive: true });
   // Same atomicity discipline as the JSON artifacts: a half-written EPUB in a
   // synced folder is worse than no EPUB.
-  const tmp = `${target}.tmp`;
-  writeFileSync(tmp, result.zip);
-  renameSync(tmp, target);
+  const write = (target: string): void => {
+    mkdirSync(dirname(target), { recursive: true });
+    const tmp = `${target}.tmp`;
+    writeFileSync(tmp, result.zip);
+    renameSync(tmp, target);
+  };
+
+  const canonical = epubPath(runDir);
+  write(canonical);
+  // The run directory is the contract (PIPELINE.md), so `--output` is a COPY
+  // and never a replacement: a book exported to the desktop must still leave
+  // the run directory complete enough to re-export from.
+  const extra = options.outputPath ? resolve(options.outputPath) : null;
+  if (extra !== null && extra !== resolve(canonical)) write(extra);
 
   writeArtifact(runDir, 'exportExclusions', result.exclusions);
 
   log(verdictBanner(calibration, result));
 
-  return { ...result, epubPath: target, degraded: result.grouping.degraded };
+  return {
+    ...result,
+    epubPath: canonical,
+    outputPath: extra ?? canonical,
+    degraded: result.grouping.degraded,
+  };
 }

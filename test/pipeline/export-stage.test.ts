@@ -9,12 +9,12 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { runExportStage, ExportStageError } from '../../src/pipeline/export-stage.js';
-import { readBlocks, readScanLines, writeArtifact, artifactPath } from '../../src/pipeline/artifacts.js';
+import { runExportStage, deriveMetadata, ExportStageError } from '../../src/pipeline/export-stage.js';
+import { readBlocks, readRun, readScanLines, writeArtifact, artifactPath } from '../../src/pipeline/artifacts.js';
 import { buildRun, runDirFor } from '../../fixtures/export/generate.js';
 import { unzipMap } from '../export/unzip.js';
 
@@ -161,4 +161,70 @@ test('the committed fixtures export without being mutated', () => {
     } finally { cleanup(); }
     assert.equal(JSON.stringify(readBlocks(runDirFor(convention))), before);
   }
+});
+
+// ── the CLI's surface ───────────────────────────────────────────────────────
+
+test('--output writes a copy WITHOUT replacing the canonical artifact', () => {
+  // The run directory is the contract: a book exported to the desktop must
+  // still leave the run complete enough to re-export from.
+  const { runDir, cleanup } = scratchRun();
+  const dest = join(runDir, '..', 'somewhere-else.epub');
+  try {
+    const r = runExportStage({ runDir, metadata: METADATA, outputPath: dest, log: () => {} });
+    assert.equal(r.epubPath, join(runDir, 'export/book.epub'));
+    assert.ok(existsSync(r.epubPath), 'the canonical artifact was not written');
+    assert.ok(existsSync(dest), 'the --output copy was not written');
+    assert.deepEqual(readFileSync(dest), readFileSync(r.epubPath));
+  } finally { cleanup(); }
+});
+
+test('--output pointing at the canonical path writes it once, not twice', () => {
+  const { runDir, cleanup } = scratchRun();
+  try {
+    const canonical = join(runDir, 'export/book.epub');
+    const r = runExportStage({ runDir, metadata: METADATA, outputPath: canonical, log: () => {} });
+    assert.equal(r.outputPath, r.epubPath);
+    assert.ok(existsSync(canonical));
+  } finally { cleanup(); }
+});
+
+test('metadata is DERIVED from the run directory when the caller has none', () => {
+  const { runDir, cleanup } = scratchRun();
+  try {
+    const r = runExportStage({ runDir, log: () => {} });
+    const opf = unzipMap(r.zip).get('EPUB/package.opf')!.text();
+    // Title from the book's own title block.
+    assert.match(opf, /<dc:title>A Synthetic Book<\/dc:title>/);
+    // Language from the tessdata the book was recognized with, not a default.
+    assert.match(opf, /<dc:language>en<\/dc:language>/);
+    // Identifier from the input hash: stable across re-exports, different per source.
+    assert.match(opf, /<dc:identifier id="pub-id">urn:sha256:0{64}<\/dc:identifier>/);
+  } finally { cleanup(); }
+});
+
+test('a derived title falls to the chapter, then the filename', () => {
+  const { runDir, cleanup } = scratchRun();
+  try {
+    const blocks = readBlocks(runDir);
+    // Drop the title block: the first chapter is the next best answer.
+    const noTitle = blocks.blocks.filter(b => b.category !== 'title');
+    writeArtifact(runDir, 'boxesBlocks', { calibration: blocks.calibration, blocks: noTitle });
+    const meta = deriveMetadata(runDir, noTitle, new Map(noTitle.map(b => [b.id, ['Chapter One']])));
+    assert.equal(meta.title, 'Chapter One');
+
+    // With neither, the input filename — which run.json records as indent.pdf.
+    const bodyOnly = noTitle.filter(b => b.category !== 'chapter');
+    assert.equal(deriveMetadata(runDir, bodyOnly, new Map()).title, 'indent');
+  } finally { cleanup(); }
+});
+
+test('a non-English tessdata pin produces a non-English dc:language', () => {
+  const { runDir, cleanup } = scratchRun();
+  try {
+    const run = readRun(runDir);
+    writeArtifact(runDir, 'run', { ...run, tesseract: { ...run.tesseract, tessdata: ['deu'] } });
+    const r = runExportStage({ runDir, log: () => {} });
+    assert.match(unzipMap(r.zip).get('EPUB/package.opf')!.text(), /<dc:language>de<\/dc:language>/);
+  } finally { cleanup(); }
 });
