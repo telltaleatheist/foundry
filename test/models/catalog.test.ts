@@ -41,24 +41,24 @@ function entry(over: Partial<FoundryModelDef> = {}): FoundryModelDef {
 }
 
 describe('the shipped catalog', () => {
-  test('is empty — no foundry-* weights are published yet', () => {
-    // If this ever fails, weights were added. Good — but check the HuggingFace
-    // repo actually serves them before believing the entry, because a catalog
-    // entry is not a published model.
-    expect(FOUNDRY_MODELS).toHaveLength(0);
+  // Base + ocr + footnotes published Aug 2 2026 to owenmorgan/foundry-models,
+  // sizes verified against the repo after upload. blocks is still training-gated.
+  test('carries the published base and adapters', () => {
+    expect(getModelDef('foundry:4b')?.bytes).toBe(8051285600);
+    expect(defaultModelFor('ocr')?.id).toBe('foundry-ocr-v1-4b');
+    expect(defaultModelFor('footnotes')?.id).toBe('foundry-footnotes-v1-4b');
+    expect(requireDefaultModel('base').id).toBe('foundry:4b');
   });
 
   test('validates at module load', () => {
     expect(() => assertCatalogValid()).not.toThrow();
   });
 
-  test('asking for a default says the weights are unpublished, not that they are missing', () => {
+  test('an unpublished stage still says unpublished, not missing', () => {
     // Two different problems with two different remedies. Conflating them sends
     // people looking in their own filesystem for something never uploaded.
-    expect(() => requireDefaultModel('base')).toThrow(/No base model is published yet/);
-    expect(() => requireDefaultModel('blocks')).toThrow(/catalog in src\/models\/catalog.ts is empty/);
-    expect(defaultModelFor('ocr')).toBeUndefined();
-    expect(getModelDef('foundry:4b')).toBeUndefined();
+    expect(defaultModelFor('blocks')).toBeUndefined();
+    expect(() => requireDefaultModel('blocks')).toThrow(/blocks/);
   });
 });
 

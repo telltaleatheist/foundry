@@ -151,7 +151,59 @@ export function parseModelId(id: string): ParsedModelId {
  * the file header: never delete a published entry, and let `rank` pick the
  * default.
  */
-export const FOUNDRY_MODELS: FoundryModelDef[] = [];
+const HF = 'https://huggingface.co/owenmorgan/foundry-models/resolve/main';
+
+export const FOUNDRY_MODELS: FoundryModelDef[] = [
+  /*
+   * PUBLISHED Aug 2 2026, all three verified on the repo after upload
+   * (x-linked-size == bytes below; local sha256 recorded at cast time).
+   *
+   * The base is f16, NOT a quant, deliberately: the owner measured a tangible
+   * quality drop on the blocks family at Q8, and in base+adapter serving the
+   * base's precision is global to every stage. The adapters were trained bf16
+   * against exactly this base snapshot (unsloth/Qwen3-4B @ 6403365), so f16
+   * base + f16 adapter is the precision training saw. A quant is a decision to
+   * make with per-stage measured deltas, never by habit.
+   */
+  {
+    id: 'foundry:4b',
+    name: 'Foundry base model (4B)',
+    filename: 'foundry-4b-f16.gguf',
+    url: `${HF}/foundry-4b-f16.gguf`,
+    sha256: '557b8c7c2ab8b8825562d19664fb5d206e8f9e8e6f3d8d14d351706c48953219',
+    bytes: 8051285600,
+    rank: 100,
+    kind: 'base',
+    note: 'The one resident base every adapter rides. f16 — see the block comment.',
+  },
+  {
+    id: 'foundry-ocr-v1-4b',
+    name: 'OCR repair (line corrector)',
+    filename: 'foundry-ocr-v1-4b.gguf',
+    url: `${HF}/foundry-ocr-v1-4b.gguf`,
+    sha256: 'f3ee7f6527ecab5998b68fbd2a37cf6507b0938f83460498014850227b478595',
+    bytes: 132155232,
+    rank: 100,
+    kind: 'adapter',
+    adapter: 'ocr',
+    note: 'galley v1.1 epoch 2. Base+adapter scored equal to the merged weights '
+      + 'on 2,000 held-out lines (CER 0.353%→0.306%, degraded 56, falseEdits 42).',
+  },
+  {
+    id: 'foundry-footnotes-v1-4b',
+    name: 'Footnote-marker removal',
+    filename: 'foundry-footnotes-v1-4b.gguf',
+    url: `${HF}/foundry-footnotes-v1-4b.gguf`,
+    sha256: 'd1a733897479b03419eac5577907fbf4488088f8ad03eea17beade7bbfed2a49',
+    bytes: 132155616,
+    rank: 100,
+    kind: 'adapter',
+    adapter: 'footnotes',
+    note: 'Trained on sft + mined-EPUB + manufactured boundary cases. Base+adapter '
+      + 'scored identical to merged: 97.0% applied / 0.5% false-fire on clean text, '
+      + '90.5% / 2.1% on raw OCR. Runs after ocr, so clean text is its surface.',
+  },
+];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Invariants
