@@ -53,7 +53,6 @@ import {
   type ParsedArgs,
 } from './args.js';
 import {
-  BOXES_CATEGORIES_V6,
   BOXES_STOP,
   boxesVersionFor,
   encodeBook,
@@ -79,7 +78,6 @@ import { computeBlockGeometry } from './paragraphs/geometry.js';
 import {
   ARTIFACTS,
   artifactPath,
-  epubPath,
   hasArtifact,
   readBlocks,
   readRun,
@@ -97,6 +95,7 @@ import {
   type StageName,
   type StageState,
 } from './pipeline/artifacts.js';
+import { runExportStage } from './pipeline/export-stage.js';
 import { applyDeskew, processPage, type Box } from './scan/bands.js';
 import { readPgm } from './scan/pgm.js';
 import { OCR_DPI, recognizeBands, resolveTesseract } from './scan/tesseract.js';
@@ -1120,84 +1119,48 @@ async function runFootnotes(args: ParsedArgs): Promise<void> {
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * The exporter is a separate piece of work (`src/export/`, `src/paragraphs/`,
- * `src/pipeline/`) and has not landed in this tree.
+ * Read `--exclude-ids`: one block id per line, `#` comments allowed.
  *
- * The CLI surface is final and is wired: `--run`, `--output`, and exclusion at
- * BOTH granularities — `--exclude <category>` (repeatable) and `--exclude-ids
- * <file>` — because PIPELINE.md defines them as one filter that composes, and
- * BookForge's per-box deletion in pdf-picker is the second half of it. What is
- * missing is the module that turns labelled blocks into XHTML.
- *
- * The exclusion arguments are parsed and validated here anyway: an operator who
- * typo'd a category name should learn that now, not after the exporter exists.
+ * The ids are NOT validated here. `src/export/exclude.ts` owns that check and
+ * throws naming the ids that are not in the run — and it also owns which
+ * spellings of a category are accepted. A second copy of either rule in the CLI
+ * is how the two drift into disagreeing about what a valid exclusion is.
  */
-function requireExporter(): never {
-  throw new Error(
-    `foundry export is not implemented in this build: src/export/epub.ts does not `
-    + `exist.\n\n`
-    + `Missing modules: src/export/ (categories → XHTML → EPUB), src/paragraphs/ `
-    + `(the §9d paragraph rules) and src/pipeline/artifacts.ts (the shared run-`
-    + `directory types). See docs/MIGRATION.md §8 and docs/PIPELINE.md.\n\n`
-    + `Everything the exporter consumes IS produced: boxes/blocks.json carries `
-    + `the categories, the line ids and the geometry facts the paragraph rules `
-    + `read. Re-running export never re-runs an upstream stage, so exclusions can `
-    + `be edited and the book rebuilt as soon as the module lands.`,
-  );
+function readExcludeIds(file: string | undefined): string[] {
+  if (!file) return [];
+  let raw: string;
+  try {
+    raw = fs.readFileSync(file, 'utf-8');
+  } catch {
+    throw new Error(`--exclude-ids: no such file: ${file}`);
+  }
+  return raw.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
 }
 
 async function runExport(args: ParsedArgs): Promise<void> {
   const runDir = path.resolve(requireString(args, 'run', 'the run directory to export from'));
-  const output = optionalString(args, 'output') ?? epubPath(runDir);
-  const excludedCategories = stringList(args, 'exclude');
-  const excludeIdsFile = optionalString(args, 'exclude-ids');
+  const output = optionalString(args, 'output');
+  const categories = stringList(args, 'exclude');
+  const blockIds = readExcludeIds(optionalString(args, 'exclude-ids'));
+  loadRun(runDir);
 
-  // Read the upstream artifact first: "export needs blocks" is a more useful
-  // error than "export is not implemented" when both are true.
-  const blocks = readBlocks(runDir).blocks;
+  await withStageRecord(runDir, 'export', async () => {
+    const result = runExportStage({
+      runDir,
+      exclude: { categories, blockIds },
+      ...(output ? { outputPath: path.resolve(output) } : {}),
+      log,
+    });
 
-  // Both halves of the filter are validated against THIS run before anything
-  // else happens, because a typo in either is silent by nature: an unknown
-  // category excludes nothing and an id from another run excludes nothing, and
-  // in both cases the book comes out containing exactly what the operator asked
-  // to remove.
-  const legal = new Set<string>(BOXES_CATEGORIES_V6);
-  const unknownCategories = excludedCategories.filter((c) => !legal.has(c));
-  if (unknownCategories.length) {
-    throw new UsageError(
-      `--exclude names ${unknownCategories.join(', ')}, which ${unknownCategories.length === 1 ? 'is not a' : 'are not'} `
-      + `block categor${unknownCategories.length === 1 ? 'y' : 'ies'}. Legal: ${[...legal].join(', ')}`,
+    const { exclusions } = result;
+    log(
+      `export: ${exclusions.keptBlocks} of ${exclusions.totalBlocks} blocks kept — `
+      + `${result.sections.length} sections, ${result.healedHyphens} hyphens healed, `
+      + `${result.keptHyphens} kept unproven`,
     );
-  }
-
-  let excludedBlockIds: string[] = [];
-  if (excludeIdsFile) {
-    let raw: string;
-    try {
-      raw = fs.readFileSync(excludeIdsFile, 'utf-8');
-    } catch {
-      throw new Error(`--exclude-ids: no such file: ${excludeIdsFile}`);
-    }
-    excludedBlockIds = raw.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
-    const known = new Set(blocks.map((b) => b.id));
-    const unknown = excludedBlockIds.filter((id) => !known.has(id));
-    if (unknown.length) {
-      throw new Error(
-        `--exclude-ids names ${unknown.length} block id(s) this run does not have, `
-        + `starting with "${unknown[0]}". An exclusion list that does not match the `
-        + `run is a list written against a different run, and silently ignoring it `
-        + `would export the blocks it was meant to remove.`,
-      );
-    }
-  }
-
-  log(
-    `export: ${blocks.length} blocks, ${excludedCategories.length} excluded categor`
-    + `${excludedCategories.length === 1 ? 'y' : 'ies'}`
-    + `${excludedCategories.length ? ` (${excludedCategories.join(', ')})` : ''}`
-    + `, ${excludedBlockIds.length} excluded block ids → ${output}`,
-  );
-  requireExporter();
+    log(`export: wrote ${result.epubPath}`);
+    if (result.outputPath !== result.epubPath) log(`export: copied to ${result.outputPath}`);
+  });
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1487,10 +1450,13 @@ export const COMMANDS: readonly Command[] = [
       '',
       'Re-export is cheap by construction: it reads the run directory and touches',
       'no upstream stage, so editing the exclusions and re-running costs no',
-      're-scan and no re-inference.',
+      're-scan and no re-inference. That is the pdf-picker interaction — delete',
+      'boxes, rebuild the book.',
       '',
-      'NOT IMPLEMENTED IN THIS BUILD — src/export/ has not landed. The arguments',
-      'are parsed and checked against the run so a mistake surfaces now.',
+      'The EPUB is ALWAYS written to <run>/export/book.epub, which is the',
+      'contract; -o additionally copies it somewhere convenient. A book with no',
+      'detectable paragraph convention still exports, with few or no breaks, and',
+      'says so loudly — that is the one sanctioned degradation in the pipeline.',
     ].join('\n'),
     options: [RUN_DIR, OUTPUT_EPUB, EXCLUDE, EXCLUDE_IDS],
     run: runExport,

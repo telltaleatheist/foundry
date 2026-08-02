@@ -180,8 +180,8 @@ weights.**
 | `boxes` | wired end to end — block formation, prompt encoding, llama-server lifecycle, answer parsing, `boxes/blocks.json`. Verified against a real trained checkpoint via `--base-model` + `--llama-server`. Stops at the catalog otherwise. |
 | `ocr` | **blocked on a migration.** The edit contract and applier are here; the trained-against system prompt is still only in BookForgeApp and will not be re-typed (docs/MIGRATION.md §2). The command says so and exits 1. |
 | `footnotes` | wired end to end — prose-block selection, prompt, subsequence-guarded applier, `footnotes/deletions.json`. Verified against a real trained checkpoint. |
-| `export` | **not implemented** — `src/export/` has not landed. The arguments are parsed and validated against the run so a mistake surfaces now. |
-| `convert` | chains all five. It stops at the first stage that cannot run, and every artifact written before that point stays on disk. |
+| `export` | **works.** Categories drive the XHTML, the §9d rules assemble the paragraphs, wrap hyphens are healed only on the book's own evidence, and exclusion composes at both granularities. Writes `export/book.epub` + `export/exclusions.json`; `-o` additionally copies. Verified: a real EPUB out of real scanned pages. |
+| `convert` | chains all five. It stops at the first stage that cannot run — today that is `ocr` — and every artifact written before that point stays on disk, with the failure recorded in `run.json`. |
 
 Local weights can be pointed at directly, which is how the wired stages are
 verified before anything is published:
