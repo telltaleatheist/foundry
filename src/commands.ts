@@ -64,6 +64,7 @@ import {
   type PageDimension,
   type TextBlock,
 } from './blocks/encoder.js';
+import { planDisplayRuns, type DisplayRunBlock } from './blocks/display-run-merge.js';
 import { applyFootnoteDeletions, planFootnotes, type FootnoteDeletion } from './footnotes/applier.js';
 import { FOOTNOTES_STOP } from './footnotes/prompt.js';
 import { applyEdits, deriveEdits } from './ocr/edits.js';
@@ -257,7 +258,7 @@ function log(message: string): void {
  * is the artifact's block plus the joined text and the size facts the encoder
  * needs, and `toArtifactBlock` projects it back down on the way to disk.
  */
-interface WorkingBlock {
+export interface WorkingBlock {
   id: string;
   page: number;
   bbox: Box;
@@ -612,11 +613,16 @@ function blockId(page: number, index: number): string {
  * when the line does not overlap the running block horizontally at all (a column
  * change). Reading order is the order the bands came in, which is the band
  * segmenter's column-major order.
+ *
+ * `mergeDisplayRuns` then runs over the result, rejoining the pieces of a
+ * heading this local rule cut apart. That is a second half of the formation, not
+ * a tidy-up, so the recorded name carries it: a prediction made under
+ * `gap-v0` alone and one made under `gap-v0+display-run-v1` saw different blocks.
  */
-const BLOCK_FORMATION = 'gap-v0';
+const BLOCK_FORMATION = 'gap-v0+display-run-v1';
 const GAP_FACTOR = 0.8;
 
-function formBlocks(pages: readonly ScanPage[], lines: readonly ScanLine[]): WorkingBlock[] {
+export function formBlocks(pages: readonly ScanPage[], lines: readonly ScanLine[]): WorkingBlock[] {
   const byPage = new Map<number, ScanLine[]>();
   for (const line of lines) {
     if (!byPage.has(line.page)) byPage.set(line.page, []);
@@ -656,6 +662,89 @@ function formBlocks(pages: readonly ScanPage[], lines: readonly ScanLine[]): Wor
 
 const blockLeft = (lines: readonly ScanLine[]): number => Math.min(...lines.map((l) => l.bbox[0]));
 const blockRight = (lines: readonly ScanLine[]): number => Math.max(...lines.map((l) => l.bbox[2]));
+
+/**
+ * Rejoin the pieces of a display heading that `formBlocks` cut apart.
+ *
+ * The gap splitter is a local rule — it sees two lines and the space between
+ * them — so a chapter opening arrives as three or four blocks: the tracked
+ * `CHAPTER 1` kicker, the title over two lines, sometimes a subtitle. The model
+ * is then asked to categorize pieces of a thing rather than the thing, and the
+ * EPUB export gets three chapter markers where the page has one heading.
+ *
+ * `planDisplayRuns` decides which pieces belong together from geometry alone.
+ * It runs HERE, before anything is classified, because at inference there are no
+ * categories to consult and because the corpus this model is trained on is
+ * merged by the same rule — see the file's header for the two-repo contract.
+ *
+ * The merged block is rebuilt by `makeBlock` from the union of its lines rather
+ * than assembled by hand, so every field on it (text, median type size, mean
+ * confidence) is computed the one way a block's fields are ever computed.
+ * Indices are reassigned so ids stay dense and in reading order.
+ */
+export function mergeDisplayRuns(
+  pages: readonly ScanPage[],
+  blocks: readonly WorkingBlock[],
+  lines: readonly ScanLine[],
+): WorkingBlock[] {
+  if (blocks.length === 0) return [];
+
+  const pageById = new Map(pages.map((p) => [p.page, p]));
+  const forRule: DisplayRunBlock[] = blocks.map((b) => {
+    const page = pageById.get(b.page);
+    if (!page) {
+      throw new Error(
+        `block ${b.id} is on page ${b.page}, which is not in scan/pages.json — the two `
+        + 'artifacts are out of step. Re-run scan and blocks together.',
+      );
+    }
+    return {
+      id: b.id,
+      page: b.page,
+      x: b.bbox[0],
+      y: b.bbox[1],
+      width: b.bbox[2] - b.bbox[0],
+      height: b.bbox[3] - b.bbox[1],
+      fontSize: b.fontSizePx,
+      lineCount: b.lineCount,
+      pageWidth: page.widthPx,
+      pageHeight: page.heightPx,
+      text: b.text,
+    };
+  });
+
+  const plan = planDisplayRuns(forRule);
+  if (plan.runs.length === 0) return [...blocks];
+
+  const lineById = new Map(lines.map((l) => [l.id, l]));
+  const linesOf = (b: WorkingBlock): ScanLine[] => b.lineIds.map((id) => {
+    const line = lineById.get(id);
+    if (!line) {
+      throw new Error(`block ${b.id} names line ${id}, which scan/lines.json does not have.`);
+    }
+    return line;
+  });
+
+  const byId = new Map(blocks.map((b) => [b.id, b]));
+  const swallowed = new Set(plan.runs.flatMap((r) => r.slice(1)));
+  const leadOf = new Map(plan.runs.map((r) => [r[0], r]));
+
+  const merged: WorkingBlock[] = [];
+  const perPageIndex = new Map<number, number>();
+  for (const b of blocks) {
+    if (swallowed.has(b.id)) continue;
+    const index = perPageIndex.get(b.page) ?? 0;
+    perPageIndex.set(b.page, index + 1);
+    const run = leadOf.get(b.id);
+    if (!run) {
+      merged.push({ ...b, id: blockId(b.page, index) });
+      continue;
+    }
+    const runLines = run.flatMap((id) => linesOf(byId.get(id)!));
+    merged.push(makeBlock(b.page, index, runLines));
+  }
+  return merged;
+}
 
 function makeBlock(page: number, index: number, lines: ScanLine[]): WorkingBlock {
   const text = lines.map((l) => l.text).join('\n');
@@ -866,7 +955,7 @@ function readScanAndForm(runDir: string): {
 } {
   const pages = readScanPages(runDir).pages;
   const lines = readScanLines(runDir).lines;
-  const blocks = formBlocks(pages, lines);
+  const blocks = mergeDisplayRuns(pages, formBlocks(pages, lines), lines);
   const calibration = calibrate(lines.map((l) => ({ page: l.page, bbox: l.bbox })));
   const geometry = computeBlockGeometry(blocks, lines, calibration);
   for (const block of blocks) {
