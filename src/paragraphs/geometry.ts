@@ -1,13 +1,13 @@
 /**
  * geometry — the four per-block facts of RUBRIC_TRAINING §9d decision 1.
  *
- * The boxes model is fed the geometry as explicit numbers so it weighs soft
+ * The blocks model is fed the geometry as explicit numbers so it weighs soft
  * evidence (flush-left styles, dialogue, poetry) instead of re-deriving
  * arithmetic from raw coordinates — a 4B model doing long division on bounding
- * boxes is spending its capacity on the part we can compute exactly.
+ * blocks is spending its capacity on the part we can compute exactly.
  *
  * The same four numbers then drive the deterministic grouping rules, and they
- * are PERSISTED into `boxes/blocks.json` rather than recomputed at export time.
+ * are PERSISTED into `blocks/blocks.json` rather than recomputed at export time.
  * That is deliberate: an export must be explainable from the run directory
  * alone. "Why did this paragraph run for two pages" has to be answerable by
  * reading a file, not by re-running the pipeline under a debugger.

@@ -8,9 +8,9 @@ import assert from 'node:assert/strict';
 
 import { applyExclusions, ExclusionError, NEVER_EMITTED, resolveCategory } from '../../src/export/exclude.js';
 import type { Block } from '../../src/pipeline/artifacts.js';
-import type { BoxesCategory } from '../../src/boxes/encoder.js';
+import type { BlocksCategory } from '../../src/blocks/encoder.js';
 
-function block(id: string, category: BoxesCategory): Block {
+function block(id: string, category: BlocksCategory): Block {
   return {
     id, page: 0, bbox: [0, 0, 10, 10], lineIds: [`${id}-l`], category,
     geometry: { firstLineIndent: 0, gapAbove: 1, prevLineShort: false, prevEndsWrapHyphen: false },
@@ -114,7 +114,7 @@ test('a typo throws and prints the legal list — it never silently does nothing
 test('an unknown block id throws, naming the ids and the likely cause', () => {
   assert.throws(() => applyExclusions(BOOK, { blockIds: ['b1', 'gone', 'also-gone'] }), (e: unknown) => {
     assert.ok(e instanceof ExclusionError);
-    assert.match(e.message, /2 excluded block id\(s\) are not in boxes\/blocks\.json: gone, also-gone/);
+    assert.match(e.message, /2 excluded block id\(s\) are not in blocks\/blocks\.json: gone, also-gone/);
     assert.match(e.message, /written against a different run/);
     return true;
   });

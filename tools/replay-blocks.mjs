@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * replay-boxes — prove the moved boxes encoder emits the SAME prompt, byte for
+ * replay-blocks — prove the moved blocks encoder emits the SAME prompt, byte for
  * byte, as the BookForge original it was moved from (MIGRATION §1).
  *
- *   node tools/replay-boxes.mjs
- *   node tools/replay-boxes.mjs --books michelle-remembers,rise-and-fall \
+ *   node tools/replay-blocks.mjs
+ *   node tools/replay-blocks.mjs --books michelle-remembers,rise-and-fall \
  *        --versions 1,2,3,4,5,6 --corpus /Volumes/Callisto/training/rubric \
  *        --reference /Volumes/Callisto/Projects/BookForgeApp
  *
@@ -48,7 +48,7 @@ const argv = process.argv.slice(2);
 const opt = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 && i + 1 < argv.length ? argv[i + 1] : d; };
 
 if (argv.includes('--help') || argv.includes('-h')) {
-  console.error('usage: node tools/replay-boxes.mjs [--books a,b,c] [--versions 1,2,3,4,5,6]\n' +
+  console.error('usage: node tools/replay-blocks.mjs [--books a,b,c] [--versions 1,2,3,4,5,6]\n' +
     '                                  [--corpus <dir>] [--reference <BookForgeApp dir>]\n' +
     '                                  [--show N]');
   process.exit(0);
@@ -71,19 +71,19 @@ const books = opt('books', DEFAULT_BOOKS.join(',')).split(',').map(s => s.trim()
 const versions = opt('versions', '1,2,3,4,5,6').split(',').map(s => Number(s.trim())).filter(Boolean);
 
 const REF_ENCODER = path.join(REFERENCE, 'src/app/features/pdf-picker/services/rubric-encoder.ts');
-const NEW_ENCODER = path.join(REPO, 'src/boxes/encoder.ts');
+const NEW_ENCODER = path.join(REPO, 'src/blocks/encoder.ts');
 for (const f of [REF_ENCODER, NEW_ENCODER]) {
-  if (!fs.existsSync(f)) { console.error(`replay-boxes: no such file: ${f}`); process.exit(1); }
+  if (!fs.existsSync(f)) { console.error(`replay-blocks: no such file: ${f}`); process.exit(1); }
 }
 
 // ── compile both encoders identically ───────────────────────────────────────
 let ts;
 try { ts = require('typescript'); } catch {
-  console.error('replay-boxes: cannot resolve `typescript`. Run: npm i --no-save typescript');
+  console.error('replay-blocks: cannot resolve `typescript`. Run: npm i --no-save typescript');
   process.exit(1);
 }
 
-const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'replay-boxes-'));
+const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'replay-blocks-'));
 function compile(tsFile, name) {
   const src = fs.readFileSync(tsFile, 'utf8');
   const js = ts.transpileModule(src, {
@@ -108,7 +108,7 @@ function sessionFromBlocks(raw, book) {
   return {
     pageDimensions: raw.pageDimensions,
     blocks: (raw.blocks || []).map((b, i) => {
-      if (!b.id) { console.error(`replay-boxes: ${book} block ${i} has no id`); process.exit(1); }
+      if (!b.id) { console.error(`replay-blocks: ${book} block ${i} has no id`); process.exit(1); }
       return {
         id: b.id,
         page: b.page,
@@ -135,14 +135,14 @@ function readBook(book) {
   const labelsFile = path.join(dir, 'labels.json');
   const blocksFile = path.join(dir, 'blocks.json');
   const from = fs.existsSync(labelsFile) ? labelsFile : blocksFile;
-  if (!fs.existsSync(from)) { console.error(`replay-boxes: no labels.json or blocks.json in ${dir}`); process.exit(1); }
+  if (!fs.existsSync(from)) { console.error(`replay-blocks: no labels.json or blocks.json in ${dir}`); process.exit(1); }
   const parsed = JSON.parse(fs.readFileSync(from, 'utf8'));
   const session = from === labelsFile ? parsed : sessionFromBlocks(parsed, book);
   if (!Array.isArray(session.blocks) || !session.blocks.length) {
-    console.error(`replay-boxes: ${from} has no blocks`); process.exit(1);
+    console.error(`replay-blocks: ${from} has no blocks`); process.exit(1);
   }
   if (!Array.isArray(session.pageDimensions) || !session.pageDimensions.length) {
-    console.error(`replay-boxes: ${from} has no pageDimensions`); process.exit(1);
+    console.error(`replay-blocks: ${from} has no pageDimensions`); process.exit(1);
   }
   return {
     source: path.basename(from),
@@ -220,17 +220,17 @@ let constDiffs = 0;
 function same(what, a, b) {
   if (a !== b) { constDiffs++; console.log(`  DIFF ${what}: ${JSON.stringify(a)} vs ${JSON.stringify(b)}`); }
 }
-same('STOP token', ref.RUBRIC_STOP, now.BOXES_STOP);
+same('STOP token', ref.RUBRIC_STOP, now.BLOCKS_STOP);
 for (const v of [0, 1, 2, 3, 4, 5, 6, 7]) {
   same(`categories(v${v})`,
-    ref.rubricCategories(v).join(' '), now.boxesCategories(v).join(' '));
+    ref.rubricCategories(v).join(' '), now.blocksCategories(v).join(' '));
 }
 for (const name of [
   'rubric-v1-0.6b', 'rubric-v2-0.6b', 'rubric-v3-4b', 'rubric-v4-4b', 'rubric-v5-4b',
-  'rubric-v6-4b', 'blockcat-v3-4b', 'foundry-boxes-v1-4b', 'no-version-here', 'V5',
+  'rubric-v6-4b', 'blockcat-v3-4b', 'foundry-blocks-v1-4b', 'no-version-here', 'V5',
   'rubric-v3-v5-mixed', 'model.v2.gguf',
 ]) {
-  same(`versionFor(${name})`, String(ref.rubricVersionFor(name)), String(now.boxesVersionFor(name)));
+  same(`versionFor(${name})`, String(ref.rubricVersionFor(name)), String(now.blocksVersionFor(name)));
 }
 
 // ── report ──────────────────────────────────────────────────────────────────

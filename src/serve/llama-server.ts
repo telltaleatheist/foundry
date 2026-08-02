@@ -48,7 +48,7 @@
  *
  * Foundry inverts that, deliberately, and it is the one place the source design
  * does not carry over (MIGRATION §4). Here there is one Qwen3-4B base and three
- * LoRA adapters (ARCHITECTURE §3). `convert` moves between boxes → ocr →
+ * LoRA adapters (ARCHITECTURE §3). `convert` moves between blocks → ocr →
  * footnotes constantly, and three separate 4B servers would be gigabytes of
  * unload/reload on every transition. Adapters are tens of megabytes. So: one
  * process, base resident, all adapters loaded at startup, and each request names
@@ -78,7 +78,7 @@ const HOST = '127.0.0.1';
 
 /** A named LoRA adapter to load alongside the base. */
 export interface AdapterSpec {
-  /** How requests name it — 'boxes', 'ocr', 'footnotes'. */
+  /** How requests name it — 'blocks', 'ocr', 'footnotes'. */
   name: string;
   /** Absolute path to the adapter GGUF. Must exist at startup. */
   path: string;
@@ -310,7 +310,7 @@ export class LlamaServer {
    *
    * Always the FULL vector, never just the one being switched on. llama-server
    * carries forward whatever it was last told, so a partial vector makes the
-   * applied adapter depend on request order — and a boxes prompt answered with
+   * applied adapter depend on request order — and a blocks prompt answered with
    * the ocr adapter still still produces plausible text. Nothing errors; the
    * labels are just wrong. Stating every scale on every request removes the
    * ordering dependency entirely.

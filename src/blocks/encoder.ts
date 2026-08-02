@@ -1,11 +1,11 @@
 /**
- * boxes encoder — turn a book's OCR blocks into the exact prompt the
+ * blocks encoder — turn a book's OCR blocks into the exact prompt the
  * block-category model was fine-tuned on.
  *
  * Moved verbatim from BookForgeApp
  * `src/app/features/pdf-picker/services/rubric-encoder.ts` (MIGRATION §1). The
- * symbols are renamed rubric→boxes; NOTHING about what this file emits or
- * accepts has changed, and `tools/replay-boxes.mjs` proves it by diffing the
+ * symbols are renamed rubric→blocks; NOTHING about what this file emits or
+ * accepts has changed, and `tools/replay-blocks.mjs` proves it by diffing the
  * prompts both implementations produce for real labelled books, byte for byte.
  *
  * THIS FILE IS A CONTRACT, not a convenience. The model was trained by
@@ -86,10 +86,10 @@ export interface PageDimension {
   height: number;
 }
 
-export type BoxesVersion = 1 | 2 | 3 | 4 | 5 | 6;
+export type BlocksVersion = 1 | 2 | 3 | 4 | 5 | 6;
 
 /** The sixteen classes v1 and v2 were trained on. */
-export const BOXES_CATEGORIES = [
+export const BLOCKS_CATEGORIES = [
   'body', 'title', 'chapter', 'heading', 'subheading', 'quote', 'caption',
   'footnote', 'footnote_ref', 'header', 'footer', 'image', 'front_matter',
   'back_matter', 'table', 'list',
@@ -101,7 +101,7 @@ export const BOXES_CATEGORIES = [
  * is interpolated into the system prompt, so the order is part of the string the
  * model was trained on.
  */
-export const BOXES_CATEGORIES_V3 = [
+export const BLOCKS_CATEGORIES_V3 = [
   'body', 'title', 'chapter', 'heading', 'subheading', 'quote', 'caption',
   'footnote', 'header', 'footer', 'image', 'table', 'list',
 ] as const;
@@ -115,7 +115,7 @@ export const BOXES_CATEGORIES_V3 = [
  * This is the branch the v4 comment predicted: v5 is the first version whose
  * TAXONOMY differs, so it needs its own list rather than sharing v3's.
  */
-export const BOXES_CATEGORIES_V5 = [
+export const BLOCKS_CATEGORIES_V5 = [
   'body', 'title', 'chapter', 'heading', 'subheading', 'quote', 'caption',
   'footnote', 'header', 'footer', 'image', 'list',
 ] as const;
@@ -148,12 +148,12 @@ export const BOXES_CATEGORIES_V5 = [
  * trustworthy, and the only boundary that matters for damage is against `body`.
  * Narrate-vs-suppress is decided by the user at review, not by the taxonomy.
  */
-export const BOXES_CATEGORIES_V6 = [
+export const BLOCKS_CATEGORIES_V6 = [
   'body', 'title', 'chapter', 'heading', 'subheading', 'quote', 'caption',
   'footnote', 'header', 'footer', 'image', 'list', 'discard',
 ] as const;
 
-export type BoxesCategory = typeof BOXES_CATEGORIES[number] | 'discard';
+export type BlocksCategory = typeof BLOCKS_CATEGORIES[number] | 'discard';
 
 /**
  * The classes a given adapter may legally emit.
@@ -165,10 +165,10 @@ export type BoxesCategory = typeof BOXES_CATEGORIES[number] | 'discard';
  * version that really does change the taxonomy needs its own list plus a branch
  * in the system-prompt selector.
  */
-export function boxesCategories(version: BoxesVersion): readonly BoxesCategory[] {
-  if (version >= 6) return BOXES_CATEGORIES_V6;
-  if (version === 5) return BOXES_CATEGORIES_V5;
-  return version >= 3 ? BOXES_CATEGORIES_V3 : BOXES_CATEGORIES;
+export function blocksCategories(version: BlocksVersion): readonly BlocksCategory[] {
+  if (version >= 6) return BLOCKS_CATEGORIES_V6;
+  if (version === 5) return BLOCKS_CATEGORIES_V5;
+  return version >= 3 ? BLOCKS_CATEGORIES_V3 : BLOCKS_CATEGORIES;
 }
 
 /**
@@ -179,12 +179,12 @@ export function boxesCategories(version: BoxesVersion): readonly BoxesCategory[]
  *
  * MOVED INTACT, deliberately un-loosened (MIGRATION §1). Note that it reads the
  * FIRST vN it matches anywhere in the string, highest first: a Foundry-style id
- * such as `foundry-boxes-v1-4b` therefore parses as PROMPT version 1 — the
- * retired sixteen-class taxonomy. Extending this to a `foundry-boxes-vN` scheme
+ * such as `foundry-blocks-v1-4b` therefore parses as PROMPT version 1 — the
+ * retired sixteen-class taxonomy. Extending this to a `foundry-blocks-vN` scheme
  * is a deliberate decision to be taken with the model ids, not a bug to patch
  * here.
  */
-export function boxesVersionFor(name: string): BoxesVersion {
+export function blocksVersionFor(name: string): BlocksVersion {
   if (/v6/i.test(name)) return 6;
   if (/v5/i.test(name)) return 5;
   if (/v4/i.test(name)) return 4;
@@ -215,7 +215,7 @@ Coordinates are fractions of the page (0-1), origin top-left. fs1.00 is normal
 body type; fs2.10 is roughly double. Long text is shown as head … tail.
 
 Label every block with exactly one of:
-${BOXES_CATEGORIES.join(', ')}
+${BLOCKS_CATEGORIES.join(', ')}
 
 Reply with one line per block, "<id> <category>", in the order given. No other text.`;
 
@@ -249,12 +249,12 @@ ${categories.join(', ')}
 
 Reply with one line per block, "<id> <category>", in the order given. No other text.`;
 
-const SYSTEM_V2 = systemV2Shape(BOXES_CATEGORIES);
-const SYSTEM_V3 = systemV2Shape(BOXES_CATEGORIES_V3);
+const SYSTEM_V2 = systemV2Shape(BLOCKS_CATEGORIES);
+const SYSTEM_V3 = systemV2Shape(BLOCKS_CATEGORIES_V3);
 // Same shape, different class list — the list is the only line that differs, and
 // SYSTEM_V5 is asserted byte-identical to the v5 SFT system turn by the self-test.
-const SYSTEM_V5 = systemV2Shape(BOXES_CATEGORIES_V5);
-const SYSTEM_V6 = systemV2Shape(BOXES_CATEGORIES_V6);
+const SYSTEM_V5 = systemV2Shape(BLOCKS_CATEGORIES_V5);
+const SYSTEM_V6 = systemV2Shape(BLOCKS_CATEGORIES_V6);
 
 /** Percent as a small integer — decimals are a tokenizer tax (see the builder). */
 const ipct = (v: number): string => String(Math.round(v * 100));
@@ -381,7 +381,7 @@ function clipText(t: string, budget: TextBudget): string {
 }
 
 function blockLine(
-  version: BoxesVersion,
+  version: BlocksVersion,
   b: TextBlock,
   prev: TextBlock | null,
   next: TextBlock | null,
@@ -426,7 +426,7 @@ function blockLine(
 }
 
 export interface EncodeOptions {
-  readonly version: BoxesVersion;
+  readonly version: BlocksVersion;
   /** Total pages in the book — the "% through the book" the model was given. */
   readonly totalPages: number;
 }
@@ -446,7 +446,7 @@ export function encodeBook(
 ): EncodedPage[] {
   const norm = computeBookNorm(blocks, pageDimensions);
   // v4 falls through to SYSTEM_V3 on purpose — same prompt, same taxonomy; v4
-  // changed the segmentation, not the instructions. See boxesCategories().
+  // changed the segmentation, not the instructions. See blocksCategories().
   const system = options.version === 1 ? SYSTEM_V1
     : options.version === 2 ? SYSTEM_V2
     : options.version >= 6 ? SYSTEM_V6
@@ -514,7 +514,7 @@ export function toRawPrompt(page: Pick<EncodedPage, 'system' | 'user'>): string 
 }
 
 /** What the model emits at the end of an answer; runtimes must stop here. */
-export const BOXES_STOP = '<|im_end|>';
+export const BLOCKS_STOP = '<|im_end|>';
 
 const ANSWER_LINE = /^\s*(\d+)\s+([a-z_]+)\s*$/;
 
@@ -533,10 +533,10 @@ const ANSWER_LINE = /^\s*(\d+)\s+([a-z_]+)\s*$/;
 export function parseAnswer(
   text: string,
   blockIds: readonly string[],
-  version: BoxesVersion,
-): Map<string, BoxesCategory> {
-  const out = new Map<string, BoxesCategory>();
-  const legal = new Set<string>(boxesCategories(version));
+  version: BlocksVersion,
+): Map<string, BlocksCategory> {
+  const out = new Map<string, BlocksCategory>();
+  const legal = new Set<string>(blocksCategories(version));
   for (const raw of (text || '').trim().split('\n')) {
     const m = ANSWER_LINE.exec(raw);
     if (!m) continue;
@@ -544,7 +544,7 @@ export function parseAnswer(
     const category = m[2];
     if (index < 0 || index >= blockIds.length) continue;
     if (!legal.has(category)) continue;
-    out.set(blockIds[index], category as BoxesCategory);
+    out.set(blockIds[index], category as BlocksCategory);
   }
   return out;
 }

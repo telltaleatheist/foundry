@@ -9,7 +9,7 @@
  *
  * The result of the last run is recorded in test/ocr/CROSSCHECK.md. This is
  * the same discipline as tools/crosscheck-ocr.mjs (the edit contract) and the
- * boxes replay: a moved artifact is verified against its source once, loudly,
+ * blocks replay: a moved artifact is verified against its source once, loudly,
  * rather than trusted because the move looked careful.
  */
 import { spawnSync } from 'node:child_process';

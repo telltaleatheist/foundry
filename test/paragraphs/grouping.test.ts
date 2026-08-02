@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 
 import { groupParagraphs, GroupingInputError, FLOWING_CATEGORIES } from '../../src/paragraphs/grouping.js';
 import type { Block, CalibrationVerdict } from '../../src/pipeline/artifacts.js';
-import type { BoxesCategory } from '../../src/boxes/encoder.js';
+import type { BlocksCategory } from '../../src/blocks/encoder.js';
 
 function verdict(convention: 'indent' | 'block' | 'none'): CalibrationVerdict {
   return {
@@ -36,7 +36,7 @@ function verdict(convention: 'indent' | 'block' | 'none'): CalibrationVerdict {
 
 interface BlockSpec {
   id: string;
-  category?: BoxesCategory;
+  category?: BlocksCategory;
   page?: number;
   indent?: number;
   gapAbove?: number | null;

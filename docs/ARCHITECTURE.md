@@ -92,7 +92,7 @@ via llama-server's multi-LoRA support.
 
 | Adapter | Id | Formerly | Unit of work |
 |---|---|---|---|
-| boxes | `foundry-boxes-v1-4b` | rubric | one page of blocks |
+| blocks | `foundry-blocks-v1-4b` | rubric | one page of blocks |
 | ocr | `foundry-ocr-v1-4b` | galley / proof | one line |
 | footnotes | `foundry-footnotes-v1-4b` | dagger | one text segment |
 
@@ -149,7 +149,7 @@ Foundry ships an **exact Tesseract version with exact tessdata**, both
 sha-verified, and runs pages at **200 dpi**.
 
 Tesseract is not a preprocessing detail here — it is the segmenter the models
-were *trained against*. The boxes model learned to label the blocks that one
+were *trained against*. The blocks model learned to label the blocks that one
 specific Tesseract produces; the ocr model learned to repair the specific errors
 that build makes at that resolution. Layout analysis changes between Tesseract
 versions, and paragraph grouping moves with resolution.
@@ -263,7 +263,7 @@ src/
   commands.ts     command surface (currently: stubs)
 
   scan/           pinned tesseract, page render, band merge
-  boxes/          block-category encoder + answer parser
+  blocks/         block-category encoder + answer parser
   ocr/            edit derivation + applier
   footnotes/      deletion parser + subsequence-guarded applier
   export/         categories → XHTML → EPUB

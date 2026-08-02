@@ -238,7 +238,7 @@ export function runExportStage(options: ExportStageOptions): ExportStageResult {
 
   const { blocks, calibration } = readBlocks(runDir);
   if (blocks.length === 0) {
-    throw new ExportStageError('boxes/blocks.json contains no blocks — there is no book to export');
+    throw new ExportStageError('blocks/blocks.json contains no blocks — there is no book to export');
   }
 
   const { blockText, allLines, lines } = collectBlockText(runDir, blocks);

@@ -13,7 +13,7 @@
  *    missing thing and exits nonzero. Nothing writes a plausible empty artifact
  *    and returns 0.
  *  - **The prompt is built here and sent verbatim to /completion (§4).** Prompt
- *    construction lives in the stage modules (`src/boxes/encoder.ts`,
+ *    construction lives in the stage modules (`src/blocks/encoder.ts`,
  *    `src/footnotes/prompt.ts`); this file wires them to the server and never
  *    reshapes what they produce.
  *  - **Stages are resumable (PIPELINE).** Each stage reads the previous stage's
@@ -23,7 +23,7 @@
  * WHAT IS NOT WIRED YET, and why the errors say so rather than pretending:
  *
  *  - **The weights are not published.** `src/models/catalog.ts` is empty on
- *    purpose, so `boxes`/`ocr`/`footnotes` build their real inputs and then stop
+ *    purpose, so `blocks`/`ocr`/`footnotes` build their real inputs and then stop
  *    at model resolution with the not-published message. An explicit
  *    `--base-model` / `--adapter` path overrides the catalog for anyone holding
  *    a local GGUF — an override, not a fallback.
@@ -54,16 +54,16 @@ import {
   type ParsedArgs,
 } from './args.js';
 import {
-  BOXES_STOP,
-  boxesVersionFor,
+  BLOCKS_STOP,
+  blocksVersionFor,
   encodeBook,
   parseAnswer,
   toRawPrompt,
-  type BoxesCategory,
-  type BoxesVersion,
+  type BlocksCategory,
+  type BlocksVersion,
   type PageDimension,
   type TextBlock,
-} from './boxes/encoder.js';
+} from './blocks/encoder.js';
 import { applyFootnoteDeletions, planFootnotes, type FootnoteDeletion } from './footnotes/applier.js';
 import { FOOTNOTES_STOP } from './footnotes/prompt.js';
 import { applyEdits, deriveEdits } from './ocr/edits.js';
@@ -228,7 +228,7 @@ export interface Command {
 // The shapes, their validation and the atomic writes all live in
 // `src/pipeline/artifacts.ts`, which PIPELINE.md makes the only module allowed
 // to read or write the run directory. Nothing in this file re-declares a field
-// name or hand-rolls a JSON write: two spellings of `boxes/blocks.json` is the
+// name or hand-rolls a JSON write: two spellings of `blocks/blocks.json` is the
 // same failure as two copies of a prompt format, one directory down.
 //
 // What lives here is stage BOOKKEEPING — creating the run record, marking a
@@ -262,7 +262,7 @@ interface WorkingBlock {
   fontSizePx: number;
   /** Mean word confidence over the block's lines, 0-100, or null. */
   conf: number | null;
-  category?: BoxesCategory;
+  category?: BlocksCategory;
   geometry?: BlockGeometry;
 }
 
@@ -355,7 +355,7 @@ async function withStageRecord(
 }
 
 /** Record which model answered for a stage. The version in the id is the point. */
-function recordModel(runDir: string, stage: 'boxes' | 'ocr' | 'footnotes', plan: ModelPlan): void {
+function recordModel(runDir: string, stage: 'blocks' | 'ocr' | 'footnotes', plan: ModelPlan): void {
   const run = loadRun(runDir);
   run.models[stage] = plan.adapterId;
   run.models.base = plan.baseId;
@@ -589,7 +589,7 @@ function blockId(page: number, index: number): string {
  * Group a page's lines into blocks.
  *
  * **This grouping is PROVISIONAL, it is recorded as `gap-v0` in
- * `boxes/blocks.json`, and it is not the grouping the boxes model was trained
+ * `blocks/blocks.json`, and it is not the grouping the blocks model was trained
  * against.** The training corpus used Tesseract's own paragraph identity (the
  * `blockNum:parNum` key, "split-only block formation" in the v4 notes), which
  * the band path cannot produce: it hands Tesseract one crop per line under
@@ -676,7 +676,7 @@ function medianOf(values: number[]): number {
   return sorted[Math.floor(sorted.length / 2)] ?? 0;
 }
 
-/** Blocks in the shape `src/boxes/encoder.ts` reads. Field names are contract. */
+/** Blocks in the shape `src/blocks/encoder.ts` reads. Field names are contract. */
 function toTextBlocks(blocks: readonly WorkingBlock[]): TextBlock[] {
   return blocks.map((b) => ({
     id: b.id,
@@ -838,7 +838,7 @@ function buildServer(args: ParsedArgs, stage: FoundryAdapter, plan: ModelPlan): 
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// boxes
+// blocks
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
@@ -847,7 +847,7 @@ function buildServer(args: ParsedArgs, stage: FoundryAdapter, plan: ModelPlan): 
  *
  * Calibration runs HERE, before anything is classified, because it is
  * label-free by design (it sees line geometry, not categories) and because the
- * boxes prompt is fed geometry expressed in the calibrated frame. It is
+ * blocks prompt is fed geometry expressed in the calibrated frame. It is
  * recomputed per stage rather than cached: it is one pass over line boxes, and
  * a cached verdict is one more thing that can be stale against the lines.
  */
@@ -870,21 +870,21 @@ function readScanAndForm(runDir: string): {
   return { pages, lines, blocks, calibration };
 }
 
-async function runBoxes(args: ParsedArgs): Promise<void> {
+async function runBlocks(args: ParsedArgs): Promise<void> {
   const runDir = path.resolve(requireString(args, 'run', 'the run directory to read and write'));
   loadRun(runDir);
 
-  await withStageRecord(runDir, 'boxes', async () => {
+  await withStageRecord(runDir, 'blocks', async () => {
     const { pages, lines, blocks, calibration } = readScanAndForm(runDir);
     log(
-      `boxes: ${blocks.length} blocks formed from ${lines.length} lines over `
+      `blocks: ${blocks.length} blocks formed from ${lines.length} lines over `
       + `${pages.length} pages (formation ${BLOCK_FORMATION})`,
     );
     // The one sanctioned degradation in the pipeline, and it is REPORTED rather
     // than absorbed: a book with no detectable paragraph convention still
     // exports, with few or no breaks (PIPELINE.md, §9d decision 5).
     log(
-      `boxes: paragraph convention "${calibration.convention}"`
+      `blocks: paragraph convention "${calibration.convention}"`
       + `${calibration.degraded ? ' — DEGRADED: ' : ' — '}${calibration.message}`,
     );
 
@@ -892,9 +892,9 @@ async function runBoxes(args: ParsedArgs): Promise<void> {
     // the blocks formed, so an operator sees their run is sound before being
     // told the weights are missing — and so the prompt-format version, which is
     // read out of the model id, is known before anything is encoded.
-    const plan = resolveStageModels(args, 'boxes');
-    const version: BoxesVersion = boxesVersionFor(plan.adapterId);
-    log(`boxes: ${describePlan(plan)} → prompt format v${version}`);
+    const plan = resolveStageModels(args, 'blocks');
+    const version: BlocksVersion = blocksVersionFor(plan.adapterId);
+    log(`blocks: ${describePlan(plan)} → prompt format v${version}`);
 
     const dimensions: PageDimension[] = [];
     for (const page of pages) dimensions[page.page] = { width: page.widthPx, height: page.heightPx };
@@ -902,9 +902,9 @@ async function runBoxes(args: ParsedArgs): Promise<void> {
       version,
       totalPages: pages.length,
     });
-    log(`boxes: ${encoded.length} page prompts encoded`);
+    log(`blocks: ${encoded.length} page prompts encoded`);
 
-    const server = buildServer(args, 'boxes', plan);
+    const server = buildServer(args, 'blocks', plan);
     const byId = new Map(blocks.map((b) => [b.id, b]));
     try {
       for (const page of encoded) {
@@ -912,8 +912,8 @@ async function runBoxes(args: ParsedArgs): Promise<void> {
           // VERBATIM: the encoder produced the final string, including the empty
           // <think> block the training template inserts (ARCHITECTURE §4).
           prompt: toRawPrompt(page),
-          adapter: plan.adapterPath ? 'boxes' : null,
-          stop: [BOXES_STOP],
+          adapter: plan.adapterPath ? 'blocks' : null,
+          stop: [BLOCKS_STOP],
         });
         const labels = parseAnswer(answer, page.blockIds, version);
         for (const [id, category] of labels) {
@@ -935,21 +935,21 @@ async function runBoxes(args: ParsedArgs): Promise<void> {
     const unlabelled = blocks.filter((b) => !b.category);
     if (unlabelled.length) {
       throw new Error(
-        `The boxes model did not label ${unlabelled.length} of ${blocks.length} blocks, `
+        `The blocks model did not label ${unlabelled.length} of ${blocks.length} blocks, `
         + `starting with ${unlabelled.slice(0, 5).map((b) => b.id).join(', ')}.\n`
-        + `boxes/blocks.json was NOT written: every block needs a category, and `
+        + `blocks/blocks.json was NOT written: every block needs a category, and `
         + `there is no safe default — 'discard' would silently drop text and 'body' `
         + `would narrate furniture. Re-run, and if a page repeats, check --context: `
         + `a truncated prompt loses the tail of the block list.`,
       );
     }
 
-    writeArtifact(runDir, 'boxesBlocks', {
+    writeArtifact(runDir, 'blocks', {
       calibration,
       blocks: blocks.map(toArtifactBlock),
     });
-    recordModel(runDir, 'boxes', plan);
-    log(`boxes: wrote ${ARTIFACTS.boxesBlocks.path} — ${blocks.length} labelled blocks`);
+    recordModel(runDir, 'blocks', plan);
+    log(`blocks: wrote ${ARTIFACTS.blocks.path} — ${blocks.length} labelled blocks`);
   });
 }
 
@@ -1067,7 +1067,7 @@ const NON_PROSE: ReadonlySet<string> = new Set([
 /**
  * The text of a block, rebuilt from the lines it was formed out of.
  *
- * `boxes/blocks.json` carries line IDS and no text, deliberately: the words live
+ * `blocks/blocks.json` carries line IDS and no text, deliberately: the words live
  * in `scan/lines.json`, and a block holding its own copy would be a second
  * source of truth for what the book says. So every consumer joins.
  */
@@ -1107,7 +1107,7 @@ function blockTexts(blocks: readonly Block[], lines: readonly ScanLine[]): Map<s
       if (!line) {
         throw new Error(
           `block ${block.id} references line ${id}, which is not in ${ARTIFACTS.scanLines.path}. `
-          + `The two artifacts are out of step — re-run scan and boxes together.`,
+          + `The two artifacts are out of step — re-run scan and blocks together.`,
         );
       }
       return line.text;
@@ -1254,7 +1254,7 @@ async function runExport(args: ParsedArgs): Promise<void> {
  */
 async function runConvert(args: ParsedArgs): Promise<void> {
   await runScan(args);
-  await runBoxes(args);
+  await runBlocks(args);
   await runOcr(args);
   await runFootnotes(args);
   await runExport(args);
@@ -1264,7 +1264,7 @@ async function runConvert(args: ParsedArgs): Promise<void> {
 // models
 // ═════════════════════════════════════════════════════════════════════════════
 
-const MODEL_ROLES: readonly ('base' | FoundryAdapter)[] = ['base', 'boxes', 'ocr', 'footnotes'];
+const MODEL_ROLES: readonly ('base' | FoundryAdapter)[] = ['base', 'blocks', 'ocr', 'footnotes'];
 
 async function runModels(args: ParsedArgs): Promise<void> {
   const action = args.positional[0];
@@ -1376,7 +1376,7 @@ export const COMMANDS: readonly Command[] = [
       'Runs every stage in order against one run directory:',
       '',
       '  scan       the pinned Tesseract at 200 dpi segments each page into lines',
-      '  boxes      the boxes adapter labels every block (body, chapter, header,',
+      '  blocks     the blocks adapter labels every block (body, chapter, header,',
       '             footnote, caption, discard, …)',
       '  ocr        the ocr adapter repairs Tesseract errors line by line, under',
       '             the edit contract — the model emits edits, an applier applies',
@@ -1427,11 +1427,11 @@ export const COMMANDS: readonly Command[] = [
     run: runScan,
   },
   {
-    name: 'boxes',
-    summary: 'Label each block with what it is (adapter: foundry-boxes).',
+    name: 'blocks',
+    summary: 'Label each block with what it is (adapter: foundry-blocks).',
     usage: '--run <dir>',
     detail: [
-      'Groups the scanned lines into blocks, then runs the boxes adapter over',
+      'Groups the scanned lines into blocks, then runs the blocks adapter over',
       'every block on every page and writes a category onto each one: body, title,',
       'chapter, heading, subheading, quote, caption, footnote, header, footer,',
       'image, list, discard.',
@@ -1448,7 +1448,7 @@ export const COMMANDS: readonly Command[] = [
       'FILENAME.',
       '',
       'Reads  <run>/scan/{pages,lines}.json',
-      'Writes <run>/boxes/blocks.json',
+      'Writes <run>/blocks/blocks.json',
       '',
       'NOTE: line→block grouping here is provisional (recorded as "gap-v0"). The',
       'training corpus used Tesseract\'s own paragraph identity, which the band',
@@ -1456,7 +1456,7 @@ export const COMMANDS: readonly Command[] = [
       'this stage can be trusted.',
     ].join('\n'),
     options: [RUN_DIR],
-    run: runBoxes,
+    run: runBlocks,
   },
   {
     name: 'ocr',
@@ -1503,7 +1503,7 @@ export const COMMANDS: readonly Command[] = [
       'images are skipped, because a model that fires on clean furniture damages a',
       'book and gains nothing.',
       '',
-      'Reads  <run>/boxes/blocks.json',
+      'Reads  <run>/blocks/blocks.json',
       'Writes <run>/footnotes/deletions.json',
     ].join('\n'),
     options: [RUN_DIR],

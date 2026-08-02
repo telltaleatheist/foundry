@@ -8,7 +8,7 @@
  * `tools/crosscheck-ocr.mjs` runs the corpus through both implementations to
  * prove they behave identically.
  *
- * WHY THIS FILE EXISTS AT ALL. boxes labels a block and footnotes deletes from
+ * WHY THIS FILE EXISTS AT ALL. blocks labels a block and footnotes deletes from
  * one; both are safe by construction — a wrong label narrates the wrong thing,
  * a wrong deletion drops a character. ocr REWRITES prose that then becomes
  * the EPUB and the narration, so a hallucinated word ships to the listener as

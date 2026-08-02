@@ -20,8 +20,8 @@
  * they excluded them.
  */
 import type { Block, ExclusionsArtifact } from '../pipeline/artifacts.js';
-import type { BoxesCategory } from '../boxes/encoder.js';
-import { BOXES_CATEGORIES_V6 } from '../boxes/encoder.js';
+import type { BlocksCategory } from '../blocks/encoder.js';
+import { BLOCKS_CATEGORIES_V6 } from '../blocks/encoder.js';
 
 /**
  * Categories the exporter structurally never emits.
@@ -29,8 +29,8 @@ import { BOXES_CATEGORIES_V6 } from '../boxes/encoder.js';
  * PIPELINE.md names them: "running heads/footers/page furniture and `discard`
  * never emitted".
  */
-export const NEVER_EMITTED: ReadonlySet<BoxesCategory> =
-  new Set<BoxesCategory>(['header', 'footer', 'discard']);
+export const NEVER_EMITTED: ReadonlySet<BlocksCategory> =
+  new Set<BlocksCategory>(['header', 'footer', 'discard']);
 
 export interface ExclusionRequest {
   /** Category names. The plural forms PIPELINE.md writes are accepted too. */
@@ -45,7 +45,7 @@ export class ExclusionError extends Error {
   }
 }
 
-const LEGAL = new Set<string>(BOXES_CATEGORIES_V6);
+const LEGAL = new Set<string>(BLOCKS_CATEGORIES_V6);
 
 /**
  * Resolve one `--exclude` argument to a category name.
@@ -56,13 +56,13 @@ const LEGAL = new Set<string>(BOXES_CATEGORIES_V6);
  * the plural is a documented alias, not a fuzzy match. Anything else throws
  * with the legal list, so a typo is a stop rather than a silent no-op.
  */
-export function resolveCategory(name: string): BoxesCategory {
+export function resolveCategory(name: string): BlocksCategory {
   const trimmed = name.trim().toLowerCase();
-  if (LEGAL.has(trimmed)) return trimmed as BoxesCategory;
+  if (LEGAL.has(trimmed)) return trimmed as BlocksCategory;
   const singular = trimmed.endsWith('s') ? trimmed.slice(0, -1) : null;
-  if (singular && LEGAL.has(singular)) return singular as BoxesCategory;
+  if (singular && LEGAL.has(singular)) return singular as BlocksCategory;
   throw new ExclusionError(
-    `"${name}" is not a category. Legal categories are: ${BOXES_CATEGORIES_V6.join(', ')}`,
+    `"${name}" is not a category. Legal categories are: ${BLOCKS_CATEGORIES_V6.join(', ')}`,
   );
 }
 
@@ -86,16 +86,16 @@ export function applyExclusions(
   request: ExclusionRequest = {},
 ): ExclusionResult {
   const categories = (request.categories ?? []).map(resolveCategory);
-  const excluded = new Set<BoxesCategory>(categories);
+  const excluded = new Set<BlocksCategory>(categories);
   const ids = new Set<string>(request.blockIds ?? []);
 
   const present = new Set(blocks.map(b => b.id));
   const unknown = [...ids].filter(id => !present.has(id));
   if (unknown.length > 0) {
     throw new ExclusionError(
-      `${unknown.length} excluded block id(s) are not in boxes/blocks.json: ${unknown.slice(0, 10).join(', ')}`
+      `${unknown.length} excluded block id(s) are not in blocks/blocks.json: ${unknown.slice(0, 10).join(', ')}`
       + `${unknown.length > 10 ? ', …' : ''}.`
-      + ' The id list was written against a different run of the boxes stage; re-export from the'
+      + ' The id list was written against a different run of the blocks stage; re-export from the'
       + ' blocks that are actually there rather than dropping ids that no longer exist.',
     );
   }

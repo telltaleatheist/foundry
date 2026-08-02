@@ -28,7 +28,7 @@
  * applier rejections, and applied-text agreement rather than pair equality —
  * are in `test/footnotes/score.test.ts` and ARCHITECTURE §7.
  */
-import { toRawPrompt } from '../boxes/encoder.js';
+import { toRawPrompt } from '../blocks/encoder.js';
 import { FOOTNOTES_SYSTEM_PROMPT } from './prompt.js';
 
 /** One edit the model proposed. Neither field is trusted until the applier checks it. */

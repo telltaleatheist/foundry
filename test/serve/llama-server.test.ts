@@ -28,7 +28,7 @@ const STUB = path.join(import.meta.dir, 'stub-llama-server.ts');
 
 let tmpDir: string;
 let basePath: string;
-let boxesAdapter: string;
+let blocksAdapter: string;
 let ocrAdapter: string;
 let footnotesAdapter: string;
 
@@ -40,7 +40,7 @@ function makeServer(over: Partial<ConstructorParameters<typeof LlamaServer>[0]> 
     binaryPath: STUB,
     basePath,
     adapters: [
-      { name: 'boxes', path: boxesAdapter },
+      { name: 'blocks', path: blocksAdapter },
       { name: 'ocr', path: ocrAdapter },
       { name: 'footnotes', path: footnotesAdapter },
     ],
@@ -55,10 +55,10 @@ function makeServer(over: Partial<ConstructorParameters<typeof LlamaServer>[0]> 
 beforeAll(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-llama-server-'));
   basePath = path.join(tmpDir, 'foundry-4b.gguf');
-  boxesAdapter = path.join(tmpDir, 'boxes.gguf');
+  blocksAdapter = path.join(tmpDir, 'blocks.gguf');
   ocrAdapter = path.join(tmpDir, 'ocr.gguf');
   footnotesAdapter = path.join(tmpDir, 'footnotes.gguf');
-  for (const p of [basePath, boxesAdapter, ocrAdapter, footnotesAdapter]) {
+  for (const p of [basePath, blocksAdapter, ocrAdapter, footnotesAdapter]) {
     fs.writeFileSync(p, 'not really a gguf');
   }
   fs.chmodSync(STUB, 0o755);
@@ -156,9 +156,9 @@ describe('readiness', () => {
 
   test('a missing adapter is named', async () => {
     const server = makeServer({
-      adapters: [{ name: 'boxes', path: path.join(tmpDir, 'absent-adapter.gguf') }],
+      adapters: [{ name: 'blocks', path: path.join(tmpDir, 'absent-adapter.gguf') }],
     });
-    await expect(server.ensureStarted()).rejects.toThrow(/adapter 'boxes' is not at/);
+    await expect(server.ensureStarted()).rejects.toThrow(/adapter 'blocks' is not at/);
   });
 
   test('the port is not readable before the server starts', () => {
@@ -235,7 +235,7 @@ describe('one base, adapters selected per request', () => {
     // because a request asked for it, never because it was first on the
     // command line.
     expect(argv.filter((a) => a === '--lora-scaled')).toHaveLength(3);
-    for (const p of [boxesAdapter, ocrAdapter, footnotesAdapter]) {
+    for (const p of [blocksAdapter, ocrAdapter, footnotesAdapter]) {
       const at = argv.indexOf(p);
       expect(at).toBeGreaterThan(0);
       expect(argv[at - 1]).toBe('--lora-scaled');
@@ -250,7 +250,7 @@ describe('one base, adapters selected per request', () => {
   test('a request names its adapter and gets the full scale vector', async () => {
     // The FULL vector every time, not just the one being switched on:
     // llama-server carries forward whatever it was last told, so a partial
-    // vector makes the applied adapter depend on request order. A boxes prompt
+    // vector makes the applied adapter depend on request order. A blocks prompt
     // answered under the ocr adapter still produces plausible output — nothing
     // errors, the labels are simply wrong.
     const server = makeServer();
@@ -264,7 +264,7 @@ describe('one base, adapters selected per request', () => {
 
   test('each adapter selects its own index', async () => {
     const server = makeServer();
-    for (const [i, name] of ['boxes', 'ocr', 'footnotes'].entries()) {
+    for (const [i, name] of ['blocks', 'ocr', 'footnotes'].entries()) {
       const answer = echo(await server.complete({ prompt: 'x', adapter: name }));
       const active = answer.received.lora.filter((l) => l.scale === 1);
       expect(active).toEqual([{ id: i, scale: 1 }]);
@@ -278,7 +278,7 @@ describe('one base, adapters selected per request', () => {
     const server = makeServer();
     await server.ensureStarted();
     const port = server.port;
-    for (const name of ['boxes', 'ocr', 'footnotes', null]) {
+    for (const name of ['blocks', 'ocr', 'footnotes', null]) {
       await server.complete({ prompt: 'x', adapter: name });
     }
     expect(server.port).toBe(port);
@@ -296,7 +296,7 @@ describe('one base, adapters selected per request', () => {
   test('an unknown adapter throws naming the ones that are loaded', async () => {
     const server = makeServer();
     await expect(server.complete({ prompt: 'x', adapter: 'rubric' })).rejects.toThrow(
-      /Unknown adapter 'rubric'.*boxes, ocr, footnotes/s,
+      /Unknown adapter 'rubric'.*blocks, ocr, footnotes/s,
     );
   });
 
@@ -305,8 +305,8 @@ describe('one base, adapters selected per request', () => {
       binaryPath: STUB,
       basePath,
       adapters: [
-        { name: 'boxes', path: boxesAdapter },
-        { name: 'boxes', path: ocrAdapter },
+        { name: 'blocks', path: blocksAdapter },
+        { name: 'blocks', path: ocrAdapter },
       ],
       contextSize: 4096,
     })).toThrow(/Duplicate adapter name/);

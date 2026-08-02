@@ -44,7 +44,7 @@ function topLevelHelp(): string {
     ...COMMANDS.map((c) => `  ${c.name.padEnd(pad)}  ${c.summary}`),
     '',
     'Pipeline:',
-    '  page renders → scan → boxes → ocr → footnotes → export → EPUB',
+    '  page renders → scan → blocks → ocr → footnotes → export → EPUB',
     '',
     '  Every stage reads and writes ONE run directory (docs/PIPELINE.md), so a',
     '  run can be stopped, inspected, edited and resumed, and BookForge can read',

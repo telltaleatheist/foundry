@@ -51,7 +51,7 @@
  * the source did.
  */
 import type { Block, CalibrationVerdict, ScanLine } from '../pipeline/artifacts.js';
-import type { BoxesCategory } from '../boxes/encoder.js';
+import type { BlocksCategory } from '../blocks/encoder.js';
 import type { GroupingReport, ParagraphGroup } from '../paragraphs/grouping.js';
 import { groupParagraphs } from '../paragraphs/grouping.js';
 import { computeBlockGeometry } from '../paragraphs/geometry.js';
@@ -77,7 +77,7 @@ export interface EpubMetadata {
 }
 
 export interface BuildEpubInput {
-  /** Labelled blocks in reading order, straight from `boxes/blocks.json`. */
+  /** Labelled blocks in reading order, straight from `blocks/blocks.json`. */
   readonly blocks: readonly Block[];
   /**
    * Every line of the book, with its FINAL text — needed to re-derive the
@@ -207,7 +207,7 @@ const STYLESHEET_BLOCK = STYLESHEET_INDENT
 // ── rendering ───────────────────────────────────────────────────────────────
 
 /** Categories that open a new spine item. */
-const SECTION_OPENERS: ReadonlySet<BoxesCategory> = new Set<BoxesCategory>(['title', 'chapter']);
+const SECTION_OPENERS: ReadonlySet<BlocksCategory> = new Set<BlocksCategory>(['title', 'chapter']);
 
 interface RenderedGroup {
   group: ParagraphGroup;
@@ -283,7 +283,7 @@ export function buildEpub(input: BuildEpubInput): BuildEpubResult {
   //
   // Three of the four §9d facts describe a block's JUNCTION WITH ITS
   // PREDECESSOR, so they are only meaningful against the sequence the grouper
-  // actually walks — and that sequence is not the one the boxes stage measured.
+  // actually walks — and that sequence is not the one the blocks stage measured.
   // Two things stand between them:
   //
   //  - **Page furniture, always.** A running head and a folio sit between the

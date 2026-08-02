@@ -45,7 +45,7 @@
  * looking at, which is information a silent tiebreak would throw away.
  */
 import type { Block, CalibrationVerdict, ParagraphConvention } from '../pipeline/artifacts.js';
-import type { BoxesCategory } from '../boxes/encoder.js';
+import type { BlocksCategory } from '../blocks/encoder.js';
 
 /**
  * The categories a paragraph may flow through. §9d: breaks only ever exist
@@ -54,7 +54,7 @@ import type { BoxesCategory } from '../boxes/encoder.js';
  * alone by definition, so it never merges with a neighbour even when the
  * neighbour has the same label.
  */
-export const FLOWING_CATEGORIES: ReadonlySet<BoxesCategory> = new Set<BoxesCategory>(['body', 'quote']);
+export const FLOWING_CATEGORIES: ReadonlySet<BlocksCategory> = new Set<BlocksCategory>(['body', 'quote']);
 
 /**
  * How sure the model must be before its bit outranks geometry.
@@ -101,7 +101,7 @@ export interface Junction {
 /** A run of blocks that becomes one paragraph (or one structural element). */
 export interface ParagraphGroup {
   id: string;
-  category: BoxesCategory;
+  category: BlocksCategory;
   /** The page the group opens on. */
   page: number;
   blockIds: string[];
@@ -198,7 +198,7 @@ function geometric(block: Block, cal: CalibrationVerdict): GeometricVerdict {
 /**
  * Assemble paragraphs from labelled blocks.
  *
- * `blocks` must be in reading order — the order `boxes/blocks.json` carries,
+ * `blocks` must be in reading order — the order `blocks/blocks.json` carries,
  * which is the order the encoder read them in. Out-of-order pages throw rather
  * than being sorted, because a re-sort would silently paper over an upstream
  * bug whose real symptom is scrambled prose.

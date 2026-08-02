@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 import { calibrate, type CalibrationLine } from '../../src/paragraphs/calibration.js';
 import { computeBlockGeometry } from '../../src/paragraphs/geometry.js';
 import { writeArtifact, type Block, type ScanLine } from '../../src/pipeline/artifacts.js';
-import type { BoxesCategory } from '../../src/boxes/encoder.js';
+import type { BlocksCategory } from '../../src/blocks/encoder.js';
 
 // ── the page ────────────────────────────────────────────────────────────────
 
@@ -58,7 +58,7 @@ const wobble = (i: number): number => ((i * 2654435761) % 3) - 1;
 // ── the content script ──────────────────────────────────────────────────────
 
 interface Element {
-  category: BoxesCategory;
+  category: BlocksCategory;
   lines: string[];
   /**
    * Does this element open a paragraph? False marks the tail of one that was
@@ -187,7 +187,7 @@ const SCRIPT: Element[] = [
 
 interface Laid {
   lines: ScanLine[];
-  blocks: Array<{ id: string; page: number; category: BoxesCategory; lineIds: string[]; bbox: [number, number, number, number] }>;
+  blocks: Array<{ id: string; page: number; category: BlocksCategory; lineIds: string[]; bbox: [number, number, number, number] }>;
   pages: number;
 }
 
@@ -202,7 +202,7 @@ const widthOf = (text: string): number => Math.min(RIGHT - LEFT, Math.round(text
  * ending in a hyphen is by definition wrapped, so it runs full even when it is
  * the last line of its block: the paragraph continues on the next page.
  */
-const runsFull = (category: BoxesCategory, index: number, count: number, text: string): boolean =>
+const runsFull = (category: BlocksCategory, index: number, count: number, text: string): boolean =>
   (category === 'body' || category === 'quote') && (index < count - 1 || text.endsWith('-'));
 
 function layout(convention: Convention): Laid {
@@ -229,7 +229,7 @@ function layout(convention: Convention): Laid {
     return l;
   };
 
-  const addBlock = (p: number, category: BoxesCategory, ls: ScanLine[]): void => {
+  const addBlock = (p: number, category: BlocksCategory, ls: ScanLine[]): void => {
     const id = `b${String(++blockSeq).padStart(4, '0')}`;
     const bbox: [number, number, number, number] = [
       Math.min(...ls.map(l => l.bbox[0])),
@@ -324,10 +324,10 @@ export function buildRun(convention: Convention, runDir: string): void {
     foundryVersion: 'fixture',
     input: { path: `${convention}.pdf`, sha256: '0'.repeat(64), pages: laid.pages },
     tesseract: { version: '5.3.4', binarySha256: '0'.repeat(64), tessdata: ['eng'], dpi: DPI },
-    models: { base: 'foundry:4b', boxes: 'foundry-boxes-v6-4b' },
+    models: { base: 'foundry:4b', blocks: 'foundry-blocks-v6-4b' },
     stages: {
       scan: { status: 'done' },
-      boxes: { status: 'done' },
+      blocks: { status: 'done' },
       ocr: { status: 'pending' },
       footnotes: { status: 'pending' },
       export: { status: 'pending' },
@@ -341,7 +341,7 @@ export function buildRun(convention: Convention, runDir: string): void {
   });
 
   writeArtifact(runDir, 'scanLines', { lines: laid.lines });
-  writeArtifact(runDir, 'boxesBlocks', { calibration, blocks });
+  writeArtifact(runDir, 'blocks', { calibration, blocks });
 }
 
 export const FIXTURE_ROOT = dirname(fileURLToPath(import.meta.url));

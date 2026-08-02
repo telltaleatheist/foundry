@@ -154,7 +154,7 @@ test('a run directory with no blocks.json says which stage to run', () => {
   try {
     assert.throws(
       () => runExportStage({ runDir: root, metadata: METADATA, log: () => {} }),
-      /boxes\/blocks\.json: not found .* run the stage that produces it/s,
+      /blocks\/blocks\.json: not found .* run the stage that produces it/s,
     );
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -242,7 +242,7 @@ test('a derived title falls to the chapter, then the filename', () => {
     const blocks = readBlocks(runDir);
     // Drop the title block: the first chapter is the next best answer.
     const noTitle = blocks.blocks.filter(b => b.category !== 'title');
-    writeArtifact(runDir, 'boxesBlocks', { calibration: blocks.calibration, blocks: noTitle });
+    writeArtifact(runDir, 'blocks', { calibration: blocks.calibration, blocks: noTitle });
     const meta = deriveMetadata(runDir, noTitle, new Map(noTitle.map(b => [b.id, ['Chapter One']])));
     assert.equal(meta.title, 'Chapter One');
 

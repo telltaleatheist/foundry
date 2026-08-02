@@ -11,11 +11,11 @@
  * left edge of a bad deskew.
  *
  * So: one pass over the book's line geometry, one verdict, fed forward as an
- * explicit fact. Everything downstream (the boxes prompt, the grouping rules)
+ * explicit fact. Everything downstream (the blocks prompt, the grouping rules)
  * reads the verdict rather than re-deciding.
  *
  * **Label-free, like every other book-level normalizer.** This runs BEFORE
- * anything is classified — it sees lines, not categories — because the boxes
+ * anything is classified — it sees lines, not categories — because the blocks
  * model needs the calibrated geometry in its prompt. That is also why the
  * measurements below are all robust ones (medians, modal buckets, percentile
  * windows): the input contains running heads, folios, headings and the odd

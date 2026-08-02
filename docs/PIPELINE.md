@@ -28,7 +28,7 @@ The design answer to all of that is one rule:
 │   └── lines.json      # per line: band box [x0,y0,x1,y1] full-page px
 │                       # (half-open, PIL crop order), page, OCR text,
 │                       # word confidences
-├── boxes/
+├── blocks/
 │   └── blocks.json     # per block: id, page, bbox, line ids, category,
 │                       # continues bit, geometry facts fed to the model
 │                       # (first-line indent, gap-above, prev-line-short,
@@ -72,7 +72,7 @@ readers refuse loudly (no silent misreads).
 ## BookForge's consumption
 
 BookForge shells into the CLI per stage (or `convert` end-to-end), then reads
-the run directory: paints pdf-picker's category layer from `boxes/blocks.json`,
+the run directory: paints pdf-picker's category layer from `blocks/blocks.json`,
 lets the user delete boxes, writes the block-id exclusion list, and invokes
 `foundry export`. BookForge never re-implements pipeline logic; where it has
 its own legacy implementation today, the migration plan (MIGRATION.md) retires

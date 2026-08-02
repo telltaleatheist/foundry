@@ -18,13 +18,13 @@
   },
   "models": {
     "base": "foundry:4b",
-    "boxes": "foundry-boxes-v6-4b"
+    "blocks": "foundry-blocks-v6-4b"
   },
   "stages": {
     "scan": {
       "status": "done"
     },
-    "boxes": {
+    "blocks": {
       "status": "done"
     },
     "ocr": {

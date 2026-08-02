@@ -66,7 +66,7 @@ test('the committed fixtures have not drifted from the generator', () => {
       const fresh = join(root, `${convention}-book`);
       buildRun(convention, fresh);
       const committed = runDirFor(convention);
-      assert.deepEqual(readBlocks(fresh), readBlocks(committed), `${convention}: boxes/blocks.json drifted`);
+      assert.deepEqual(readBlocks(fresh), readBlocks(committed), `${convention}: blocks/blocks.json drifted`);
       assert.deepEqual(readScanLines(fresh), readScanLines(committed), `${convention}: scan/lines.json drifted`);
     } finally {
       rmSync(root, { recursive: true, force: true });

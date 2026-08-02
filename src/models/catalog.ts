@@ -31,10 +31,10 @@ export type FoundryModelKind = 'base' | 'adapter';
 
 /**
  * The three stages that have their own adapter. Named for what they DO, which
- * is the rename that came with the extraction: rubric → boxes, galley/proof →
+ * is the rename that came with the extraction: rubric → blocks, galley/proof →
  * ocr, dagger → footnotes.
  */
-export type FoundryAdapter = 'boxes' | 'ocr' | 'footnotes';
+export type FoundryAdapter = 'blocks' | 'ocr' | 'footnotes';
 
 export interface FoundryModelDef {
   /**
@@ -80,11 +80,11 @@ export interface FoundryModelDef {
 const BASE_ID = /^foundry:(\d+)b$/;
 
 /**
- * Adapter ids: `foundry-boxes-v1-4b`. Stage, version, and the size of the base
+ * Adapter ids: `foundry-blocks-v1-4b`. Stage, version, and the size of the base
  * it was trained against — an adapter is only valid on the base it was tuned
  * on, so the size travels with it.
  */
-const ADAPTER_ID = /^foundry-(boxes|ocr|footnotes)-v(\d+)-(\d+)b$/;
+const ADAPTER_ID = /^foundry-(blocks|ocr|footnotes)-v(\d+)-(\d+)b$/;
 
 export interface ParsedModelId {
   kind: FoundryModelKind;
@@ -102,7 +102,7 @@ export interface ParsedModelId {
  * This is the validation ARCHITECTURE §3 asks for. It exists here, at the
  * catalog, so a malformed id fails when the entry is added rather than deep in
  * a run — but note that the *prompt-format* consequence of the version number
- * belongs to the stage that owns the format (`src/boxes/`), not here. This file
+ * belongs to the stage that owns the format (`src/blocks/`), not here. This file
  * checks that a version is present and well-formed; it does not decide what the
  * version means.
  */
@@ -122,7 +122,7 @@ export function parseModelId(id: string): ParsedModelId {
 
   throw new Error(
     `Malformed model id: ${id}. Expected a base id like \`foundry:4b\` or an `
-    + `adapter id like \`foundry-boxes-v1-4b\` (stage, version, base size). The `
+    + `adapter id like \`foundry-blocks-v1-4b\` (stage, version, base size). The `
     + `version segment is load-bearing — an id without one reads as v1 and gets `
     + `a prompt for a retired taxonomy.`,
   );

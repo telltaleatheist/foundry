@@ -11,10 +11,10 @@ The rename map, applied everywhere as things move:
 
 | BookForge name | Foundry name |
 |---|---|
-| rubric | **boxes** |
+| rubric | **blocks** |
 | galley / proof | **ocr** |
 | dagger | **footnotes** |
-| `rubric-v5-4b` etc. | `foundry-boxes-v1-4b` etc. |
+| `rubric-v5-4b` etc. | `foundry-blocks-v1-4b` etc. |
 
 ---
 
@@ -38,15 +38,15 @@ The rename map, applied everywhere as things move:
 
 ---
 
-## 1. Prompt encoder — boxes (was rubric)
+## 1. Prompt encoder — blocks (was rubric)
 
 | | |
 |---|---|
 | **From** | `src/app/features/pdf-picker/services/rubric-encoder.ts` |
-| **To** | `src/boxes/encoder.ts` |
+| **To** | `src/blocks/encoder.ts` |
 | **Status** | NOT YET MOVED |
 
-The single implementation of the boxes prompt format. Exports to carry over:
+The single implementation of the blocks prompt format. Exports to carry over:
 `RubricVersion`, the `RUBRIC_CATEGORIES*` class lists (v1/v3/v5/v6),
 `rubricCategories()`, `rubricVersionFor()`, `encodeBook()`, `EncodedPage`,
 `EncodeOptions`, `toRawPrompt()`, `RUBRIC_STOP`, `parseAnswer()`.
@@ -164,9 +164,9 @@ Changes on the way in:
 
 | From | To | Note |
 |---|---|---|
-| `electron/rubric-server.ts` | folded into `src/serve/llama-server.ts` | thin wrapper; its per-model params become boxes' entry in the adapter table |
+| `electron/rubric-server.ts` | folded into `src/serve/llama-server.ts` | thin wrapper; its per-model params become blocks' entry in the adapter table |
 | `electron/dagger-server.ts` | folded into `src/serve/llama-server.ts` | same |
-| `electron/rubric-bridge.ts` | `src/boxes/run.ts` | request shaping for boxes |
+| `electron/rubric-bridge.ts` | `src/blocks/run.ts` | request shaping for blocks |
 
 ---
 
@@ -276,7 +276,7 @@ be resumable — not the ownership machinery.
 
 | From | To | Note |
 |---|---|---|
-| `electron/rubric-predictions.ts` | `src/boxes/predictions.ts` | prediction storage/shape |
+| `electron/rubric-predictions.ts` | `src/blocks/predictions.ts` | prediction storage/shape |
 | `electron/corpus-ocr-run.ts` | *stays* | corpus-building, BookForge-side |
 
 ---
@@ -316,7 +316,7 @@ The dependency order, roughly:
    weights, and it is the least entangled code in the list.
 2. **`serve/`** — binary resolution + llama-server lifecycle + adapter swap.
    Prove `/completion` round-trips verbatim before anything depends on it.
-3. **`boxes/`** — encoder moves byte-exact, replay-verified. This is the one to
+3. **`blocks/`** — encoder moves byte-exact, replay-verified. This is the one to
    get right; the other two adapters follow its pattern.
 4. **`scan/`** — tesseract pin first, then the `bands.py` port with fixtures.
 5. **`ocr/`** and **`footnotes/`** — appliers move with their eval harnesses.

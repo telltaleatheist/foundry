@@ -6,7 +6,7 @@
  * function calls: every stage writes its artifact to a documented, stable path
  * and the EPUB is merely the last consumer. That makes these seven files an API
  * with an external consumer (BookForge paints pdf-picker's category layer
- * straight out of `boxes/blocks.json`), and an API needs two properties this
+ * straight out of `blocks/blocks.json`), and an API needs two properties this
  * module supplies and nothing else does:
  *
  *  1. **A format version per file, checked on every read.** A reader that meets
@@ -31,8 +31,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname, join } from 'node:path';
 
 import type { Box } from '../scan/bands.js';
-import type { BoxesCategory } from '../boxes/encoder.js';
-import { BOXES_CATEGORIES_V6 } from '../boxes/encoder.js';
+import type { BlocksCategory } from '../blocks/encoder.js';
+import { BLOCKS_CATEGORIES_V6 } from '../blocks/encoder.js';
 import type { Edit, RejectedEdit } from '../ocr/edits.js';
 import type { FootnoteDeletion } from '../footnotes/applier.js';
 
@@ -51,7 +51,7 @@ export const ARTIFACTS = {
   run: { path: 'run.json', version: 1 },
   scanPages: { path: 'scan/pages.json', version: 1 },
   scanLines: { path: 'scan/lines.json', version: 1 },
-  boxesBlocks: { path: 'boxes/blocks.json', version: 1 },
+  blocks: { path: 'blocks/blocks.json', version: 1 },
   ocrLines: { path: 'ocr/lines.json', version: 1 },
   footnoteDeletions: { path: 'footnotes/deletions.json', version: 1 },
   exportExclusions: { path: 'export/exclusions.json', version: 1 },
@@ -61,7 +61,7 @@ export type ArtifactName = keyof typeof ARTIFACTS;
 
 /**
  * Which shape belongs to which file. Declared as a map, not left to inference,
- * so `writeArtifact(dir, 'boxesBlocks', …)` is checked against `BlocksArtifact`
+ * so `writeArtifact(dir, 'blocks', …)` is checked against `BlocksArtifact`
  * at the call site — a stage writing the wrong shape into the right path is a
  * compile error rather than a reader's problem later.
  */
@@ -69,7 +69,7 @@ export interface ArtifactPayloads {
   run: RunArtifact;
   scanPages: ScanPagesArtifact;
   scanLines: ScanLinesArtifact;
-  boxesBlocks: BlocksArtifact;
+  blocks: BlocksArtifact;
   ocrLines: OcrLinesArtifact;
   footnoteDeletions: FootnoteDeletionsArtifact;
   exportExclusions: ExclusionsArtifact;
@@ -106,8 +106,8 @@ export class ArtifactVersionError extends ArtifactError {
 
 // ── shapes ──────────────────────────────────────────────────────────────────
 
-export type StageName = 'scan' | 'boxes' | 'ocr' | 'footnotes' | 'export';
-export const STAGE_NAMES: readonly StageName[] = ['scan', 'boxes', 'ocr', 'footnotes', 'export'];
+export type StageName = 'scan' | 'blocks' | 'ocr' | 'footnotes' | 'export';
+export const STAGE_NAMES: readonly StageName[] = ['scan', 'blocks', 'ocr', 'footnotes', 'export'];
 
 export type StageStatus = 'pending' | 'running' | 'done' | 'failed';
 const STAGE_STATUSES: readonly StageStatus[] = ['pending', 'running', 'done', 'failed'];
@@ -154,7 +154,7 @@ export interface RunArtifact {
   /** Model ids as they were resolved. The version in the id is load-bearing. */
   models: {
     base?: string;
-    boxes?: string;
+    blocks?: string;
     ocr?: string;
     footnotes?: string;
   };
@@ -197,7 +197,7 @@ export interface ScanLinesArtifact {
 }
 
 /**
- * The geometry facts §9d feeds the boxes model as explicit per-block numbers,
+ * The geometry facts §9d feeds the blocks model as explicit per-block numbers,
  * so it weighs evidence instead of re-deriving arithmetic from coordinates.
  * The same four facts drive the deterministic grouping rules, which is why they
  * are persisted rather than recomputed: the export must be able to explain a
@@ -240,7 +240,7 @@ export interface Block {
   bbox: Box;
   /** The `scan/lines.json` ids this block was built from, in reading order. */
   lineIds: string[];
-  category: BoxesCategory;
+  category: BlocksCategory;
   continues?: ContinuesBit;
   geometry: BlockGeometry;
 }
@@ -421,14 +421,14 @@ function bbox(file: string, where: string, v: unknown): Box {
   return [x0, y0, x1, y1];
 }
 
-const LEGAL_CATEGORIES = new Set<string>(BOXES_CATEGORIES_V6);
+const LEGAL_CATEGORIES = new Set<string>(BLOCKS_CATEGORIES_V6);
 
-function category(file: string, where: string, v: unknown): BoxesCategory {
+function category(file: string, where: string, v: unknown): BlocksCategory {
   const s = str(file, where, v);
   if (!LEGAL_CATEGORIES.has(s)) {
-    fail(file, `${where} is "${s}", which is not a boxes category (${[...LEGAL_CATEGORIES].join(', ')})`);
+    fail(file, `${where} is "${s}", which is not a blocks category (${[...LEGAL_CATEGORIES].join(', ')})`);
   }
-  return s as BoxesCategory;
+  return s as BlocksCategory;
 }
 
 function oneOf<T extends string>(file: string, where: string, v: unknown, legal: readonly T[]): T {
@@ -458,6 +458,23 @@ export function parseRun(text: string, file = ARTIFACTS.run.path): RunArtifact {
   const tess = obj(file, 'tesseract', root['tesseract']);
   const models = obj(file, 'models', root['models']);
   const stagesRaw = obj(file, 'stages', root['stages']);
+
+  /*
+   * The `boxes` stage was renamed `blocks` (Aug 2026), pre-release, with no
+   * compatibility arm. A run directory written before the rename records the
+   * old key, and the loop below would reject it with a bare "stages.blocks must
+   * be an object, found undefined" — true, but it names neither the cause nor
+   * the fix. Say the rename.
+   */
+  if (stagesRaw['boxes'] !== undefined && stagesRaw['blocks'] === undefined) {
+    fail(
+      file,
+      'stages.boxes is present and stages.blocks is not. This run directory predates the '
+      + 'rename of the `boxes` stage to `blocks`, and it is NOT read with the old name — '
+      + 'the artifacts moved too (`boxes/blocks.json` is now `blocks/blocks.json`). '
+      + 'Start a fresh run; there is no migration.',
+    );
+  }
 
   const stages = {} as Record<StageName, StageState>;
   for (const name of STAGE_NAMES) {
@@ -491,7 +508,7 @@ export function parseRun(text: string, file = ARTIFACTS.run.path): RunArtifact {
     },
     models: {
       base: optStr(file, 'models.base', models['base']),
-      boxes: optStr(file, 'models.boxes', models['boxes']),
+      blocks: optStr(file, 'models.blocks', models['blocks']),
       ocr: optStr(file, 'models.ocr', models['ocr']),
       footnotes: optStr(file, 'models.footnotes', models['footnotes']),
     },
@@ -575,9 +592,9 @@ export function parseCalibration(file: string, where: string, v: unknown): Calib
   };
 }
 
-export function parseBlocks(text: string, file = ARTIFACTS.boxesBlocks.path): BlocksArtifact {
+export function parseBlocks(text: string, file = ARTIFACTS.blocks.path): BlocksArtifact {
   const root = obj(file, 'root', json(file, text));
-  checkVersion(file, root, ARTIFACTS.boxesBlocks.version);
+  checkVersion(file, root, ARTIFACTS.blocks.version);
   const calibration = parseCalibration(file, 'calibration', root['calibration']);
   const seen = new Set<string>();
   const blocks = arr(file, 'blocks', root['blocks']).map((raw, i) => {
@@ -615,7 +632,7 @@ export function parseBlocks(text: string, file = ARTIFACTS.boxesBlocks.path): Bl
       },
     };
   });
-  return { formatVersion: ARTIFACTS.boxesBlocks.version, calibration, blocks };
+  return { formatVersion: ARTIFACTS.blocks.version, calibration, blocks };
 }
 
 export function parseOcrLines(text: string, file = ARTIFACTS.ocrLines.path): OcrLinesArtifact {
@@ -751,7 +768,7 @@ export const readScanPages = (runDir: string): ScanPagesArtifact =>
 export const readScanLines = (runDir: string): ScanLinesArtifact =>
   parseScanLines(readText(runDir, 'scanLines'));
 export const readBlocks = (runDir: string): BlocksArtifact =>
-  parseBlocks(readText(runDir, 'boxesBlocks'));
+  parseBlocks(readText(runDir, 'blocks'));
 export const readOcrLines = (runDir: string): OcrLinesArtifact =>
   parseOcrLines(readText(runDir, 'ocrLines'));
 export const readFootnoteDeletions = (runDir: string): FootnoteDeletionsArtifact =>

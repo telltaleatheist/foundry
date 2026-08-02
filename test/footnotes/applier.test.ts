@@ -14,7 +14,7 @@ import {
   splitForFootnotes,
 } from '../../src/footnotes/applier.js';
 import { FOOTNOTES_STOP, FOOTNOTES_SYSTEM_PROMPT } from '../../src/footnotes/prompt.js';
-import { BOXES_STOP, toRawPrompt } from '../../src/boxes/encoder.js';
+import { BLOCKS_STOP, toRawPrompt } from '../../src/blocks/encoder.js';
 
 // ── the subsequence guard ───────────────────────────────────────────────────
 
@@ -149,7 +149,7 @@ test('the prompt is the trained-against string in the trained-against template',
   assert.equal(prompts.length, 1);
   assert.equal(prompts[0][0], toRawPrompt({ system: FOOTNOTES_SYSTEM_PROMPT, user: 'Germany.*' }));
   assert.ok(prompts[0][0].includes('<think>\n\n</think>'), 'the empty think block is missing');
-  assert.equal(FOOTNOTES_STOP, BOXES_STOP);
+  assert.equal(FOOTNOTES_STOP, BLOCKS_STOP);
 });
 
 test('identical texts are asked about once and share one plan entry', async () => {

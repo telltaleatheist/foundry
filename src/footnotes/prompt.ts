@@ -5,12 +5,12 @@
  *
  * The prompt has to arrive VERBATIM, in the Qwen3 template with thinking
  * disabled — the empty `<think>\n\n</think>` block a stock template omits. That
- * template lives in `src/boxes/encoder.ts` (`toRawPrompt`) and is imported, not
+ * template lives in `src/blocks/encoder.ts` (`toRawPrompt`) and is imported, not
  * re-typed: a near-miss here would read as a bad model rather than a bad wire
  * hop, which is the single hardest failure in this area to diagnose.
  * See ARCHITECTURE §4.
  */
-import { BOXES_STOP } from '../boxes/encoder.js';
+import { BLOCKS_STOP } from '../blocks/encoder.js';
 
 /**
  * The training system prompt, byte for byte. Changing a word here changes the
@@ -24,9 +24,9 @@ export const FOOTNOTES_SYSTEM_PROMPT =
 /**
  * What the model emits at the end of an answer; the server must stop here.
  *
- * The same token as boxes, and deliberately the same constant rather than a
+ * The same token as blocks, and deliberately the same constant rather than a
  * second copy of the string: both fine-tunes were trained under one chat
  * template, so one of these drifting from the other is a wire bug that presents
  * as a model bug.
  */
-export const FOOTNOTES_STOP = BOXES_STOP;
+export const FOOTNOTES_STOP = BLOCKS_STOP;

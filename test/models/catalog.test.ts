@@ -26,15 +26,15 @@ const HASH_C = 'c'.repeat(64);
 
 function entry(over: Partial<FoundryModelDef> = {}): FoundryModelDef {
   return {
-    id: 'foundry-boxes-v1-4b',
+    id: 'foundry-blocks-v1-4b',
     name: 'Page layout adapter',
-    filename: 'foundry-boxes-v1-4b.gguf',
-    url: 'https://huggingface.co/owenmorgan/foundry/resolve/main/foundry-boxes-v1-4b.gguf',
+    filename: 'foundry-blocks-v1-4b.gguf',
+    url: 'https://huggingface.co/owenmorgan/foundry/resolve/main/foundry-blocks-v1-4b.gguf',
     sha256: HASH_A,
     bytes: 1024,
     rank: 10,
     kind: 'adapter',
-    adapter: 'boxes',
+    adapter: 'blocks',
     note: 'test entry',
     ...over,
   };
@@ -56,7 +56,7 @@ describe('the shipped catalog', () => {
     // Two different problems with two different remedies. Conflating them sends
     // people looking in their own filesystem for something never uploaded.
     expect(() => requireDefaultModel('base')).toThrow(/No base model is published yet/);
-    expect(() => requireDefaultModel('boxes')).toThrow(/catalog in src\/models\/catalog.ts is empty/);
+    expect(() => requireDefaultModel('blocks')).toThrow(/catalog in src\/models\/catalog.ts is empty/);
     expect(defaultModelFor('ocr')).toBeUndefined();
     expect(getModelDef('foundry:4b')).toBeUndefined();
   });
@@ -77,7 +77,7 @@ describe('parseModelId', () => {
   });
 
   test('all three stages parse', () => {
-    for (const stage of ['boxes', 'ocr', 'footnotes'] as const) {
+    for (const stage of ['blocks', 'ocr', 'footnotes'] as const) {
       expect(parseModelId(`foundry-${stage}-v1-4b`).adapter).toBe(stage);
     }
   });
@@ -86,7 +86,7 @@ describe('parseModelId', () => {
     // This is the load-bearing case (ARCHITECTURE §3): a version-less id read as
     // v1 gets a prompt advertising a retired taxonomy. It does not error — it
     // just scores worse, and reads as an undertrained model.
-    expect(() => parseModelId('foundry-boxes-4b')).toThrow(/version segment is load-bearing/);
+    expect(() => parseModelId('foundry-blocks-4b')).toThrow(/version segment is load-bearing/);
   });
 
   test('an unknown stage is rejected', () => {
@@ -94,7 +94,7 @@ describe('parseModelId', () => {
   });
 
   test('the old BookForge ids do not parse', () => {
-    // rubric → boxes, galley/proof → ocr, dagger → footnotes. An id that
+    // rubric → blocks, galley/proof → ocr, dagger → footnotes. An id that
     // survived the rename would silently be an id nothing can serve.
     expect(() => parseModelId('rubric-v5-4b')).toThrow(/Malformed model id/);
     expect(() => parseModelId('dagger-v1-4b')).toThrow(/Malformed model id/);
@@ -121,7 +121,7 @@ describe('assertCatalogValid', () => {
     // installed" the moment the first is downloaded.
     expect(() => assertCatalogValid([
       entry(),
-      entry({ id: 'foundry-boxes-v2-4b', sha256: HASH_B }),
+      entry({ id: 'foundry-blocks-v2-4b', sha256: HASH_B }),
     ])).toThrow(/duplicate filename/);
   });
 
@@ -130,12 +130,12 @@ describe('assertCatalogValid', () => {
   });
 
   test('rejects an adapter field that contradicts the id', () => {
-    expect(() => assertCatalogValid([entry({ adapter: 'ocr' })])).toThrow(/but its id names 'boxes'/);
+    expect(() => assertCatalogValid([entry({ adapter: 'ocr' })])).toThrow(/but its id names 'blocks'/);
   });
 
   test('rejects a base that claims an adapter', () => {
     expect(() => assertCatalogValid([
-      entry({ id: 'foundry:4b', kind: 'base', adapter: 'boxes' }),
+      entry({ id: 'foundry:4b', kind: 'base', adapter: 'blocks' }),
     ])).toThrow(/must not name an adapter/);
   });
 
@@ -159,15 +159,15 @@ describe('assertCatalogValid', () => {
   });
 
   test('rejects a malformed id', () => {
-    expect(() => assertCatalogValid([entry({ id: 'boxes' })])).toThrow(/Malformed model id/);
+    expect(() => assertCatalogValid([entry({ id: 'blocks' })])).toThrow(/Malformed model id/);
   });
 });
 
 describe('rank picks the default', () => {
   const catalog: FoundryModelDef[] = [
-    entry({ id: 'foundry-boxes-v1-4b', filename: 'b1.gguf', sha256: HASH_A, rank: 10 }),
-    entry({ id: 'foundry-boxes-v3-4b', filename: 'b3.gguf', sha256: HASH_B, rank: 30 }),
-    entry({ id: 'foundry-boxes-v2-4b', filename: 'b2.gguf', sha256: HASH_C, rank: 20 }),
+    entry({ id: 'foundry-blocks-v1-4b', filename: 'b1.gguf', sha256: HASH_A, rank: 10 }),
+    entry({ id: 'foundry-blocks-v3-4b', filename: 'b3.gguf', sha256: HASH_B, rank: 30 }),
+    entry({ id: 'foundry-blocks-v2-4b', filename: 'b2.gguf', sha256: HASH_C, rank: 20 }),
     entry({
       id: 'foundry-ocr-v1-4b', adapter: 'ocr', filename: 'o1.gguf',
       sha256: 'd'.repeat(64), rank: 99,
@@ -183,14 +183,14 @@ describe('rank picks the default', () => {
   });
 
   test('highest rank wins, not newest version or catalog order', () => {
-    expect(defaultModelFor('boxes', catalog)?.id).toBe('foundry-boxes-v3-4b');
+    expect(defaultModelFor('blocks', catalog)?.id).toBe('foundry-blocks-v3-4b');
   });
 
   test('a superseded entry is still listed — nobody mid-book loses their install', () => {
-    expect(modelsFor('boxes', catalog).map((m) => m.id)).toEqual([
-      'foundry-boxes-v3-4b',
-      'foundry-boxes-v2-4b',
-      'foundry-boxes-v1-4b',
+    expect(modelsFor('blocks', catalog).map((m) => m.id)).toEqual([
+      'foundry-blocks-v3-4b',
+      'foundry-blocks-v2-4b',
+      'foundry-blocks-v1-4b',
     ]);
   });
 
@@ -200,8 +200,8 @@ describe('rank picks the default', () => {
     expect(modelsFor('base', catalog).map((m) => m.id)).toEqual(['foundry:4b']);
   });
 
-  test('a higher-ranked adapter for another stage is not the boxes default', () => {
-    expect(defaultModelFor('boxes', catalog)?.rank).toBe(30);
+  test('a higher-ranked adapter for another stage is not the blocks default', () => {
+    expect(defaultModelFor('blocks', catalog)?.rank).toBe(30);
   });
 
   test('ordering is deterministic when ranks tie', () => {
@@ -216,12 +216,12 @@ describe('rank picks the default', () => {
 
   test('sorting does not mutate the catalog it was handed', () => {
     const order = catalog.map((m) => m.id);
-    modelsFor('boxes', catalog);
+    modelsFor('blocks', catalog);
     expect(catalog.map((m) => m.id)).toEqual(order);
   });
 
   test('requireDefaultModel returns the ranked default when one exists', () => {
-    expect(requireDefaultModel('boxes', catalog).id).toBe('foundry-boxes-v3-4b');
+    expect(requireDefaultModel('blocks', catalog).id).toBe('foundry-blocks-v3-4b');
     expect(() => requireDefaultModel('footnotes', catalog)).toThrow(/No footnotes model is published/);
   });
 });

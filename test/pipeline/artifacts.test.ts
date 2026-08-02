@@ -1,6 +1,6 @@
 /**
  * The run directory is an API with an external consumer (BookForge reads
- * `boxes/blocks.json` to paint pdf-picker's category layer), so these tests are
+ * `blocks/blocks.json` to paint pdf-picker's category layer), so these tests are
  * about the two properties that make it safe to depend on: a version gate that
  * REFUSES rather than misreads, and validation that names the bad field.
  *
@@ -72,10 +72,10 @@ test('every artifact round-trips through the writer and its reader', () => {
       runId: 'r1', createdAt: '2026-08-01T00:00:00Z', foundryVersion: '0.1.0',
       input: { path: 'in.pdf', sha256: 'abc', pages: 3 },
       tesseract: { version: '5.3.4', binarySha256: 'def', tessdata: ['eng'], dpi: 200 },
-      models: { base: 'foundry:4b', boxes: 'foundry-boxes-v1-4b' },
+      models: { base: 'foundry:4b', blocks: 'foundry-blocks-v1-4b' },
       stages: {
         scan: { status: 'done', startedAt: 'a', finishedAt: 'b' },
-        boxes: { status: 'done' },
+        blocks: { status: 'done' },
         ocr: { status: 'pending' },
         footnotes: { status: 'pending' },
         export: { status: 'failed', error: 'no blocks survived the exclusions' },
@@ -85,7 +85,7 @@ test('every artifact round-trips through the writer and its reader', () => {
     assert.equal(run.formatVersion, ARTIFACTS.run.version);
     assert.equal(run.input.pages, 3);
     assert.equal(run.tesseract.dpi, 200);
-    assert.equal(run.models.boxes, 'foundry-boxes-v1-4b');
+    assert.equal(run.models.blocks, 'foundry-blocks-v1-4b');
     assert.equal(run.stages.export.error, 'no blocks survived the exclusions');
     assert.equal(run.stages.ocr.status, 'pending');
 
@@ -104,7 +104,7 @@ test('every artifact round-trips through the writer and its reader', () => {
     assert.equal(lines.lines[0].wordConfidences?.length, 2);
     assert.equal(lines.lines[1].conf, null);
 
-    writeArtifact(dir, 'boxesBlocks', BLOCKS);
+    writeArtifact(dir, 'blocks', BLOCKS);
     const blocks = readBlocks(dir);
     assert.equal(blocks.blocks.length, 2);
     assert.equal(blocks.blocks[1].continues?.value, true);
@@ -161,14 +161,14 @@ test('writes are atomic: no temp file is left behind', () => {
     writeArtifact(dir, 'scanPages', { pages: [] });
     assert.equal(existsSync(`${artifactPath(dir, 'scanPages')}.tmp`), false);
     assert.equal(hasArtifact(dir, 'scanPages'), true);
-    assert.equal(hasArtifact(dir, 'boxesBlocks'), false);
+    assert.equal(hasArtifact(dir, 'blocks'), false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
 test('paths follow the documented layout', () => {
-  assert.equal(artifactPath('/r', 'boxesBlocks'), '/r/boxes/blocks.json');
+  assert.equal(artifactPath('/r', 'blocks'), '/r/blocks/blocks.json');
   assert.equal(artifactPath('/r', 'scanLines'), '/r/scan/lines.json');
   assert.equal(artifactPath('/r', 'exportExclusions'), '/r/export/exclusions.json');
   assert.equal(epubPath('/r'), '/r/export/book.epub');
@@ -179,12 +179,12 @@ test('paths follow the documented layout', () => {
 test('an unknown formatVersion is REFUSED, naming the file and both versions', () => {
   const dir = scratch();
   try {
-    put(dir, 'boxesBlocks', { ...BLOCKS, formatVersion: 2 });
+    put(dir, 'blocks', { ...BLOCKS, formatVersion: 2 });
     assert.throws(() => readBlocks(dir), (e: unknown) => {
       assert.ok(e instanceof ArtifactVersionError);
       assert.equal(e.found, 2);
       assert.equal(e.expected, 1);
-      assert.match(e.message, /boxes\/blocks\.json/);
+      assert.match(e.message, /blocks\/blocks\.json/);
       assert.match(e.message, /version 1/);
       return true;
     });
@@ -214,7 +214,7 @@ test('a missing artifact names its path and what produces it', () => {
   try {
     assert.throws(() => readBlocks(dir), (e: unknown) => {
       assert.ok(e instanceof ArtifactError);
-      assert.match(e.message, /boxes\/blocks\.json: not found/);
+      assert.match(e.message, /blocks\/blocks\.json: not found/);
       assert.match(e.message, /run the stage that produces it/);
       return true;
     });
@@ -256,7 +256,7 @@ test('an illegal category is refused and the legal list is printed', () => {
   (bad['blocks'] as Array<Record<string, unknown>>)[0]['category'] = 'front_matter';
   assert.throws(
     () => parseBlocks(JSON.stringify({ formatVersion: 1, ...bad })),
-    /is not a boxes category .*discard/s,
+    /is not a blocks category .*discard/s,
   );
 });
 
@@ -332,7 +332,7 @@ test('a continues confidence outside 0..1 is refused', () => {
 
 test('a failed stage with no message is refused', () => {
   const stages = {
-    scan: { status: 'done' }, boxes: { status: 'done' }, ocr: { status: 'done' },
+    scan: { status: 'done' }, blocks: { status: 'done' }, ocr: { status: 'done' },
     footnotes: { status: 'done' }, export: { status: 'failed' },
   };
   assert.throws(() => parseRun(JSON.stringify({
@@ -343,9 +343,26 @@ test('a failed stage with no message is refused', () => {
   })), /stages\.export is 'failed' with no error message/);
 });
 
+test('a pre-rename run directory is refused by name, not by a bare missing field', () => {
+  // The `boxes` stage became `blocks` pre-release, with no compatibility arm.
+  // The old key must produce a message that says so — the failure a stranger
+  // meets is otherwise "stages.blocks must be an object, found undefined",
+  // which names neither the cause nor the fix.
+  const stages = {
+    scan: { status: 'done' }, boxes: { status: 'done' }, ocr: { status: 'done' },
+    footnotes: { status: 'done' }, export: { status: 'done' },
+  };
+  assert.throws(() => parseRun(JSON.stringify({
+    formatVersion: 1, runId: 'r', createdAt: 'c', foundryVersion: '0',
+    input: { path: 'p', sha256: 's', pages: 1 },
+    tesseract: { version: 'v', binarySha256: 'b', tessdata: [], dpi: 200 },
+    models: { boxes: 'foundry-boxes-v6-4b' }, stages,
+  })), /stages\.boxes is present.*rename of the `boxes` stage to `blocks`.*Start a fresh run/s);
+});
+
 test('an unknown stage status is refused and the legal set printed', () => {
   const stages = {
-    scan: { status: 'skipped' }, boxes: { status: 'done' }, ocr: { status: 'done' },
+    scan: { status: 'skipped' }, blocks: { status: 'done' }, ocr: { status: 'done' },
     footnotes: { status: 'done' }, export: { status: 'done' },
   };
   assert.throws(() => parseRun(JSON.stringify({

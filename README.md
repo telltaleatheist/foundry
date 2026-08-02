@@ -28,8 +28,8 @@ foundry convert --pages page-renders/ --run run/ -o book.epub
  └──────────┘   The ONLY stage that touches the PDF.
       │  blocks.json
       ▼
- ┌──────────┐   adapter: foundry-boxes
- │  boxes   │   What IS this block? body · chapter opening · subheading ·
+ ┌──────────┐   adapter: foundry-blocks
+ │  blocks  │   What IS this block? body · chapter opening · subheading ·
  └──────────┘   running head · page number · footnote · caption · table
       │         fragment · title · discard
       │  blocks.json + categories
@@ -62,7 +62,7 @@ rather than only the EPUB at the end.
 
 ```
 foundry scan      --pages <renders> --run <run>
-foundry boxes     --run <run>
+foundry blocks    --run <run>
 foundry ocr       --run <run>
 foundry footnotes --run <run>
 foundry export    --run <run> -o book.epub [--exclude footnote]... [--exclude-ids ids.txt]
@@ -95,7 +95,7 @@ llama-server's multi-LoRA support.
 
 | Adapter | Id | Was called | Does |
 |---|---|---|---|
-| boxes | `foundry-boxes-v1-4b` | rubric | Labels every text block on a page with what it is |
+| blocks | `foundry-blocks-v1-4b` | rubric | Labels every text block on a page with what it is |
 | ocr | `foundry-ocr-v1-4b` | galley / proof | Repairs Tesseract errors, line level, under the edit contract |
 | footnotes | `foundry-footnotes-v1-4b` | dagger | Removes inline footnote reference markers |
 
@@ -156,8 +156,8 @@ binary it already bundles, rather than shipping a second copy of it.
 
 ```
 BookForge ──spawn──> foundry scan  --pages <its mupdf renders> --run <run>
-          ──spawn──> foundry boxes --run <run> --llama-server <its own>
-          ──reads───> <run>/boxes/blocks.json   (paints pdf-picker's category layer)
+          ──spawn──> foundry blocks --run <run> --llama-server <its own>
+          ──reads───> <run>/blocks/blocks.json   (paints pdf-picker's category layer)
           ──spawn──> foundry export --run <run> -o out.epub --exclude-ids <deleted boxes>
 ```
 
@@ -177,7 +177,7 @@ weights.**
 |---|---|
 | `models list` / `pull` | wired. The catalog is **empty**: no weights are published yet, and both commands say exactly that rather than reporting a missing file. |
 | `scan` | **works.** Verified end to end on fixture pages: pinned Tesseract 5.5.1, band segmentation, `scan/pages.json` + `scan/lines.json` + `run.json`. |
-| `boxes` | wired end to end — block formation, prompt encoding, llama-server lifecycle, answer parsing, `boxes/blocks.json`. Verified against a real trained checkpoint via `--base-model` + `--llama-server`. Stops at the catalog otherwise. |
+| `blocks` | wired end to end — block formation, prompt encoding, llama-server lifecycle, answer parsing, `blocks/blocks.json`. Verified against a real trained checkpoint via `--base-model` + `--llama-server`. Stops at the catalog otherwise. |
 | `ocr` | **blocked on a migration.** The edit contract and applier are here; the trained-against system prompt is still only in BookForgeApp and will not be re-typed (docs/MIGRATION.md §2). The command says so and exits 1. |
 | `footnotes` | wired end to end — prose-block selection, prompt, subsequence-guarded applier, `footnotes/deletions.json`. Verified against a real trained checkpoint. |
 | `export` | **works.** Categories drive the XHTML, the §9d rules assemble the paragraphs, wrap hyphens are healed only on the book's own evidence, and exclusion composes at both granularities. Writes `export/book.epub` + `export/exclusions.json`; `-o` additionally copies. Verified: a real EPUB out of real scanned pages. |
@@ -187,7 +187,7 @@ Local weights can be pointed at directly, which is how the wired stages are
 verified before anything is published:
 
 ```bash
-foundry boxes --run <run> \
+foundry blocks --run <run> \
   --base-model <merged.gguf> \
   --llama-server <path to llama-server>
 ```

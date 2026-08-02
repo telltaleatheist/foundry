@@ -33,7 +33,7 @@ export const OCR_SYSTEM_PROMPT: string = [
 
 /**
  * Qwen3's chat template with thinking DISABLED, built by hand — the same
- * construction as `toRawPrompt()` in src/boxes/encoder.ts and `qwen3_prompt()`
+ * construction as `toRawPrompt()` in src/blocks/encoder.ts and `qwen3_prompt()`
  * in BookForgeApp tools/galley/eval-line.py, which is the harness every score
  * was measured on.
  *
