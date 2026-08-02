@@ -81,6 +81,21 @@ const GAP_MIN_SEPARATION = 0.25;
 const GAP_MIN_UPPER_CENTRE = 1.2;
 
 /**
+ * The largest advance that can still be a PARAGRAPH gap, in pitch units.
+ *
+ * A blank-line separation lands near 1.5x. Anything past about two and a half
+ * lines of travel is a structural jump — the drop from a running head into the
+ * text block, the space above a heading, the fall to a footnote at the foot of
+ * the page — and none of those say anything about how this book opens
+ * paragraphs. Left in, they are the most damaging samples in the set: a running
+ * head appears on EVERY page, so its advance arrives with perfect regularity
+ * and at a paragraph-like share, which is exactly the shape a two-cluster split
+ * is looking for. An indent-style book with running heads would calibrate as
+ * block-style, and then every page's first paragraph would take a false break.
+ */
+const GAP_MAX_SAMPLE = 2.5;
+
+/**
  * A paragraph rhythm: between 5% and 60% of samples in the upper cluster.
  *
  * The floor is set by the longest paragraph a book can average and still be
@@ -332,7 +347,7 @@ export function calibrate(
       ? `the lower cluster sits ${m.lower.toFixed(2)} body heights off the margin — two indent depths, not indent-vs-flush`
       : null);
 
-  const gaps = advances.map(d => d / pitch);
+  const gaps = advances.map(d => d / pitch).filter(r => r <= GAP_MAX_SAMPLE);
   const gap = evaluate(gaps, GAP_MIN_SEPARATION, m =>
     m.upper < GAP_MIN_UPPER_CENTRE
       ? `the upper cluster is only ${m.upper.toFixed(2)}x pitch — wider leading, not a blank line`

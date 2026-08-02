@@ -1,0 +1,40 @@
+{
+  "formatVersion": 1,
+  "runId": "synthetic-indent",
+  "createdAt": "1980-01-01T00:00:00Z",
+  "foundryVersion": "fixture",
+  "input": {
+    "path": "indent.pdf",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "pages": 4
+  },
+  "tesseract": {
+    "version": "5.3.4",
+    "binarySha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "tessdata": [
+      "eng"
+    ],
+    "dpi": 200
+  },
+  "models": {
+    "base": "foundry:4b",
+    "boxes": "foundry-boxes-v6-4b"
+  },
+  "stages": {
+    "scan": {
+      "status": "done"
+    },
+    "boxes": {
+      "status": "done"
+    },
+    "ocr": {
+      "status": "pending"
+    },
+    "footnotes": {
+      "status": "pending"
+    },
+    "export": {
+      "status": "pending"
+    }
+  }
+}
