@@ -27,11 +27,12 @@
  *    at model resolution with the not-published message. An explicit
  *    `--base-model` / `--adapter` path overrides the catalog for anyone holding
  *    a local GGUF — an override, not a fallback.
- *  - **The ocr system prompt has not been migrated.** `src/ocr/edits.ts` carries
- *    the edit contract and the applier, but the trained-against system prompt is
- *    still only in BookForgeApp (`tools/galley/build-dataset.py`, `SYSTEM`).
- *    Re-typing it here would be exactly the second-copy failure the extraction
- *    exists to prevent, so `ocr` names it and stops.
+ *  - **The ocr prompt was MOVED, not re-typed.** `src/ocr/prompt.ts` carries the
+ *    trained-against system prompt, verified byte-identical against
+ *    BookForgeApp's `tools/galley/build-dataset.py` by
+ *    `tools/crosscheck-ocr-prompt.mjs` (recorded in test/ocr/CROSSCHECK.md).
+ *    The stage ships with the per-word guard (`src/ocr/guard.ts`) always on —
+ *    it is part of the measured configuration, not an option.
  *  - **PDF rasterization is not built.** `scan` takes a directory of rendered
  *    page images. BookForge already has a mupdf render pool and supplies them;
  *    standalone PDF input is the next milestone. There is no half-measure here —
@@ -65,6 +66,9 @@ import {
 } from './boxes/encoder.js';
 import { applyFootnoteDeletions, planFootnotes, type FootnoteDeletion } from './footnotes/applier.js';
 import { FOOTNOTES_STOP } from './footnotes/prompt.js';
+import { applyEdits, deriveEdits } from './ocr/edits.js';
+import { ocrWordGuard } from './ocr/guard.js';
+import { extractOcrAnswer, OCR_STOP, toOcrRawPrompt } from './ocr/prompt.js';
 import {
   FOUNDRY_MODELS,
   requireDefaultModel,
@@ -88,6 +92,7 @@ import {
   type Block,
   type BlockGeometry,
   type FootnoteBlockDeletions,
+  type OcrLine,
   type CalibrationVerdict,
   type RunArtifact,
   type ScanLine,
@@ -952,33 +957,46 @@ async function runBoxes(args: ParsedArgs): Promise<void> {
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * The ocr stage's missing piece, stated exactly.
+ * One line through the ship configuration: model → per-word guard → edit
+ * derivation → applier round-trip. The model answers with a whole corrected
+ * line (free text — it CAN invent a word, and nothing in the wire format stops
+ * it), so the artifact is only ever built from an output that survived the
+ * guard AND could be expressed as contract-legal edits.
  *
- * `src/ocr/edits.ts` holds the whole edit contract — `deriveEdits`,
- * `applyEdits`, the verbatim-match rejection rule, the hyphenation JOIN. What it
- * does NOT hold is the system prompt the model was fine-tuned under; that string
- * is still only in BookForgeApp, and MIGRATION.md §2 does not list it as moved.
- *
- * Re-typing it here is not an option, and this is the whole reason the message
- * is this long: a prompt that differs from the trained one by a word does not
- * error, it just makes the model quietly worse, and the natural conclusion is
- * "the model needs more training data" — expensive, and wrong (ARCHITECTURE §4).
- * So the prompt moves verbatim into `src/ocr/prompt.ts` as its own change, with
- * a replay check, exactly as the boxes encoder did.
+ * Rejection is never silent and never fatal: the line ships unchanged and the
+ * artifact records why. That is the measured ship configuration (checkpoint-2
+ * scoring, Aug 1 2026), not a fallback: EN degraded rows 37 → 15 with CER
+ * improving, DE degraded 52 → 29.
  */
-function requireOcrPrompt(): never {
-  throw new Error(
-    `foundry ocr cannot build a prompt: src/ocr/prompt.ts does not exist.\n\n`
-    + `What IS here: src/ocr/edits.ts — the edit contract and the applier `
-    + `(deriveEdits, applyEdits, the verbatim-match rejection, hyphenation as a `
-    + `JOIN).\n`
-    + `What is missing: the trained-against system prompt. It lives in `
-    + `BookForgeApp at tools/galley/build-dataset.py (the SYSTEM constant, ~line `
-    + `207) and has not been migrated — see docs/MIGRATION.md §2.\n\n`
-    + `It must move VERBATIM into src/ocr/prompt.ts. A near-miss does not error; `
-    + `it degrades the model in the way that is hardest to attribute, which is `
-    + `why this stage stops rather than improvising a prompt.`,
-  );
+function repairLine(id: string, src: string, out: string): OcrLine {
+  if (out === src) return { id, text: src, edits: [], rejected: [] };
+
+  const verdict = ocrWordGuard(src, out);
+  if (!verdict.ok) {
+    return { id, text: src, edits: [], rejected: [{ before: out, why: `per-word guard: ${verdict.why}` }] };
+  }
+
+  // Express the accepted correction as contract-legal edits. A pair too far
+  // apart to derive is a rewrite the guard's word-local view could not see.
+  const derived = deriveEdits(src, out);
+  if (!derived) {
+    return {
+      id, text: src, edits: [],
+      rejected: [{ before: out, why: 'edit derivation refused: output too far from the source line' }],
+    };
+  }
+
+  // Round-trip through the applier — the artifact must never claim an edit
+  // list that does not reproduce its own text.
+  const applied = applyEdits(src, derived.edits);
+  if (!applied.ok || applied.text !== out) {
+    return {
+      id, text: src, edits: [],
+      rejected: [{ before: out, why: 'applier round-trip failed to reproduce the model output' }],
+    };
+  }
+
+  return { id, text: out, edits: derived.edits, rejected: [] };
 }
 
 async function runOcr(args: ParsedArgs): Promise<void> {
@@ -990,12 +1008,43 @@ async function runOcr(args: ParsedArgs): Promise<void> {
     const work = lines.filter((l) => l.text.trim().length > 0);
     log(`ocr: ${work.length} non-empty lines of ${lines.length} to repair`);
 
-    // Real resolution, in the real order: with an empty catalog this is the
-    // not-published error; with `--adapter <file.gguf>` it succeeds and the next
-    // line is the honest blocker.
     const plan = resolveStageModels(args, 'ocr');
     log(`ocr: ${describePlan(plan)}`);
-    requireOcrPrompt();
+
+    const server = buildServer(args, 'ocr', plan);
+    const results: OcrLine[] = [];
+    try {
+      let done = 0;
+      for (const line of lines) {
+        if (line.text.trim().length === 0) {
+          results.push({ id: line.id, text: line.text, edits: [], rejected: [] });
+          continue;
+        }
+        const raw = await server.complete({
+          prompt: toOcrRawPrompt(line.text),
+          adapter: plan.adapterPath ? 'ocr' : null,
+          stop: [OCR_STOP],
+          // eval-line.py's budget, exactly: the answer is the line again, so
+          // its own length plus headroom bounds the generation.
+          nPredict: line.text.length + 64,
+        });
+        results.push(repairLine(line.id, line.text, extractOcrAnswer(raw)));
+        done++;
+        if (done % 100 === 0) log(`  ocr: ${done}/${work.length} lines`);
+      }
+    } finally {
+      await server.stop();
+    }
+
+    writeArtifact(runDir, 'ocrLines', { lines: results });
+    recordModel(runDir, 'ocr', plan);
+
+    const touched = results.filter((l) => l.edits.length > 0).length;
+    const refused = results.reduce((n, l) => n + l.rejected.length, 0);
+    log(
+      `ocr: wrote ${ARTIFACTS.ocrLines.path} — ${touched} lines corrected, `
+      + `${refused} outputs refused by the guards, ${lines.length - touched} unchanged`,
+    );
   });
 }
 

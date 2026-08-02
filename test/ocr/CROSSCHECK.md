@@ -102,3 +102,24 @@ finish a word whose other half is on the next line — is generation. The
 test hold that line: derivation refuses to produce an anchor spanning the wrap,
 and an invented `inter- → international` is rejected by the applier because the
 anchor does not occur.
+
+## The system prompt (src/ocr/prompt.ts)
+
+Moved from BookForgeApp `tools/galley/build-dataset.py` (the `SYSTEM`
+constant) on Aug 1 2026 and verified byte-identical by
+`tools/crosscheck-ocr-prompt.mjs`, which parses the Python AST and evaluates
+exactly the SYSTEM assignment rather than regexing the source:
+
+```
+OK — byte-identical.
+  sha256 624b88aab76d45986f3c8797a0ec5d3f2b41100844f86860490f83ae559a53a2
+  length 501 chars, 11 lines
+```
+
+The raw-prompt construction (`toOcrRawPrompt`) and the answer reduction
+(`extractOcrAnswer` = `raw.strip().split('\n')[0].strip()`) mirror
+`qwen3_prompt()` and `_one()` in `tools/galley/eval-line.py` — the harness
+every checkpoint score was measured on. The per-word d≤2 guard
+(`src/ocr/guard.ts`) is the measured ship configuration's other half; its
+acceptance rule is the scoring harness's `wguard` (balanced word substitutions
+only, each within distance 2), enforced whole-line.
