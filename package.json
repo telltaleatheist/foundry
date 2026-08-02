@@ -1,6 +1,6 @@
 {
   "name": "foundry",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Recast poorly scanned PDFs into clean EPUBs. Pinned Tesseract for segmentation, three LoRA adapters on one shared Qwen3-4B base for labelling, OCR repair and footnote-marker removal.",
   "type": "module",
@@ -14,13 +14,14 @@
   "scripts": {
     "start": "bun run src/cli.ts",
     "typecheck": "tsc --noEmit",
-    "build": "bun build src/cli.ts --compile --outfile dist/foundry",
-    "build:mac-arm64": "bun build src/cli.ts --compile --target=bun-darwin-arm64 --outfile dist/foundry-darwin-arm64",
-    "build:mac-x64": "bun build src/cli.ts --compile --target=bun-darwin-x64 --outfile dist/foundry-darwin-x64",
-    "build:linux-x64": "bun build src/cli.ts --compile --target=bun-linux-x64 --outfile dist/foundry-linux-x64",
-    "build:win-x64": "bun build src/cli.ts --compile --target=bun-windows-x64 --outfile dist/foundry-windows-x64.exe",
-    "build:all": "bun run build:mac-arm64 && bun run build:mac-x64 && bun run build:linux-x64 && bun run build:win-x64",
-    "test": "bun test"
+    "build": "tools/release-build.sh host",
+    "build:mac-arm64": "tools/release-build.sh darwin-arm64",
+    "build:mac-x64": "tools/release-build.sh darwin-x64",
+    "build:linux-x64": "tools/release-build.sh linux-x64",
+    "build:win-x64": "tools/release-build.sh windows-x64",
+    "build:all": "tools/release-build.sh",
+    "test": "bun test",
+    "release:package": "tools/release-package.sh"
   },
   "devDependencies": {
     "@types/bun": "latest",

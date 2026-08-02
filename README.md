@@ -12,7 +12,7 @@ It is a single command-line program. End users install no runtime, no Python, no
 Node: the distribution is **three binaries and a set of weights**.
 
 ```
-foundry convert scan.pdf -o book.epub
+foundry convert --pages page-renders/ --run run/ -o book.epub
 ```
 
 ---
@@ -53,9 +53,37 @@ foundry convert scan.pdf -o book.epub
   output.epub
 ```
 
-`foundry convert` runs all five. Each stage is also a standalone command reading
-and writing the same blocks JSON, so a run can be stopped, inspected by hand,
-edited, and resumed.
+`foundry convert` runs all five. Each stage is also a standalone command, and
+they do not pass data hand to hand — **every stage writes its artifact into a
+run directory at a documented path, and the next stage reads it from there**
+(see [`docs/PIPELINE.md`](docs/PIPELINE.md)). So a run can be stopped, inspected
+by hand, edited, and resumed, and BookForge can read the data at every step
+rather than only the EPUB at the end.
+
+```
+foundry scan      --pages <renders> --run <run>
+foundry boxes     --run <run>
+foundry ocr       --run <run>
+foundry footnotes --run <run>
+foundry export    --run <run> -o book.epub [--exclude footnote]... [--exclude-ids ids.txt]
+```
+
+## Page input
+
+**Foundry does not rasterize PDFs yet.** `scan` takes a directory of page
+renders — binary PGM (P5), 8-bit grayscale, **rendered at 200 dpi** — and reads
+them in natural page order.
+
+That is not a placeholder for a missing feature so much as a boundary that is
+currently drawn in the right place: BookForge already has a pooled mupdf.js
+renderer and hands over the pages it has already produced. Standalone PDF input
+is the next milestone, and it must land at 200 dpi — every model here was
+trained against the segmentation of one Tesseract at that resolution, and a
+render at any other silently changes the input distribution (see "the
+strip-down" below).
+
+There is deliberately no "close enough" path: a directory with no PGM pages is
+an error that says what the format is, not a scan of nothing.
 
 ---
 
@@ -127,7 +155,10 @@ ebook2audiobook. It can pass `--llama-server <path>` to reuse the llama.cpp
 binary it already bundles, rather than shipping a second copy of it.
 
 ```
-BookForge ──spawn──> foundry convert in.pdf -o out.epub --llama-server <its own>
+BookForge ──spawn──> foundry scan  --pages <its mupdf renders> --run <run>
+          ──spawn──> foundry boxes --run <run> --llama-server <its own>
+          ──reads───> <run>/boxes/blocks.json   (paints pdf-picker's category layer)
+          ──spawn──> foundry export --run <run> -o out.epub --exclude-ids <deleted boxes>
 ```
 
 Nothing in Foundry knows what an audiobook is.
@@ -139,17 +170,53 @@ and [`docs/MIGRATION.md`](docs/MIGRATION.md) for what still has to move over.
 
 ## Status
 
-**Scaffold.** The command surface exists; every command is a stub that prints
-what the stage will do and exits 1. No code has been migrated yet.
+**v0.1.0 — the scan pipeline runs; the model stages are waiting on published
+weights.**
+
+| | |
+|---|---|
+| `models list` / `pull` | wired. The catalog is **empty**: no weights are published yet, and both commands say exactly that rather than reporting a missing file. |
+| `scan` | **works.** Verified end to end on fixture pages: pinned Tesseract 5.5.1, band segmentation, `scan/pages.json` + `scan/lines.json` + `run.json`. |
+| `boxes` | wired end to end — block formation, prompt encoding, llama-server lifecycle, answer parsing, `boxes/blocks.json`. Verified against a real trained checkpoint via `--base-model` + `--llama-server`. Stops at the catalog otherwise. |
+| `ocr` | **blocked on a migration.** The edit contract and applier are here; the trained-against system prompt is still only in BookForgeApp and will not be re-typed (docs/MIGRATION.md §2). The command says so and exits 1. |
+| `footnotes` | wired end to end — prose-block selection, prompt, subsequence-guarded applier, `footnotes/deletions.json`. Verified against a real trained checkpoint. |
+| `export` | **not implemented** — `src/export/` has not landed. The arguments are parsed and validated against the run so a mistake surfaces now. |
+| `convert` | chains all five. It stops at the first stage that cannot run, and every artifact written before that point stays on disk. |
+
+Local weights can be pointed at directly, which is how the wired stages are
+verified before anything is published:
 
 ```bash
-bun run src/cli.ts --help
-bun run src/cli.ts convert --help
+foundry boxes --run <run> \
+  --base-model <merged.gguf> \
+  --llama-server <path to llama-server>
 ```
 
-Build:
+`--base-model` with no `--adapter` means a **merged** fine-tune: the base answers
+directly and no adapter is applied. With both, the adapter's filename carries the
+version that picks the prompt format.
+
+## Build
 
 ```bash
-bun run build          # this platform
-bun run build:all      # mac arm64/x64, linux x64, windows x64
+bun run typecheck
+bun test
+bun run build            # this machine
+bun run build:all        # darwin arm64/x64, linux x64, windows x64
+tools/release-package.sh # tarballs + checksums.txt into dist/release/
 ```
+
+`tools/release-build.sh` bakes the git commit into the binary, so
+`foundry --version` reports `0.1.0 (a1b2c3d)` and a build from a dirty tree says
+`+dirty` rather than claiming the commit it was nearly built from.
+
+## Install
+
+A release asset is one binary in a tarball. **The vendored Tesseract is not in
+it** — see [`vendor/tesseract/README.md`](vendor/tesseract/README.md) for what a
+portable build per platform actually requires; only `darwin-arm64` is recorded
+today and that copy is not relocatable. Until those exist, run with
+`--tesseract <path>` pointing at a Tesseract 5.5.1 that matches the pin.
+
+`vendor/` is resolved beside the executable (or one directory up), never from
+`PATH`.

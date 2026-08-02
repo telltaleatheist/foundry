@@ -29,11 +29,25 @@ export interface OptionSpec {
   placeholder?: string;
   /** One-line help text. */
   describe: string;
+  /**
+   * Repeatable: every occurrence is COLLECTED, and the option's value is a
+   * string array rather than a string.
+   *
+   * `--exclude footnote --exclude caption` has to mean both, not the last one.
+   * With the default last-wins rule a user who names two categories silently
+   * gets one of them and a book that still contains the other — a quiet
+   * half-obeyed instruction, which is the shape of failure this program exists
+   * to refuse. So repetition is declared per option, and a repeat of an option
+   * that did NOT declare it is an error rather than a silent overwrite.
+   */
+  multiple?: boolean;
 }
+
+export type OptionValue = string | boolean | string[];
 
 export interface ParsedArgs {
   positional: string[];
-  options: Record<string, string | boolean>;
+  options: Record<string, OptionValue>;
 }
 
 export class UsageError extends Error {
@@ -52,7 +66,26 @@ export function parseArgs(argv: readonly string[], specs: readonly OptionSpec[])
   }
 
   const positional: string[] = [];
-  const options: Record<string, string | boolean> = {};
+  const options: Record<string, OptionValue> = {};
+
+  /**
+   * Record a string value, collecting repeats for `multiple` options and
+   * REFUSING them for the rest. A second `--run` is not a correction, it is a
+   * command that means two different things at once.
+   */
+  const setString = (spec: OptionSpec, value: string): void => {
+    if (spec.multiple) {
+      const prior = options[spec.name];
+      options[spec.name] = Array.isArray(prior) ? [...prior, value] : [value];
+      return;
+    }
+    if (options[spec.name] !== undefined) {
+      throw new UsageError(
+        `option --${spec.name} was given more than once, and it takes a single value`,
+      );
+    }
+    options[spec.name] = value;
+  };
 
   let i = 0;
   for (; i < argv.length; i++) {
@@ -80,7 +113,7 @@ export function parseArgs(argv: readonly string[], specs: readonly OptionSpec[])
 
       const value = inlineValue ?? argv[++i];
       if (value === undefined) throw new UsageError(`option --${name} needs a value`);
-      options[spec.name] = value;
+      setString(spec, value);
       continue;
     }
 
@@ -96,7 +129,7 @@ export function parseArgs(argv: readonly string[], specs: readonly OptionSpec[])
 
       const value = argv[++i];
       if (value === undefined) throw new UsageError(`option -${short} needs a value`);
-      options[spec.name] = value;
+      setString(spec, value);
       continue;
     }
 
@@ -104,6 +137,46 @@ export function parseArgs(argv: readonly string[], specs: readonly OptionSpec[])
   }
 
   return { positional, options };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reading values back out
+//
+// Typed accessors rather than reaching into `options` directly, so a command
+// cannot quietly treat a missing option as an empty string. `requireString` is
+// the one that matters: it throws a UsageError naming the option AND what it is
+// for, because "missing --run" is a question about which run directory, and the
+// answer belongs in the error rather than in the help page the reader now has
+// to go find.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function optionalString(args: ParsedArgs, name: string): string | undefined {
+  const value = args.options[name];
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') {
+    throw new UsageError(`option --${name} takes a single value`);
+  }
+  return value;
+}
+
+export function requireString(args: ParsedArgs, name: string, what: string): string {
+  const value = optionalString(args, name);
+  if (value === undefined || value.trim() === '') {
+    throw new UsageError(`--${name} is required: ${what}`);
+  }
+  return value;
+}
+
+export function stringList(args: ParsedArgs, name: string): string[] {
+  const value = args.options[name];
+  if (value === undefined) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') return [value];
+  throw new UsageError(`option --${name} takes values, not a bare flag`);
+}
+
+export function flag(args: ParsedArgs, name: string): boolean {
+  return args.options[name] === true;
 }
 
 /** Render one option as a help line: `  -o, --out <path>    description`. */
