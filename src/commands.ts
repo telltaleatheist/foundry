@@ -235,6 +235,12 @@ const DRY_RUN: OptionSpec = {
   describe: 'Write the report and no EPUB — the measuring pass. --epub only.',
 };
 
+const ASK_EVERYTHING: OptionSpec = {
+  name: 'ask-everything',
+  type: 'boolean',
+  describe: 'Ask about note bodies and index entries too, which are skipped by default. --epub only.',
+};
+
 const OVERRIDES: OptionSpec = {
   name: 'overrides',
   type: 'string',
@@ -1270,7 +1276,7 @@ async function runFootnotes(args: ParsedArgs): Promise<void> {
     return;
   }
 
-  for (const name of ['report', 'output', 'dry-run'] as const) {
+  for (const name of ['report', 'output', 'dry-run', 'ask-everything'] as const) {
     if (args.options[name] !== undefined) {
       throw new UsageError(
         `--${name} belongs to --epub mode. A run writes ${ARTIFACTS.footnoteDeletions.path} `
@@ -1315,6 +1321,7 @@ async function runFootnotesEpub(args: ParsedArgs, epubPath: string): Promise<voi
       epubPath,
       outputPath: dryRun ? null : path.resolve(output!),
       model: describePlan(plan),
+      askEverything: flag(args, 'ask-everything'),
       log,
       // The same wire as run mode: each prompt sent unchanged, one answer per
       // prompt, in order. A short array is a broken generator, and planFootnotes
@@ -1817,17 +1824,31 @@ export const COMMANDS: readonly Command[] = [
       'and CRC they came in with, so the output differs from the input only',
       'where a marker was removed. THE INPUT IS NEVER WRITTEN TO.',
       '',
-      'Table-of-contents lines are not asked about: a unit whose whole text sits',
-      'inside one hyperlink is a navigation entry, and "3The Façade" is exactly',
-      'the shape this model deletes. Headings, list items and table cells are',
-      'not asked about either, matching run mode\'s prose-only rule.',
+      'THREE POPULATIONS ARE NOT ASKED ABOUT, because each has the shape this',
+      'model deletes — digits welded onto prose — without carrying a marker:',
+      '',
+      '  navigation  a unit whose whole text sits inside one hyperlink.',
+      '              "3The Façade" is a table-of-contents line.',
+      '  note body   a unit that OPENS with an intra-book back-link whose text',
+      '              is a number: "1. Himmler and his companions were…". The',
+      '              leading number is the note\'s own label, and deleting it',
+      '              destroys the numbering of the notes section.',
+      '  index entry a short phrase ending in page numbers — "Ahnenerbe',
+      '              (Ancestral Heritage) 260, 266, 271, 275-9" — IN A DOCUMENT',
+      '              that is mostly such units. The shape alone never skips',
+      '              anything; a dateline has it too.',
+      '',
+      'Every skip is counted by reason, per document, in the report, and',
+      '--ask-everything turns the note-body and index skips off. Headings, list',
+      'items and table cells are not asked about either, matching run mode\'s',
+      'prose-only rule.',
       '',
       '--report is required and is the point of a dry run: per-document counts,',
       'every applied deletion with ~80 characters of context either side, and',
       'every refused line verbatim with its reason. That report is how the',
       'false-fire rate gets judged before this is pointed at a library.',
     ].join('\n'),
-    options: [RUN_DIR, EPUB_IN, OUTPUT_EPUB, REPORT, DRY_RUN],
+    options: [RUN_DIR, EPUB_IN, OUTPUT_EPUB, REPORT, DRY_RUN, ASK_EVERYTHING],
     run: runFootnotes,
   },
   {

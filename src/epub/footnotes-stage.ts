@@ -34,7 +34,9 @@ import { deflateRawSync } from 'node:zlib';
 
 import { planFootnotes, type FootnoteGenerator } from '../footnotes/applier.js';
 import { crc32, writeZip, type ZipEntry } from '../export/zip.js';
-import { proseUnits, projectDeletions, spliceSource, type ProseUnit } from './document.js';
+import {
+  isIndexDocument, proseUnits, projectDeletions, spliceSource, type ProseUnit,
+} from './document.js';
 import { readEpubPackage } from './package.js';
 import { parseXml } from './xml.js';
 import { entryText, readZip, METHOD_DEFLATE, type ZipReadEntry } from './zip-read.js';
@@ -48,6 +50,21 @@ export interface FootnoteCounts {
   units: number;
   /** Units skipped because the whole unit was one hyperlink — a TOC line. */
   unitsNavigation: number;
+  /** Units skipped because they open with an intra-book back-link — note bodies. */
+  unitsNoteBody: number;
+  /**
+   * Units skipped because they are index entries: index-shaped AND in a
+   * document dense enough with index-shaped units to BE an index.
+   */
+  unitsIndex: number;
+  /**
+   * Units matching the index SHAPE, whether or not they were skipped.
+   *
+   * Reported so the gate is legible: a document with a high count and
+   * `indexDocument: false` is an index this run decided to ask about anyway,
+   * and a reader of the report can see it rather than deduce it.
+   */
+  unitsIndexShaped: number;
   /** Units actually put to the model. */
   unitsAsked: number;
   /** Units the model proposed at least one deletion for. */
@@ -63,6 +80,8 @@ export interface DocumentReport extends FootnoteCounts {
   path: string;
   /** Did this document's bytes change? */
   edited: boolean;
+  /** Did the density gate call this document an index? */
+  indexDocument: boolean;
 }
 
 export interface AppliedRow {
@@ -104,6 +123,8 @@ export interface EpubFootnotesReport {
   dryRun: boolean;
   generatedAt: string;
   model: string;
+  /** Were the note-body and index skips turned off for this run? */
+  askEverything: boolean;
   totals: FootnoteCounts & { documents: number; documentsEdited: number };
   /** Spine items not read, and why. */
   skipped: Array<{ path: string; why: string }>;
@@ -120,12 +141,23 @@ export interface EpubFootnotesOptions {
   /** What weights answered — recorded in the report, never used to decide anything. */
   model: string;
   generate: FootnoteGenerator;
+  /**
+   * Ask about note bodies and index entries too — `--ask-everything`.
+   *
+   * The two skips are ON by default because the units they remove are, in the
+   * measured books, entirely false-fire risk: a note body's leading number is
+   * the note's own label and an index entry's trailing numbers are page
+   * references, and neither is a marker a narrator would read out. The flag
+   * exists because that is a judgement about books, not a law about them.
+   */
+  askEverything?: boolean;
   log?: (message: string) => void;
 }
 
 function emptyCounts(): FootnoteCounts {
   return {
-    units: 0, unitsNavigation: 0, unitsAsked: 0, unitsFired: 0,
+    units: 0, unitsNavigation: 0, unitsNoteBody: 0, unitsIndex: 0, unitsIndexShaped: 0,
+    unitsAsked: 0, unitsFired: 0,
     deletionsProposed: 0, deletionsApplied: 0, deletionsRejected: 0, elementsRemoved: 0,
   };
 }
@@ -133,6 +165,9 @@ function emptyCounts(): FootnoteCounts {
 function addCounts(into: FootnoteCounts, from: FootnoteCounts): void {
   into.units += from.units;
   into.unitsNavigation += from.unitsNavigation;
+  into.unitsNoteBody += from.unitsNoteBody;
+  into.unitsIndex += from.unitsIndex;
+  into.unitsIndexShaped += from.unitsIndexShaped;
   into.unitsAsked += from.unitsAsked;
   into.unitsFired += from.unitsFired;
   into.deletionsProposed += from.deletionsProposed;
@@ -179,6 +214,39 @@ interface LoadedDocument {
   source: string;
   units: ProseUnit[];
   counts: FootnoteCounts;
+  indexDocument: boolean;
+}
+
+/**
+ * Which units of one document go to the model, and why the rest did not.
+ *
+ * Every unit falls in exactly ONE bucket, in this order — navigation, note
+ * body, index entry, asked — so the four counts add up to the units that have
+ * any text at all, and no unit is skipped twice or skipped silently.
+ */
+function selectUnits(
+  units: readonly ProseUnit[],
+  askEverything: boolean,
+): { asked: ProseUnit[]; counts: FootnoteCounts; indexDocument: boolean } {
+  const counts = emptyCounts();
+  counts.units = units.length;
+  counts.unitsNavigation = units.filter((u) => u.linkOnly).length;
+
+  let candidates = units.filter((u) => !u.linkOnly && u.text.trim().length > 0);
+  if (!askEverything) {
+    counts.unitsNoteBody = candidates.filter((u) => u.noteBody).length;
+    candidates = candidates.filter((u) => !u.noteBody);
+  }
+
+  counts.unitsIndexShaped = candidates.filter((u) => u.indexShaped).length;
+  const indexDocument = !askEverything && isIndexDocument(candidates);
+  if (indexDocument) {
+    counts.unitsIndex = counts.unitsIndexShaped;
+    candidates = candidates.filter((u) => !u.indexShaped);
+  }
+
+  counts.unitsAsked = candidates.length;
+  return { asked: candidates, counts, indexDocument };
 }
 
 /**
@@ -190,6 +258,7 @@ interface LoadedDocument {
  */
 export async function runEpubFootnotes(options: EpubFootnotesOptions): Promise<EpubFootnotesReport> {
   const log = options.log ?? ((): void => {});
+  const askEverything = options.askEverything === true;
   const inputPath = path.resolve(options.epubPath);
   const outputPath = options.outputPath === null ? null : path.resolve(options.outputPath);
   if (outputPath !== null && outputPath === inputPath) {
@@ -221,18 +290,30 @@ export async function runEpubFootnotes(options: EpubFootnotesOptions): Promise<E
     } catch (e) {
       throw new Error(`footnotes: ${doc.path} cannot be parsed: ${(e as Error).message}`);
     }
-    const counts = emptyCounts();
-    counts.units = units.length;
-    counts.unitsNavigation = units.filter((u) => u.linkOnly).length;
-    const asked = units.filter((u) => !u.linkOnly && u.text.trim().length > 0);
-    counts.unitsAsked = asked.length;
-    docs.push({ path: doc.path, source, units: asked, counts });
+    const selected = selectUnits(units, askEverything);
+    docs.push({
+      path: doc.path,
+      source,
+      units: selected.asked,
+      counts: selected.counts,
+      indexDocument: selected.indexDocument,
+    });
+    if (selected.indexDocument) {
+      log(`  footnotes: ${doc.path} is an index — ${selected.counts.unitsIndex} entries not asked about`);
+    }
   }
 
   const texts: string[] = [];
   for (const doc of docs) for (const unit of doc.units) texts.push(unit.text);
   const total = texts.length;
-  log(`footnotes: ${total} prose units to ask about`);
+  const skippedNav = docs.reduce((a, d) => a + d.counts.unitsNavigation, 0);
+  const skippedNote = docs.reduce((a, d) => a + d.counts.unitsNoteBody, 0);
+  const skippedIndex = docs.reduce((a, d) => a + d.counts.unitsIndex, 0);
+  log(
+    `footnotes: ${total} prose units to ask about `
+    + `(skipped ${skippedNav} navigation, ${skippedNote} note bodies, ${skippedIndex} index entries`
+    + `${askEverything ? '; --ask-everything is on, so only navigation was skipped' : ''})`,
+  );
 
   const plan = await planFootnotes(texts, options.generate, {
     onProgress: (done, all) => log(`  footnotes: ${done}/${all} units`),
@@ -283,7 +364,7 @@ export async function runEpubFootnotes(options: EpubFootnotesOptions): Promise<E
 
     const edited = ranges.length > 0;
     if (edited) outputText.set(doc.path, spliceSource(doc.source, ranges));
-    documents.push({ path: doc.path, edited, ...doc.counts });
+    documents.push({ path: doc.path, edited, indexDocument: doc.indexDocument, ...doc.counts });
   }
 
   const totals = { ...emptyCounts(), documents: docs.length, documentsEdited: 0 };
@@ -310,6 +391,7 @@ export async function runEpubFootnotes(options: EpubFootnotesOptions): Promise<E
     dryRun: outputPath === null,
     generatedAt: new Date().toISOString(),
     model: options.model,
+    askEverything,
     totals,
     skipped: pkg.skipped,
     documents,

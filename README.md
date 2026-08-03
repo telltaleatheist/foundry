@@ -101,9 +101,36 @@ something a human judges by reading.
 
 Not asked about, deliberately: headings (an EPUB heading welds the chapter
 number to the title, and a digit welded to a phrase is what this model deletes),
-list items and table cells (matching run mode's prose-only rule), and any unit
-whose whole text sits inside one hyperlink — which is how a table of contents is
-recognised without a filename rule.
+and list items and table cells (matching run mode's prose-only rule).
+
+Three more populations are skipped for the same reason — each has the shape this
+model is trained to delete, digits welded onto prose, without carrying a marker.
+None is recognised by filename or by class attribute:
+
+| skipped | test | why |
+|---|---|---|
+| navigation | the unit's whole text sits inside one hyperlink | `3The Façade` is a table-of-contents line |
+| note body | the unit OPENS with an intra-book back-link whose anchor text is a number | `1. Himmler and his companions were…` — the leading number is the note's own label, and deleting it destroys the numbering of the notes section |
+| index entry | a short phrase ending in page numbers, **in a document that is mostly such units** | `Ahnenerbe (Ancestral Heritage) 260, 266, 271, 275–9` |
+
+The index shape alone never skips anything: a dateline (`July 2008`), a
+copyright line and a bibliography shelfmark (`Fonds 504`) all have it, and all
+three occur in the front matter of the books this was measured on. The document
+has to be an index too — ≥20 index-shaped units and ≥50% of what it would be
+asked about. Measured, the two real index documents score 92% and the highest-
+scoring document that is *not* an index scores 16% on 3 units.
+
+Measured on two real books: **Heinrich Himmler** 10,030 units asked → 3,690
+(3,526 note bodies, 2,814 index entries), with **zero** units skipped in any
+chapter document. **Killing America** 1,323 → 1,003 (320 in-chapter
+`<p class="fn">` note bodies); of the 313 deletions a real model run applied to
+that book, exactly one was inside a note body — and it was the known false fire,
+`2018.Ibid.` → `2018.`
+
+Every skip is counted by reason, per document, in the report, along with the
+index-shaped count for documents the density gate declined. **`--ask-everything`**
+turns the note-body and index skips off; the navigation skip is structural and
+stays.
 
 ## Page input
 

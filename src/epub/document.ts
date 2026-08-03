@@ -68,6 +68,17 @@ export interface ProseUnit {
    * first word, because its links cover only the marker.
    */
   linkOnly: boolean;
+  /**
+   * This unit is the BODY of a note, not prose carrying a marker — so it is
+   * never asked about. See {@link isNoteBody}.
+   */
+  noteBody: boolean;
+  /**
+   * This unit has the shape of an index entry. See {@link isIndexShaped} —
+   * and note that the shape ALONE never skips anything; the document has to
+   * be an index too ({@link isIndexDocument}).
+   */
+  indexShaped: boolean;
 }
 
 /**
@@ -180,7 +191,14 @@ export function extractUnit(element: XmlElement, src: string): ProseUnit {
   };
 
   for (const child of element.children) walk(child);
-  return { element, text, chars, linkOnly: isLinkOnly(element, text, chars) };
+  return {
+    element,
+    text,
+    chars,
+    linkOnly: isLinkOnly(element, text, chars),
+    noteBody: isNoteBody(element, text, chars),
+    indexShaped: isIndexShaped(text),
+  };
 }
 
 /** Is every non-blank character of this unit inside one and the same `<a href>`? */
@@ -201,6 +219,164 @@ function isLinkOnly(element: XmlElement, text: string, chars: readonly CharSourc
     }
     return false;
   }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The two populations that share the marker's SHAPE without being markers
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The model's trained target is "digits welded onto prose". A real book carries
+// two large populations with exactly that shape and no markers in them at all,
+// and asking about either is a false-fire farm rather than a source of recall:
+//
+//  - **Note bodies.** `1. Himmler and his companions were apprehended…` — the
+//    leading number is the note's own back-link, and deleting it destroys the
+//    numbering of the notes section. Heinrich Himmler has 3,526 of these.
+//  - **Index entries.** `Ahnenerbe (Ancestral Heritage) 260, 266, 271, 275–9` —
+//    a phrase with digits welded to the END. Himmler's index is 3,050 units.
+//
+// Neither is recognised by filename or by class attribute. One is STRUCTURE
+// (rule 1), the other is SHAPE plus DOCUMENT DENSITY (rule 2), and each is
+// counted in the report by name.
+
+/** A URL that leaves the book: `https:`, `mailto:`, `//host/…`. */
+const ABSOLUTE_URL = /^[a-z][a-z0-9+.-]*:/i;
+
+/**
+ * Anchor text that could be a note's number: `1`, `12.`, `(3)`, `[7]`, `*`, `†`.
+ *
+ * Deliberately tight. A back-link whose text is a word (`Chapter 2`, `back`) is
+ * a cross-reference in prose, not a note's own number, and the unit it opens is
+ * prose that must still be asked about.
+ */
+const NOTE_ANCHOR = /^[[(]?(?:\d{1,4}|[*†‡§¶#]{1,3})[.):\]]?$/;
+
+/**
+ * Does this unit BEGIN with an intra-book back-link whose text is a number?
+ *
+ * That is the structure of a note body in every EPUB measured, in both of the
+ * layouts publishers use:
+ *
+ *   Killing America, notes inside the chapter document:
+ *     <p class="fn"><span class="fn"><a href="#fn_1" id="fn-1">1.</a></span>Thomas Paine…
+ *   Heinrich Himmler, notes in their own spine documents:
+ *     <blockquote><p><a id="…"/><a href="…_split_009.html#filepos27843">1</a>. Himmler and…
+ *
+ * The three conditions are all load-bearing:
+ *
+ *  - **At the start.** A marker is welded to the END of the sentence it cites.
+ *    A number at the FRONT, before the first word, is the note's own label.
+ *  - **A link that stays in the book.** An `<a href="https://…">` opening a
+ *    paragraph is a citation, not a back-link, and the paragraph is prose.
+ *  - **Numeric anchor text.** See {@link NOTE_ANCHOR}.
+ *
+ * The empty `<a id="…"/>` anchors Calibre scatters through a book contribute no
+ * characters, so they are stepped over for free: the first INK character is what
+ * is asked about, and it lands inside the real link.
+ */
+export function isNoteBody(
+  element: XmlElement,
+  text: string,
+  chars: readonly CharSource[],
+): boolean {
+  let first = -1;
+  for (let i = 0; i < text.length; i++) {
+    if (!/\s/.test(text[i]!)) { first = i; break; }
+  }
+  if (first < 0) return false;
+
+  let anchor: XmlElement | null = null;
+  for (let el: XmlElement | null = chars[first]!.owner; el && el !== element; el = el.parent) {
+    if (el.tag === 'a' && el.attrs.has('href')) { anchor = el; break; }
+  }
+  if (anchor === null) return false;
+
+  const href = anchor.attrs.get('href')!.trim();
+  if (href.length === 0 || ABSOLUTE_URL.test(href) || href.startsWith('//')) return false;
+
+  let label = '';
+  for (let i = 0; i < text.length; i++) {
+    for (let el: XmlElement | null = chars[i]!.owner; el && el !== element; el = el.parent) {
+      if (el === anchor) { label += text[i]; break; }
+    }
+  }
+  return NOTE_ANCHOR.test(label.trim());
+}
+
+/** An index entry is at most this long. Himmler's longest is 91 characters. */
+const INDEX_MAX_LENGTH = 120;
+
+/**
+ * A trailing run of page numbers: ` 260, 266, 271, 275–9`, ` 158`, ` 321–4`.
+ *
+ * Anchored at the end, and the whitespace in front of it is part of the match,
+ * so what precedes it is the entry's head. NOT allowed to end with a full stop:
+ * `He was shot in 1963.` is a sentence and this must not read it as an entry
+ * for "He was shot in" on page 1963.
+ */
+const INDEX_PAGE_LIST =
+  /\s(\d{1,4}(?:\s*[–—-]\s*\d{1,4})?(?:\s*,\s*\d{1,4}(?:\s*[–—-]\s*\d{1,4})?)*)$/;
+
+/**
+ * Does this unit have the SHAPE of an index entry — a short phrase ending in
+ * comma-separated page numbers and ranges?
+ *
+ * **This predicate is not sufficient on its own and is never used on its own.**
+ * `He died in 1945` has the shape and is prose; so do `First published 2012`,
+ * `July 2008` and `Fonds 504`, all three of which it fires on in the Himmler
+ * front matter and bibliography. That is why the skip is gated on
+ * {@link isIndexDocument}: the shape says what a unit looks like, the density
+ * says whether the document it sits in is an index. Measured over both books,
+ * the shape fires on 2,822 units and the gate skips 2,814 of them — every one
+ * inside the two index documents, and none of the eight elsewhere.
+ *
+ * Four rejections narrow it, each paid for by a real false positive:
+ *
+ *  - **Length.** An index entry is a phrase. Prose paragraphs are not.
+ *  - **A head.** ` 260, 266` with nothing before it is a page range in a note.
+ *  - **A letter in the head.** `1 2 3 4 5 6 7 8 / 28 27 26 25 24` is a
+ *    printing-history line, which both books carry in the copyright page.
+ *  - **No sentence punctuation in the head.** `Casualties: 12, 45` is a
+ *    statistic. Costs nothing on the measured index (0 entries lost).
+ */
+export function isIndexShaped(text: string): boolean {
+  const flat = text.trim().replace(/\s+/g, ' ');
+  if (flat.length === 0 || flat.length > INDEX_MAX_LENGTH) return false;
+  const pages = INDEX_PAGE_LIST.exec(flat);
+  if (pages === null) return false;
+  const head = flat.slice(0, flat.length - pages[0].length).trim();
+  if (head.length === 0) return false;
+  if (!/\p{L}/u.test(head)) return false;
+  if (/[.!?;:]/.test(head)) return false;
+  return true;
+}
+
+/** A document has to be at least this many index-shaped units to be an index. */
+export const INDEX_DOCUMENT_MIN_UNITS = 20;
+/** …and they have to be at least this share of the units it would be asked about. */
+export const INDEX_DOCUMENT_MIN_SHARE = 0.5;
+
+/**
+ * Is this document an INDEX — a document where the shape is the whole content?
+ *
+ * The gate that makes {@link isIndexShaped} safe to act on. It is deliberately
+ * a wide margin rather than a tuned threshold: in the measured books the two
+ * index documents score 92%, and the highest-scoring document that is NOT an
+ * index scores 16% on 3 units. Nothing sits near 50%.
+ *
+ * A book whose index shares a document with a chapter therefore has its index
+ * asked about, in full. That is the conservative half of the trade and it is
+ * VISIBLE: the report carries the index-shaped count for every document,
+ * including the ones this gate declined.
+ *
+ * `candidates` is the units the document would otherwise be asked about —
+ * navigation and note bodies already removed, so a notes document whose entries
+ * end in page ranges cannot inflate the denominator.
+ */
+export function isIndexDocument(candidates: readonly ProseUnit[]): boolean {
+  const shaped = candidates.filter((u) => u.indexShaped).length;
+  return shaped >= INDEX_DOCUMENT_MIN_UNITS
+    && shaped >= candidates.length * INDEX_DOCUMENT_MIN_SHARE;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
