@@ -207,3 +207,14 @@ test('the ids inside a removed span are reported, not silently dropped', () => {
   const projection = projectDeletions(units[0]!, [{ before: 'Munich.3', after: 'Munich.' }], src);
   assert.deepEqual(projection.emptied[0]!.ids, ['back3']);
 });
+
+test('a deletion that removes nothing is refused, not counted as an edit', () => {
+  // `6.Ibid. → 6.Ibid.` really does come back from the model on a notes list.
+  // It passes every applier guard and deletes the empty string, which would
+  // inflate "markers removed" with edits that changed nothing.
+  const src = DOC('<p>6.Ibid.</p>');
+  const { out, applied, rejected } = edit(src, [{ before: '6.Ibid.', after: '6.Ibid.' }]);
+  assert.equal(out, src);
+  assert.deepEqual(applied, []);
+  assert.deepEqual(rejected, ['the deletion removes nothing']);
+});

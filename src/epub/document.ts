@@ -222,6 +222,7 @@ export type RejectionReason =
   | 'the replacement is empty'
   | 'the replacement is not the anchor with characters deleted'
   | 'the anchor does not occur in the text'
+  | 'the deletion removes nothing'
   | 'the deletion spans a line break, which has no characters to remove';
 
 export interface RejectedProjection {
@@ -266,6 +267,16 @@ export function projectDeletions(
     if (!after) { rejected.push({ deletion, reason: 'the replacement is empty' }); continue; }
     if (!isDeletionOnly(before, after)) {
       rejected.push({ deletion, reason: 'the replacement is not the anchor with characters deleted' });
+      continue;
+    }
+    if (before === after) {
+      // `6.Ibid. → 6.Ibid.` — a line that announces a marker and then removes
+      // none of it. The applier counts that as an applied edit that deleted the
+      // empty string, which is true and useless: it inflates "markers removed"
+      // with edits that changed nothing, in a report whose whole job is to say
+      // how much of the book moved. Refused by name instead. The text is
+      // identical either way, so the cross-check below is unaffected.
+      rejected.push({ deletion, reason: 'the deletion removes nothing' });
       continue;
     }
     const at = text.indexOf(before);
