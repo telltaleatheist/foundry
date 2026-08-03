@@ -65,6 +65,7 @@ import {
   type TextBlock,
 } from './blocks/encoder.js';
 import { planDisplayRuns, type DisplayRunBlock } from './blocks/display-run-merge.js';
+import { runEpubFootnotes } from './epub/footnotes-stage.js';
 import { applyFootnoteDeletions, planFootnotes, type FootnoteDeletion } from './footnotes/applier.js';
 import { FOOTNOTES_STOP } from './footnotes/prompt.js';
 import { applyEdits, deriveEdits } from './ocr/edits.js';
@@ -212,6 +213,26 @@ const COVER: OptionSpec = {
   type: 'string',
   placeholder: '<image>',
   describe: 'A JPEG or PNG to embed as the cover. Checked by its bytes, not its extension.',
+};
+
+const EPUB_IN: OptionSpec = {
+  name: 'epub',
+  type: 'string',
+  placeholder: '<book.epub>',
+  describe: 'Strip markers from an existing EPUB rather than a run directory. Never written to.',
+};
+
+const REPORT: OptionSpec = {
+  name: 'report',
+  type: 'string',
+  placeholder: '<file.json>',
+  describe: 'Where the review report goes: every deletion in context, every refusal. --epub only.',
+};
+
+const DRY_RUN: OptionSpec = {
+  name: 'dry-run',
+  type: 'boolean',
+  describe: 'Write the report and no EPUB — the measuring pass. --epub only.',
 };
 
 const OVERRIDES: OptionSpec = {
@@ -1220,8 +1241,106 @@ function blockTexts(blocks: readonly Block[], lines: readonly ScanLine[]): Map<s
   return out;
 }
 
+/**
+ * Two inputs, one stage.
+ *
+ * `--run` is the pipeline's own artifact directory; `--epub` is somebody else's
+ * finished book. They are alternatives, not a ladder: naming both is a command
+ * that means two different things at once, and naming neither is a command with
+ * no input. Both are refused by name rather than resolved in some order.
+ */
 async function runFootnotes(args: ParsedArgs): Promise<void> {
-  const runDir = path.resolve(requireString(args, 'run', 'the run directory to read and write'));
+  const epub = optionalString(args, 'epub');
+  const runDir = optionalString(args, 'run');
+
+  if (epub && runDir) {
+    throw new UsageError(
+      '--epub and --run name two different jobs: one edits an existing book, the other '
+      + 'reads a scan foundry made. Pass one.',
+    );
+  }
+  if (!epub && !runDir) {
+    throw new UsageError(
+      'footnotes needs an input: --run <dir> for a foundry run, or --epub <book.epub> '
+      + 'for an existing book.',
+    );
+  }
+  if (epub) {
+    await runFootnotesEpub(args, epub);
+    return;
+  }
+
+  for (const name of ['report', 'output', 'dry-run'] as const) {
+    if (args.options[name] !== undefined) {
+      throw new UsageError(
+        `--${name} belongs to --epub mode. A run writes ${ARTIFACTS.footnoteDeletions.path} `
+        + `into the run directory, and \`foundry export\` builds the book from it.`,
+      );
+    }
+  }
+  await runFootnotesRun(args, path.resolve(runDir!));
+}
+
+/**
+ * EPUB mode: the markers are in publisher markup, not OCR debris.
+ *
+ * Everything about the model path is the run mode's — `resolveStageModels`, the
+ * same server, `planFootnotes`, `FOOTNOTES_STOP`. The stage module owns the
+ * walking and the projection back onto the markup; this function is the wire
+ * and the report file, nothing else.
+ */
+async function runFootnotesEpub(args: ParsedArgs, epubPath: string): Promise<void> {
+  const dryRun = flag(args, 'dry-run');
+  const output = optionalString(args, 'output');
+  const reportPath = path.resolve(requireString(args, 'report', 'where the review report is written'));
+
+  if (dryRun && output) {
+    throw new UsageError('--dry-run writes no EPUB, so -o/--output would be a promise it does not keep');
+  }
+  if (!dryRun && !output) {
+    throw new UsageError(
+      'footnotes --epub needs -o <book.epub> to write the edited book, or --dry-run to '
+      + 'write only the report',
+    );
+  }
+  if (!fs.existsSync(epubPath)) throw new Error(`--epub: no such file: ${epubPath}`);
+
+  const plan = resolveStageModels(args, 'footnotes');
+  log(`footnotes: ${describePlan(plan)}`);
+
+  const server = buildServer(args, 'footnotes', plan);
+  let report;
+  try {
+    report = await runEpubFootnotes({
+      epubPath,
+      outputPath: dryRun ? null : path.resolve(output!),
+      model: describePlan(plan),
+      log,
+      // The same wire as run mode: each prompt sent unchanged, one answer per
+      // prompt, in order. A short array is a broken generator, and planFootnotes
+      // throws on it rather than padding it out.
+      generate: async (prompts) => {
+        const answers: string[] = [];
+        for (const prompt of prompts) {
+          answers.push(await server.complete({
+            prompt,
+            adapter: plan.adapterPath ? 'footnotes' : null,
+            stop: [FOOTNOTES_STOP],
+          }));
+        }
+        return answers;
+      },
+    });
+  } finally {
+    await server.stop();
+  }
+
+  fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+  fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+  log(`footnotes: wrote ${reportPath}`);
+}
+
+async function runFootnotesRun(args: ParsedArgs, runDir: string): Promise<void> {
   loadRun(runDir);
 
   await withStageRecord(runDir, 'footnotes', async () => {
@@ -1662,7 +1781,7 @@ export const COMMANDS: readonly Command[] = [
   {
     name: 'footnotes',
     summary: 'Strip inline footnote reference markers (adapter: foundry-footnotes).',
-    usage: '--run <dir>',
+    usage: '--run <dir>  |  --epub <in.epub> --report <file.json> [-o <out.epub> | --dry-run]',
     detail: [
       'Finds the footnote reference markers left inline in the body text — †, ‡,',
       '*, superscript numbers, and the OCR debris they turn into — and deletes',
@@ -1680,8 +1799,35 @@ export const COMMANDS: readonly Command[] = [
       '',
       'Reads  <run>/blocks/blocks.json',
       'Writes <run>/footnotes/deletions.json',
+      '',
+      'EPUB MODE — `--epub <in.epub>`, for a book that is already a book:',
+      '',
+      '    foundry footnotes --epub in.epub --report review.json --dry-run',
+      '    foundry footnotes --epub in.epub --report review.json -o out.epub',
+      '',
+      'The markers in a publisher\'s EPUB are markup, not OCR debris:',
+      '<sup><a href="#fn3">3</a></sup>. So the text of every paragraph and block',
+      'quote goes to the model in reading order, and the deletions are projected',
+      'back onto the DOM text nodes they came from — a marker that spans a text',
+      'node boundary, or that is the whole content of a <sup> or an <a>, is',
+      'handled by that projection. An inline element a deletion empties is',
+      'removed with it; an empty anchor left behind is a dead artifact.',
+      '',
+      'Documents nobody edited are copied through with the exact bytes, method',
+      'and CRC they came in with, so the output differs from the input only',
+      'where a marker was removed. THE INPUT IS NEVER WRITTEN TO.',
+      '',
+      'Table-of-contents lines are not asked about: a unit whose whole text sits',
+      'inside one hyperlink is a navigation entry, and "3The Façade" is exactly',
+      'the shape this model deletes. Headings, list items and table cells are',
+      'not asked about either, matching run mode\'s prose-only rule.',
+      '',
+      '--report is required and is the point of a dry run: per-document counts,',
+      'every applied deletion with ~80 characters of context either side, and',
+      'every refused line verbatim with its reason. That report is how the',
+      'false-fire rate gets judged before this is pointed at a library.',
     ].join('\n'),
-    options: [RUN_DIR],
+    options: [RUN_DIR, EPUB_IN, OUTPUT_EPUB, REPORT, DRY_RUN],
     run: runFootnotes,
   },
   {
