@@ -68,6 +68,43 @@ foundry footnotes --run <run>
 foundry export    --run <run> -o book.epub [--exclude footnote]... [--exclude-ids ids.txt]
 ```
 
+## Stripping markers from a book that is already a book
+
+`footnotes` has a second input. A publisher's EPUB carries its reference markers
+as markup — `<sup><a href="#fn3">3</a></sup>` — rather than as the OCR debris the
+run directory holds, and a narrator reads them out as numbers either way.
+
+```
+foundry footnotes --epub in.epub --report review.json --dry-run
+foundry footnotes --epub in.epub --report review.json -o out.epub
+```
+
+`--epub` and `--run` are alternatives; naming both, or neither, is refused by
+name. The model path is identical in the two modes — same prompt, same stop
+token, same subsequence-guarded applier. What differs is the walk and the
+**projection**: the text of every `<p>` and `<blockquote>` in spine order goes to
+the model, and the deletions it returns are mapped back onto the DOM text nodes
+they came from, whether the marker sits inside one text node, spans a boundary,
+or is the entire content of a `<sup>` or an `<a>` — an inline element a deletion
+empties is removed with it.
+
+Two promises about bytes. **The input is never written to.** And a document
+nobody edited is copied through with the exact bytes, method and CRC it arrived
+with — nothing is re-serialized — so a diff between the book that went in and
+the book that came out is exactly the paragraphs that changed.
+
+`--report` is required, and a dry run is what it is for: per-document counts,
+every applied deletion with ~80 characters of context either side, and every
+refused line verbatim with its reason. The number that decides whether this may
+be pointed at a library is the false-fire rate on clean prose, and that is
+something a human judges by reading.
+
+Not asked about, deliberately: headings (an EPUB heading welds the chapter
+number to the title, and a digit welded to a phrase is what this model deletes),
+list items and table cells (matching run mode's prose-only rule), and any unit
+whose whole text sits inside one hyperlink — which is how a table of contents is
+recognised without a filename rule.
+
 ## Page input
 
 **Foundry does not rasterize PDFs yet.** `scan` takes a directory of page
@@ -179,7 +216,7 @@ weights.**
 | `scan` | **works.** Verified end to end on fixture pages: pinned Tesseract 5.5.1, band segmentation, `scan/pages.json` + `scan/lines.json` + `run.json`. |
 | `blocks` | wired end to end — block formation, prompt encoding, llama-server lifecycle, answer parsing, `blocks/blocks.json`. Verified against a real trained checkpoint via `--base-model` + `--llama-server`. Stops at the catalog otherwise. |
 | `ocr` | **blocked on a migration.** The edit contract and applier are here; the trained-against system prompt is still only in BookForgeApp and will not be re-typed (docs/MIGRATION.md §2). The command says so and exits 1. |
-| `footnotes` | wired end to end — prose-block selection, prompt, subsequence-guarded applier, `footnotes/deletions.json`. Verified against a real trained checkpoint. |
+| `footnotes` | wired end to end — prose-block selection, prompt, subsequence-guarded applier, `footnotes/deletions.json`. Verified against a real trained checkpoint. **`--epub` also works**: an existing book in, the same model path, an edited book and a review report out, measured on two real books. |
 | `export` | **works.** Categories drive the XHTML, the §9d rules assemble the paragraphs, wrap hyphens are healed only on the book's own evidence, and exclusion composes at both granularities. Writes `export/book.epub` + `export/exclusions.json`; `-o` additionally copies. Verified: a real EPUB out of real scanned pages. |
 | `convert` | chains all five. It stops at the first stage that cannot run — today that is `ocr` — and every artifact written before that point stays on disk, with the failure recorded in `run.json`. |
 
