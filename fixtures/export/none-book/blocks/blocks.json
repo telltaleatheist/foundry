@@ -1,5 +1,6 @@
 {
-  "formatVersion": 1,
+  "formatVersion": 2,
+  "formation": "gap-v0+para-split-v1+display-run-v1",
   "calibration": {
     "convention": "none",
     "degraded": true,

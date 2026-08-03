@@ -61,7 +61,7 @@ export interface CalibrationLine {
  * jitter. A real first-line indent is one to two ems; half a body height is
  * comfortably below the smallest real one and comfortably above baseline noise.
  */
-const INDENT_MIN_SEPARATION = 0.45;
+export const INDENT_MIN_SEPARATION = 0.45;
 
 /**
  * The flush cluster must actually be flush. If the lower cluster sits a third
@@ -116,8 +116,17 @@ const MAX_UPPER_SHARE = 0.60;
 const MIN_SAMPLES = 12;
 
 // ── robust statistics ───────────────────────────────────────────────────────
+//
+// These four are EXPORTED for `splitter.ts` and for no other reason. The
+// paragraph-aware splitter asks the same question this file asks — "are these
+// samples two clusters at a paragraph rhythm, and where is the book's own
+// midpoint between them?" — over a different population (line insets measured
+// against each BLOCK's own margin, rather than the book's). It has to be the
+// same question, answered by the same code: two implementations of "is this a
+// rhythm" would drift, and the one that drifted would be the one deciding where
+// paragraphs start. The constants above are shared for the same reason.
 
-function median(values: readonly number[]): number {
+export function median(values: readonly number[]): number {
   if (values.length === 0) return 0;
   const s = [...values].sort((a, b) => a - b);
   const mid = s.length >> 1;
@@ -141,7 +150,7 @@ function median(values: readonly number[]): number {
  * the dependence on where the bucket grid happens to fall; the median is then
  * taken over the whole window, so the answer does not snap to a grid either.
  */
-function modalCentre(values: readonly number[], bucketWidth: number): number {
+export function modalCentre(values: readonly number[], bucketWidth: number): number {
   if (values.length === 0) return 0;
   const w = Math.max(1e-6, bucketWidth);
   const buckets = new Map<number, number[]>();
@@ -162,7 +171,7 @@ function modalCentre(values: readonly number[], bucketWidth: number): number {
   return median(windowOf(bestKey));
 }
 
-interface TwoMeans {
+export interface TwoMeans {
   lower: number;
   upper: number;
   upperShare: number;
@@ -181,7 +190,7 @@ interface TwoMeans {
  * A degenerate input (every value identical) converges to two equal centroids
  * and a separation of zero, which is exactly the "no signal" answer wanted.
  */
-function twoMeans(values: readonly number[]): TwoMeans {
+export function twoMeans(values: readonly number[]): TwoMeans {
   const s = [...values].sort((a, b) => a - b);
   let lower = s[0];
   let upper = s[s.length - 1];
@@ -204,7 +213,7 @@ function twoMeans(values: readonly number[]): TwoMeans {
   return { lower, upper, upperShare: s.length ? above / s.length : 0, threshold: mid };
 }
 
-function evaluate(
+export function evaluateClusterSignal(
   samples: readonly number[],
   minSeparation: number,
   extra: (m: TwoMeans) => string | null,
@@ -342,13 +351,13 @@ export function calibrate(
     insets.push(Math.max(0, leftInset) / bodyHeight);
   }
 
-  const indent = evaluate(insets, INDENT_MIN_SEPARATION, m =>
+  const indent = evaluateClusterSignal(insets, INDENT_MIN_SEPARATION, m =>
     m.lower > INDENT_MAX_FLUSH_CENTRE
       ? `the lower cluster sits ${m.lower.toFixed(2)} body heights off the margin — two indent depths, not indent-vs-flush`
       : null);
 
   const gaps = advances.map(d => d / pitch).filter(r => r <= GAP_MAX_SAMPLE);
-  const gap = evaluate(gaps, GAP_MIN_SEPARATION, m =>
+  const gap = evaluateClusterSignal(gaps, GAP_MIN_SEPARATION, m =>
     m.upper < GAP_MIN_UPPER_CENTRE
       ? `the upper cluster is only ${m.upper.toFixed(2)}x pitch — wider leading, not a blank line`
       : null);

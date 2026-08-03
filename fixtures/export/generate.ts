@@ -27,6 +27,7 @@ import { calibrate, type CalibrationLine } from '../../src/paragraphs/calibratio
 import { computeBlockGeometry } from '../../src/paragraphs/geometry.js';
 import { writeArtifact, type Block, type ScanLine } from '../../src/pipeline/artifacts.js';
 import type { BlocksCategory } from '../../src/blocks/encoder.js';
+import { BLOCK_FORMATION } from '../../src/blocks/formation.js';
 
 // ── the page ────────────────────────────────────────────────────────────────
 
@@ -341,7 +342,7 @@ export function buildRun(convention: Convention, runDir: string): void {
   });
 
   writeArtifact(runDir, 'scanLines', { lines: laid.lines });
-  writeArtifact(runDir, 'blocks', { calibration, blocks });
+  writeArtifact(runDir, 'blocks', { formation: BLOCK_FORMATION, calibration, blocks });
 }
 
 export const FIXTURE_ROOT = dirname(fileURLToPath(import.meta.url));

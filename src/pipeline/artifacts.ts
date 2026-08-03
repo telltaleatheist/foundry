@@ -33,6 +33,7 @@ import { dirname, join } from 'node:path';
 import type { Box } from '../scan/bands.js';
 import type { BlocksCategory } from '../blocks/encoder.js';
 import { BLOCKS_CATEGORIES_V6 } from '../blocks/encoder.js';
+import { BLOCK_FORMATION, BLOCK_FORMATION_BEFORE_PARAGRAPH_SPLIT } from '../blocks/formation.js';
 import type { Edit, RejectedEdit } from '../ocr/edits.js';
 import type { FootnoteDeletion } from '../footnotes/applier.js';
 
@@ -51,7 +52,12 @@ export const ARTIFACTS = {
   run: { path: 'run.json', version: 1 },
   scanPages: { path: 'scan/pages.json', version: 1 },
   scanLines: { path: 'scan/lines.json', version: 1 },
-  blocks: { path: 'blocks/blocks.json', version: 1 },
+  // 2: `formation` — the segmentation marker — became a required field when the
+  // paragraph-aware splitter landed (BLOCKS_TRAINING §13b P0). A required field
+  // added is a breaking change by the rule above, and here it is breaking on
+  // purpose: a v1 file's blocks were formed by a DIFFERENT rule, so reading one
+  // as if it were this build's output is the silent segmentation mix §5 forbids.
+  blocks: { path: 'blocks/blocks.json', version: 2 },
   ocrLines: { path: 'ocr/lines.json', version: 1 },
   footnoteDeletions: { path: 'footnotes/deletions.json', version: 1 },
   exportExclusions: { path: 'export/exclusions.json', version: 1 },
@@ -293,6 +299,13 @@ export interface CalibrationVerdict {
 
 export interface BlocksArtifact {
   formatVersion: number;
+  /**
+   * The SEGMENTATION MARKER: which rules formed these blocks, composed in the
+   * order they ran (`src/blocks/formation.ts`). A prediction is only comparable
+   * to a corpus segmented the same way, so the artifact has to say which one it
+   * saw — see ARCHITECTURE §5 and BLOCKS_TRAINING §13b.
+   */
+  formation: string;
   calibration: CalibrationVerdict;
   blocks: Block[];
 }
@@ -594,7 +607,31 @@ export function parseCalibration(file: string, where: string, v: unknown): Calib
 
 export function parseBlocks(text: string, file = ARTIFACTS.blocks.path): BlocksArtifact {
   const root = obj(file, 'root', json(file, text));
+
+  /*
+   * A v1 file is not merely an older format, it is a DIFFERENT SEGMENTATION:
+   * its blocks were formed before the paragraph-aware splitter existed, so its
+   * junctions are the ones §13b measured as unreachable (24 body blocks for ~53
+   * paragraphs on the Kershaw run) and its block ids key labels that this build
+   * would not produce. The bare version error would say "re-run the stage",
+   * which is the right instruction for the wrong reason — say which reason, and
+   * name both segmentations, because that is the fact a stale prediction has to
+   * be identified by later.
+   */
+  if (root['formatVersion'] === 1 && root['formation'] === undefined) {
+    fail(
+      file,
+      `was written under the ${BLOCK_FORMATION_BEFORE_PARAGRAPH_SPLIT} segmentation, before block `
+      + `formation split at paragraph starts. This build forms blocks as ${BLOCK_FORMATION}, `
+      + 'so these block ids, and the labels keyed to them, describe a different grouping of the '
+      + 'same lines — reading them here would mix two segmentations in one book (ARCHITECTURE §5). '
+      + 'Re-run `foundry blocks` against this run directory; scan/lines.json is unaffected and '
+      + 'nothing has to be re-scanned. There is no migration.',
+    );
+  }
+
   checkVersion(file, root, ARTIFACTS.blocks.version);
+  const formation = str(file, 'formation', root['formation']);
   const calibration = parseCalibration(file, 'calibration', root['calibration']);
   const seen = new Set<string>();
   const blocks = arr(file, 'blocks', root['blocks']).map((raw, i) => {
@@ -632,7 +669,7 @@ export function parseBlocks(text: string, file = ARTIFACTS.blocks.path): BlocksA
       },
     };
   });
-  return { formatVersion: ARTIFACTS.blocks.version, calibration, blocks };
+  return { formatVersion: ARTIFACTS.blocks.version, formation, calibration, blocks };
 }
 
 export function parseOcrLines(text: string, file = ARTIFACTS.ocrLines.path): OcrLinesArtifact {

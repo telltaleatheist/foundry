@@ -15,6 +15,7 @@ import { calibrate, type CalibrationLine } from '../../src/paragraphs/calibratio
 import { computeBlockGeometry } from '../../src/paragraphs/geometry.js';
 import { writeArtifact, type Block, type ScanLine } from '../../src/pipeline/artifacts.js';
 import type { BlocksCategory } from '../../src/blocks/encoder.js';
+import { BLOCK_FORMATION } from '../../src/blocks/formation.js';
 
 const DPI = 200;
 const PAGE_W = 1240;
@@ -82,7 +83,7 @@ export function buildSyntheticRun(runDir: string, script: readonly SyntheticBloc
     })),
   });
   writeArtifact(runDir, 'scanLines', { lines });
-  writeArtifact(runDir, 'blocks', { calibration, blocks: full });
+  writeArtifact(runDir, 'blocks', { formation: BLOCK_FORMATION, calibration, blocks: full });
 }
 
 /** Enough prose that calibration has real lines to measure. */

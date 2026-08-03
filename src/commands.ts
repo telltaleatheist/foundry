@@ -65,6 +65,7 @@ import {
   type TextBlock,
 } from './blocks/encoder.js';
 import { planDisplayRuns, type DisplayRunBlock } from './blocks/display-run-merge.js';
+import { BLOCK_FORMATION } from './blocks/formation.js';
 import { runEpubFootnotes } from './epub/footnotes-stage.js';
 import { applyFootnoteDeletions, planFootnotes, type FootnoteDeletion } from './footnotes/applier.js';
 import { FOOTNOTES_STOP } from './footnotes/prompt.js';
@@ -81,6 +82,7 @@ import { downloadVerified, sha256File } from './models/download.js';
 import { ensureModelsDir, modelFilePath, modelsDir } from './models/paths.js';
 import { calibrate } from './paragraphs/calibration.js';
 import { computeBlockGeometry } from './paragraphs/geometry.js';
+import { planParagraphSplits, type ParagraphSplitReport } from './paragraphs/splitter.js';
 import {
   ARTIFACTS,
   artifactPath,
@@ -635,19 +637,19 @@ function blockId(page: number, index: number): string {
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * Group a page's lines into blocks.
+ * Group a page's lines into blocks — the FIRST of three rules.
  *
- * **This grouping is PROVISIONAL, it is recorded as `gap-v0` in
- * `blocks/blocks.json`, and it is not the grouping the blocks model was trained
- * against.** The training corpus used Tesseract's own paragraph identity (the
- * `blockNum:parNum` key, "split-only block formation" in the v4 notes), which
- * the band path cannot produce: it hands Tesseract one crop per line under
+ * **This grouping is PROVISIONAL and it is not the grouping the blocks model was
+ * trained against.** The training corpus used Tesseract's own paragraph identity
+ * (the `blockNum:parNum` key, "split-only block formation" in the v4 notes),
+ * which the band path cannot produce: it hands Tesseract one crop per line under
  * `--psm 7`, so there is no page-level layout pass to ask.
  *
  * That matters enough to name loudly rather than bury, because it is precisely
  * the failure ARCHITECTURE §5 is about — a different segmentation is a different
- * input distribution, and the damage reads as a bad model. It is recorded in the
- * artifact so a prediction made under it can be identified later.
+ * input distribution, and the damage reads as a bad model. Which rules ran is
+ * recorded in `blocks/blocks.json` as `formation` (`blocks/formation.ts`), so a
+ * prediction made under one can be identified later.
  *
  * The rule itself is deliberately dull: a new block starts when the vertical gap
  * to the previous line exceeds `GAP_FACTOR` of the page's median line height, or
@@ -655,12 +657,17 @@ function blockId(page: number, index: number): string {
  * change). Reading order is the order the bands came in, which is the band
  * segmenter's column-major order.
  *
- * `mergeDisplayRuns` then runs over the result, rejoining the pieces of a
- * heading this local rule cut apart. That is a second half of the formation, not
- * a tidy-up, so the recorded name carries it: a prediction made under
- * `gap-v0` alone and one made under `gap-v0+display-run-v1` saw different blocks.
+ * Two rules then run over the result, and each is a half of the formation rather
+ * than a tidy-up — a prediction made under one set and a prediction made under
+ * another saw different blocks:
+ *
+ *  - `planParagraphSplits` CUTS what this rule left fused. The gap is the only
+ *    thing it can see, so on a book whose paragraphs are marked by an indent or
+ *    by a short last line it cuts nowhere, and a whole page of prose arrives as
+ *    one block with no junction inside it for anything downstream to decide
+ *    (BLOCKS_TRAINING §13b, measured on Kershaw: 24 body blocks, ~53 paragraphs).
+ *  - `mergeDisplayRuns` REJOINS the pieces of a heading both cut apart.
  */
-const BLOCK_FORMATION = 'gap-v0+display-run-v1';
 const GAP_FACTOR = 0.8;
 
 export function formBlocks(pages: readonly ScanPage[], lines: readonly ScanLine[]): WorkingBlock[] {
@@ -703,6 +710,62 @@ export function formBlocks(pages: readonly ScanPage[], lines: readonly ScanLine[
 
 const blockLeft = (lines: readonly ScanLine[]): number => Math.min(...lines.map((l) => l.bbox[0]));
 const blockRight = (lines: readonly ScanLine[]): number => Math.max(...lines.map((l) => l.bbox[2]));
+
+/**
+ * Cut the formed blocks at their paragraph starts.
+ *
+ * The geometry is decided in `paragraphs/splitter.ts`; this applies the plan,
+ * which is the same division of labour `mergeDisplayRuns` has with
+ * `planDisplayRuns`. Nothing here re-reads a coordinate: it slices `lineIds` at
+ * the planned indices and rebuilds each piece with `makeBlock`, so every field
+ * on a split block is computed the one way a block's fields are ever computed.
+ *
+ * Indices are reassigned per page so ids stay dense and in reading order —
+ * which means a split changes the ids of the blocks after it on the page. That
+ * is the point of the segmentation marker: those ids are keys, and they mean
+ * something different under a different formation.
+ */
+export function splitParagraphs(
+  blocks: readonly WorkingBlock[],
+  lines: readonly ScanLine[],
+  calibration: CalibrationVerdict,
+): { blocks: WorkingBlock[]; report: ParagraphSplitReport } {
+  const { splits, report } = planParagraphSplits(blocks, lines, calibration);
+  if (splits.length === 0) return { blocks: [...blocks], report };
+
+  const lineById = new Map(lines.map((l) => [l.id, l]));
+  const cutsOf = new Map<string, number[]>();
+  for (const s of splits) {
+    const at = cutsOf.get(s.blockId);
+    if (at) at.push(s.lineIndex); else cutsOf.set(s.blockId, [s.lineIndex]);
+  }
+
+  const out: WorkingBlock[] = [];
+  const perPageIndex = new Map<number, number>();
+  const nextIndex = (page: number): number => {
+    const i = perPageIndex.get(page) ?? 0;
+    perPageIndex.set(page, i + 1);
+    return i;
+  };
+
+  for (const b of blocks) {
+    const at = cutsOf.get(b.id);
+    if (!at) {
+      out.push({ ...b, id: blockId(b.page, nextIndex(b.page)) });
+      continue;
+    }
+    const bounds = [0, ...[...at].sort((x, y) => x - y), b.lineIds.length];
+    for (let i = 1; i < bounds.length; i++) {
+      const slice = b.lineIds.slice(bounds[i - 1], bounds[i]).map((id) => {
+        const line = lineById.get(id);
+        if (!line) throw new Error(`block ${b.id} names line ${id}, which scan/lines.json does not have.`);
+        return line;
+      });
+      out.push(makeBlock(b.page, nextIndex(b.page), slice));
+    }
+  }
+  return { blocks: out, report };
+}
 
 /**
  * Rejoin the pieces of a display heading that `formBlocks` cut apart.
@@ -1063,29 +1126,39 @@ function buildServer(args: ParsedArgs, stage: FoundryStage, plan: ModelPlan): Ll
  * Everything the model stages read out of the scan: the pages, the lines, the
  * blocks formed from them, and the book's paragraph calibration.
  *
- * Calibration runs HERE, before anything is classified, because it is
- * label-free by design (it sees line geometry, not categories) and because the
- * blocks prompt is fed geometry expressed in the calibrated frame. It is
- * recomputed per stage rather than cached: it is one pass over line boxes, and
- * a cached verdict is one more thing that can be stale against the lines.
+ * Calibration runs FIRST, before anything is formed or classified. It is
+ * label-free by design (it sees line geometry, not categories), the blocks
+ * prompt is fed geometry expressed in the calibrated frame, and the paragraph
+ * splitter needs the frame to measure an indent or a gap in the book's own
+ * units. It is recomputed per stage rather than cached: it is one pass over line
+ * boxes, and a cached verdict is one more thing that can be stale against the
+ * lines.
+ *
+ * Then the three formation rules, in the order `formation` names them: the gap
+ * cut, the paragraph-start splitter, the display-run rejoin. The splitter runs
+ * BEFORE the rejoin on purpose — a cut it makes through a display heading is
+ * exactly what the rejoin exists to undo, and putting it after would leave the
+ * rejoin's input dependent on which of the two ran last.
  */
 function readScanAndForm(runDir: string): {
   pages: ScanPage[];
   lines: ScanLine[];
   blocks: WorkingBlock[];
   calibration: CalibrationVerdict;
+  split: ParagraphSplitReport;
 } {
   const pages = readScanPages(runDir).pages;
   const lines = readScanLines(runDir).lines;
-  const blocks = mergeDisplayRuns(pages, formBlocks(pages, lines), lines);
   const calibration = calibrate(lines.map((l) => ({ page: l.page, bbox: l.bbox })));
+  const cut = splitParagraphs(formBlocks(pages, lines), lines, calibration);
+  const blocks = mergeDisplayRuns(pages, cut.blocks, lines);
   const geometry = computeBlockGeometry(blocks, lines, calibration);
   for (const block of blocks) {
     const g = geometry.get(block.id);
     if (!g) throw new Error(`block ${block.id} got no geometry — computeBlockGeometry skipped it`);
     block.geometry = g;
   }
-  return { pages, lines, blocks, calibration };
+  return { pages, lines, blocks, calibration, split: cut.report };
 }
 
 async function runBlocks(args: ParsedArgs): Promise<void> {
@@ -1093,7 +1166,7 @@ async function runBlocks(args: ParsedArgs): Promise<void> {
   loadRun(runDir);
 
   await withStageRecord(runDir, 'blocks', async () => {
-    const { pages, lines, blocks, calibration } = readScanAndForm(runDir);
+    const { pages, lines, blocks, calibration, split } = readScanAndForm(runDir);
     log(
       `blocks: ${blocks.length} blocks formed from ${lines.length} lines over `
       + `${pages.length} pages (formation ${BLOCK_FORMATION})`,
@@ -1105,6 +1178,11 @@ async function runBlocks(args: ParsedArgs): Promise<void> {
       `blocks: paragraph convention "${calibration.convention}"`
       + `${calibration.degraded ? ' — DEGRADED: ' : ' — '}${calibration.message}`,
     );
+    // The splitter's own verdict, reported the same way and for the same
+    // reason: a book whose paragraph starts were invisible produces blocks with
+    // no junction inside them, and that has to be visible in the log rather than
+    // inferred from a book that reads as one long paragraph.
+    log(`blocks: ${split.message}`);
 
     // Model resolution happens HERE, after the run directory has been read and
     // the blocks formed, so an operator sees their run is sound before being
@@ -1163,6 +1241,7 @@ async function runBlocks(args: ParsedArgs): Promise<void> {
     }
 
     writeArtifact(runDir, 'blocks', {
+      formation: BLOCK_FORMATION,
       calibration,
       blocks: blocks.map(toArtifactBlock),
     });
@@ -1838,10 +1917,16 @@ export const COMMANDS: readonly Command[] = [
       'Reads  <run>/scan/{pages,lines}.json',
       'Writes <run>/blocks/blocks.json',
       '',
-      'NOTE: line→block grouping here is provisional (recorded as "gap-v0"). The',
-      'training corpus used Tesseract\'s own paragraph identity, which the band',
-      'path cannot produce; matching it is a prerequisite before predictions from',
-      'this stage can be trusted.',
+      'Lines are grouped into blocks by three rules in order: the vertical-gap',
+      'cut, the paragraph-start splitter (indent / gap / short previous line,',
+      'thresholds measured from the book itself), and the display-run rejoin.',
+      'Which rules ran is recorded in blocks.json as "formation" — a prediction',
+      'is only comparable to a corpus segmented the same way.',
+      '',
+      'NOTE: the grouping is still provisional. The training corpus used',
+      'Tesseract\'s own paragraph identity, which the band path cannot produce;',
+      'matching it is a prerequisite before predictions from this stage can be',
+      'trusted.',
     ].join('\n'),
     options: [RUN_DIR],
     run: runBlocks,

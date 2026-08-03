@@ -23,6 +23,7 @@ import {
   writeArtifact,
   type ArtifactName, type BlocksArtifact, type CalibrationVerdict,
 } from '../../src/pipeline/artifacts.js';
+import { BLOCK_FORMATION, BLOCK_FORMATION_BEFORE_PARAGRAPH_SPLIT } from '../../src/blocks/formation.js';
 
 function scratch(): string {
   return mkdtempSync(join(tmpdir(), 'foundry-artifacts-'));
@@ -49,6 +50,7 @@ const CALIBRATION: CalibrationVerdict = {
 };
 
 const BLOCKS: Omit<BlocksArtifact, 'formatVersion'> = {
+  formation: BLOCK_FORMATION,
   calibration: CALIBRATION,
   blocks: [
     {
@@ -179,13 +181,13 @@ test('paths follow the documented layout', () => {
 test('an unknown formatVersion is REFUSED, naming the file and both versions', () => {
   const dir = scratch();
   try {
-    put(dir, 'blocks', { ...BLOCKS, formatVersion: 2 });
+    put(dir, 'blocks', { ...BLOCKS, formatVersion: 3 });
     assert.throws(() => readBlocks(dir), (e: unknown) => {
       assert.ok(e instanceof ArtifactVersionError);
-      assert.equal(e.found, 2);
-      assert.equal(e.expected, 1);
+      assert.equal(e.found, 3);
+      assert.equal(e.expected, ARTIFACTS.blocks.version);
       assert.match(e.message, /blocks\/blocks\.json/);
-      assert.match(e.message, /version 1/);
+      assert.match(e.message, new RegExp(`version ${ARTIFACTS.blocks.version}`));
       return true;
     });
   } finally {
@@ -196,6 +198,34 @@ test('an unknown formatVersion is REFUSED, naming the file and both versions', (
 test('a MISSING formatVersion is refused too — no "version 1 means unversioned"', () => {
   const body: Record<string, unknown> = { ...BLOCKS };
   assert.throws(() => parseBlocks(JSON.stringify(body)), ArtifactVersionError);
+});
+
+test('a blocks.json from before the paragraph splitter names BOTH segmentations', () => {
+  // The bare version error would say "re-run the stage" without saying why, and
+  // the why is the whole point: a v1 file's block ids key labels made over a
+  // different grouping of the same lines (BLOCKS_TRAINING §13b).
+  const { formation, ...withoutFormation } = BLOCKS;
+  void formation;
+  assert.throws(
+    () => parseBlocks(JSON.stringify({ formatVersion: 1, ...withoutFormation })),
+    (e: unknown) => {
+      assert.ok(e instanceof ArtifactError);
+      // Not the generic version error: this one has to explain the segmentation.
+      assert.equal(e instanceof ArtifactVersionError, false);
+      assert.match(e.message, new RegExp(BLOCK_FORMATION_BEFORE_PARAGRAPH_SPLIT.replace(/\+/g, '\\+')));
+      assert.match(e.message, new RegExp(BLOCK_FORMATION.replace(/\+/g, '\\+')));
+      assert.match(e.message, /foundry blocks/);
+      assert.match(e.message, /no migration/);
+      return true;
+    },
+  );
+});
+
+test('a blocks.json that carries a formation but an unknown version still hits the version gate', () => {
+  assert.throws(
+    () => parseBlocks(JSON.stringify({ ...BLOCKS, formatVersion: 1 })),
+    ArtifactVersionError,
+  );
 });
 
 test('the version gate runs before any field is read', () => {
@@ -236,7 +266,7 @@ test('a bad field is named by its exact path', () => {
   (bad['blocks'] as Array<Record<string, unknown>>)[1]['geometry'] = {
     firstLineIndent: 0, gapAbove: 'soon', prevLineShort: false, prevEndsWrapHyphen: false,
   };
-  assert.throws(() => parseBlocks(JSON.stringify({ formatVersion: 1, ...bad })), (e: unknown) => {
+  assert.throws(() => parseBlocks(JSON.stringify({ ...bad, formatVersion: ARTIFACTS.blocks.version })), (e: unknown) => {
     assert.match((e as Error).message, /blocks\[1\]\.geometry\.gapAbove must be a finite number/);
     return true;
   });
@@ -246,7 +276,7 @@ test('a missing required field is not defaulted', () => {
   const bad = structuredClone(BLOCKS) as Record<string, unknown>;
   delete ((bad['blocks'] as Array<Record<string, unknown>>)[0]['geometry'] as Record<string, unknown>)['prevLineShort'];
   assert.throws(
-    () => parseBlocks(JSON.stringify({ formatVersion: 1, ...bad })),
+    () => parseBlocks(JSON.stringify({ ...bad, formatVersion: ARTIFACTS.blocks.version })),
     /blocks\[0\]\.geometry\.prevLineShort must be a boolean/,
   );
 });
@@ -255,7 +285,7 @@ test('an illegal category is refused and the legal list is printed', () => {
   const bad = structuredClone(BLOCKS) as Record<string, unknown>;
   (bad['blocks'] as Array<Record<string, unknown>>)[0]['category'] = 'front_matter';
   assert.throws(
-    () => parseBlocks(JSON.stringify({ formatVersion: 1, ...bad })),
+    () => parseBlocks(JSON.stringify({ ...bad, formatVersion: ARTIFACTS.blocks.version })),
     /is not a blocks category .*discard/s,
   );
 });
@@ -264,7 +294,7 @@ test('duplicate block ids are refused — the id is the exclusion key', () => {
   const bad = structuredClone(BLOCKS) as Record<string, unknown>;
   (bad['blocks'] as Array<Record<string, unknown>>)[1]['id'] = 'b1';
   assert.throws(
-    () => parseBlocks(JSON.stringify({ formatVersion: 1, ...bad })),
+    () => parseBlocks(JSON.stringify({ ...bad, formatVersion: ARTIFACTS.blocks.version })),
     /blocks\[1\]\.id "b1" is a duplicate/,
   );
 });
@@ -307,7 +337,7 @@ test('calibration cannot claim degraded without the none verdict', () => {
   const bad = structuredClone(BLOCKS) as Record<string, unknown>;
   (bad['calibration'] as Record<string, unknown>)['degraded'] = true;
   assert.throws(
-    () => parseBlocks(JSON.stringify({ formatVersion: 1, ...bad })),
+    () => parseBlocks(JSON.stringify({ ...bad, formatVersion: ARTIFACTS.blocks.version })),
     /degraded is true but convention is "indent"/,
   );
 });
@@ -316,7 +346,7 @@ test('a none verdict must admit it is degraded', () => {
   const bad = structuredClone(BLOCKS) as Record<string, unknown>;
   (bad['calibration'] as Record<string, unknown>)['convention'] = 'none';
   assert.throws(
-    () => parseBlocks(JSON.stringify({ formatVersion: 1, ...bad })),
+    () => parseBlocks(JSON.stringify({ ...bad, formatVersion: ARTIFACTS.blocks.version })),
     /degraded is false but convention is "none"/,
   );
 });
@@ -325,7 +355,7 @@ test('a continues confidence outside 0..1 is refused', () => {
   const bad = structuredClone(BLOCKS) as Record<string, unknown>;
   (bad['blocks'] as Array<Record<string, unknown>>)[1]['continues'] = { value: true, confidence: 1.4 };
   assert.throws(
-    () => parseBlocks(JSON.stringify({ formatVersion: 1, ...bad })),
+    () => parseBlocks(JSON.stringify({ ...bad, formatVersion: ARTIFACTS.blocks.version })),
     /continues\.confidence is 1\.4, expected 0\.\.1/,
   );
 });

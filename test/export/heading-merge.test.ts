@@ -19,6 +19,7 @@ import { calibrate, type CalibrationLine } from '../../src/paragraphs/calibratio
 import { computeBlockGeometry } from '../../src/paragraphs/geometry.js';
 import { writeArtifact, type Block, type ScanLine } from '../../src/pipeline/artifacts.js';
 import type { BlocksCategory } from '../../src/blocks/encoder.js';
+import { BLOCK_FORMATION } from '../../src/blocks/formation.js';
 import { runExportStage } from '../../src/pipeline/export-stage.js';
 import { unzipMap } from './unzip.js';
 
@@ -107,7 +108,7 @@ function makeRun(runDir: string): void {
     pages: [0, 1, 2].map(page => ({ page, widthPx: PAGE_W, heightPx: PAGE_H, deskewDeg: 0, dpi: DPI })),
   });
   writeArtifact(runDir, 'scanLines', { lines });
-  writeArtifact(runDir, 'blocks', { calibration, blocks: full });
+  writeArtifact(runDir, 'blocks', { formation: BLOCK_FORMATION, calibration, blocks: full });
 }
 
 const METADATA = {

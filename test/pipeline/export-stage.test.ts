@@ -287,7 +287,7 @@ test('a derived title falls to the chapter, then the filename', () => {
     const blocks = readBlocks(runDir);
     // Drop the title block: the first chapter is the next best answer.
     const noTitle = blocks.blocks.filter(b => b.category !== 'title');
-    writeArtifact(runDir, 'blocks', { calibration: blocks.calibration, blocks: noTitle });
+    writeArtifact(runDir, 'blocks', { formation: blocks.formation, calibration: blocks.calibration, blocks: noTitle });
     const meta = deriveMetadata(runDir, noTitle, new Map(noTitle.map(b => [b.id, ['Chapter One']])));
     assert.equal(meta.title, 'Chapter One');
 

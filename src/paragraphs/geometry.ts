@@ -32,8 +32,13 @@ export interface GeometryBlock {
  * units. Two body heights is roughly two ems of white at the right margin —
  * past what justification or a wide word-space produces, and short of calling
  * every slightly ragged line the end of a paragraph.
+ *
+ * Exported because `splitter.ts` decides what "short" means with the same
+ * number: the splitter proposes a cut after a short line and the ladder reads
+ * `prevLineShort` at the junction that cut created. Two definitions of short
+ * would let the splitter cut where the ladder cannot see why.
  */
-const SHORT_LINE_UNITS = 2.0;
+export const SHORT_LINE_UNITS = 2.0;
 
 /** A block whose lines are not in the line table, or which has none. */
 export class GeometryInputError extends Error {

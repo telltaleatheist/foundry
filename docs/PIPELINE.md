@@ -32,7 +32,11 @@ The design answer to all of that is one rule:
 │   └── blocks.json     # per block: id, page, bbox, line ids, category,
 │                       # continues bit, geometry facts fed to the model
 │                       # (first-line indent, gap-above, prev-line-short,
-│                       # wrap-hyphen), calibration verdict for the book
+│                       # wrap-hyphen), calibration verdict for the book,
+│                       # and `formation` — WHICH SEGMENTATION formed these
+│                       # blocks (gap cut + paragraph splitter + display-run
+│                       # rejoin, composed in run order). A prediction is only
+│                       # comparable to a corpus segmented the same way.
 ├── ocr/
 │   └── lines.json      # per line: corrected text + the edit list that was
 │                       # applied + rejections (before/why)
