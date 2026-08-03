@@ -144,6 +144,57 @@ export interface CompletionRequest {
   temperature?: number;
 }
 
+/**
+ * The single `--lora-scaled` argument for one adapter, at scale 0.0.
+ *
+ * THE FLAG TAKES ONE ARGUMENT, `FNAME:SCALE` — not two. llama.cpp's parser
+ * rejects the two-argument spelling outright ("lora-scaled format: FNAME:SCALE"),
+ * so a server launched the old way never starts and the failure lands as "the
+ * stage could not reach a model".
+ *
+ * AND THAT ONE ARGUMENT IS SPLIT AT THE **FIRST** COLON. On Windows that is the
+ * drive letter, so an absolute adapter path — `C:\Users\...\ocr.gguf:0.0` —
+ * parses as filename `C` with scale `\Users\...:0.0`, and llama-server exits
+ * during startup with exactly that error. Confirmed against b7482 on a real
+ * Windows install: absolute path → parse error, colon-free relative path →
+ * parses and proceeds. Mac and Linux never hit it because POSIX paths have no
+ * colons, which is why this survived until the first Windows user ran `ocr`.
+ *
+ * So on win32 the adapter is spelled RELATIVE to the spawn cwd, which `start()`
+ * already sets to the binary's directory for DLL resolution. In practice the
+ * adapter and the binary sit under the same `C:\Users\<u>\AppData` tree, so the
+ * relative form has no colon in it.
+ *
+ * If they are on DIFFERENT drives the relative form is still absolute and still
+ * has a colon — llama.cpp's format simply cannot express that path, so this
+ * THROWS before the spawn rather than shipping an argument the parser will
+ * reject. There is no fallback: a silently skipped adapter is a stage answering
+ * from the bare base model, which does not error, it just answers worse.
+ *
+ * `platform` is a parameter (and `path.win32` is used explicitly) so the
+ * Windows spelling is testable from any host.
+ */
+export function loraScaledArg(
+  adapterPath: string,
+  binaryDir: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform !== 'win32') return `${adapterPath}:0.0`;
+
+  const relative = path.win32.relative(binaryDir, adapterPath);
+  if (relative.includes(':')) {
+    throw new Error(
+      `Adapter '${adapterPath}' cannot be passed to llama-server: it is not on `
+      + `the same drive as the server's working directory '${binaryDir}', so the `
+      + `shortest way to name it is still '${relative}'. llama.cpp's `
+      + `--lora-scaled takes one FNAME:SCALE argument and splits it at the FIRST `
+      + `colon, so no path containing a colon — including a drive letter — can be `
+      + `expressed. Put the adapter on the same drive as the llama-server binary.`,
+    );
+  }
+  return `${relative}:0.0`;
+}
+
 export class LlamaServer {
   private proc: ChildProcess | null = null;
   private ready = false;
@@ -347,6 +398,10 @@ export class LlamaServer {
     const port = this.opts.port ?? (await freeLoopbackPort());
     this.resolvedPort = port;
 
+    // The directory the binary lives in. It is the spawn cwd on win32 (below),
+    // which is what makes a relative `--lora-scaled` path resolvable there.
+    const binaryDir = path.dirname(this.opts.binaryPath);
+
     const nGpuLayers = this.opts.nGpuLayers ?? (process.platform === 'darwin' ? 99 : 0);
 
     const args = [
@@ -364,29 +419,23 @@ export class LlamaServer {
     // means an adapter is only ever active because a request asked for it — not
     // because it happened to be first on the command line.
     //
-    // The flag takes ONE argument, `FNAME:SCALE` — not two. llama.cpp's parser
-    // rejects the two-argument spelling outright ("lora-scaled format:
-    // FNAME:SCALE"), so a server launched the old way never starts and the
-    // failure lands as "the stage could not reach a model". Checked against
-    // llama.cpp b10216 and the build BookForge bundles; both want the joined
-    // form. (A path containing a colon would therefore be unrepresentable —
-    // that is llama.cpp's format, not a choice made here.)
+    // See loraScaledArg for why the path is spelled differently on Windows.
     for (const a of this.adapters) {
-      args.push('--lora-scaled', `${a.path}:0.0`);
+      args.push('--lora-scaled', loraScaledArg(a.path, binaryDir));
     }
 
     const env: NodeJS.ProcessEnv = { ...process.env };
     if (process.platform === 'darwin') {
       // The llama.cpp dylibs ship alongside the binary.
-      env['DYLD_LIBRARY_PATH'] =
-        `${path.dirname(this.opts.binaryPath)}:${env['DYLD_LIBRARY_PATH'] ?? ''}`;
+      env['DYLD_LIBRARY_PATH'] = `${binaryDir}:${env['DYLD_LIBRARY_PATH'] ?? ''}`;
     }
 
     const proc = spawn(this.opts.binaryPath, args, {
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
-      // Windows needs cwd at the binary dir so it finds its DLLs.
-      cwd: process.platform === 'win32' ? path.dirname(this.opts.binaryPath) : undefined,
+      // Windows needs cwd at the binary dir so it finds its DLLs. It is also
+      // what `--lora-scaled`'s relative path is resolved against (loraScaledArg).
+      cwd: process.platform === 'win32' ? binaryDir : undefined,
       windowsHide: true,
     });
     this.proc = proc;

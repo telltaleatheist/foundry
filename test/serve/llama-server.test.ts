@@ -22,7 +22,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { freeLoopbackPort, LlamaServer } from '../../src/serve/llama-server.js';
+import { freeLoopbackPort, LlamaServer, loraScaledArg } from '../../src/serve/llama-server.js';
 
 const STUB = path.join(import.meta.dir, 'stub-llama-server.ts');
 
@@ -237,9 +237,12 @@ describe('one base, adapters selected per request', () => {
     expect(argv.filter((a) => a === '--lora-scaled')).toHaveLength(3);
     // `FNAME:SCALE` in ONE argument — llama.cpp's parser refuses the
     // two-argument spelling, and a server that will not start is a stage that
-    // reports it cannot reach a model.
+    // reports it cannot reach a model. The spelling of FNAME is platform
+    // dependent (see loraScaledArg), so ask for it rather than assuming the
+    // absolute form the host happens to use.
+    const binaryDir = path.dirname(STUB);
     for (const p of [blocksAdapter, ocrAdapter, footnotesAdapter]) {
-      const at = argv.indexOf(`${p}:0.0`);
+      const at = argv.indexOf(loraScaledArg(p, binaryDir));
       expect(at).toBeGreaterThan(0);
       expect(argv[at - 1]).toBe('--lora-scaled');
     }
@@ -318,6 +321,50 @@ describe('one base, adapters selected per request', () => {
     const server = makeServer({ adapters: [] });
     expect(echo(await server.complete({ prompt: 'x' })).received.lora).toEqual([]);
     expect(server.adapterNames).toEqual([]);
+  });
+});
+
+describe('the --lora-scaled argument is spelled so llama.cpp can parse it', () => {
+  // llama.cpp splits the single FNAME:SCALE argument at the FIRST colon, so a
+  // Windows drive letter ends the filename and the rest is read as the scale.
+  // Reproduced on b7482: an absolute path exits startup with `error while
+  // handling argument "--lora-scaled": lora-scaled format: FNAME:SCALE`.
+  const WIN_BIN_DIR = 'C:\\Users\\u\\AppData\\Local\\foundry\\llama\\bin';
+
+  test('win32: same drive is spelled relative to the spawn cwd, colon-free', () => {
+    const arg = loraScaledArg(
+      'C:\\Users\\u\\AppData\\Local\\foundry\\models\\foundry-ocr-v1-4b.gguf',
+      WIN_BIN_DIR,
+      'win32',
+    );
+    expect(arg).toBe('..\\..\\models\\foundry-ocr-v1-4b.gguf:0.0');
+    // The whole point: one colon, and it is the one separating the scale.
+    expect(arg.split(':')).toHaveLength(2);
+    expect(arg.endsWith(':0.0')).toBe(true);
+  });
+
+  test('win32: an adapter below the binary dir needs no traversal', () => {
+    expect(loraScaledArg(`${WIN_BIN_DIR}\\adapters\\ocr.gguf`, WIN_BIN_DIR, 'win32'))
+      .toBe('adapters\\ocr.gguf:0.0');
+  });
+
+  test('win32: a cross-drive adapter throws, naming the path and the cwd', () => {
+    // Unrepresentable in llama.cpp's format. Throwing before the spawn beats
+    // dropping the adapter: a stage answering from the bare base does not
+    // error, it just answers worse.
+    expect(() => loraScaledArg('D:\\models\\ocr.gguf', WIN_BIN_DIR, 'win32'))
+      .toThrow(/D:\\models\\ocr\.gguf/);
+    expect(() => loraScaledArg('D:\\models\\ocr.gguf', WIN_BIN_DIR, 'win32'))
+      .toThrow(new RegExp(WIN_BIN_DIR.replace(/\\/g, '\\\\')));
+    expect(() => loraScaledArg('D:\\models\\ocr.gguf', WIN_BIN_DIR, 'win32'))
+      .toThrow(/FNAME:SCALE/);
+  });
+
+  test('darwin and linux keep the absolute path unchanged', () => {
+    const p = '/Users/u/Library/Application Support/foundry/models/ocr.gguf';
+    for (const platform of ['darwin', 'linux'] as const) {
+      expect(loraScaledArg(p, '/opt/foundry/llama/bin', platform)).toBe(`${p}:0.0`);
+    }
   });
 });
 
