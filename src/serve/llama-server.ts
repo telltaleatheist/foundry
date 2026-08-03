@@ -363,8 +363,16 @@ export class LlamaServer {
     // Every request then states the full scale vector (see loraVector), which
     // means an adapter is only ever active because a request asked for it — not
     // because it happened to be first on the command line.
+    //
+    // The flag takes ONE argument, `FNAME:SCALE` — not two. llama.cpp's parser
+    // rejects the two-argument spelling outright ("lora-scaled format:
+    // FNAME:SCALE"), so a server launched the old way never starts and the
+    // failure lands as "the stage could not reach a model". Checked against
+    // llama.cpp b10216 and the build BookForge bundles; both want the joined
+    // form. (A path containing a colon would therefore be unrepresentable —
+    // that is llama.cpp's format, not a choice made here.)
     for (const a of this.adapters) {
-      args.push('--lora-scaled', a.path, '0.0');
+      args.push('--lora-scaled', `${a.path}:0.0`);
     }
 
     const env: NodeJS.ProcessEnv = { ...process.env };

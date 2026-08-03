@@ -235,11 +235,13 @@ describe('one base, adapters selected per request', () => {
     // because a request asked for it, never because it was first on the
     // command line.
     expect(argv.filter((a) => a === '--lora-scaled')).toHaveLength(3);
+    // `FNAME:SCALE` in ONE argument — llama.cpp's parser refuses the
+    // two-argument spelling, and a server that will not start is a stage that
+    // reports it cannot reach a model.
     for (const p of [blocksAdapter, ocrAdapter, footnotesAdapter]) {
-      const at = argv.indexOf(p);
+      const at = argv.indexOf(`${p}:0.0`);
       expect(at).toBeGreaterThan(0);
       expect(argv[at - 1]).toBe('--lora-scaled');
-      expect(argv[at + 1]).toBe('0.0');
     }
     // One model, loopback only.
     expect(argv[argv.indexOf('-m') + 1]).toBe(basePath);
