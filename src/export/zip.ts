@@ -8,6 +8,11 @@
  * that would have justified a library. A book's XHTML is a few hundred
  * kilobytes; the container is not where the size goes.
  *
+ * It never compresses. It can COPY a payload that was already deflated by
+ * somebody else (`ZipEntry.method`), which is how `foundry footnotes --epub`
+ * gives a publisher's EPUB back with only the edited documents changed — but no
+ * deflate implementation lives here and none is coming.
+ *
  * Three properties this writer guarantees, all of them load-bearing for EPUB:
  *
  *  - **`mimetype` is written exactly as the caller ordered it**, first, stored,
@@ -50,7 +55,25 @@ export function crc32(data: Uint8Array): number {
 export interface ZipEntry {
   /** Forward-slashed, relative, no `.` or `..` segments. */
   path: string;
+  /** The bytes to write, verbatim — already compressed when `method` is 8. */
   data: Uint8Array;
+  /**
+   * STORED (0, the default) or DEFLATE (8) — and 8 is a PASS-THROUGH, not a
+   * request to compress.
+   *
+   * This writer still never compresses anything: it has no deflate in it and
+   * will not grow one. What 8 exists for is `foundry footnotes --epub`, which
+   * reads a publisher's EPUB and gives one back — an entry nobody edited is
+   * copied out with the exact bytes, method and CRC it came in with, so the
+   * only entries that differ from the input are the documents that were
+   * actually edited. Re-storing 5 MB of untouched deflated XHTML would make
+   * every byte of the book differ from the original for no reason.
+   */
+  method?: 0 | 8;
+  /** CRC-32 of the UNCOMPRESSED content. Required with method 8, computed otherwise. */
+  crc?: number;
+  /** Size of the UNCOMPRESSED content. Required with method 8. */
+  uncompressedSize?: number;
 }
 
 /** A UTF-8 text entry. */
@@ -144,7 +167,10 @@ export function writeZip(entries: readonly ZipEntry[]): Uint8Array {
 
   const seen = new Set<string>();
   const out = new Writer();
-  const central: Array<{ name: Uint8Array; crc: number; size: number; offset: number; utf8: boolean }> = [];
+  const central: Array<{
+    name: Uint8Array; crc: number; csize: number; size: number;
+    offset: number; utf8: boolean; method: number;
+  }> = [];
 
   for (const entry of entries) {
     const name = checkPath(entry.path);
@@ -159,24 +185,32 @@ export function writeZip(entries: readonly ZipEntry[]): Uint8Array {
     // makes some older readers treat plain ASCII names as UTF-8-flagged, which
     // is harmless but is a difference from what every other EPUB carries.
     const utf8 = name.length !== entry.path.length;
-    const crc = crc32(entry.data);
+    const method = entry.method ?? 0;
+    if (method === 8 && (entry.crc === undefined || entry.uncompressedSize === undefined)) {
+      throw new ZipError(
+        `entry "${entry.path}" is declared DEFLATE but carries no crc/uncompressedSize — `
+        + `a pass-through entry has to bring the values its payload was made with`,
+      );
+    }
+    const crc = method === 8 ? entry.crc! : crc32(entry.data);
+    const usize = method === 8 ? entry.uncompressedSize! : entry.data.length;
     const offset = out.offset;
 
     out.u32(LOCAL_SIG);
     out.u16(20);                       // version needed: 2.0
     out.u16(utf8 ? FLAG_UTF8 : 0);
-    out.u16(0);                        // method: stored
+    out.u16(method);                   // stored, or a deflate payload passed through
     out.u16(DOS_TIME);
     out.u16(DOS_DATE);
     out.u32(crc);
-    out.u32(entry.data.length);        // compressed size == uncompressed
-    out.u32(entry.data.length);
+    out.u32(entry.data.length);        // compressed size (== uncompressed when stored)
+    out.u32(usize);
     out.u16(name.length);
     out.u16(0);                        // no extra field — required for mimetype
     out.bytes(name);
     out.bytes(entry.data);
 
-    central.push({ name, crc, size: entry.data.length, offset, utf8 });
+    central.push({ name, crc, csize: entry.data.length, size: usize, offset, utf8, method });
   }
 
   const centralStart = out.offset;
@@ -185,11 +219,11 @@ export function writeZip(entries: readonly ZipEntry[]): Uint8Array {
     out.u16(20);                       // version made by
     out.u16(20);                       // version needed
     out.u16(e.utf8 ? FLAG_UTF8 : 0);
-    out.u16(0);                        // stored
+    out.u16(e.method);
     out.u16(DOS_TIME);
     out.u16(DOS_DATE);
     out.u32(e.crc);
-    out.u32(e.size);
+    out.u32(e.csize);
     out.u32(e.size);
     out.u16(e.name.length);
     out.u16(0);                        // extra
