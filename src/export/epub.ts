@@ -41,6 +41,23 @@
  *    the markers themselves — so there is nothing to link to and inventing
  *    anchors would produce dead links in every reader.
  *
+ * ## The title page is a spine item, not a chapter
+ *
+ * A real book's title page is a page, and a real EPUB's is a document of its
+ * own, ahead of the first chapter and listed in the EPUB3 **landmarks** nav
+ * rather than in the reading TOC — a title page listed as a chapter is a
+ * chapter the reader did not write.
+ *
+ * Which one a `title` block is has to be DERIVED, because nothing in the run
+ * directory declares it: `blocks/blocks.json` carries a category per block and
+ * no page-level fact at all, so a title page and a `title` opening a chapter
+ * arrive as the same label. The exporter therefore asks the question the blocks
+ * stage's page gate asks (`display-run-merge.ts`): is there a PAGE here that is
+ * nothing but title? Concretely — the leading run of `title` groups, when the
+ * pages those groups sit on carry no other surviving content. Where that does
+ * not hold nothing changes, and the title opens an ordinary section exactly as
+ * it always did.
+ *
  * ## One stylesheet, shipped
  *
  * No font matching, ever (PIPELINE.md). The CSS below is the whole typographic
@@ -97,9 +114,16 @@ export interface BuildEpubInput {
   readonly exclude?: ExclusionRequest;
 }
 
+/**
+ * What a spine item IS, which decides both its markup and whether it appears in
+ * the reading TOC. A `titlepage` is listed in landmarks instead.
+ */
+export type SectionRole = 'titlepage' | 'text';
+
 export interface EpubSection {
   id: string;
-  /** The TOC label. */
+  role: SectionRole;
+  /** The TOC label, and the document's own `<title>`. */
   label: string;
   /** Href relative to the package document. */
   href: string;
@@ -190,6 +214,11 @@ li { margin: 0.2em 0; }
 section.footnotes { margin-top: 2.5em; border-top: 1px solid currentColor; padding-top: 1em; font-size: 0.9em; }
 section.footnotes h2 { font-size: 1em; }
 section.footnotes p { text-indent: 0; margin: 0.4em 0; }
+/* A title page is a plate, not prose: everything centred, nothing indented,
+   and no measure to hold to. */
+section.titlepage { margin-top: 15%; text-align: center; }
+section.titlepage h1.title { margin: 0 0 1em; }
+section.titlepage p, section.titlepage p.caption { text-align: center; text-indent: 0; }
 `;
 
 /**
@@ -208,6 +237,63 @@ const STYLESHEET_BLOCK = STYLESHEET_INDENT
 
 /** Categories that open a new spine item. */
 const SECTION_OPENERS: ReadonlySet<BlocksCategory> = new Set<BlocksCategory>(['title', 'chapter']);
+
+const NO_TITLE_PAGE: ReadonlySet<string> = new Set<string>();
+
+/**
+ * The groups that make up the book's title page, or nothing.
+ *
+ * Derived, because nothing on disk declares one: `blocks/blocks.json` carries a
+ * category per block and no page-level fact, so a `title` block opening a
+ * chapter and a whole title page are the same label at the same altitude. The
+ * question that separates them is the one the blocks stage's page gate asks —
+ * is there a PAGE here that is nothing but title? — and it is answerable from
+ * the artifact, because every block names its page.
+ *
+ * Three conditions, and all three are the definition rather than guards:
+ *
+ *  - The run is LEADING. A title page precedes the book; a `title` that turns
+ *    up after the third chapter is a display heading, whatever it says.
+ *  - The pages that run occupies carry NO OTHER surviving group. This is the
+ *    whole discrimination: a chapter-opening title shares its page with the
+ *    prose underneath it, and a title page does not share its page with
+ *    anything. Measured over what SURVIVED the exclusions, deliberately —
+ *    excluding a category is the user saying it is not in the book.
+ *  - Something follows it. A run of title groups that is the entire book is not
+ *    a page before the book; there is no book for it to be before, and carving
+ *    it out would leave a reading TOC with nothing in it.
+ */
+function findTitlePage(
+  groups: readonly ParagraphGroup[],
+  blocks: readonly Block[],
+): ReadonlySet<string> {
+  const lead: ParagraphGroup[] = [];
+  for (const group of groups) {
+    if (group.category !== 'title') break;
+    lead.push(group);
+  }
+  if (lead.length === 0 || lead.length === groups.length) return NO_TITLE_PAGE;
+
+  // A group's own `page` is where it OPENS, and a group can span a page turn,
+  // so the pages come from the blocks themselves.
+  const pageOf = new Map(blocks.map(b => [b.id, b.page] as const));
+  const pagesOf = (group: ParagraphGroup): number[] =>
+    group.blockIds.map(id => {
+      const page = pageOf.get(id);
+      if (page === undefined) {
+        throw new EpubError(`group ${group.id} names block ${id}, which is not among the blocks being exported`);
+      }
+      return page;
+    });
+
+  const ids = new Set(lead.map(g => g.id));
+  const pages = new Set(lead.flatMap(pagesOf));
+  for (const group of groups) {
+    if (ids.has(group.id)) continue;
+    if (pagesOf(group).some(page => pages.has(page))) return NO_TITLE_PAGE;
+  }
+  return ids;
+}
 
 interface RenderedGroup {
   group: ParagraphGroup;
@@ -344,11 +430,14 @@ export function buildEpub(input: BuildEpubInput): BuildEpubResult {
   // its title page. They extend the open section and its label instead. The
   // page bound is deliberate: a part divider ("OMENS") on its own page ahead of
   // a chapter opening keeps its own TOC entry.
+  const titlePage = findTitlePage(groups, regrouped);
+
   const sections: EpubSection[] = [];
-  const openSection = (label: string): EpubSection => {
+  const openSection = (label: string, role: SectionRole): EpubSection => {
     const n = sections.length + 1;
     const s: EpubSection = {
       id: `s${String(n).padStart(4, '0')}`,
+      role,
       label,
       href: `text/s${String(n).padStart(4, '0')}.xhtml`,
       groupIds: [],
@@ -361,17 +450,32 @@ export function buildEpub(input: BuildEpubInput): BuildEpubResult {
   let current: EpubSection | null = null;
   let openerRun: { category: BlocksCategory; page: number } | null = null;
   for (const group of groups) {
+    if (titlePage.has(group.id)) {
+      // Every title group of the title page goes into ONE section, in reading
+      // order, and nothing else may join it — the page is the unit.
+      const label = rendered.get(group.id)!.text.trim();
+      if (current !== null && current.role === 'titlepage') {
+        if (label.length > 0) current.label = `${current.label} ${label}`.trim();
+      } else {
+        current = openSection(label.length > 0 ? label : 'Title page', 'titlepage');
+      }
+      openerRun = null;
+      current.groupIds.push(group.id);
+      continue;
+    }
     if (SECTION_OPENERS.has(group.category)) {
       const label = rendered.get(group.id)!.text.trim();
-      if (current !== null && openerRun !== null
+      if (current !== null && current.role === 'text' && openerRun !== null
         && openerRun.category === group.category && openerRun.page === group.page) {
         if (label.length > 0) current.label = `${current.label} ${label}`.trim();
       } else {
-        current = openSection(label.length > 0 ? label : `Section ${sections.length + 1}`);
+        current = openSection(label.length > 0 ? label : `Section ${sections.length + 1}`, 'text');
       }
       openerRun = { category: group.category, page: group.page };
     } else {
-      if (current === null) current = openSection('Front matter');
+      // A title page is closed by whatever follows it: the front matter that
+      // comes after one is not part of it.
+      if (current === null || current.role === 'titlepage') current = openSection('Front matter', 'text');
       openerRun = null;
     }
     if (group.category === 'footnote') current.footnoteGroupIds.push(group.id);
@@ -406,6 +510,10 @@ export function buildEpub(input: BuildEpubInput): BuildEpubResult {
       const html = renderGroup(rendered.get(gid)!);
       if (html.length > 0) body.push(html);
     }
+    if (s.role === 'titlepage' && body.length > 0) {
+      body.splice(0, body.length,
+        `<section epub:type="titlepage" class="titlepage">\n${body.join('\n')}\n</section>`);
+    }
     if (s.footnoteGroupIds.length > 0) {
       const notes = s.footnoteGroupIds
         .map(gid => renderGroup(rendered.get(gid)!))
@@ -423,15 +531,33 @@ export function buildEpub(input: BuildEpubInput): BuildEpubResult {
       XHTML_HEAD(s.label, meta.language) + body.join('\n') + '\n' + XHTML_TAIL));
   }
 
+  // The reading TOC is the READING order: the title page is in the spine but
+  // not in it. Every real EPUB does this, and the reason is that a TOC entry
+  // called "Title page" is an entry the author never wrote — it is declared in
+  // `landmarks` below, which is what a reading system's "go to" menu is built
+  // from.
   const navItems = sections
+    .filter(s => s.role === 'text')
     .map(s => `      <li><a href="${clean(s.href)}">${clean(s.label)}</a></li>`)
     .join('\n');
+  const landmark = (type: string, s: EpubSection, text: string): string =>
+    `      <li><a epub:type="${type}" href="${clean(s.href)}">${text}</a></li>`;
+  const titleSection = sections.find(s => s.role === 'titlepage');
+  const bodySection = sections.find(s => s.role === 'text');
+  const landmarks = [
+    ...(titleSection ? [landmark('titlepage', titleSection, 'Title page')] : []),
+    // Always present: `sections` is non-empty and only a `text` section can
+    // carry the book, so there is always somewhere for "start reading" to go.
+    ...(bodySection ? [landmark('bodymatter', bodySection, 'Beginning')] : []),
+  ].join('\n');
   entries.push(zipText(`${OPF_DIR}/nav.xhtml`,
     `<?xml version="1.0" encoding="UTF-8"?>\n`
     + `<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"`
     + ` xml:lang="${clean(meta.language)}" lang="${clean(meta.language)}">\n`
     + `<head>\n  <meta charset="utf-8"/>\n  <title>${clean(meta.title)}</title>\n</head>\n<body>\n`
     + `  <nav epub:type="toc" id="toc">\n    <h1>Contents</h1>\n    <ol>\n${navItems}\n    </ol>\n  </nav>\n`
+    + `  <nav epub:type="landmarks" id="landmarks" hidden="">\n    <h1>Landmarks</h1>\n`
+    + `    <ol>\n${landmarks}\n    </ol>\n  </nav>\n`
     + `</body>\n</html>\n`));
 
   const manifest = [
