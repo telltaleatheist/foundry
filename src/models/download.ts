@@ -237,14 +237,26 @@ function streamToFile(
       fn();
     };
 
+    /**
+     * Reject only once the .part file is CLOSED.
+     *
+     * `createWriteStream` opens its fd asynchronously, so `destroy()` does not
+     * mean the file is not about to appear. A failure raised before the open
+     * lands — an unsupported protocol is raised synchronously, in the same tick
+     * as the stream was created — would otherwise reject, the caller would
+     * unlink a file that does not exist yet, and the open would then create it
+     * behind the cleanup. The orphan is invisible until the next pull refuses
+     * to resume onto it.
+     */
     const fail = (err: Error): void => {
       finish(() => {
+        file.once('close', () => reject(err));
+        file.once('error', () => reject(err));
         try {
           file.destroy();
         } catch {
-          /* ignore */
+          reject(err);
         }
-        reject(err);
       });
     };
 
