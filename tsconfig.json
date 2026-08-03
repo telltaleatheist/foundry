@@ -9,6 +9,11 @@
     "verbatimModuleSyntax": true,
     "noEmit": true,
 
+    // package.json (the version) and vendor/tesseract/manifest.json (the
+    // Tesseract pin) are imported as modules so the bundler INLINES them into
+    // the compiled binary — see src/version.ts and src/scan/tesseract.ts.
+    "resolveJsonModule": true,
+
     "strict": true,
     "noUncheckedIndexedAccess": false,
     "noImplicitOverride": true,
