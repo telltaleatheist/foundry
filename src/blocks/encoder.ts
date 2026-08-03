@@ -177,12 +177,19 @@ export function blocksCategories(version: BlocksVersion): readonly BlocksCategor
  * convention is load-bearing: put the version in the name (`rubric-v3-0.6b`),
  * and it does not matter what size or base the model is.
  *
- * MOVED INTACT, deliberately un-loosened (MIGRATION §1). Note that it reads the
- * FIRST vN it matches anywhere in the string, highest first: a Foundry-style id
- * such as `foundry-blocks-v1-4b` therefore parses as PROMPT version 1 — the
- * retired sixteen-class taxonomy. Extending this to a `foundry-blocks-vN` scheme
- * is a deliberate decision to be taken with the model ids, not a bug to patch
- * here.
+ * MOVED INTACT, deliberately un-loosened (MIGRATION §1). It reads the FIRST vN
+ * it matches anywhere in the string, highest first, so a Foundry-style id such
+ * as `foundry-blocks-v1-4b` parses as PROMPT version 1 — the retired
+ * sixteen-class taxonomy — even though those weights are rubric v5.
+ *
+ * THAT IS WHY THE CATALOG ANSWERS FIRST. `FoundryModelDef.promptVersion` states
+ * the format the weights were trained on, is required on every blocks entry, and
+ * is what `blocksPromptVersion` in commands.ts reads. This function is the
+ * fallback for `--base-model` / `--adapter` overrides, where there is no catalog
+ * entry and the filename (`rubric-v5-4b-f16.gguf`) is the only evidence there
+ * is — which is exactly the case it was written for. It is deliberately NOT
+ * taught about foundry ids: a release number and a prompt number are two facts,
+ * and one string cannot carry both.
  */
 export function blocksVersionFor(name: string): BlocksVersion {
   if (/v6/i.test(name)) return 6;

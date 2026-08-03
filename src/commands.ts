@@ -74,8 +74,8 @@ import { extractOcrAnswer, OCR_STOP, toOcrRawPrompt } from './ocr/prompt.js';
 import {
   FOUNDRY_MODELS,
   requireDefaultModel,
-  type FoundryAdapter,
   type FoundryModelDef,
+  type FoundryStage,
 } from './models/catalog.js';
 import { downloadVerified, sha256File } from './models/download.js';
 import { ensureModelsDir, modelFilePath, modelsDir } from './models/paths.js';
@@ -396,11 +396,18 @@ async function withStageRecord(
   mark({ status: 'done', startedAt, finishedAt: new Date().toISOString() });
 }
 
-/** Record which model answered for a stage. The version in the id is the point. */
-function recordModel(runDir: string, stage: 'blocks' | 'ocr' | 'footnotes', plan: ModelPlan): void {
+/**
+ * Record which model answered for a stage. The version in the id is the point.
+ *
+ * `models.base` is written only when a base was actually ridden. A fused
+ * checkpoint loads no base, and recording its own id there would both claim a
+ * base that was never loaded and overwrite the one a sibling stage did load —
+ * leaving `models.base` decided by stage order.
+ */
+function recordModel(runDir: string, stage: FoundryStage, plan: ModelPlan): void {
   const run = loadRun(runDir);
-  run.models[stage] = plan.adapterId;
-  run.models.base = plan.baseId;
+  run.models[stage] = plan.stageId;
+  if (plan.baseId !== null) run.models.base = plan.baseId;
   saveRun(runDir, run);
 }
 
@@ -834,21 +841,37 @@ function toTextBlocks(blocks: readonly WorkingBlock[]): TextBlock[] {
 // ═════════════════════════════════════════════════════════════════════════════
 
 interface ModelPlan {
-  basePath: string;
-  baseId: string;
+  /** The weights llama-server loads with `-m`. */
+  modelPath: string;
   /**
-   * The LoRA adapter, or null for a MERGED fine-tune given as `--base-model`
-   * with no `--adapter`.
+   * The id of the base being ridden, or null when `modelPath` is a full
+   * checkpoint that already contains the tune.
    *
-   * Null is not "run without a model". It is the case where the weights being
-   * pointed at already contain the tune — which is what every model in this
-   * family is today, before the base+adapter split exists — and the caller has
-   * said so by naming one file and not two. Requests then carry no adapter, and
+   * Null is what makes `run.json` honest: a full-checkpoint stage did not load
+   * the base, so it must not write one into `models.base` — and it must not
+   * overwrite the base a sibling stage genuinely did load.
+   */
+  baseId: string | null;
+  /**
+   * The LoRA adapter, or null for a FUSED model — a catalogued `kind: 'full'`
+   * entry, or a merged fine-tune given as `--base-model` with no `--adapter`.
+   *
+   * Null is not "run without a model". It is the case where the weights in
+   * `modelPath` already contain the tune. Requests then carry no adapter, and
    * the server loads none, so nothing is silently half-applied.
    */
   adapterPath: string | null;
-  /** The id the prompt version is read out of — a catalog id or a filename. */
-  adapterId: string;
+  /** The id recorded for the stage in `run.json`. Its version is load-bearing. */
+  stageId: string;
+  /**
+   * The catalog entry the stage weights came from, or null for an explicit
+   * `--base-model`/`--adapter` override.
+   *
+   * Carried so a stage can read facts the catalog knows and a filename cannot —
+   * today that is `promptVersion` for blocks. An override has no entry to ask,
+   * and falls back to the filename rule, which is what the filename rule is for.
+   */
+  stageDef: FoundryModelDef | null;
 }
 
 function requireGgufFile(file: string, what: string): string {
@@ -864,54 +887,91 @@ function requireGgufFile(file: string, what: string): string {
  *
  * Two sources, in this order, and there is no third:
  *   1. `--base-model` / `--adapter` — explicit GGUF paths. An OVERRIDE, for
- *      someone holding weights of their own, and the whole reason the plumbing
- *      below is reachable today.
+ *      someone holding weights of their own.
  *   2. the catalog (`src/models/catalog.ts`) + the models directory.
  *
- * With the catalog empty, (2) throws the not-published message from
- * `requireDefaultModel`, which says the weights are not on HuggingFace rather
- * than that a file is missing from this machine — different problems, different
- * remedies, and conflating them sends people searching their own disk for
- * something nobody has uploaded.
+ * (2) throws the not-published message from `requireDefaultModel` when a role
+ * has no entry, and a catalogued-but-absent file names `foundry models pull`.
+ * Those are different problems with different remedies, and conflating them
+ * sends people searching their own disk for something nobody has uploaded.
+ *
+ * **A `kind: 'full'` stage does not resolve the base at all.** Its checkpoint is
+ * fused, so the base is not merely unused — it is not part of the answer, and
+ * demanding an 8 GB download that will never be loaded would be a fabricated
+ * requirement. That is what lets a chain mix the two: `blocks` loads its own
+ * fused model, `ocr` and `footnotes` load the shared base with their adapters,
+ * and each stage's server is built from its own plan (`buildServer`) so the two
+ * shapes never have to agree.
  */
-function resolveStageModels(args: ParsedArgs, stage: FoundryAdapter): ModelPlan {
+function resolveStageModels(args: ParsedArgs, stage: FoundryStage): ModelPlan {
   const dir = optionalString(args, 'models-dir');
 
   const explicitBase = optionalString(args, 'base-model');
   const explicitAdapter = optionalString(args, 'adapter');
 
-  const base = explicitBase
-    ? { path: requireGgufFile(explicitBase, '--base-model'), id: path.basename(explicitBase) }
-    : catalogued('base', dir);
-
   if (explicitAdapter) {
+    // An adapter needs something to ride. The base is the catalogued one unless
+    // the caller named theirs.
+    const base = explicitBase
+      ? { path: requireGgufFile(explicitBase, '--base-model'), id: path.basename(explicitBase) }
+      : catalogued('base', dir);
     return {
-      basePath: base.path,
+      modelPath: base.path,
       baseId: base.id,
       adapterPath: requireGgufFile(explicitAdapter, '--adapter'),
-      adapterId: path.basename(explicitAdapter),
+      stageId: path.basename(explicitAdapter),
+      stageDef: null,
     };
   }
 
   // An explicit base with no adapter is a merged fine-tune, and the prompt
-  // version is then read out of the BASE's filename — which is the same rule as
-  // always: the version lives in the name of whatever weights answer the
-  // request (ARCHITECTURE §3).
+  // version is then read out of its FILENAME — which is the same rule as always:
+  // the version lives in the name of whatever weights answer the request
+  // (ARCHITECTURE §3). It is not a base being ridden, so `baseId` is null.
   if (explicitBase) {
-    return { basePath: base.path, baseId: base.id, adapterPath: null, adapterId: base.id };
+    const file = requireGgufFile(explicitBase, '--base-model');
+    return {
+      modelPath: file,
+      baseId: null,
+      adapterPath: null,
+      stageId: path.basename(explicitBase),
+      stageDef: null,
+    };
   }
 
-  const adapter = catalogued(stage, dir);
+  const def = requireDefaultModel(stage);
+  const stageFile = cataloguedFile(def, stage, dir);
+
+  if (def.kind === 'full') {
+    return {
+      modelPath: stageFile,
+      baseId: null,
+      adapterPath: null,
+      stageId: def.id,
+      stageDef: def,
+    };
+  }
+
+  const base = catalogued('base', dir);
   return {
-    basePath: base.path,
+    modelPath: base.path,
     baseId: base.id,
-    adapterPath: adapter.path,
-    adapterId: adapter.id,
+    adapterPath: stageFile,
+    stageId: def.id,
+    stageDef: def,
   };
 }
 
-function catalogued(role: 'base' | FoundryAdapter, dir: string | undefined): { path: string; id: string } {
+function catalogued(role: 'base' | FoundryStage, dir: string | undefined): { path: string; id: string } {
   const def = requireDefaultModel(role);
+  return { path: cataloguedFile(def, role, dir), id: def.id };
+}
+
+function cataloguedFile(
+  def: FoundryModelDef,
+  role: 'base' | FoundryStage,
+  dir: string | undefined,
+): string {
   const file = modelFilePath(def.id, dir);
   if (!fs.existsSync(file)) {
     throw new Error(
@@ -919,14 +979,38 @@ function catalogued(role: 'base' | FoundryAdapter, dir: string | undefined): { p
       + `Run \`foundry models pull\`.`,
     );
   }
-  return { path: file, id: def.id };
+  return file;
 }
 
 /** What weights are about to answer, said plainly enough to catch a mistake. */
 function describePlan(plan: ModelPlan): string {
-  return plan.adapterPath
-    ? `adapter ${plan.adapterId} on base ${plan.baseId}`
-    : `merged model ${plan.baseId}, no adapter applied`;
+  if (plan.adapterPath) return `adapter ${plan.stageId} on base ${plan.baseId}`;
+  return `full model ${plan.stageId}, no adapter applied`;
+}
+
+/**
+ * Which prompt format the blocks weights were trained on.
+ *
+ * The CATALOG is asked first, because it is the only thing that knows. The id's
+ * version is foundry's release line, which restarted at v1, while the prompt
+ * format carried on from BookForge — `foundry-blocks-v1-4b` is rubric v5. Read
+ * out of the id, it would come back as 1 and encode the retired sixteen-class
+ * taxonomy: legal-looking prompts, quietly worse answers.
+ *
+ * The filename rule remains the answer for `--base-model`/`--adapter`, where
+ * there is no entry to ask and the name (`rubric-v5-4b-f16.gguf`) is the only
+ * evidence there is.
+ */
+function blocksPromptVersion(plan: ModelPlan): BlocksVersion {
+  const declared = plan.stageDef?.promptVersion;
+  if (declared === undefined) return blocksVersionFor(plan.stageId);
+  if (declared < 1 || declared > 6 || !Number.isInteger(declared)) {
+    throw new Error(
+      `The catalog declares promptVersion ${declared} for ${plan.stageId}, and `
+      + `this build only knows blocks prompt formats 1-6. Upgrade foundry.`,
+    );
+  }
+  return declared as BlocksVersion;
 }
 
 const DEFAULT_CONTEXT = 1024 * 16;
@@ -944,18 +1028,22 @@ function intOption(args: ParsedArgs, name: string, fallback: number): number {
 /**
  * Build the server for one stage.
  *
- * One base, one adapter, named for the stage. When all three adapters exist a
- * `convert` should hold ONE server carrying all three (ARCHITECTURE §3) — that
- * is a one-line change here and is deliberately not written yet, because no
- * stage past `scan` can currently run at all and untested optimisation of an
- * unreachable path is not a saving.
+ * Whatever the plan says: a base with the stage's adapter, or a fused checkpoint
+ * on its own with no adapter list — in which case `LlamaServer` emits `-m` and
+ * no `--lora-scaled`, because there is no LoRA to scale.
+ *
+ * ONE SERVER PER STAGE, which is what lets the two shapes coexist in a chain.
+ * A `convert` could hold one server carrying the adapters that share the base
+ * (ARCHITECTURE §3), but `blocks` could never join it — an 8 GB fused model is
+ * not an adapter and cannot be hot-swapped onto the base — so that optimisation
+ * would cover ocr and footnotes only, and it is still not written.
  */
-function buildServer(args: ParsedArgs, stage: FoundryAdapter, plan: ModelPlan): LlamaServer {
+function buildServer(args: ParsedArgs, stage: FoundryStage, plan: ModelPlan): LlamaServer {
   const binaryPath = resolveLlamaServer(optionalString(args, 'llama-server'));
   const verbose = flag(args, 'verbose');
   return new LlamaServer({
     binaryPath,
-    basePath: plan.basePath,
+    basePath: plan.modelPath,
     adapters: plan.adapterPath ? [{ name: stage, path: plan.adapterPath }] : [],
     contextSize: intOption(args, 'context', DEFAULT_CONTEXT),
     nGpuLayers: intOption(
@@ -1023,7 +1111,7 @@ async function runBlocks(args: ParsedArgs): Promise<void> {
     // told the weights are missing — and so the prompt-format version, which is
     // read out of the model id, is known before anything is encoded.
     const plan = resolveStageModels(args, 'blocks');
-    const version: BlocksVersion = blocksVersionFor(plan.adapterId);
+    const version = blocksPromptVersion(plan);
     log(`blocks: ${describePlan(plan)} → prompt format v${version}`);
 
     const dimensions: PageDimension[] = [];
@@ -1565,7 +1653,7 @@ async function runConvert(args: ParsedArgs): Promise<void> {
 // models
 // ═════════════════════════════════════════════════════════════════════════════
 
-const MODEL_ROLES: readonly ('base' | FoundryAdapter)[] = ['base', 'blocks', 'ocr', 'footnotes'];
+const MODEL_ROLES: readonly ('base' | FoundryStage)[] = ['base', 'blocks', 'ocr', 'footnotes'];
 
 async function runModels(args: ParsedArgs): Promise<void> {
   const action = args.positional[0];
@@ -1586,12 +1674,11 @@ async function listModels(dir: string | undefined, verify: boolean): Promise<voi
     // one of those sends someone looking on their own disk for a file that does
     // not exist anywhere yet.
     out.push(
-      'The catalog is empty: no foundry weights are published yet.',
+      'The catalog is empty: this build knows of no published foundry weights.',
       '',
-      'The base model has not been cast and the three adapters are gated on their',
-      'training runs. There is nothing to download, and `foundry models pull` will',
-      'say the same thing. Entries land in src/models/catalog.ts only once the',
-      'weights are live at their URLs and their sha256 has been verified.',
+      'There is nothing to download, and `foundry models pull` will say the same',
+      'thing. Entries land in src/models/catalog.ts only once the weights are live',
+      'at their URLs and their sha256 has been verified.',
       '',
       'A local GGUF can be pointed at directly: --base-model <file> --adapter <file>.',
     );
@@ -1601,7 +1688,7 @@ async function listModels(dir: string | undefined, verify: boolean): Promise<voi
 
   for (const role of MODEL_ROLES) {
     const entries = FOUNDRY_MODELS.filter((m) =>
-      role === 'base' ? m.kind === 'base' : m.adapter === role,
+      role === 'base' ? m.kind === 'base' : m.stage === role,
     ).sort((a, b) => b.rank - a.rank);
     out.push(`${role}:`);
     if (entries.length === 0) out.push('  (none catalogued)');
@@ -1910,13 +1997,13 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'models',
-    summary: 'Fetch and verify the base model and adapters.',
+    summary: 'Fetch and verify the base model and the stage models.',
     usage: '<pull|list>',
     detail: [
       'foundry models list',
-      '    Show the catalog: the base model and the three adapters, each with its',
-      '    id, size, and whether it is present on disk. --verify also checks the',
-      '    sha256 of what is there, which reads every byte.',
+      '    Show the catalog: the base model and the three stage models, each with',
+      '    its id, size, and whether it is present on disk. --verify also checks',
+      '    the sha256 of what is there, which reads every byte.',
       '',
       'foundry models pull',
       '    Download whatever is missing from HuggingFace (owner: owenmorgan) into',

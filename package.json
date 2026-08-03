@@ -2,7 +2,7 @@
   "name": "foundry",
   "version": "0.1.0",
   "private": true,
-  "description": "Recast poorly scanned PDFs into clean EPUBs. Pinned Tesseract for segmentation, three LoRA adapters on one shared Qwen3-4B base for labelling, OCR repair and footnote-marker removal.",
+  "description": "Recast poorly scanned PDFs into clean EPUBs. Pinned Tesseract for segmentation, three Qwen3-4B stage models for labelling, OCR repair and footnote-marker removal.",
   "type": "module",
   "module": "src/cli.ts",
   "bin": {

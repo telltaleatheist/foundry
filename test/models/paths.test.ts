@@ -113,8 +113,10 @@ describe('model file resolution', () => {
   test('an unknown id throws naming the id, not a plausible path', () => {
     // A path into nowhere would be reported downstream as a missing file, which
     // sends the reader to the disk instead of to the id they mistyped.
-    expect(() => modelFilePath('foundry-blocks-v1-4b', '/tmp/weights')).toThrow(
-      /Unknown model id: foundry-blocks-v1-4b/,
+    // A well-formed id for a version nobody published. `foundry-blocks-v1-4b`
+    // used to serve here and no longer can: it is catalogued now.
+    expect(() => modelFilePath('foundry-blocks-v9-4b', '/tmp/weights')).toThrow(
+      /Unknown model id: foundry-blocks-v9-4b/,
     );
   });
 

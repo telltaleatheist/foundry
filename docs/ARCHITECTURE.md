@@ -85,27 +85,48 @@ or relax any check.
 
 ---
 
-## 3. Three adapters, one resident base model
+## 3. Three stage models on one resident base model
 
-One Qwen3-4B base (`foundry:4b`), three LoRA adapters hot-swapped per request
-via llama-server's multi-LoRA support.
+One Qwen3-4B base (`foundry:4b`), and one model per stage.
 
-| Adapter | Id | Formerly | Unit of work |
-|---|---|---|---|
-| blocks | `foundry-blocks-v1-4b` | rubric | one page of blocks |
-| ocr | `foundry-ocr-v1-4b` | galley / proof | one line |
-| footnotes | `foundry-footnotes-v1-4b` | dagger | one text segment |
+| Stage | Id | Kind | Formerly | Unit of work |
+|---|---|---|---|---|
+| blocks | `foundry-blocks-v1-4b` | full (fused, 8 GB) | rubric | one page of blocks |
+| ocr | `foundry-ocr-v1-4b` | adapter (126 MB) | galley / proof | one line |
+| footnotes | `foundry-footnotes-v1-4b` | adapter (126 MB) | dagger | one text segment |
 
-Three separate 4B models would mean several gigabytes of unload/reload every
-time the pipeline moved from one stage to the next, and `convert` moves between
-them constantly. Adapters are tens of megabytes. One base loads, stays resident,
-and the adapter swaps.
+Two of the three are LoRA adapters hot-swapped per request via llama-server's
+multi-LoRA support, and that is the design: three separate 4B models would mean
+several gigabytes of unload/reload every time the pipeline moved from one stage
+to the next, and `convert` moves between them constantly. Adapters are tens of
+megabytes. One base loads, stays resident, and the adapter swaps.
 
-**The id carries version and size, and the version is load-bearing.** The
-encoder parses it to select the prompt format and the legal class list. An id
-without a version parses as v1 and produces a prompt advertising a retired
-taxonomy — which does not error, it just quietly scores worse. Model ids are
-therefore validated, not trusted.
+**`blocks` is fused, and that is a fact about the checkpoint rather than a
+choice.** The weights that scored were trained as a merged model, and shipping a
+re-derived LoRA would be shipping a model nobody has measured. So its entry
+declares `kind: 'full'`, it is served with `-m <its own file>` and no
+`--lora-scaled`, and it does not need the base on disk at all. Each stage builds
+its own server from its own plan, which is what lets the two shapes sit in one
+chain — the fused stage loads and unloads around the base+adapter stages instead
+of pretending to join them. When blocks is retrained as a LoRA against
+`foundry:4b`, its entry lands as `kind: 'adapter'` with a higher rank and the
+fused one stays.
+
+The catalog therefore declares packaging per entry and never infers it from the
+id: `foundry-blocks-v1-4b` names the stage, the release and the base size, and
+none of that says whether the tune was merged.
+
+**The id carries version and size, and the version is load-bearing.** An id
+without a version parses as v1. Model ids are therefore validated, not trusted.
+
+**But the release version is NOT the prompt version.** Foundry's stage lines
+restart at v1 while the prompt formats carried on from BookForge, so
+`foundry-blocks-v1-4b` is release v1 of a **v5 prompt**. The format the weights
+were trained on is declared as `promptVersion` on the catalog entry and is
+required on every `blocks` entry; reading it off the id would select the retired
+sixteen-class taxonomy, which does not error and just quietly scores worse. The
+filename rule (`blocksVersionFor`) remains the answer for `--base-model` /
+`--adapter` overrides, where there is no entry to ask.
 
 Old catalog entries are never deleted: someone is mid-book with the weights they
 already have on disk. A `rank` field decides the default.

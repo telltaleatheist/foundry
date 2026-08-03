@@ -1,10 +1,17 @@
 /**
  * catalog — the weights Foundry knows how to fetch.
  *
- * One base model and three LoRA adapters (ARCHITECTURE §3). The base is a few
- * gigabytes and stays resident; the adapters are tens of megabytes and swap per
- * request, which is the whole reason this is one base with three adapters
- * rather than three fine-tunes.
+ * One base model and three stage models (ARCHITECTURE §3). Two of the three are
+ * LoRA adapters: the base is a few gigabytes and stays resident, the adapters
+ * are tens of megabytes and swap per request, which is the whole reason this is
+ * one base with adapters rather than three fine-tunes.
+ *
+ * `blocks` is the exception, and it is a fact about the weights rather than a
+ * design choice: the checkpoint that shipped is a FUSED full model, so it is
+ * catalogued as `kind: 'full'` and served on its own with no adapter. Nothing
+ * pretends otherwise — a full checkpoint declared as an adapter would be loaded
+ * with `--lora-scaled` and produce a server that answers with the base's
+ * behaviour, which is the failure mode this file exists to prevent.
  *
  *   Hosting:  huggingface.co/owenmorgan/<repo>, direct resolve URLs
  *   On disk:  see paths.ts — a platform data dir, or `--models-dir`
@@ -26,15 +33,29 @@
  * first run. Check the HuggingFace repo, never this file, for what is live.
  */
 
-/** Base model, or a LoRA adapter that rides on it. */
-export type FoundryModelKind = 'base' | 'adapter';
+/**
+ * What a file IS, which decides how llama-server is told to load it.
+ *
+ *  - `base`    the resident base every adapter rides. Loaded with `-m`.
+ *  - `adapter` a LoRA. Loaded with `-m <base> --lora-scaled <this>`.
+ *  - `full`    a fused fine-tune that already contains the tune. Loaded with
+ *              `-m <this>` and NO lora flag, and it does not need the base on
+ *              disk at all.
+ *
+ * This is deliberately NOT derivable from the id: `foundry-blocks-v1-4b` says
+ * which stage, which release and which base size, and none of that tells you
+ * whether the tune was merged. A stage can ship an adapter at v1 and a fused
+ * model at v2 without its ids changing shape, so the id grammar checks the
+ * stage and the catalog entry declares the packaging.
+ */
+export type FoundryModelKind = 'base' | 'adapter' | 'full';
 
 /**
- * The three stages that have their own adapter. Named for what they DO, which
+ * The three stages that have their own model. Named for what they DO, which
  * is the rename that came with the extraction: rubric → blocks, galley/proof →
  * ocr, dagger → footnotes.
  */
-export type FoundryAdapter = 'blocks' | 'ocr' | 'footnotes';
+export type FoundryStage = 'blocks' | 'ocr' | 'footnotes';
 
 export interface FoundryModelDef {
   /**
@@ -61,10 +82,28 @@ export interface FoundryModelDef {
   rank: number;
   kind: FoundryModelKind;
   /**
-   * Which stage this adapter serves. Set for `kind: 'adapter'`, absent for the
-   * base — the base serves every stage, which is the point of it.
+   * Which stage these weights serve. Set for `adapter` and `full`, absent for
+   * the base — the base serves every stage, which is the point of it.
    */
-  adapter?: FoundryAdapter;
+  stage?: FoundryStage;
+  /**
+   * The prompt format these weights were TRAINED on, when the stage has
+   * versioned prompt formats. Today that is `blocks` and only `blocks`, where it
+   * selects the system prompt and the legal class list (`blocksCategories`).
+   *
+   * This is a separate number from the version in the id, and conflating them
+   * is the trap. The id's version is the RELEASE line — foundry's stage lines
+   * restart at v1 — while the prompt format has its own history that predates
+   * the extraction: `foundry-blocks-v1-4b` IS rubric v5, so it is release v1 of
+   * a v5 prompt. Reading the format out of the id would hand it the v1 prompt,
+   * which advertises a retired sixteen-class taxonomy. That does not error; it
+   * just scores worse and reads as an undertrained model.
+   *
+   * `blocksVersionFor(name)` — the filename rule — stays correct and stays the
+   * answer for `--base-model`/`--adapter` overrides, where there is no catalog
+   * entry to ask and the filename is all there is.
+   */
+  promptVersion?: number;
   /** One line for `foundry models list`. */
   note: string;
 }
@@ -80,16 +119,22 @@ export interface FoundryModelDef {
 const BASE_ID = /^foundry:(\d+)b$/;
 
 /**
- * Adapter ids: `foundry-blocks-v1-4b`. Stage, version, and the size of the base
- * it was trained against — an adapter is only valid on the base it was tuned
- * on, so the size travels with it.
+ * Stage ids: `foundry-blocks-v1-4b`. Stage, release version, and the size of the
+ * base it was trained against — an adapter is only valid on the base it was
+ * tuned on, and a fused checkpoint is still a 4B model, so the size travels with
+ * it either way.
  */
-const ADAPTER_ID = /^foundry-(blocks|ocr|footnotes)-v(\d+)-(\d+)b$/;
+const STAGE_ID = /^foundry-(blocks|ocr|footnotes)-v(\d+)-(\d+)b$/;
 
 export interface ParsedModelId {
-  kind: FoundryModelKind;
+  /**
+   * `'stage'`, not `'adapter'`: the id names which stage the weights serve, and
+   * says nothing about whether the tune is a LoRA or fused. That is the
+   * catalog's `kind`, declared per entry.
+   */
+  kind: 'base' | 'stage';
   /** Undefined for the base. */
-  adapter?: FoundryAdapter;
+  stage?: FoundryStage;
   /** Undefined for the base — the base is versioned by its size and hash. */
   version?: number;
   /** Parameter count in billions, as written in the id. */
@@ -110,19 +155,19 @@ export function parseModelId(id: string): ParsedModelId {
   const base = BASE_ID.exec(id);
   if (base) return { kind: 'base', sizeB: Number(base[1]) };
 
-  const adapter = ADAPTER_ID.exec(id);
-  if (adapter) {
+  const stage = STAGE_ID.exec(id);
+  if (stage) {
     return {
-      kind: 'adapter',
-      adapter: adapter[1] as FoundryAdapter,
-      version: Number(adapter[2]),
-      sizeB: Number(adapter[3]),
+      kind: 'stage',
+      stage: stage[1] as FoundryStage,
+      version: Number(stage[2]),
+      sizeB: Number(stage[3]),
     };
   }
 
   throw new Error(
-    `Malformed model id: ${id}. Expected a base id like \`foundry:4b\` or an `
-    + `adapter id like \`foundry-blocks-v1-4b\` (stage, version, base size). The `
+    `Malformed model id: ${id}. Expected a base id like \`foundry:4b\` or a `
+    + `stage id like \`foundry-blocks-v1-4b\` (stage, version, base size). The `
     + `version segment is load-bearing — an id without one reads as v1 and gets `
     + `a prompt for a retired taxonomy.`,
   );
@@ -133,23 +178,14 @@ export function parseModelId(id: string): ParsedModelId {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * EMPTY, deliberately, and this is not an oversight.
+ * Every entry here is LIVE at its url, and that is the standing rule: upload,
+ * verify the uploaded bytes, THEN add the entry with the real hash. An invented
+ * hash is worse than no entry — it turns "not published yet", which is a clear
+ * message, into a checksum mismatch on a stranger's first run, which reads as a
+ * corrupt download.
  *
- * No `foundry-*` weights are published yet: the base has not been cast and the
- * three adapters are gated on their training runs clearing their measurement
- * gates. Writing entries now would mean inventing URLs and sha256s, and an
- * invented hash is worse than no entry — it turns "not published yet", which is
- * a clear message, into a checksum mismatch on a stranger's first run, which
- * reads as a corrupt download.
- *
- * So the catalog stays empty until weights are actually live at their URLs, and
- * every command that needs a model reports exactly that (see
- * `requireDefaultModel`). Publishing a model version means: upload, verify the
- * uploaded bytes, THEN add the entry with the real hash.
- *
- * When entries do land, they land in the shape above and under the two rules in
- * the file header: never delete a published entry, and let `rank` pick the
- * default.
+ * And the two rules from the file header: never delete a published entry, and
+ * let `rank` pick the default.
  */
 const HF = 'https://huggingface.co/owenmorgan/foundry-models/resolve/main';
 
@@ -185,7 +221,7 @@ export const FOUNDRY_MODELS: FoundryModelDef[] = [
     bytes: 132155232,
     rank: 100,
     kind: 'adapter',
-    adapter: 'ocr',
+    stage: 'ocr',
     note: 'galley v1.1 epoch 2. Base+adapter scored equal to the merged weights '
       + 'on 2,000 held-out lines (CER 0.353%→0.306%, degraded 56, falseEdits 42).',
   },
@@ -198,10 +234,37 @@ export const FOUNDRY_MODELS: FoundryModelDef[] = [
     bytes: 132155616,
     rank: 100,
     kind: 'adapter',
-    adapter: 'footnotes',
+    stage: 'footnotes',
     note: 'Trained on sft + mined-EPUB + manufactured boundary cases. Base+adapter '
       + 'scored identical to merged: 97.0% applied / 0.5% false-fire on clean text, '
       + '90.5% / 2.1% on raw OCR. Runs after ocr, so clean text is its surface.',
+  },
+  /*
+   * PUBLISHED Aug 3 2026. Verified on the repo after upload: x-linked-size ==
+   * bytes below, x-linked-etag == sha256 below.
+   *
+   * A FULL FUSED MODEL, not an adapter, and the same 8,051,285,248 bytes that
+   * every blocks measurement was taken on — byte-identical to
+   * bookforge-rubric/rubric-v5-4b-f16.gguf, uploaded rather than re-quantized,
+   * because a re-quantize would be a model nobody has scored. It is 8 GB where
+   * the other two stages are 132 MB, which is the honest cost of the checkpoint
+   * that exists; when blocks is retrained as a LoRA against `foundry:4b` its
+   * entry lands here as `kind: 'adapter'` with a higher rank and this one stays.
+   */
+  {
+    id: 'foundry-blocks-v1-4b',
+    name: 'Page layout model',
+    filename: 'foundry-blocks-v1-4b.gguf',
+    url: `${HF}/foundry-blocks-v1-4b.gguf`,
+    sha256: '4b991fca888de5cf5926d15d67b4eac979fda16fb9d3078ffdcd9f816b7e9a9a',
+    bytes: 8051285248,
+    rank: 100,
+    kind: 'full',
+    stage: 'blocks',
+    promptVersion: 5,
+    note: 'rubric v5, fused f16 — release v1 of a v5 PROMPT (twelve classes, '
+      + 'table merged into list). Labels a whole page exactly right far more often '
+      + 'than v4: 79% against 57% on the same split. Loads on its own, no adapter.',
   },
 ];
 
@@ -224,21 +287,43 @@ export function assertCatalogValid(models: readonly FoundryModelDef[] = FOUNDRY_
   for (const m of models) {
     const parsed = parseModelId(m.id);
 
-    if (parsed.kind !== m.kind) {
+    const declaredKind = m.kind === 'base' ? 'base' : 'stage';
+    if (parsed.kind !== declaredKind) {
       throw new Error(
-        `Catalog: ${m.id} declares kind '${m.kind}' but its id parses as '${parsed.kind}'.`,
+        `Catalog: ${m.id} declares kind '${m.kind}' but its id parses as `
+        + `'${parsed.kind}'. A base id names no stage; a stage id always does.`,
       );
     }
-    if (m.kind === 'adapter' && m.adapter !== parsed.adapter) {
+    if (m.kind === 'base') {
+      if (m.stage !== undefined) {
+        throw new Error(
+          `Catalog: ${m.id} is the base model and must not name a stage `
+          + `(got '${m.stage}'). The base serves every stage.`,
+        );
+      }
+    } else if (m.stage !== parsed.stage) {
       throw new Error(
-        `Catalog: ${m.id} declares adapter '${m.adapter ?? 'none'}' but its id `
-        + `names '${parsed.adapter}'.`,
+        `Catalog: ${m.id} declares stage '${m.stage ?? 'none'}' but its id `
+        + `names '${parsed.stage}'.`,
       );
     }
-    if (m.kind === 'base' && m.adapter !== undefined) {
+
+    // The trap this exists for: the blocks prompt format is NOT the version in
+    // the id, and a blocks entry that leaves it out gets `blocksVersionFor` on a
+    // `foundry-blocks-vN` id — which reads release v1 as PROMPT v1 and hands the
+    // model the retired sixteen-class taxonomy. It does not error. It just
+    // scores worse and reads as a bad model.
+    if (m.stage === 'blocks' && m.promptVersion === undefined) {
       throw new Error(
-        `Catalog: ${m.id} is the base model and must not name an adapter `
-        + `(got '${m.adapter}'). The base serves every stage.`,
+        `Catalog: ${m.id} serves the blocks stage and must declare `
+        + `promptVersion — the prompt format its weights were trained on, which `
+        + `is a different number from the release version in its id.`,
+      );
+    }
+    if (m.promptVersion !== undefined
+      && (!Number.isInteger(m.promptVersion) || m.promptVersion <= 0)) {
+      throw new Error(
+        `Catalog: ${m.id} has a non-positive promptVersion (${m.promptVersion}).`,
       );
     }
 
@@ -284,14 +369,21 @@ export function getModelDef(id: string): FoundryModelDef | undefined {
   return FOUNDRY_MODELS.find((m) => m.id === id);
 }
 
-/** Every entry for a role, highest rank first. */
+/**
+ * Every entry for a role, highest rank first.
+ *
+ * A stage matches on `stage`, never on `kind`: an adapter and a fused full model
+ * are two packagings of the same role, and a stage that switches from one to the
+ * other must not lose its old entries from the list — someone mid-book has them
+ * on disk.
+ */
 export function modelsFor(
-  role: 'base' | FoundryAdapter,
+  role: 'base' | FoundryStage,
   models: readonly FoundryModelDef[] = FOUNDRY_MODELS,
 ): FoundryModelDef[] {
   const matching = role === 'base'
     ? models.filter((m) => m.kind === 'base')
-    : models.filter((m) => m.kind === 'adapter' && m.adapter === role);
+    : models.filter((m) => m.stage === role);
   return [...matching].sort(byRankDesc);
 }
 
@@ -304,7 +396,7 @@ export function modelsFor(
  * models dir to look in.
  */
 export function defaultModelFor(
-  role: 'base' | FoundryAdapter,
+  role: 'base' | FoundryStage,
   models: readonly FoundryModelDef[] = FOUNDRY_MODELS,
 ): FoundryModelDef | undefined {
   return modelsFor(role, models)[0];
@@ -313,23 +405,25 @@ export function defaultModelFor(
 /**
  * The catalogued default, or an error saying why there isn't one.
  *
- * No fallback (ARCHITECTURE §8): with an empty catalog this is the message a
- * user gets, and it says the weights are not published rather than pretending
- * the model is merely missing from disk — those are different problems with
- * different remedies, and conflating them sends people looking in their own
- * filesystem for something that was never uploaded.
+ * No fallback (ARCHITECTURE §8): the message says the weights are not published
+ * rather than pretending the model is merely missing from disk — those are
+ * different problems with different remedies, and conflating them sends people
+ * looking in their own filesystem for something that was never uploaded.
+ *
+ * Every role has a published default today, so this throws only for a role whose
+ * entries were removed — which the header forbids.
  */
 export function requireDefaultModel(
-  role: 'base' | FoundryAdapter,
+  role: 'base' | FoundryStage,
   models: readonly FoundryModelDef[] = FOUNDRY_MODELS,
 ): FoundryModelDef {
   const def = defaultModelFor(role, models);
   if (def) return def;
   throw new Error(
-    `No ${role} model is published yet. The Foundry weights are not on `
-    + `HuggingFace at this version — the catalog in src/models/catalog.ts is `
-    + `empty pending the training runs. There is nothing to download and no `
-    + `substitute to run instead.`,
+    `No ${role} model is published. The Foundry weights for that role are not `
+    + `on HuggingFace — src/models/catalog.ts carries no entry for it. There is `
+    + `nothing to download and no substitute to run instead. A local GGUF can be `
+    + `pointed at directly with --base-model <file> (and --adapter <file>).`,
   );
 }
 

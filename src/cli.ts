@@ -4,9 +4,10 @@
  *
  * A type foundry casts worn type into fresh type. This one takes a badly
  * scanned page and casts it back into a readable EPUB: pinned Tesseract finds
- * the lines, three LoRA adapters on one shared Qwen3-4B base decide what each
- * block IS, repair what the OCR got wrong, and strip the footnote markers, and
- * the labels drive the EPUB.
+ * the lines, three Qwen3-4B stage models decide what each block IS, repair what
+ * the OCR got wrong, and strip the footnote markers, and the labels drive the
+ * EPUB. Two of the three are LoRA adapters on one shared base; `blocks` is a
+ * fused checkpoint and loads on its own (ARCHITECTURE §3).
  *
  * Entry point. Dispatch only — every stage lives in its own module, and this
  * file's job is to turn argv into exactly one of them and to make failure loud.
