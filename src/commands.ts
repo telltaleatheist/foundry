@@ -22,11 +22,13 @@
  *
  * WHAT IS NOT WIRED YET, and why the errors say so rather than pretending:
  *
- *  - **The weights are not published.** `src/models/catalog.ts` is empty on
- *    purpose, so `blocks`/`ocr`/`footnotes` build their real inputs and then stop
- *    at model resolution with the not-published message. An explicit
- *    `--base-model` / `--adapter` path overrides the catalog for anyone holding
- *    a local GGUF — an override, not a fallback.
+ *  - **A role with no catalogued weights stops that stage, not the run before
+ *    it.** Every role is published today (`src/models/catalog.ts`), but the
+ *    handling stays: a stage whose family is uncatalogued builds its real inputs
+ *    and then stops at model resolution with the not-published message, and
+ *    `models pull` skips it and fetches the rest. An explicit `--base-model` /
+ *    `--adapter` path overrides the catalog for anyone holding a local GGUF —
+ *    an override, not a fallback.
  *  - **The ocr prompt was MOVED, not re-typed.** `src/ocr/prompt.ts` carries the
  *    trained-against system prompt, verified byte-identical against
  *    BookForgeApp's `tools/galley/build-dataset.py` by
@@ -74,6 +76,7 @@ import { ocrWordGuard } from './ocr/guard.js';
 import { extractOcrAnswer, OCR_STOP, toOcrRawPrompt } from './ocr/prompt.js';
 import {
   FOUNDRY_MODELS,
+  defaultModelFor,
   requireDefaultModel,
   type FoundryModelDef,
   type FoundryStage,
@@ -1751,7 +1754,8 @@ async function listModels(dir: string | undefined, verify: boolean): Promise<voi
   if (FOUNDRY_MODELS.length === 0) {
     // Not "no models installed" — nothing has been PUBLISHED. Saying the wrong
     // one of those sends someone looking on their own disk for a file that does
-    // not exist anywhere yet.
+    // not exist anywhere yet. Unreachable while the catalog carries entries; it
+    // stays because the distinction is the thing worth keeping, not the state.
     out.push(
       'The catalog is empty: this build knows of no published foundry weights.',
       '',
@@ -1801,10 +1805,33 @@ async function describeModel(
 const mib = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 
 async function pullModels(dir: string | undefined): Promise<void> {
-  // requireDefaultModel is the gate, and with an empty catalog it throws the
-  // not-published message. That is the correct failure: there is no substitute
-  // to fetch and no partial success to report.
-  const wanted = MODEL_ROLES.map((role) => ({ role, def: requireDefaultModel(role) }));
+  /*
+   * A role with nothing catalogued is SKIPPED, loudly, not fatal.
+   *
+   * This used to call requireDefaultModel for every role up front, so one
+   * unpublished family aborted the whole command - and it aborted it before a
+   * single byte was fetched, which meant a user whose blocks weights were not
+   * yet published could not download the base, the ocr adapter or the footnotes
+   * adapter either. "Pull whatever is missing" is what this command means, and
+   * one absent family is not a reason to withhold the other three.
+   *
+   * The skip is reported per role, because silence here would read as "nothing
+   * to do" on the one family that actually needs the user's attention.
+   */
+  const wanted: Array<{ role: 'base' | FoundryStage; def: FoundryModelDef }> = [];
+  for (const role of MODEL_ROLES) {
+    const def = defaultModelFor(role);
+    if (def) {
+      wanted.push({ role, def });
+      continue;
+    }
+    log(`${role}: nothing catalogued in this build - skipped (no weights are published for it yet)`);
+  }
+  if (wanted.length === 0) {
+    // Every role empty is a different statement from one role empty, and it is
+    // the one requireDefaultModel words best: there is nothing to fetch at all.
+    requireDefaultModel('base');
+  }
   const target = ensureModelsDir(dir);
 
   for (const { role, def } of wanted) {
@@ -2095,9 +2122,10 @@ export const COMMANDS: readonly Command[] = [
       '    the models directory, verifying sha256 on arrival. A file whose hash',
       '    does not match is deleted and named, never used.',
       '',
-      'The catalog is EMPTY in this build: no foundry weights are published yet,',
-      'and both commands say so. A local GGUF can still be used directly with',
-      '--base-model <file> --adapter <file>.',
+      'All four roles are published and catalogued in this build. A role that is',
+      'not is reported and skipped rather than failing the pull, so one absent',
+      'family never withholds the other three. A local GGUF can be used directly',
+      'with --base-model <file> --adapter <file>.',
       '',
       'Weights live on HuggingFace; only code lives in git. Nothing is bundled',
       'into the binary — the distribution is three binaries plus the weights they',
