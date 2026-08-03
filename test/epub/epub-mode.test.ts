@@ -198,3 +198,33 @@ test('a zip with no container is not an EPUB, and says so', async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('a document that is not UTF-8 stops the run, named', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'foundry-epub-'));
+  try {
+    // Latin-1 bytes: `Caf<E9>`. Decoded as UTF-8 they become a replacement
+    // character, and writing the result back would transcode the whole book.
+    const latin1 = new Uint8Array([
+      ...new TextEncoder().encode('<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Caf'),
+      0xE9,
+      ...new TextEncoder().encode('.</p></body></html>'),
+    ]);
+    const entries: ZipEntry[] = [
+      { path: 'mimetype', data: new TextEncoder().encode('application/epub+zip') },
+      { path: 'META-INF/container.xml', data: new TextEncoder().encode(CONTAINER) },
+      { path: 'OEBPS/content.opf', data: new TextEncoder().encode(OPF) },
+      { path: 'OEBPS/nav.xhtml', data: new TextEncoder().encode(NAV) },
+      { path: 'OEBPS/ch1.xhtml', data: latin1 },
+      { path: 'OEBPS/ch2.xhtml', data: new TextEncoder().encode(CH2) },
+      { path: 'OEBPS/s.css', data: new TextEncoder().encode('p{}') },
+    ];
+    const path = join(dir, 'latin1.epub');
+    writeFileSync(path, writeZip(entries));
+    await assert.rejects(
+      runEpubFootnotes({ epubPath: path, outputPath: null, model: 'stub', generate: stubModel }),
+      /ch1\.xhtml is not valid UTF-8/,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
