@@ -450,51 +450,6 @@ function naturalCompare(a: string, b: string): number {
   return ax.length - bx.length;
 }
 
-/**
- * Where `vendor/tesseract` is, for THIS way of running the program.
- *
- * Two spellings of "next to this program", checked in order, and neither of
- * them substitutes a different Tesseract the way a PATH lookup would:
- *
- *  - **Compiled** (`bun build --compile`): `process.execPath` is the foundry
- *    binary and `vendor/` sits beside it in the install.
- *  - **From source** (`bun run src/cli.ts`): `process.execPath` is bun, which is
- *    somewhere else entirely, so the repo root comes from this module's own
- *    location — which in a compiled binary is a virtual path that does not exist
- *    on disk, and is simply not offered.
- *
- * This has to be passed in explicitly rather than left to `resolveTesseract`'s
- * own default, because that default is module-relative and therefore resolves
- * inside the compiled binary's virtual filesystem — the pin would read as
- * missing on every packaged install.
- *
- * When nothing is found the FIRST candidate is returned anyway, so the error
- * that follows names the path a packager needs to fill.
- */
-function vendorTesseractDir(): string {
-  const beside = path.dirname(process.execPath);
-  const candidates = [
-    path.join(beside, 'vendor', 'tesseract'),
-    // One level up, which covers both a `bin/foundry` + `vendor/` install and a
-    // compiled binary sitting in the checkout's own `dist/`. Still "next to this
-    // program", still not a search.
-    path.join(beside, '..', 'vendor', 'tesseract'),
-  ];
-  try {
-    const moduleDir = path.dirname(new URL(import.meta.url).pathname);
-    const repoRoot = path.resolve(moduleDir, '..');
-    if (fs.statSync(repoRoot).isDirectory()) {
-      candidates.push(path.join(repoRoot, 'vendor', 'tesseract'));
-    }
-  } catch {
-    /* compiled build: no real directory to derive */
-  }
-  for (const candidate of candidates) {
-    if (fs.existsSync(path.join(candidate, 'manifest.json'))) return candidate;
-  }
-  return candidates[0]!;
-}
-
 function listPageImages(pagesDir: string): string[] {
   let entries: string[];
   try {
@@ -533,10 +488,10 @@ async function runScan(args: ParsedArgs): Promise<void> {
   const runDir = path.resolve(requireString(args, 'run', 'the run directory to write into'));
 
   const files = listPageImages(pagesDir);
-  const tess = await resolveTesseract({
-    binaryPath: optionalString(args, 'tesseract'),
-    vendorDir: vendorTesseractDir(),
-  });
+  // No vendorDir: the resolver owns the search order (checkout, beside the
+  // executable, data dir). Passing one here pinned a single root, which is how
+  // the packaged binary managed to look beside the .exe and nowhere else.
+  const tess = await resolveTesseract({ binaryPath: optionalString(args, 'tesseract') });
   log(`scan: ${files.length} pages, tesseract ${tess.version} (${tess.platform}) at ${OCR_DPI} dpi`);
 
   // The input hash is taken BEFORE any work, so the run record can exist from

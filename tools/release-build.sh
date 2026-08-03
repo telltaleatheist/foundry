@@ -59,6 +59,11 @@ if [ "${TARGETS[0]}" = "host" ]; then
   case "$host_os" in
     Darwin) host_os=darwin ;;
     Linux)  host_os=linux ;;
+    # Git Bash / MSYS2 report MINGW64_NT-…; the bun target is spelled `windows`
+    # while the platform key elsewhere is `win32`. Without this, `npm run build`
+    # simply refused to run on the one platform whose packaging bug this repo
+    # most recently had.
+    MINGW*|MSYS*|CYGWIN*) host_os=windows ;;
     *)      echo "release-build: no target for host OS '$host_os'" >&2; exit 2 ;;
   esac
   case "$host_arch" in

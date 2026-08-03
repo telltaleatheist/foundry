@@ -251,17 +251,37 @@ function checkoutVendorDir(): string | null {
 /**
  * Every root that could hold a vendored Tesseract for this platform, in order.
  *
- * The dev checkout comes FIRST and deliberately: someone working on the repo,
- * who has just re-vendored a build to test it, must get theirs rather than a
- * copy the data dir happens to be holding from a previous release.
+ * ONE search order, used by every caller. `runScan` used to compute its own and
+ * pass it as `vendorDir`, which pinned a single root and meant the packaged
+ * binary looked beside the .exe and nowhere else — so a downloaded bundle in the
+ * data dir was invisible to the one command that needed it. Two resolvers is the
+ * bug; this is the fix.
+ *
+ *   1. the dev CHECKOUT, when this is running from source. First and
+ *      deliberately: someone who has just re-vendored a build to test it must
+ *      get theirs, not a copy the data dir is holding from a previous release.
+ *      In a compiled binary `import.meta.url` is a virtual path that does not
+ *      exist on disk, so this candidate simply is not offered.
+ *   2. BESIDE THE EXECUTABLE, and one level up — which covers a packager who
+ *      ships `vendor/` next to the binary, and a `bin/foundry` + `vendor/`
+ *      layout. Deliberate placement by whoever built the install, so it
+ *      outranks the download.
+ *   3. the platform DATA DIR, where `foundry models pull` puts what it fetched.
+ *
+ * Every one of them is "a Tesseract someone chose for this program"; none of
+ * them is a PATH lookup, which is the line that matters.
  */
 export function vendorRoots(explicit?: string): string[] {
   if (explicit) return [path.resolve(explicit)];
   const roots: string[] = [];
   const checkout = checkoutVendorDir();
   if (checkout) roots.push(checkout);
+  const beside = path.dirname(process.execPath);
+  roots.push(path.join(beside, 'vendor', 'tesseract'));
+  roots.push(path.resolve(beside, '..', 'vendor', 'tesseract'));
   roots.push(vendorTesseractDir());
-  return roots;
+  // Dedupe: run from a checkout with bun and `beside` can repeat the checkout.
+  return [...new Set(roots)];
 }
 
 /** The pin for this platform, or an error naming what is recorded instead. */
