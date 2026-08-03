@@ -109,6 +109,51 @@ test('footnotes/deletions.json replaces a block\'s text wholesale', () => {
   } finally { cleanup(); }
 });
 
+test('a footnotes-rewritten block still gets line joining and hyphen healing', () => {
+  // The Kershaw bug (Aug 3 2026): the rewrite is computed over the block's
+  // newline-joined lines, and the stage used to ship that glued string as ONE
+  // unit. Every marker-bearing block then bypassed joinLines — its `\n`s went
+  // into the XHTML verbatim and its wrap hyphens were never examined, so a
+  // footnoted book (i.e. every book this stage exists for) shipped
+  // `totali-\ntarianism` everywhere. Pin: after a footnotes rewrite, the book
+  // contains no raw line breaks and no unexamined wrap hyphen.
+  const { runDir, cleanup } = scratchRun();
+  try {
+    const lines = readScanLines(runDir).lines;
+    const byId = new Map(lines.map(l => [l.id, l.text]));
+    // A body block whose joined base wraps a hyphen across lines — the shape
+    // the fix exists for.
+    const target = readBlocks(runDir).blocks.find(b =>
+      b.category === 'body'
+      && /-$/.test(byId.get(b.lineIds[0]!) ?? ''))!;
+    assert.ok(target, 'fixture must carry a body block with a wrap hyphen');
+    const base = target.lineIds.map(id => byId.get(id)!).join('\n');
+    // A word this block holds and the rest of the book does not, so its absence
+    // from the export proves the deletion landed rather than colliding with
+    // another occurrence.
+    const everything = lines.map(l => l.text).join('\n');
+    const word = [...base.matchAll(/[A-Za-z]{4,}/g)]
+      .map(m => m[0])
+      .find(w => everything.split(w).length === 2)!;
+    assert.ok(word, 'fixture block must contain a word unique to the book');
+    const applied = [{ before: word, after: word.slice(0, -1) }];
+    const stripped = applyFootnoteDeletions(base, applied);
+    assert.equal(stripped.rejected, 0);
+    writeArtifact(runDir, 'footnoteDeletions', {
+      blocks: [{ blockId: target.id, applied, rejected: 0, text: stripped.text }],
+    });
+
+    const text = prose(runExportStage({ runDir, metadata: METADATA, log: () => {} }).zip);
+    // The glued rewrite must not ship: no wrap hyphen may survive against a
+    // raw line break anywhere in the book.
+    assert.equal(/[A-Za-zÀ-ÿ]-\n/.test(text), false,
+      'a footnotes rewrite shipped its newline-joined base without line joining');
+    assert.equal(text.includes(stripped.text), false);
+    // And the deletion itself still landed.
+    assert.equal(text.includes(word), false);
+  } finally { cleanup(); }
+});
+
 test('a footnotes rewrite that does not derive from the current lines is refused', () => {
   // The bug the 2-page end-to-end run caught, pinned: dagger derived its
   // deletions from the RAW scan text, ocr corrected the lines afterwards, and

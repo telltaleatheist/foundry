@@ -275,7 +275,16 @@ function collectBlockText(runDir: string, blocks: readonly Block[]): {
           + `stage ran after footnotes). Re-run the footnotes stage.`,
         );
       }
-      blockText.set(b.id, [marked.text]);
+      // Back to LINES, not one glued unit. The rewrite was computed over the
+      // newline-joined base, but everything downstream — joinLines' wrap-hyphen
+      // healing, the paragraph ladder — consumes a block as its lines. Shipping
+      // `[marked.text]` here (the original bug) made every marker-bearing block
+      // a single "line": its embedded `\n`s sailed into the XHTML verbatim and
+      // no wrap hyphen in it could ever be examined, which on a footnoted book
+      // is nearly every block ("totali-\ntarianism", Kershaw, Aug 3 2026).
+      // Footnote deletions never insert newlines, so splitting restores the
+      // line structure the deletions were projected onto.
+      blockText.set(b.id, marked.text.split('\n'));
       continue;
     }
     const units = b.lineIds.map(id => {
