@@ -41,22 +41,25 @@
  *    the markers themselves — so there is nothing to link to and inventing
  *    anchors would produce dead links in every reader.
  *
- * ## The title page is a spine item, not a chapter
+ * ## The front of the book: cover, then title page, then chapters
  *
- * A real book's title page is a page, and a real EPUB's is a document of its
- * own, ahead of the first chapter and listed in the EPUB3 **landmarks** nav
- * rather than in the reading TOC — a title page listed as a chapter is a
- * chapter the reader did not write.
+ * Two spine items ahead of the reading text, each of which a real EPUB carries
+ * and neither of which belongs in the reading TOC. They are declared in the
+ * EPUB3 **landmarks** nav instead, which is the list a reading system's "go to"
+ * menu is built from — a title page listed as a chapter is a chapter the reader
+ * did not write.
  *
- * Which one a `title` block is has to be DERIVED, because nothing in the run
- * directory declares it: `blocks/blocks.json` carries a category per block and
- * no page-level fact at all, so a title page and a `title` opening a chapter
- * arrive as the same label. The exporter therefore asks the question the blocks
- * stage's page gate asks (`display-run-merge.ts`): is there a PAGE here that is
- * nothing but title? Concretely — the leading run of `title` groups, when the
- * pages those groups sit on carry no other surviving content. Where that does
- * not hold nothing changes, and the title opens an ordinary section exactly as
- * it always did.
+ *  - **The cover** is the caller's own image (`--cover`), a page of its own
+ *    holding nothing but that image, first in the spine. See `cover.ts`.
+ *  - **The title page** is derived, because nothing in the run directory
+ *    declares one. `blocks/blocks.json` carries a category per block and no
+ *    page-level fact at all, so the exporter asks the question the blocks stage
+ *    asks (`display-run-merge.ts`, the page gate): is there a PAGE here that is
+ *    nothing but title? Concretely — the leading run of `title` groups, when
+ *    the pages those groups sit on carry no other surviving content. That is
+ *    the whole distinction between a title page and a `title` block opening a
+ *    chapter, and where it does not hold nothing changes: the title opens an
+ *    ordinary section exactly as it always did.
  *
  * ## One stylesheet, shipped
  *
@@ -73,6 +76,7 @@ import type { GroupingReport, ParagraphGroup } from '../paragraphs/grouping.js';
 import { groupParagraphs } from '../paragraphs/grouping.js';
 import { computeBlockGeometry } from '../paragraphs/geometry.js';
 import type { HyphenAttestation } from '../paragraphs/hyphen.js';
+import { coverFormat, type CoverImage } from './cover.js';
 import { applyExclusions, type ExclusionRequest, type ExclusionResult } from './exclude.js';
 import { joinLines } from './linejoin.js';
 import { writeZip, zipText, type ZipEntry } from './zip.js';
@@ -112,13 +116,15 @@ export interface BuildEpubInput {
   /** The book's own vocabulary, for healing wrap hyphens. */
   readonly attestation: HyphenAttestation;
   readonly exclude?: ExclusionRequest;
+  /** `--cover`: an image the caller supplies. Nothing here reads it. */
+  readonly cover?: CoverImage;
 }
 
 /**
  * What a spine item IS, which decides both its markup and whether it appears in
- * the reading TOC. A `titlepage` is listed in landmarks instead.
+ * the reading TOC. `cover` and `titlepage` are listed in landmarks instead.
  */
-export type SectionRole = 'titlepage' | 'text';
+export type SectionRole = 'cover' | 'titlepage' | 'text';
 
 export interface EpubSection {
   id: string;
@@ -214,6 +220,10 @@ li { margin: 0.2em 0; }
 section.footnotes { margin-top: 2.5em; border-top: 1px solid currentColor; padding-top: 1em; font-size: 0.9em; }
 section.footnotes h2 { font-size: 1em; }
 section.footnotes p { text-indent: 0; margin: 0.4em 0; }
+/* The cover is one image on a page of its own. Bounded by the viewport rather
+   than scaled to it, so a small image is not blown up into its own artifacts. */
+section.cover { margin: 0; padding: 0; text-align: center; }
+section.cover img { max-width: 100%; max-height: 100%; }
 /* A title page is a plate, not prose: everything centred, nothing indented,
    and no measure to hold to. */
 section.titlepage { margin-top: 15%; text-align: center; }
@@ -484,6 +494,23 @@ export function buildEpub(input: BuildEpubInput): BuildEpubResult {
 
   if (sections.length === 0) throw new EpubError('no sections were produced from surviving blocks');
 
+  // The cover is prepended AFTER the content sections are numbered, so adding
+  // one never renumbers a single `sNNNN.xhtml` — an export with a cover and the
+  // same export without it differ by the cover and nothing else.
+  const cover = input.cover;
+  const coverImage = cover ? coverFormat(cover) : null;
+  const coverHref = coverImage ? `images/cover.${coverImage.extension}` : null;
+  if (cover) {
+    sections.unshift({
+      id: 'cover',
+      role: 'cover',
+      label: 'Cover',
+      href: 'text/cover.xhtml',
+      groupIds: [],
+      footnoteGroupIds: [],
+    });
+  }
+
   // ── the container ─────────────────────────────────────────────────────────
 
   const meta = input.metadata;
@@ -504,7 +531,20 @@ export function buildEpub(input: BuildEpubInput): BuildEpubResult {
   entries.push(zipText(`${OPF_DIR}/style.css`,
     input.calibration.convention === 'indent' ? STYLESHEET_INDENT : STYLESHEET_BLOCK));
 
+  if (cover && coverHref) entries.push({ path: `${OPF_DIR}/${coverHref}`, data: cover.data });
+
   for (const s of sections) {
+    if (s.role === 'cover') {
+      // The image and nothing else. `alt` is present because a reader that
+      // cannot show the image must say what is missing, and empty because the
+      // words on a cover are part of the artwork, not text this program has.
+      entries.push(zipText(`${OPF_DIR}/${s.href}`,
+        XHTML_HEAD(s.label, meta.language)
+        + `<section epub:type="cover" class="cover">\n`
+        + `<img src="../${clean(coverHref!)}" alt=""/>\n</section>\n`
+        + XHTML_TAIL));
+      continue;
+    }
     const body: string[] = [];
     for (const gid of s.groupIds) {
       const html = renderGroup(rendered.get(gid)!);
@@ -531,20 +571,22 @@ export function buildEpub(input: BuildEpubInput): BuildEpubResult {
       XHTML_HEAD(s.label, meta.language) + body.join('\n') + '\n' + XHTML_TAIL));
   }
 
-  // The reading TOC is the READING order: the title page is in the spine but
-  // not in it. Every real EPUB does this, and the reason is that a TOC entry
-  // called "Title page" is an entry the author never wrote — it is declared in
-  // `landmarks` below, which is what a reading system's "go to" menu is built
-  // from.
+  // The reading TOC is the READING order: the cover and the title page are in
+  // the spine but not in it. Every real EPUB does this, and the reason is that a
+  // TOC entry called "Cover" is an entry the author never wrote — those two are
+  // declared in `landmarks` below, which is what a reading system's "go to"
+  // menu is built from.
   const navItems = sections
     .filter(s => s.role === 'text')
     .map(s => `      <li><a href="${clean(s.href)}">${clean(s.label)}</a></li>`)
     .join('\n');
   const landmark = (type: string, s: EpubSection, text: string): string =>
     `      <li><a epub:type="${type}" href="${clean(s.href)}">${text}</a></li>`;
+  const coverSection = sections.find(s => s.role === 'cover');
   const titleSection = sections.find(s => s.role === 'titlepage');
   const bodySection = sections.find(s => s.role === 'text');
   const landmarks = [
+    ...(coverSection ? [landmark('cover', coverSection, 'Cover')] : []),
     ...(titleSection ? [landmark('titlepage', titleSection, 'Title page')] : []),
     // Always present: `sections` is non-empty and only a `text` section can
     // carry the book, so there is always somewhere for "start reading" to go.
@@ -563,6 +605,10 @@ export function buildEpub(input: BuildEpubInput): BuildEpubResult {
   const manifest = [
     `    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>`,
     `    <item id="style" href="style.css" media-type="text/css"/>`,
+    ...(coverImage && coverHref
+      ? [`    <item id="cover-image" href="${clean(coverHref)}" media-type="${coverImage.mediaType}"`
+        + ` properties="cover-image"/>`]
+      : []),
     ...sections.map(s =>
       `    <item id="${s.id}" href="${clean(s.href)}" media-type="application/xhtml+xml"/>`),
   ].join('\n');
@@ -578,6 +624,11 @@ export function buildEpub(input: BuildEpubInput): BuildEpubResult {
     + `    <dc:language>${clean(meta.language)}</dc:language>\n`
     + (meta.author ? `    <dc:creator>${clean(meta.author)}</dc:creator>\n` : '')
     + `    <meta property="dcterms:modified">${clean(modified)}</meta>\n`
+    // The EPUB2 spelling of the same fact. EPUB3 keeps the legacy `name`/
+    // `content` meta legal for exactly this, and readers old enough to want it
+    // find a cover no other way — it costs one line and it is not a fallback:
+    // both point at the one manifest item.
+    + (coverImage ? `    <meta name="cover" content="cover-image"/>\n` : '')
     + `  </metadata>\n  <manifest>\n${manifest}\n  </manifest>\n`
     + `  <spine>\n${spine}\n  </spine>\n</package>\n`));
 

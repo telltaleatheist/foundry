@@ -47,6 +47,13 @@
  * half of it that still matches would put a user's chapter title on whatever
  * block inherited the name.
  *
+ * ## The cover comes from outside the pipeline
+ *
+ * `--cover <file>` is the one input to this stage that is not in the run
+ * directory. No stage produced it, nothing OCRs it, and no text comes out of
+ * it: the bytes are embedded verbatim as the book's cover image. All this
+ * function does is read the file; `export/cover.ts` decides whether it is one.
+ *
  * ## The one sanctioned degradation
  *
  * A book with no detectable paragraph convention exports successfully with few
@@ -54,7 +61,7 @@
  * into the returned report, and this stage writes it to the log. It is never an
  * exception and it is never quiet.
  */
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 
 import {
@@ -64,6 +71,7 @@ import {
 import type { Block, CalibrationVerdict, FootnoteBlockDeletions, ScanLine } from './artifacts.js';
 import { applyFootnoteDeletions } from '../footnotes/applier.js';
 import { attestationFromLines } from '../paragraphs/hyphen.js';
+import type { CoverImage } from '../export/cover.js';
 import { buildEpub, type BuildEpubResult, type EpubMetadata } from '../export/epub.js';
 import type { ExclusionRequest } from '../export/exclude.js';
 import { BLOCKS_CATEGORIES_V6, type BlocksCategory } from '../blocks/encoder.js';
@@ -102,6 +110,12 @@ export interface ExportStageOptions {
   exclude?: ExclusionRequest;
   /** The user's own text and category decisions — see the ladder above. */
   overrides?: OverrideRequest;
+  /**
+   * `--cover`: an image file to embed as the book's cover. External to the
+   * pipeline in every sense — it is not in the run directory, no stage produced
+   * it, and nothing reads a word out of it.
+   */
+  coverPath?: string;
   /**
    * An extra destination for the same bytes (`--output`). The canonical
    * `<run>/export/book.epub` is ALWAYS written regardless: the run directory is
@@ -339,6 +353,20 @@ const ISO_639_2_TO_1: Record<string, string> = {
   tur: 'tr', hun: 'hu', ron: 'ro', rum: 'ro', ukr: 'uk', cat: 'ca',
 };
 
+/**
+ * Read the cover file. WHAT it is stays `export/cover.ts`'s question — this
+ * hands over bytes and the path they came from, and the magic-byte check runs
+ * inside the build, where every caller reaches it.
+ */
+function readCover(coverPath: string): CoverImage {
+  const resolved = resolve(coverPath);
+  try {
+    return { data: new Uint8Array(readFileSync(resolved)), sourcePath: resolved };
+  } catch {
+    throw new ExportStageError(`--cover: no such file: ${resolved}`);
+  }
+}
+
 /** Format the calibration + grouping verdict for the log. */
 function verdictBanner(calibration: CalibrationVerdict, result: BuildEpubResult): string {
   const bar = '─'.repeat(72);
@@ -379,6 +407,7 @@ export function runExportStage(options: ExportStageOptions): ExportStageResult {
     metadata: options.metadata ?? deriveMetadata(runDir, blocks, blockText),
     attestation: attestationFromLines(allLines),
     exclude: options.exclude,
+    ...(options.coverPath ? { cover: readCover(options.coverPath) } : {}),
   });
 
   // Same atomicity discipline as the JSON artifacts: a half-written EPUB in a

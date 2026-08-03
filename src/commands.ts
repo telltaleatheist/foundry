@@ -207,6 +207,13 @@ const EXCLUDE_IDS: OptionSpec = {
   describe: 'File of block ids to drop, one per line (BookForge writes this from pdf-picker).',
 };
 
+const COVER: OptionSpec = {
+  name: 'cover',
+  type: 'string',
+  placeholder: '<image>',
+  describe: 'A JPEG or PNG to embed as the cover. Checked by its bytes, not its extension.',
+};
+
 const OVERRIDES: OptionSpec = {
   name: 'overrides',
   type: 'string',
@@ -1375,6 +1382,7 @@ function readOverrides(file: string | undefined): OverrideRequest | undefined {
 async function runExport(args: ParsedArgs): Promise<void> {
   const runDir = path.resolve(requireString(args, 'run', 'the run directory to export from'));
   const output = optionalString(args, 'output');
+  const cover = optionalString(args, 'cover');
   const categories = stringList(args, 'exclude');
   const blockIds = readExcludeIds(optionalString(args, 'exclude-ids'));
   const overrides = readOverrides(optionalString(args, 'overrides'));
@@ -1385,6 +1393,7 @@ async function runExport(args: ParsedArgs): Promise<void> {
       runDir,
       exclude: { categories, blockIds },
       ...(overrides ? { overrides } : {}),
+      ...(cover ? { coverPath: path.resolve(cover) } : {}),
       ...(output ? { outputPath: path.resolve(output) } : {}),
       log,
     });
@@ -1678,7 +1687,7 @@ export const COMMANDS: readonly Command[] = [
   {
     name: 'export',
     summary: 'Build an EPUB from labelled, corrected blocks.',
-    usage: '--run <dir> -o <book.epub> [--exclude <category>]...',
+    usage: '--run <dir> -o <book.epub> [--cover <image>] [--exclude <category>]...',
     detail: [
       'Turns labelled blocks into XHTML and packages an EPUB. The categories do',
       'the work: chapter blocks start a spine item and a TOC entry, title opens',
@@ -1692,6 +1701,15 @@ export const COMMANDS: readonly Command[] = [
       'contents, because a title page is not a chapter. Where a title block',
       'shares its page with anything else it is a display heading and opens an',
       'ordinary section, exactly as before.',
+      '',
+      '--cover <image> embeds a cover. It takes a JPEG or a PNG, and it decides',
+      'which by reading the file\'s first bytes rather than its extension — a',
+      '.jpg that some converter left as a PNG is the common case, and the media',
+      'type declared in the package has to be what the file IS. Anything that is',
+      'neither stops the export and is named; foundry does not re-encode images.',
+      'The image is embedded verbatim as the cover, on a page of its own that is',
+      'first in the spine and holds nothing but it. Order at the front of the',
+      'book: cover, then the title page if there is one, then the chapters.',
       '',
       'Exclusion is ONE filter at two granularities, and they compose: a block is',
       'dropped if its category is in --exclude OR its id is in --exclude-ids. The',
@@ -1720,7 +1738,7 @@ export const COMMANDS: readonly Command[] = [
       'detectable paragraph convention still exports, with few or no breaks, and',
       'says so loudly — that is the one sanctioned degradation in the pipeline.',
     ].join('\n'),
-    options: [RUN_DIR, OUTPUT_EPUB, EXCLUDE, EXCLUDE_IDS, OVERRIDES],
+    options: [RUN_DIR, OUTPUT_EPUB, COVER, EXCLUDE, EXCLUDE_IDS, OVERRIDES],
     run: runExport,
   },
   {
