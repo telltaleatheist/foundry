@@ -58,10 +58,22 @@ function currentPlatform(): PlatformContext {
  * machine that has never downloaded anything.
  */
 export function defaultModelsDir(ctx: PlatformContext = currentPlatform()): string {
+  return path.join(defaultDataDir(ctx), 'models');
+}
+
+/**
+ * The platform data root — the directory `models` and `vendor` sit inside.
+ *
+ * Factored out of `defaultModelsDir` when the vendored Tesseract became
+ * fetchable: the weights and the segmenter are downloaded by the same command,
+ * on the same first run, and they belong under one root so that "delete
+ * everything foundry downloaded" is one directory rather than a list.
+ */
+export function defaultDataDir(ctx: PlatformContext = currentPlatform()): string {
   const { platform, env, homedir } = ctx;
 
   if (platform === 'darwin') {
-    return path.join(homedir, 'Library', 'Application Support', APP_DIR, 'models');
+    return path.join(homedir, 'Library', 'Application Support', APP_DIR);
   }
 
   if (platform === 'win32') {
@@ -69,12 +81,24 @@ export function defaultModelsDir(ctx: PlatformContext = currentPlatform()): stri
     // fallback location is the same directory it points at — this reconstructs
     // the default, it does not substitute a different place.
     const local = env['LOCALAPPDATA']?.trim() || path.join(homedir, 'AppData', 'Local');
-    return path.join(local, APP_DIR, 'models');
+    return path.join(local, APP_DIR);
   }
 
   // Linux and everything else: the XDG base directory spec.
   const dataHome = env['XDG_DATA_HOME']?.trim() || path.join(homedir, '.local', 'share');
-  return path.join(dataHome, APP_DIR, 'models');
+  return path.join(dataHome, APP_DIR);
+}
+
+/**
+ * Where a fetched Tesseract bundle lives: `<data>/vendor/tesseract`.
+ *
+ * The same relative layout as the repo's own `vendor/tesseract`, deliberately —
+ * `<root>/<platform>/tesseract`, `<root>/<platform>/tessdata/…` — so one set of
+ * manifest paths describes both a dev checkout and a packaged install, and the
+ * resolver's two branches differ only in which root they were handed.
+ */
+export function vendorTesseractDir(ctx?: PlatformContext): string {
+  return path.join(defaultDataDir(ctx ?? currentPlatform()), 'vendor', 'tesseract');
 }
 
 /**

@@ -11,9 +11,16 @@
  * ADDED here, because BookForge does not have it: the PIN IS VERIFIED. BookForge
  * assumes an installed Tesseract and asks the component system where it is.
  * Foundry vendors one, and vendoring is worthless without a check — so the
- * resolved binary's `--version` and every tessdata file's sha256 are compared
- * against `vendor/tesseract/manifest.json` before a single page is read, and a
+ * resolved binary's `--version`, its libraries' sha256s and every tessdata
+ * file's sha256 are compared against the pin before a single page is read, and a
  * mismatch is an error naming the file (ARCHITECTURE §5).
+ *
+ * The pin — `vendor/tesseract/manifest.json` — is IMPORTED, so the bundler
+ * compiles it into the binary. The FILES it describes are found either in a dev
+ * checkout's `vendor/tesseract/` or in the platform data dir, where
+ * `foundry models pull` downloads them. That split is the point: the statement
+ * about which Tesseract this build was measured against travels with the build,
+ * and only the bytes have to be fetched.
  */
 
 import { execFile } from 'node:child_process';
@@ -25,6 +32,8 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import manifestJson from '../../vendor/tesseract/manifest.json';
+import { vendorTesseractDir } from '../models/paths.js';
 import { pyRoundTo, type Band } from './bands.js';
 import { writePgm, type GrayRaster } from './pgm.js';
 
@@ -93,23 +102,61 @@ export interface TessdataEntry {
   bytes: number;
 }
 
+/** A downloadable, self-contained vendor bundle for one platform. */
+export interface TesseractArtifact {
+  /** Basename of the tarball, which carries its version and platform. */
+  name: string;
+  url: string;
+  sha256: string;
+  bytes: number;
+}
+
 export interface TesseractPlatformPin {
+  /**
+   * The exact `tesseract --version` number this platform's bundle reports.
+   *
+   * PER PLATFORM, and it has to be: there is no single Tesseract version that
+   * exists as a real build everywhere. Homebrew publishes `5.5.1`; the Windows
+   * builds report a datestamped `5.5.0.20241111`. A global pin could only ever
+   * be satisfied on the one platform it was taken from, which is precisely the
+   * state this field replaces — scan worked on exactly one machine.
+   */
+  expectedVersion: string;
+  /** The whole first line of `--version`, as recorded. For humans. */
+  versionLine?: string;
   /** Path to the binary, relative to the vendor root. */
   binary: string;
   /** sha256 of that binary, or null when the platform is not vendored yet. */
   binarySha256: string | null;
+  /**
+   * Shared libraries shipped beside the binary, path relative to the vendor
+   * root's platform dir. Hashed like the tessdata, because on Windows the
+   * `tesseract.exe` that carries the version is an 88 KB launcher and
+   * `libtesseract-5.dll` is the actual engine — verifying only the executable
+   * would leave the segmenter itself unchecked.
+   */
+  libraries?: Record<string, TessdataEntry>;
   /** Directory holding `<lang>.traineddata`, relative to the vendor root. */
   tessdataDir: string;
   tessdata: Record<string, TessdataEntry>;
   /** False when the recorded binary is not relocatable — see vendor/tesseract/README.md. */
   portable: boolean;
+  /**
+   * The fetchable bundle, when one has been published for this platform.
+   * Absent means the platform is recorded but only usable from a checkout that
+   * already holds the files.
+   */
+  artifact?: TesseractArtifact;
   note?: string;
 }
 
 export interface TesseractManifest {
-  /** The exact version string this build of Foundry was measured against. */
-  expectedVersion: string;
-  /** The dpi the pin is defined at. Cross-checked against OCR_DPI. */
+  /**
+   * The dpi the pin is defined at. Cross-checked against OCR_DPI.
+   *
+   * Global, and unlike the version it genuinely is: dpi keys the training
+   * corpus, so it is one number for the whole program on every platform.
+   */
   dpi: number;
   platforms: Record<string, TesseractPlatformPin>;
 }
@@ -131,10 +178,25 @@ export interface TesseractOptions {
    * the vendor directory. It is not an escape hatch from the pin.
    */
   binaryPath?: string;
-  /** Vendor root; defaults to `vendor/tesseract` in the repo/install. */
+  /**
+   * Pin one vendor root instead of searching. Used by the tests, and by anyone
+   * who wants a specific bundle rather than "whichever this machine has".
+   */
   vendorDir?: string;
   /** Language, and the tessdata file that must verify. */
   lang?: string;
+  /**
+   * Use this pin instead of the one compiled into the build.
+   *
+   * Injected for the same reason `PlatformContext` is injected in
+   * `models/paths.ts`: the verification branches — wrong version, wrong hash,
+   * missing file, unrecorded platform — have to be exercisable from ONE machine,
+   * and the compiled-in pin describes only the platform the test is running on.
+   *
+   * It is not a way to loosen anything. Whatever is passed is checked exactly as
+   * strictly as the real pin; there is no shape of manifest that verifies less.
+   */
+  manifest?: TesseractManifest;
 }
 
 /** `<platform>-<arch>`, the key into the manifest. */
@@ -143,75 +205,139 @@ export function platformKey(): string {
 }
 
 /**
- * `<root>/vendor/tesseract`, relative to this source file.
+ * The pin, compiled INTO this build.
  *
- * fileURLToPath, not `url.pathname`: on Windows the latter yields `/C:/…`,
- * which is not a path. A packaged build resolves its own vendor directory and
- * passes `vendorDir` explicitly; this is the checkout's default.
+ * Imported rather than read off disk, and that is the fix for the bug that
+ * started this: the loose-file version resolved `manifest.json` relative to
+ * `import.meta.url`, which in a `bun build --compile` binary points beside the
+ * executable. The release tarball ships one file — `foundry.exe` — so a packaged
+ * foundry looked for its pin in `…/components/foundry-cli/vendor/tesseract/
+ * manifest.json`, found nothing, and refused to scan. Scan worked only from a
+ * checkout.
+ *
+ * The manifest is COMMITTED CODE — a statement about which Tesseract this build
+ * was measured against — so compiling it in is what it always should have been.
+ * A packaged install now needs no manifest.json on disk at all, and the
+ * downloadable bundle is just the binary, its libraries and the tessdata.
  */
-function defaultVendorDir(): string {
-  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'vendor', 'tesseract');
+const MANIFEST = manifestJson as unknown as TesseractManifest;
+
+/**
+ * The pin this build carries. Exported so a test can assert on the SHIPPED pin
+ * rather than on a file in the checkout, which is the difference that mattered.
+ */
+export function compiledManifest(): TesseractManifest {
+  return MANIFEST;
 }
 
 /**
- * Resolve the binary and the tessdata, and verify BOTH against the manifest.
+ * `<root>/vendor/tesseract` relative to this source file, or null when that is
+ * not a real directory — which is exactly the compiled-binary case.
  *
- * Resolution order, and there is no third entry:
- *   1. an explicit path (the CLI's `--tesseract`)
- *   2. `vendor/tesseract/<platform>/`
+ * fileURLToPath, not `url.pathname`: on Windows the latter yields `/C:/…`,
+ * which is not a path.
+ */
+function checkoutVendorDir(): string | null {
+  let dir: string;
+  try {
+    dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'vendor', 'tesseract');
+  } catch {
+    // A compiled binary's import.meta.url is not a file: URL at all.
+    return null;
+  }
+  return fs.existsSync(dir) ? dir : null;
+}
+
+/**
+ * Every root that could hold a vendored Tesseract for this platform, in order.
+ *
+ * The dev checkout comes FIRST and deliberately: someone working on the repo,
+ * who has just re-vendored a build to test it, must get theirs rather than a
+ * copy the data dir happens to be holding from a previous release.
+ */
+export function vendorRoots(explicit?: string): string[] {
+  if (explicit) return [path.resolve(explicit)];
+  const roots: string[] = [];
+  const checkout = checkoutVendorDir();
+  if (checkout) roots.push(checkout);
+  roots.push(vendorTesseractDir());
+  return roots;
+}
+
+/** The pin for this platform, or an error naming what is recorded instead. */
+export function requirePin(
+  key: string = platformKey(),
+  manifest: TesseractManifest = MANIFEST,
+): TesseractPlatformPin {
+  const pin = manifest.platforms[key];
+  if (!pin) {
+    throw new Error(
+      `This build's Tesseract pin has no entry for ${key}. Recorded platforms: ` +
+        `${Object.keys(manifest.platforms).join(', ') || '(none)'}. ` +
+        `Run tools/scan-vendor-tesseract.sh on a machine of this platform to record one, ` +
+        `then publish its bundle — see vendor/tesseract/README.md.`,
+    );
+  }
+  return pin;
+}
+
+/**
+ * Resolve the binary and the tessdata, and verify BOTH against the pin.
+ *
+ * Resolution order, and there is no entry after the last:
+ *   1. an explicit path (the CLI's `--tesseract`) — overrides WHICH BINARY, and
+ *      nothing else: the version check and the tessdata verification still run
+ *   2. the dev checkout's `vendor/tesseract/<platform>/`, when there is one
+ *   3. the platform data dir, `<data>/foundry/vendor/tesseract/<platform>/` —
+ *      where `foundry models pull` puts the downloaded bundle
  *
  * PATH is never consulted. Picking up whatever `tesseract` happens to be
  * installed silently shifts the input distribution the models were trained
  * against: layout analysis changes between Tesseract versions, blocks come out
  * differently grouped, labels get slightly worse, and every symptom points at
- * the models (ARCHITECTURE §5). A missing vendored Tesseract is an error that
- * says which paths were checked, not a reason to go looking elsewhere.
+ * the models (ARCHITECTURE §5). A missing vendored Tesseract is an error naming
+ * every path that was checked and the command that fetches it — not a reason to
+ * go looking elsewhere.
  */
 export async function resolveTesseract(options: TesseractOptions = {}): Promise<ResolvedTesseract> {
   const lang = options.lang ?? 'eng';
-  const vendorDir = options.vendorDir ?? defaultVendorDir();
-  const manifestPath = path.join(vendorDir, 'manifest.json');
+  const manifest = options.manifest ?? MANIFEST;
 
-  let manifest: TesseractManifest;
-  try {
-    manifest = JSON.parse(await fsp.readFile(manifestPath, 'utf-8')) as TesseractManifest;
-  } catch (err) {
-    throw new Error(
-      `No Tesseract pin: ${manifestPath} could not be read (${(err as Error).message}). ` +
-        `The manifest records the expected version and the tessdata hashes; without it there is ` +
-        `nothing to verify against, and an unverified Tesseract is not one this program will use.`,
-    );
-  }
   if (manifest.dpi !== OCR_DPI) {
     throw new Error(
-      `${manifestPath} pins ${manifest.dpi} dpi but this build renders at ${OCR_DPI} dpi. ` +
+      `The Tesseract pin is defined at ${manifest.dpi} dpi but this build renders at ${OCR_DPI} dpi. ` +
         `The pin and the renderer must agree — see the OCR_DPI comment in src/scan/tesseract.ts.`,
     );
   }
 
   const key = platformKey();
-  const pin = manifest.platforms[key];
-  if (!pin) {
+  const pin = requirePin(key, manifest);
+
+  // 1. the vendor root: the first one that actually holds this platform's binary.
+  const roots = vendorRoots(options.vendorDir);
+  const vendorDir = roots.find((root) => fs.existsSync(path.join(root, pin.binary)));
+
+  // 2. the binary. An explicit --tesseract does not need a vendor root to exist
+  //    for the BINARY, but the tessdata still comes from one, so a missing root
+  //    is still an error — just a different one, raised below.
+  const binary = options.binaryPath ?? (vendorDir ? path.join(vendorDir, pin.binary) : null);
+  if (!binary || !fs.existsSync(binary)) {
+    if (options.binaryPath) {
+      throw new Error(
+        `No Tesseract binary at the path given with --tesseract (${options.binaryPath}).`,
+      );
+    }
     throw new Error(
-      `${manifestPath} has no pin for ${key}. Vendored platforms: ` +
-        `${Object.keys(manifest.platforms).join(', ') || '(none)'}. ` +
-        `Run tools/scan-vendor-tesseract.sh on a machine of this platform to record one.`,
+      `No vendored Tesseract for ${key}. Checked:\n` +
+        roots.map((r) => `  ${path.join(r, pin.binary)}`).join('\n') +
+        `\n\nRun \`foundry models pull\` to download it` +
+        (pin.artifact ? ` (${pin.artifact.name}, ${mib(pin.artifact.bytes)})` : '') +
+        `.\n\nPATH is deliberately NOT searched: the models were trained against the ` +
+        `segmentation of one exact Tesseract build, and a different one degrades them ` +
+        `silently rather than failing.`,
     );
   }
 
-  // 1. the binary
-  const vendored = path.join(vendorDir, pin.binary);
-  const binary = options.binaryPath ?? vendored;
-  if (!fs.existsSync(binary)) {
-    const checked = options.binaryPath
-      ? `the path given with --tesseract (${options.binaryPath})`
-      : `the vendored binary (${vendored})`;
-    throw new Error(
-      `No Tesseract binary at ${checked}. PATH is deliberately NOT searched: the models were ` +
-        `trained against the segmentation of one exact Tesseract build, and a different one ` +
-        `degrades them silently. Vendor ${pin.binary} or pass --tesseract <path>.`,
-    );
-  }
   if (!options.binaryPath && pin.binarySha256) {
     const got = await sha256(binary);
     if (got !== pin.binarySha256) {
@@ -223,15 +349,34 @@ export async function resolveTesseract(options: TesseractOptions = {}): Promise<
     }
   }
 
-  // 2. the version — run even for an explicit --tesseract, which overrides
-  //    which binary is used and nothing else.
+  // 3. the version — run even for an explicit --tesseract, which overrides
+  //    which binary is used and nothing else. The expectation is the PLATFORM's:
+  //    no single version number exists as a real build everywhere.
   const version = await readVersion(binary);
-  if (version !== manifest.expectedVersion) {
+  if (version !== pin.expectedVersion) {
     throw new Error(
-      `Tesseract version mismatch: ${binary} reports ${version}, the pin is ` +
-        `${manifest.expectedVersion}. Layout analysis moves between versions, so this is a ` +
+      `Tesseract version mismatch: ${binary} reports ${version}, the pin for ${key} is ` +
+        `${pin.expectedVersion}. Layout analysis moves between versions, so this is a ` +
         `different segmenter from the one the models were trained against, not a near-enough one.`,
     );
+  }
+
+  if (!vendorDir) {
+    throw new Error(
+      `--tesseract named a binary, but the pinned language data for ${key} is not on this ` +
+        `machine. Checked:\n` +
+        roots.map((r) => `  ${path.join(r, pin.tessdataDir)}`).join('\n') +
+        `\n\nRun \`foundry models pull\` to download the vendor bundle. --tesseract overrides ` +
+        `which binary runs; it does not replace the pinned tessdata.`,
+    );
+  }
+
+  // 4. the libraries beside the binary, where the platform ships any. On Windows
+  //    tesseract.exe is a launcher and libtesseract-5.dll is the engine, so
+  //    leaving these unchecked would verify the wrapper and not the segmenter.
+  const platformDir = path.dirname(path.join(vendorDir, pin.binary));
+  for (const [file, want] of Object.entries(pin.libraries ?? {})) {
+    await verifyFile(path.join(platformDir, file), want, 'A pinned Tesseract library');
   }
 
   // 3. the tessdata. Passed explicitly on every invocation with --tessdata-dir,
@@ -248,26 +393,32 @@ export async function resolveTesseract(options: TesseractOptions = {}): Promise<
     );
   }
   for (const [file, want] of Object.entries(pin.tessdata)) {
-    const full = path.join(tessdataDir, file);
-    let stat: fs.Stats;
-    try {
-      stat = await fsp.stat(full);
-    } catch {
-      throw new Error(`Pinned language data is missing: ${full}`);
-    }
-    if (stat.size !== want.bytes) {
-      throw new Error(`${full}: pinned at ${want.bytes} bytes, found ${stat.size}`);
-    }
-    const got = await sha256(full);
-    if (got !== want.sha256) {
-      throw new Error(
-        `${full} does not match the pin\n  expected sha256 ${want.sha256}\n  got      sha256 ${got}`,
-      );
-    }
+    await verifyFile(path.join(tessdataDir, file), want, 'Pinned language data');
   }
 
   return { binary, tessdataDir, lang, version, platform: key, manifest };
 }
+
+/** Size then hash, so a truncated file reads as truncated rather than as wrong. */
+async function verifyFile(full: string, want: TessdataEntry, what: string): Promise<void> {
+  let stat: fs.Stats;
+  try {
+    stat = await fsp.stat(full);
+  } catch {
+    throw new Error(`${what} is missing: ${full}`);
+  }
+  if (stat.size !== want.bytes) {
+    throw new Error(`${full}: pinned at ${want.bytes} bytes, found ${stat.size}`);
+  }
+  const got = await sha256(full);
+  if (got !== want.sha256) {
+    throw new Error(
+      `${full} does not match the pin\n  expected sha256 ${want.sha256}\n  got      sha256 ${got}`,
+    );
+  }
+}
+
+const mib = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 
 async function sha256(file: string): Promise<string> {
   const hash = createHash('sha256');

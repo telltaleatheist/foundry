@@ -27,6 +27,7 @@ import { applyDeskew, processPage } from '../../src/scan/bands.js';
 import { readPgm } from '../../src/scan/pgm.js';
 import {
   OCR_DPI,
+  compiledManifest,
   parseTsv,
   platformKey,
   recognizeBands,
@@ -91,7 +92,18 @@ describe('TSV parsing', () => {
 describe('pin verification', () => {
   const key = platformKey();
 
-  function fakeVendor(mutate: (m: TesseractManifest) => void, versionSays = 'tesseract 5.5.1'): string {
+  /**
+   * A synthetic vendor root plus the pin that describes it.
+   *
+   * The pin is HANDED IN rather than written to disk: it is compiled into the
+   * build now, so a manifest.json in a temp directory would be read by nothing.
+   * `options.manifest` is the injection seam for exactly this, and it loosens
+   * nothing - whatever is passed is verified as strictly as the real pin.
+   */
+  function fakeVendor(
+    mutate: (m: TesseractManifest) => void,
+    versionSays = 'tesseract 5.5.1',
+  ): { dir: string; manifest: TesseractManifest } {
     const dir = mkdtempSync(join(tmpdir(), 'foundry-pin-'));
     mkdirSync(join(dir, key, 'tessdata'), { recursive: true });
     const data = join(dir, key, 'tessdata', 'eng.traineddata');
@@ -102,10 +114,10 @@ describe('pin verification', () => {
     writeFileSync(bin, `#!/bin/sh\necho "${versionSays}"\n`);
     chmodSync(bin, 0o755);
     const manifest: TesseractManifest = {
-      expectedVersion: '5.5.1',
       dpi: 200,
       platforms: {
         [key]: {
+          expectedVersion: '5.5.1',
           binary: `${key}/tesseract`,
           binarySha256: null,
           tessdataDir: `${key}/tessdata`,
@@ -115,55 +127,68 @@ describe('pin verification', () => {
       },
     };
     mutate(manifest);
-    writeFileSync(join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2));
-    return dir;
+    return { dir, manifest };
   }
 
   const shellOk = process.platform !== 'win32';
 
-  test('a manifest that cannot be read is an error naming it', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'foundry-pin-'));
-    await expect(resolveTesseract({ vendorDir: dir })).rejects.toThrow(/No Tesseract pin/);
+  test('the pin compiled into this build is well-formed', () => {
+    // The pin used to be READ off disk, so a packaged binary had none at all and
+    // refused to scan. It is imported now, which makes this an assertion about
+    // the shipped artifact rather than about the checkout.
+    const m = compiledManifest();
+    expect(m.dpi).toBe(OCR_DPI);
+    expect(Object.keys(m.platforms).length).toBeGreaterThan(0);
+    for (const [name, pin] of Object.entries(m.platforms)) {
+      expect(pin.expectedVersion, `${name} must pin its own version`).toMatch(/^[0-9]+[.][0-9]+/);
+      expect(pin.binary.startsWith(`${name}/`), `${name}: binary sits under its platform dir`).toBe(true);
+      expect(Object.keys(pin.tessdata)).toContain('configs/tsv');
+      expect(Object.keys(pin.tessdata)).toContain('eng.traineddata');
+    }
   });
 
-  test('a missing vendored binary says so and does NOT fall back to PATH', async () => {
-    const dir = fakeVendor((m) => {
+  test('a missing vendored binary says so, names the fetch, and does NOT fall back to PATH', async () => {
+    const { dir, manifest } = fakeVendor((m) => {
       m.platforms[key]!.binary = `${key}/not-there`;
     });
-    await expect(resolveTesseract({ vendorDir: dir })).rejects.toThrow(/PATH is deliberately NOT searched/);
+    const err = await resolveTesseract({ vendorDir: dir, manifest }).catch((e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/PATH is deliberately NOT searched/);
+    // The whole point of the change: the error says how to GET one.
+    expect((err as Error).message).toMatch(/foundry models pull/);
   });
 
   test.skipIf(!shellOk)('the right version verifies', async () => {
-    const dir = fakeVendor(() => {});
-    const r = await resolveTesseract({ vendorDir: dir });
+    const { dir, manifest } = fakeVendor(() => {});
+    const r = await resolveTesseract({ vendorDir: dir, manifest });
     expect(r.version).toBe('5.5.1');
     expect(r.platform).toBe(key);
   });
 
   test.skipIf(!shellOk)('a different version is refused', async () => {
-    const dir = fakeVendor(() => {}, 'tesseract 5.3.4');
-    await expect(resolveTesseract({ vendorDir: dir })).rejects.toThrow(/version mismatch/);
+    const { dir, manifest } = fakeVendor(() => {}, 'tesseract 5.3.4');
+    await expect(resolveTesseract({ vendorDir: dir, manifest })).rejects.toThrow(/version mismatch/);
   });
 
   test.skipIf(!shellOk)('tessdata whose hash does not match is refused, naming the file', async () => {
-    const dir = fakeVendor((m) => {
+    const { dir, manifest } = fakeVendor((m) => {
       m.platforms[key]!.tessdata['eng.traineddata']!.sha256 = 'f'.repeat(64);
     });
-    await expect(resolveTesseract({ vendorDir: dir })).rejects.toThrow(/does not match the pin/);
+    await expect(resolveTesseract({ vendorDir: dir, manifest })).rejects.toThrow(/does not match the pin/);
   });
 
   test.skipIf(!shellOk)('a dpi that disagrees with this build is refused', async () => {
-    const dir = fakeVendor((m) => {
+    const { dir, manifest } = fakeVendor((m) => {
       m.dpi = 300;
     });
-    await expect(resolveTesseract({ vendorDir: dir })).rejects.toThrow(/pins 300 dpi/);
+    await expect(resolveTesseract({ vendorDir: dir, manifest })).rejects.toThrow(/defined at 300 dpi/);
   });
 
   test('an unvendored platform names what IS vendored', async () => {
-    const dir = fakeVendor((m) => {
+    const { dir, manifest } = fakeVendor((m) => {
       m.platforms = { 'sunos-sparc': m.platforms[key]! };
     });
-    await expect(resolveTesseract({ vendorDir: dir })).rejects.toThrow(/has no pin for/);
+    await expect(resolveTesseract({ vendorDir: dir, manifest })).rejects.toThrow(/has no entry for/);
   });
 });
 

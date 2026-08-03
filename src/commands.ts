@@ -83,6 +83,11 @@ import {
 } from './models/catalog.js';
 import { downloadVerified, sha256File } from './models/download.js';
 import { ensureModelsDir, modelFilePath, modelsDir } from './models/paths.js';
+import {
+  describeVendorTesseract,
+  ensureVendorTesseract,
+  installedVendorRoot,
+} from './models/vendor-tesseract.js';
 import { calibrate } from './paragraphs/calibration.js';
 import { computeBlockGeometry } from './paragraphs/geometry.js';
 import { planParagraphSplits, type ParagraphSplitReport } from './paragraphs/splitter.js';
@@ -1769,6 +1774,8 @@ async function listModels(dir: string | undefined, verify: boolean): Promise<voi
     return;
   }
 
+  out.push(...(await describeVendorTesseract()), '');
+
   for (const role of MODEL_ROLES) {
     const entries = FOUNDRY_MODELS.filter((m) =>
       role === 'base' ? m.kind === 'base' : m.stage === role,
@@ -1809,7 +1816,7 @@ async function pullModels(dir: string | undefined): Promise<void> {
    * A role with nothing catalogued is SKIPPED, loudly, not fatal.
    *
    * This used to call requireDefaultModel for every role up front, so one
-   * unpublished family aborted the whole command - and it aborted it before a
+   * unpublished family aborted the whole command — and it aborted it before a
    * single byte was fetched, which meant a user whose blocks weights were not
    * yet published could not download the base, the ocr adapter or the footnotes
    * adapter either. "Pull whatever is missing" is what this command means, and
@@ -1825,7 +1832,7 @@ async function pullModels(dir: string | undefined): Promise<void> {
       wanted.push({ role, def });
       continue;
     }
-    log(`${role}: nothing catalogued in this build - skipped (no weights are published for it yet)`);
+    log(`${role}: nothing catalogued in this build — skipped (no weights are published for it yet)`);
   }
   if (wanted.length === 0) {
     // Every role empty is a different statement from one role empty, and it is
@@ -1855,6 +1862,30 @@ async function pullModels(dir: string | undefined): Promise<void> {
     });
     log(`${role}: ${def.id} verified and installed at ${file}`);
   }
+
+  /*
+   * The segmenter, last — after the weights rather than before them, because it
+   * is the small download and finishing the 8 GB one first is the friendlier
+   * order to be interrupted in.
+   *
+   * Not conditional on anything: a scan needs the pinned Tesseract exactly as
+   * much as a label needs the blocks model, and leaving it to a separate
+   * subcommand is how the packaged app ended up able to download every weight it
+   * needed and still fail on page one.
+   */
+  const already = installedVendorRoot();
+  if (already) {
+    log(`tesseract: already present at ${already}`);
+    return;
+  }
+  log('tesseract: downloading the pinned segmenter');
+  let lastTessPct = -1;
+  const root = await ensureVendorTesseract((p) => {
+    if (p.pct === lastTessPct || p.pct % 5 !== 0) return;
+    lastTessPct = p.pct;
+    log(`  tesseract: ${p.pct}%`);
+  });
+  log(`tesseract: verified and installed at ${root}`);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -2127,9 +2158,13 @@ export const COMMANDS: readonly Command[] = [
       'family never withholds the other three. A local GGUF can be used directly',
       'with --base-model <file> --adapter <file>.',
       '',
-      'Weights live on HuggingFace; only code lives in git. Nothing is bundled',
-      'into the binary — the distribution is three binaries plus the weights they',
-      'pull on first run.',
+      'pull also fetches the pinned Tesseract for this platform when it is not',
+      'already on disk — it is the segmenter the models were trained against, so',
+      'it is as much a prerequisite as the weights (ARCHITECTURE §5).',
+      '',
+      'Weights live on HuggingFace and the Tesseract bundle on the GitHub release;',
+      'only code lives in git. Nothing large is bundled into the binary — the',
+      'distribution is the executables plus what they pull on first run.',
     ].join('\n'),
     options: [{ name: 'verify', type: 'boolean', describe: 'Also check the sha256 of installed files.' }],
     positionals: [{ name: 'pull|list', describe: 'Which model action to run.' }],
