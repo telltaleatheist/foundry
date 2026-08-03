@@ -1,11 +1,10 @@
 /**
  * Catalog invariants.
  *
- * The shipped catalog is empty (no weights are published yet), so most of this
- * runs `assertCatalogValid` against synthetic entries. That is not a weaker
- * test: the function is the thing being tested, and it is what will catch the
- * copy-paste that leaves the previous version's filename or hash in place when
- * real entries do land.
+ * Most of this runs `assertCatalogValid` against synthetic entries: the
+ * function is the thing being tested, and it is what will catch the copy-paste
+ * that leaves the previous version's filename or hash in place when a new
+ * entry lands. The shipped entries get their own pinned-facts checks below.
  */
 import { describe, expect, test } from 'bun:test';
 
@@ -51,6 +50,7 @@ describe('the shipped catalog', () => {
   });
 
   test('validates at module load', () => {
+    expect(FOUNDRY_MODELS.length).toBeGreaterThan(0);
     expect(() => assertCatalogValid()).not.toThrow();
   });
 

@@ -75,7 +75,7 @@ export function readEpubPackage(entries: ReadonlyMap<string, ZipReadEntry>): Epu
   if (!container) {
     throw new EpubError('there is no META-INF/container.xml — this file is not an EPUB');
   }
-  const containerRoot = parseXml(entryText(container));
+  const containerRoot = parseXml(entryText(container), 'xml');
   const rootfile = findElement(containerRoot, 'rootfile');
   const fullPath = rootfile?.attrs.get('full-path');
   if (!fullPath) {
@@ -87,7 +87,7 @@ export function readEpubPackage(entries: ReadonlyMap<string, ZipReadEntry>): Epu
     throw new EpubError(`the container points at "${opfPath}", which is not in the archive`);
   }
 
-  const opf = parseXml(entryText(opfEntry));
+  const opf = parseXml(entryText(opfEntry), 'xml');
   const manifest = findElement(opf, 'manifest');
   const spine = findElement(opf, 'spine');
   if (!manifest) throw new EpubError(`${opfPath} has no <manifest>`);

@@ -82,13 +82,19 @@ export interface XmlElement {
 export type XmlNode = XmlElement | XmlText | XmlOther;
 
 /**
- * HTML void elements, treated as self-closing whether or not they carry a slash.
+ * HTML void elements, treated as self-closing whether or not they carry a slash
+ * — in the 'xhtml' dialect only.
  *
  * XHTML from a sane toolchain writes `<br/>`, but "XHTML" in the wild includes
  * files with bare `<br>` and `<img …>`, and under a strict parser one of those
  * swallows the rest of the paragraph into a phantom element. That is not
  * forgiveness of broken markup — these tags cannot have content in any HTML
  * serialization, so there is nothing to guess.
+ *
+ * The OPF is a different language: pure XML, where `<meta property="…">value</meta>`
+ * has content and an end tag. Auto-closing `meta` there makes the `</meta>`
+ * appear to close its parent `<metadata>`. So void treatment is per-dialect,
+ * and the OPF/container parse uses 'xml'.
  */
 const VOID_TAGS: ReadonlySet<string> = new Set([
   'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
@@ -171,7 +177,7 @@ export function decodeEntities(raw: string): string {
  * parser is also how the OPF is read, and refusing a stray processing
  * instruction would be a rule about XML the stage does not need.
  */
-export function parseXml(source: string): XmlElement {
+export function parseXml(source: string, dialect: 'xhtml' | 'xml' = 'xhtml'): XmlElement {
   const root: XmlElement = {
     kind: 'element', name: '#document', tag: '#document', attrs: new Map(),
     start: 0, end: source.length, innerStart: 0, innerEnd: source.length,
@@ -331,7 +337,7 @@ export function parseXml(source: string): XmlElement {
     const element: XmlElement = {
       kind: 'element', name, tag, attrs,
       start: lt, end, innerStart: end, innerEnd: end,
-      selfClosing: selfClosed || VOID_TAGS.has(tag),
+      selfClosing: selfClosed || (dialect === 'xhtml' && VOID_TAGS.has(tag)),
       children: [], parent: top(),
     };
     top().children.push(element);
