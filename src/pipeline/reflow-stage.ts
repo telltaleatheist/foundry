@@ -63,7 +63,6 @@ import { extractDocument, type ExtractedPage } from '../pdf/extract.js';
 import type { PageFrame } from '../pdf/frame.js';
 import { repairLines, type OcrGenerate } from '../ocr/stage.js';
 import type { Block, ScanLine } from './artifacts.js';
-import { languageOf } from './export-stage.js';
 
 /** Resolves the ocr adapter and returns its wire. Called only for a scan. */
 export type OcrSupplier = () => Promise<OcrGenerate>;
@@ -409,9 +408,7 @@ function deriveMetadata(
   const declared = (doc.getTitle() ?? '').trim();
   const fromFile = basename(pdfPath).replace(/\.[^.]+$/, '').trim();
 
-  const language = languageOf({
-    kind: 'embedded-text', extractor: '', language: marker.language, dpi: marker.dpi,
-  });
+  const language = marker.language ?? '';
   return {
     title: fromBlock.length > 0 ? fromBlock : (declared.length > 0 ? declared : fromFile),
     language: ISO_639_2_TO_1[language] ?? (language.length > 0 ? language : 'und'),
