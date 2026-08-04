@@ -74,6 +74,29 @@ export interface ExtractedDocument {
 const BASELINE_TOLERANCE = 0.4;
 
 /**
+ * The type size the tolerance is measured against is the PAGE's, not the
+ * fragment's.
+ *
+ * Both alternatives were measured and both fail. The tallest fragment in the
+ * row: one 700 px scanner artifact on a cover then swallows every line under it
+ * (the five-page Deathstalker scan came back with 183 of its 197 lines, and the
+ * missing fourteen were exactly that). The fragment's own: a superscript is
+ * smaller than the words it marks, so a footnote marker splits onto a line of
+ * its own and the marker-removal model never sees the sentence it belongs to.
+ *
+ * The page's median line height is neither. It is the size the page is SET in,
+ * which is what "half a line apart" has to mean — the same argument paragraph
+ * calibration makes about measuring a book in its own units.
+ */
+const medianHeight = (fragments: readonly Fragment[]): number => {
+  const heights = fragments
+    .filter(f => f.text.trim().length > 0 && f.height > 0)
+    .map(f => f.height)
+    .sort((a, b) => a - b);
+  return heights.length === 0 ? 0 : heights[Math.floor(heights.length / 2)];
+};
+
+/**
  * A horizontal gap wider than this fraction of the type size is a word space,
  * even when the PDF emitted no space character for it.
  *
@@ -190,16 +213,14 @@ export async function extractDocument(
 export function assembleLines(fragments: readonly Fragment[]): ExtractedLine[] {
   if (fragments.length === 0) return [];
 
+  const tolerance = BASELINE_TOLERANCE * medianHeight(fragments);
   const sorted = [...fragments].sort((p, q) => (p.y - q.y) || (p.x - q.x));
   const rows: Fragment[][] = [];
   for (const fragment of sorted) {
     const row = rows[rows.length - 1];
-    if (row) {
-      const tallest = Math.max(...row.map(f => f.height), fragment.height);
-      if (Math.abs(fragment.y - row[0].y) <= BASELINE_TOLERANCE * tallest) {
-        row.push(fragment);
-        continue;
-      }
+    if (row && Math.abs(fragment.y - row[0].y) <= tolerance) {
+      row.push(fragment);
+      continue;
     }
     rows.push([fragment]);
   }

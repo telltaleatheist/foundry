@@ -116,6 +116,7 @@ import { writeBlockLayer } from './pipeline/blocks-document.js';
 import { runEmbeddedScanStage, runGetTextStage } from './pipeline/document-stage.js';
 import { applyExclusions } from './export/exclude.js';
 import { runExportStage, type BlockOverride, type OverrideRequest } from './pipeline/export-stage.js';
+import { runPdfFootnotes } from './pipeline/footnotes-document.js';
 import { runReflowStage } from './pipeline/reflow-stage.js';
 import { applyDeskew, processPage, type Box } from './scan/bands.js';
 import { readPgm } from './scan/pgm.js';
@@ -1548,21 +1549,40 @@ function blockTexts(blocks: readonly Block[], lines: readonly ScanLine[]): Map<s
 async function runFootnotes(args: ParsedArgs): Promise<void> {
   const epub = optionalString(args, 'epub');
   const runDir = optionalString(args, 'run');
+  const pdf = optionalString(args, 'pdf');
 
-  if (epub && runDir) {
+  const named = [epub && '--epub', runDir && '--run', pdf && '--pdf'].filter(Boolean);
+  if (named.length > 1) {
     throw new UsageError(
-      '--epub and --run name two different jobs: one edits an existing book, the other '
-      + 'reads a scan foundry made. Pass one.',
+      `${named.join(' and ')} name different jobs: --epub edits an existing book, --run reads a `
+      + 'scan foundry made, --pdf edits a working document. Pass one.',
     );
   }
-  if (!epub && !runDir) {
+  if (named.length === 0) {
     throw new UsageError(
-      'footnotes needs an input: --run <dir> for a foundry run, or --epub <book.epub> '
-      + 'for an existing book.',
+      'footnotes needs an input: --pdf <working.pdf> for a working document, --run <dir> for a '
+      + 'foundry run, or --epub <book.epub> for an existing book.',
     );
   }
   if (epub) {
     await runFootnotesEpub(args, epub);
+    return;
+  }
+  if (pdf) {
+    if (args.options['output'] !== undefined) {
+      throw new UsageError(
+        '--pdf edits the working document IN PLACE, as an incremental update, so there is nowhere '
+        + 'for -o to write. The book comes out of `foundry reflow`.',
+      );
+    }
+    if (args.options['ask-everything'] !== undefined) {
+      throw new UsageError(
+        '--ask-everything belongs to --epub mode. The three populations it turns off — navigation, '
+        + 'note bodies, index entries — are found in a book\'s MARKUP; a working document\'s block '
+        + 'categories already say which text is prose.',
+      );
+    }
+    await runFootnotesPdf(args, path.resolve(pdf));
     return;
   }
 
@@ -1575,6 +1595,51 @@ async function runFootnotes(args: ParsedArgs): Promise<void> {
     }
   }
   await runFootnotesRun(args, path.resolve(runDir!));
+}
+
+/**
+ * Document mode: the markers are in the text layer `get-text` wrote, and that
+ * layer is rewritten in place.
+ *
+ * Same wire, same model resolution and same report discipline as `--epub`. The
+ * report is required for the same reason: this stage deletes characters out of
+ * somebody's book, and the number that decides whether it may be pointed at a
+ * library is the false-fire rate, which is only readable from the report.
+ */
+async function runFootnotesPdf(args: ParsedArgs, pdfPath: string): Promise<void> {
+  const reportPath = path.resolve(requireString(args, 'report', 'where the review report is written'));
+  if (!fs.existsSync(pdfPath)) throw new Error(`--pdf: no such working PDF: ${pdfPath}`);
+
+  const plan = resolveStageModels(args, 'footnotes');
+  log(`footnotes: ${describePlan(plan)}`);
+
+  const server = buildServer(args, 'footnotes', plan);
+  let result;
+  try {
+    result = await runPdfFootnotes({
+      pdfPath,
+      dryRun: flag(args, 'dry-run'),
+      model: describePlan(plan),
+      log,
+      generate: async (prompts) => {
+        const answers: string[] = [];
+        for (const prompt of prompts) {
+          answers.push(await server.complete({
+            prompt,
+            adapter: plan.adapterPath ? 'footnotes' : null,
+            stop: [FOOTNOTES_STOP],
+          }));
+        }
+        return answers;
+      },
+    });
+  } finally {
+    await server.stop();
+  }
+
+  fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+  fs.writeFileSync(reportPath, `${JSON.stringify(result.report, null, 2)}\n`);
+  log(`footnotes: wrote ${reportPath}`);
 }
 
 /**
@@ -2273,7 +2338,7 @@ export const COMMANDS: readonly Command[] = [
   {
     name: 'footnotes',
     summary: 'Strip inline footnote reference markers (adapter: foundry-footnotes).',
-    usage: '--run <dir>  |  --epub <in.epub> --report <file.json> [-o <out.epub> | --dry-run]',
+    usage: '--run <dir>  |  --pdf <working.pdf> --report <file.json> [--dry-run]  |  --epub <in.epub> --report <file.json> [-o <out.epub> | --dry-run]',
     detail: [
       'Finds the footnote reference markers left inline in the body text — †, ‡,',
       '*, superscript numbers, and the OCR debris they turn into — and deletes',
@@ -2291,6 +2356,27 @@ export const COMMANDS: readonly Command[] = [
       '',
       'Reads  <run>/blocks/blocks.json',
       'Writes <run>/footnotes/deletions.json',
+      '',
+      'DOCUMENT MODE — `--pdf <working.pdf>`:',
+      '',
+      '    foundry footnotes --pdf working.pdf --report review.json --dry-run',
+      '    foundry footnotes --pdf working.pdf --report review.json',
+      '',
+      'Runs over the text layer `foundry get-text` wrote and REWRITES that layer',
+      'with the markers gone — one incremental update, the text streams replaced',
+      'in place, every other object in the document untouched. There is no -o:',
+      'the document is edited where it is, and the book comes out of `reflow`.',
+      '',
+      'Which blocks are prose comes from the block annotations, so `foundry',
+      'blocks --pdf` has to have run. Headers, footers, captions, tables, lists,',
+      'images and anything flagged deleted are never asked about — the same',
+      'prose-only rule run mode has.',
+      '',
+      'A `text`-class working document is REFUSED. Its text layer is the',
+      'publisher\'s — their fonts, their positioning, spread through the content',
+      'streams of a book somebody typeset — and rewriting that from a parse of it',
+      'would re-lay-out the book, which is a worse outcome than a marker left in.',
+      'Export it and use --epub, where the markers are markup.',
       '',
       'EPUB MODE — `--epub <in.epub>`, for a book that is already a book:',
       '',
@@ -2333,7 +2419,7 @@ export const COMMANDS: readonly Command[] = [
       'every refused line verbatim with its reason. That report is how the',
       'false-fire rate gets judged before this is pointed at a library.',
     ].join('\n'),
-    options: [RUN_DIR, EPUB_IN, OUTPUT_EPUB, REPORT, DRY_RUN, ASK_EVERYTHING],
+    options: [RUN_DIR, PDF_IN, EPUB_IN, OUTPUT_EPUB, REPORT, DRY_RUN, ASK_EVERYTHING],
     run: runFootnotes,
   },
   {

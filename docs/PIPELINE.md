@@ -22,7 +22,11 @@ The design answer to all of that is one rule:
 ```
 <run>/
 ├── run.json            # pipeline state: stage status, versions, input hash,
-│                       # tesseract + model ids used — the resume/audit record
+│                       # model ids, and `segmenter` — WHAT PRODUCED THE LINES,
+│                       # as a tagged union: the pinned Tesseract over renders,
+│                       # or `embedded-text` where a PDF's own text layer was
+│                       # read and nothing was rasterized at all. The resume /
+│                       # audit record.
 ├── scan/
 │   ├── pages.json      # per page: width, height, deskewDeg, render dpi
 │   └── lines.json      # per line: band box [x0,y0,x1,y1] full-page px
@@ -81,3 +85,16 @@ lets the user delete boxes, writes the block-id exclusion list, and invokes
 `foundry export`. BookForge never re-implements pipeline logic; where it has
 its own legacy implementation today, the migration plan (MIGRATION.md) retires
 it after parity is proven.
+
+## The other shape: the working document
+
+Everything above is the run directory, and it is still the contract for the
+stage-by-stage path. Foundry also has a **document mode**, whose rule is that
+every stage is document-in → document-out: the words, the categories and the
+deletions all live in a working PDF, and `foundry reflow` builds the book from
+that file alone. See [`DOCUMENT_MODES.md`](DOCUMENT_MODES.md).
+
+The two overlap at one stage. `blocks` reads the run directory and, given
+`--pdf`, writes its answer into BOTH `blocks/blocks.json` and the document —
+the run artifact because BookForge reads it today, the annotations because that
+is where the pipeline is going.
