@@ -70,6 +70,36 @@ function installShims(): void {
 }
 
 /**
+ * The two warnings pdf.js emits while its module body runs, about a package
+ * this program does not use.
+ *
+ * They are printed at MODULE LOAD, before any document exists and before any
+ * verbosity setting can apply — pdf.js tries to `require("@napi-rs/canvas")`
+ * for a renderer's `DOMMatrix`, and says so when it is not there. Foundry's
+ * stderr is its progress log, and a line telling an operator that an image
+ * library is missing is a lie about what is happening: nothing here renders a
+ * page, and the shims above are the deliberate answer to exactly this.
+ *
+ * Swallowed BY MESSAGE and only for the duration of the import, so a real
+ * warning about a real document still reaches the log.
+ */
+const RENDERER_WARNINGS = ['@napi-rs/canvas', 'Cannot access the `require` function'];
+
+async function withoutRendererWarnings<T>(body: () => Promise<T>): Promise<T> {
+  const original = console.warn;
+  console.warn = (...args: unknown[]): void => {
+    const first = typeof args[0] === 'string' ? args[0] : '';
+    if (RENDERER_WARNINGS.some(fragment => first.includes(fragment))) return;
+    original(...args);
+  };
+  try {
+    return await body();
+  } finally {
+    console.warn = original;
+  }
+}
+
+/**
  * Load pdf.js, shimmed, once.
  *
  * The import is dynamic so the shims are installed first — pdf.js constructs a
@@ -80,7 +110,7 @@ export function loadPdfjs(): Promise<PdfjsModule> {
   if (loading) return loading;
   loading = (async () => {
     installShims();
-    return import('pdfjs-dist/legacy/build/pdf.mjs');
+    return withoutRendererWarnings(() => import('pdfjs-dist/legacy/build/pdf.mjs'));
   })();
   return loading;
 }
