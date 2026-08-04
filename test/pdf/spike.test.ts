@@ -311,6 +311,67 @@ describe('spike 4 — custom annotation keys', () => {
     }
   }, 60_000);
 
+  /*
+   * The regression this file exists for.
+   *
+   * The first real three-page run wrote 39 annotations carrying the blocks'
+   * own text and read 19 back — the file parsed, no error was raised anywhere,
+   * and twenty blocks including every one on the last page were simply not in
+   * the document. Cause: pdf-lib's literal `PDFString.of` truncates each
+   * character to one byte, so `—` is written as 0x14 and any character whose
+   * low byte lands on `(`, `)` or `\` terminates or escapes the string and
+   * corrupts every object after it in the same object stream.
+   *
+   * A book's text is em dashes, curly quotes, ligatures and accented capitals.
+   * This test carries all of them, in enough annotations to fill an object
+   * stream, and it is the reason `src/pdf/strings.ts` exists.
+   */
+  test('annotations carrying a real book\'s characters all survive, and say what they said', async () => {
+    const { dir, done } = scratch();
+    try {
+      const file = join(dir, 'working.pdf');
+      writeFileSync(file, await synthesizeBook(3));
+      const frames = new Map<number, PageFrame>();
+      for (let i = 0; i < 3; i++) frames.set(i, frameFromPage(i, 612, 792, DPI));
+
+      // The characters that broke it, plus the ones that would break it next:
+      // U+2028 (0x28 → an opening parenthesis), U+2029 (0x29 → a closing one),
+      // U+005C's family (0x5C → a backslash).
+      const specimens = [
+        'the treaty col—lapsed “quietly”, ﬁnally',
+        'Führer, Größe, œuvre, Ærø — and a dagger†',
+        'line separator and paragraph separator',
+        'a back\slash and a Ŝlatin S with cedilla',
+        'Кириллица, ελληνικά, 漢字',
+      ];
+      const annotations = Array.from({ length: 45 }, (_, i) => ({
+        id: `p${String(i % 3).padStart(4, '0')}b${String(i).padStart(3, '0')}`,
+        page: i % 3,
+        seq: i,
+        category: 'body' as const,
+        box: [100, 100 + i * 10, 900, 160 + i * 10] as [number, number, number, number],
+        text: specimens[i % specimens.length],
+        merged: [],
+        deleted: false,
+      }));
+
+      const working = await WorkingPdf.open(file);
+      const count = writeBlockAnnotations(
+        working.doc, frames, annotations, DEFAULT_PALETTE, t => working.markChanged(t),
+      );
+      expect(count).toBe(45);
+      await working.appendUpdate();
+
+      const reread = await PDFDocument.load(new Uint8Array(readFileSync(file)));
+      const back = readBlockAnnotations(reread, frames);
+      expect(back).toHaveLength(45);
+      expect(back.map(a => a.text)).toEqual(annotations.map(a => a.text));
+      expect(back.map(a => a.id)).toEqual(annotations.map(a => a.id));
+    } finally {
+      done();
+    }
+  }, 60_000);
+
   test('a second blocks run REPLACES the layer rather than doubling it', async () => {
     const { dir, done } = scratch();
     try {

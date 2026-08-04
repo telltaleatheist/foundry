@@ -45,12 +45,15 @@
  * current. Annotations that are NOT ours (a publisher's links, a reader's
  * highlights) are left exactly as they were.
  */
-import { PDFArray, PDFBool, PDFDict, PDFDocument, PDFName, PDFNumber, PDFObject, PDFRef, PDFString } from '@cantoo/pdf-lib';
+import {
+  PDFArray, PDFBool, PDFDict, PDFDocument, PDFName, PDFNumber, PDFObject, PDFRef,
+} from '@cantoo/pdf-lib';
 
 import { BLOCKS_CATEGORIES_V6, type BlocksCategory } from '../blocks/encoder.js';
 import type { Box } from '../scan/bands.js';
 import { pxBoxToPtRect, ptRectToPxBox, type PageFrame, type PtRect } from './frame.js';
 import { pageAnnots } from './document.js';
+import { decodeTextString, textString } from './strings.js';
 
 export class AnnotationError extends Error {
   constructor(message: string) {
@@ -256,14 +259,14 @@ function buildAnnotation(
     F: 4,
     C: colourComponents(hex),
     BS: { W: 1, S: 'S' },
-    NM: PDFString.of(a.id),
-    T: PDFString.of(`${a.id} ${a.category}`),
-    Contents: PDFString.of(a.text),
+    NM: textString(a.id),
+    T: textString(`${a.id} ${a.category}`),
+    Contents: textString(a.text),
   });
   dict.set(K_CATEGORY, PDFName.of(a.category));
   dict.set(K_SEQ, PDFNumber.of(a.seq));
   if (a.merged.length > 0) {
-    dict.set(K_MERGED, doc.context.obj(a.merged.map(id => PDFString.of(id))));
+    dict.set(K_MERGED, doc.context.obj(a.merged.map(id => textString(id))));
   }
   if (a.deleted) dict.set(K_DELETED, PDFBool.True);
   return dict;
@@ -334,40 +337,39 @@ function readOne(annot: PDFDict, page: number, frame: PageFrame): BlockAnnotatio
       + 'unknown. It was written by something other than this build of foundry.',
     );
   }
-  const nm = annot.lookup(PDFName.of('NM'));
-  if (!(nm instanceof PDFString)) {
+  const id = decodeTextString(annot.lookup(PDFName.of('NM')));
+  if (id === null) {
     throw new AnnotationError(`${where}: a block annotation has no /NM, which carries the block id`);
   }
   const rect = annot.lookup(PDFName.of('Rect'));
   if (!(rect instanceof PDFArray) || rect.size() !== 4) {
-    throw new AnnotationError(`${where}: block ${nm.decodeText()} has no four-number /Rect`);
+    throw new AnnotationError(`${where}: block ${id} has no four-number /Rect`);
   }
   const numbers = [0, 1, 2, 3].map(i => {
     const n = rect.lookup(i);
     if (!(n instanceof PDFNumber)) {
-      throw new AnnotationError(`${where}: block ${nm.decodeText()} has a /Rect entry that is not a number`);
+      throw new AnnotationError(`${where}: block ${id} has a /Rect entry that is not a number`);
     }
     return n.asNumber();
   }) as PtRect;
-  const contents = annot.lookup(PDFName.of('Contents'));
   const merged = annot.lookup(K_MERGED);
   const mergedIds: string[] = [];
   if (merged instanceof PDFArray) {
     for (let i = 0; i < merged.size(); i++) {
-      const id = merged.lookup(i);
-      if (!(id instanceof PDFString)) {
-        throw new AnnotationError(`${where}: block ${nm.decodeText()} has a /FoundryMerged entry that is not a string`);
+      const member = decodeTextString(merged.lookup(i));
+      if (member === null) {
+        throw new AnnotationError(`${where}: block ${id} has a /FoundryMerged entry that is not a string`);
       }
-      mergedIds.push(id.decodeText());
+      mergedIds.push(member);
     }
   }
   return {
-    id: nm.decodeText(),
+    id,
     page,
     seq: seq.asNumber(),
     category: name as BlocksCategory,
     box: ptRectToPxBox(frame, normalizeRect(numbers)),
-    text: contents instanceof PDFString ? contents.decodeText() : '',
+    text: decodeTextString(annot.lookup(PDFName.of('Contents'))) ?? '',
     merged: mergedIds,
     deleted: annot.lookup(K_DELETED) === PDFBool.True,
   };

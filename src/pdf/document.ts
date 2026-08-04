@@ -43,9 +43,11 @@ import { dirname, join } from 'node:path';
 import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 
 import {
-  PDFArray, PDFBool, PDFDict, PDFDocument, PDFName, PDFNumber, PDFObject, PDFRef, PDFString,
+  PDFArray, PDFBool, PDFDict, PDFDocument, PDFName, PDFNumber, PDFObject, PDFRef,
 } from '@cantoo/pdf-lib';
 import type { DocumentSnapshot } from '@cantoo/pdf-lib';
+
+import { decodeTextString, textString } from './strings.js';
 
 /** Errors from this module name the stage the caller is in. */
 export class WorkingPdfError extends Error {
@@ -128,10 +130,13 @@ export function writeMarker(doc: PDFDocument, marker: FoundryMarker): void {
   const dict = ctx.obj({});
   dict.set(K_VERSION, PDFNumber.of(marker.version));
   dict.set(K_CLASS, PDFName.of(marker.documentClass));
-  if (marker.language !== null) dict.set(K_LANG, PDFString.of(marker.language));
+  // Hex strings throughout, for the reason `textString` documents: pdf-lib's
+  // literal strings truncate every character to one byte, which destroys the
+  // text and can corrupt the object it sits in.
+  if (marker.language !== null) dict.set(K_LANG, textString(marker.language));
   dict.set(K_DPI, PDFNumber.of(marker.dpi));
-  dict.set(K_SOURCE, PDFString.of(marker.sourceSha256));
-  dict.set(K_PRODUCER, PDFString.of(marker.producer));
+  dict.set(K_SOURCE, textString(marker.sourceSha256));
+  dict.set(K_PRODUCER, textString(marker.producer));
   doc.catalog.set(FOUNDRY_KEY, dict);
 }
 
@@ -167,20 +172,20 @@ export function readMarker(doc: PDFDocument): FoundryMarker {
       + `${DOCUMENT_CLASSES.join(', ')}. Re-cast the working document from the original.`,
     );
   }
-  const lang = dict.lookup(K_LANG);
+  const lang = decodeTextString(dict.lookup(K_LANG));
   const dpi = dict.lookup(K_DPI);
   if (!(dpi instanceof PDFNumber)) {
     throw new WorkingPdfError('the foundry marker has no Dpi, so no geometry in it can be read. Re-cast the working document.');
   }
-  const source = dict.lookup(K_SOURCE);
-  const producer = dict.lookup(K_PRODUCER);
+  const source = decodeTextString(dict.lookup(K_SOURCE));
+  const producer = decodeTextString(dict.lookup(K_PRODUCER));
   return {
     version: MARKER_VERSION,
     documentClass: name as DocumentClass,
-    language: lang instanceof PDFString ? lang.decodeText() : null,
+    language: lang,
     dpi: dpi.asNumber(),
-    sourceSha256: source instanceof PDFString ? source.decodeText() : '',
-    producer: producer instanceof PDFString ? producer.decodeText() : '',
+    sourceSha256: source ?? '',
+    producer: producer ?? '',
   };
 }
 
