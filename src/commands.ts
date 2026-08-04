@@ -71,9 +71,7 @@ import { BLOCK_FORMATION } from './blocks/formation.js';
 import { runEpubFootnotes } from './epub/footnotes-stage.js';
 import { applyFootnoteDeletions, planFootnotes, type FootnoteDeletion } from './footnotes/applier.js';
 import { FOOTNOTES_STOP } from './footnotes/prompt.js';
-import { applyEdits, deriveEdits } from './ocr/edits.js';
-import { ocrWordGuard } from './ocr/guard.js';
-import { extractOcrAnswer, OCR_STOP, toOcrRawPrompt } from './ocr/prompt.js';
+import { repairLines } from './ocr/stage.js';
 import {
   FOUNDRY_MODELS,
   defaultModelFor,
@@ -105,18 +103,24 @@ import {
   type BlockGeometry,
   type FootnoteBlockDeletions,
   readOcrLines,
-  type OcrLine,
   type CalibrationVerdict,
   type RunArtifact,
   type ScanLine,
   type ScanPage,
   type StageName,
   type StageState,
+  type Segmenter,
 } from './pipeline/artifacts.js';
+import { DEFAULT_PALETTE, parsePalette, type Palette } from './pdf/annotations.js';
+import { writeBlockLayer } from './pipeline/blocks-document.js';
+import { runEmbeddedScanStage, runGetTextStage } from './pipeline/document-stage.js';
+import { applyExclusions } from './export/exclude.js';
 import { runExportStage, type BlockOverride, type OverrideRequest } from './pipeline/export-stage.js';
+import { runPdfFootnotes } from './pipeline/footnotes-document.js';
+import { runReflowStage } from './pipeline/reflow-stage.js';
 import { applyDeskew, processPage, type Box } from './scan/bands.js';
 import { readPgm } from './scan/pgm.js';
-import { OCR_DPI, recognizeBands, resolveTesseract } from './scan/tesseract.js';
+import { OCR_DPI, recognizeBands, resolveTesseract, type ResolvedTesseract } from './scan/tesseract.js';
 import { resolveLlamaServer } from './serve/llama-binary.js';
 import { LlamaServer } from './serve/llama-server.js';
 import { versionString } from './version.js';
@@ -193,6 +197,35 @@ const PAGES_DIR: OptionSpec = {
   type: 'string',
   placeholder: '<dir>',
   describe: 'Directory of page images (binary PGM, rendered at 200 dpi), one file per page.',
+};
+
+/**
+ * The document-mode input and output.
+ *
+ * `--pdf` is always READ and `--out` is always WRITTEN, in every stage that
+ * takes them, and no stage takes one path for both. That is the whole shape of
+ * the document pipeline: a stage is a document in and a document out, and the
+ * caller — not foundry — decides what the files are called.
+ */
+const PDF_IN: OptionSpec = {
+  name: 'pdf',
+  type: 'string',
+  placeholder: '<file.pdf>',
+  describe: 'The PDF to read. Never written to.',
+};
+
+const OUT_PATH: OptionSpec = {
+  name: 'out',
+  type: 'string',
+  placeholder: '<path>',
+  describe: 'Where this stage writes its document. Required; foundry never invents a name.',
+};
+
+const PALETTE: OptionSpec = {
+  name: 'palette',
+  type: 'string',
+  placeholder: '<file.json>',
+  describe: 'Category → "#RRGGBB" for the block annotations. The caller owns the colours.',
 };
 
 const OUTPUT_EPUB: OptionSpec = {
@@ -481,10 +514,73 @@ function sha256Of(file: string): string {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
 
+/** The pin, as run.json records it: which binary read the pages, and at what dpi. */
+function tesseractSegmenter(tess: ResolvedTesseract): Segmenter {
+  return {
+    kind: 'tesseract',
+    version: tess.version,
+    binarySha256: sha256Of(tess.binary),
+    tessdata: [tess.lang],
+    dpi: OCR_DPI,
+  };
+}
+
+/**
+ * Two inputs, one stage — the same shape `footnotes` already has.
+ *
+ * `--pages` is a directory of renders and means Tesseract reads them.
+ * `--pdf` is a document that already carries text and means nothing is
+ * rasterized at all. They are alternatives, not a ladder: naming both is a
+ * command that means two different things, and naming neither is a command with
+ * no input.
+ */
 async function runScan(args: ParsedArgs): Promise<void> {
-  const pagesDir = path.resolve(
-    requireString(args, 'pages', 'the directory of page images to segment'),
-  );
+  const pdf = optionalString(args, 'pdf');
+  const pages = optionalString(args, 'pages');
+
+  if (pdf && pages) {
+    throw new UsageError(
+      '--pdf and --pages name two different scans: one reads a document\'s own text layer, the '
+      + 'other runs Tesseract over page renders. Pass one.',
+    );
+  }
+  if (!pdf && !pages) {
+    throw new UsageError(
+      'scan needs an input: --pages <dir> for page renders, or --pdf <file.pdf> for a document '
+      + 'that already carries text.',
+    );
+  }
+  if (pdf) {
+    await runEmbeddedScan(args, pdf);
+    return;
+  }
+  if (args.options['out'] !== undefined) {
+    throw new UsageError(
+      '--out belongs to `scan --pdf`, which casts the working document as it reads. A Tesseract '
+      + 'scan writes only the run directory; `foundry get-text` casts the working document from it.',
+    );
+  }
+  await runTesseractScan(args, path.resolve(pages!));
+}
+
+/**
+ * The embedded-text route: read the document's own text layer, emit the same
+ * scan artifacts a Tesseract scan emits, and cast the working document in the
+ * same pass.
+ *
+ * One pass rather than two because there is nothing to decide between them: the
+ * text is already in the document, so "read it" and "make this the working
+ * document" are one act, and a separate get-text step would have nothing to
+ * write.
+ */
+async function runEmbeddedScan(args: ParsedArgs, pdf: string): Promise<void> {
+  const runDir = path.resolve(requireString(args, 'run', 'the run directory to write into'));
+  const out = path.resolve(requireString(args, 'out', 'where the working PDF is written'));
+  fs.mkdirSync(runDir, { recursive: true });
+  await runEmbeddedScanStage({ pdfPath: path.resolve(pdf), runDir, outPath: out, log });
+}
+
+async function runTesseractScan(args: ParsedArgs, pagesDir: string): Promise<void> {
   const runDir = path.resolve(requireString(args, 'run', 'the run directory to write into'));
 
   const files = listPageImages(pagesDir);
@@ -523,22 +619,12 @@ async function runScan(args: ParsedArgs): Promise<void> {
       createdAt: new Date().toISOString(),
       foundryVersion: versionString(),
       input: { path: pagesDir, sha256: inputSha, pages: files.length },
-      tesseract: {
-        version: tess.version,
-        binarySha256: sha256Of(tess.binary),
-        tessdata: [tess.lang],
-        dpi: OCR_DPI,
-      },
+      segmenter: tesseractSegmenter(tess),
       models: {},
       stages: pendingStages(),
     };
   }
-  run.tesseract = {
-    version: tess.version,
-    binarySha256: sha256Of(tess.binary),
-    tessdata: [tess.lang],
-    dpi: OCR_DPI,
-  };
+  run.segmenter = tesseractSegmenter(tess);
   saveRun(runDir, run);
 
   await withStageRecord(runDir, 'scan', async () => {
@@ -593,6 +679,26 @@ function lineId(page: number, index: number): string {
 
 function blockId(page: number, index: number): string {
   return `p${String(page).padStart(4, '0')}b${String(index).padStart(3, '0')}`;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// get-text
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Cast the working document for a scanned book: the original plus the scan's
+ * line geometry, out comes a PDF that carries its own text.
+ *
+ * It is not recorded as a run STAGE. The run directory's stages are the five
+ * PIPELINE.md names and they describe a run; this writes a document, and which
+ * stage a document has reached is a byte offset in that document
+ * (docs/DOCUMENT_MODES.md), not a status in a JSON file beside it.
+ */
+async function runGetText(args: ParsedArgs): Promise<void> {
+  const pdf = path.resolve(requireString(args, 'pdf', 'the original PDF the scan was made from'));
+  const runDir = path.resolve(requireString(args, 'run', 'the run directory holding the scan'));
+  const out = path.resolve(requireString(args, 'out', 'where the working PDF is written'));
+  await runGetTextStage({ pdfPath: pdf, runDir, outPath: out, log });
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1126,6 +1232,25 @@ function readScanAndForm(runDir: string): {
 
 async function runBlocks(args: ParsedArgs): Promise<void> {
   const runDir = path.resolve(requireString(args, 'run', 'the run directory to read and write'));
+  const pdf = optionalString(args, 'pdf');
+  const workingPdf = pdf === undefined ? undefined : path.resolve(pdf);
+  // Both files are read before the model is asked anything: a palette that does
+  // not parse is a mistake worth meeting in the first second rather than after
+  // an hour of inference.
+  const palette = readPalette(optionalString(args, 'palette'));
+  if (workingPdf !== undefined && !fs.existsSync(workingPdf)) {
+    throw new Error(
+      `--pdf: no such working PDF: ${workingPdf}.\n`
+      + 'A working document is cast by `foundry get-text` (a scanned book) or by '
+      + '`foundry scan --pdf` (a book that already has text).',
+    );
+  }
+  if (workingPdf === undefined && args.options['palette'] !== undefined) {
+    throw new UsageError(
+      '--palette colours the block annotations, and annotations are only written with --pdf. '
+      + 'Without it, blocks writes the run artifact and nothing has a colour.',
+    );
+  }
   loadRun(runDir);
 
   await withStageRecord(runDir, 'blocks', async () => {
@@ -1210,7 +1335,52 @@ async function runBlocks(args: ParsedArgs): Promise<void> {
     });
     recordModel(runDir, 'blocks', plan);
     log(`blocks: wrote ${ARTIFACTS.blocks.path} — ${blocks.length} labelled blocks`);
+
+    // Document mode: the answer goes INTO the book. The run artifact above is
+    // still written — BookForge reads it, and re-export from a run directory is
+    // still a thing this build does — but a caller working in documents needs
+    // nothing from it.
+    if (workingPdf !== undefined) {
+      await writeBlockLayer({
+        pdfPath: workingPdf,
+        blocks: blocks.map(b => ({
+          id: b.id, page: b.page, bbox: b.bbox, lineIds: b.lineIds, category: b.category!,
+        })),
+        lines,
+        pages,
+        pitchPx: calibration.pitch,
+        palette,
+        log,
+      });
+    }
   });
+}
+
+/**
+ * Read `--palette`: `{ "body": "#3b82f6", … }`.
+ *
+ * SHAPE and MEANING are both checked in `src/pdf/annotations.ts`, which owns the
+ * taxonomy and the colour format; this reads the file and hands over what was
+ * in it. The categories a caller does not name keep foundry's own colours,
+ * which is not a fallback — a palette is a set of statements about individual
+ * categories, and saying nothing about `caption` is not a request for it to be
+ * invisible.
+ */
+function readPalette(file: string | undefined): Palette {
+  if (!file) return DEFAULT_PALETTE;
+  let raw: string;
+  try {
+    raw = fs.readFileSync(file, 'utf-8');
+  } catch {
+    throw new Error(`--palette: no such file: ${file}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`--palette: ${file} is not valid JSON: ${(e as Error).message}`);
+  }
+  return parsePalette(parsed, `--palette: ${file}`);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1218,95 +1388,86 @@ async function runBlocks(args: ParsedArgs): Promise<void> {
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * One line through the ship configuration: model → per-word guard → edit
- * derivation → applier round-trip. The model answers with a whole corrected
- * line (free text — it CAN invent a word, and nothing in the wire format stops
- * it), so the artifact is only ever built from an output that survived the
- * guard AND could be expressed as contract-legal edits.
+ * The ocr stage over a run directory.
  *
- * Rejection is never silent and never fatal: the line ships unchanged and the
- * artifact records why. That is the measured ship configuration (checkpoint-2
- * scoring, Aug 1 2026), not a fallback: EN degraded rows 37 → 15 with CER
- * improving, DE degraded 52 → 29.
+ * The repair itself lives in `src/ocr/stage.ts` — model → per-word guard → edit
+ * derivation → applier round-trip — because `reflow` runs the SAME code against
+ * a working document. Two implementations of "repair a line" is the same
+ * failure as two copies of a prompt format, one directory down.
+ *
+ * `--exclude` and `--exclude-ids` build a KEEP-LIST: a block the export is
+ * going to drop does not need a GPU pointed at its lines. Both mean here
+ * exactly what they mean in `export` — `src/export/exclude.ts` owns the rule —
+ * so a caller that already knows what it will drop says so once and pays for it
+ * nowhere.
  */
-function repairLine(id: string, src: string, out: string): OcrLine {
-  if (out === src) return { id, text: src, edits: [], rejected: [] };
-
-  const verdict = ocrWordGuard(src, out);
-  if (!verdict.ok) {
-    return { id, text: src, edits: [], rejected: [{ before: out, why: `per-word guard: ${verdict.why}` }] };
-  }
-
-  // Express the accepted correction as contract-legal edits. A pair too far
-  // apart to derive is a rewrite the guard's word-local view could not see.
-  const derived = deriveEdits(src, out);
-  if (!derived) {
-    return {
-      id, text: src, edits: [],
-      rejected: [{ before: out, why: 'edit derivation refused: output too far from the source line' }],
-    };
-  }
-
-  // Round-trip through the applier — the artifact must never claim an edit
-  // list that does not reproduce its own text.
-  const applied = applyEdits(src, derived.edits);
-  if (!applied.ok || applied.text !== out) {
-    return {
-      id, text: src, edits: [],
-      rejected: [{ before: out, why: 'applier round-trip failed to reproduce the model output' }],
-    };
-  }
-
-  return { id, text: out, edits: derived.edits, rejected: [] };
-}
-
 async function runOcr(args: ParsedArgs): Promise<void> {
   const runDir = path.resolve(requireString(args, 'run', 'the run directory to read and write'));
+  const categories = stringList(args, 'exclude');
+  const blockIds = readExcludeIds(optionalString(args, 'exclude-ids'));
   loadRun(runDir);
 
   await withStageRecord(runDir, 'ocr', async () => {
     const lines = readScanLines(runDir).lines;
-    const work = lines.filter((l) => l.text.trim().length > 0);
-    log(`ocr: ${work.length} non-empty lines of ${lines.length} to repair`);
+    const keep = keepList(runDir, { categories, blockIds });
+    const asked = keep === undefined
+      ? lines.filter(l => l.text.trim().length > 0).length
+      : lines.filter(l => l.text.trim().length > 0 && keep.has(l.id)).length;
+    log(`ocr: ${asked} lines of ${lines.length} to repair`);
 
     const plan = resolveStageModels(args, 'ocr');
     log(`ocr: ${describePlan(plan)}`);
 
     const server = buildServer(args, 'ocr', plan);
-    const results: OcrLine[] = [];
+    let result;
     try {
-      let done = 0;
-      for (const line of lines) {
-        if (line.text.trim().length === 0) {
-          results.push({ id: line.id, text: line.text, edits: [], rejected: [] });
-          continue;
-        }
-        const raw = await server.complete({
-          prompt: toOcrRawPrompt(line.text),
+      result = await repairLines({
+        lines,
+        ...(keep ? { keep } : {}),
+        generate: (request) => server.complete({
+          prompt: request.prompt,
           adapter: plan.adapterPath ? 'ocr' : null,
-          stop: [OCR_STOP],
-          // eval-line.py's budget, exactly: the answer is the line again, so
-          // its own length plus headroom bounds the generation.
-          nPredict: line.text.length + 64,
-        });
-        results.push(repairLine(line.id, line.text, extractOcrAnswer(raw)));
-        done++;
-        if (done % 100 === 0) log(`  ocr: ${done}/${work.length} lines`);
-      }
+          stop: request.stop,
+          nPredict: request.nPredict,
+        }),
+        onProgress: (done, total) => {
+          if (done % 100 === 0) log(`  ocr: ${done}/${total} lines`);
+        },
+      });
     } finally {
       await server.stop();
     }
 
-    writeArtifact(runDir, 'ocrLines', { lines: results });
+    writeArtifact(runDir, 'ocrLines', { lines: result.lines });
     recordModel(runDir, 'ocr', plan);
-
-    const touched = results.filter((l) => l.edits.length > 0).length;
-    const refused = results.reduce((n, l) => n + l.rejected.length, 0);
     log(
-      `ocr: wrote ${ARTIFACTS.ocrLines.path} — ${touched} lines corrected, `
-      + `${refused} outputs refused by the guards, ${lines.length - touched} unchanged`,
+      `ocr: wrote ${ARTIFACTS.ocrLines.path} — ${result.corrected} lines corrected, `
+      + `${result.refused} outputs refused by the guards, ${result.skipped} not asked about`,
     );
   });
+}
+
+/**
+ * Which lines are worth the model, or undefined for "all of them".
+ *
+ * Undefined rather than a set holding everything, because the two are different
+ * statements: no exclusions is the stage's normal shape and needs no
+ * `blocks/blocks.json`, while an exclusion is a statement ABOUT BLOCKS and
+ * cannot be honoured before there are any. Asking for one without the other is
+ * a stop, not a silent full run.
+ */
+function keepList(
+  runDir: string, exclude: { categories: string[]; blockIds: string[] },
+): Set<string> | undefined {
+  if (exclude.categories.length === 0 && exclude.blockIds.length === 0) return undefined;
+  if (!hasArtifact(runDir, 'blocks')) {
+    throw new Error(
+      `--exclude and --exclude-ids name blocks, and ${ARTIFACTS.blocks.path} has not been written `
+      + 'yet. Run `foundry blocks` first, or drop the exclusions and repair every line.',
+    );
+  }
+  const { kept } = applyExclusions(readBlocks(runDir).blocks, exclude);
+  return new Set(kept.flatMap(b => b.lineIds));
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1388,21 +1549,40 @@ function blockTexts(blocks: readonly Block[], lines: readonly ScanLine[]): Map<s
 async function runFootnotes(args: ParsedArgs): Promise<void> {
   const epub = optionalString(args, 'epub');
   const runDir = optionalString(args, 'run');
+  const pdf = optionalString(args, 'pdf');
 
-  if (epub && runDir) {
+  const named = [epub && '--epub', runDir && '--run', pdf && '--pdf'].filter(Boolean);
+  if (named.length > 1) {
     throw new UsageError(
-      '--epub and --run name two different jobs: one edits an existing book, the other '
-      + 'reads a scan foundry made. Pass one.',
+      `${named.join(' and ')} name different jobs: --epub edits an existing book, --run reads a `
+      + 'scan foundry made, --pdf edits a working document. Pass one.',
     );
   }
-  if (!epub && !runDir) {
+  if (named.length === 0) {
     throw new UsageError(
-      'footnotes needs an input: --run <dir> for a foundry run, or --epub <book.epub> '
-      + 'for an existing book.',
+      'footnotes needs an input: --pdf <working.pdf> for a working document, --run <dir> for a '
+      + 'foundry run, or --epub <book.epub> for an existing book.',
     );
   }
   if (epub) {
     await runFootnotesEpub(args, epub);
+    return;
+  }
+  if (pdf) {
+    if (args.options['output'] !== undefined) {
+      throw new UsageError(
+        '--pdf edits the working document IN PLACE, as an incremental update, so there is nowhere '
+        + 'for -o to write. The book comes out of `foundry reflow`.',
+      );
+    }
+    if (args.options['ask-everything'] !== undefined) {
+      throw new UsageError(
+        '--ask-everything belongs to --epub mode. The three populations it turns off — navigation, '
+        + 'note bodies, index entries — are found in a book\'s MARKUP; a working document\'s block '
+        + 'categories already say which text is prose.',
+      );
+    }
+    await runFootnotesPdf(args, path.resolve(pdf));
     return;
   }
 
@@ -1415,6 +1595,51 @@ async function runFootnotes(args: ParsedArgs): Promise<void> {
     }
   }
   await runFootnotesRun(args, path.resolve(runDir!));
+}
+
+/**
+ * Document mode: the markers are in the text layer `get-text` wrote, and that
+ * layer is rewritten in place.
+ *
+ * Same wire, same model resolution and same report discipline as `--epub`. The
+ * report is required for the same reason: this stage deletes characters out of
+ * somebody's book, and the number that decides whether it may be pointed at a
+ * library is the false-fire rate, which is only readable from the report.
+ */
+async function runFootnotesPdf(args: ParsedArgs, pdfPath: string): Promise<void> {
+  const reportPath = path.resolve(requireString(args, 'report', 'where the review report is written'));
+  if (!fs.existsSync(pdfPath)) throw new Error(`--pdf: no such working PDF: ${pdfPath}`);
+
+  const plan = resolveStageModels(args, 'footnotes');
+  log(`footnotes: ${describePlan(plan)}`);
+
+  const server = buildServer(args, 'footnotes', plan);
+  let result;
+  try {
+    result = await runPdfFootnotes({
+      pdfPath,
+      dryRun: flag(args, 'dry-run'),
+      model: describePlan(plan),
+      log,
+      generate: async (prompts) => {
+        const answers: string[] = [];
+        for (const prompt of prompts) {
+          answers.push(await server.complete({
+            prompt,
+            adapter: plan.adapterPath ? 'footnotes' : null,
+            stop: [FOOTNOTES_STOP],
+          }));
+        }
+        return answers;
+      },
+    });
+  } finally {
+    await server.stop();
+  }
+
+  fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+  fs.writeFileSync(reportPath, `${JSON.stringify(result.report, null, 2)}\n`);
+  log(`footnotes: wrote ${reportPath}`);
 }
 
 /**
@@ -1672,6 +1897,54 @@ async function runExport(args: ParsedArgs): Promise<void> {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// reflow
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * The working document in, the EPUB out — and nothing else on the command line
+ * but where each of them lives.
+ *
+ * The ocr adapter is passed as a FACTORY, so a book that turns out to carry its
+ * own text never resolves the weights, never downloads eight gigabytes it will
+ * not use, and never starts a server. The stage asks only when the document has
+ * told it it is a scan.
+ */
+async function runReflow(args: ParsedArgs): Promise<void> {
+  const pdf = path.resolve(requireString(args, 'pdf', 'the working PDF to build the book from'));
+  const out = path.resolve(requireString(args, 'out', 'where the EPUB is written'));
+  const cover = optionalString(args, 'cover');
+
+  let server: LlamaServer | null = null;
+  try {
+    const result = await runReflowStage({
+      pdfPath: pdf,
+      outPath: out,
+      excludeCategories: stringList(args, 'exclude'),
+      ...(cover ? { coverPath: path.resolve(cover) } : {}),
+      ocr: async () => {
+        const plan = resolveStageModels(args, 'ocr');
+        log(`reflow: ${describePlan(plan)}`);
+        server = buildServer(args, 'ocr', plan);
+        const started = server;
+        return (request) => started.complete({
+          prompt: request.prompt,
+          adapter: plan.adapterPath ? 'ocr' : null,
+          stop: request.stop,
+          nPredict: request.nPredict,
+        });
+      },
+      log,
+    });
+    log(
+      `reflow: ${result.keptBlocks} of ${result.totalBlocks} blocks, ${result.keptLines} lines, `
+      + `class ${result.documentClass}`,
+    );
+  } finally {
+    if (server !== null) await (server as LlamaServer).stop();
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // convert
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -1880,17 +2153,41 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'scan',
-    summary: 'Segment page renders into lines with the pinned Tesseract.',
-    usage: '--pages <dir> --run <dir>',
+    summary: 'Find the lines: pinned Tesseract over renders, or a PDF\'s own text.',
+    usage: '--pages <dir> --run <dir>  |  --pdf <in.pdf> --run <dir> --out <working.pdf>',
     detail: [
+      'EMBEDDED-TEXT MODE — `--pdf <in.pdf> --out <working.pdf>`:',
+      '',
+      'A book that already carries a text layer does not need Tesseract and must',
+      'not get it: the words are the publisher\'s, set from the author\'s file, and',
+      'recognizing a picture of them can only make them worse. So this mode reads',
+      'the document\'s own text with its geometry and writes the SAME artifacts a',
+      'Tesseract scan writes — one input shape for everything downstream.',
+      '',
+      'It casts the working document in the same pass, because there is nothing to',
+      'decide between the two acts: the text is already in the PDF. The document',
+      'records class `text`, which is how `reflow` knows to skip the ocr model.',
+      '',
+      'Geometry is projected into the SAME 200 dpi pixel frame a scan measures in,',
+      'so the blocks model sees the numbers it was trained on rather than points.',
+      'Lines carry no confidence: nothing recognized anything, and a fabricated',
+      '100 would tell every consumer this text was measured when it was copied.',
+      '',
+      'A PDF with no extractable text stops the stage and says so — that book is a',
+      'scan, and the route for a scan is --pages then `foundry get-text`.',
+      '',
+      'THE INPUT IS NEVER WRITTEN TO. --out may not be --pdf.',
+      '',
+      'TESSERACT MODE — `--pages <dir>`:',
+      '',
       'Reads every .pgm in --pages in natural page order, finds the text lines',
       'with the projection-profile band segmenter (deskewing the page first where',
       'it is tilted), and runs the PINNED Tesseract over one crop per line.',
       '',
-      'Writes:',
+      'Writes (both modes):',
       '  <run>/scan/pages.json   per page: size, deskew angle, columns, coverage',
       '  <run>/scan/lines.json   per line: id, page, box, text, mean confidence',
-      '  <run>/run.json          input hash, tesseract version, stage state',
+      '  <run>/run.json          input hash, which segmenter read it, stage state',
       '',
       'The dpi and the Tesseract version are not settings. Every model in this',
       'repo was trained on the output of one specific Tesseract at 200 dpi, and',
@@ -1903,8 +2200,48 @@ export const COMMANDS: readonly Command[] = [
       'Bands find the lines; --psm 7 reads them; a band that reads as nothing is',
       'retried at --psm 13 and the rescue is counted.',
     ].join('\n'),
-    options: [PAGES_DIR, RUN_DIR],
+    options: [PAGES_DIR, RUN_DIR, PDF_IN, OUT_PATH],
     run: runScan,
+  },
+  {
+    name: 'get-text',
+    summary: 'Write a scan\'s words into the PDF as an invisible text layer.',
+    usage: '--pdf <original.pdf> --run <dir> --out <working.pdf>',
+    detail: [
+      'Casts the WORKING DOCUMENT for a scanned book. Takes the original PDF and',
+      'the line geometry `foundry scan` measured, and writes one invisible text',
+      'run per recognized line, positioned at that line\'s box — the OCRmyPDF',
+      'technique. The result is a PDF whose pages are still the scan and whose',
+      'text can be selected, copied and searched.',
+      '',
+      'This is the point where the pipeline becomes document-in / document-out.',
+      'Every stage after it reads the DOCUMENT — `blocks` writes its categories in',
+      'as annotations, `reflow` reads the text layer and the annotations and',
+      'writes the EPUB — so nothing downstream has to be kept in step with a',
+      'directory of JSON.',
+      '',
+      'It is the ONE full rewrite. Everything after it is a PDF incremental',
+      'update: bytes appended, nothing moved, so every stage boundary is a byte',
+      'offset and "reset to that stage" is a truncate. The rewrite also drops any',
+      'linearization the original carried — a first-page layout declaration that',
+      'an append silently invalidates (docs/PDF_SPIKE.md).',
+      '',
+      'The document records what it is: class `scanned`, which is how `reflow`',
+      'knows these words came out of Tesseract and have to go through the ocr',
+      'model before they are joined into paragraphs.',
+      '',
+      'Reads  <original.pdf>, <run>/scan/{pages,lines}.json',
+      'Writes <working.pdf>',
+      '',
+      'THE ORIGINAL IS NEVER WRITTEN TO. --out may not be --pdf.',
+      '',
+      'The page count and every page\'s aspect ratio must match the scan. A scan',
+      'of a different edition — or of the same book with its cover stripped —',
+      'would put each page\'s words on some other page, and that is a book that is',
+      'wrong everywhere with nothing visibly broken.',
+    ].join('\n'),
+    options: [PDF_IN, RUN_DIR, OUT_PATH],
+    run: runGetText,
   },
   {
     name: 'blocks',
@@ -1940,8 +2277,32 @@ export const COMMANDS: readonly Command[] = [
       'Tesseract\'s own paragraph identity, which the band path cannot produce;',
       'matching it is a prerequisite before predictions from this stage can be',
       'trusted.',
+      '',
+      'DOCUMENT MODE — `--pdf <working.pdf>`:',
+      '',
+      'The answer also goes INTO the book, as one square PDF annotation per',
+      'block: coloured by category, named by its block id, carrying the block\'s',
+      'text, and recording where it sits in the reading order. Open the working',
+      'document in any annotation-aware reader and the layer is there — and a box',
+      'moved or a heading retyped in that reader has edited the pipeline\'s state,',
+      'with no side file to keep in step.',
+      '',
+      'Adjacent `chapter` blocks, and adjacent `title` blocks, are MERGED before',
+      'they are written when they sit on the same page with nothing between them',
+      'and no more than a paragraph\'s advance apart. Those two categories open a',
+      'spine item, so a heading split across three lines otherwise becomes three',
+      'chapters in the table of contents. The merge is recorded on the surviving',
+      'annotation, so the blocks the model actually answered for stay identifiable.',
+      '',
+      'Detect REPLACES: every annotation foundry wrote is removed and the new set',
+      'written, as ONE incremental update. Nothing else on the page is touched —',
+      'a publisher\'s links and a reader\'s own highlights survive.',
+      '',
+      '--palette <file.json> takes `{ "body": "#3b82f6", … }`. The canonical',
+      'palette belongs to whoever draws the boxes for a user; foundry accepts it',
+      'as data and has its own only so that a box always has a colour.',
     ].join('\n'),
-    options: [RUN_DIR],
+    options: [RUN_DIR, PDF_IN, PALETTE],
     run: runBlocks,
   },
   {
@@ -1963,17 +2324,21 @@ export const COMMANDS: readonly Command[] = [
       'halves are rejoined as they appear, and the model is never asked to guess',
       'the rest of a word.',
       '',
-      'NOT RUNNABLE IN THIS BUILD. The edit contract and applier are here',
-      '(src/ocr/edits.ts); the trained-against system prompt has not been migrated',
-      'from BookForgeApp and will not be re-typed. See docs/MIGRATION.md §2.',
+      '--exclude <category> and --exclude-ids <file> build a KEEP-LIST rather',
+      'than filtering the output: every line still comes back, in order, but only',
+      'the lines a block that survives those exclusions is built from are sent to',
+      'the model. They mean exactly what they mean in `export`, so a caller that',
+      'already knows it is dropping the notes apparatus pays no GPU time for it.',
+      'Naming either before `foundry blocks` has run is a stop: an exclusion is a',
+      'statement about blocks, and there are none yet.',
     ].join('\n'),
-    options: [RUN_DIR],
+    options: [RUN_DIR, EXCLUDE, EXCLUDE_IDS],
     run: runOcr,
   },
   {
     name: 'footnotes',
     summary: 'Strip inline footnote reference markers (adapter: foundry-footnotes).',
-    usage: '--run <dir>  |  --epub <in.epub> --report <file.json> [-o <out.epub> | --dry-run]',
+    usage: '--run <dir>  |  --pdf <working.pdf> --report <file.json> [--dry-run]  |  --epub <in.epub> --report <file.json> [-o <out.epub> | --dry-run]',
     detail: [
       'Finds the footnote reference markers left inline in the body text — †, ‡,',
       '*, superscript numbers, and the OCR debris they turn into — and deletes',
@@ -1991,6 +2356,27 @@ export const COMMANDS: readonly Command[] = [
       '',
       'Reads  <run>/blocks/blocks.json',
       'Writes <run>/footnotes/deletions.json',
+      '',
+      'DOCUMENT MODE — `--pdf <working.pdf>`:',
+      '',
+      '    foundry footnotes --pdf working.pdf --report review.json --dry-run',
+      '    foundry footnotes --pdf working.pdf --report review.json',
+      '',
+      'Runs over the text layer `foundry get-text` wrote and REWRITES that layer',
+      'with the markers gone — one incremental update, the text streams replaced',
+      'in place, every other object in the document untouched. There is no -o:',
+      'the document is edited where it is, and the book comes out of `reflow`.',
+      '',
+      'Which blocks are prose comes from the block annotations, so `foundry',
+      'blocks --pdf` has to have run. Headers, footers, captions, tables, lists,',
+      'images and anything flagged deleted are never asked about — the same',
+      'prose-only rule run mode has.',
+      '',
+      'A `text`-class working document is REFUSED. Its text layer is the',
+      'publisher\'s — their fonts, their positioning, spread through the content',
+      'streams of a book somebody typeset — and rewriting that from a parse of it',
+      'would re-lay-out the book, which is a worse outcome than a marker left in.',
+      'Export it and use --epub, where the markers are markup.',
       '',
       'EPUB MODE — `--epub <in.epub>`, for a book that is already a book:',
       '',
@@ -2033,7 +2419,7 @@ export const COMMANDS: readonly Command[] = [
       'every refused line verbatim with its reason. That report is how the',
       'false-fire rate gets judged before this is pointed at a library.',
     ].join('\n'),
-    options: [RUN_DIR, EPUB_IN, OUTPUT_EPUB, REPORT, DRY_RUN, ASK_EVERYTHING],
+    options: [RUN_DIR, PDF_IN, EPUB_IN, OUTPUT_EPUB, REPORT, DRY_RUN, ASK_EVERYTHING],
     run: runFootnotes,
   },
   {
@@ -2092,6 +2478,53 @@ export const COMMANDS: readonly Command[] = [
     ].join('\n'),
     options: [RUN_DIR, OUTPUT_EPUB, COVER, EXCLUDE, EXCLUDE_IDS, OVERRIDES],
     run: runExport,
+  },
+  {
+    name: 'reflow',
+    summary: 'Working PDF in, EPUB out — the document is the only input.',
+    usage: '--pdf <working.pdf> --out <book.epub> [--exclude <category>]... [--cover <image>]',
+    detail: [
+      'Reads the working document and writes the book. ONE file in, one file out:',
+      'no run directory, no blocks.json, no exclusion list, no overrides file.',
+      'Everything this stage needs is in the PDF, because every stage before it',
+      'wrote its answer into the PDF.',
+      '',
+      '  the text layer   the words, with their geometry',
+      '  the annotations  what each block is, where, what it says, whether it is',
+      '                   deleted, and its place in the reading order',
+      '  the catalog      the document class, the language, the frame\'s dpi, and',
+      '                   the hash of the original this was cast from',
+      '',
+      'In one pass:',
+      '',
+      '  1. Drop what is not in the book — blocks flagged deleted, blocks on',
+      '     pages flagged deleted, categories named by --exclude, and the page',
+      '     furniture the exporter never emits. FIRST, so nothing after it is',
+      '     spent on text nobody will read.',
+      '  2. Repair the OCR, for a SCANNED document only, line by line through the',
+      '     ocr adapter and its guards — and only over the lines that survived',
+      '     step 1, so blocks a user deleted cost no GPU at all. A document that',
+      '     arrived with its own text layer skips this: those words are the',
+      '     publisher\'s, and a model editing them could only make them worse.',
+      '     Which of the two it is, is recorded IN the document.',
+      '  3. Reflow into paragraphs, with the book\'s own calibration and the',
+      '     line-join rules. A wrap hyphen is healed only when the book itself',
+      '     attests the joined word — never by guessing from the next letter.',
+      '  4. Chapters from the `chapter` annotations. An annotation\'s text is the',
+      '     definitive title, so a heading retyped in any PDF reader is the',
+      '     chapter title, with no override file anywhere. Where nobody has',
+      '     touched it, the repaired lines are used, because they are the same',
+      '     words with the scan\'s errors taken out.',
+      '',
+      'DELETION IS IN THE DOCUMENT. A block annotation carrying /FoundryDeleted is',
+      'dropped; so is every block on a page carrying /FoundryPageDeleted; so are',
+      'the lines under a box somebody removed outright, because a line that no',
+      'block contains is not in the book.',
+      '',
+      'THE WORKING DOCUMENT IS NEVER WRITTEN TO by this stage.',
+    ].join('\n'),
+    options: [PDF_IN, OUT_PATH, EXCLUDE, COVER],
+    run: runReflow,
   },
   {
     name: 'models',

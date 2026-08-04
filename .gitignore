@@ -38,3 +38,8 @@ tmp/
 Thumbs.db
 .idea/
 .vscode/
+
+# Local fixtures: real books, used by the PDF spike and the end-to-end runs.
+# Copyrighted scans of several megabytes each. The tests that use them SKIP when
+# they are absent (test/pdf/fixtures.ts), so the suite is green without them.
+/fixtures/local/

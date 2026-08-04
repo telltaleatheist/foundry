@@ -68,6 +68,60 @@ foundry footnotes --run <run>
 foundry export    --run <run> -o book.epub [--exclude footnote]... [--exclude-ids ids.txt]
 ```
 
+## Document mode — the PDF itself is the pipeline's state
+
+The run directory is a good API and a bad hand-off. Every consumer has to be
+told what the files mean, nothing in it can be opened by a person, and the state
+of a half-finished book lives in five JSON files that have to stay in step with
+each other and with a PDF nobody is holding.
+
+So there is a second shape, and its rule is that **every stage is document-in →
+document-out**. An untouched original is cast once into a WORKING PDF; every
+stage after that writes into that file as a PDF incremental update — bytes
+appended, nothing moved — so the file is a valid PDF at every stage boundary, a
+boundary is a byte offset, and "reset to that stage" is a truncate.
+
+```
+# a scan: Tesseract finds the lines, then the words go back INTO the PDF
+foundry scan      --pages <renders> --run <run>
+foundry get-text  --pdf original.pdf --run <run> --out working.pdf
+
+# a book that already carries text: no Tesseract anywhere near it
+foundry scan      --pdf original.pdf --run <run> --out working.pdf
+
+# then, whichever it was
+foundry blocks    --run <run> --pdf working.pdf [--palette colours.json]
+foundry footnotes --pdf working.pdf --report review.json [--dry-run]
+foundry reflow    --pdf working.pdf --out book.epub [--exclude footnote]...
+```
+
+What that buys, concretely:
+
+- **`get-text` makes a scan a document.** One invisible text run per recognized
+  line, at that line's box — the OCRmyPDF technique. The pages are still the
+  scan; the text is selectable, searchable and copyable in any reader.
+- **`blocks --pdf` writes its answer as annotations.** One coloured square per
+  block, named by id, carrying the block's text. Open the working PDF in
+  anything that shows annotations and the categories are there. Move a box,
+  retype a heading, delete one — you have edited the pipeline's state, and there
+  is no side file to keep in step. `--palette` takes the caller's own colours.
+- **`reflow` reads the document and nothing else.** No run directory, no
+  exclusion list, no overrides file. It drops what the annotations say is
+  deleted, repairs the OCR for a scanned document only and only over the lines
+  that survived, reflows with the book's own calibration, and takes its chapters
+  from the chapter annotations — whose text IS the title, so a heading retyped
+  in a PDF reader is the chapter title.
+- **Whether a book needs the OCR model is written IN the document.** `get-text`
+  stamps `scanned`; `scan --pdf` stamps `text`. A publisher's words are never
+  handed to a model trained to fix Tesseract's mistakes.
+
+`foundry` never invents a filename: every input and output above is named on the
+command line, and the original PDF is never written to.
+
+See [`docs/DOCUMENT_MODES.md`](docs/DOCUMENT_MODES.md) for what the working
+document carries, and [`docs/PDF_SPIKE.md`](docs/PDF_SPIKE.md) for the
+measurements the incremental-update design rests on.
+
 ## Stripping markers from a book that is already a book
 
 `footnotes` has a second input. A publisher's EPUB carries its reference markers

@@ -49,7 +49,12 @@ import type { FootnoteDeletion } from '../footnotes/applier.js';
  * the same book. A field is NEVER repurposed; that is a rename plus a bump.
  */
 export const ARTIFACTS = {
-  run: { path: 'run.json', version: 1 },
+  // 2: `tesseract` became `segmenter`, a tagged union. A scan no longer implies
+  // Tesseract — `scan --pdf` reads a document's own text layer and never
+  // rasterizes anything — and there is no honest Tesseract version to write for
+  // one. Recording a fabricated pin would break the one thing the field exists
+  // for: telling two runs apart by the segmenter that produced them (§5).
+  run: { path: 'run.json', version: 2 },
   scanPages: { path: 'scan/pages.json', version: 1 },
   scanLines: { path: 'scan/lines.json', version: 1 },
   // 2: `formation` — the segmentation marker — became a required field when the
@@ -118,6 +123,34 @@ export const STAGE_NAMES: readonly StageName[] = ['scan', 'blocks', 'ocr', 'foot
 export type StageStatus = 'pending' | 'running' | 'done' | 'failed';
 const STAGE_STATUSES: readonly StageStatus[] = ['pending', 'running', 'done', 'failed'];
 
+/**
+ * Where a run's lines came from. A tagged union rather than optional fields,
+ * because the two have nothing in common but the dpi: one is a pinned binary
+ * reading pictures, the other is a document's own text being projected into the
+ * same frame, and a reader has to be able to tell which without inspecting
+ * which fields happen to be filled in.
+ */
+export type Segmenter =
+  | {
+    kind: 'tesseract';
+    version: string;
+    binarySha256: string;
+    /** Language files used, e.g. ['eng']. */
+    tessdata: string[];
+    dpi: number;
+  }
+  | {
+    kind: 'embedded-text';
+    /** The library and version that read the text layer, e.g. `pdfjs-dist@6.2.108`. */
+    extractor: string;
+    /** The document's declared language, or null. Never guessed from the words. */
+    language: string | null;
+    /** The pixel frame the text's geometry was projected into. */
+    dpi: number;
+  };
+
+const SEGMENTER_KINDS = ['tesseract', 'embedded-text'] as const;
+
 export interface StageState {
   status: StageStatus;
   /** ISO-8601. */
@@ -146,17 +179,12 @@ export interface RunArtifact {
     pages: number;
   };
   /**
-   * The pin, recorded because the models were trained against exactly this
-   * segmenter at exactly this resolution (ARCHITECTURE §5). A run whose
-   * Tesseract differs from another run's is not comparable to it.
+   * WHAT PRODUCED THE LINES, recorded because the models were trained against
+   * exactly one segmenter at exactly one resolution (ARCHITECTURE §5). Two runs
+   * made by different segmenters are not comparable, and this is how they are
+   * told apart.
    */
-  tesseract: {
-    version: string;
-    binarySha256: string;
-    /** Language files used, e.g. ['eng']. */
-    tessdata: string[];
-    dpi: number;
-  };
+  segmenter: Segmenter;
   /** Model ids as they were resolved. The version in the id is load-bearing. */
   models: {
     base?: string;
@@ -463,31 +491,76 @@ function checkVersion(file: string, root: Record<string, unknown>, expected: num
 
 // ── parsers ─────────────────────────────────────────────────────────────────
 
+function parseSegmenter(file: string, v: unknown): Segmenter {
+  const s = obj(file, 'segmenter', v);
+  const kind = oneOf(file, 'segmenter.kind', s['kind'], SEGMENTER_KINDS);
+  if (kind === 'tesseract') {
+    return {
+      kind,
+      version: str(file, 'segmenter.version', s['version']),
+      binarySha256: str(file, 'segmenter.binarySha256', s['binarySha256']),
+      tessdata: strArray(file, 'segmenter.tessdata', s['tessdata']),
+      dpi: num(file, 'segmenter.dpi', s['dpi']),
+    };
+  }
+  return {
+    kind,
+    extractor: str(file, 'segmenter.extractor', s['extractor']),
+    // Required, and legitimately null: a PDF that declares no language has
+    // none. Absent is a different statement and throws.
+    language: s['language'] === null ? null : str(file, 'segmenter.language', s['language']),
+    dpi: num(file, 'segmenter.dpi', s['dpi']),
+  };
+}
+
 export function parseRun(text: string, file = ARTIFACTS.run.path): RunArtifact {
   const root = obj(file, 'root', json(file, text));
-  checkVersion(file, root, ARTIFACTS.run.version);
-
-  const input = obj(file, 'input', root['input']);
-  const tess = obj(file, 'tesseract', root['tesseract']);
-  const models = obj(file, 'models', root['models']);
-  const stagesRaw = obj(file, 'stages', root['stages']);
 
   /*
    * The `boxes` stage was renamed `blocks` (Aug 2026), pre-release, with no
    * compatibility arm. A run directory written before the rename records the
-   * old key, and the loop below would reject it with a bare "stages.blocks must
-   * be an object, found undefined" — true, but it names neither the cause nor
-   * the fix. Say the rename.
+   * old key, and the version gate below would reject it as merely old — true,
+   * but it names neither the cause nor the fix. Say the rename, and say it
+   * FIRST: a directory that predates the rename also predates everything after
+   * it, and the rename is the more specific fact about it.
    */
-  if (stagesRaw['boxes'] !== undefined && stagesRaw['blocks'] === undefined) {
+  const stagesEarly = root['stages'];
+  if (typeof stagesEarly === 'object' && stagesEarly !== null && !Array.isArray(stagesEarly)) {
+    const s = stagesEarly as Record<string, unknown>;
+    if (s['boxes'] !== undefined && s['blocks'] === undefined) {
+      fail(
+        file,
+        'stages.boxes is present and stages.blocks is not. This run directory predates the '
+        + 'rename of the `boxes` stage to `blocks`, and it is NOT read with the old name — '
+        + 'the artifacts moved too (`boxes/blocks.json` is now `blocks/blocks.json`). '
+        + 'Start a fresh run; there is no migration.',
+      );
+    }
+  }
+
+  /*
+   * A v1 run record described its segmenter as `tesseract`, because there was
+   * only one. Saying "re-run the stage" without saying why would send someone
+   * looking for a corrupt file: the record is fine, it just cannot state what
+   * produced these lines in a pipeline where a scan may never have rasterized
+   * anything. Nothing is lost by starting again — scan is the stage that writes
+   * this file, and it writes the artifacts beside it in the same pass.
+   */
+  if (root['formatVersion'] === 1 && root['tesseract'] !== undefined) {
     fail(
       file,
-      'stages.boxes is present and stages.blocks is not. This run directory predates the '
-      + 'rename of the `boxes` stage to `blocks`, and it is NOT read with the old name — '
-      + 'the artifacts moved too (`boxes/blocks.json` is now `blocks/blocks.json`). '
-      + 'Start a fresh run; there is no migration.',
+      'records a `tesseract` block, which this build reads as `segmenter` — a tagged union, because '
+      + '`foundry scan --pdf` reads a document\'s own text layer and never runs Tesseract at all. '
+      + 'Re-run `foundry scan` against this directory; there is no migration, and nothing downstream '
+      + 'has to be re-inferred that scan does not rewrite anyway.',
     );
   }
+
+  checkVersion(file, root, ARTIFACTS.run.version);
+
+  const input = obj(file, 'input', root['input']);
+  const models = obj(file, 'models', root['models']);
+  const stagesRaw = obj(file, 'stages', root['stages']);
 
   const stages = {} as Record<StageName, StageState>;
   for (const name of STAGE_NAMES) {
@@ -513,12 +586,7 @@ export function parseRun(text: string, file = ARTIFACTS.run.path): RunArtifact {
       sha256: str(file, 'input.sha256', input['sha256']),
       pages: num(file, 'input.pages', input['pages']),
     },
-    tesseract: {
-      version: str(file, 'tesseract.version', tess['version']),
-      binarySha256: str(file, 'tesseract.binarySha256', tess['binarySha256']),
-      tessdata: strArray(file, 'tesseract.tessdata', tess['tessdata']),
-      dpi: num(file, 'tesseract.dpi', tess['dpi']),
-    },
+    segmenter: parseSegmenter(file, root['segmenter']),
     models: {
       base: optStr(file, 'models.base', models['base']),
       blocks: optStr(file, 'models.blocks', models['blocks']),
