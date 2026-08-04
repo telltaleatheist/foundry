@@ -45,8 +45,21 @@ export interface PageFrame {
   page: number;
   widthPx: number;
   heightPx: number;
+  /** The VISIBLE page's size in points — the crop box where there is one. */
   widthPt: number;
   heightPt: number;
+  /**
+   * The visible page's lower-left corner, in the page's own user space.
+   *
+   * Not always the origin. A page may declare a `/CropBox` smaller than its
+   * `/MediaBox` — trimmed scanner margins are the common case — and every
+   * renderer and every reader shows the CROP box, so a render's pixel (0,0) is
+   * the crop box's top-left and not the media box's. Text and annotations are
+   * placed in user space, which is the media box's frame, so the offset has to
+   * be carried or every box on such a page lands short by the trim.
+   */
+  offsetXPt: number;
+  offsetYPt: number;
   /** Straightening the scan applied before the px boxes were measured. */
   deskewDeg: number;
 }
@@ -55,19 +68,19 @@ export interface PageFrame {
 export type PtRect = [number, number, number, number];
 
 export function pxToPtX(frame: PageFrame, x: number): number {
-  return x * (frame.widthPt / frame.widthPx);
+  return frame.offsetXPt + x * (frame.widthPt / frame.widthPx);
 }
 
 export function pxToPtY(frame: PageFrame, y: number): number {
-  return frame.heightPt - y * (frame.heightPt / frame.heightPx);
+  return frame.offsetYPt + frame.heightPt - y * (frame.heightPt / frame.heightPx);
 }
 
 export function ptToPxX(frame: PageFrame, x: number): number {
-  return x * (frame.widthPx / frame.widthPt);
+  return (x - frame.offsetXPt) * (frame.widthPx / frame.widthPt);
 }
 
 export function ptToPxY(frame: PageFrame, y: number): number {
-  return (frame.heightPt - y) * (frame.heightPx / frame.heightPt);
+  return (frame.offsetYPt + frame.heightPt - y) * (frame.heightPx / frame.heightPt);
 }
 
 /**
@@ -96,6 +109,7 @@ export function ptRectToPxBox(frame: PageFrame, rect: PtRect): Box {
  */
 export function frameFromPage(
   page: number, widthPt: number, heightPt: number, dpi: number,
+  origin: { x: number; y: number } = { x: 0, y: 0 },
 ): PageFrame {
   const scale = dpi / POINTS_PER_INCH;
   return {
@@ -104,6 +118,8 @@ export function frameFromPage(
     heightPx: Math.round(heightPt * scale),
     widthPt,
     heightPt,
+    offsetXPt: origin.x,
+    offsetYPt: origin.y,
     deskewDeg: 0,
   };
 }

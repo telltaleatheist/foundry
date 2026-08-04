@@ -73,7 +73,7 @@ test('every artifact round-trips through the writer and its reader', () => {
     writeArtifact(dir, 'run', {
       runId: 'r1', createdAt: '2026-08-01T00:00:00Z', foundryVersion: '0.1.0',
       input: { path: 'in.pdf', sha256: 'abc', pages: 3 },
-      tesseract: { version: '5.3.4', binarySha256: 'def', tessdata: ['eng'], dpi: 200 },
+      segmenter: { kind: 'tesseract', version: '5.3.4', binarySha256: 'def', tessdata: ['eng'], dpi: 200 },
       models: { base: 'foundry:4b', blocks: 'foundry-blocks-v1-4b' },
       stages: {
         scan: { status: 'done', startedAt: 'a', finishedAt: 'b' },
@@ -86,7 +86,7 @@ test('every artifact round-trips through the writer and its reader', () => {
     const run = readRun(dir);
     assert.equal(run.formatVersion, ARTIFACTS.run.version);
     assert.equal(run.input.pages, 3);
-    assert.equal(run.tesseract.dpi, 200);
+    assert.equal((run.segmenter.dpi), 200);
     assert.equal(run.models.blocks, 'foundry-blocks-v1-4b');
     assert.equal(run.stages.export.error, 'no blocks survived the exclusions');
     assert.equal(run.stages.ocr.status, 'pending');
@@ -366,9 +366,9 @@ test('a failed stage with no message is refused', () => {
     footnotes: { status: 'done' }, export: { status: 'failed' },
   };
   assert.throws(() => parseRun(JSON.stringify({
-    formatVersion: 1, runId: 'r', createdAt: 'c', foundryVersion: '0',
+    formatVersion: ARTIFACTS.run.version, runId: 'r', createdAt: 'c', foundryVersion: '0',
     input: { path: 'p', sha256: 's', pages: 1 },
-    tesseract: { version: 'v', binarySha256: 'b', tessdata: [], dpi: 200 },
+    segmenter: { kind: 'tesseract', version: 'v', binarySha256: 'b', tessdata: [], dpi: 200 },
     models: {}, stages,
   })), /stages\.export is 'failed' with no error message/);
 });
@@ -383,9 +383,9 @@ test('a pre-rename run directory is refused by name, not by a bare missing field
     footnotes: { status: 'done' }, export: { status: 'done' },
   };
   assert.throws(() => parseRun(JSON.stringify({
-    formatVersion: 1, runId: 'r', createdAt: 'c', foundryVersion: '0',
+    formatVersion: ARTIFACTS.run.version, runId: 'r', createdAt: 'c', foundryVersion: '0',
     input: { path: 'p', sha256: 's', pages: 1 },
-    tesseract: { version: 'v', binarySha256: 'b', tessdata: [], dpi: 200 },
+    segmenter: { kind: 'tesseract', version: 'v', binarySha256: 'b', tessdata: [], dpi: 200 },
     models: { boxes: 'foundry-boxes-v6-4b' }, stages,
   })), /stages\.boxes is present.*rename of the `boxes` stage to `blocks`.*Start a fresh run/s);
 });
@@ -396,11 +396,86 @@ test('an unknown stage status is refused and the legal set printed', () => {
     footnotes: { status: 'done' }, export: { status: 'done' },
   };
   assert.throws(() => parseRun(JSON.stringify({
-    formatVersion: 1, runId: 'r', createdAt: 'c', foundryVersion: '0',
+    formatVersion: ARTIFACTS.run.version, runId: 'r', createdAt: 'c', foundryVersion: '0',
     input: { path: 'p', sha256: 's', pages: 1 },
-    tesseract: { version: 'v', binarySha256: 'b', tessdata: [], dpi: 200 },
+    segmenter: { kind: 'tesseract', version: 'v', binarySha256: 'b', tessdata: [], dpi: 200 },
     models: {}, stages,
   })), /stages\.scan\.status is "skipped", expected one of pending, running, done, failed/);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The segmenter — what produced the lines
+//
+// A run no longer implies Tesseract: `scan --pdf` reads a document's own text
+// layer and never rasterizes anything. The field is a tagged union rather than
+// a set of optional keys, because ARCHITECTURE §5 rests on being able to tell
+// two runs apart by what segmented them, and "the tesseract fields happen to be
+// empty" is not a statement anybody can act on.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('an embedded-text segmenter round-trips, language and all', () => {
+  const dir = scratch();
+  try {
+    writeArtifact(dir, 'run', {
+      runId: 'r2', createdAt: '2026-08-03T00:00:00Z', foundryVersion: '0.3.1',
+      input: { path: 'book.pdf', sha256: 'abc', pages: 12 },
+      segmenter: { kind: 'embedded-text', extractor: 'pdfjs-dist@6.2.108', language: 'de', dpi: 200 },
+      models: {},
+      stages: {
+        scan: { status: 'done' }, blocks: { status: 'pending' }, ocr: { status: 'pending' },
+        footnotes: { status: 'pending' }, export: { status: 'pending' },
+      },
+    });
+    const run = readRun(dir);
+    assert.equal(run.segmenter.kind, 'embedded-text');
+    assert.equal(run.segmenter.dpi, 200);
+    if (run.segmenter.kind !== 'embedded-text') throw new Error('unreachable');
+    assert.equal(run.segmenter.extractor, 'pdfjs-dist@6.2.108');
+    assert.equal(run.segmenter.language, 'de');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a document that declares no language says so, rather than being given one', () => {
+  const parsed = parseRun(JSON.stringify({
+    formatVersion: ARTIFACTS.run.version, runId: 'r', createdAt: 'c', foundryVersion: '0',
+    input: { path: 'p', sha256: 's', pages: 1 },
+    segmenter: { kind: 'embedded-text', extractor: 'x', language: null, dpi: 200 },
+    models: {},
+    stages: {
+      scan: { status: 'done' }, blocks: { status: 'done' }, ocr: { status: 'done' },
+      footnotes: { status: 'done' }, export: { status: 'done' },
+    },
+  }));
+  if (parsed.segmenter.kind !== 'embedded-text') throw new Error('unreachable');
+  assert.equal(parsed.segmenter.language, null);
+});
+
+test('a pre-segmenter run record is refused by name', () => {
+  assert.throws(() => parseRun(JSON.stringify({
+    formatVersion: 1, runId: 'r', createdAt: 'c', foundryVersion: '0',
+    input: { path: 'p', sha256: 's', pages: 1 },
+    tesseract: { version: 'v', binarySha256: 'b', tessdata: ['eng'], dpi: 200 },
+    models: {},
+    stages: {
+      scan: { status: 'done' }, blocks: { status: 'done' }, ocr: { status: 'done' },
+      footnotes: { status: 'done' }, export: { status: 'done' },
+    },
+  })), /records a `tesseract` block.*reads as `segmenter`.*Re-run `foundry scan`/s);
+});
+
+test('an unknown segmenter kind is refused with the legal set', () => {
+  assert.throws(() => parseRun(JSON.stringify({
+    formatVersion: ARTIFACTS.run.version, runId: 'r', createdAt: 'c', foundryVersion: '0',
+    input: { path: 'p', sha256: 's', pages: 1 },
+    segmenter: { kind: 'ocropus', dpi: 200 },
+    models: {},
+    stages: {
+      scan: { status: 'done' }, blocks: { status: 'done' }, ocr: { status: 'done' },
+      footnotes: { status: 'done' }, export: { status: 'done' },
+    },
+  })), /segmenter\.kind is "ocropus", expected one of tesseract, embedded-text/);
 });
 
 test('the other parsers validate their own shapes', () => {

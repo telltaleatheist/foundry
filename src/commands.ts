@@ -112,11 +112,13 @@ import {
   type ScanPage,
   type StageName,
   type StageState,
+  type Segmenter,
 } from './pipeline/artifacts.js';
+import { runEmbeddedScanStage, runGetTextStage } from './pipeline/document-stage.js';
 import { runExportStage, type BlockOverride, type OverrideRequest } from './pipeline/export-stage.js';
 import { applyDeskew, processPage, type Box } from './scan/bands.js';
 import { readPgm } from './scan/pgm.js';
-import { OCR_DPI, recognizeBands, resolveTesseract } from './scan/tesseract.js';
+import { OCR_DPI, recognizeBands, resolveTesseract, type ResolvedTesseract } from './scan/tesseract.js';
 import { resolveLlamaServer } from './serve/llama-binary.js';
 import { LlamaServer } from './serve/llama-server.js';
 import { versionString } from './version.js';
@@ -193,6 +195,28 @@ const PAGES_DIR: OptionSpec = {
   type: 'string',
   placeholder: '<dir>',
   describe: 'Directory of page images (binary PGM, rendered at 200 dpi), one file per page.',
+};
+
+/**
+ * The document-mode input and output.
+ *
+ * `--pdf` is always READ and `--out` is always WRITTEN, in every stage that
+ * takes them, and no stage takes one path for both. That is the whole shape of
+ * the document pipeline: a stage is a document in and a document out, and the
+ * caller — not foundry — decides what the files are called.
+ */
+const PDF_IN: OptionSpec = {
+  name: 'pdf',
+  type: 'string',
+  placeholder: '<file.pdf>',
+  describe: 'The PDF to read. Never written to.',
+};
+
+const OUT_PATH: OptionSpec = {
+  name: 'out',
+  type: 'string',
+  placeholder: '<path>',
+  describe: 'Where this stage writes its document. Required; foundry never invents a name.',
 };
 
 const OUTPUT_EPUB: OptionSpec = {
@@ -481,10 +505,73 @@ function sha256Of(file: string): string {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
 
+/** The pin, as run.json records it: which binary read the pages, and at what dpi. */
+function tesseractSegmenter(tess: ResolvedTesseract): Segmenter {
+  return {
+    kind: 'tesseract',
+    version: tess.version,
+    binarySha256: sha256Of(tess.binary),
+    tessdata: [tess.lang],
+    dpi: OCR_DPI,
+  };
+}
+
+/**
+ * Two inputs, one stage — the same shape `footnotes` already has.
+ *
+ * `--pages` is a directory of renders and means Tesseract reads them.
+ * `--pdf` is a document that already carries text and means nothing is
+ * rasterized at all. They are alternatives, not a ladder: naming both is a
+ * command that means two different things, and naming neither is a command with
+ * no input.
+ */
 async function runScan(args: ParsedArgs): Promise<void> {
-  const pagesDir = path.resolve(
-    requireString(args, 'pages', 'the directory of page images to segment'),
-  );
+  const pdf = optionalString(args, 'pdf');
+  const pages = optionalString(args, 'pages');
+
+  if (pdf && pages) {
+    throw new UsageError(
+      '--pdf and --pages name two different scans: one reads a document\'s own text layer, the '
+      + 'other runs Tesseract over page renders. Pass one.',
+    );
+  }
+  if (!pdf && !pages) {
+    throw new UsageError(
+      'scan needs an input: --pages <dir> for page renders, or --pdf <file.pdf> for a document '
+      + 'that already carries text.',
+    );
+  }
+  if (pdf) {
+    await runEmbeddedScan(args, pdf);
+    return;
+  }
+  if (args.options['out'] !== undefined) {
+    throw new UsageError(
+      '--out belongs to `scan --pdf`, which casts the working document as it reads. A Tesseract '
+      + 'scan writes only the run directory; `foundry get-text` casts the working document from it.',
+    );
+  }
+  await runTesseractScan(args, path.resolve(pages!));
+}
+
+/**
+ * The embedded-text route: read the document's own text layer, emit the same
+ * scan artifacts a Tesseract scan emits, and cast the working document in the
+ * same pass.
+ *
+ * One pass rather than two because there is nothing to decide between them: the
+ * text is already in the document, so "read it" and "make this the working
+ * document" are one act, and a separate get-text step would have nothing to
+ * write.
+ */
+async function runEmbeddedScan(args: ParsedArgs, pdf: string): Promise<void> {
+  const runDir = path.resolve(requireString(args, 'run', 'the run directory to write into'));
+  const out = path.resolve(requireString(args, 'out', 'where the working PDF is written'));
+  fs.mkdirSync(runDir, { recursive: true });
+  await runEmbeddedScanStage({ pdfPath: path.resolve(pdf), runDir, outPath: out, log });
+}
+
+async function runTesseractScan(args: ParsedArgs, pagesDir: string): Promise<void> {
   const runDir = path.resolve(requireString(args, 'run', 'the run directory to write into'));
 
   const files = listPageImages(pagesDir);
@@ -523,22 +610,12 @@ async function runScan(args: ParsedArgs): Promise<void> {
       createdAt: new Date().toISOString(),
       foundryVersion: versionString(),
       input: { path: pagesDir, sha256: inputSha, pages: files.length },
-      tesseract: {
-        version: tess.version,
-        binarySha256: sha256Of(tess.binary),
-        tessdata: [tess.lang],
-        dpi: OCR_DPI,
-      },
+      segmenter: tesseractSegmenter(tess),
       models: {},
       stages: pendingStages(),
     };
   }
-  run.tesseract = {
-    version: tess.version,
-    binarySha256: sha256Of(tess.binary),
-    tessdata: [tess.lang],
-    dpi: OCR_DPI,
-  };
+  run.segmenter = tesseractSegmenter(tess);
   saveRun(runDir, run);
 
   await withStageRecord(runDir, 'scan', async () => {
@@ -593,6 +670,26 @@ function lineId(page: number, index: number): string {
 
 function blockId(page: number, index: number): string {
   return `p${String(page).padStart(4, '0')}b${String(index).padStart(3, '0')}`;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// get-text
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Cast the working document for a scanned book: the original plus the scan's
+ * line geometry, out comes a PDF that carries its own text.
+ *
+ * It is not recorded as a run STAGE. The run directory's stages are the five
+ * PIPELINE.md names and they describe a run; this writes a document, and which
+ * stage a document has reached is a byte offset in that document
+ * (docs/DOCUMENT_MODES.md), not a status in a JSON file beside it.
+ */
+async function runGetText(args: ParsedArgs): Promise<void> {
+  const pdf = path.resolve(requireString(args, 'pdf', 'the original PDF the scan was made from'));
+  const runDir = path.resolve(requireString(args, 'run', 'the run directory holding the scan'));
+  const out = path.resolve(requireString(args, 'out', 'where the working PDF is written'));
+  await runGetTextStage({ pdfPath: pdf, runDir, outPath: out, log });
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1880,17 +1977,41 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'scan',
-    summary: 'Segment page renders into lines with the pinned Tesseract.',
-    usage: '--pages <dir> --run <dir>',
+    summary: 'Find the lines: pinned Tesseract over renders, or a PDF\'s own text.',
+    usage: '--pages <dir> --run <dir>  |  --pdf <in.pdf> --run <dir> --out <working.pdf>',
     detail: [
+      'EMBEDDED-TEXT MODE — `--pdf <in.pdf> --out <working.pdf>`:',
+      '',
+      'A book that already carries a text layer does not need Tesseract and must',
+      'not get it: the words are the publisher\'s, set from the author\'s file, and',
+      'recognizing a picture of them can only make them worse. So this mode reads',
+      'the document\'s own text with its geometry and writes the SAME artifacts a',
+      'Tesseract scan writes — one input shape for everything downstream.',
+      '',
+      'It casts the working document in the same pass, because there is nothing to',
+      'decide between the two acts: the text is already in the PDF. The document',
+      'records class `text`, which is how `reflow` knows to skip the ocr model.',
+      '',
+      'Geometry is projected into the SAME 200 dpi pixel frame a scan measures in,',
+      'so the blocks model sees the numbers it was trained on rather than points.',
+      'Lines carry no confidence: nothing recognized anything, and a fabricated',
+      '100 would tell every consumer this text was measured when it was copied.',
+      '',
+      'A PDF with no extractable text stops the stage and says so — that book is a',
+      'scan, and the route for a scan is --pages then `foundry get-text`.',
+      '',
+      'THE INPUT IS NEVER WRITTEN TO. --out may not be --pdf.',
+      '',
+      'TESSERACT MODE — `--pages <dir>`:',
+      '',
       'Reads every .pgm in --pages in natural page order, finds the text lines',
       'with the projection-profile band segmenter (deskewing the page first where',
       'it is tilted), and runs the PINNED Tesseract over one crop per line.',
       '',
-      'Writes:',
+      'Writes (both modes):',
       '  <run>/scan/pages.json   per page: size, deskew angle, columns, coverage',
       '  <run>/scan/lines.json   per line: id, page, box, text, mean confidence',
-      '  <run>/run.json          input hash, tesseract version, stage state',
+      '  <run>/run.json          input hash, which segmenter read it, stage state',
       '',
       'The dpi and the Tesseract version are not settings. Every model in this',
       'repo was trained on the output of one specific Tesseract at 200 dpi, and',
@@ -1903,8 +2024,48 @@ export const COMMANDS: readonly Command[] = [
       'Bands find the lines; --psm 7 reads them; a band that reads as nothing is',
       'retried at --psm 13 and the rescue is counted.',
     ].join('\n'),
-    options: [PAGES_DIR, RUN_DIR],
+    options: [PAGES_DIR, RUN_DIR, PDF_IN, OUT_PATH],
     run: runScan,
+  },
+  {
+    name: 'get-text',
+    summary: 'Write a scan\'s words into the PDF as an invisible text layer.',
+    usage: '--pdf <original.pdf> --run <dir> --out <working.pdf>',
+    detail: [
+      'Casts the WORKING DOCUMENT for a scanned book. Takes the original PDF and',
+      'the line geometry `foundry scan` measured, and writes one invisible text',
+      'run per recognized line, positioned at that line\'s box — the OCRmyPDF',
+      'technique. The result is a PDF whose pages are still the scan and whose',
+      'text can be selected, copied and searched.',
+      '',
+      'This is the point where the pipeline becomes document-in / document-out.',
+      'Every stage after it reads the DOCUMENT — `blocks` writes its categories in',
+      'as annotations, `reflow` reads the text layer and the annotations and',
+      'writes the EPUB — so nothing downstream has to be kept in step with a',
+      'directory of JSON.',
+      '',
+      'It is the ONE full rewrite. Everything after it is a PDF incremental',
+      'update: bytes appended, nothing moved, so every stage boundary is a byte',
+      'offset and "reset to that stage" is a truncate. The rewrite also drops any',
+      'linearization the original carried — a first-page layout declaration that',
+      'an append silently invalidates (docs/PDF_SPIKE.md).',
+      '',
+      'The document records what it is: class `scanned`, which is how `reflow`',
+      'knows these words came out of Tesseract and have to go through the ocr',
+      'model before they are joined into paragraphs.',
+      '',
+      'Reads  <original.pdf>, <run>/scan/{pages,lines}.json',
+      'Writes <working.pdf>',
+      '',
+      'THE ORIGINAL IS NEVER WRITTEN TO. --out may not be --pdf.',
+      '',
+      'The page count and every page\'s aspect ratio must match the scan. A scan',
+      'of a different edition — or of the same book with its cover stripped —',
+      'would put each page\'s words on some other page, and that is a book that is',
+      'wrong everywhere with nothing visibly broken.',
+    ].join('\n'),
+    options: [PDF_IN, RUN_DIR, OUT_PATH],
+    run: runGetText,
   },
   {
     name: 'blocks',

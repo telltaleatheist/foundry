@@ -134,9 +134,13 @@ export async function extractDocument(
           + 'un-rotate the PDF first.',
         );
       }
-      // Viewport at scale 1 with no rotation: the page's own user space.
-      const viewport = page.getViewport({ scale: 1, rotation: 0 });
-      const frame = frameFromPage(index, viewport.width, viewport.height, options.dpi);
+      // `page.view` is the CROP box — what a renderer renders and a reader
+      // shows — in the page's own user space. Its lower-left is the pixel
+      // frame's origin, and it is not always (0,0).
+      const [vx0, vy0, vx1, vy1] = page.view as number[];
+      const frame = frameFromPage(
+        index, vx1 - vx0, vy1 - vy0, options.dpi, { x: vx0, y: vy0 },
+      );
       const content = await page.getTextContent({ disableNormalization: true });
 
       const fragments: Fragment[] = [];

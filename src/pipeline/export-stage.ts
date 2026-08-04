@@ -68,7 +68,7 @@ import {
   epubPath, hasArtifact, readBlocks, readFootnoteDeletions, readOcrLines, readRun, readScanLines,
   writeArtifact,
 } from './artifacts.js';
-import type { Block, CalibrationVerdict, FootnoteBlockDeletions, ScanLine } from './artifacts.js';
+import type { Block, CalibrationVerdict, FootnoteBlockDeletions, RunArtifact, ScanLine } from './artifacts.js';
 import { applyFootnoteDeletions } from '../footnotes/applier.js';
 import { attestationFromLines } from '../paragraphs/hyphen.js';
 import type { CoverImage } from '../export/cover.js';
@@ -340,12 +340,26 @@ export function deriveMetadata(
     : '';
   const fromFile = basename(run.input.path).replace(/\.[^.]+$/, '').trim();
 
-  const lang = run.tesseract.tessdata[0] ?? '';
+  const lang = languageOf(run.segmenter);
   return {
     title: fromBlock.length > 0 ? fromBlock : (fromFile.length > 0 ? fromFile : run.runId),
     language: ISO_639_2_TO_1[lang] ?? (lang.length > 0 ? lang : 'und'),
     identifier: `urn:sha256:${run.input.sha256}`,
   };
+}
+
+/**
+ * What the SEGMENTER says the book's language is.
+ *
+ * A Tesseract run was recognized with a specific tessdata, and that is a
+ * decision somebody made about this book. A document read through its own text
+ * layer declares its language or does not; a PDF with no `/Lang` is a PDF that
+ * never said, and the empty string carries that through to `und` below rather
+ * than inventing English.
+ */
+export function languageOf(segmenter: RunArtifact['segmenter']): string {
+  if (segmenter.kind === 'tesseract') return segmenter.tessdata[0] ?? '';
+  return segmenter.language ?? '';
 }
 
 /**

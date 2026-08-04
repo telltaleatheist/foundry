@@ -301,7 +301,10 @@ test('a non-English tessdata pin produces a non-English dc:language', () => {
   const { runDir, cleanup } = scratchRun();
   try {
     const run = readRun(runDir);
-    writeArtifact(runDir, 'run', { ...run, tesseract: { ...run.tesseract, tessdata: ['deu'] } });
+    writeArtifact(runDir, 'run', {
+      ...run,
+      segmenter: { kind: 'tesseract', version: '5.3.4', binarySha256: 'x', tessdata: ['deu'], dpi: 200 },
+    });
     const r = runExportStage({ runDir, log: () => {} });
     assert.match(unzipMap(r.zip).get('EPUB/package.opf')!.text(), /<dc:language>de<\/dc:language>/);
   } finally { cleanup(); }

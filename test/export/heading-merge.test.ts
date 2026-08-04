@@ -94,7 +94,7 @@ function makeRun(runDir: string): void {
     createdAt: '1980-01-01T00:00:00Z',
     foundryVersion: 'fixture',
     input: { path: 'heading-merge.pdf', sha256: '0'.repeat(64), pages: 3 },
-    tesseract: { version: '5.3.4', binarySha256: '0'.repeat(64), tessdata: ['eng'], dpi: DPI },
+    segmenter: { kind: 'tesseract', version: '5.3.4', binarySha256: '0'.repeat(64), tessdata: ['eng'], dpi: DPI },
     models: { base: 'foundry:4b', blocks: 'foundry-blocks-v6-4b' },
     stages: {
       scan: { status: 'done' },
