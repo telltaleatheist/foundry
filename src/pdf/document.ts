@@ -178,14 +178,27 @@ export function readMarker(doc: PDFDocument): FoundryMarker {
     throw new WorkingPdfError('the foundry marker has no Dpi, so no geometry in it can be read. Re-cast the working document.');
   }
   const source = decodeTextString(dict.lookup(K_SOURCE));
+  if (source === null || source.length === 0) {
+    throw new WorkingPdfError(
+      'the foundry marker has no SourceSHA256, so this working document cannot say which original '
+      + 'it was cast from — and that hash is the identity everything downstream binds to. '
+      + 'Re-cast the working document from the original.',
+    );
+  }
   const producer = decodeTextString(dict.lookup(K_PRODUCER));
+  if (producer === null) {
+    throw new WorkingPdfError(
+      'the foundry marker has no Producer. Every cast records the build that made it; a marker '
+      + 'without one was written by something else. Re-cast the working document from the original.',
+    );
+  }
   return {
     version: MARKER_VERSION,
     documentClass: name as DocumentClass,
     language: lang,
     dpi: dpi.asNumber(),
-    sourceSha256: source ?? '',
-    producer: producer ?? '',
+    sourceSha256: source,
+    producer,
   };
 }
 
