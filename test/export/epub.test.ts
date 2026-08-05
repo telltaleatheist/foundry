@@ -169,10 +169,77 @@ test('a chapter block starts a spine item and a TOC entry labelled with its text
 test('a title block opens the title section', () => {
   withBook('indent', r => {
     const first = unzipMap(r.zip).get(`EPUB/${r.sections[0].href}`)!.text();
-    assert.match(first, /<h1 class="title">A Synthetic Book<\/h1>/);
+    assert.match(first, /<h1 class="title"[^>]*>A Synthetic Book<\/h1>/);
     // And a chapter gets a plain h1, not the title class.
     const second = unzipMap(r.zip).get(`EPUB/${r.sections[1].href}`)!.text();
-    assert.match(second, /<h1>Chapter One<\/h1>/);
+    assert.match(second, /<h1[^>]*>Chapter One<\/h1>/);
+  });
+});
+
+// ── provenance ──────────────────────────────────────────────────────────────
+
+test('every emitted element says which group and category it came from', () => {
+  withBook('indent', r => {
+    for (const section of r.sections) {
+      const xhtml = unzipMap(r.zip).get(`EPUB/${section.href}`)!.text();
+      const body = xhtml.slice(xhtml.indexOf('<body>'), xhtml.indexOf('</body>'));
+      // Every element the emitter opens inside the body is either a group's own
+      // element — which must be stamped — or one of the structural wrappers it
+      // writes around them. Walked rather than sampled, so a category added to
+      // the table without a stamp fails here rather than in a book.
+      const STRUCTURAL = new Set(['body', 'section', 'li', 'p', 'h2']);
+      for (const [, tag, attrs] of body.matchAll(/<([a-z0-9]+)([^>]*)>/g)) {
+        if (STRUCTURAL.has(tag) && !attrs.includes('data-bf-')) continue;
+        assert.match(attrs, /data-bf-category="[a-z]+"/, `<${tag}> carries no category`);
+        assert.match(attrs, /data-bf-group="[^"]+"/, `<${tag}> carries no group id`);
+        assert.match(attrs, /data-bf-blocks="[^"]+"/, `<${tag}> carries no source blocks`);
+      }
+    }
+  });
+});
+
+test('the stamped category is the block category, not a guess from the tag', () => {
+  withBook('indent', r => {
+    const first = unzipMap(r.zip).get(`EPUB/${r.sections[0].href}`)!.text();
+    const second = unzipMap(r.zip).get(`EPUB/${r.sections[1].href}`)!.text();
+    // The whole point: `title` and `chapter` are BOTH <h1>, and only the stamp
+    // tells them apart. A reader inferring the category from the tag gets this
+    // wrong on every chapter opening that is not literally called "Chapter N".
+    assert.match(first, /<h1 class="title" data-bf-category="title"/);
+    assert.match(second, /<h1 data-bf-category="chapter"/);
+    assert.match(second, /<h2 data-bf-category="heading"/);
+    assert.match(second, /<h3 data-bf-category="subheading"/);
+    assert.match(second, /<blockquote data-bf-category="quote"/);
+    assert.match(second, /<p class="caption" data-bf-category="caption"/);
+    assert.match(second, /<ul data-bf-category="list"/);
+    assert.match(second, /<p class="footnote" data-bf-category="footnote"/);
+    assert.match(second, /<p data-bf-category="body"/);
+  });
+});
+
+test('the stamped blocks are real blocks, each claimed by exactly one paragraph', () => {
+  withBook('indent', (r, runDir) => {
+    const real = new Set(readBlocks(runDir).blocks.map(b => b.id));
+    const claimed = new Map<string, string>();  // block id → the group that claimed it
+    const groupIds = new Set<string>();
+    for (const section of r.sections) {
+      const xhtml = unzipMap(r.zip).get(`EPUB/${section.href}`)!.text();
+      for (const [, group, blocks] of
+        xhtml.matchAll(/data-bf-group="([^"]+)" data-bf-blocks="([^"]+)"/g)) {
+        assert.equal(groupIds.has(group), false, `group ${group} was emitted twice`);
+        groupIds.add(group);
+        for (const id of blocks.split(' ')) {
+          // A stamp naming a block the run does not have would be an identity
+          // that leads nowhere — worse than no stamp, because it looks usable.
+          assert.ok(real.has(id), `the book claims block ${id}, which is not in blocks.json`);
+          const already = claimed.get(id);
+          assert.equal(already, undefined,
+            `block ${id} is claimed by both ${already} and ${group}`);
+          claimed.set(id, group);
+        }
+      }
+    }
+    assert.ok(claimed.size > 0, 'no stamped elements were found to check');
   });
 });
 
@@ -191,13 +258,13 @@ test('the three conventions produce the same sections and the same chapter split
 test('headings, quotes, captions and lists get their own elements', () => {
   withBook('indent', r => {
     const chapter = unzipMap(r.zip).get(`EPUB/${r.sections[1].href}`)!.text();
-    assert.match(chapter, /<h2>A Heading That Sits In Place<\/h2>/);
-    assert.match(chapter, /<h3>A Subheading Beneath It<\/h3>/);
-    assert.match(chapter, /<blockquote><p>A quoted passage sits here/);
-    assert.match(chapter, /<p class="caption">Figure 1\./);
+    assert.match(chapter, /<h2[^>]*>A Heading That Sits In Place<\/h2>/);
+    assert.match(chapter, /<h3[^>]*>A Subheading Beneath It<\/h3>/);
+    assert.match(chapter, /<blockquote[^>]*><p>A quoted passage sits here/);
+    assert.match(chapter, /<p class="caption"[^>]*>Figure 1\./);
     // A list keeps the author's line breaks: one item per line, not one
     // run-on sentence.
-    assert.match(chapter, /<ul>\n {2}<li>The first item<\/li>\n {2}<li>The second item<\/li>\n {2}<li>The third item<\/li>\n<\/ul>/);
+    assert.match(chapter, /<ul[^>]*>\n {2}<li>The first item<\/li>\n {2}<li>The second item<\/li>\n {2}<li>The third item<\/li>\n<\/ul>/);
   });
 });
 
@@ -205,7 +272,7 @@ test('footnotes are collected at the end of their section and are NOT linked', (
   withBook('indent', r => {
     const chapter = unzipMap(r.zip).get(`EPUB/${r.sections[1].href}`)!.text();
     assert.match(chapter, /<section epub:type="footnotes"/);
-    assert.match(chapter, /<p class="footnote">1\. A footnote at the foot of its own page\.<\/p>/);
+    assert.match(chapter, /<p class="footnote"[^>]*>1\. A footnote at the foot of its own page\.<\/p>/);
     // No body linking, in either direction: the markers are removed upstream,
     // so there is nothing to point at and no anchor to point back to.
     assert.equal(/<a /.test(chapter), false, 'a section document contains a link');
@@ -339,10 +406,10 @@ test('a degraded book still breaks on the hard rules, so its structure survives'
     // Chapters, headings, quotes and captions are all category transitions, so
     // they are still separate elements even with no paragraph signal at all.
     const chapter = unzipMap(r.zip).get(`EPUB/${r.sections[1].href}`)!.text();
-    assert.match(chapter, /<h1>Chapter One<\/h1>/);
-    assert.match(chapter, /<h2>A Heading That Sits In Place<\/h2>/);
-    assert.match(chapter, /<blockquote>/);
-    assert.match(chapter, /<p class="caption">/);
+    assert.match(chapter, /<h1[^>]*>Chapter One<\/h1>/);
+    assert.match(chapter, /<h2[^>]*>A Heading That Sits In Place<\/h2>/);
+    assert.match(chapter, /<blockquote[^>]*>/);
+    assert.match(chapter, /<p class="caption"[^>]*>/);
     assert.ok(r.grouping.byLevel.hard > 0);
   });
 });

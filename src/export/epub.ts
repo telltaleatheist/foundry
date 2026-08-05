@@ -24,6 +24,32 @@
  * | `footnote`         | collected into an end-of-section `<section>`      |
  * | `header`/`footer`/`discard` | never emitted (see exclude.ts)           |
  *
+ * ## Provenance: the book says where it came from
+ *
+ * Every element this emitter writes carries the group it was rendered from:
+ *
+ * ```html
+ * <h1 data-bf-category="chapter" data-bf-group="g12" data-bf-blocks="p0006b003">…
+ * ```
+ *
+ * The table above is a mapping, and every mapping loses something. `title` and
+ * `chapter` both become `<h1>` and are told apart only by a class; `list` and
+ * `body` and `caption` all become paragraphs of one kind or another. A reader
+ * handed the finished book can do no better than guess the category back from
+ * how it looks — font size, boldness, whether the text happens to start with
+ * the word "chapter" — and that guess is wrong exactly where it matters, on
+ * every chapter opening that is not literally titled "Chapter N".
+ *
+ * We are the ones who put the element there. We knew its category, its group
+ * and the source blocks it was joined from, and writing three attributes is
+ * cheaper than any amount of cleverness spent inferring them later. The book
+ * remains an ordinary EPUB3 — `data-*` attributes are valid and every reader
+ * ignores them.
+ *
+ * `data-bf-blocks` is the same identity the working PDF's annotations carry, so
+ * a paragraph in the book can be traced to the blocks and the page it was made
+ * from.
+ *
  * Three of those deserve their reasoning written down, because PIPELINE.md
  * does not settle them:
  *
@@ -312,24 +338,49 @@ interface RenderedGroup {
   lines: string[];
 }
 
+/**
+ * The provenance attributes every emitted element carries.
+ *
+ * Written on the OUTERMOST element of a group, which is the one that stands for
+ * it: the `<ul>` and not each `<li>`, the `<blockquote>` and not the `<p>`
+ * inside it. A group is one thing in the book, and one thing carries its name.
+ *
+ * Attribute values are the group's own ids and its category, all of which come
+ * from `blocks.json` and are `[A-Za-z0-9_-]`-shaped — but they go through
+ * `clean` like every other value this file writes, because "the input cannot
+ * contain a quote" is a property of today's ids rather than of this function,
+ * and an unescaped attribute is how a well-formed book stops being one.
+ * `clean` is `xml` over `stripIllegalXml`, and `xml` escapes all five
+ * predefined entities including the quotes that only matter in attributes.
+ */
+function provenance(group: ParagraphGroup): string {
+  const attrs: [string, string][] = [
+    ['data-bf-category', group.category],
+    ['data-bf-group', group.id],
+    ['data-bf-blocks', group.blockIds.join(' ')],
+  ];
+  return attrs.map(([name, value]) => ` ${name}="${clean(value)}"`).join('');
+}
+
 function renderGroup(g: RenderedGroup): string {
   const { group, text, lines } = g;
   if (text.length === 0 && lines.length === 0) return '';
+  const p = provenance(group);
   switch (group.category) {
-    case 'title': return `<h1 class="title">${clean(text)}</h1>`;
-    case 'chapter': return `<h1>${clean(text)}</h1>`;
-    case 'heading': return `<h2>${clean(text)}</h2>`;
-    case 'subheading': return `<h3>${clean(text)}</h3>`;
-    case 'quote': return `<blockquote><p>${clean(text)}</p></blockquote>`;
-    case 'caption': return `<p class="caption">${clean(text)}</p>`;
-    case 'image': return `<p class="image-text">${clean(text)}</p>`;
+    case 'title': return `<h1 class="title"${p}>${clean(text)}</h1>`;
+    case 'chapter': return `<h1${p}>${clean(text)}</h1>`;
+    case 'heading': return `<h2${p}>${clean(text)}</h2>`;
+    case 'subheading': return `<h3${p}>${clean(text)}</h3>`;
+    case 'quote': return `<blockquote${p}><p>${clean(text)}</p></blockquote>`;
+    case 'caption': return `<p class="caption"${p}>${clean(text)}</p>`;
+    case 'image': return `<p class="image-text"${p}>${clean(text)}</p>`;
     case 'list': {
       const items = lines.map(l => l.trim()).filter(l => l.length > 0);
       if (items.length === 0) return '';
-      return `<ul>\n${items.map(l => `  <li>${clean(l)}</li>`).join('\n')}\n</ul>`;
+      return `<ul${p}>\n${items.map(l => `  <li>${clean(l)}</li>`).join('\n')}\n</ul>`;
     }
-    case 'footnote': return `<p class="footnote">${clean(text)}</p>`;
-    case 'body': return `<p>${clean(text)}</p>`;
+    case 'footnote': return `<p class="footnote"${p}>${clean(text)}</p>`;
+    case 'body': return `<p${p}>${clean(text)}</p>`;
     // Every content category is above, and the three never-emitted ones were
     // filtered by applyExclusions. Reaching here means the taxonomy grew and
     // this table did not, which is a decision to make deliberately rather than

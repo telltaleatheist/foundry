@@ -229,10 +229,10 @@ test('reflow builds the book from the document alone', async () => {
     assert.match(opf, /<dc:identifier id="pub-id">urn:sha256:[0-9a-f]{64}<\/dc:identifier>/);
 
     const first = epubEntry(new Uint8Array(readFileSync(out)), 'EPUB/text/s0001.xhtml');
-    assert.match(first, /<h1>Chapter 1<\/h1>/);
+    assert.match(first, /<h1[^>]*>Chapter 1<\/h1>/);
     assert.match(first, /The treaty collapsed in the spring of 1930\./);
     // The folio was furniture and is not in the book.
-    assert.doesNotMatch(first, /<p>1<\/p>/);
+    assert.doesNotMatch(first, /<p[^>]*>1<\/p>/);
   } finally {
     done();
   }
@@ -294,7 +294,7 @@ test('--exclude drops a category the labeller kept', async () => {
     assert.equal(result.keptBlocks, 4);
     const body = epubEntry(new Uint8Array(readFileSync(out)), 'EPUB/text/s0001.xhtml');
     assert.doesNotMatch(body, /treaty collapsed/);
-    assert.match(body, /<h1>Chapter 1<\/h1>/);
+    assert.match(body, /<h1[^>]*>Chapter 1<\/h1>/);
   } finally {
     done();
   }
@@ -323,7 +323,7 @@ test('a retyped chapter annotation is the chapter title', async () => {
     const opf = epubEntry(new Uint8Array(readFileSync(out)), 'EPUB/package.opf');
     assert.match(opf, /<dc:title>One: The Beer Hall<\/dc:title>/);
     const body = epubEntry(new Uint8Array(readFileSync(out)), 'EPUB/text/s0001.xhtml');
-    assert.match(body, /<h1>One: The Beer Hall<\/h1>/);
+    assert.match(body, /<h1[^>]*>One: The Beer Hall<\/h1>/);
   } finally {
     done();
   }

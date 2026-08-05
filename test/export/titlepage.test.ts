@@ -136,7 +136,7 @@ test('a title block that shares its page with prose is NOT a title page', () => 
     const first = files.get(`EPUB/${r.sections[0].href}`)!.text();
     // The behaviour it always had: the title opens an ordinary section, with an
     // h1.title, and the prose beneath it belongs to that section.
-    assert.match(first, /<h1 class="title">A Structured Book<\/h1>/);
+    assert.match(first, /<h1 class="title"[^>]*>A Structured Book<\/h1>/);
     assert.ok(first.includes('The body of the chapter'));
     assert.equal(/epub:type="titlepage"/.test(first), false);
 

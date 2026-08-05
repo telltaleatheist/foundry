@@ -341,10 +341,10 @@ test('a text override renames a chapter — the heading AND its nav label follow
 
     // And so is the h1 in the section it opens.
     const text = prose(r.zip);
-    assert.match(text, /<h1>The Lost Empire<\/h1>/);
+    assert.match(text, /<h1[^>]*>The Lost Empire<\/h1>/);
     assert.equal(text.includes('Chapter One'), false);
     // Chapter Two was not touched.
-    assert.match(text, /<h1>Chapter Two<\/h1>/);
+    assert.match(text, /<h1[^>]*>Chapter Two<\/h1>/);
   } finally { cleanup(); }
 });
 
@@ -373,7 +373,7 @@ test('a text override replaces the whole block as ONE line, lines and all', () =
     });
     assert.deepEqual(r.overrides, { text: 1, category: 1 });
     const text = prose(r.zip);
-    assert.match(text, /<p>One replacement line<\/p>/);
+    assert.match(text, /<p[^>]*>One replacement line<\/p>/);
     assert.equal(text.includes('The first item'), false);
     assert.equal(text.includes('<li>'), false);
   } finally { cleanup(); }
@@ -383,7 +383,7 @@ test('a category override moves how the block renders', () => {
   const { runDir, cleanup } = scratchRun();
   try {
     const before = prose(runExportStage({ runDir, metadata: METADATA, log: () => {} }).zip);
-    assert.match(before, /<p class="caption">Figure 1\./);
+    assert.match(before, /<p class="caption"[^>]*>Figure 1\./);
 
     const r = runExportStage({
       runDir,
@@ -393,7 +393,7 @@ test('a category override moves how the block renders', () => {
     });
     assert.deepEqual(r.overrides, { text: 0, category: 1 });
     const text = prose(r.zip);
-    assert.match(text, /<h2>Figure 1\. A caption belonging to a plate\.<\/h2>/);
+    assert.match(text, /<h2[^>]*>Figure 1\. A caption belonging to a plate\.<\/h2>/);
     assert.equal(text.includes('<p class="caption">Figure 1.'), false);
   } finally { cleanup(); }
 });
@@ -410,7 +410,7 @@ test('a category override to chapter opens a section and a TOC entry', () => {
       log: () => {},
     });
     assert.ok(nav(r.zip).includes('A Promoted Heading'), `nav is ${JSON.stringify(nav(r.zip))}`);
-    assert.match(prose(r.zip), /<h1>A Promoted Heading<\/h1>/);
+    assert.match(prose(r.zip), /<h1[^>]*>A Promoted Heading<\/h1>/);
   } finally { cleanup(); }
 });
 
