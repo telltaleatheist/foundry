@@ -218,6 +218,15 @@ longer than the cap is cut at a word boundary and **never** mid-word — where a
 single word is longer than the cap, that word is its own unit and the unit
 exceeds it.
 
+**The boundary guesses against cutting.** The unit is arbitrary — it could be
+the paragraph — so a missed boundary is a longer unit and costs nothing, while a
+wrong one manufactures the fragment the sentence unit exists to escape. So an
+abbreviation is not a sentence end (a closed English and German list, plus a
+lone letter in either case: `J. R. R.`, `z. B.`), a footnote reference rides on
+the sentence it marks (`…lost the war.12 The next morning` cuts after the `12`,
+which is otherwise no boundary at all), and a stop behind a digit is a decimal
+rather than either.
+
 **The prompt is not reworded for any of this.** It opens "a single line of
 text", and a sentence is a line of text; rewording it would move the trained
 distribution in the one dimension this repo guards hardest.

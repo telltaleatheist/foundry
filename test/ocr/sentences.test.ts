@@ -123,6 +123,66 @@ test('every character of every word survives the cut', () => {
   }
 });
 
+// ── the boundary guesses against cutting (2026-08-05) ───────────────────────
+//
+// A missed boundary is a longer unit and costs nothing; a wrong one is a
+// fragment, which is the failure this file exists to prevent. So both guards
+// below can only ever REFUSE a cut.
+
+test('an abbreviation does not end a sentence — the unit grows instead', () => {
+  const text = 'Then Mr. Smith left. He did not return.';
+  const units = correctionUnits(text, 22);
+  assert.deepEqual(units.map(u => u.text), ['Then Mr. Smith left.', 'He did not return.']);
+  assertFaithful(text, units);
+});
+
+test('the list is English and German, and a lone letter is an initial in either case', () => {
+  // Each of these is ONE unit: every stop in it is an abbreviation mark. `z. B.`
+  // is why a lowercase single letter counts — German's commonest abbreviations
+  // are lowercase, and a false initial only ever lengthens a unit.
+  for (const text of [
+    'See ibid. for the rest.',
+    'Hrsg. von Ian Kershaw.',
+    'Vgl. dazu Bd. 2 der Reihe.',
+    'Written by J. P. Taylor.',
+    'Das gilt z. B. für ihn.',
+  ]) {
+    assert.deepEqual(correctionUnits(text, 400).map(u => u.text), [text],
+      `cut at an abbreviation: ${text}`);
+  }
+});
+
+test('a footnote reference belongs to the sentence it marks, and the cut falls after it', () => {
+  // Until this rule the stop was followed by a digit rather than whitespace, so
+  // there was no boundary at all — and past the cap the word-boundary fallback
+  // then cut wherever it landed.
+  const text = 'They lost the war.12 The next morning was quiet.';
+  const units = correctionUnits(text, 30);
+  assert.deepEqual(units.map(u => u.text), ['They lost the war.12', 'The next morning was quiet.']);
+  assertFaithful(text, units);
+});
+
+test('a reference rides behind the closing quote, and superscripts count', () => {
+  const quoted = 'He said "stop."12 She left.';
+  assert.deepEqual(correctionUnits(quoted, 22).map(u => u.text), ['He said "stop."12', 'She left.']);
+
+  const superscript = 'They lost the war.¹² The next morning.';
+  assert.deepEqual(correctionUnits(superscript, 25).map(u => u.text),
+    ['They lost the war.¹²', 'The next morning.']);
+  assertFaithful(superscript, correctionUnits(superscript, 25));
+});
+
+test('a decimal point is not a sentence end, and a year still is', () => {
+  // The digit guard is on the SUFFIX form only: `3.14` is one number, while
+  // `1945. The` consumed no reference and is an ordinary stop.
+  const decimal = 'It cost 3.14 dollars and not one cent more.';
+  assert.deepEqual(correctionUnits(decimal, 400).map(u => u.text), [decimal]);
+
+  const year = 'It ended in 1945. The next year was worse.';
+  assert.deepEqual(correctionUnits(year, 25).map(u => u.text),
+    ['It ended in 1945.', 'The next year was worse.']);
+});
+
 test('the cap must be a positive number of characters', () => {
   assert.throws(() => correctionUnits('anything', 0), /positive number of characters/);
 });
