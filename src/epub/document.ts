@@ -46,6 +46,17 @@ export interface CharSource {
   srcEnd: number;
   /** The element the character's text node sits directly inside. */
   owner: XmlElement;
+  /**
+   * These bytes are LITERAL — a CDATA payload, where `&` is an ampersand and
+   * `<` is a less-than sign rather than the start of anything.
+   *
+   * Deletion does not care: removing a character removes its bytes either way.
+   * REPLACEMENT does, and cannot be done here at all: text spliced into a CDATA
+   * section must not be escaped, and text spliced anywhere else must be, so a
+   * writer that did not know which it was would corrupt one of the two.
+   * `ocr-correct --epub` refuses a correction that touches one, by name.
+   */
+  literal?: true;
 }
 
 /** One block of prose, as the model will be asked about it. */
@@ -174,7 +185,7 @@ export function extractUnit(element: XmlElement, src: string): ProseUnit {
       // Comments and PIs are invisible; CDATA is literal text, entities and all.
       if (node.what !== 'cdata') return;
       for (let i = node.innerStart; i < node.innerEnd; i++) {
-        chars.push({ srcStart: i, srcEnd: i + 1, owner: node.parent });
+        chars.push({ srcStart: i, srcEnd: i + 1, owner: node.parent, literal: true });
         text += src[i];
       }
       return;

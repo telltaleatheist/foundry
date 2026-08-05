@@ -186,6 +186,76 @@ index-shaped count for documents the density gate declined. **`--ask-everything`
 turns the note-body and index skips off; the navigation skip is structural and
 stays.
 
+## Correcting a book that is already a book
+
+`ocr-correct --epub` is the **only** correction the pipeline offers a user.
+
+```
+foundry ocr-correct --epub in.epub --report review.json --dry-run
+foundry ocr-correct --epub in.epub --report review.json -o out.epub
+```
+
+Correction lives on the EPUB because that is where every text transformation
+lives, and because correction buried inside `reflow` is invisible,
+un-re-runnable and un-reviewable — it happens once, on the way past, and nothing
+comes out of it a person can read. There is no `--pdf` mode: a working
+document's text layer is never edited. The scan path keeps its per-line
+correction inside `reflow` as an implementation detail of building the book.
+
+**Run it first among the EPUB passes.** Footnote removal measures 97.0/0.5 on
+corrected text against 90.5/2.1 on raw, so correcting afterwards takes the worse
+number for nothing; and simplify and translate rewrite the prose, so correcting
+after them edits the model's output rather than the book.
+
+**The unit is a sentence**, packed to about 400 characters. More context
+disambiguates more errors — `tbe` is unarguable in a clause and a coin flip on
+its own — and the generation budget is already derived from the input length, so
+a longer unit costs proportionally and nothing has to be re-tuned. Three rules,
+in the order they beat each other: a `<br/>` always ends a unit (the model
+answers with one line, so a prompt containing a line break could not
+round-trip); units are packed only up to a sentence boundary; and a sentence
+longer than the cap is cut at a word boundary and **never** mid-word — where a
+single word is longer than the cap, that word is its own unit and the unit
+exceeds it.
+
+**The prompt is not reworded for any of this.** It opens "a single line of
+text", and a sentence is a line of text; rewording it would move the trained
+distribution in the one dimension this repo guards hardest.
+
+The model path is the `ocr` stage's, unchanged: the same prompt, the same
+per-word guard, the same edit contract and applier round-trip. What is new is
+the **projection** — the accepted edit's text offsets mapped back onto the bytes
+they came from — and its three refusals, each reported by name:
+
+| refused | why |
+|---|---|
+| markup boundary | the anchor straddles a tag. `the r<em>n</em>ain point` cannot be repaired without deciding what happens to the emphasis, so it is not |
+| entity | the anchor begins or ends inside `&amp;`, which stands for one character in five bytes |
+| CDATA | escaping is inverted inside one, and this stage does not write into them |
+
+A correction wholly inside an inline element is written into that element's text
+node and the element survives — only the bytes of the words change.
+
+Asked about: paragraphs, block quotes, headings, list items, definition lists,
+table cells, captions and bare divs. Wider than the footnotes stage on purpose —
+repairing a misread word cannot restructure a book the way deleting a digit can,
+and a misread chapter title is the one line a reader sees before deciding to
+read at all. A unit whose whole text sits inside one hyperlink is navigation and
+is skipped.
+
+**Offered on every book, never refused.** A book whose text is the publisher's
+own has no OCR errors, and every change would be the model editing an author —
+but provenance is not knowable from the file (a book converted from a PDF before
+import looks identical), so the caveat is stated in the log and carried in the
+report rather than used to lock the door.
+
+Same two promises about bytes as `footnotes --epub`: the input is never written
+to, and a document nobody corrected is copied through with the exact bytes,
+method and CRC it arrived with. Where foundry built the book, the report also
+names the block each correction landed in, read out of the `data-bf-blocks` and
+`data-bf-category` stamps the exporter wrote; a publisher's EPUB carries none,
+and the report says so rather than inventing one.
+
 ## Page input
 
 **Foundry does not rasterize PDFs yet.** `scan` takes a directory of page

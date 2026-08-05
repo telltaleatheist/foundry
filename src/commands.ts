@@ -68,9 +68,11 @@ import {
 } from './blocks/encoder.js';
 import { planDisplayRuns, type DisplayRunBlock } from './blocks/display-run-merge.js';
 import { BLOCK_FORMATION } from './blocks/formation.js';
+import { runEpubCorrection } from './epub/correct-stage.js';
 import { runEpubFootnotes } from './epub/footnotes-stage.js';
 import { applyFootnoteDeletions, planFootnotes, type FootnoteDeletion } from './footnotes/applier.js';
 import { FOOTNOTES_STOP } from './footnotes/prompt.js';
+import { CORRECTION_UNIT_MAX_CHARS } from './ocr/sentences.js';
 import { repairLines } from './ocr/stage.js';
 import {
   FOUNDRY_MODELS,
@@ -262,7 +264,7 @@ const EPUB_IN: OptionSpec = {
   name: 'epub',
   type: 'string',
   placeholder: '<book.epub>',
-  describe: 'Strip markers from an existing EPUB rather than a run directory. Never written to.',
+  describe: 'Edit an existing EPUB rather than a run directory. Never written to.',
 };
 
 const REPORT: OptionSpec = {
@@ -282,6 +284,13 @@ const ASK_EVERYTHING: OptionSpec = {
   name: 'ask-everything',
   type: 'boolean',
   describe: 'Ask about note bodies and index entries too, which are skipped by default. --epub only.',
+};
+
+const UNIT_CHARS: OptionSpec = {
+  name: 'unit-chars',
+  type: 'string',
+  placeholder: '<n>',
+  describe: `Sentence packing cap for ocr-correct. Default ${CORRECTION_UNIT_MAX_CHARS}; a budget, not a tuning knob.`,
 };
 
 const OVERRIDES: OptionSpec = {
@@ -1471,6 +1480,78 @@ function keepList(
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// ocr-correct
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Correct the words of a finished book.
+ *
+ * `--epub` is the only input, and that is a decision rather than a milestone:
+ * the planned PDF text-layer correction mode is DROPPED, because the working
+ * PDF's text is never edited (rewriting a publisher's content streams from a
+ * parse of them would re-lay-out the book). The scan path keeps its per-line
+ * correction inside `reflow` as an implementation detail; the correction a USER
+ * asks for happens here, once, on a book, with a report.
+ *
+ * Everything about the model path is the `ocr` stage's — `resolveStageModels`,
+ * the same server, `repairLines`, the prompt sent verbatim. The stage module
+ * owns the sentence cut and the projection back onto markup; this function is
+ * the wire and the report file, nothing else.
+ */
+async function runOcrCorrect(args: ParsedArgs): Promise<void> {
+  // One input, and `--pdf` / `--run` are not among this command's options at
+  // all, so parseArgs refuses them by name before this runs. That is the right
+  // shape: they are not modes that are unbuilt, they are modes that were ruled
+  // out — a working document's text layer is never edited, and the scan path
+  // corrects its lines inside `foundry reflow` on the way to the book.
+  const epubPath = requireString(args, 'epub', 'the book to correct');
+  const resolved = path.resolve(epubPath);
+  const dryRun = flag(args, 'dry-run');
+  const output = optionalString(args, 'output');
+  const reportPath = path.resolve(requireString(args, 'report', 'where the review report is written'));
+
+  if (dryRun && output) {
+    throw new UsageError('--dry-run writes no EPUB, so -o/--output would be a promise it does not keep');
+  }
+  if (!dryRun && !output) {
+    throw new UsageError(
+      'ocr-correct needs -o <book.epub> to write the corrected book, or --dry-run to write only '
+      + 'the report',
+    );
+  }
+  if (!fs.existsSync(resolved)) throw new Error(`--epub: no such file: ${resolved}`);
+
+  const plan = resolveStageModels(args, 'ocr');
+  log(`ocr-correct: ${describePlan(plan)}`);
+
+  const server = buildServer(args, 'ocr', plan);
+  let report;
+  try {
+    report = await runEpubCorrection({
+      epubPath: resolved,
+      outputPath: dryRun ? null : path.resolve(output!),
+      model: describePlan(plan),
+      maxChars: intOption(args, 'unit-chars', CORRECTION_UNIT_MAX_CHARS),
+      log,
+      // The same wire the `ocr` stage uses: the stage built the prompt and the
+      // generation ceiling, and this sends them unchanged (ARCHITECTURE §4).
+      generate: (request) => server.complete({
+        prompt: request.prompt,
+        adapter: plan.adapterPath ? 'ocr' : null,
+        stop: request.stop,
+        nPredict: request.nPredict,
+      }),
+    });
+  } finally {
+    await server.stop();
+  }
+
+  fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+  fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+  log(`ocr-correct: wrote ${reportPath}`);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // footnotes
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -2335,6 +2416,75 @@ export const COMMANDS: readonly Command[] = [
     ].join('\n'),
     options: [RUN_DIR, EXCLUDE, EXCLUDE_IDS],
     run: runOcr,
+  },
+  {
+    name: 'ocr-correct',
+    summary: 'Repair OCR errors in a finished EPUB (adapter: foundry-ocr).',
+    usage: '--epub <in.epub> --report <file.json> [-o <out.epub> | --dry-run]',
+    detail: [
+      '    foundry ocr-correct --epub in.epub --report review.json --dry-run',
+      '    foundry ocr-correct --epub in.epub --report review.json -o out.epub',
+      '',
+      'Runs the ocr adapter over the text of a book that is already a book, and',
+      'writes the corrections back into its XHTML — the words change, the markup',
+      'does not. A document no correction landed in is copied through with the',
+      'exact bytes, method and CRC it came in with, so a diff between the input',
+      'and the output is exactly the set of paragraphs that changed. THE INPUT IS',
+      'NEVER WRITTEN TO.',
+      '',
+      'THIS IS THE ONLY CORRECTION THE PIPELINE OFFERS. There is no --pdf mode:',
+      'a working document\'s text layer is the publisher\'s or the scan\'s, and it',
+      'is never edited. Correction on the EPUB is where every other text',
+      'transformation lives, and it is the only place a user can see what changed,',
+      'undo it, and run it again.',
+      '',
+      'RUN IT FIRST among the EPUB passes. Footnote removal measures 97.0/0.5 on',
+      'corrected text against 90.5/2.1 on raw, so correcting afterwards takes the',
+      'worse number for nothing; and simplify and translate REWRITE the prose, so',
+      'correcting after them edits the model\'s output rather than the book.',
+      '',
+      'THE UNIT IS A SENTENCE, packed to about 400 characters. More context',
+      'disambiguates more errors, and the generation budget is derived from the',
+      'input length so a longer unit costs proportionally. Units are cut only at',
+      'sentence boundaries; a sentence longer than the cap is cut at a word',
+      'boundary and never mid-word, because half a word is a fragment no amount of',
+      'context repairs. A <br/> always ends a unit — the model answers with one',
+      'line, so a prompt containing a line break could not round-trip.',
+      '',
+      'The model does not get to rewrite the book. Its answer goes through the',
+      'same per-word guard and the same edit contract the `ocr` stage uses, and',
+      'then through a PROJECTION that decides whether the accepted change can be',
+      'written into the markup at all. Three refusals are the projection\'s own,',
+      'and each is reported by name:',
+      '',
+      '  markup boundary  the anchor spans a tag — "the <em>main</em> point"',
+      '                   cannot be rewritten without deciding what happens to',
+      '                   the emphasis, so it is not.',
+      '  entity           the anchor begins or ends inside "&amp;", which stands',
+      '                   for one character in five bytes.',
+      '  CDATA            escaping is opposite inside one, and this stage does',
+      '                   not write into them.',
+      '',
+      'WHICH TEXT IS ASKED ABOUT: paragraphs, block quotes, headings, list items,',
+      'definition lists, table cells, captions and bare divs — wider than the',
+      'footnotes stage, because repairing a misread word cannot restructure a book',
+      'the way deleting a digit can, and a misread chapter title is the one line a',
+      'reader sees before deciding to read at all. A unit whose whole text sits',
+      'inside one hyperlink is navigation, not prose, and is skipped.',
+      '',
+      'OFFERED ON EVERY BOOK, NEVER REFUSED. A book whose text is the publisher\'s',
+      'has no OCR errors and every change would be the model editing an author —',
+      'but provenance is not knowable from the file (an EPUB converted from a PDF',
+      'before import looks the same), so the caveat is stated in the log and in',
+      'the report rather than used to lock the door.',
+      '',
+      '--report is required and is the point of a dry run: per-document counts,',
+      'every correction with ~80 characters of context either side, and every',
+      'refused answer verbatim with its reason. That report is how the false-fire',
+      'rate gets judged before this is pointed at a library.',
+    ].join('\n'),
+    options: [EPUB_IN, OUTPUT_EPUB, REPORT, DRY_RUN, UNIT_CHARS],
+    run: runOcrCorrect,
   },
   {
     name: 'footnotes',

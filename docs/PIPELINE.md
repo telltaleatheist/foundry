@@ -69,6 +69,13 @@ readers refuse loudly (no silent misreads).
   break), model `continues` for the residue, merge when unsure. A book with no
   detectable paragraph convention degrades to few/no breaks, REPORTED loudly,
   never a failure.
+- **Hyphens**: an ASCII wrap hyphen is JOIN EVIDENCE and is decided against the
+  book's own vocabulary; unproven keeps the hyphen. A **soft hyphen (U+00AD)**
+  is not ambiguous — it is a typesetter's discretionary break, invisible unless
+  the line falls on it — so it joins unconditionally, and one that did not fall
+  on a break is invisible formatting and is stripped. Both are counted in the
+  stage's summary line. (Measured on Kershaw 2026-08-04: an ASCII-only rule read
+  those line ends as carrying no hyphen and emitted `totali tarianism`.)
 - **Footnotes**: rendered as an end-of-chapter section, no body linking. With
   `--exclude footnotes` they are dropped entirely.
 - **Fonts/CSS**: one standard stylesheet shipped with the exporter. No
