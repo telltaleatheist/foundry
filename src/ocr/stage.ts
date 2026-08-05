@@ -32,7 +32,7 @@
  * shipped.
  */
 import { applyEdits, deriveEdits } from './edits.js';
-import { ocrWordGuard } from './guard.js';
+import { OCR_GUARD_SHIPPED_POLICY, ocrGuardResolve, type OcrGuardPolicy } from './guard.js';
 import { extractOcrAnswer, OCR_STOP, toOcrRawPrompt } from './prompt.js';
 import type { OcrLine } from '../pipeline/artifacts.js';
 
@@ -63,6 +63,12 @@ export interface RepairLinesOptions {
   keep?: ReadonlySet<string>;
   generate: OcrGenerate;
   onProgress?: (done: number, total: number) => void;
+  /**
+   * How far one illegal run reaches (src/ocr/guard.ts). Defaults to the
+   * measured ship configuration; anything else is an experiment and has to be
+   * asked for by name.
+   */
+  guardPolicy?: OcrGuardPolicy;
 }
 
 export interface RepairLinesResult {
@@ -81,17 +87,31 @@ export interface RepairLinesResult {
  * One line through the ship configuration. Exported because it is the unit the
  * contract tests are written against.
  */
-export function repairLine(id: string, src: string, out: string): OcrLine {
+export function repairLine(
+  id: string,
+  src: string,
+  out: string,
+  guardPolicy: OcrGuardPolicy = OCR_GUARD_SHIPPED_POLICY,
+): OcrLine {
   if (out === src) return { id, text: src, edits: [], rejected: [] };
 
-  const verdict = ocrWordGuard(src, out);
-  if (!verdict.ok) {
+  const verdict = ocrGuardResolve(src, out, { policy: guardPolicy });
+  // Under `whole-unit` this is the model's answer or the source, and nothing
+  // below can tell the difference from the previous whole-string branch. Under
+  // `per-run` it can also be the mixture — in which case the refusal is still
+  // recorded, because a reverted run is recall lost and lost recall is never
+  // silent here.
+  const candidate = verdict.text;
+  if (candidate === src) {
     return { id, text: src, edits: [], rejected: [{ before: out, why: `per-word guard: ${verdict.why}` }] };
   }
+  const refusals = verdict.ok
+    ? []
+    : [{ before: out, why: `per-word guard reverted ${verdict.rejectedRuns} run(s): ${verdict.why}` }];
 
   // Express the accepted correction as contract-legal edits. A pair too far
   // apart to derive is a rewrite the guard's word-local view could not see.
-  const derived = deriveEdits(src, out);
+  const derived = deriveEdits(src, candidate);
   if (!derived) {
     return {
       id, text: src, edits: [],
@@ -102,14 +122,14 @@ export function repairLine(id: string, src: string, out: string): OcrLine {
   // Round-trip through the applier — a result must never claim an edit list
   // that does not reproduce its own text.
   const applied = applyEdits(src, derived.edits);
-  if (!applied.ok || applied.text !== out) {
+  if (!applied.ok || applied.text !== candidate) {
     return {
       id, text: src, edits: [],
       rejected: [{ before: out, why: 'applier round-trip failed to reproduce the model output' }],
     };
   }
 
-  return { id, text: out, edits: derived.edits, rejected: [] };
+  return { id, text: candidate, edits: derived.edits, rejected: refusals };
 }
 
 export async function repairLines(options: RepairLinesOptions): Promise<RepairLinesResult> {
@@ -131,7 +151,7 @@ export async function repairLines(options: RepairLinesOptions): Promise<RepairLi
       // own length plus headroom bounds the generation.
       nPredict: line.text.length + 64,
     });
-    results.push(repairLine(line.id, line.text, extractOcrAnswer(raw)));
+    results.push(repairLine(line.id, line.text, extractOcrAnswer(raw), options.guardPolicy));
     asked++;
     options.onProgress?.(asked, work.length);
   }

@@ -21,9 +21,58 @@
  * can pick different alignments for pathological inputs, but the acceptance
  * rule they enforce is the same: every changed region must be a balanced,
  * per-word-close substitution.
+ *
+ * ## TWO POLICIES, ONE RULE
+ *
+ * The RULE above is not in question and is not parameterised: a changed run is
+ * legal only if it is balanced and per-word close. What a policy chooses is the
+ * BLAST RADIUS of one illegal run.
+ *
+ *   `whole-unit` — the SHIPPED default. One illegal run discards the model's
+ *       whole answer for the unit and the source is kept verbatim. This is the
+ *       configuration every number above was measured under, and it is what
+ *       `ocrWordGuard` reports.
+ *
+ *   `per-run` — keep the legal runs, revert only the illegal ones to their
+ *       source words. Same rule, applied run by run.
+ *
+ * Why `whole-unit` is the default rather than the obvious-looking `per-run`:
+ * an illegal run is evidence about the WHOLE answer, not only about itself. A
+ * model that deleted a word in one clause was not reading carefully in the
+ * others either, and the neighbouring "legal" substitutions in that same answer
+ * are drawn from a different, worse distribution than the ones in an answer
+ * that broke no rule. `per-run` bets that they are independent. That bet is an
+ * empirical question about `degraded`, not a design preference, so it is a mode
+ * to be MEASURED — never a default to be assumed.
+ *
+ * The blast radius is also a function of unit length, which is why the policy is
+ * a knob at all. On a LINE, discarding the unit costs the handful of repairs
+ * that line had. On a 400-character SENTENCE, one bad clause throws away five
+ * lines' worth of good corrections, so whatever the two policies score on lines
+ * they need not score the same on sentences.
+ *
+ * ## WHITESPACE
+ *
+ * The rule reads words and is blind to the spacing between them; both policies
+ * inherit that. `per-run` has to REBUILD text rather than pick one of two
+ * strings, so it carries each word's preceding whitespace along with it: a
+ * kept word keeps the spacing the model gave it, a reverted word gets the
+ * spacing the source gave it. When nothing is reverted the model's answer is
+ * returned as the identical string it arrived as, and when the surviving words
+ * are exactly the source's the SOURCE string is returned identically — so
+ * neither policy can invent a whitespace-only edit at its own boundaries.
  */
 
 export const OCR_GUARD_MAX_WORD_DISTANCE = 2;
+
+/**
+ * How far one illegal run reaches. See the file header — `whole-unit` is the
+ * measured ship configuration and the default everywhere.
+ */
+export type OcrGuardPolicy = 'whole-unit' | 'per-run';
+
+/** The policy every measured number was taken under. Changing this is a ship decision. */
+export const OCR_GUARD_SHIPPED_POLICY: OcrGuardPolicy = 'whole-unit';
 
 /** Levenshtein, two-row. Words are short; this is not a bottleneck. */
 function lev(a: string, b: string): number {
@@ -61,52 +110,181 @@ function equalPairs(a: readonly string[], b: readonly string[]): Array<[number, 
   return pairs;
 }
 
+/** One word and the whitespace that came immediately before it. */
+interface Token {
+  word: string;
+  /** The run of whitespace between the previous word and this one; '' for the first. */
+  sep: string;
+}
+
+/**
+ * Split into words while remembering the spacing, so a rebuilt string can be
+ * byte-identical to its source wherever nothing was changed.
+ */
+function tokenize(s: string): { lead: string; tokens: Token[]; trail: string } {
+  const tokens: Token[] = [];
+  let lead = '';
+  let at = 0;
+  const re = /\S+/g;
+  let m: RegExpExecArray | null;
+  let first = true;
+  while ((m = re.exec(s)) !== null) {
+    const gap = s.slice(at, m.index);
+    if (first) { lead = gap; first = false; tokens.push({ word: m[0], sep: '' }); }
+    else tokens.push({ word: m[0], sep: gap });
+    at = m.index + m[0].length;
+  }
+  return { lead, tokens, trail: s.slice(at) };
+}
+
+/** A contiguous region where the source and the output disagree. */
+export interface GuardRun {
+  /** The source words the model replaced. Empty means the model INSERTED. */
+  del: string[];
+  /** The words the model put there. Empty means the model DELETED. */
+  ins: string[];
+  /** True when this run is a balanced, per-word-close substitution. */
+  ok: boolean;
+  /** Why an illegal run is illegal, naming the offending words. */
+  why?: string;
+}
+
 export interface GuardVerdict {
   ok: boolean;
   /** Human-readable reason when rejected; states the offending words. */
   why?: string;
 }
 
+export interface GuardResolution extends GuardVerdict {
+  policy: OcrGuardPolicy;
+  /** The text to ship: the model's answer, the source, or a per-run mixture. */
+  text: string;
+  /** Every changed run, in order, with its verdict. */
+  runs: GuardRun[];
+  /** Changed runs the rule accepted. */
+  acceptedRuns: number;
+  /** Changed runs the rule refused — reverted under `per-run`, fatal under `whole-unit`. */
+  rejectedRuns: number;
+}
+
+/**
+ * Judge every changed run, then resolve them under a policy.
+ *
+ * `ok` means the model's answer survived intact. Under `per-run` a resolution
+ * can have `ok: false` and still carry text that is not the source: the legal
+ * runs were kept. Callers that need "was anything refused" read `rejectedRuns`;
+ * callers that need "what do I ship" read `text`.
+ */
+export function ocrGuardResolve(
+  src: string,
+  out: string,
+  options: { policy?: OcrGuardPolicy; maxDist?: number } = {},
+): GuardResolution {
+  const policy = options.policy ?? OCR_GUARD_SHIPPED_POLICY;
+  const maxDist = options.maxDist ?? OCR_GUARD_MAX_WORD_DISTANCE;
+
+  if (src === out) {
+    return { policy, ok: true, text: out, runs: [], acceptedRuns: 0, rejectedRuns: 0 };
+  }
+
+  const A = tokenize(src), B = tokenize(out);
+  const a = A.tokens.map((t) => t.word);
+  const b = B.tokens.map((t) => t.word);
+
+  const pairs = equalPairs(a, b);
+  // Walk the gaps between (and around) equal pairs: each gap holds the words
+  // of `a` and `b` that found no equal partner. Segments are kept in order and
+  // with their indices, because `per-run` has to rebuild a string from them.
+  type Segment =
+    | { kind: 'equal'; ai: number; bi: number }
+    | { kind: 'run'; a1: number; a2: number; b1: number; b2: number };
+  const segments: Segment[] = [];
+  let ai = 0, bi = 0;
+  for (const [pi, pj] of [...pairs, [a.length, b.length] as [number, number]]) {
+    if (pi > ai || pj > bi) segments.push({ kind: 'run', a1: ai, a2: pi, b1: bi, b2: pj });
+    if (pi < a.length && pj < b.length) segments.push({ kind: 'equal', ai: pi, bi: pj });
+    ai = pi + 1; bi = pj + 1;
+  }
+
+  const runs: GuardRun[] = [];
+  const verdictOf = new Map<Segment, GuardRun>();
+  for (const seg of segments) {
+    if (seg.kind !== 'run') continue;
+    const del = a.slice(seg.a1, seg.a2);
+    const ins = b.slice(seg.b1, seg.b2);
+    const run = judgeRun(del, ins, maxDist);
+    runs.push(run);
+    verdictOf.set(seg, run);
+  }
+
+  const bad = runs.filter((r) => !r.ok);
+  const acceptedRuns = runs.length - bad.length;
+  const base: Omit<GuardResolution, 'text'> = {
+    policy,
+    ok: bad.length === 0,
+    ...(bad.length ? { why: bad[0].why } : {}),
+    runs,
+    acceptedRuns,
+    rejectedRuns: bad.length,
+  };
+
+  if (bad.length === 0) return { ...base, text: out };
+  if (policy === 'whole-unit') return { ...base, text: src };
+
+  // ── per-run: keep the legal runs, revert the illegal ones ─────────────────
+  const kept: Token[] = [];
+  for (const seg of segments) {
+    if (seg.kind === 'equal') { kept.push(B.tokens[seg.bi]); continue; }
+    const run = verdictOf.get(seg);
+    if (run === undefined) throw new Error('unjudged run — the segment walk and the verdict map disagree');
+    if (run.ok) kept.push(...B.tokens.slice(seg.b1, seg.b2));
+    else kept.push(...A.tokens.slice(seg.a1, seg.a2));
+  }
+
+  // Reverting every changed run leaves the source's words; return the source
+  // string itself rather than a re-spaced copy of it, so a full rejection under
+  // `per-run` is indistinguishable from one under `whole-unit`.
+  if (kept.length === a.length && kept.every((t, i) => t.word === a[i])) {
+    return { ...base, text: src };
+  }
+  const text = B.lead
+    + kept.map((t, i) => (i === 0 ? '' : t.sep) + t.word).join('')
+    + B.trail;
+  return { ...base, text };
+}
+
+/** The rule, applied to one changed run. */
+function judgeRun(del: string[], ins: string[], maxDist: number): GuardRun {
+  if (del.length !== ins.length) {
+    return {
+      del, ins, ok: false,
+      why: `unbalanced change: [${del.join(' ')}] → [${ins.join(' ')}] `
+        + `(${del.length} word${del.length === 1 ? '' : 's'} → ${ins.length})`,
+    };
+  }
+  for (let k = 0; k < del.length; k++) {
+    const d = lev(del[k], ins[k]);
+    if (d > maxDist) {
+      return {
+        del, ins, ok: false,
+        why: `word changed beyond distance ${maxDist}: "${del[k]}" → "${ins[k]}" (distance ${d})`,
+      };
+    }
+  }
+  return { del, ins, ok: true };
+}
+
 /**
  * Accept or reject a model's corrected line against its source, whole.
+ *
+ * The shipped question, and the one the measured numbers answer: is the WHOLE
+ * answer usable? For the per-run mixture, call `ocrGuardResolve`.
  */
 export function ocrWordGuard(
   src: string,
   out: string,
   maxDist: number = OCR_GUARD_MAX_WORD_DISTANCE,
 ): GuardVerdict {
-  if (src === out) return { ok: true };
-  const a = src.split(/\s+/).filter((w) => w.length > 0);
-  const b = out.split(/\s+/).filter((w) => w.length > 0);
-
-  const pairs = equalPairs(a, b);
-  // Walk the gaps between (and around) equal pairs: each gap holds the words
-  // of `a` and `b` that found no equal partner.
-  let ai = 0, bi = 0;
-  const gaps: Array<{ del: string[]; ins: string[] }> = [];
-  for (const [pi, pj] of [...pairs, [a.length, b.length] as [number, number]]) {
-    const del = a.slice(ai, pi), ins = b.slice(bi, pj);
-    if (del.length > 0 || ins.length > 0) gaps.push({ del, ins });
-    ai = pi + 1; bi = pj + 1;
-  }
-
-  for (const { del, ins } of gaps) {
-    if (del.length !== ins.length) {
-      return {
-        ok: false,
-        why: `unbalanced change: [${del.join(' ')}] → [${ins.join(' ')}] `
-          + `(${del.length} word${del.length === 1 ? '' : 's'} → ${ins.length})`,
-      };
-    }
-    for (let k = 0; k < del.length; k++) {
-      const d = lev(del[k], ins[k]);
-      if (d > maxDist) {
-        return {
-          ok: false,
-          why: `word changed beyond distance ${maxDist}: "${del[k]}" → "${ins[k]}" (distance ${d})`,
-        };
-      }
-    }
-  }
-  return { ok: true };
+  const r = ocrGuardResolve(src, out, { policy: 'whole-unit', maxDist });
+  return r.ok ? { ok: true } : { ok: false, why: r.why };
 }
