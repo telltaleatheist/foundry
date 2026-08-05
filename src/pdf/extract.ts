@@ -23,6 +23,36 @@
  * this layer as the text that will ship, so the round trip has to be exact, and
  * `disableNormalization` is not an option here — it is the contract.
  *
+ * ## KNOWN GAP: pdf.js DROPS soft hyphens, and every other format character
+ *
+ * MEASURED 2026-08-04 on Kershaw, *Working Towards The Fuhrer* (JSTOR):
+ * 34 of the archive PDF's 42 fonts carry a ToUnicode entry mapping a glyph to
+ * **U+00AD SOFT HYPHEN**, and page 2 draws two of those codes. Nothing with
+ * that character reaches this module. The cause is one line in pdf.js's
+ * `getTextContent`:
+ *
+ *     if (category.isInvisibleFormatMark) { continue; }
+ *
+ * where the category comes from `/^(\s)|(\p{Mn})|(\p{Cf})$/u` — so every
+ * Unicode **Cf** character is skipped, glyph and advance both, with no option
+ * to keep it. `disableNormalization` does not govern this.
+ *
+ * What that costs, concretely: line 33 of that book ends `…views on 'totali`
+ * and line 34 opens `tarianism'`, with NO mark of any kind between them, so the
+ * line join has nothing to see and emits `totali tarianism` — which a TTS
+ * engine mispronounces. The join rule itself is correct and handles U+00AD
+ * unconditionally (`../paragraphs/hyphen.ts`); it simply never receives one
+ * from this path. The EPUB path is unaffected, because there the character is
+ * markup we read ourselves.
+ *
+ * Recovering it is not a patch. `getOperatorList()` DOES carry the dropped
+ * glyphs, so the marks could be re-inserted by aligning that glyph stream
+ * against the text-content items — but pdf.js also SYNTHESIZES whitespace
+ * between items from geometry, so the two strings differ in both directions
+ * and the alignment is a diff rather than an insertion. That is a real
+ * subsystem sitting under the input distribution of every model in this repo,
+ * and it must be measured across books before it is built, not bolted on.
+ *
  * ## Reading order
  *
  * Lines come out sorted top-to-bottom, then left-to-right, which is a page's
