@@ -42,14 +42,16 @@
  * others either, and the neighbouring "legal" substitutions in that same answer
  * are drawn from a different, worse distribution than the ones in an answer
  * that broke no rule. `per-run` bets that they are independent. That bet is an
- * empirical question about `degraded`, not a design preference, so it is a mode
- * to be MEASURED — never a default to be assumed.
+ * empirical question about `degraded`, not a design preference, so it was
+ * MEASURED rather than assumed — and the answer depends on the UNIT.
  *
- * The blast radius is also a function of unit length, which is why the policy is
- * a knob at all. On a LINE, discarding the unit costs the handful of repairs
- * that line had. On a 400-character SENTENCE, one bad clause throws away five
- * lines' worth of good corrections, so whatever the two policies score on lines
- * they need not score the same on sentences.
+ * The blast radius is a function of unit length, which is why the policy is a
+ * knob at all. On a LINE, discarding the unit costs the handful of repairs that
+ * line had, and the two policies are statistically indistinguishable. On a
+ * 400-character SENTENCE one bad clause throws away five lines' worth of good
+ * corrections, and `whole-unit` stops being a guard on the stage and becomes an
+ * off switch for it. So the policy is chosen per unit shape: lines ship
+ * `OCR_GUARD_SHIPPED_POLICY`, sentences ship `OCR_GUARD_SENTENCE_POLICY`.
  *
  * ## WHITESPACE
  *
@@ -73,6 +75,23 @@ export type OcrGuardPolicy = 'whole-unit' | 'per-run';
 
 /** The policy every measured number was taken under. Changing this is a ship decision. */
 export const OCR_GUARD_SHIPPED_POLICY: OcrGuardPolicy = 'whole-unit';
+
+/**
+ * The policy for the SENTENCE unit (`ocr-correct --epub`, src/ocr/sentences.ts).
+ *
+ * MEASURED 2026-08-05 (BookForge `tools/foundry-ocr/results-guard-experiment/`):
+ * on 400-character units at 7% CER, `whole-unit` kept 6 corrections across 102
+ * units where `per-run` kept 96. At that length nearly every answer carries one
+ * illegal run somewhere, so discarding the unit does not guard the stage — it
+ * turns it off, while still costing a full generation per sentence. Net CER
+ * favours `per-run` in 5 of the 6 measured cells; the sixth turns on 2 units in
+ * 390, which is noise.
+ *
+ * The same measurement is why the LINE path is untouched: on lines the two
+ * policies are statistically indistinguishable, so nothing is gained by moving
+ * the configuration every checkpoint number was taken under.
+ */
+export const OCR_GUARD_SENTENCE_POLICY: OcrGuardPolicy = 'per-run';
 
 /** Levenshtein, two-row. Words are short; this is not a bottleneck. */
 function lev(a: string, b: string): number {

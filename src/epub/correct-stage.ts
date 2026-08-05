@@ -10,11 +10,19 @@
  *
  * NOTHING ABOUT THE MODEL PATH IS DIFFERENT HERE. The same `repairLines` seam
  * from `src/ocr/stage.ts`, the same prompt sent verbatim, the same per-word
- * guard, the same edit derivation and applier round-trip. Two implementations of
- * "repair a line" is the same failure as two copies of a prompt format, and this
- * file contains none of it. What is new is the UNIT (a sentence —
- * `src/ocr/sentences.ts`) and the PROJECTION back onto markup
+ * guard rule, the same edit derivation and applier round-trip. Two
+ * implementations of "repair a line" is the same failure as two copies of a
+ * prompt format, and this file contains none of it. What is new is the UNIT (a
+ * sentence — `src/ocr/sentences.ts`) and the PROJECTION back onto markup
  * (`correct-document.ts`).
+ *
+ * ONE THING FOLLOWS FROM THE UNIT: the guard's BLAST RADIUS. The rule is the
+ * same rule, but a 400-character sentence is not a line, and throwing the whole
+ * answer away for one illegal run costs five lines' worth of good corrections
+ * instead of one line's. Measured 2026-08-05: `whole-unit` kept 6 corrections
+ * across 102 sentence units where `per-run` kept 96. So this stage asks for
+ * `OCR_GUARD_SENTENCE_POLICY` by name, the `ocr` line stage keeps
+ * `OCR_GUARD_SHIPPED_POLICY`, and the report says which it ran under.
  *
  * ## Offered on every book, never refused
  *
@@ -39,6 +47,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { OCR_GUARD_SENTENCE_POLICY, type OcrGuardPolicy } from '../ocr/guard.js';
 import { repairLines, type OcrGenerate } from '../ocr/stage.js';
 import { correctionUnits, CORRECTION_UNIT_MAX_CHARS, type TextUnit } from '../ocr/sentences.js';
 import { requireUtf8, writeEditedEpub } from './archive.js';
@@ -84,9 +93,25 @@ export interface CorrectionCounts {
    * book with many of them is a book whose text is not what it looks like.
    */
   sentencesOverCap: number;
-  /** Sentences the model changed and every guard accepted. */
+  /** Sentences the model changed and every guard accepted whole. */
   sentencesCorrected: number;
-  /** Sentences whose output a guard refused. Harmless to the text; never silent. */
+  /**
+   * Sentences that shipped a correction with at least one run reverted.
+   *
+   * Under `per-run` — the sentence unit's policy — a guard refusal does not mean
+   * the source shipped: the legal runs of that answer are in the book and the
+   * illegal ones are not. Counted apart from the other two because a single
+   * number covering both would claim either that nothing was refused or that
+   * nothing was corrected, and both would be false. Always 0 under `whole-unit`.
+   */
+  sentencesPartlyReverted: number;
+  /**
+   * Sentences whose whole output was refused — the source text shipped verbatim.
+   *
+   * A guard that reverted every run, an output too far from the source to derive
+   * edits from, or an edit list that would not reproduce its own text. Harmless
+   * to the book; never silent.
+   */
   sentencesRefused: number;
   /** Corrections written into the markup. */
   editsApplied: number;
@@ -127,6 +152,12 @@ export interface RejectedRow extends Provenance {
   asked: string;
   /** The model's answer, verbatim — this is the thing to read. */
   answer: string;
+  /**
+   * Why, verbatim. A guard refusal names how many runs it reverted, and under
+   * `per-run` the rest of that answer is in the book — so a row here is not by
+   * itself a statement that the source text shipped. The counts are what say
+   * which: `sentencesRefused` against `sentencesPartlyReverted`.
+   */
   reason: string;
 }
 
@@ -138,6 +169,12 @@ export interface EpubCorrectionReport {
   model: string;
   /** The packing cap the sentences were cut to. */
   unitMaxChars: number;
+  /**
+   * How far one illegal run reached (src/ocr/guard.ts). Recorded because it is
+   * what decides whether a refusal cost the book one clause or one sentence, and
+   * therefore how the refusal counts below are to be read.
+   */
+  guardPolicy: OcrGuardPolicy;
   caveat: string;
   totals: CorrectionCounts & { documents: number; documentsEdited: number };
   /** Spine items not read, and why. */
@@ -162,7 +199,8 @@ export interface EpubCorrectionOptions {
 function emptyCounts(): CorrectionCounts {
   return {
     units: 0, unitsNavigation: 0, unitsEmpty: 0, unitsAsked: 0,
-    sentences: 0, sentencesOverCap: 0, sentencesCorrected: 0, sentencesRefused: 0,
+    sentences: 0, sentencesOverCap: 0,
+    sentencesCorrected: 0, sentencesPartlyReverted: 0, sentencesRefused: 0,
     editsApplied: 0, editsRejected: 0,
   };
 }
@@ -175,6 +213,7 @@ function addCounts(into: CorrectionCounts, from: CorrectionCounts): void {
   into.sentences += from.sentences;
   into.sentencesOverCap += from.sentencesOverCap;
   into.sentencesCorrected += from.sentencesCorrected;
+  into.sentencesPartlyReverted += from.sentencesPartlyReverted;
   into.sentencesRefused += from.sentencesRefused;
   into.editsApplied += from.editsApplied;
   into.editsRejected += from.editsRejected;
@@ -301,6 +340,9 @@ export async function runEpubCorrection(
   const result = await repairLines({
     lines: sentences.map((s) => ({ id: s.id, text: s.span.text })),
     generate: options.generate,
+    // The unit is a sentence, so the blast radius is the sentence's — see the
+    // file header. Asked for by name; the line stage keeps its own.
+    guardPolicy: OCR_GUARD_SENTENCE_POLICY,
     onProgress: (done, all) => {
       if (done % 100 === 0) log(`  ocr-correct: ${done}/${all} sentences`);
     },
@@ -346,14 +388,21 @@ export async function runEpubCorrection(
           );
         }
         for (const r of line.rejected) {
-          doc.counts.sentencesRefused++;
           rejected.push({
             document: doc.path, ...where,
             asked: sentence.span.text, answer: r.before, reason: r.why,
           });
         }
-        if (line.edits.length === 0) continue;
-        doc.counts.sentencesCorrected++;
+        // Under `per-run` a refusal and a correction come back together: the
+        // illegal runs were reverted and the legal ones are in `edits`. Which
+        // bucket a sentence lands in is decided by what SHIPPED, so that no
+        // count reads as "the source was kept" when it was not.
+        if (line.edits.length === 0) {
+          if (line.rejected.length > 0) doc.counts.sentencesRefused++;
+          continue;
+        }
+        if (line.rejected.length > 0) doc.counts.sentencesPartlyReverted++;
+        else doc.counts.sentencesCorrected++;
         for (const edit of line.edits) {
           // `deriveEdits` guarantees the anchor occurs exactly once in the text
           // it was derived against — this sentence — so its offset inside the
@@ -405,7 +454,9 @@ export async function runEpubCorrection(
 
   log(
     `ocr-correct: ${totals.editsApplied} corrections written across ${totals.documentsEdited} `
-    + `documents, ${totals.sentencesRefused} model outputs refused by the guards, `
+    + `documents, ${totals.sentencesRefused} model outputs refused whole and `
+    + `${totals.sentencesPartlyReverted} partly reverted by the guard `
+    + `(${OCR_GUARD_SENTENCE_POLICY}), `
     + `${totals.editsRejected} accepted corrections the markup would not take`,
   );
 
@@ -422,6 +473,7 @@ export async function runEpubCorrection(
     generatedAt: new Date().toISOString(),
     model: options.model,
     unitMaxChars: maxChars,
+    guardPolicy: OCR_GUARD_SENTENCE_POLICY,
     caveat: PUBLISHER_TEXT_CAVEAT,
     totals,
     skipped: pkg.skipped,

@@ -233,6 +233,59 @@ test('a dry run writes no book and still writes the whole report', async () => {
   }
 });
 
+test('a sentence keeps its legal repair when another run in the same answer is illegal', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'foundry-correct-'));
+  try {
+    const output = join(dir, 'out.epub');
+    const report = await runEpubCorrection({
+      epubPath: buildBook(dir),
+      outputPath: output,
+      model: 'stub',
+      // ONE answer carrying both: a recognition fix (tbe → the) and the word
+      // "rest" deleted. whole-unit would throw the fix away with the deletion,
+      // which on a 400-character unit is the whole sentence for one clause.
+      generate: async (request) => askedLine(request.prompt)
+        .replace(/\btbe\b/g, 'the')
+        .replace('The rest is prose', 'The is prose'),
+    });
+
+    assert.equal(report.guardPolicy, 'per-run', 'the report says what it ran under');
+
+    const entries = new Map(readZip(new Uint8Array(readFileSync(output))).map(e => [e.path, e]));
+    const ch1 = new TextDecoder().decode(entryBytes(entries.get('OEBPS/ch1.xhtml')!));
+    assert.match(ch1, /He left Munich in the spring\. The rest is prose\./,
+      'the fix landed and the deleted word came back');
+
+    // The refusal is recorded — a reverted run is lost recall and is never
+    // silent — and it is NOT counted as a sentence whose source shipped.
+    assert.equal(report.totals.sentencesPartlyReverted, 1);
+    assert.equal(report.totals.sentencesRefused, 0);
+    const reverted = report.rejected.filter(r => /reverted 1 run/.test(r.reason));
+    assert.equal(reverted.length, 1, JSON.stringify(report.rejected, null, 2));
+    assert.equal(reverted[0]!.answer, 'He left Munich in the spring. The is prose.');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an answer whose ONLY change is illegal is refused whole, and counted as that', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'foundry-correct-'));
+  try {
+    const report = await runEpubCorrection({
+      epubPath: buildBook(dir),
+      outputPath: null,
+      model: 'stub',
+      generate: async (request) => askedLine(request.prompt).replace('The rest is prose', 'The is prose'),
+    });
+    assert.equal(report.totals.sentencesRefused, 1);
+    assert.equal(report.totals.sentencesPartlyReverted, 0);
+    assert.equal(report.totals.sentencesCorrected, 0);
+    assert.equal(report.totals.editsApplied, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('the input is never the output', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'foundry-correct-'));
   try {

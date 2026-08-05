@@ -222,8 +222,20 @@ exceeds it.
 text", and a sentence is a line of text; rewording it would move the trained
 distribution in the one dimension this repo guards hardest.
 
-The model path is the `ocr` stage's, unchanged: the same prompt, the same
-per-word guard, the same edit contract and applier round-trip. What is new is
+**One illegal run costs one clause, not the sentence.** The per-word guard's
+rule is the line stage's rule exactly — a changed run is legal only if it swaps
+N words for N words, each pair within Levenshtein 2 — but what one violation
+costs is chosen per unit. Measured 2026-08-05 on 400-character units at 7% CER:
+discarding the whole unit kept 6 corrections across 102 units where reverting
+run by run kept 96, and net CER favours per-run in 5 of 6 measured cells. At
+sentence length a whole-unit guard is not a guard, it is an off switch. So this
+stage reverts the illegal runs and ships the legal ones, the `ocr` line stage
+keeps whole-unit (where the two are indistinguishable), and the report records
+which it ran under along with `sentencesRefused` — answers discarded entire —
+kept apart from `sentencesPartlyReverted`.
+
+The model path is otherwise the `ocr` stage's, unchanged: the same prompt, the
+same edit contract and applier round-trip. What is new is
 the **projection** — the accepted edit's text offsets mapped back onto the bytes
 they came from — and its three refusals, each reported by name:
 

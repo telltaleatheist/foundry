@@ -8,10 +8,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  OCR_GUARD_SENTENCE_POLICY,
   OCR_GUARD_SHIPPED_POLICY,
   ocrGuardResolve,
   ocrWordGuard,
 } from '../../src/ocr/guard.js';
+import { repairLine } from '../../src/ocr/stage.js';
 
 // ── accepts: recognition fixes ──────────────────────────────────────────────
 
@@ -181,4 +183,33 @@ test('per-run never invents a word: every output word comes from the source or t
   for (const w of r.text.split(/\s+/)) {
     assert.ok(vocabulary.has(w), `"${w}" came from neither side`);
   }
+});
+
+// ── which unit ships which policy ───────────────────────────────────────────
+//
+// The blast radius is chosen per UNIT SHAPE, not once for the repo. Measured
+// 2026-08-05: on lines the two are statistically indistinguishable, so the line
+// path keeps the configuration every checkpoint number was taken under; on
+// 400-character sentences `whole-unit` kept 6 corrections across 102 units
+// where `per-run` kept 96, so `ocr-correct --epub` asks for per-run by name.
+
+test('the sentence unit ships per-run, and it is not the line path\'s policy', () => {
+  assert.equal(OCR_GUARD_SENTENCE_POLICY, 'per-run');
+  assert.notEqual(OCR_GUARD_SENTENCE_POLICY, OCR_GUARD_SHIPPED_POLICY);
+});
+
+test('the line path defaults to whole-unit: a mixed answer is discarded, repairs and all', () => {
+  const src = 'Tbe rnain gaie and I said it rudely';
+  const line = repairLine('l1', src, 'The main gate and said it rudely');
+  assert.equal(line.text, src);
+  assert.deepEqual(line.edits, []);
+  assert.equal(line.rejected.length, 1, 'and the refusal is recorded');
+});
+
+test('the same line under per-run keeps its legal repairs — the default is a choice', () => {
+  const src = 'Tbe rnain gaie and I said it rudely';
+  const line = repairLine('l1', src, 'The main gate and said it rudely', 'per-run');
+  assert.equal(line.text, 'The main gate and I said it rudely');
+  assert.ok(line.edits.length > 0);
+  assert.equal(line.rejected.length, 1, 'a reverted run is still a refusal');
 });
