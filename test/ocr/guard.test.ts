@@ -185,6 +185,112 @@ test('per-run never invents a word: every output word comes from the source or t
   }
 });
 
+// ── a join or a split is not a substitution (measured 2026-08-05) ───────────
+//
+// Every case here is a run the real Kershaw book produced, named. The guard was
+// refusing the sentence model's best work: 9 of its 10 refusals on that book
+// were this shape.
+
+const JOINS_AND_SPLITS: Array<[string, string, string]> = [
+  ['Memoran dum → Memorandum', 'The Four-Year Plan Memoran dum of 1936', 'The Four-Year Plan Memorandum of 1936'],
+  ['ofJuly → of July', 'the law ofJuly 1933 was', 'the law of July 1933 was'],
+  ['of‘feudal → of ‘feudal', 'the metaphor of‘feudal anarchy’ might', 'the metaphor of ‘feudal anarchy’ might'],
+  ['193 3, → 1933,', 'in 193 3, the barriers fell', 'in 1933, the barriers fell'],
+];
+
+for (const [name, src, out] of JOINS_AND_SPLITS) {
+  for (const policy of ['whole-unit', 'per-run'] as const) {
+    test(`${policy}: a join or split is legal — ${name}`, () => {
+      const r = ocrGuardResolve(src, out, { policy });
+      assert.equal(r.ok, true, r.why ?? '');
+      assert.equal(r.text, out);
+    });
+  }
+}
+
+test('inhu manity → humanity is REFUSED: a join that drops a syllable inverts the meaning', () => {
+  // The letters are NOT identical — "in" is gone — so this is not a join at
+  // all. It is the failure the guard exists for, wearing a join's clothes.
+  for (const policy of ['whole-unit', 'per-run'] as const) {
+    const r = ocrGuardResolve('measures of gross inhu manity were removed', 'measures of gross humanity were removed', { policy });
+    assert.equal(r.ok, false);
+    assert.equal(r.text, 'measures of gross inhu manity were removed');
+  }
+});
+
+test('... → . . . is REFUSED: letters-identical, but no token in it is a word', () => {
+  // Re-spacing an ellipsis is a typesetter's decision. Admitting it tripled the
+  // line path's degraded characters (deg/100k 16.9 → 56.0), and 13 of the 17
+  // runs the unrestricted exemption let through were exactly this.
+  const r = ocrGuardResolve('he waited... and then', 'he waited . . . and then');
+  assert.equal(r.ok, false);
+  assert.equal(r.text, 'he waited... and then');
+});
+
+// ── a typography substitution is not a repair ───────────────────────────────
+//
+// 13 of the 15 corrections the sentence model landed on the real book were
+// these: it was reformatting Kershaw's punctuation, not repairing a scan.
+// Refusing them: degraded 17 → 3, deg/100k 103.0 → 10.3, false-edit 25% → 3.12%.
+
+const TYPOGRAPHY: Array<[string, string, string]> = [
+  ['em dash → hyphen', 'from the years 1933—45 of a', 'from the years 1933-45 of a'],
+  ['a lone em dash', 'himself — written in fury', 'himself - written in fury'],
+  ['curly quotes → straight', 'consult Hitler if the ‘action’ was', "consult Hitler if the 'action' was"],
+  ['curly double quotes', 'he said “no” to that', 'he said "no" to that'],
+  ['ellipsis character → three stops', 'he waited… and then', 'he waited... and then'],
+];
+
+for (const [name, src, out] of TYPOGRAPHY) {
+  test(`a typography substitution is refused — ${name}`, () => {
+    const r = ocrGuardResolve(src, out);
+    assert.equal(r.ok, false);
+    assert.match(r.why ?? '', /typography substitution/);
+    assert.equal(r.text, src, 'the book keeps its own marks');
+  });
+}
+
+test('a letter fix beside an untouched quote is still an ordinary substitution', () => {
+  // Only the mark-for-the-same-mark case is refused. A real misreading next to
+  // punctuation the model left alone is judged by the distance rule as always.
+  const r = ocrGuardResolve('the ‘brovn’ fox', 'the ‘brown’ fox');
+  assert.equal(r.ok, true);
+  assert.equal(r.text, 'the ‘brown’ fox');
+});
+
+test('a run that MIXES a join with a quote swap is neither shape, and refused', () => {
+  // `‘totali tarianism’` → `'totalitarianism'`, from the real book. Not
+  // letters-identical (the quotes changed), not typography-only (the words
+  // joined), so the substitution rule governs — and it is unbalanced.
+  const r = ocrGuardResolve('views on ‘totali tarianism’ and', "views on 'totalitarianism' and");
+  assert.equal(r.ok, false);
+  assert.match(r.why ?? '', /unbalanced/);
+});
+
+test('mid-ipzos → mid-1920s stays refused at distance 4', () => {
+  // The model's best single repair on the real book, and the guard still says
+  // no. A digit-confusion exemption was MEASURED and not landed: it is inert on
+  // every English dump and gains only on one German book (see the header).
+  const r = ocrGuardResolve('from the mid-ipzos onwards', 'from the mid-1920s onwards');
+  assert.equal(r.ok, false);
+  assert.match(r.why ?? '', /distance 4/);
+});
+
+test('the Kershaw sentence, whole: per-run ships the join and reverts the dashes', () => {
+  // The unit that made `sentencesPartlyReverted` a real number — one answer
+  // carrying both shapes at once.
+  const src = 'The Four-Year Plan Memoran dum of 1936 is a unique example from the years 1933—45';
+  const out = 'The Four-Year Plan Memorandum of 1936 is a unique example from the years 1933-45';
+  const r = ocrGuardResolve(src, out, { policy: 'per-run' });
+  assert.equal(r.ok, false, 'the dash swap is still a refusal');
+  assert.equal(r.acceptedRuns, 1);
+  assert.equal(r.rejectedRuns, 1);
+  assert.equal(
+    r.text,
+    'The Four-Year Plan Memorandum of 1936 is a unique example from the years 1933—45',
+  );
+});
+
 // ── which unit ships which policy ───────────────────────────────────────────
 //
 // The blast radius is chosen per UNIT SHAPE, not once for the repo. Measured

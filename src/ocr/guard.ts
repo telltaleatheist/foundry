@@ -22,6 +22,52 @@
  * rule they enforce is the same: every changed region must be a balanced,
  * per-word-close substitution.
  *
+ * ## TWO SHAPES THAT ARE NOT SUBSTITUTIONS (measured 2026-08-05)
+ *
+ * The balanced-substitution rule is the general case, and it was answering the
+ * wrong question about two shapes that are not substitutions at all. Both are
+ * decided before it. Both were measured by re-scoring dumps that were already
+ * on disk — BookForge `tools/foundry-ocr/results-sent-v1/` and
+ * `results-guard-experiment/`, 1,921 gold units, no GPU.
+ *
+ *   **A JOIN OR SPLIT IS LEGAL.** `Memoran dum` → `Memorandum`, `ofJuly` →
+ *   `of July`: the run's non-whitespace characters are IDENTICAL on both sides,
+ *   so nothing was read differently — only the space between two words moved.
+ *   Refusing them was refusing the model's best work. On the real Kershaw book,
+ *   9 of the sentence model's 10 refusals were this shape and every one was
+ *   right.
+ *
+ *   Every token on both sides must carry a letter or a digit, because `...` →
+ *   `. . .` is letters-identical too and is a typesetter's decision rather than
+ *   a repair. Without that clause the exemption cost the LINE path deg/100k
+ *   16.9 → 56.0, and re-spaced ellipses were 13 of the 17 runs it admitted.
+ *   With it: lines pay 16.9 → 18.2 (one unit in 1,232), English sentences gain
+ *   CER 0.220% → 0.218%, German 0.515% → 0.472%, and `degraded` moves on
+ *   neither.
+ *
+ *   `inhu manity` → `humanity` is NOT this shape and stays refused. The letters
+ *   differ, "in-" is gone and the meaning is inverted — the failure the guard
+ *   exists for, wearing a join's clothes.
+ *
+ *   **A TYPOGRAPHY SUBSTITUTION IS ILLEGAL.** `—` → `-`, `‘action’` →
+ *   `'action'`: the two are the same mark in a different font, which is a
+ *   publisher's choice or a scanner's, and never a misreading to repair. The
+ *   d≤2 rule accepted every one of them. On the real book they were 13 of the
+ *   15 corrections that landed — the model was mostly reformatting Kershaw's
+ *   punctuation. Measured on Kershaw's own sentences: degraded 17 → 3, deg/100k
+ *   103.0 → 10.3, false-edit 25.00% → 3.12%. It costs nothing on the corpus
+ *   slices, where no such run exists.
+ *
+ * A run that mixes the two — `‘totali tarianism’` → `'totalitarianism'`, a join
+ * AND a quote swap — is neither shape, so the substitution rule governs it, and
+ * it refuses.
+ *
+ * MEASURED AND NOT LANDED: a length-scaled distance (d≤3 for words ≥10
+ * characters) and a digit-confusion exemption (`mid-ipzos` → `mid-1920s`, d=4).
+ * Neither costs anything anywhere, and neither fires ONCE on any English dump —
+ * their whole gain is on one German book's 200 units. That is not enough to
+ * widen the one constant every checkpoint number was measured against.
+ *
  * ## TWO POLICIES, ONE RULE
  *
  * The RULE above is not in question and is not parameterised: a changed run is
@@ -272,8 +318,71 @@ export function ocrGuardResolve(
   return { ...base, text };
 }
 
+/**
+ * Marks that are the same mark in a different font.
+ *
+ * Closed and conservative on purpose: every member is a shape a typesetter
+ * chooses between, never a letter. Guillemets are deliberately absent — `«` for
+ * `"` is a language's convention, not a font's, and a model changing one is
+ * making a bigger claim than this rule is about. The whitespace class is absent
+ * for a different reason: `tokenize` splits on `\s`, which already includes
+ * NBSP and the Unicode spaces, so a space swap never reaches a run at all.
+ */
+const PUNCT_FOLD: ReadonlyMap<string, string> = new Map([
+  ...[...'-‐‑‒–—―−'].map((c) => [c, '-'] as const),
+  ...[...'\'‘’‚‛`´′'].map((c) => [c, '\''] as const),
+  ...[...'"“”„‟″'].map((c) => [c, '"'] as const),
+]);
+
+/** One word with every typographic variant folded onto one spelling. */
+function punctFold(word: string): string {
+  let out = '';
+  for (const ch of word) out += ch === '…' ? '...' : PUNCT_FOLD.get(ch) ?? ch;
+  return out;
+}
+
+/** A word is a token with a letter or a digit in it. `...` is not a word. */
+function isWord(token: string): boolean {
+  return /[\p{L}\p{N}]/u.test(token);
+}
+
+/**
+ * Did the run only move the space between two words? See the header.
+ *
+ * The `isWord` clause is what separates `Memoran dum` → `Memorandum` from
+ * `...` → `. . .`, and it is load-bearing: without it the exemption tripled the
+ * line path's degraded characters.
+ */
+function isJoinOrSplit(del: string[], ins: string[]): boolean {
+  if (del.join('') !== ins.join('')) return false;
+  return del.every(isWord) && ins.every(isWord);
+}
+
+/** Is every change in this run one mark swapped for the same mark? */
+function isTypographyOnly(del: string[], ins: string[]): boolean {
+  if (del.length !== ins.length) return false;
+  let changed = false;
+  for (let k = 0; k < del.length; k++) {
+    if (del[k] === ins[k]) continue;
+    changed = true;
+    if (punctFold(del[k]!) !== punctFold(ins[k]!)) return false;
+  }
+  return changed;
+}
+
 /** The rule, applied to one changed run. */
 function judgeRun(del: string[], ins: string[], maxDist: number): GuardRun {
+  // Neither of these is a substitution, so both are decided before the
+  // substitution rule gets to answer a question it was not asked.
+  if (isJoinOrSplit(del, ins)) return { del, ins, ok: true };
+  if (isTypographyOnly(del, ins)) {
+    return {
+      del, ins, ok: false,
+      why: `typography substitution: [${del.join(' ')}] → [${ins.join(' ')}] `
+        + '(the same mark in a different font, which is a typesetter\'s choice and not a misreading)',
+    };
+  }
+
   if (del.length !== ins.length) {
     return {
       del, ins, ok: false,
