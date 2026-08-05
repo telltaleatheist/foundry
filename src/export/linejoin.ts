@@ -22,9 +22,19 @@
  * because a reader meeting `inter-national` sees a typographic artefact, while
  * a reader meeting `farright` sees a word that was never written and cannot
  * tell what it replaced.
+ *
+ * A SOFT HYPHEN (U+00AD) at a line end is the same break with none of the
+ * doubt, and it takes the short path: it joins unconditionally, with no
+ * attestation lookup and no hyphen left behind. `../paragraphs/hyphen.ts`
+ * carries the argument and the measurement; the consequence here is that
+ * `totali<U+00AD>` / `tarianism` becomes `totalitarianism` rather than the
+ * `totali tarianism` this module used to emit. Soft hyphens that did NOT fall
+ * on a break are invisible formatting and leave with them.
  */
 import type { HyphenAttestation } from '../paragraphs/hyphen.js';
-import { proveHyphenVerdict, wrapHyphenHalves } from '../paragraphs/hyphen.js';
+import {
+  endsWithSoftHyphen, proveHyphenVerdict, stripSoftHyphens, wrapHyphenHalves,
+} from '../paragraphs/hyphen.js';
 
 export interface JoinedText {
   text: string;
@@ -32,6 +42,13 @@ export interface JoinedText {
   healed: number;
   /** Wrap hyphens kept, because the join was unproven or the compound was attested. */
   keptHyphens: number;
+  /** Line breaks that fell on a soft hyphen and were closed up unconditionally. */
+  softJoined: number;
+  /**
+   * Soft hyphens removed without a break to close: the typesetter's other
+   * hyphenation points, invisible on the page and meaningless to a narrator.
+   */
+  softStripped: number;
 }
 
 /**
@@ -43,17 +60,30 @@ export interface JoinedText {
  */
 export function joinLines(lines: readonly string[], attestation: HyphenAttestation): JoinedText {
   const parts = lines.map(l => l.trim()).filter(l => l.length > 0);
-  if (parts.length === 0) return { text: '', healed: 0, keptHyphens: 0 };
+  if (parts.length === 0) {
+    return { text: '', healed: 0, keptHyphens: 0, softJoined: 0, softStripped: 0 };
+  }
 
   let text = parts[0];
   let healed = 0;
   let keptHyphens = 0;
+  let softJoined = 0;
 
   for (let i = 1; i < parts.length; i++) {
     const prev = parts[i - 1];
     const cur = parts[i];
-    const halves = wrapHyphenHalves(prev, cur);
 
+    if (endsWithSoftHyphen(prev)) {
+      // A discretionary hyphenation point the line break landed on. The word is
+      // cut and nothing else is possible, so close the gap and drop the mark —
+      // no lookup, no counter-example to fear. `text` ends with the soft hyphen
+      // because `prev` was trimmed and U+00AD is not whitespace.
+      text = text.slice(0, -1) + cur;
+      softJoined++;
+      continue;
+    }
+
+    const halves = wrapHyphenHalves(prev, cur);
     if (!halves) {
       text += ` ${cur}`;
       continue;
@@ -72,5 +102,11 @@ export function joinLines(lines: readonly string[], attestation: HyphenAttestati
     }
   }
 
-  return { text, healed, keptHyphens };
+  // Whatever soft hyphens are left fell inside a line rather than on a break.
+  // They are invisible on the page and they must not reach a narrator, so they
+  // go — counted, because a silent removal is not a removal anybody can check.
+  const stripped = stripSoftHyphens(text);
+  const softStripped = text.length - stripped.length;
+
+  return { text: stripped, healed, keptHyphens, softJoined, softStripped };
 }

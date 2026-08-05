@@ -9,7 +9,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { joinLines } from '../../src/export/linejoin.js';
-import { attestationFromLines, createHyphenAttestation } from '../../src/paragraphs/hyphen.js';
+import {
+  attestationFromLines, createHyphenAttestation, SOFT_HYPHEN,
+} from '../../src/paragraphs/hyphen.js';
 
 const EMPTY = createHyphenAttestation();
 
@@ -96,3 +98,51 @@ test('several hyphens in one paragraph are counted separately', () => {
   assert.equal(r.healed, 1);
   assert.equal(r.keptHyphens, 2);
 });
+
+// ── soft hyphens (U+00AD) ────────────────────────────────────────────────────
+//
+// THE Kershaw bug. The archive PDF's text layer ends line 51 at a soft hyphen,
+// which WRAP_HYPHEN_END could not see, so the join inserted a space and the
+// finished book said `totali tarianism` — which a TTS engine mispronounces.
+
+test('a line break on a soft hyphen joins unconditionally — no attestation', () => {
+  // EMPTY attestation on purpose: the whole point is that nothing is consulted.
+  const r = joinLines([`traditional views on totali${SOFT_HYPHEN}`, 'tarianism and Stalin'], EMPTY);
+  assert.equal(r.text, 'traditional views on totalitarianism and Stalin');
+  assert.equal(r.softJoined, 1);
+  assert.equal(r.healed, 0, 'a soft-hyphen join is not an attested heal');
+  assert.equal(r.keptHyphens, 0, 'and it never keeps the mark');
+});
+
+test('an ASCII wrap hyphen still goes through attestation, unchanged', () => {
+  // The soft-hyphen rule must not leak into the ambiguous case: `far-right` is
+  // a real compound and an unproven pair still keeps its hyphen.
+  assert.equal(joinLines(['the far-', 'right press'], EMPTY).text, 'the far-right press');
+  assert.equal(joinLines(['the far-', 'right press'], EMPTY).keptHyphens, 1);
+  assert.equal(joinLines(['the far-', 'right press'], EMPTY).softJoined, 0);
+  const att = attestationFromLines(['it was a question of time']);
+  const r = joinLines(['it was a ques-', 'tion of money'], att);
+  assert.equal(r.text, 'it was a question of money');
+  assert.equal(r.healed, 1);
+  assert.equal(r.softJoined, 0);
+});
+
+test('a soft hyphen that did NOT fall on a break is stripped, never narrated', () => {
+  const r = joinLines([`the moderni${SOFT_HYPHEN}sing state`, 'went on'], EMPTY);
+  assert.equal(r.text, 'the modernising state went on');
+  assert.equal(r.softStripped, 1);
+  assert.equal(r.softJoined, 0);
+});
+
+test('soft joins and ASCII heals are counted apart, in one paragraph', () => {
+  const att = attestationFromLines(['the question stands']);
+  const r = joinLines(
+    [`a ques-`, `tion about totali${SOFT_HYPHEN}`, `tarianism and a zeb-`, `ruck`],
+    att,
+  );
+  assert.equal(r.text, 'a question about totalitarianism and a zeb-ruck');
+  assert.equal(r.healed, 1);
+  assert.equal(r.softJoined, 1);
+  assert.equal(r.keptHyphens, 1);
+});
+

@@ -1889,7 +1889,8 @@ async function runExport(args: ParsedArgs): Promise<void> {
     log(
       `export: ${exclusions.keptBlocks} of ${exclusions.totalBlocks} blocks kept — `
       + `${result.sections.length} sections, ${result.healedHyphens} hyphens healed, `
-      + `${result.keptHyphens} kept unproven`,
+      + `${result.keptHyphens} kept unproven, ${result.softJoinedHyphens} soft-hyphen joins, `
+      + `${result.strippedSoftHyphens} stray soft hyphens removed`,
     );
     log(`export: wrote ${result.epubPath}`);
     if (result.outputPath !== result.epubPath) log(`export: copied to ${result.outputPath}`);

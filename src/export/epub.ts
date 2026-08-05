@@ -101,7 +101,7 @@ import type { BlocksCategory } from '../blocks/encoder.js';
 import type { GroupingReport, ParagraphGroup } from '../paragraphs/grouping.js';
 import { groupParagraphs } from '../paragraphs/grouping.js';
 import { computeBlockGeometry } from '../paragraphs/geometry.js';
-import type { HyphenAttestation } from '../paragraphs/hyphen.js';
+import { stripSoftHyphens, type HyphenAttestation } from '../paragraphs/hyphen.js';
 import { coverFormat, type CoverImage } from './cover.js';
 import { applyExclusions, type ExclusionRequest, type ExclusionResult } from './exclude.js';
 import { joinLines } from './linejoin.js';
@@ -174,6 +174,10 @@ export interface BuildEpubResult {
   healedHyphens: number;
   /** Wrap hyphens kept because the join was unproven. */
   keptHyphens: number;
+  /** Line breaks that fell on a soft hyphen and were closed up unconditionally. */
+  softJoinedHyphens: number;
+  /** Soft hyphens removed with no break to close — invisible formatting. */
+  strippedSoftHyphens: number;
   /** Every file in the container, in order — the first is always `mimetype`. */
   entryPaths: string[];
 }
@@ -216,7 +220,18 @@ function stripIllegalXml(text: string): string {
   return text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, '');
 }
 
-const clean = (text: string): string => xml(stripIllegalXml(text));
+/**
+ * Nothing invisible reaches the book.
+ *
+ * `joinLines` has already resolved every soft hyphen that MEANT something — the
+ * ones a line break fell on — and stripped the rest out of the joined prose.
+ * This is the emitter's own guarantee for the text that does not go through
+ * that path: a `list` group renders its lines one `<li>` at a time, and a
+ * chapter title retyped by a person arrives as itself. A U+00AD is invisible in
+ * a reader and is not a sound in a narrator, so there is nothing it can be
+ * except a character that should not be in a book.
+ */
+const clean = (text: string): string => xml(stripIllegalXml(stripSoftHyphens(text)));
 
 // ── the stylesheet ──────────────────────────────────────────────────────────
 
@@ -462,6 +477,8 @@ export function buildEpub(input: BuildEpubInput): BuildEpubResult {
   // paragraph in the first place.
   let healedHyphens = 0;
   let keptHyphens = 0;
+  let softJoinedHyphens = 0;
+  let strippedSoftHyphens = 0;
   const rendered = new Map<string, RenderedGroup>();
   for (const group of groups) {
     const lines: string[] = [];
@@ -475,6 +492,8 @@ export function buildEpub(input: BuildEpubInput): BuildEpubResult {
     const joined = joinLines(lines, input.attestation);
     healedHyphens += joined.healed;
     keptHyphens += joined.keptHyphens;
+    softJoinedHyphens += joined.softJoined;
+    strippedSoftHyphens += joined.softStripped;
     rendered.set(group.id, { group, text: joined.text, lines });
   }
 
@@ -690,6 +709,8 @@ export function buildEpub(input: BuildEpubInput): BuildEpubResult {
     sections,
     healedHyphens,
     keptHyphens,
+    softJoinedHyphens,
+    strippedSoftHyphens,
     entryPaths: entries.map(e => e.path),
   };
 }

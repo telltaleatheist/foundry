@@ -29,18 +29,104 @@
  * was measured and rejected in BookForge: on a short book it fires on genuine
  * compounds. Foundry has no model arbitration for the `null` case and does not
  * want one — generation is how a scan becomes fiction (ARCHITECTURE §7).
+ *
+ * ## THE SOFT HYPHEN (U+00AD) IS THE SAME BREAK AND IT IS NOT AMBIGUOUS
+ *
+ * Everything above is about ASCII hyphen-minus, and everything above is needed
+ * BECAUSE that character is ambiguous: `well-` at a line end might be a real
+ * compound, and only the book can say. U+00AD cannot be ambiguous. It is by
+ * definition a typesetter's DISCRETIONARY hyphenation point — a mark that is
+ * invisible unless the line happens to break there — so a line ending in one
+ * is a word cut in half and nothing else. It therefore joins UNCONDITIONALLY:
+ * no attestation lookup, no hyphen kept, no verdict to prove.
+ *
+ * Measured 2026-08-04 on Kershaw, *Working Towards The Fuhrer*, in the archive
+ * PDF's own text layer:
+ *
+ *     line 51: …traditional views on 'totali<U+00AD>
+ *     line 52: tarianism' and to views of Stalin…
+ *
+ * `WRAP_HYPHEN_END` saw no hyphen there, so the join inserted a space and the
+ * finished book said `totali tarianism`, which a TTS engine then mispronounces.
+ * It was all over that book.
+ *
+ * And a soft hyphen ANYWHERE ELSE — mid-line, mid-word — is invisible
+ * formatting. It carries no sound, no meaning and no break, so it must never
+ * reach a narrator: it is stripped, not preserved.
+ *
+ * The consequence for THIS file is that the attestation has to see the healed
+ * word. `totali<U+00AD>\ntarianism` masked the way an ASCII split is masked
+ * would teach the book neither half; healed, it teaches `totalitarianism`,
+ * which is the word the book actually contains.
  */
 
 const WRAP_HYPHEN_END = /[A-Za-zÀ-ÿ]-[ \t]*$/;
 const WRAP_HYPHEN_CONT = /^[ \t]*[A-Za-zÀ-ÿ]/;
 
-/** Does the break between these two laid-out lines split a hyphenated word? */
+/** U+00AD SOFT HYPHEN — the discretionary break, invisible unless it is used. */
+export const SOFT_HYPHEN = '\u00AD';
+
+const SOFT_HYPHEN_END = /\u00AD[ \t]*$/;
+
+/**
+ * A soft hyphen that a line break actually landed on: the mark, the break, and
+ * whatever indent the next line was laid out with. Removing the WHOLE match
+ * welds the two halves back into one word.
+ */
+const SOFT_HYPHEN_SPLIT = /\u00AD[ \t]*\r?\n[ \t]*/g;
+
+/**
+ * Does this line end at a soft hyphen?
+ *
+ * Trailing spaces and tabs are allowed for the same reason `WRAP_HYPHEN_END`
+ * allows them: a laid-out line's trailing whitespace is an artefact of the
+ * crop, not of the text.
+ */
+export function endsWithSoftHyphen(line: string): boolean {
+  return SOFT_HYPHEN_END.test(line);
+}
+
+/** Remove every soft hyphen. Invisible formatting is not text. */
+export function stripSoftHyphens(text: string): string {
+  return text.replace(/\u00AD/g, '');
+}
+
+/**
+ * Resolve every soft hyphen in a run of laid-out lines: a break that landed on
+ * one is closed up, and the strays that did not break are removed.
+ *
+ * Both cases produce the same thing — the word, whole — which is why one
+ * function does both. The line-break case has to run FIRST, because it is the
+ * only one that also has to consume the newline and the next line's indent.
+ */
+export function healSoftHyphens(text: string): string {
+  return stripSoftHyphens(text.replace(SOFT_HYPHEN_SPLIT, ''));
+}
+
+/**
+ * Does the break between these two laid-out lines split a hyphenated word?
+ *
+ * The soft-hyphen case is decided by the PREVIOUS line alone — the mark says
+ * the word is cut, and there is nothing for the continuation to add to that.
+ * The ASCII case still needs both lines: `page 3 -` followed by a digit is
+ * punctuation, not a wrapped word.
+ */
 export function isWrapHyphenBreak(prevLine: string, nextLine: string): boolean {
+  if (endsWithSoftHyphen(prevLine)) return true;
   return WRAP_HYPHEN_END.test(prevLine) && WRAP_HYPHEN_CONT.test(nextLine);
 }
 
-/** The two halves of a wrap-hyphenated word, or null if this is not one. */
+/**
+ * The two halves of an ASCII wrap-hyphenated word, or null if this is not one.
+ *
+ * A soft-hyphen break returns null DELIBERATELY, and callers must handle it
+ * before asking: there are no halves to weigh because there is no verdict to
+ * prove. Handing one to `proveHyphenVerdict` would put a decided join back into
+ * the undecided pile, where an unattested pair keeps a hyphen the book never
+ * printed.
+ */
 export function wrapHyphenHalves(prevLine: string, nextLine: string): { head: string; tail: string } | null {
+  if (endsWithSoftHyphen(prevLine)) return null;
   if (!isWrapHyphenBreak(prevLine, nextLine)) return null;
   const head = /([A-Za-zÀ-ÿ]+)-[ \t]*$/.exec(prevLine);
   const tail = /^[ \t]*([A-Za-zÀ-ÿ]+)/.exec(nextLine);
@@ -82,9 +168,17 @@ export function createHyphenAttestation(): HyphenAttestation {
  * second fragment (`ques-\ntion` → `tion`) enters `words` as a standalone token
  * and attests itself, which silently breaks every proof that reads `words`.
  * Masking with a newline keeps the surrounding tokens' boundaries intact.
+ *
+ * Soft hyphens are HEALED before any of that, and the difference from masking is
+ * the point. An ASCII split is undecided, so neither half may be believed; a
+ * soft-hyphen split is already decided, so the book genuinely contains the
+ * joined word and the vocabulary should hold it. Healing also stops the two
+ * halves entering `words` separately, which is the same self-attestation trap
+ * masking exists to close — `\u00AD` is not in `[A-Za-zÀ-ÿ]`, so an unhealed
+ * `totali\u00ADtarianism` would tokenize as `totali` and `tarianism`.
  */
 export function addTextToHyphenAttestation(att: HyphenAttestation, text: string): void {
-  const masked = text.replace(HYPHEN_SPLIT, '\n');
+  const masked = healSoftHyphens(text).replace(HYPHEN_SPLIT, '\n');
   for (const m of masked.matchAll(STANDALONE_WORD)) att.words.add(m[1].toLowerCase());
   for (const m of masked.matchAll(SINGLE_LINE_COMPOUND)) {
     att.hyphenated.add(`${m[1]}-${m[2]}`.toLowerCase());

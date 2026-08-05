@@ -111,6 +111,10 @@ export interface ReflowResult {
   sections: number;
   healedHyphens: number;
   keptHyphens: number;
+  /** Line breaks that fell on a soft hyphen (U+00AD) and were closed up. */
+  softJoinedHyphens: number;
+  /** Soft hyphens removed with no break to close — invisible formatting. */
+  strippedSoftHyphens: number;
   degraded: boolean;
 }
 
@@ -339,7 +343,8 @@ export async function runReflowStage(options: ReflowOptions): Promise<ReflowResu
   writeAtomically(outPath, result.zip);
   options.log(
     `reflow: ${result.sections.length} sections, ${result.healedHyphens} hyphens healed, `
-    + `${result.keptHyphens} kept unproven → ${outPath}`,
+    + `${result.keptHyphens} kept unproven, ${result.softJoinedHyphens} soft-hyphen joins, `
+    + `${result.strippedSoftHyphens} stray soft hyphens removed → ${outPath}`,
   );
   if (result.grouping.degraded) options.log(result.grouping.message);
 
@@ -355,6 +360,8 @@ export async function runReflowStage(options: ReflowOptions): Promise<ReflowResu
     sections: result.sections.length,
     healedHyphens: result.healedHyphens,
     keptHyphens: result.keptHyphens,
+    softJoinedHyphens: result.softJoinedHyphens,
+    strippedSoftHyphens: result.strippedSoftHyphens,
     degraded: result.grouping.degraded,
   };
 }

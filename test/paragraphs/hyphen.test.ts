@@ -13,7 +13,8 @@ import assert from 'node:assert/strict';
 
 import {
   addTextToHyphenAttestation, attestationFromLines, createHyphenAttestation,
-  isWrapHyphenBreak, proveHyphenVerdict, wrapHyphenHalves,
+  healSoftHyphens, isWrapHyphenBreak, proveHyphenVerdict, SOFT_HYPHEN, stripSoftHyphens,
+  wrapHyphenHalves,
 } from '../../src/paragraphs/hyphen.js';
 
 test('a wrap hyphen is a letter, a hyphen, end of line, then a letter', () => {
@@ -107,3 +108,59 @@ test('accented letters are words too', () => {
   const att = attestationFromLines(['über die Verhältnisse', 'Verhältnisse waren schlecht']);
   assert.equal(proveHyphenVerdict('Verhält', 'nisse', att), 'join');
 });
+
+// ── soft hyphens (U+00AD) ────────────────────────────────────────────────────
+//
+// A different character with a different rule, and the difference is the whole
+// point: the ASCII hyphen above is ambiguous and is decided by the book, while
+// a soft hyphen is a typesetter's discretionary break and is decided outright.
+// Measured on Kershaw (2026-08-04): the archive PDF's text layer breaks
+// `totali<U+00AD>` / `tarianism`, which the ASCII-only rule read as a line
+// ending in no hyphen at all and joined with a space.
+
+test('a line ending in a soft hyphen is a wrap break, whatever follows', () => {
+  assert.equal(isWrapHyphenBreak('views on totali' + SOFT_HYPHEN, 'tarianism and Stalin'), true);
+  assert.equal(isWrapHyphenBreak('views on totali' + SOFT_HYPHEN + ' ', 'tarianism'), true,
+    'trailing space is a crop artefact here too');
+  // The ASCII rule needs the next line to continue a word; the soft-hyphen rule
+  // does not, because the mark itself says the word was cut.
+  assert.equal(isWrapHyphenBreak('modernis' + SOFT_HYPHEN, '3 scenes'), true);
+  assert.equal(isWrapHyphenBreak('no mark here', 'tarianism'), false);
+});
+
+test('a soft-hyphen break has no halves to weigh — attestation is not consulted', () => {
+  assert.equal(wrapHyphenHalves('totali' + SOFT_HYPHEN, 'tarianism'), null);
+  // …and the ASCII pair still comes back, unchanged.
+  assert.deepEqual(wrapHyphenHalves('a long inter-', 'national scene'),
+    { head: 'inter', tail: 'national' });
+});
+
+test('healing a soft hyphen closes the break and removes the strays', () => {
+  const LF = String.fromCharCode(10);
+  const CR = String.fromCharCode(13);
+  assert.equal(healSoftHyphens(`totali${SOFT_HYPHEN}${LF}tarianism`), 'totalitarianism');
+  assert.equal(healSoftHyphens(`totali${SOFT_HYPHEN}  ${LF}   tarianism`), 'totalitarianism',
+    'the indent the next line was laid out with goes too');
+  assert.equal(healSoftHyphens(`totali${SOFT_HYPHEN}${CR}${LF}tarianism`), 'totalitarianism');
+  assert.equal(healSoftHyphens(`moderni${SOFT_HYPHEN}sing`), 'modernising',
+    'a mark that did not break is invisible formatting');
+  assert.equal(stripSoftHyphens(`a${SOFT_HYPHEN}b${SOFT_HYPHEN}`), 'ab');
+});
+
+test('the attestation learns the WHOLE word from a soft-hyphen split', () => {
+  // The opposite of the ASCII treatment, and deliberately so. An ASCII split is
+  // undecided, so neither half may be believed; a soft-hyphen split is already
+  // decided, so the book genuinely contains 'totalitarianism'.
+  const att = attestationFromLines(['views on totali' + SOFT_HYPHEN, 'tarianism and Stalin']);
+  assert.equal(att.words.has('totalitarianism'), true);
+  assert.equal(att.words.has('totali'), false);
+  assert.equal(att.words.has('tarianism'), false);
+});
+
+test('a soft hyphen inside a line does not split the word it hides in', () => {
+  const att = attestationFromLines(['the moderni' + SOFT_HYPHEN + 'sing state']);
+  assert.equal(att.words.has('modernising'), true);
+  assert.equal(att.words.has('moderni'), false);
+  assert.equal(att.words.has('sing'), false);
+});
+
