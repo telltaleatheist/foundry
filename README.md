@@ -122,6 +122,37 @@ See [`docs/DOCUMENT_MODES.md`](docs/DOCUMENT_MODES.md) for what the working
 document carries, and [`docs/PDF_SPIKE.md`](docs/PDF_SPIKE.md) for the
 measurements the incremental-update design rests on.
 
+## The other route — a vision model reads the page
+
+`vlm-convert` answers the same question by different means: instead of
+segmenting a page and labelling its blocks, it hands the whole page picture to a
+document VLM and takes back marked-up text.
+
+```
+foundry vlm-convert --pdf book.pdf --out book.epub [--vlm-model <id>] [--python <path>]
+```
+
+It shares **no stage, no artifact and no model** with the pipeline above, on
+purpose: the two are meant to be comparable, which they stop being the moment
+they share a step. What it needs that the rest of foundry does not is a Python
+with MLX in it — the models are MLX, so `src/vlm/vlm_page.py` reads the pages in
+ONE subprocess for the whole book (one model load, not one per page) and streams
+a JSON object per page back. Pages are rendered by PyMuPDF at 200 dpi, the
+resolution the models were measured at.
+
+Three models are catalogued in `src/vlm/models.ts`, each asked in the prompt its
+own model card documents, VERBATIM, and each answering in its own dialect. That
+prompt is load-bearing exactly the way the stage prompts are (ARCHITECTURE §4):
+asking Qwen2.5-VL for an ad-hoc JSON layout produced fabricated bounding boxes,
+while asking it for `QwenVL HTML` — its trained format — produced real geometry.
+Adding a model is a registry entry plus a dialect parser, and nothing else.
+
+Measured, on a 17-page born-digital article (`Nanonets-OCR2-3B`, 8-bit MLX, M1
+Ultra): 15.4 s a page, 3.9 pages a minute, 5.5 GiB peak, and **0.80% character
+error** against the PDF's own text layer — 0.56% over the sixteen pages of
+running prose, and 0.40% with em/en dashes folded together. Page furniture the
+model TAGS is dropped; a running head, which it does not tag, is not.
+
 ## Stripping markers from a book that is already a book
 
 `footnotes` has a second input. A publisher's EPUB carries its reference markers

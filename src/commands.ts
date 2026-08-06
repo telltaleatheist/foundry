@@ -120,6 +120,8 @@ import { applyExclusions } from './export/exclude.js';
 import { runExportStage, type BlockOverride, type OverrideRequest } from './pipeline/export-stage.js';
 import { runPdfFootnotes } from './pipeline/footnotes-document.js';
 import { runReflowStage } from './pipeline/reflow-stage.js';
+import { vlmConvert } from './vlm/convert.js';
+import { DEFAULT_VLM_MODEL_ID, VLM_MODELS } from './vlm/models.js';
 import { applyDeskew, processPage, type Box } from './scan/bands.js';
 import { readPgm } from './scan/pgm.js';
 import { OCR_DPI, recognizeBands, resolveTesseract, type ResolvedTesseract } from './scan/tesseract.js';
@@ -291,6 +293,38 @@ const UNIT_CHARS: OptionSpec = {
   type: 'string',
   placeholder: '<n>',
   describe: `Sentence packing cap for ocr-correct. Default ${CORRECTION_UNIT_MAX_CHARS}; a budget, not a tuning knob.`,
+};
+
+/**
+ * `vlm-convert`'s own flags. Every one of them is about the SECOND route to a
+ * book (src/vlm/models.ts) and none of them is read by any other command.
+ */
+const VLM_MODEL: OptionSpec = {
+  name: 'vlm-model',
+  type: 'string',
+  placeholder: '<id>',
+  describe: `Which document VLM reads the pages. Default ${DEFAULT_VLM_MODEL_ID}.`,
+};
+
+const VLM_PYTHON: OptionSpec = {
+  name: 'python',
+  type: 'string',
+  placeholder: '<path>',
+  describe: 'The interpreter with mlx-vlm and PyMuPDF in it. Also FOUNDRY_VLM_PYTHON.',
+};
+
+const VLM_RENDERS: OptionSpec = {
+  name: 'renders',
+  type: 'string',
+  placeholder: '<dir>',
+  describe: 'Keep the page images here. They are deleted as the run proceeds otherwise.',
+};
+
+const VLM_LANGUAGE: OptionSpec = {
+  name: 'language',
+  type: 'string',
+  placeholder: '<bcp47>',
+  describe: 'dc:language for the EPUB. Declared, not detected — nothing here reads a language.',
 };
 
 const OVERRIDES: OptionSpec = {
@@ -2027,6 +2061,39 @@ async function runReflow(args: ParsedArgs): Promise<void> {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// vlm-convert
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * The other route to a book, and the only command in this file that reaches
+ * none of the stages above it.
+ *
+ * It shells into one Python process because the vision model is MLX and foundry
+ * is TypeScript; `src/vlm/bridge.ts` owns that seam and `src/vlm/models.ts`
+ * carries the reasoning for the mode. What belongs here is only argv.
+ */
+async function runVlmConvert(args: ParsedArgs): Promise<void> {
+  const report = await vlmConvert({
+    pdfPath: requireString(args, 'pdf', 'the PDF to read'),
+    outPath: requireString(args, 'out', 'where the EPUB is written'),
+    modelId: optionalString(args, 'vlm-model') ?? DEFAULT_VLM_MODEL_ID,
+    ...(optionalString(args, 'python') ? { python: optionalString(args, 'python')! } : {}),
+    ...(optionalString(args, 'renders') ? { rendersDir: optionalString(args, 'renders')! } : {}),
+    language: optionalString(args, 'language') ?? 'en',
+    log,
+  });
+
+  const { timings } = report;
+  const perPage = timings.inferenceSeconds / report.pages.length;
+  log(
+    `vlm-convert: ${report.pages.length} pages in ${timings.totalSeconds.toFixed(1)}s `
+    + `(${perPage.toFixed(1)}s a page at steady state, `
+    + `${(60 / perPage).toFixed(1)} pages a minute), `
+    + `peak ${(report.peakRssBytes / 1024 / 1024 / 1024).toFixed(1)} GiB`,
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // convert
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -2676,6 +2743,57 @@ export const COMMANDS: readonly Command[] = [
     ].join('\n'),
     options: [PDF_IN, OUT_PATH, EXCLUDE, COVER],
     run: runReflow,
+  },
+  {
+    name: 'vlm-convert',
+    summary: 'The other route: a vision model reads the pages, PDF in, EPUB out.',
+    usage: '--pdf <file.pdf> --out <book.epub> [--vlm-model <id>] [--python <path>]',
+    detail: [
+      'A SECOND, SELF-CONTAINED ROUTE TO A BOOK. Every other command in this',
+      'program reads a page the same way: pinned Tesseract finds the lines, the',
+      'blocks adapter says what each one is, the ocr adapter repairs the words.',
+      'This one hands the whole page picture to a document vision model and takes',
+      'back marked-up text.',
+      '',
+      'It shares nothing with the pipeline. No run directory is read or written,',
+      'no stage artifact is produced or consumed, and no model in',
+      '`foundry models` is loaded. The two routes answer the same question by',
+      'different means, and they stop being comparable the moment they share a',
+      'step.',
+      '',
+      'Models — pick one with --vlm-model:',
+      '',
+      ...VLM_MODELS.map((m) =>
+        `  ${m.id === DEFAULT_VLM_MODEL_ID ? '*' : ' '} ${m.id.padEnd(17)} ${m.repo}`),
+      '',
+      '  (* is the default.) Each is asked in the prompt its own model card',
+      '  documents, verbatim, and each answers in its own dialect. Adding one is a',
+      '  registry entry in src/vlm/models.ts plus a parser in src/vlm/dialect.ts.',
+      '',
+      'THIS COMMAND NEEDS PYTHON. The models are MLX, which is Python, so the',
+      'pages are read by `src/vlm/vlm_page.py` in one subprocess for the whole',
+      'book — one model load, not one per page. The interpreter needs mlx-vlm and',
+      'PyMuPDF in it; pass it with --python or FOUNDRY_VLM_PYTHON, or leave it and',
+      'a `vlmtest` conda environment is looked for. Weights are pulled by mlx-vlm',
+      'into the HuggingFace cache on first use, not by `foundry models pull`.',
+      '',
+      'Pages are rendered by PyMuPDF at 200 dpi. That is the resolution the models',
+      'were measured at and it is not a setting, for the same reason the rest of',
+      'the pipeline pins its dpi (ARCHITECTURE §5).',
+      '',
+      'What comes out is an ordinary EPUB3: one XHTML document per chapter, split',
+      'on the highest heading level the book actually uses, a nav document, and a',
+      'package. Page furniture the model TAGGED — folios, running feet, watermarks',
+      '— is dropped; a dialect with no such tags cannot drop it, and says so in',
+      'its model notes.',
+      '',
+      'NOTHING DEGRADES. A page that came back empty, a page that hit the token',
+      'cap while the model was still writing, a page whose HTML does not parse and',
+      'a block this program has no rule for are each an error that names the page.',
+      'Half a book reads exactly like a whole one.',
+    ].join('\n'),
+    options: [PDF_IN, OUT_PATH, VLM_MODEL, VLM_PYTHON, VLM_RENDERS, VLM_LANGUAGE],
+    run: runVlmConvert,
   },
   {
     name: 'models',
