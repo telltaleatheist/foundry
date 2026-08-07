@@ -55,6 +55,15 @@ export function parsePage(text: string, dialect: VlmDialect, page: number): Pars
     case 'nanonets-markdown': return parseMarkdown(text, page, true);
     case 'markdown': return parseMarkdown(text, page, false);
     case 'qwen-html': return parseQwenHtml(text, page);
+    case 'dots-json':
+      // Parsed by `dots.ts`, not here, and that is not an oversight. Its answer
+      // carries a box on every block, and a `VlmBlock` has nowhere to put one —
+      // dropping the geometry to fit this shape would throw away the only thing
+      // that dialect knows that the others do not. `convert.ts` forks on it.
+      throw new VlmDialectError(
+        `page ${page}: the dots-json dialect answers with geometry and is parsed by`
+        + ' src/vlm/dots.ts. Nothing should reach this parser with it.',
+      );
     // Every dialect in the registry is above. A new one arrives with its
     // parser, which is the whole cost of adding a model.
     default: throw new VlmDialectError(

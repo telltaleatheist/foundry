@@ -41,6 +41,22 @@ export class VlmBridgeError extends Error {
   }
 }
 
+/**
+ * The pixel budget the MLX path hands the processor, and it is a measurement.
+ *
+ * dots.ocr's own processor allows 11,289,600 pixels, which at 200 dpi means a
+ * page is passed through untouched — and costs about twice as long per page on
+ * this machine as the same page capped here, with no difference anybody could
+ * see in the text or in the boxes. So the MLX path caps it, and the SAME number
+ * goes to the dialect: the model answers in the frame the processor resized to,
+ * and a box scaled with the wrong budget is a few per cent out everywhere.
+ *
+ * The endpoint path does NOT cap. A vLLM server was started with a processor
+ * config and this program did not choose it; the model's own cap is the honest
+ * assumption there, and it makes the scale 1.0 at 200 dpi.
+ */
+export const MLX_MAX_PIXELS = 2_000_000;
+
 /** One page, as the model and the rasteriser measured it. */
 export interface VlmPage {
   number: number;
@@ -53,8 +69,21 @@ export interface VlmPage {
   chars: number;
   tokens: number;
   finishReason: string | null;
-  /** The model's answer, verbatim, in its own dialect. */
+  /** The model's answer, verbatim, in its own dialect. Empty when not read. */
   text: string;
+  /**
+   * The page was rendered and NOT read — either its answer was already on disk
+   * (`--readings`) or this run only wanted the render (the endpoint path).
+   * Never a failure, and never confused with one: an unreadable page is in
+   * `VlmRunResult.unreadable`, by name.
+   */
+  skipped: boolean;
+}
+
+/** A page the model could not usefully answer for. Always carries a reason. */
+export interface VlmUnreadablePage {
+  number: number;
+  reason: string;
 }
 
 /** What the PDF says about itself, before a model has seen a page of it. */
@@ -70,6 +99,8 @@ export interface VlmDocumentInfo {
 export interface VlmRunResult {
   document: VlmDocumentInfo;
   pages: VlmPage[];
+  /** Empty unless `unreadablePages: 'record'` — see the option. */
+  unreadable: VlmUnreadablePage[];
   /** Process start through model resident. The fixed cost, paid once. */
   loadSeconds: number;
   renderSeconds: number;
@@ -86,6 +117,42 @@ export interface VlmRunOptions {
   python?: string;
   /** Keep the page renders here instead of deleting them. */
   rendersDir?: string;
+  /**
+   * The processor's pixel budget for this run. Absent means the model's own,
+   * which is what the model card says and what a server would use.
+   */
+  maxPixels?: number;
+  /**
+   * Render every page and read NONE of them — no model is loaded at all.
+   *
+   * The endpoint path (`endpoint.ts`) does its own inference over HTTP but
+   * still needs the pages rasterised, and rasterising is PyMuPDF's job on the
+   * far side of this seam (see `vlm_page.py`). One flag rather than a second
+   * script.
+   */
+  renderOnly?: boolean;
+  /**
+   * Also write a grayscale PGM beside each PNG.
+   *
+   * The dots dialect measures ink in the render to decide a page-turn join, and
+   * PGM is the one raster format foundry reads with no decoder (`scan/pgm.ts`).
+   * PyMuPDF is already holding the pixmap, so the conversion is free here and
+   * would be a dependency anywhere else.
+   */
+  grayscale?: boolean;
+  /** Pages whose answers are already in hand. Rendered, never inferred. */
+  skipPages?: readonly number[];
+  /**
+   * What an unusable page does: stop the run, or be recorded and carried on
+   * past.
+   *
+   * `stop` is the default and the rule for the markdown dialects: their answer
+   * is prose, a short page is invisible in the finished book, and the run has
+   * to fail where a person can see it. `record` is for a dialect whose answer
+   * is per-page structured data that a report can name and a cached re-read can
+   * repair — see the header of `dots.ts`.
+   */
+  unreadablePages?: 'stop' | 'record';
   /** Called as each page lands, for progress. */
   onPage?: (page: VlmPage, total: number) => void;
   onLoaded?: (seconds: number) => void;
@@ -164,6 +231,7 @@ export async function readPagesWithVlm(opts: VlmRunOptions): Promise<VlmRunResul
   const script = scriptPath();
 
   const config = JSON.stringify({
+    mode: opts.renderOnly ? 'render' : 'read',
     pdf: path.resolve(opts.pdfPath),
     repo: opts.model.repo,
     // Verbatim, and it travels as a JSON string on stdin rather than as an
@@ -171,6 +239,9 @@ export async function readPagesWithVlm(opts: VlmRunOptions): Promise<VlmRunResul
     prompt: opts.model.prompt,
     dpi: opts.dpi,
     maxTokens: opts.model.maxTokens,
+    grayscale: opts.grayscale === true,
+    skipPages: opts.skipPages ?? [],
+    ...(opts.maxPixels !== undefined ? { maxPixels: opts.maxPixels } : {}),
     ...(opts.rendersDir ? { rendersDir: path.resolve(opts.rendersDir) } : {}),
   });
 
@@ -270,36 +341,151 @@ export async function readPagesWithVlm(opts: VlmRunOptions): Promise<VlmRunResul
 
   if (pages.length !== doc.pages) {
     throw new VlmBridgeError(
-      `the PDF has ${doc.pages} pages and the model answered for ${pages.length} of them`,
+      `the PDF has ${doc.pages} pages and the helper reported ${pages.length} of them`,
     );
   }
+
+  const record = opts.unreadablePages === 'record';
+  const unreadable: VlmUnreadablePage[] = [];
+  const usable: VlmPage[] = [];
   for (const [index, page] of pages.entries()) {
     if (page.number !== index + 1) {
       throw new VlmBridgeError(
         `pages arrived out of order: expected page ${index + 1}, got page ${page.number}`,
       );
     }
-    if (page.finishReason === 'length') {
-      throw new VlmBridgeError(
-        `page ${page.number} hit the ${opts.model.maxTokens}-token cap, so the model was still`
-        + ' writing when it was cut off. That page is truncated and the book would be missing'
-        + ' the end of it with nothing to show for it.',
-      );
-    }
-    if (page.text.trim().length === 0) {
-      throw new VlmBridgeError(
-        `page ${page.number} came back empty from ${opts.model.id}. A blank page in a book is a`
-        + ' claim about the source, and nothing here can make it.',
-      );
-    }
+    // A skipped page was never offered to the model on this run, so nothing
+    // about its answer is this run's to judge.
+    if (page.skipped) { usable.push(page); continue; }
+
+    const truncated = page.finishReason === 'length'
+      ? `it hit the ${opts.model.maxTokens}-token cap, so the model was still writing when it was`
+        + ' cut off. That page is truncated and the book would be missing the end of it with'
+        + ' nothing to show for it.'
+      : null;
+    const empty = page.text.trim().length === 0
+      ? `it came back empty from ${opts.model.id}. A blank page in a book is a claim about the`
+        + ' source, and nothing here can make it.'
+      : null;
+    const reason = truncated ?? empty;
+    if (reason === null) { usable.push(page); continue; }
+    if (!record) throw new VlmBridgeError(`page ${page.number}: ${reason}`);
+    unreadable.push({ number: page.number, reason });
   }
 
   return {
     document: doc,
-    pages,
+    pages: usable,
+    unreadable,
     loadSeconds,
     renderSeconds: sums.renderSeconds,
     inferenceSeconds: sums.inferenceSeconds,
     peakRssBytes: sums.peakRssBytes,
   };
+}
+
+// ── cropping a picture out of a page ────────────────────────────────────────
+
+/** One picture to cut out of a page render, in render pixels. */
+export interface VlmCropRequest {
+  page: number;
+  box: { x1: number; y1: number; x2: number; y2: number };
+  /** The file name it gets, inside the container. */
+  name: string;
+}
+
+export interface VlmCropResult {
+  name: string;
+  mediaType: string;
+  data: Uint8Array;
+}
+
+/**
+ * Cut the pictures out of the renders, in one more turn of the same seam.
+ *
+ * A second short subprocess rather than a PNG codec in TypeScript, and that is
+ * the same decision `src/scan/pgm.ts` records: an image decoder is a dependency
+ * in the most portable part of the program, and this mode ALREADY requires a
+ * Python with PyMuPDF in it. The boxes are not known until the pages have been
+ * parsed, which is why it cannot be folded into the read pass.
+ */
+export async function cropPageRenders(opts: {
+  pdfPath: string;
+  dpi: number;
+  cropsDir: string;
+  requests: readonly VlmCropRequest[];
+  python?: string;
+}): Promise<VlmCropResult[]> {
+  if (opts.requests.length === 0) return [];
+  const python = resolvePython(opts.python);
+  const script = scriptPath();
+  const cropsDir = path.resolve(opts.cropsDir);
+
+  const config = JSON.stringify({
+    mode: 'crop',
+    pdf: path.resolve(opts.pdfPath),
+    dpi: opts.dpi,
+    cropsDir,
+    crops: opts.requests.map((r) => ({
+      page: r.page,
+      name: r.name,
+      box: [r.box.x1, r.box.y1, r.box.x2, r.box.y2],
+    })),
+  });
+
+  const proc = spawn(python, [script], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const written: { name: string; path: string }[] = [];
+  const stderrTail: string[] = [];
+
+  const finished = new Promise<void>((resolve, reject) => {
+    let stdout = '';
+    proc.stdout.setEncoding('utf8');
+    proc.stdout.on('data', (chunk: string) => {
+      stdout += chunk;
+      let nl = stdout.indexOf('\n');
+      while (nl !== -1) {
+        const line = stdout.slice(0, nl);
+        stdout = stdout.slice(nl + 1);
+        nl = stdout.indexOf('\n');
+        if (line.trim().length === 0) continue;
+        const event = JSON.parse(line) as Record<string, unknown>;
+        if (event['event'] === 'crop') {
+          written.push({ name: event['name'] as string, path: event['path'] as string });
+        }
+      }
+    });
+    proc.stderr.setEncoding('utf8');
+    proc.stderr.on('data', (chunk: string) => {
+      for (const line of chunk.split('\n')) {
+        if (line.length === 0) continue;
+        stderrTail.push(line);
+        if (stderrTail.length > 40) stderrTail.shift();
+      }
+    });
+    proc.on('error', (err) => reject(new VlmBridgeError(`could not start ${python}: ${err.message}`)));
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        return reject(new VlmBridgeError(
+          `${path.basename(script)} exited ${code} while cropping. Its last output:\n`
+          + stderrTail.map((l) => `  ${l}`).join('\n'),
+        ));
+      }
+      resolve();
+    });
+  });
+
+  proc.stdin.write(config);
+  proc.stdin.end();
+  await finished;
+
+  if (written.length !== opts.requests.length) {
+    throw new VlmBridgeError(
+      `${opts.requests.length} pictures were asked for and ${written.length} were written`,
+    );
+  }
+  return written.map((entry) => ({
+    name: entry.name,
+    mediaType: 'image/png',
+    data: new Uint8Array(fs.readFileSync(entry.path)),
+  }));
 }

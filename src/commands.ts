@@ -121,6 +121,7 @@ import { runExportStage, type BlockOverride, type OverrideRequest } from './pipe
 import { runPdfFootnotes } from './pipeline/footnotes-document.js';
 import { runReflowStage } from './pipeline/reflow-stage.js';
 import { vlmConvert } from './vlm/convert.js';
+import { DEFAULT_VLM_CONCURRENCY } from './vlm/endpoint.js';
 import { DEFAULT_VLM_MODEL_ID, VLM_MODELS } from './vlm/models.js';
 import { applyDeskew, processPage, type Box } from './scan/bands.js';
 import { readPgm } from './scan/pgm.js';
@@ -325,6 +326,47 @@ const VLM_LANGUAGE: OptionSpec = {
   type: 'string',
   placeholder: '<bcp47>',
   describe: 'dc:language for the EPUB. Declared, not detected — nothing here reads a language.',
+};
+
+const VLM_ENDPOINT: OptionSpec = {
+  name: 'vlm-endpoint',
+  type: 'string',
+  placeholder: '<url>',
+  describe: 'An OpenAI-compatible server reads the pages instead of MLX, e.g. http://host:8000/v1.',
+};
+
+const VLM_ENDPOINT_MODEL: OptionSpec = {
+  name: 'vlm-endpoint-model',
+  type: 'string',
+  placeholder: '<name>',
+  describe: 'The name --vlm-endpoint\'s server was started with. Defaults to the registry entry\'s.',
+};
+
+const VLM_CONCURRENCY: OptionSpec = {
+  name: 'vlm-concurrency',
+  type: 'string',
+  placeholder: '<n>',
+  describe: `Pages in flight against --vlm-endpoint at once. Default ${DEFAULT_VLM_CONCURRENCY}, the measured knee.`,
+};
+
+const VLM_READINGS: OptionSpec = {
+  name: 'readings',
+  type: 'string',
+  placeholder: '<file.jsonl>',
+  describe: 'Bank each page\'s answer here as it lands, and re-read only what is missing.',
+};
+
+const VLM_CHAPTERS: OptionSpec = {
+  name: 'chapters',
+  type: 'string',
+  placeholder: '<file.json>',
+  describe: 'Write the chapter PROPOSALS and the skipped pages here, for a person to confirm.',
+};
+
+const VLM_STRIP_MARKERS: OptionSpec = {
+  name: 'strip-note-markers',
+  type: 'boolean',
+  describe: 'Remove footnote reference numbers from the prose. For a narration build.',
 };
 
 const OVERRIDES: OptionSpec = {
@@ -2073,24 +2115,49 @@ async function runReflow(args: ParsedArgs): Promise<void> {
  * carries the reasoning for the mode. What belongs here is only argv.
  */
 async function runVlmConvert(args: ParsedArgs): Promise<void> {
+  const concurrency = optionalString(args, 'vlm-concurrency');
+  if (concurrency !== undefined && !/^[1-9]\d*$/.test(concurrency)) {
+    throw new UsageError(`--vlm-concurrency takes a positive whole number, not "${concurrency}"`);
+  }
+
   const report = await vlmConvert({
     pdfPath: requireString(args, 'pdf', 'the PDF to read'),
     outPath: requireString(args, 'out', 'where the EPUB is written'),
     modelId: optionalString(args, 'vlm-model') ?? DEFAULT_VLM_MODEL_ID,
     ...(optionalString(args, 'python') ? { python: optionalString(args, 'python')! } : {}),
     ...(optionalString(args, 'renders') ? { rendersDir: optionalString(args, 'renders')! } : {}),
+    ...(optionalString(args, 'vlm-endpoint') ? { endpoint: optionalString(args, 'vlm-endpoint')! } : {}),
+    ...(optionalString(args, 'vlm-endpoint-model')
+      ? { endpointModel: optionalString(args, 'vlm-endpoint-model')! } : {}),
+    ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
+    ...(optionalString(args, 'readings') ? { readingsPath: optionalString(args, 'readings')! } : {}),
+    ...(optionalString(args, 'chapters') ? { chaptersPath: optionalString(args, 'chapters')! } : {}),
+    stripNoteMarkers: flag(args, 'strip-note-markers'),
     language: optionalString(args, 'language') ?? 'en',
     log,
   });
 
   const { timings } = report;
-  const perPage = timings.inferenceSeconds / report.pages.length;
+  const read = Math.max(1, report.pages.length - report.unreadable.length);
+  const perPage = timings.inferenceSeconds / read;
   log(
     `vlm-convert: ${report.pages.length} pages in ${timings.totalSeconds.toFixed(1)}s `
     + `(${perPage.toFixed(1)}s a page at steady state, `
     + `${(60 / perPage).toFixed(1)} pages a minute), `
     + `peak ${(report.peakRssBytes / 1024 / 1024 / 1024).toFixed(1)} GiB`,
   );
+  const categories = Object.entries(report.categories).sort((a, b) => b[1] - a[1]);
+  if (categories.length > 0) {
+    log(`vlm-convert: ${categories.map(([name, n]) => `${name} ${n}`).join(', ')}`);
+  }
+  if (report.unreadable.length > 0) {
+    // Last, and named again: the run has printed forty lines by now, and a page
+    // that is not in the book has to be the thing still on screen at the end.
+    log(
+      `vlm-convert: ${report.unreadable.length} PAGE(S) ARE NOT IN THE BOOK — `
+      + report.unreadable.map((p) => p.number).join(', '),
+    );
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -2770,29 +2837,68 @@ export const COMMANDS: readonly Command[] = [
       '  documents, verbatim, and each answers in its own dialect. Adding one is a',
       '  registry entry in src/vlm/models.ts plus a parser in src/vlm/dialect.ts.',
       '',
+      'dots-ocr IS THE DEFAULT, and it is the only one that answers with GEOMETRY:',
+      'a JSON array of {bbox, category, text} in reading order over eleven',
+      'categories. Everything the other three cannot do follows from that. Page',
+      'headers and footers are dropped because the model says which blocks they',
+      'are. A Picture is cropped out of the page render by its box and carried',
+      'into the book with its Caption. Footnote blocks collect at the end of their',
+      'CHAPTER, one paragraph per note. A centered epigraph is told from a',
+      'paragraph by measuring against the BOOK\'S body column rather than the page.',
+      'A paragraph that runs over a page turn is rejoined — by the words when the',
+      'words say so, and by the ink of the render when they do not — and a word the',
+      'column broke across the turn is fused using the book itself as the',
+      'dictionary. Every element in the EPUB carries data-bf-page (the PDF page it',
+      'was read from) and data-bf-cat (the model\'s own category), which is what',
+      'lets a picker select "every footnote" or "everything on page 3" in a format',
+      'that has no page concept of its own.',
+      '',
       'THIS COMMAND NEEDS PYTHON. The models are MLX, which is Python, so the',
       'pages are read by `src/vlm/vlm_page.py` in one subprocess for the whole',
       'book — one model load, not one per page. The interpreter needs mlx-vlm and',
       'PyMuPDF in it; pass it with --python or FOUNDRY_VLM_PYTHON, or leave it and',
       'a `vlmtest` conda environment is looked for. Weights are pulled by mlx-vlm',
       'into the HuggingFace cache on first use, not by `foundry models pull`.',
+      'Python is needed even with --vlm-endpoint: the pages still have to be',
+      'rasterised, and PyMuPDF is what does it.',
+      '',
+      '--vlm-endpoint sends the pages to an OpenAI-compatible server instead —',
+      'the same verbatim prompt, the same 200 dpi render, temperature 0, twelve',
+      'pages in flight. A chat endpoint is right HERE and wrong everywhere else in',
+      'foundry (ARCHITECTURE §4): a document VLM\'s published interface IS the chat',
+      'template, and the MLX path reaches the same one through',
+      'apply_chat_template. On MLX the pixel budget is capped at 2,000,000, which',
+      'halves the per-page cost and is the same number the boxes are scaled with;',
+      'a server uses its own processor config, so the model\'s cap is assumed there',
+      'and the run states the frame it measured in.',
+      '',
+      '--readings banks every answer as it lands and re-reads only what is',
+      'missing, so a killed run costs one page and a change to the parser or the',
+      'assembler costs no GPU at all.',
       '',
       'Pages are rendered by PyMuPDF at 200 dpi. That is the resolution the models',
       'were measured at and it is not a setting, for the same reason the rest of',
       'the pipeline pins its dpi (ARCHITECTURE §5).',
       '',
-      'What comes out is an ordinary EPUB3: one XHTML document per chapter, split',
-      'on the highest heading level the book actually uses, a nav document, and a',
-      'package. Page furniture the model TAGGED — folios, running feet, watermarks',
-      '— is dropped; a dialect with no such tags cannot drop it, and says so in',
-      'its model notes.',
+      'What comes out is an ordinary EPUB3: one XHTML document per chapter, a nav',
+      'document, and a package. Chapters are PROPOSED by a deterministic rule and',
+      '--chapters writes the proposals out as data for a person to confirm; the',
+      'list over-includes on purpose, because an extra costs a click and a missed',
+      'chapter cannot be recovered.',
       '',
-      'NOTHING DEGRADES. A page that came back empty, a page that hit the token',
-      'cap while the model was still writing, a page whose HTML does not parse and',
-      'a block this program has no rule for are each an error that names the page.',
-      'Half a book reads exactly like a whole one.',
+      'NOTHING DEGRADES SILENTLY. A page that came back empty, a page that hit the',
+      'token cap while the model was still writing, a page whose answer does not',
+      'parse and a block this program has no rule for are each named. For the',
+      'markdown dialects that stops the run; for dots.ocr, whose answer is',
+      'per-page structured data and whose answers are cached, the page is left out',
+      'and reported BY NUMBER — in the log, in --chapters, and again on the last',
+      'line of the run. What never happens is a page quietly guessed at.',
     ].join('\n'),
-    options: [PDF_IN, OUT_PATH, VLM_MODEL, VLM_PYTHON, VLM_RENDERS, VLM_LANGUAGE],
+    options: [
+      PDF_IN, OUT_PATH, VLM_MODEL, VLM_PYTHON, VLM_RENDERS, VLM_LANGUAGE,
+      VLM_ENDPOINT, VLM_ENDPOINT_MODEL, VLM_CONCURRENCY, VLM_READINGS, VLM_CHAPTERS,
+      VLM_STRIP_MARKERS,
+    ],
     run: runVlmConvert,
   },
   {

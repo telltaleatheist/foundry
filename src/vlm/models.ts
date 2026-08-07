@@ -36,8 +36,14 @@
  *  - `qwen-html`          `<h2 data-bbox="…">`, `<p data-bbox="…">` — Qwen2.5-VL's
  *                         own document format, geometry included.
  *  - `markdown`           plain markdown, no document tags (olmOCR).
+ *  - `dots-json`          one JSON array per page: `{bbox, category, text}` in
+ *                         reading order, eleven categories, geometry included.
+ *                         The only dialect that answers with WHERE as well as
+ *                         WHAT, which is why it is the one that can drop
+ *                         furniture, crop a picture, and tell a centered
+ *                         epigraph from a paragraph.
  */
-export type VlmDialect = 'nanonets-markdown' | 'qwen-html' | 'markdown';
+export type VlmDialect = 'nanonets-markdown' | 'qwen-html' | 'markdown' | 'dots-json';
 
 export interface VlmModelDef {
   /** Selected with `--vlm-model`. */
@@ -60,6 +66,31 @@ export interface VlmModelDef {
    * that has started repeating itself.
    */
   maxTokens: number;
+  /**
+   * The processor's own pixel budget — the FRAME THE MODEL'S BOXES ARE IN.
+   *
+   * A Qwen-family vision tower resizes its input to a multiple of 28 with the
+   * area inside `[min_pixels, max_pixels]`, and a model that answers with
+   * geometry answers in THAT space, not in the render's. Scaling a box back
+   * therefore needs the same number the processor used, which is why it is
+   * declared here beside the repo rather than read off a page — a preprocessor
+   * config that changed under us would move every box by a few per cent, which
+   * is a paragraph that loses its indent test and a picture cropped slightly
+   * wrong. Absent for the dialects that carry no geometry, because for them
+   * there is nothing to scale.
+   *
+   * `bridge.ts` OVERRIDES it downward on the MLX path (`MLX_MAX_PIXELS`) and
+   * hands the override to the dialect, so the two always agree.
+   */
+  maxPixels?: number;
+  /**
+   * The name an OpenAI-compatible server knows this model by (`--vlm-endpoint`).
+   *
+   * vLLM serves the upstream repo, not the MLX conversion, and the `model`
+   * field of a chat request has to match what the server was started with.
+   * `--vlm-endpoint-model` overrides it for a server started under another name.
+   */
+  endpointModel?: string;
   /** What is known about this model's behaviour on books. Measured, or nothing. */
   notes: string;
 }
@@ -95,7 +126,62 @@ const OLMOCR_PROMPT =
   + 'representation of this document as if you were reading it naturally. '
   + 'Convert equations to LaTeX and tables to markdown. Return your output as markdown.';
 
+/**
+ * dots.ocr's `layout-all` prompt, from the rednote-hilab model card.
+ *
+ * Written as a line array rather than one string so the four-space indents
+ * under rules 3 and 4 are visible and cannot be reflowed by an editor. It is
+ * byte-for-byte the card's prompt with no trailing newline;
+ * `test/vlm/dots.test.ts` pins its sha256 so a well-meant tidy of the wording
+ * fails a test instead of quietly costing accuracy (ARCHITECTURE §4).
+ */
+const DOTS_PROMPT = [
+  "Please output the layout information from the PDF image, including each layout element's bbox, its category, and the corresponding text content within the bbox.",
+  '',
+  '1. Bbox format: [x1, y1, x2, y2]',
+  '',
+  "2. Layout Categories: The possible categories are ['Caption', 'Footnote', 'Formula', 'List-item', 'Page-footer', 'Page-header', 'Picture', 'Section-header', 'Table', 'Text', 'Title'].",
+  '',
+  '3. Text Extraction & Formatting Rules:',
+  "    - Picture: For the 'Picture' category, the text field should be omitted.",
+  '    - Formula: Format its text as LaTeX.',
+  '    - Table: Format its text as HTML.',
+  '    - All Others (Text, Title, etc.): Format their text as Markdown.',
+  '',
+  '4. Constraints:',
+  '    - The output text must be the original text from the image, with no translation.',
+  '    - All layout elements must be sorted according to human reading order.',
+  '',
+  '5. Final Output: The entire output must be a single JSON object.',
+].join('\n');
+
 export const VLM_MODELS: readonly VlmModelDef[] = [
+  {
+    id: 'dots-ocr',
+    repo: 'mlx-community/dots.ocr-4bit',
+    prompt: DOTS_PROMPT,
+    dialect: 'dots-json',
+    // A dense index page — two columns of surnames and page numbers, no prose —
+    // ran past 4096 and came back truncated. The cap is not a budget, it is a
+    // stop for a model that has started repeating itself, so it is set where a
+    // real page cannot reach it. Measured on this machine, no page of any book
+    // read today went past 1,700 tokens.
+    maxTokens: 8192,
+    maxPixels: 11289600,
+    endpointModel: 'rednote-hilab/dots.ocr',
+    notes:
+      'THE DEFAULT (Aug 7 2026), and the only model here that answers with geometry. Its '
+      + 'answer is a JSON array of {bbox, category, text} in reading order over eleven '
+      + 'categories, which is what lets this mode do the things a stream of markdown cannot: '
+      + 'drop Page-header and Page-footer without a tag convention, crop a Picture out of the '
+      + 'page render and embed it with its Caption, judge a centered epigraph against the '
+      + "BOOK'S body column, collect Footnote blocks to the end of their chapter, and join a "
+      + 'paragraph across a page turn by measuring ink in the render. Measured on the 17-page '
+      + 'Kershaw article: 0.80% character error against the PDF\'s own text layer at roughly '
+      + '27 s a page (4-bit MLX, M1 Ultra), and 35% of blocks arriving as Text that a human '
+      + 'would call furniture is what the categories fix. The weights are somebody else\'s '
+      + 'and no prompting adds a category the model was not trained on.',
+  },
   {
     id: 'nanonets-ocr2-3b',
     repo: 'mlx-community/Nanonets-OCR2-3B-8bit',
@@ -148,8 +234,15 @@ export const VLM_MODELS: readonly VlmModelDef[] = [
  * stage exist. Nothing here is installed in that sense — mlx-vlm downloads a
  * repo on first use — so "which is present" is not a question with an answer at
  * this point, and the default is the model that was measured.
+ *
+ * It became `dots-ocr` on 7 Aug 2026. Nanonets reads a page marginally more
+ * accurately and produces a WORSE BOOK, because a stream of markdown cannot say
+ * which paragraph was a running head, where a picture was, or that four lines
+ * were a footnote — a third of its blocks arrive as ordinary body text that a
+ * reader would call furniture, and nothing downstream can tell. The three
+ * markdown models stay: they are what dots is measured against.
  */
-export const DEFAULT_VLM_MODEL_ID = 'nanonets-ocr2-3b';
+export const DEFAULT_VLM_MODEL_ID = 'dots-ocr';
 
 /** Look one up by id, or fail naming every id there is. */
 export function requireVlmModel(id: string): VlmModelDef {

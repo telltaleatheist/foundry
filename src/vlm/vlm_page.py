@@ -20,25 +20,42 @@ canvas layer cannot survive `bun build --compile`, and every drawing method on
 the shim throws so that a rendering path fails loudly instead of drawing with an
 identity transform. There is no rasteriser on the TypeScript side to reuse. The
 page image is already crossing this seam, so it is rendered on the side that can
-do it.
+do it — and so are the two other pixel jobs this mode has, for the same reason:
+the grayscale raster the dots dialect measures ink in, and the crop that turns a
+Picture block into a picture.
 
 200 DPI is not a setting. It is what the measurement was taken at — the pages
-the default model was scored on were 1300×2112 for a 468×760 pt page, exactly
-200 dpi — and it is the same resolution the rest of foundry pins for the same
-reason (ARCHITECTURE §5): a model's input distribution moves with resolution,
-and the damage shows up as a bad model rather than a bad render.
+the models were scored on were 1300×2112 for a 468×760 pt page, exactly 200 dpi
+— and it is the same resolution the rest of foundry pins for the same reason
+(ARCHITECTURE §5): a model's input distribution moves with resolution, and the
+damage shows up as a bad model rather than a bad render.
+
+THE PIXEL BUDGET IS THE MODEL'S COORDINATE SYSTEM. A model that answers with
+boxes answers in the frame its processor resized the page to, so `maxPixels` is
+not a performance knob that can be set here and forgotten: whatever is set here
+is what the TypeScript side must scale the boxes with. It is therefore passed IN
+rather than chosen here, and a processor that will not accept it is a failure
+rather than a silent ignore.
 
 NO SILENT FALLBACKS (ARCHITECTURE §8). A missing import, a page that renders to
-nothing, a page the model answers with nothing, and a page that hits the token
-cap are each fatal, named, and exit nonzero. Half a book that looks like a whole
-one is the failure this file refuses to produce.
+nothing, a processor that cannot be told its budget, and a crop that lands
+outside its page are each fatal, named, and exit nonzero. Half a book that looks
+like a whole one is the failure this file refuses to produce.
+
+Three modes, one script:
+
+    read      render every page and read it with the model  (the MLX path)
+    render    render every page and read none of them       (the endpoint path)
+    crop      cut named boxes out of named pages            (Picture blocks)
 
 Protocol — one JSON object per line on stdout, flushed:
 
     {"event":"document","pages":17,"title":…,"author":…,"widthPt":…,"heightPt":…}
-    {"event":"loaded","repo":…,"seconds":9.8}
+    {"event":"loaded","repo":…,"seconds":9.8,"maxPixels":2000000}
     {"event":"page","number":1,"width":1300,"height":2112,"renderSeconds":0.09,
-     "seconds":14.9,"chars":2183,"tokens":612,"finishReason":"stop","text":"…"}
+     "seconds":14.9,"chars":2183,"tokens":612,"finishReason":"stop",
+     "skipped":false,"text":"…"}
+    {"event":"crop","name":"p0005-0.png","path":"…/crops/p0005-0.png"}
     {"event":"done","renderSeconds":1.6,"inferenceSeconds":251.4,"peakRssBytes":…}
 
 stderr is progress and whatever MLX has to say; stdout is only ever the
@@ -68,30 +85,124 @@ def peak_rss_bytes():
     return raw if sys.platform == 'darwin' else raw * 1024
 
 
-def main():
-    config = json.loads(sys.stdin.read())
-    pdf_path = config['pdf']
-    repo = config['repo']
-    prompt = config['prompt']
-    dpi = config['dpi']
-    max_tokens = config['maxTokens']
-    renders_dir = config.get('rendersDir')
-
-    # Imported inside main so the failure names the missing package and the
-    # interpreter it was missing from — an ImportError traceback out of a
+def import_fitz():
+    # Imported inside a function so the failure names the missing package and
+    # the interpreter it was missing from — an ImportError traceback out of a
     # subprocess is the least useful thing this seam could hand back.
     try:
         import fitz
     except ImportError as err:
         fail('PyMuPDF is not installed in %s (%s). Install it with `pip install pymupdf`.'
              % (sys.executable, err))
-    try:
-        from mlx_vlm import generate, load
-        from mlx_vlm.prompt_utils import apply_chat_template
-        from mlx_vlm.utils import load_config
-    except ImportError as err:
-        fail('mlx-vlm is not installed in %s (%s). Install it with `pip install mlx-vlm`.'
-             % (sys.executable, err))
+    return fitz
+
+
+def write_pgm(path, pixmap):
+    """The grayscale raster, as the one image format foundry reads with no codec.
+
+    Written by hand rather than through the library's own PGM writer: the
+    reader on the other side (`src/scan/pgm.ts`) accepts binary P5 with a
+    single whitespace after the header and an 8-bit maxval, and this is the
+    nine bytes that guarantees it.
+    """
+    samples = pixmap.samples
+    if len(samples) != pixmap.width * pixmap.height:
+        fail('a grayscale pixmap of %dx%d carried %d bytes, so its rows are padded and this '
+             'writer would mis-shape them' % (pixmap.width, pixmap.height, len(samples)))
+    with open(path, 'wb') as out:
+        out.write(b'P5\n%d %d\n255\n' % (pixmap.width, pixmap.height))
+        out.write(samples)
+
+
+def cap_pixels(processor, max_pixels):
+    """Tell the image processor its budget, or fail naming what it is.
+
+    Both spellings are set because transformers moved the number from an
+    attribute to the `size` dict and both are live in the wild; at least one of
+    them has to exist, and a processor that has neither is a processor whose
+    coordinate frame this program cannot predict.
+    """
+    image_processor = getattr(processor, 'image_processor', None)
+    if image_processor is None:
+        fail('the processor has no image_processor, so its pixel budget cannot be set — and '
+             'the boxes it answers with could not be scaled back to the render')
+    touched = []
+    if hasattr(image_processor, 'max_pixels'):
+        image_processor.max_pixels = max_pixels
+        touched.append('max_pixels')
+    size = getattr(image_processor, 'size', None)
+    if isinstance(size, dict):
+        for key in ('max_pixels', 'longest_edge'):
+            if key in size:
+                size[key] = max_pixels
+                touched.append('size[%s]' % key)
+    if not touched:
+        fail('%s carries neither max_pixels nor a size dict, so a pixel budget of %d cannot be '
+             'applied to it' % (type(image_processor).__name__, max_pixels))
+    sys.stderr.write('  pixel budget %d applied to %s\n' % (max_pixels, ', '.join(touched)))
+
+
+def run_crop(config):
+    """Cut boxes out of pages, straight from the PDF at the pinned dpi.
+
+    Re-rendered rather than cut out of the page PNG: the crop is a picture that
+    goes into somebody's book, the PDF still has it at full fidelity, and a
+    second decode of a lossless render to get the same pixels is work for
+    nothing.
+    """
+    fitz = import_fitz()
+    pdf_path = config['pdf']
+    dpi = config['dpi']
+    crops_dir = config['cropsDir']
+    os.makedirs(crops_dir, exist_ok=True)
+
+    doc = fitz.open(pdf_path)
+    scale = 72.0 / dpi
+    for crop in config['crops']:
+        number = crop['page']
+        if number < 1 or number > doc.page_count:
+            fail('a crop names page %d of a %d-page document' % (number, doc.page_count))
+        page = doc[number - 1]
+        x1, y1, x2, y2 = crop['box']
+        rect = fitz.Rect(x1 * scale, y1 * scale, x2 * scale, y2 * scale) & page.rect
+        if rect.is_empty:
+            fail('the crop for %s on page %d lies outside the page' % (crop['name'], number))
+        pixmap = page.get_pixmap(dpi=dpi, clip=rect)
+        if pixmap.width == 0 or pixmap.height == 0:
+            fail('the crop for %s on page %d rendered to a %dx%d image'
+                 % (crop['name'], number, pixmap.width, pixmap.height))
+        path = os.path.join(crops_dir, crop['name'])
+        pixmap.save(path)
+        emit({'event': 'crop', 'name': crop['name'], 'path': path})
+
+
+def main():
+    config = json.loads(sys.stdin.read())
+    mode = config.get('mode', 'read')
+    if mode == 'crop':
+        return run_crop(config)
+    if mode not in ('read', 'render'):
+        fail('mode "%s" is not one of read, render, crop' % mode)
+
+    pdf_path = config['pdf']
+    repo = config['repo']
+    prompt = config['prompt']
+    dpi = config['dpi']
+    max_tokens = config['maxTokens']
+    max_pixels = config.get('maxPixels')
+    renders_dir = config.get('rendersDir')
+    grayscale = config.get('grayscale', False)
+    skip_pages = set(config.get('skipPages') or [])
+
+    fitz = import_fitz()
+    if mode == 'read':
+        try:
+            from mlx_vlm import generate, load
+            from mlx_vlm.prompt_utils import apply_chat_template
+            from mlx_vlm.utils import load_config
+        except ImportError as err:
+            fail('mlx-vlm is not installed in %s (%s). Install it with `pip install mlx-vlm`.'
+                 % (sys.executable, err))
 
     doc = fitz.open(pdf_path)
     if doc.page_count == 0:
@@ -112,10 +223,15 @@ def main():
         'heightPt': first.height,
     })
 
-    load_start = time.time()
-    model, processor = load(repo)
-    cfg = load_config(repo)
-    emit({'event': 'loaded', 'repo': repo, 'seconds': time.time() - load_start})
+    model = processor = cfg = None
+    if mode == 'read' and len(skip_pages) < doc.page_count:
+        load_start = time.time()
+        model, processor = load(repo)
+        cfg = load_config(repo)
+        if max_pixels:
+            cap_pixels(processor, max_pixels)
+        emit({'event': 'loaded', 'repo': repo, 'seconds': time.time() - load_start,
+              'maxPixels': max_pixels})
 
     if renders_dir:
         os.makedirs(renders_dir, exist_ok=True)
@@ -133,24 +249,33 @@ def main():
         pixmap = doc[index].get_pixmap(dpi=dpi)
         image_path = os.path.join(scratch, 'page-%04d.png' % number)
         pixmap.save(image_path)
+        if grayscale:
+            write_pgm(os.path.join(scratch, 'page-%04d.pgm' % number),
+                      fitz.Pixmap(fitz.csGRAY, pixmap))
         render_seconds = time.time() - render_start
         render_total += render_seconds
         if pixmap.width == 0 or pixmap.height == 0:
             fail('page %d rendered to a %dx%d image' % (number, pixmap.width, pixmap.height))
 
-        infer_start = time.time()
-        # The prompt goes through the model's OWN chat template, which is what
-        # `apply_chat_template` is for: the image placeholder, the role turns and
-        # any thinking-block convention are the checkpoint's, and building the
-        # string by hand here would feed a shape it was never trained on.
-        formatted = apply_chat_template(processor, cfg, prompt, num_images=1)
-        result = generate(model, processor, formatted, [image_path],
-                          max_tokens=max_tokens, temperature=0.0, verbose=False)
-        # mlx-vlm has returned both a bare string and a result object across
-        # versions; `.text` when it is there, the string when it is not.
-        text = (getattr(result, 'text', None) or str(result)).strip()
-        infer_seconds = time.time() - infer_start
-        inference_total += infer_seconds
+        skipped = mode == 'render' or number in skip_pages
+        text = ''
+        result = None
+        infer_seconds = 0.0
+        if not skipped:
+            infer_start = time.time()
+            # The prompt goes through the model's OWN chat template, which is
+            # what `apply_chat_template` is for: the image placeholder, the role
+            # turns and any thinking-block convention are the checkpoint's, and
+            # building the string by hand here would feed a shape it was never
+            # trained on.
+            formatted = apply_chat_template(processor, cfg, prompt, num_images=1)
+            result = generate(model, processor, formatted, [image_path],
+                              max_tokens=max_tokens, temperature=0.0, verbose=False)
+            # mlx-vlm has returned both a bare string and a result object across
+            # versions; `.text` when it is there, the string when it is not.
+            text = (getattr(result, 'text', None) or str(result)).strip()
+            infer_seconds = time.time() - infer_start
+            inference_total += infer_seconds
 
         if not renders_dir:
             os.unlink(image_path)
@@ -163,12 +288,16 @@ def main():
             'renderSeconds': render_seconds,
             'seconds': infer_seconds,
             'chars': len(text),
-            'tokens': getattr(result, 'generation_tokens', 0),
-            'finishReason': getattr(result, 'finish_reason', None),
+            'tokens': getattr(result, 'generation_tokens', 0) if result is not None else 0,
+            'finishReason': getattr(result, 'finish_reason', None) if result is not None else None,
+            'skipped': skipped,
             'text': text,
         })
-        sys.stderr.write('  page %d/%d: %d chars in %.1fs\n'
-                         % (number, doc.page_count, len(text), infer_seconds))
+        if skipped:
+            sys.stderr.write('  page %d/%d: rendered\n' % (number, doc.page_count))
+        else:
+            sys.stderr.write('  page %d/%d: %d chars in %.1fs\n'
+                             % (number, doc.page_count, len(text), infer_seconds))
 
     emit({
         'event': 'done',

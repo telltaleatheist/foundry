@@ -126,32 +126,105 @@ measurements the incremental-update design rests on.
 
 `vlm-convert` answers the same question by different means: instead of
 segmenting a page and labelling its blocks, it hands the whole page picture to a
-document VLM and takes back marked-up text.
+document VLM and takes back a description of the page.
 
 ```
-foundry vlm-convert --pdf book.pdf --out book.epub [--vlm-model <id>] [--python <path>]
+foundry vlm-convert --pdf book.pdf --out book.epub \
+    [--vlm-model <id>] [--python <path>] [--readings answers.jsonl] \
+    [--chapters chapters.json] [--vlm-endpoint http://host:8000/v1]
 ```
 
 It shares **no stage, no artifact and no model** with the pipeline above, on
 purpose: the two are meant to be comparable, which they stop being the moment
 they share a step. What it needs that the rest of foundry does not is a Python
-with MLX in it — the models are MLX, so `src/vlm/vlm_page.py` reads the pages in
-ONE subprocess for the whole book (one model load, not one per page) and streams
-a JSON object per page back. Pages are rendered by PyMuPDF at 200 dpi, the
-resolution the models were measured at.
+with PyMuPDF in it, and with MLX too unless the reading happens elsewhere —
+`src/vlm/vlm_page.py` renders the pages at 200 dpi and, on the MLX path, reads
+them in ONE subprocess for the whole book (one model load, not one per page),
+streaming a JSON object per page back.
 
-Three models are catalogued in `src/vlm/models.ts`, each asked in the prompt its
-own model card documents, VERBATIM, and each answering in its own dialect. That
-prompt is load-bearing exactly the way the stage prompts are (ARCHITECTURE §4):
-asking Qwen2.5-VL for an ad-hoc JSON layout produced fabricated bounding boxes,
-while asking it for `QwenVL HTML` — its trained format — produced real geometry.
-Adding a model is a registry entry plus a dialect parser, and nothing else.
+### dots.ocr, the default — the one that answers with geometry
 
-Measured, on a 17-page born-digital article (`Nanonets-OCR2-3B`, 8-bit MLX, M1
-Ultra): 15.4 s a page, 3.9 pages a minute, 5.5 GiB peak, and **0.80% character
-error** against the PDF's own text layer — 0.56% over the sixteen pages of
-running prose, and 0.40% with em/en dashes folded together. Page furniture the
-model TAGS is dropped; a running head, which it does not tag, is not.
+`dots-ocr` (`mlx-community/dots.ocr-4bit`) does not answer with a stream of
+text. It answers with a JSON array of `{bbox, category, text}` in reading order
+over eleven categories, and **everything this mode can do that a markdown model
+cannot follows from that**:
+
+| what | how |
+|---|---|
+| page furniture goes | `Page-header` / `Page-footer` are dropped because the model says which blocks they are — no tag convention to rely on, no running head left in the prose |
+| a picture is a picture | the `Picture` box is cropped out of the page at 200 dpi, embedded, and kept with its `Caption` |
+| footnotes are endnotes | `Footnote` blocks collect at the end of their **chapter** — not per page — split into one paragraph per note at the superscript that opens it |
+| a marker is markup | reference numbers arrive as dedicated superscript codepoints, so they become real `<sup>`, or come out entirely with `--strip-note-markers` for a narration build |
+| centered means centered | alignment is judged against the **book's own body column** (the median edges of its full-width `Text` blocks), never the page — a justified column is itself centered on the paper, so a page-relative rule calls every paragraph in the book centered |
+| a paragraph survives a page turn | the words decide when they can (no terminal punctuation, next block opens lowercase); when they cannot, the **ink** does — a continuing paragraph fills its last line to the right margin, and a genuinely new one starts with a first-line indent |
+| a broken word is one word | the fuse-or-keep decision uses **the book as its own dictionary**: fuse if the fused form appears in it, keep the hyphen if the compound does, otherwise fuse iff the continuation is lowercase |
+| markdown never reaches the reader | dots writes `# …` headings and `> ` quote runs *inside* a text field; they become real headings and blockquotes |
+| a newline is a line ending | it reflows wrapped prose, so a break it kept is one the page had — a contents entry, a line of verse — and becomes `<br/>` |
+
+Chapters are **proposed, not decided**: a `Title` or `Section-header`, first on
+its page, in the top 45%, short, and either chapter-ish or centered.
+`--chapters` writes the list out as data with the reason each one fired. It
+over-includes — decorative half-titles land in it — and that is the design: an
+extra costs a click, a missed chapter cannot be recovered.
+
+Every element in the book carries **`data-bf-page`** (the PDF page it was read
+from) and **`data-bf-cat`** (the model's own category, lower-cased:
+`text`, `title`, `section-header`, `footnote`, `caption`, `table`, `picture`,
+`quote`, `formula`, `list-item`). An EPUB has no page concept and no memory of a
+layout model's opinion, and both are unrecoverable once the pages are joined —
+these two attributes are what let a picker say "every footnote" or "everything
+that was on page 3". Standard `epub:type="pagebreak"` markers are emitted at the
+page boundaries as well, inside the paragraph when the turn happened mid-sentence.
+
+The three markdown models stay in the registry. They are what dots is measured
+against, and each is asked in the prompt its own model card documents,
+VERBATIM. That prompt is load-bearing exactly the way the stage prompts are
+(ARCHITECTURE §4): asking Qwen2.5-VL for an ad-hoc JSON layout produced
+fabricated bounding boxes, while asking it for `QwenVL HTML` — its trained
+format — produced real geometry. Adding a model is a registry entry plus a
+dialect parser, and nothing else.
+
+### Reading the pages somewhere else, and only once
+
+`--readings <file.jsonl>` banks every page's answer as it lands, fsynced, and a
+re-run reads only what is missing. It is a cache of **answers**, not of books:
+the pages are still rendered, parsed and assembled every time, so a change to
+the parser or the assembler costs no GPU at all.
+
+`--vlm-endpoint <url>` sends the pages to an OpenAI-compatible server (vLLM)
+instead of loading MLX — same verbatim prompt, same 200 dpi render, temperature
+0, twelve pages in flight by default. A chat endpoint is right *here* and wrong
+everywhere else in foundry: ARCHITECTURE §4 forbids one for the stage models
+because their prompt is one this project builds byte for byte, while a document
+VLM's published interface *is* the chat template, and the MLX path reaches the
+same one through `apply_chat_template`.
+
+The two paths differ in exactly one number, and it is the one that matters. A
+Qwen-family processor resizes a page to a multiple of 28 inside a pixel budget,
+and **a model that answers with boxes answers in that resized frame**. On MLX
+the budget is pinned at 2,000,000 — measured: it halves the per-page cost with
+no visible difference — and the same number scales the boxes back. A server was
+started with its own processor config, so the model's own cap (11,289,600) is
+assumed there. The run prints the frame it measured in, and refuses outright if
+the boxes overflow it: a budget that is silently wrong crops every picture
+wrong and flips every indent test, on a book that reads fine.
+
+### Measured
+
+On a 17-page born-digital article (Kershaw, "Working Towards the Führer", 1993),
+M1 Ultra: `dots-ocr` at 4-bit MLX reads it at **0.80% character error** against
+the PDF's own text layer. `Nanonets-OCR2-3B` reads it slightly more accurately —
+0.80% over the same pages, 0.56% over the sixteen pages of running prose — and
+produces a **worse book**, because a third of what it returns as ordinary
+paragraphs is furniture a reader would never want narrated, and nothing
+downstream can tell which third.
+
+Nothing degrades silently. A page that came back empty, a page that hit the
+token cap while the model was still writing, and a page whose answer does not
+parse are each named. For the markdown dialects that stops the run; for
+dots.ocr — whose answer is per-page structured data and whose answers are
+cached — the page is left out of the book and reported by number, in the log, in
+`--chapters`, and again on the last line of the run.
 
 ## Stripping markers from a book that is already a book
 
