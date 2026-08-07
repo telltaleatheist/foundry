@@ -73,7 +73,7 @@ export interface VlmEpubResult {
   zipSeconds: number;
 }
 
-const OPF_DIR = 'EPUB';
+export const OPF_DIR = 'EPUB';
 
 /**
  * A fixed timestamp, so the same pages produce the same bytes.
@@ -96,7 +96,7 @@ table { border-collapse: collapse; margin: 1em 0; }
 td, th { border: 1px solid currentColor; padding: 0.2em 0.4em; }
 `;
 
-function esc(text: string): string {
+export function esc(text: string): string {
   return text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -105,14 +105,118 @@ function esc(text: string): string {
     .replace(/'/g, '&apos;');
 }
 
-const XHTML_HEAD = (title: string, lang: string): string =>
+export const XHTML_HEAD = (title: string, lang: string): string =>
   `<?xml version="1.0" encoding="UTF-8"?>\n`
   + `<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"`
   + ` xml:lang="${esc(lang)}" lang="${esc(lang)}">\n`
   + `<head>\n  <meta charset="utf-8"/>\n  <title>${esc(title)}</title>\n`
   + `  <link rel="stylesheet" type="text/css" href="../style.css"/>\n</head>\n<body>\n`;
 
-const XHTML_TAIL = '</body>\n</html>\n';
+export const XHTML_TAIL = '</body>\n</html>\n';
+
+/**
+ * One XHTML document of the book, already rendered.
+ *
+ * The two emitters in this directory build their documents from different
+ * inputs and neither can build the other's, but an EPUB CONTAINER is an EPUB
+ * container: the same `mimetype`-first rule, the same nav document, the same
+ * package. `packageVlmEpub` below is that shared half, and it is the only place
+ * either of them writes one.
+ */
+export interface VlmDocument {
+  /** Manifest id, unique in the package. */
+  id: string;
+  /** Href relative to `OPF_DIR`, e.g. `text/c0001.xhtml`. */
+  href: string;
+  /** The TOC label. */
+  label: string;
+  xhtml: string;
+}
+
+/** A non-document file the book carries — a cropped picture, so far. */
+export interface VlmResource {
+  id: string;
+  href: string;
+  mediaType: string;
+  data: Uint8Array;
+}
+
+/**
+ * Container, nav, package, zip — everything about an EPUB that is not the
+ * book's own words.
+ */
+export function packageVlmEpub(
+  metadata: VlmEpubMetadata,
+  documents: readonly VlmDocument[],
+  resources: readonly VlmResource[],
+  stylesheet: string,
+): { bytes: Uint8Array; zipSeconds: number } {
+  if (documents.length === 0) {
+    throw new VlmEpubError('no text survived the pages — there is no book to write');
+  }
+  const entries: ZipEntry[] = [];
+
+  // FIRST, stored, no extra field — the OCF spec lets a reader identify an EPUB
+  // by reading byte offset 30 without parsing anything. `writeZip` never
+  // reorders and never compresses, so ordering it first here is the whole job.
+  entries.push(zipText('mimetype', 'application/epub+zip'));
+
+  entries.push(zipText('META-INF/container.xml',
+    `<?xml version="1.0" encoding="UTF-8"?>\n`
+    + `<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">\n`
+    + `  <rootfiles>\n`
+    + `    <rootfile full-path="${OPF_DIR}/package.opf" media-type="application/oebps-package+xml"/>\n`
+    + `  </rootfiles>\n</container>\n`));
+
+  entries.push(zipText(`${OPF_DIR}/style.css`, stylesheet));
+
+  for (const document of documents) {
+    entries.push(zipText(`${OPF_DIR}/${document.href}`, document.xhtml));
+  }
+  for (const resource of resources) {
+    entries.push({ path: `${OPF_DIR}/${resource.href}`, data: resource.data });
+  }
+
+  const navItems = documents
+    .map((d) => `      <li><a href="${esc(d.href)}">${esc(d.label)}</a></li>`)
+    .join('\n');
+  entries.push(zipText(`${OPF_DIR}/nav.xhtml`,
+    `<?xml version="1.0" encoding="UTF-8"?>\n`
+    + `<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"`
+    + ` xml:lang="${esc(metadata.language)}" lang="${esc(metadata.language)}">\n`
+    + `<head>\n  <meta charset="utf-8"/>\n  <title>${esc(metadata.title)}</title>\n</head>\n<body>\n`
+    + `  <nav epub:type="toc" id="toc">\n    <h1>Contents</h1>\n    <ol>\n${navItems}\n    </ol>\n  </nav>\n`
+    + `  <nav epub:type="landmarks" id="landmarks" hidden="">\n    <h1>Landmarks</h1>\n    <ol>\n`
+    + `      <li><a epub:type="bodymatter" href="${esc(documents[0].href)}">Beginning</a></li>\n`
+    + `    </ol>\n  </nav>\n</body>\n</html>\n`));
+
+  const manifest = [
+    `    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>`,
+    `    <item id="style" href="style.css" media-type="text/css"/>`,
+    ...documents.map((d) =>
+      `    <item id="${d.id}" href="${esc(d.href)}" media-type="application/xhtml+xml"/>`),
+    ...resources.map((r) =>
+      `    <item id="${r.id}" href="${esc(r.href)}" media-type="${esc(r.mediaType)}"/>`),
+  ].join('\n');
+  const spine = documents.map((d) => `    <itemref idref="${d.id}"/>`).join('\n');
+
+  entries.push(zipText(`${OPF_DIR}/package.opf`,
+    `<?xml version="1.0" encoding="UTF-8"?>\n`
+    + `<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id"`
+    + ` xml:lang="${esc(metadata.language)}">\n`
+    + `  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n`
+    + `    <dc:identifier id="pub-id">${esc(metadata.identifier)}</dc:identifier>\n`
+    + `    <dc:title>${esc(metadata.title)}</dc:title>\n`
+    + `    <dc:language>${esc(metadata.language)}</dc:language>\n`
+    + (metadata.author ? `    <dc:creator>${esc(metadata.author)}</dc:creator>\n` : '')
+    + `    <meta property="dcterms:modified">${FIXED_MODIFIED}</meta>\n`
+    + `  </metadata>\n  <manifest>\n${manifest}\n  </manifest>\n`
+    + `  <spine>\n${spine}\n  </spine>\n</package>\n`));
+
+  const zipStarted = Date.now();
+  const bytes = writeZip(entries);
+  return { bytes, zipSeconds: (Date.now() - zipStarted) / 1000 };
+}
 
 /** A block with the page it was read from, which is what gets rendered. */
 interface PlacedBlock {
@@ -203,69 +307,18 @@ export function buildVlmEpub(
     };
   });
 
-  const entries: ZipEntry[] = [];
-
-  // FIRST, stored, no extra field — the OCF spec lets a reader identify an EPUB
-  // by reading byte offset 30 without parsing anything. `writeZip` never
-  // reorders and never compresses, so ordering it first here is the whole job.
-  entries.push(zipText('mimetype', 'application/epub+zip'));
-
-  entries.push(zipText('META-INF/container.xml',
-    `<?xml version="1.0" encoding="UTF-8"?>\n`
-    + `<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">\n`
-    + `  <rootfiles>\n`
-    + `    <rootfile full-path="${OPF_DIR}/package.opf" media-type="application/oebps-package+xml"/>\n`
-    + `  </rootfiles>\n</container>\n`));
-
-  entries.push(zipText(`${OPF_DIR}/style.css`, STYLESHEET));
-
-  for (const [index, section] of sections.entries()) {
+  const documents: VlmDocument[] = sections.map((section, index) => {
     const chapter = chapters[index];
     const body = section.blocks.map(render).filter((html) => html.length > 0);
-    entries.push(zipText(`${OPF_DIR}/${chapter.href}`,
-      XHTML_HEAD(chapter.label, metadata.language) + body.join('\n') + '\n' + XHTML_TAIL));
-  }
+    return {
+      id: chapter.id,
+      href: chapter.href,
+      label: chapter.label,
+      xhtml: XHTML_HEAD(chapter.label, metadata.language) + body.join('\n') + '\n' + XHTML_TAIL,
+    };
+  });
 
-  const navItems = chapters
-    .map((c) => `      <li><a href="${esc(c.href)}">${esc(c.label)}</a></li>`)
-    .join('\n');
-  entries.push(zipText(`${OPF_DIR}/nav.xhtml`,
-    `<?xml version="1.0" encoding="UTF-8"?>\n`
-    + `<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"`
-    + ` xml:lang="${esc(metadata.language)}" lang="${esc(metadata.language)}">\n`
-    + `<head>\n  <meta charset="utf-8"/>\n  <title>${esc(metadata.title)}</title>\n</head>\n<body>\n`
-    + `  <nav epub:type="toc" id="toc">\n    <h1>Contents</h1>\n    <ol>\n${navItems}\n    </ol>\n  </nav>\n`
-    + `  <nav epub:type="landmarks" id="landmarks" hidden="">\n    <h1>Landmarks</h1>\n    <ol>\n`
-    + `      <li><a epub:type="bodymatter" href="${esc(chapters[0].href)}">Beginning</a></li>\n`
-    + `    </ol>\n  </nav>\n</body>\n</html>\n`));
-
-  const manifest = [
-    `    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>`,
-    `    <item id="style" href="style.css" media-type="text/css"/>`,
-    ...chapters.map((c) =>
-      `    <item id="${c.id}" href="${esc(c.href)}" media-type="application/xhtml+xml"/>`),
-  ].join('\n');
-  const spine = chapters.map((c) => `    <itemref idref="${c.id}"/>`).join('\n');
-
-  entries.push(zipText(`${OPF_DIR}/package.opf`,
-    `<?xml version="1.0" encoding="UTF-8"?>\n`
-    + `<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id"`
-    + ` xml:lang="${esc(metadata.language)}">\n`
-    + `  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n`
-    + `    <dc:identifier id="pub-id">${esc(metadata.identifier)}</dc:identifier>\n`
-    + `    <dc:title>${esc(metadata.title)}</dc:title>\n`
-    + `    <dc:language>${esc(metadata.language)}</dc:language>\n`
-    + (metadata.author ? `    <dc:creator>${esc(metadata.author)}</dc:creator>\n` : '')
-    + `    <meta property="dcterms:modified">${FIXED_MODIFIED}</meta>\n`
-    + `  </metadata>\n  <manifest>\n${manifest}\n  </manifest>\n`
-    + `  <spine>\n${spine}\n  </spine>\n</package>\n`));
-
-  const zipStarted = Date.now();
-  const bytes = writeZip(entries);
-  return {
-    bytes,
-    chapters,
-    xhtmlSeconds: (zipStarted - started) / 1000,
-    zipSeconds: (Date.now() - zipStarted) / 1000,
-  };
+  const xhtmlSeconds = (Date.now() - started) / 1000;
+  const packaged = packageVlmEpub(metadata, documents, [], STYLESHEET);
+  return { bytes: packaged.bytes, chapters, xhtmlSeconds, zipSeconds: packaged.zipSeconds };
 }
