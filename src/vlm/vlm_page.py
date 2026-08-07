@@ -117,17 +117,21 @@ def write_pgm(path, pixmap):
 def cap_pixels(processor, max_pixels):
     """Tell the image processor its budget, or fail naming what it is.
 
-    Both spellings are set because transformers moved the number from an
-    attribute to the `size` dict and both are live in the wild; at least one of
-    them has to exist, and a processor that has neither is a processor whose
-    coordinate frame this program cannot predict.
+    Every spelling transformers has used is set, because all of them are live in
+    the wild: a bare `max_pixels` attribute on the older image processors, a
+    plain `size` dict on the next, and a `SizeDict` dataclass with
+    `longest_edge` on the current fast ones — which is what
+    `mlx-community/dots.ocr-4bit` loads today. At least one has to exist. A
+    processor with none of them is a processor whose coordinate frame this
+    program cannot predict, and predicting it is the whole point: the number set
+    here is the number the TypeScript side scales the model's boxes with.
     """
     image_processor = getattr(processor, 'image_processor', None)
     if image_processor is None:
         fail('the processor has no image_processor, so its pixel budget cannot be set — and '
              'the boxes it answers with could not be scaled back to the render')
     touched = []
-    if hasattr(image_processor, 'max_pixels'):
+    if getattr(image_processor, 'max_pixels', None) is not None:
         image_processor.max_pixels = max_pixels
         touched.append('max_pixels')
     size = getattr(image_processor, 'size', None)
@@ -136,9 +140,16 @@ def cap_pixels(processor, max_pixels):
             if key in size:
                 size[key] = max_pixels
                 touched.append('size[%s]' % key)
+    elif size is not None:
+        for key in ('max_pixels', 'longest_edge'):
+            if getattr(size, key, None) is not None:
+                setattr(size, key, max_pixels)
+                touched.append('size.%s' % key)
     if not touched:
-        fail('%s carries neither max_pixels nor a size dict, so a pixel budget of %d cannot be '
-             'applied to it' % (type(image_processor).__name__, max_pixels))
+        fail('%s carries no pixel budget under any name this program knows (max_pixels, '
+             'size[max_pixels], size[longest_edge]), so %d cannot be applied to it and the '
+             'frame its boxes are in cannot be predicted'
+             % (type(image_processor).__name__, max_pixels))
     sys.stderr.write('  pixel budget %d applied to %s\n' % (max_pixels, ', '.join(touched)))
 
 

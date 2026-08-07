@@ -2138,12 +2138,15 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
   });
 
   const { timings } = report;
-  const read = Math.max(1, report.pages.length - report.unreadable.length);
-  const perPage = timings.inferenceSeconds / read;
+  const perPage = timings.inferenceSeconds / report.inferredPages;
+  // A run that read nothing has no rate, and printing one for it would be
+  // printing a number about work that did not happen.
+  const rate = report.inferredPages === 0
+    ? 'every page came from the readings file'
+    : `${report.inferredPages} read this run at ${perPage.toFixed(1)}s a page, `
+      + `${(60 / perPage).toFixed(1)} pages a minute`;
   log(
-    `vlm-convert: ${report.pages.length} pages in ${timings.totalSeconds.toFixed(1)}s `
-    + `(${perPage.toFixed(1)}s a page at steady state, `
-    + `${(60 / perPage).toFixed(1)} pages a minute), `
+    `vlm-convert: ${report.pages.length} pages in ${timings.totalSeconds.toFixed(1)}s (${rate}), `
     + `peak ${(report.peakRssBytes / 1024 / 1024 / 1024).toFixed(1)} GiB`,
   );
   const categories = Object.entries(report.categories).sort((a, b) => b[1] - a[1]);

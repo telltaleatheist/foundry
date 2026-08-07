@@ -274,8 +274,11 @@ function stamp(block: DotsBlock): string {
  * an attribute on the block.
  */
 function pageBreak(page: number): string {
+  // Closed explicitly rather than self-closed: an EPUB document is XML and both
+  // spellings parse, but `<span/>` is an OPEN tag to anything that falls back to
+  // an HTML parser, and the rest of the paragraph then lives inside it.
   return `<span epub:type="pagebreak" role="doc-pagebreak" id="pb-${page}"`
-    + ` data-bf-page="${page}" aria-label="${page}"/>`;
+    + ` data-bf-page="${page}" aria-label="${page}"></span>`;
 }
 
 export interface DotsChapterOptions {

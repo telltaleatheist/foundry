@@ -100,6 +100,8 @@ export interface VlmConvertReport {
   blocks: number;
   /** Pages that could not be read, each with the reason. Never silent. */
   unreadable: VlmUnreadablePage[];
+  /** How many pages this run actually paid a model for. The rest were cached. */
+  inferredPages: number;
   /** Geometric dialects only — otherwise empty or zero. */
   proposals: DotsChapterProposal[];
   categories: Record<string, number>;
@@ -189,8 +191,16 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       },
     });
 
-    const unreadable: VlmUnreadablePage[] = [...run.unreadable];
+    // Keyed by page: the bridge names a truncated page, and so does the
+    // readings file it was banked in. One page, one line in the report.
+    const unreadable = new Map<number, VlmUnreadablePage>(
+      run.unreadable.map((page) => [page.number, page]),
+    );
+    const refuse = (number: number, reason: string): void => {
+      if (!unreadable.has(number)) unreadable.set(number, { number, reason });
+    };
     let inferenceSeconds = run.inferenceSeconds;
+    let inferredPages = run.pages.filter((page) => !page.skipped).length + run.unreadable.length;
 
     // ── the answers, from wherever they came ────────────────────────────────
     const answers = new Map<number, string>();
@@ -201,10 +211,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       for (const page of readings.pages()) {
         const reading = readings.get(page)!;
         if (reading.finishReason === 'length') {
-          unreadable.push({
-            number: page,
-            reason: `it hit the ${model.maxTokens}-token cap when it was read, so its answer is truncated`,
-          });
+          refuse(page, `it hit the ${model.maxTokens}-token cap when it was read, so its answer is truncated`);
           continue;
         }
         answers.set(page, reading.text);
@@ -236,13 +243,10 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
             seconds: page.seconds,
           });
           if (page.finishReason === 'length') {
-            unreadable.push({
-              number: page.number,
-              reason: `it hit the ${model.maxTokens}-token cap, so the model was still writing when`
-                + ' it was cut off',
-            });
+            refuse(page.number, `it hit the ${model.maxTokens}-token cap, so the model was still`
+              + ' writing when it was cut off');
           } else if (page.text.trim().length === 0) {
-            unreadable.push({ number: page.number, reason: `it came back empty from ${model.id}` });
+            refuse(page.number, `it came back empty from ${model.id}`);
           } else {
             answers.set(page.number, page.text);
           }
@@ -253,6 +257,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
         },
       });
       inferenceSeconds = (Date.now() - endpointStarted) / 1000;
+      inferredPages = wanted.length;
     }
 
     // ── parse ──────────────────────────────────────────────────────────────
@@ -264,10 +269,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     for (const page of run.pages) {
       const answer = answers.get(page.number);
       if (answer === undefined) {
-        // Already recorded above, by name, with its reason.
-        if (!unreadable.some((u) => u.number === page.number)) {
-          unreadable.push({ number: page.number, reason: 'no answer was ever produced for it' });
-        }
+        refuse(page.number, 'no answer was ever produced for it');
         continue;
       }
       if (!geometric) {
@@ -286,11 +288,12 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
         geometryPages.push(parsed);
       } catch (err) {
         if (!(err instanceof DotsPageError)) throw err;
-        unreadable.push({ number: page.number, reason: err.message.replace(/^page \d+: /, '') });
+        refuse(page.number, err.message.replace(/^page \d+: /, ''));
       }
     }
 
-    for (const page of unreadable.sort((a, b) => a.number - b.number)) {
+    const skipped = [...unreadable.values()].sort((a, b) => a.number - b.number);
+    for (const page of skipped) {
       opts.log(`vlm-convert: page ${page.number} SKIPPED — ${page.reason}`);
     }
 
@@ -376,7 +379,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
     fs.writeFileSync(outPath, bytes);
     if (opts.chaptersPath !== undefined) {
-      writeProposals(path.resolve(opts.chaptersPath), proposals, unreadable);
+      writeProposals(path.resolve(opts.chaptersPath), proposals, skipped);
       opts.log(`vlm-convert: ${proposals.length} chapter proposal(s) written to ${opts.chaptersPath}`);
     }
     const writeSeconds = (Date.now() - writeStarted) / 1000;
@@ -398,7 +401,8 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       pages: run.pages,
       droppedFurniture,
       blocks,
-      unreadable,
+      unreadable: skipped,
+      inferredPages,
       proposals,
       categories,
       footnotes,
@@ -468,23 +472,33 @@ function checkPixelBudget(
   maxPixels: number,
   log: (message: string) => void,
 ): void {
-  const measured = pages.filter((p) => p.rawExtent.x > 0);
-  if (measured.length === 0 || rendered.length === 0) return;
-  const render = { width: rendered[0].width, height: rendered[0].height };
-  const resized = smartResize(render.height, render.width, maxPixels);
-  const extents = measured.map((p) => p.rawExtent.x).sort((a, b) => a - b);
-  const median = extents[Math.floor(extents.length / 2)];
+  // PER PAGE, because a book's pages are not all one size — the Kershaw article
+  // opens with a JSTOR cover page 1653 px wide in front of sixteen 1300 px ones,
+  // and a frame taken from the first page would be the wrong frame for the book.
+  const sizes = new Map(rendered.map((page) => [page.number, page]));
+  const ratios: number[] = [];
+  for (const page of pages) {
+    const size = sizes.get(page.page);
+    if (!size || page.rawExtent.x <= 0) continue;
+    ratios.push(page.rawExtent.x / smartResize(size.height, size.width, maxPixels).width);
+  }
+  if (ratios.length === 0) return;
+  ratios.sort((a, b) => a - b);
+  const median = ratios[Math.floor(ratios.length / 2)];
 
+  const first = rendered[0];
+  const frame = smartResize(first.height, first.width, maxPixels);
   log(
-    `vlm-convert: boxes measured in a ${resized.width}x${resized.height} frame, scaled by `
-    + `${renderScale(render, maxPixels).toFixed(4)} into the ${render.width}x${render.height} render`
-    + ` (median box extent ${Math.round(median)})`,
+    `vlm-convert: page 1's boxes measured in a ${frame.width}x${frame.height} frame, scaled by `
+    + `${renderScale({ width: first.width, height: first.height }, maxPixels).toFixed(4)} into its `
+    + `${first.width}x${first.height} render; boxes fill ${(median * 100).toFixed(0)}% of the frame `
+    + 'on a median page',
   );
-  if (median > resized.width * 1.02) {
+  if (median > 1.02) {
     throw new Error(
-      `the model's boxes reach ${Math.round(median)} on a median page, and a ${maxPixels}-pixel`
-      + ` budget puts the page in a ${resized.width}-wide frame. The budget this run scaled with is`
-      + ' not the one the processor used, so every box in the book is wrong by that ratio.',
+      `the model's boxes overflow the frame a ${maxPixels}-pixel budget puts the pages in, by `
+      + `${((median - 1) * 100).toFixed(0)}% on a median page. The budget this run scaled with is `
+      + 'not the one the processor used, so every box in the book is wrong by that ratio.',
     );
   }
 }
