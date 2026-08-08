@@ -19,6 +19,8 @@ import {
   alignmentClass,
   BookLexicon,
   bodyColumn,
+  carriesBodyProse,
+  classifyPage,
   consumeMarkdown,
   continuesTextually,
   DotsPageError,
@@ -28,6 +30,7 @@ import {
   renderScale,
   smartResize,
   type DotsBlock,
+  type DotsPagePlace,
 } from '../../src/vlm/dots.js';
 import {
   buildChapterBody,
@@ -355,6 +358,203 @@ test('a chapter is proposed with its reasons, and only the first block on a page
   assert.equal(proposals.length, 1);
   assert.equal(proposals[0].text, 'CHAPTER ONE');
   assert.deepEqual(proposals[0].why, ['chapterish-text', 'title-class', 'centered']);
+});
+
+// ── what a page IS ──────────────────────────────────────────────────────────
+
+/**
+ * Every case here is either a page out of a real book — For the Soul of the
+ * People, read by dots.ocr, blocks and boxes as they arrived — or the thing
+ * that page is one measurement away from being. The second sort is the point:
+ * a classifier that only ever sees what it is supposed to catch has not been
+ * tested, it has been demonstrated.
+ */
+/** A block off a page of For the Soul of the People: 1700x2200 at 200 dpi. */
+function soul(overrides: Partial<DotsBlock> = {}): DotsBlock {
+  return block({ pageWidth: 1700, pageHeight: 2200, ...overrides });
+}
+
+const MID_BOOK: DotsPagePlace = { index: 40, bodyFollows: true };
+const FRONT: DotsPagePlace = { index: 2, bodyFollows: true };
+
+test('a half-title page is display type, centered, and nothing else', () => {
+  const verdict = classifyPage([
+    soul({ category: 'Title', text: 'FOR\nTHE SOUL\nOF THE\nPEOPLE', box: { x1: 666, y1: 251, x2: 1046, y2: 540 } }),
+  ], FRONT);
+  assert.equal(verdict?.kind, 'title-page');
+  assert.deepEqual(verdict?.why, ['display-heading', '0-other-words', 'centered']);
+});
+
+test('a title page keeps its subtitle and its author, because they are short', () => {
+  const verdict = classifyPage([
+    soul({ category: 'Title', text: 'FOR\nTHE SOUL\nOF THE\nPEOPLE', box: { x1: 457, y1: 255, x2: 1234, y2: 849 } }),
+    soul({ category: 'Picture', text: '', box: { x1: 811, y1: 910, x2: 881, y2: 978 } }),
+    soul({ text: '*Protestant Protest*\n*Against Hitler*', box: { x1: 540, y1: 1028, x2: 1155, y2: 1210 } }),
+    soul({ text: 'Victoria Barnett', box: { x1: 558, y1: 1372, x2: 1134, y2: 1441 } }),
+  ], FRONT);
+  assert.equal(verdict?.kind, 'title-page');
+});
+
+test('a dedication page is sparse and centered and is NOT a title page', () => {
+  // Three short lines, no heading. Nothing here knows what it is, so it says
+  // nothing — and the picker still shows the page.
+  assert.equal(classifyPage([
+    soul({ text: 'For Ruth McGinnis,\nand for Ulrich\nsine qua non', box: { x1: 665, y1: 404, x2: 1028, y2: 547 } }),
+  ], FRONT), null);
+});
+
+test('a blank page is not a title page, and neither is a chapter opener', () => {
+  assert.equal(classifyPage([soul({ text: 'BLANK PAGE' })], FRONT), null);
+  assert.equal(classifyPage([
+    soul({ category: 'Title', text: 'The Lost Empire', box: { x1: 528, y1: 274, x2: 1171, y2: 365 } }),
+    soul({ text: 'THEY WERE BORN during the German Empire, in the final years of the reigns of the '
+      + 'provincial German princes and of Kaiser Wilhelm II, from the royal Prussian house that had '
+      + 'ruled since the seventeenth century and would not survive the war.' }),
+  ], FRONT), null);
+});
+
+test('a heading that is not centered is not a title page', () => {
+  assert.equal(classifyPage([
+    soul({ category: 'Title', text: 'PREFACE', box: { x1: 200, y1: 200, x2: 500, y2: 260 } }),
+  ], FRONT), null);
+});
+
+test('a copyright page is recognised by its boilerplate, and needs two of them', () => {
+  const page = [
+    soul({ text: 'Copyright © 1992 by Victoria Barnett' }),
+    soul({ text: 'All rights reserved. No part of this publication may be reproduced.' }),
+    soul({ text: 'Library of Congress Cataloging-in-Publication Data\nBarnett, Victoria.' }),
+    soul({ text: 'ISBN 0-19-505306-0; ISBN 0-19-512118-X (paper)' }),
+    soul({ text: '135798642' }),
+  ];
+  const verdict = classifyPage(page, FRONT);
+  assert.equal(verdict?.kind, 'copyright');
+  assert.deepEqual(verdict?.why, [
+    'copyright-mark', 'isbn', 'all-rights-reserved', 'library-of-congress', 'printing-history',
+  ]);
+
+  // ONE mark is a permissions note, a bibliography entry, a line of front
+  // matter that happens to say the word. It is not a copyright page.
+  assert.equal(classifyPage([
+    soul({ text: 'Reprinted by permission. Copyright 1988 by the Christian Century Foundation.' }),
+  ], FRONT), null);
+});
+
+test('a page with a heading on it is not a copyright page', () => {
+  assert.equal(classifyPage([
+    soul({ category: 'Section-header', text: 'Permissions', box: { x1: 200, y1: 200, x2: 500, y2: 260 } }),
+    soul({ text: 'Copyright © 1992. All rights reserved. ISBN 0-19-505306-0.' }),
+  ], FRONT), null);
+});
+
+test('a contents page is the word and then the numbers', () => {
+  const verdict = classifyPage([
+    soul({ category: 'Title', text: 'Contents', box: { x1: 759, y1: 368, x2: 1106, y2: 448 } }),
+    soul({ text: '*Introduction, 3*' }),
+    soul({ category: 'Section-header', text: 'I OMENS' }),
+    soul({ category: 'List-item', text: '1. The Lost Empire, 9' }),
+    soul({ category: 'List-item', text: '2. The Weimar Years, 18' }),
+    soul({ category: 'List-item', text: '11. Postwar Germans and Their Church: Rebirth or Restoration? 239' }),
+  ], { index: 8, bodyFollows: true });
+  assert.equal(verdict?.kind, 'contents');
+  assert.deepEqual(verdict?.why, ['contents-heading', '4-numbered-entries']);
+});
+
+test('the word alone is not a contents page', () => {
+  // A reference work with a `Contents` heading over a paragraph of prose.
+  assert.equal(classifyPage([
+    soul({ category: 'Section-header', text: 'Contents' }),
+    soul({ text: 'The volume gathers essays written between 1979 and 1991.' }),
+  ], MID_BOOK), null);
+});
+
+test('an index page is not a contents page', () => {
+  assert.equal(classifyPage([
+    soul({ category: 'Title', text: 'Index' }),
+    soul({ text: 'Action for Reconciliation, 293\nAdenauer, Konrad, 206, 212, 225\nAryan laws, 127' }),
+  ], MID_BOOK), null);
+});
+
+test('a part divider is a roman numeral and a short title, alone on the page', () => {
+  const verdict = classifyPage([
+    soul({ category: 'Section-header', text: 'III', box: { x1: 799, y1: 235, x2: 894, y2: 326 } }),
+    soul({ category: 'Section-header', text: 'RESISTANCE\nAND GUILT', box: { x1: 484, y1: 478, x2: 1205, y2: 693 } }),
+  ], MID_BOOK);
+  assert.equal(verdict?.kind, 'part');
+  assert.deepEqual(verdict?.why, ['roman-numeral', 'short-title', 'near-empty-page']);
+  // The nav entry is the number AND the name: `III` alone tells a reader nothing.
+  assert.equal(verdict?.label, 'III RESISTANCE AND GUILT');
+});
+
+test('the part\'s name may be an ordinary Text block, and the numeral lowercase', () => {
+  const verdict = classifyPage([
+    soul({ category: 'Section-header', text: 'iv', box: { x1: 808, y1: 229, x2: 879, y2: 320 } }),
+    soul({ text: '"THE INABILITY\nTO MOURN"', box: { x1: 395, y1: 480, x2: 1298, y2: 692 } }),
+  ], MID_BOOK);
+  assert.equal(verdict?.kind, 'part');
+  // Verbatim. Upper-casing it would be inventing a word the page does not carry.
+  assert.equal(verdict?.label, 'iv "THE INABILITY TO MOURN"');
+});
+
+test('Part Two says so, and needs no numeral rule at all', () => {
+  const verdict = classifyPage([
+    soul({ category: 'Title', text: 'Part Two' }),
+    soul({ text: 'The War Years' }),
+  ], MID_BOOK);
+  assert.equal(verdict?.kind, 'part');
+  assert.deepEqual(verdict?.why, ['part-heading', 'near-empty-page']);
+  assert.equal(verdict?.label, 'Part Two');
+});
+
+test('a bare ARABIC numeral is a chapter as often as a part, so it is neither', () => {
+  assert.equal(classifyPage([
+    soul({ category: 'Section-header', text: '5' }),
+    soul({ category: 'Section-header', text: 'Daily Life and Work' }),
+  ], MID_BOOK), null);
+});
+
+test('a short word made of roman letters is not a roman numeral', () => {
+  // C, I, V, I, L are all numeral letters and CIVIL is not a numeral.
+  assert.equal(classifyPage([
+    soul({ category: 'Title', text: 'CIVIL' }),
+    soul({ text: 'War and Memory' }),
+  ], MID_BOOK), null);
+});
+
+test('a chapter that opens with its first paragraph is not a divider', () => {
+  assert.equal(classifyPage([
+    soul({ category: 'Section-header', text: 'IV' }),
+    soul({ category: 'Section-header', text: 'Convictions and Conflicts' }),
+    soul({ text: 'THE WAYS in which individuals confronted Nazism depended upon their backgrounds '
+      + 'and personalities as well as upon their political persuasions. Both theological and '
+      + 'political differences divided the church opposition from its first days.' }),
+  ], MID_BOOK), null);
+});
+
+test('a divider with nothing after it is not a part', () => {
+  // The last such page in a book is a colophon, and a part opens something.
+  assert.equal(classifyPage([
+    soul({ category: 'Section-header', text: 'III' }),
+    soul({ category: 'Section-header', text: 'RESISTANCE AND GUILT' }),
+  ], { index: 40, bodyFollows: false }), null);
+});
+
+test('a part divider in the front matter window is not looked for', () => {
+  // Front matter is asked the front-matter questions and nothing else: a page
+  // of centered display type there is a half-title, not a part.
+  const verdict = classifyPage([
+    soul({ category: 'Section-header', text: 'III', box: { x1: 799, y1: 235, x2: 894, y2: 326 } }),
+    soul({ category: 'Section-header', text: 'RESISTANCE\nAND GUILT', box: { x1: 484, y1: 478, x2: 1205, y2: 693 } }),
+  ], FRONT);
+  assert.equal(verdict?.kind, 'title-page');
+});
+
+test('body prose is what a divider does not have', () => {
+  assert.equal(carriesBodyProse([soul({ text: 'BLANK PAGE' })]), false);
+  assert.equal(carriesBodyProse([soul({ category: 'Title', text: 'OMENS' })]), false);
+  assert.equal(carriesBodyProse([soul({ text: 'one two three four five six seven eight nine ten '
+    + 'eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty '
+    + 'twenty-one twenty-two twenty-three twenty-four twenty-five' })]), true);
 });
 
 // ── the book ────────────────────────────────────────────────────────────────

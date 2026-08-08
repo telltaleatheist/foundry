@@ -30,6 +30,11 @@
  *    perfectly distinguishable from the number 14 in the prose, so it can be
  *    made real `<sup>` markup, or removed entirely for a narration build,
  *    without a single heuristic.
+ *  - **A page can say what it IS, and most pages cannot.** A title page, a
+ *    copyright page, a contents page and a part divider each have one loud
+ *    signature, and `classifyPage` names a page only when it fires. Everything
+ *    else gets no kind. See the header of that section for why the asymmetry is
+ *    the design rather than a limitation.
  *
  * WHAT FAILS HERE FAILS ONE PAGE. A `DotsPageError` names the page and what
  * about it could not be read; `convert.ts` records it and the book carries the
@@ -574,6 +579,281 @@ export function continuesTextually(previous: string, next: string): boolean {
   if (/[.!?:"”]$/.test(previous.trimEnd())) return false;
   const first = next.charAt(0);
   return first !== first.toUpperCase();
+}
+
+// ── what a page IS ──────────────────────────────────────────────────────────
+
+/**
+ * The kinds of page this dialect will name, and there are only five.
+ *
+ * A book's front matter and its part dividers are pages a reader skips and a
+ * NARRATOR must not read: a title page read aloud is the book's title said
+ * twice, a copyright page is a minute of ISBNs, and a contents page is a list
+ * of numbers. The picker can delete them in one click — but only if something
+ * tells it which pages they are, and this is that.
+ *
+ * NOT EVERY BOOK HAS THIS STRUCTURE. An article has none of it, an extract has
+ * none of it, and a bare typescript has none of it. So every rule below is a
+ * LOUD signature or nothing: a page the classifier cannot read simply gets no
+ * kind, which is the ordinary outcome and never an error. The asymmetry is the
+ * whole design — an unlabelled page costs a person one click in the picker, and
+ * a MISLABELLED one puts a lie in the nav that nobody looking at the finished
+ * book can see. Every threshold here is therefore set where it refuses.
+ */
+export type DotsPageKind = 'title-page' | 'copyright' | 'contents' | 'part' | 'chapter';
+
+export interface DotsPageVerdict {
+  kind: DotsPageKind;
+  /** Every signature that fired, so the verdict can be read rather than trusted. */
+  why: string[];
+  /**
+   * A label the page's own words justify, when the section's first heading is
+   * not the whole of it.
+   *
+   * Only a `part` sets one: its number and its name are two separate blocks on
+   * the page, and a nav entry reading `III` alone tells a reader nothing. Null
+   * everywhere else, where the first heading of the section IS the label.
+   */
+  label: string | null;
+}
+
+/** Where a page sits in the book. Both facts come from the book, not the page. */
+export interface DotsPagePlace {
+  /** 0-based position among the book's pages, in reading order. */
+  index: number;
+  /** Does any LATER page carry body prose? A part opens something. */
+  bodyFollows: boolean;
+}
+
+/**
+ * How many pages at the front of a book may be front matter.
+ *
+ * A window rather than a search, because the thing being excluded is the
+ * mid-book page that LOOKS like a title page: a part divider is also a page of
+ * nothing but centered display type, and outside the front of a book that is
+ * what it usually is. Six is the conventional depth of half-title, title,
+ * copyright, dedication — and a book whose second half-title falls past it goes
+ * unlabelled, which is the cheap failure.
+ */
+export const FRONT_MATTER_PAGES = 6;
+
+/** A block that is set as display type — the only kind a divider page carries. */
+const DISPLAY: ReadonlySet<DotsCategory> = new Set<DotsCategory>(['Title', 'Section-header']);
+
+/** Emphasis markers out, so a contents entry italicised whole still ends in its page number. */
+function unemphasise(text: string): string {
+  return text.replace(/[*_]/g, ' ').trim();
+}
+
+/** The block's text on one line, for a label. */
+function oneLine(text: string): string {
+  return unemphasise(text).replace(/\s+/g, ' ').trim();
+}
+
+export function wordCount(text: string): number {
+  return unemphasise(text).split(/\s+/).filter((word) => word.length > 0).length;
+}
+
+/**
+ * A real paragraph of the book's prose, in words.
+ *
+ * The number that separates `BLANK PAGE` and a two-line dedication from a page
+ * that is actually being read. Deliberately low: what is being detected is the
+ * ABSENCE of prose, so the test has to fail on the shortest genuine paragraph
+ * rather than on the longest divider.
+ */
+const BODY_PARAGRAPH_WORDS = 25;
+
+/** Does this page carry a paragraph somebody wrote to be read? */
+export function carriesBodyProse(blocks: readonly DotsBlock[]): boolean {
+  return blocks.some((b) => isProse(b) && wordCount(b.text) >= BODY_PARAGRAPH_WORDS);
+}
+
+function isProse(block: DotsBlock): boolean {
+  return !DISPLAY.has(block.category) && block.category !== 'Picture';
+}
+
+function proseWords(blocks: readonly DotsBlock[]): number {
+  return blocks.filter(isProse).reduce((sum, b) => sum + wordCount(b.text), 0);
+}
+
+/** A divider page carries nothing but its own announcement. */
+const SPARSE_BLOCKS = 8;
+const SPARSE_WORDS = 12;
+
+/**
+ * What this page is, or nothing.
+ *
+ * The order is the order of certainty. A contents page announces itself in
+ * words and is placed nowhere in particular, so it is asked first and asked
+ * everywhere; the front-matter kinds are asked only at the front; a part
+ * divider is asked only past it. `chapter` is not decided here — it is
+ * `proposeChapters` in `dots-book.ts`, which was already the rule and stays it.
+ */
+export function classifyPage(
+  blocks: readonly DotsBlock[],
+  place: DotsPagePlace,
+): DotsPageVerdict | null {
+  if (blocks.length === 0) return null;
+  const contents = contentsVerdict(blocks);
+  if (contents !== null) return contents;
+  if (place.index < FRONT_MATTER_PAGES) {
+    return copyrightVerdict(blocks) ?? titlePageVerdict(blocks);
+  }
+  return partVerdict(blocks, place);
+}
+
+/**
+ * A title page: display type, centered, and nothing else on the paper.
+ *
+ * The subtitle and the author's name are ordinary Text blocks — a title page is
+ * not all headings — so what is measured is that there are FEW of them and they
+ * are SHORT. `SPARSE_WORDS` is twelve because `Protestant Protest Against
+ * Hitler` + `Victoria Barnett` is six, and one full sentence of prose is more.
+ *
+ * At least one real heading is required, and that is what keeps a dedication
+ * page ("For Ruth, sine qua non", three short Text blocks, centered) out: it is
+ * sparse and centered and it is not a title page.
+ */
+function titlePageVerdict(blocks: readonly DotsBlock[]): DotsPageVerdict | null {
+  const display = blocks.filter((b) => DISPLAY.has(b.category));
+  if (display.length === 0) return null;
+  if (blocks.length > SPARSE_BLOCKS) return null;
+  const other = proseWords(blocks);
+  if (other > SPARSE_WORDS) return null;
+  if (!display.every((b) => centerOffset(b) < 0.06)) return null;
+  return {
+    kind: 'title-page',
+    why: ['display-heading', `${other}-other-words`, 'centered'],
+    label: null,
+  };
+}
+
+/**
+ * The copyright page, recognised by the boilerplate that is on every one of
+ * them and nowhere else in a book.
+ *
+ * TWO marks, never one. `Copyright` alone appears in a bibliography entry and
+ * in a permissions note; `ISBN` alone appears in a list of further reading. The
+ * conjunction is what no other page in a book produces, and requiring it is why
+ * this rule can be run over prose pages without labelling one.
+ *
+ * A heading disqualifies the page outright: a copyright page has no title, and
+ * a page that has one is announcing itself as something else.
+ */
+function copyrightVerdict(blocks: readonly DotsBlock[]): DotsPageVerdict | null {
+  if (blocks.some((b) => DISPLAY.has(b.category))) return null;
+  const text = blocks.map((b) => b.text).join('\n');
+  const why = COPYRIGHT_MARKS.filter(([, test]) => test(text)).map(([name]) => name);
+  if (why.length < 2) return null;
+  return { kind: 'copyright', why, label: null };
+}
+
+const COPYRIGHT_MARKS: ReadonlyArray<readonly [string, (text: string) => boolean]> = [
+  ['copyright-mark', (t) => /©|\bcopyright\b/i.test(t)],
+  ['isbn', (t) => /\bISBN\b/i.test(t)],
+  ['all-rights-reserved', (t) => /all rights reserved/i.test(t)],
+  ['library-of-congress', (t) => /library of congress/i.test(t)],
+  // The printing history: `10 9 8 7 6 5 4 3 2 1`, or the same line set solid as
+  // `135798642`. A whole line of nothing but digits, and enough of them that a
+  // stray year or page number cannot be it.
+  ['printing-history', (t) => t.split('\n').some((line) => {
+    const trimmed = line.trim();
+    return /^[\d ]+$/.test(trimmed) && (trimmed.match(/\d/g)?.length ?? 0) >= 5;
+  })],
+];
+
+/**
+ * The book's own contents page: the word, and then the numbers.
+ *
+ * The heading alone is not enough — `Contents` is also a section heading inside
+ * a reference work — so what confirms it is the SHAPE of what follows: short
+ * lines that end in a page number, which is a thing no page of prose does three
+ * times running.
+ */
+const CONTENTS_HEADING = /^(table of )?contents$/i;
+const CONTENTS_ENTRIES = 3;
+const CONTENTS_ENTRY_CHARS = 100;
+/** `The Weimar Years, 18` — anything, then a page number, then the line ends. */
+const CONTENTS_ENTRY = /[^\d\s]\s*[,.]?\s*\d{1,4}[.,]?$/;
+
+function contentsVerdict(blocks: readonly DotsBlock[]): DotsPageVerdict | null {
+  const heading = blocks.find(
+    (b) => DISPLAY.has(b.category) && CONTENTS_HEADING.test(unemphasise(b.text)),
+  );
+  if (heading === undefined) return null;
+  let entries = 0;
+  for (const block of blocks) {
+    if (block === heading) continue;
+    for (const line of unemphasise(block.text).split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0 || trimmed.length > CONTENTS_ENTRY_CHARS) continue;
+      if (CONTENTS_ENTRY.test(trimmed)) entries += 1;
+    }
+  }
+  if (entries < CONTENTS_ENTRIES) return null;
+  return { kind: 'contents', why: ['contents-heading', `${entries}-numbered-entries`], label: null };
+}
+
+/**
+ * A part divider: a page that announces a division and carries nothing else.
+ *
+ * Two spellings, and the difference between them is everything this rule knows
+ * about its own danger:
+ *
+ *  - `Part Two`, `Book III` — the word is on the page, and there is nothing
+ *    else it could be.
+ *  - a BARE numeral with a short title beside it — which is what a real book
+ *    does (`III` / `RESISTANCE AND GUILT`) and is also what a chapter opener
+ *    does. So the bare form is accepted for a ROMAN numeral only. Parts are
+ *    numbered in roman by convention and chapters in arabic; a bare `5` on a
+ *    divider page is a chapter as often as it is a part, and a part invented
+ *    there would swallow every chapter after it in the nav. The roman rule is
+ *    canonical (`IIII` is not a numeral) so that a short word made of I, V, X,
+ *    L, C, D and M — `CIVIL`, `MILD` — cannot pass for one.
+ *
+ * Both forms additionally require the page to be NEARLY EMPTY. A chapter that
+ * opens with its title also opens with its first paragraph; a divider is alone
+ * on the paper. That is the measurement that separates them, and it is the
+ * reason this rule can be asked of every page in the body of a book.
+ */
+const PART_HEADING = new RegExp(
+  '^(part|book|section|volume)\\s+'
+  + '([ivxlcdm]+|\\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\\b',
+  'i',
+);
+const ROMAN_NUMERAL = /^(?=[ivxlcdm])m{0,3}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3})\.?$/i;
+const PART_BLOCKS = 6;
+const PART_TITLE_WORDS = 8;
+
+function partVerdict(
+  blocks: readonly DotsBlock[],
+  place: DotsPagePlace,
+): DotsPageVerdict | null {
+  // A part opens something. The last divider-shaped page in a book is a colophon.
+  if (!place.bodyFollows) return null;
+  if (blocks.length > PART_BLOCKS) return null;
+  if (proseWords(blocks) > SPARSE_WORDS) return null;
+  const display = blocks.filter((b) => DISPLAY.has(b.category));
+  if (display.length === 0) return null;
+
+  const named = display.find((b) => PART_HEADING.test(unemphasise(b.text)));
+  if (named !== undefined) {
+    return { kind: 'part', why: ['part-heading', 'near-empty-page'], label: oneLine(named.text) };
+  }
+
+  const numeral = display.find((b) => ROMAN_NUMERAL.test(unemphasise(b.text)));
+  if (numeral === undefined) return null;
+  const titled = blocks.find(
+    (b) => b !== numeral && b.category !== 'Picture'
+      && wordCount(b.text) > 0 && wordCount(b.text) <= PART_TITLE_WORDS,
+  );
+  if (titled === undefined) return null;
+  return {
+    kind: 'part',
+    why: ['roman-numeral', 'short-title', 'near-empty-page'],
+    label: `${oneLine(numeral.text)} ${oneLine(titled.text)}`,
+  };
 }
 
 /**
