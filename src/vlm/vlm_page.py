@@ -42,6 +42,12 @@ nothing, a processor that cannot be told its budget, and a crop that lands
 outside its page are each fatal, named, and exit nonzero. Half a book that looks
 like a whole one is the failure this file refuses to produce.
 
+A PAGE IN `excludePages` IS NOT PART OF THE BOOK. It is not rasterised, not
+read and not emitted — `--skip-pages`, the deletions somebody made in a picker,
+arriving as a list rather than as a re-written PDF so that the file's sha256
+(and with it the readings cache) survives the curation. Every page that does
+survive keeps its own page number; nothing is renumbered around the gap.
+
 Three modes, one script:
 
     read      render every page and read it with the model  (the MLX path)
@@ -203,7 +209,13 @@ def main():
     max_pixels = config.get('maxPixels')
     renders_dir = config.get('rendersDir')
     grayscale = config.get('grayscale', False)
+    # Two different lists, and the difference is a cache against a curation.
+    # `skipPages` are pages whose answer is already banked: still rendered,
+    # still reported, just not read. `excludePages` are pages that are not part
+    # of the book — `--skip-pages` — and they are not rendered, not read and not
+    # reported at all. See src/vlm/pages.ts.
     skip_pages = set(config.get('skipPages') or [])
+    exclude_pages = set(config.get('excludePages') or [])
 
     fitz = import_fitz()
     if mode == 'read':
@@ -218,6 +230,19 @@ def main():
     doc = fitz.open(pdf_path)
     if doc.page_count == 0:
         fail('%s has no pages' % pdf_path)
+
+    # How many pages the document has is known HERE and nowhere earlier, so the
+    # two refusals that need that number are made here — before a page is
+    # rasterised and before a model is loaded. The syntax of the list was
+    # already refused on the TypeScript side (src/vlm/pages.ts); neither
+    # refusal exists twice.
+    beyond = sorted(p for p in exclude_pages if p > doc.page_count)
+    if beyond:
+        fail('--skip-pages names %s of a %d-page document'
+             % (', '.join('page %d' % p for p in beyond), doc.page_count))
+    if len(exclude_pages) >= doc.page_count:
+        fail('--skip-pages names every page of the %d-page document, so there would be no book '
+             'left to write' % doc.page_count)
 
     meta = doc.metadata or {}
     first = doc[0].rect
@@ -234,8 +259,16 @@ def main():
         'heightPt': first.height,
     })
 
+    # Is there a page left that this run will actually pay a model for? An
+    # excluded page is not in the book and a banked one is already answered, so
+    # a run with neither loads nothing at all.
+    reads_something = any(
+        number not in exclude_pages and number not in skip_pages
+        for number in range(1, doc.page_count + 1)
+    )
+
     model = processor = cfg = None
-    if mode == 'read' and len(skip_pages) < doc.page_count:
+    if mode == 'read' and reads_something:
         load_start = time.time()
         model, processor = load(repo)
         cfg = load_config(repo)
@@ -255,6 +288,13 @@ def main():
     inference_total = 0.0
     for index in range(doc.page_count):
         number = index + 1
+        if number in exclude_pages:
+            # Not rasterised, not read, not emitted. A page somebody deleted has
+            # to cost nothing, which is why this is a `continue` and not a flag
+            # on the page event: the bridge counts the pages it was told to
+            # expect (see bridge.ts), so a silent omission is still caught.
+            sys.stderr.write('  page %d/%d: skipped\n' % (number, doc.page_count))
+            continue
 
         render_start = time.time()
         pixmap = doc[index].get_pixmap(dpi=dpi)

@@ -80,6 +80,17 @@ export interface VlmConvertOptions {
   concurrency?: number;
   /** JSONL of per-page answers, appended as they land. Makes a run resumable. */
   readingsPath?: string;
+  /**
+   * Pages that are not part of the book — `--skip-pages`, and `pages.ts` has
+   * the reasoning. Never rendered, never read, never in the EPUB; every other
+   * page keeps its true PDF page number.
+   *
+   * PER RUN, and deliberately not persisted anywhere. The readings file is
+   * keyed by page and belongs to the PDF, so a page banked before it was
+   * skipped simply stops being asked for, and a run that skips a different set
+   * tomorrow resumes off the same answers.
+   */
+  skipPages?: readonly number[];
   /** Where the chapter proposals are written. Geometric dialects only. */
   chaptersPath?: string;
   /** Remove footnote reference numbers — for a narration build. */
@@ -100,6 +111,8 @@ export interface VlmConvertReport {
   blocks: number;
   /** Pages that could not be read, each with the reason. Never silent. */
   unreadable: VlmUnreadablePage[];
+  /** Pages the caller struck out with `--skip-pages`. Ascending; usually empty. */
+  skippedPages: number[];
   /** How many pages this run actually paid a model for. The rest were cached. */
   inferredPages: number;
   /** Geometric dialects only — otherwise empty or zero. */
@@ -143,6 +156,12 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
    */
   const maxPixels = !geometric ? undefined : viaEndpoint ? requireMaxPixels(model) : MLX_MAX_PIXELS;
 
+  // The pages this run is not about. Sorted, so the log line, the report and
+  // the chapters file all name them in the same order; also held as a set,
+  // because what the readings cache asks is membership.
+  const skipPages = [...new Set(opts.skipPages ?? [])].sort((a, b) => a - b);
+  const notInBook = new Set(skipPages);
+
   opts.log(
     `vlm-convert: ${model.id} (${viaEndpoint ? opts.endpoint : model.repo}), pages rendered at `
     + `${VLM_DPI} dpi${maxPixels !== undefined ? `, ${maxPixels.toLocaleString('en-US')} pixel budget` : ''}`,
@@ -157,10 +176,21 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     : fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-vlm-'));
   const needRenders = geometric || viaEndpoint;
 
+  if (skipPages.length > 0) {
+    opts.log(
+      `vlm-convert: ${skipPages.length} page(s) skipped, not read and not in the book — `
+      + skipPages.join(', '),
+    );
+  }
+
   const readings = opts.readingsPath !== undefined ? VlmReadings.open(opts.readingsPath) : null;
   if (readings !== null && readings.size > 0) {
     opts.log(`vlm-convert: ${readings.size} page(s) already in ${opts.readingsPath} — not re-read`);
   }
+  // A banked answer for a page this run skips stays in the file, untouched and
+  // unread. The cache is keyed by page and belongs to the PDF; the skip list
+  // belongs to the run, and tomorrow's run may keep the page.
+  const banked = readings !== null ? readings.pages().filter((p) => !notInBook.has(p)) : [];
 
   try {
     const run = await readPagesWithVlm({
@@ -172,7 +202,8 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       ...(maxPixels !== undefined ? { maxPixels } : {}),
       ...(viaEndpoint ? { renderOnly: true } : {}),
       ...(geometric ? { grayscale: true, unreadablePages: 'record' as const } : {}),
-      ...(readings !== null ? { skipPages: readings.pages() } : {}),
+      ...(readings !== null ? { skipPages: banked } : {}),
+      ...(skipPages.length > 0 ? { excludePages: skipPages } : {}),
       onLoaded: (seconds) => opts.log(`vlm-convert: model resident in ${seconds.toFixed(1)}s`),
       onPage: (page, total) => {
         if (page.skipped) return;
@@ -208,7 +239,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       if (!page.skipped) answers.set(page.number, page.text);
     }
     if (readings !== null) {
-      for (const page of readings.pages()) {
+      for (const page of banked) {
         const reading = readings.get(page)!;
         if (reading.finishReason === 'length') {
           refuse(page, `it hit the ${model.maxTokens}-token cap when it was read, so its answer is truncated`);
@@ -390,7 +421,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
     fs.writeFileSync(outPath, bytes);
     if (opts.chaptersPath !== undefined) {
-      writeProposals(path.resolve(opts.chaptersPath), proposals, chapters, skipped);
+      writeProposals(path.resolve(opts.chaptersPath), proposals, chapters, skipped, skipPages);
       opts.log(`vlm-convert: ${proposals.length} chapter proposal(s) written to ${opts.chaptersPath}`);
     }
     const writeSeconds = (Date.now() - writeStarted) / 1000;
@@ -413,6 +444,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       droppedFurniture,
       blocks,
       unreadable: skipped,
+      skippedPages: skipPages,
       inferredPages,
       proposals,
       categories,
@@ -529,16 +561,24 @@ function checkPixelBudget(
  * on. A book that does not open on a proposal has a leading section with no
  * proposal behind it, and the picker needs the href either way.
  *
- * The skipped pages travel in the same file because they are the other half of
- * "what is this book missing", and a report that answers one and not the other
- * is a report that gets half read.
+ * The pages that are not in the book travel in the same file because they are
+ * the other half of "what is this book missing", and a report that answers one
+ * and not the other is a report that gets half read. There are TWO such lists
+ * and they are never merged: `unreadable` is a page the model failed on, which
+ * is a defect, and `skippedPages` is a page somebody struck out, which is a
+ * decision. A reader who cannot tell them apart cannot tell whether the book is
+ * broken.
  */
 function writeProposals(
   filePath: string,
   proposals: readonly DotsChapterProposal[],
   sections: readonly VlmChapter[],
   unreadable: readonly VlmUnreadablePage[],
+  skippedPages: readonly number[],
 ): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify({ proposals, sections, unreadable }, null, 1)}\n`);
+  fs.writeFileSync(
+    filePath,
+    `${JSON.stringify({ proposals, sections, unreadable, skippedPages }, null, 1)}\n`,
+  );
 }

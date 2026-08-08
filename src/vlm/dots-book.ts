@@ -15,6 +15,15 @@
  *    a paragraph that continues fills its last line to the right margin, and a
  *    paragraph that genuinely starts on the new page starts with a first-line
  *    indent. Neither of those is in the text, and both are in the ink.
+ *    **A TURN IS ONE PAGE, NOT A GAP.** Page 8 followed by page 12 is not a
+ *    page turn: four pages of the book are missing between them, either struck
+ *    out by `--skip-pages` or left out because the model could not read them.
+ *    Both tests would happily join across that hole — the words because a
+ *    sentence that was interrupted mid-clause still reads as interrupted, the
+ *    ink because a paragraph that continued onto page 9 still fills its last
+ *    line — and the join would fuse two unrelated sentences into one, which is
+ *    a lie no reader can see. So a non-consecutive page break is a boundary,
+ *    exactly like a chapter start.
  *  - **Footnotes collect at the END OF THEIR CHAPTER.** Not per page: a page is
  *    not a unit of a reflowable book, and seventeen little note sections in a
  *    chapter is seventeen interruptions. One Footnote block routinely carries
@@ -392,6 +401,24 @@ export function carriesOver(
   return head.left < 0.03 * nextWidth + 8;
 }
 
+/**
+ * Are these two blocks close enough to be halves of one paragraph?
+ *
+ * Same page, or the very next one. Anything else is a GAP — pages struck out
+ * with `--skip-pages`, or pages the model could not read and that were left out
+ * by number — and nothing may be joined across one. See this file's header:
+ * both join tests answer "yes, continue" for a paragraph whose continuation is
+ * on a page that is not in the book, and the sentence they would build never
+ * existed.
+ *
+ * Exported because the rule is worth asserting on its own; it is arithmetic,
+ * and it decides whether a book contains a sentence nobody wrote.
+ */
+export function adjoins(previous: DotsBlock | null, next: DotsBlock): boolean {
+  if (previous === null) return true;
+  return next.page === previous.page || next.page === previous.page + 1;
+}
+
 // ── one chapter's XHTML ─────────────────────────────────────────────────────
 
 const CATEGORY_ATTRIBUTE: Record<string, string> = {
@@ -588,7 +615,7 @@ export function buildChapterBody(
         // epigraph that happens to open lowercase is not a continuation.
         const align = alignmentClass(block.box, opts.column);
         let joined = false;
-        if (lastParagraph !== null && align === '') {
+        if (lastParagraph !== null && align === '' && adjoins(lastParagraphBlock, block)) {
           joined = continuesTextually(lastParagraphText, block.text);
           if (!joined && lastParagraphBlock !== null && block.page !== lastParagraphBlock.page) {
             joined = carriesOver(lastParagraphBlock, block, opts.images);

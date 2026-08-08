@@ -123,6 +123,7 @@ import { runReflowStage } from './pipeline/reflow-stage.js';
 import { vlmConvert } from './vlm/convert.js';
 import { DEFAULT_VLM_CONCURRENCY } from './vlm/endpoint.js';
 import { DEFAULT_VLM_MODEL_ID, VLM_MODELS } from './vlm/models.js';
+import { parsePageList } from './vlm/pages.js';
 import { applyDeskew, processPage, type Box } from './scan/bands.js';
 import { readPgm } from './scan/pgm.js';
 import { OCR_DPI, recognizeBands, resolveTesseract, type ResolvedTesseract } from './scan/tesseract.js';
@@ -354,6 +355,13 @@ const VLM_READINGS: OptionSpec = {
   type: 'string',
   placeholder: '<file.jsonl>',
   describe: 'Bank each page\'s answer here as it lands, and re-read only what is missing.',
+};
+
+const VLM_SKIP_PAGES: OptionSpec = {
+  name: 'skip-pages',
+  type: 'string',
+  placeholder: '<3,17,19-24>',
+  describe: 'Pages that are not part of the book: never rendered, never read, never in the EPUB.',
 };
 
 const VLM_CHAPTERS: OptionSpec = {
@@ -2119,6 +2127,7 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
   if (concurrency !== undefined && !/^[1-9]\d*$/.test(concurrency)) {
     throw new UsageError(`--vlm-concurrency takes a positive whole number, not "${concurrency}"`);
   }
+  const skipPages = optionalString(args, 'skip-pages');
 
   const report = await vlmConvert({
     pdfPath: requireString(args, 'pdf', 'the PDF to read'),
@@ -2131,6 +2140,7 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
       ? { endpointModel: optionalString(args, 'vlm-endpoint-model')! } : {}),
     ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
     ...(optionalString(args, 'readings') ? { readingsPath: optionalString(args, 'readings')! } : {}),
+    ...(skipPages !== undefined ? { skipPages: parsePageList(skipPages, '--skip-pages') } : {}),
     ...(optionalString(args, 'chapters') ? { chaptersPath: optionalString(args, 'chapters')! } : {}),
     stripNoteMarkers: flag(args, 'strip-note-markers'),
     language: optionalString(args, 'language') ?? 'en',
@@ -2145,8 +2155,14 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
     ? 'every page came from the readings file'
     : `${report.inferredPages} read this run at ${perPage.toFixed(1)}s a page, `
       + `${(60 / perPage).toFixed(1)} pages a minute`;
+  // The skipped pages are named on the completion line rather than only where
+  // they were asked for: a run whose page count looks short is the moment
+  // somebody wants to know whether that was a decision or a defect.
+  const struck = report.skippedPages.length === 0
+    ? ''
+    : `, ${report.skippedPages.length} skipped (${report.skippedPages.join(', ')})`;
   log(
-    `vlm-convert: ${report.pages.length} pages in ${timings.totalSeconds.toFixed(1)}s (${rate}), `
+    `vlm-convert: ${report.pages.length} pages in ${timings.totalSeconds.toFixed(1)}s (${rate})${struck}, `
     + `peak ${(report.peakRssBytes / 1024 / 1024 / 1024).toFixed(1)} GiB`,
   );
   const categories = Object.entries(report.categories).sort((a, b) => b[1] - a[1]);
@@ -2879,6 +2895,18 @@ export const COMMANDS: readonly Command[] = [
       'missing, so a killed run costs one page and a change to the parser or the',
       'assembler costs no GPU at all.',
       '',
+      '--skip-pages 3,17,19-24 leaves pages out of the book. They are not',
+      'rasterised, not read and not in the EPUB, so a page somebody deleted in a',
+      'picker costs nothing. It is a SKIP, NOT A SUBSET: the PDF is not rewritten,',
+      'so its sha256 — the identity --readings is keyed to — survives the',
+      'curation, and every page that stays keeps its TRUE page number in',
+      'data-bf-page. A page that is not a number, a page 0 and a backwards range',
+      'are refused here; a page past the end of the document and a list covering',
+      'the whole book are refused once the PDF has been opened, before anything',
+      'is rendered. A paragraph is never joined across the hole: page 8 followed',
+      'by page 12 is not a page turn, and the sentence a join would build there',
+      'is one nobody wrote.',
+      '',
       'Pages are rendered by PyMuPDF at 200 dpi. That is the resolution the models',
       'were measured at and it is not a setting, for the same reason the rest of',
       'the pipeline pins its dpi (ARCHITECTURE §5).',
@@ -2899,8 +2927,8 @@ export const COMMANDS: readonly Command[] = [
     ].join('\n'),
     options: [
       PDF_IN, OUT_PATH, VLM_MODEL, VLM_PYTHON, VLM_RENDERS, VLM_LANGUAGE,
-      VLM_ENDPOINT, VLM_ENDPOINT_MODEL, VLM_CONCURRENCY, VLM_READINGS, VLM_CHAPTERS,
-      VLM_STRIP_MARKERS,
+      VLM_ENDPOINT, VLM_ENDPOINT_MODEL, VLM_CONCURRENCY, VLM_READINGS, VLM_SKIP_PAGES,
+      VLM_CHAPTERS, VLM_STRIP_MARKERS,
     ],
     run: runVlmConvert,
   },

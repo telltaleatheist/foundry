@@ -33,6 +33,7 @@ import {
   type DotsPagePlace,
 } from '../../src/vlm/dots.js';
 import {
+  adjoins,
   buildChapterBody,
   buildDotsBook,
   carriesOver,
@@ -331,6 +332,38 @@ test('a first-line indent on the next page is a new paragraph', () => {
     1: raster(1300, 700, [[100, 460, 1100, 490]]),
     2: raster(1300, 700, [[160, 205, 900, 235]]),
   })), false);
+});
+
+test('a page turn is one page; a gap is a boundary', () => {
+  // Pages 8 and 9 are a turn. Pages 8 and 12 are four missing pages, whether
+  // they were struck out with --skip-pages or left out because the model could
+  // not read them, and nothing may be joined across them.
+  assert.equal(adjoins(block({ page: 8 }), block({ page: 8 })), true);
+  assert.equal(adjoins(block({ page: 8 }), block({ page: 9 })), true);
+  assert.equal(adjoins(block({ page: 8 }), block({ page: 10 })), false);
+  assert.equal(adjoins(block({ page: 8 }), block({ page: 12 })), false);
+});
+
+test('neither join test is even asked across a gap', () => {
+  // Both would say yes here: the first paragraph ends mid-clause and the second
+  // opens lowercase, which is exactly what `continuesTextually` is looking for.
+  // The pages are 1 and 3, so the sentence the join would build ran through a
+  // page that is not in this book — and nobody wrote it.
+  const gapped = buildChapterBody([
+    block({ page: 1, text: 'The Reich was' }),
+    block({ page: 3, text: 'divided in two.' }),
+  ], chapterOptions());
+  assert.equal(gapped.xhtml.match(/<p /g)?.length, 2);
+  assert.deepEqual(gapped.joinedPages, []);
+
+  // The same two blocks one page apart ARE one paragraph — the rule above is a
+  // gap rule, not a new refusal to join.
+  const turned = buildChapterBody([
+    block({ page: 1, text: 'The Reich was' }),
+    block({ page: 2, text: 'divided in two.' }),
+  ], chapterOptions());
+  assert.equal(turned.xhtml.match(/<p /g)?.length, 1);
+  assert.deepEqual(turned.joinedPages, [2]);
 });
 
 test('the words decide first, and the ink is only asked when they do not', () => {

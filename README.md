@@ -136,8 +136,15 @@ document VLM and takes back a description of the page.
 ```
 foundry vlm-convert --pdf book.pdf --out book.epub \
     [--vlm-model <id>] [--python <path>] [--readings answers.jsonl] \
+    [--skip-pages 3,17,19-24] \
     [--chapters chapters.json] [--vlm-endpoint http://host:8000/v1]
 ```
+
+`--skip-pages` leaves pages out of the book — not rasterised, not read, not in
+the EPUB. It is a **skip, not a subset**: the PDF is never rewritten, so its
+sha256 (the identity `--readings` is keyed to) survives the curation, and every
+page that stays keeps its true page number in `data-bf-page`. A paragraph is
+never joined across the hole a skip leaves.
 
 It shares **no stage, no artifact and no model** with the pipeline above, on
 purpose: the two are meant to be comparable, which they stop being the moment

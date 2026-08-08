@@ -17,7 +17,9 @@
  *  - **a page came back empty** — a blank page in a book is a claim, and a
  *    model that answered with nothing did not make it
  *  - **the pages do not arrive once each, in order** — a book assembled out of
- *    a stream that skipped page nine is wrong in a way no reader can see
+ *    a stream that skipped page nine is wrong in a way no reader can see. A
+ *    page named by `excludePages` is expected NOT to arrive; every other page
+ *    of the document is, exactly once, in ascending order
  *
  * The interpreter is not searched for on PATH. `python3` on this machine is a
  * Homebrew build with neither mlx-vlm nor PyMuPDF in it, and MLX lives in one
@@ -145,8 +147,24 @@ export interface VlmRunOptions {
    * would be a dependency anywhere else.
    */
   grayscale?: boolean;
-  /** Pages whose answers are already in hand. Rendered, never inferred. */
+  /**
+   * Pages whose answers are already in hand. Rendered, never inferred.
+   *
+   * NOT `excludePages`, and the difference is the difference between a cache
+   * and a curation: a page in this list is still part of the book and still
+   * arrives, it just costs no GPU.
+   */
   skipPages?: readonly number[];
+  /**
+   * Pages that are not part of the book at all — `--skip-pages`.
+   *
+   * Never rasterised, never read, never reported: a page somebody deleted in a
+   * picker costs nothing, which is the entire point of passing the deletions
+   * rather than converting a physically-subsetted PDF (see `pages.ts`). Such a
+   * page never appears in `VlmRunResult.pages`, and the pages that survive
+   * keep their true PDF numbers rather than being renumbered around the gap.
+   */
+  excludePages?: readonly number[];
   /**
    * What an unusable page does: stop the run, or be recorded and carried on
    * past.
@@ -265,6 +283,7 @@ export async function readPagesWithVlm(opts: VlmRunOptions): Promise<VlmRunResul
     maxTokens: opts.model.maxTokens,
     grayscale: opts.grayscale === true,
     skipPages: opts.skipPages ?? [],
+    excludePages: opts.excludePages ?? [],
     ...(opts.maxPixels !== undefined ? { maxPixels: opts.maxPixels } : {}),
     ...(opts.rendersDir ? { rendersDir: path.resolve(opts.rendersDir) } : {}),
   });
@@ -363,9 +382,28 @@ export async function readPagesWithVlm(opts: VlmRunOptions): Promise<VlmRunResul
   const doc: VlmDocumentInfo = document;
   const sums: { renderSeconds: number; inferenceSeconds: number; peakRssBytes: number } = totals;
 
-  if (pages.length !== doc.pages) {
+  /*
+   * The pages this run was ever going to be about, in order.
+   *
+   * "All of them" is the ordinary answer, and then this is `1..doc.pages` and
+   * the two checks below are the ones that have always been here. With
+   * `--skip-pages` it is that list with the gaps taken out — and the gaps are
+   * what the checks have to be stated against, because a helper that silently
+   * dropped page nine and a helper that was TOLD to drop page nine produce
+   * exactly the same stream.
+   */
+  const excluded = new Set(opts.excludePages ?? []);
+  const expected: number[] = [];
+  for (let page = 1; page <= doc.pages; page += 1) {
+    if (!excluded.has(page)) expected.push(page);
+  }
+
+  if (pages.length !== expected.length) {
     throw new VlmBridgeError(
-      `the PDF has ${doc.pages} pages and the helper reported ${pages.length} of them`,
+      excluded.size === 0
+        ? `the PDF has ${doc.pages} pages and the helper reported ${pages.length} of them`
+        : `the PDF has ${doc.pages} pages with ${excluded.size} skipped, so ${expected.length}`
+          + ` were expected and the helper reported ${pages.length}`,
     );
   }
 
@@ -373,9 +411,9 @@ export async function readPagesWithVlm(opts: VlmRunOptions): Promise<VlmRunResul
   const unreadable: VlmUnreadablePage[] = [];
   const usable: VlmPage[] = [];
   for (const [index, page] of pages.entries()) {
-    if (page.number !== index + 1) {
+    if (page.number !== expected[index]) {
       throw new VlmBridgeError(
-        `pages arrived out of order: expected page ${index + 1}, got page ${page.number}`,
+        `pages arrived out of order: expected page ${expected[index]}, got page ${page.number}`,
       );
     }
     // A skipped page was never offered to the model on this run, so nothing
