@@ -27,10 +27,15 @@
  * failure prints every one of them.
  */
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+// The helper's source, embedded at build time so a compiled binary carries it.
+// See `scriptPath()` for why this is text rather than a file on disk.
+import VLM_PAGE_SOURCE from './vlm_page.py' with { type: 'text' };
 
 import type { VlmModelDef } from './models.js';
 
@@ -159,14 +164,24 @@ export interface VlmRunOptions {
 }
 
 /**
- * Where `vlm_page.py` is, next to this module.
+ * Where `vlm_page.py` is.
  *
- * NOT EMBEDDED IN THE COMPILED BINARY, deliberately and visibly: a file bundled
- * by `bun build --compile` lives inside the executable and an external
- * interpreter cannot open it. This mode already requires a Python environment
- * with MLX in it, so it already requires something on the machine that is not
- * the binary; pretending otherwise would move the failure from here — where it
- * names the file — to a python that cannot find its script.
+ * The helper is EMBEDDED as text (`with { type: 'text' }`), so a compiled
+ * binary carries its own copy and materialises it beside the machine's cache
+ * on first use. The earlier reading — that a Python environment is a
+ * prerequisite anyway, so the script may as well be one too — conflated two
+ * different things. The ENVIRONMENT is the operator's: their python, their
+ * mlx-vlm, their PyMuPDF, and foundry can only name what it could not find.
+ * The SCRIPT is foundry's own source, versioned with the bridge that speaks to
+ * it, and a release that ships the caller without the callee is incomplete.
+ * `bun build --compile` cannot hand an external interpreter a path inside the
+ * executable (`/$bunfs/root/vlm_page.py`, which is what a user got), so the
+ * text is written out to a real file that python can open.
+ *
+ * The materialised copy is named for the CONTENT's hash: a foundry that
+ * changed the helper writes a different file rather than running the old one
+ * out of a cache, and two foundry versions on one machine cannot fight over
+ * the same path.
  */
 function scriptPath(): string {
   const override = process.env['FOUNDRY_VLM_SCRIPT'];
@@ -176,15 +191,24 @@ function scriptPath(): string {
     }
     return override;
   }
+  // Source tree: the file beside this module IS the helper, and running it
+  // directly is what makes an edit take effect without a build step.
   const here = path.dirname(fileURLToPath(import.meta.url));
-  const script = path.join(here, 'vlm_page.py');
-  if (!fs.existsSync(script)) {
-    throw new VlmBridgeError(
-      `the VLM helper is not at ${script}. It ships beside this module in the source tree and`
-      + ' is not embedded in a compiled binary — point at it with FOUNDRY_VLM_SCRIPT.',
-    );
+  const beside = path.join(here, 'vlm_page.py');
+  if (fs.existsSync(beside)) return beside;
+
+  const digest = createHash('sha256').update(VLM_PAGE_SOURCE).digest('hex').slice(0, 16);
+  const dir = path.join(os.tmpdir(), 'foundry-vlm');
+  const materialised = path.join(dir, `vlm_page-${digest}.py`);
+  if (!fs.existsSync(materialised)) {
+    fs.mkdirSync(dir, { recursive: true });
+    // Written beside the target and renamed: two foundry runs starting at once
+    // must never hand python a half-written script.
+    const partial = `${materialised}.${process.pid}.part`;
+    fs.writeFileSync(partial, VLM_PAGE_SOURCE, 'utf8');
+    fs.renameSync(partial, materialised);
   }
-  return script;
+  return materialised;
 }
 
 /**

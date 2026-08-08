@@ -128,6 +128,11 @@ measurements the incremental-update design rests on.
 segmenting a page and labelling its blocks, it hands the whole page picture to a
 document VLM and takes back a description of the page.
 
+> Shipping a change to BookForge is one command — `tools/deploy.sh`, and there
+> is no version to bump on the BookForge side. See **docs/DEPLOYING.md**, which
+> also covers what each platform needs for this mode (Windows and Linux read
+> pages from a server; only Apple Silicon reads them locally).
+
 ```
 foundry vlm-convert --pdf book.pdf --out book.epub \
     [--vlm-model <id>] [--python <path>] [--readings answers.jsonl] \
