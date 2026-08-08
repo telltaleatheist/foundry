@@ -1,6 +1,6 @@
 {
   "name": "foundry",
-  "version": "0.6.0",
+  "version": "0.7.2",
   "private": true,
   "description": "Recast poorly scanned PDFs into clean EPUBs. Pinned Tesseract for segmentation, three Qwen3-4B stage models for labelling, OCR repair and footnote-marker removal.",
   "type": "module",
