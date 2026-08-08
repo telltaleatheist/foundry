@@ -164,6 +164,7 @@ cannot follows from that**:
 | what | how |
 |---|---|
 | page furniture goes | `Page-header` / `Page-footer` are dropped because the model says which blocks they are — no tag convention to rely on, no running head left in the prose |
+| the furniture it MISLABELLED goes too | a running head the model called a `Title` is found by the book's own repetition: the same text, reduced past letter-spacing, decoration and folio, in the top 15% of three or more pages, at least one of them tagged furniture. Both facts are required — `THE DEFENSE` heads 55 pages of Nuremberg *and* names its third part, and only the height on the page tells them apart |
 | a picture is a picture | the `Picture` box is cropped out of the page at 200 dpi, embedded, and kept with its `Caption` |
 | footnotes are endnotes | `Footnote` blocks collect at the end of their **chapter** — not per page — split into one paragraph per note at the superscript that opens it |
 | a marker is markup | reference numbers arrive as dedicated superscript codepoints, so they become real `<sup>`, or come out entirely with `--strip-note-markers` for a narration build |
@@ -172,6 +173,7 @@ cannot follows from that**:
 | a broken word is one word | the fuse-or-keep decision uses **the book as its own dictionary**: fuse if the fused form appears in it, keep the hyphen if the compound does, otherwise fuse iff the continuation is lowercase |
 | markdown never reaches the reader | dots writes `# …` headings and `> ` quote runs *inside* a text field; they become real headings and blockquotes |
 | a newline is a line ending | it reflows wrapped prose, so a break it kept is one the page had — a contents entry, a line of verse — and becomes `<br/>` |
+| except when it is a print line | it does not reflow *every* paragraph (386 of Nuremberg's blocks kept their print breaks), so a `Text` block with no blank line in it whose every line but the last is ≥ 45 characters is put back together: a justified column fills every line to the margin, and verse does not |
 
 Chapters are **proposed, not decided**: a `Title` or `Section-header`, first on
 its page, in the top 45%, short, and either chapter-ish or centered.
@@ -179,13 +181,24 @@ its page, in the top 45%, short, and either chapter-ish or centered.
 over-includes — decorative half-titles land in it — and that is the design: an
 extra costs a click, a missed chapter cannot be recovered.
 
+A **bare arabic number** is the one heading that proposal rule asks the whole
+book about. `16` is a chapter in a novel numbered 1, 2, 3 and a section mark in
+a work of history that renumbers from 1 in every part, and the difference is the
+SEQUENCE: two or more bare numbers that do not strictly increase across the book
+are section marks, and none of them proposes a chapter. They still render where
+the printer put them. Roman numerals are the part rule's business and untouched.
+
 Every element in the book carries **`data-bf-page`** (the PDF page it was read
 from) and **`data-bf-cat`** (the model's own category, lower-cased:
 `text`, `title`, `section-header`, `footnote`, `caption`, `table`, `picture`,
-`quote`, `formula`, `list-item`). An EPUB has no page concept and no memory of a
-layout model's opinion, and both are unrecoverable once the pages are joined —
-these two attributes are what let a picker say "every footnote" or "everything
-that was on page 3". Standard `epub:type="pagebreak"` markers are emitted at the
+`quote`, `formula`, `list-item`) — with one value that is not the model's:
+**`chapter`**, on the heading a chapter proposal points at, and on the display
+headings of a part divider. That is BookForge's own palette category ("Chapter
+Openings"), and it is what makes a proposal something a person can see and move
+rather than an offer nothing in the book records. An EPUB has no page concept
+and no memory of a layout model's opinion, and both are unrecoverable once the
+pages are joined — these two attributes are what let a picker say "every
+footnote" or "everything that was on page 3". Standard `epub:type="pagebreak"` markers are emitted at the
 page boundaries as well, inside the paragraph when the turn happened mid-sentence.
 
 The three markdown models stay in the registry. They are what dots is measured

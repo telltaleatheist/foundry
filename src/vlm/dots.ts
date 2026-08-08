@@ -21,10 +21,14 @@
  *    block. Left alone they reach the reader as literal hashes; read here, a
  *    leading-`#` line becomes a real heading and a run of `>` lines becomes a
  *    Quote block.
- *  - **A newline dots emitted is a real line ending.** It reflows wrapped
- *    prose — a paragraph comes back as one long line — so the newlines that
- *    survive are the ones it decided to keep: a contents entry, a verse, a
- *    multi-line heading. They become `<br/>`, not spaces.
+ *  - **A newline dots emitted is a real line ending — USUALLY.** It reflows
+ *    wrapped prose — a paragraph comes back as one long line — so the newlines
+ *    that survive are mostly the ones it decided to keep: a contents entry, a
+ *    verse, a multi-line heading. They become `<br/>`, not spaces. It does not
+ *    reflow EVERY paragraph, though, and the ones it misses reach the reader as
+ *    chopped print-width lines; `reflowWrappedProse` in `dots-book.ts` finds
+ *    them by their line lengths, which is a measurement of the block and not a
+ *    guess about the model.
  *  - **A footnote marker is a dedicated codepoint.** These arrive as Unicode
  *    superscript digits, which is a fact worth more than it sounds: `¹⁴` is
  *    perfectly distinguishable from the number 14 in the prose, so it can be
@@ -147,14 +151,21 @@ const MODEL_CATEGORIES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Page furniture, dropped before anything else looks at the page.
+ * Page furniture: out of the book, and KEPT as evidence.
  *
  * The folio and the running head are not sentences anybody wrote to be read,
  * they land in the middle of a paragraph when the page turns, and a narrator
  * reads them aloud. The markdown dialects can only drop what the model TAGGED;
  * this one is told which blocks they are.
+ *
+ * They are set aside rather than thrown away because of what the model gets
+ * WRONG. Nuremberg's running head is tagged Page-header on 168 pages and Title
+ * on 3; its INDEX head is Page-header on 5 pages and Section-header on 16. Each
+ * miss is a spurious chapter split that cuts a sentence in half — and the only
+ * thing that identifies a miss is the 168 hits, which are these blocks. See
+ * `suppressRunningHeads` in `dots-book.ts`, which is the pass that uses them.
  */
-const DROP: ReadonlySet<DotsCategory> = new Set<DotsCategory>(['Page-header', 'Page-footer']);
+const FURNITURE: ReadonlySet<DotsCategory> = new Set<DotsCategory>(['Page-header', 'Page-footer']);
 
 export interface DotsBlock {
   /** 1-based, the PDF's own numbering. */
@@ -171,8 +182,15 @@ export interface DotsBlock {
 export interface DotsParsedPage {
   page: number;
   blocks: DotsBlock[];
-  /** Page-header and Page-footer blocks removed. */
-  dropped: number;
+  /**
+   * The Page-header and Page-footer blocks, out of `blocks` and kept here.
+   *
+   * Nothing downstream writes one into the book. They are the book's own record
+   * of what its furniture SAYS, which is the only thing that can identify the
+   * same running head on a page where the model tagged it a Title — see
+   * `FURNITURE` above. The count of them is what the report calls dropped.
+   */
+  furniture: DotsBlock[];
   /**
    * The furthest right and furthest down any box reached, BEFORE scaling.
    *
@@ -225,8 +243,8 @@ export function parseDotsPage(answer: string, opts: DotsParseOptions): DotsParse
 
   const scale = renderScale(render, maxPixels);
   const blocks: DotsBlock[] = [];
+  const furniture: DotsBlock[] = [];
   const rawExtent = { x: 0, y: 0 };
-  let dropped = 0;
 
   for (const [index, element] of raw.entries()) {
     if (typeof element !== 'object' || element === null) {
@@ -260,8 +278,8 @@ export function parseDotsPage(answer: string, opts: DotsParseOptions): DotsParse
       pageWidth: render.width,
       pageHeight: render.height,
     };
-    if (DROP.has(block.category)) {
-      dropped += 1;
+    if (FURNITURE.has(block.category)) {
+      furniture.push(block);
       continue;
     }
     if (
@@ -274,7 +292,7 @@ export function parseDotsPage(answer: string, opts: DotsParseOptions): DotsParse
     blocks.push(block);
   }
 
-  return { page, blocks, dropped, rawExtent };
+  return { page, blocks, furniture, rawExtent };
 }
 
 function readBox(value: unknown, page: number, index: number, scale: number): DotsBox {
@@ -406,9 +424,12 @@ export function dotsInline(raw: string, opts: DotsInlineOptions = {}): string {
     const digits = [...run].map((c) => String(SUPERSCRIPT_DIGITS.indexOf(c))).join('');
     return `<sup>${digits}</sup>`;
   });
-  // The one place a newline is content. dots reflows wrapped prose, so a break
-  // it kept is a break the page had: a contents entry, a line of verse, the
-  // second line of a heading.
+  // The one place a newline is content: a break that reached here is a break the
+  // page had — a contents entry, a line of verse, the second line of a heading.
+  // A paragraph the model forgot to reflow has already had its newlines taken
+  // out by `reflowWrappedProse`, upstream of this, where the whole block's line
+  // lengths are still visible. Nothing here can tell the two apart from one
+  // newline at a time, which is why the decision is not made here.
   return out.replace(/\n/g, '<br/>\n');
 }
 
@@ -545,6 +566,17 @@ export function widthFraction(block: DotsBlock): number {
 
 export function topFraction(block: DotsBlock): number {
   return block.box.y1 / block.pageHeight;
+}
+
+/**
+ * Where the block ENDS, as a fraction of the page height.
+ *
+ * The bottom edge rather than the top, because that is the edge a footer sits
+ * against: a two-line running foot starts higher up the page than a one-line
+ * one and ends in the same place.
+ */
+export function bottomFraction(block: DotsBlock): number {
+  return block.box.y2 / block.pageHeight;
 }
 
 /** Distance from the PAGE's centre line, as a fraction of the page width. */

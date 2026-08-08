@@ -65,6 +65,7 @@ import {
   alignmentClass,
   BookLexicon,
   bodyColumn,
+  bottomFraction,
   carriesBodyProse,
   centerOffset,
   checkTableHtml,
@@ -79,6 +80,7 @@ import {
   type BodyColumn,
   type DotsBlock,
   type DotsBox,
+  type DotsCategory,
   type DotsPageKind,
   type DotsParsedPage,
 } from './dots.js';
@@ -172,6 +174,155 @@ export function openPageImages(
   };
 }
 
+// ── the running head the model mistagged ────────────────────────────────────
+
+/**
+ * A running head, reduced to what is the same about it on every page it is on.
+ *
+ * Three things vary and none of them is the head: LETTER-SPACING, which a
+ * designer sets as `N U R E M B E R G` and the model reads with the spaces in;
+ * DECORATION, which is `■ INDEX ■` on one page and `• INDEX •` on the next; and
+ * the FOLIO, which is a different number every time. So everything but letters
+ * and digits comes out, and then every run of digits collapses to a single `#`
+ * — `NUREMBERG 42` and `NUREMBERG 43` are one head, and the number they differ
+ * by is the only thing that made them look like two.
+ *
+ * Accents go with the punctuation, which loses information and does not matter:
+ * the key only ever has to match ITSELF, on the other pages of the same book,
+ * and `PRÉFACE` reduces to `PRFACE` on every one of them.
+ */
+export function furnitureKey(text: string): string {
+  return text.toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/\d+/g, '#');
+}
+
+/**
+ * The band a running head lives in, as a fraction of the page.
+ *
+ * Measured on Nuremberg, 568 pages: all 22 running heads the model mistagged
+ * sit between 6.0% and 7.2% down their page, and the lowest of the book's real
+ * openers — `CHAPTER III` on page 306 and `SOURCE NOTES` on page 501 — is at
+ * 17.6%. There is nothing at all in between, which is why one number can carry
+ * the whole distinction and why it is put at 15%, in the middle of the gap
+ * rather than against either side of it.
+ */
+const FURNITURE_BAND = 0.15;
+
+/**
+ * How many pages must carry a text before it is furniture rather than prose.
+ *
+ * A chapter opens once. A running head is on every page of its section, so the
+ * evidence for one is REPETITION, and three pages is enough of it that no
+ * heading in a book can produce it by accident.
+ *
+ * The count includes the mistagged copies, and it has to. Nuremberg's
+ * introduction head is tagged Page-header on two pages and mistagged on two
+ * more; counting only what the model got right leaves it one page short of the
+ * threshold, and both mistakes survive as chapter splits — which is the exact
+ * failure this pass exists for. So a page counts when the text is in the
+ * furniture band, and at least one of those pages must have been tagged
+ * furniture outright, which is what keeps the rule anchored to the model's own
+ * answer rather than to a shape.
+ */
+const FURNITURE_PAGES = 3;
+
+/**
+ * A mistagged running head is short. 80 characters is `proposeChapters`'s own
+ * ceiling for a heading, and the same number here for the same reason.
+ */
+const FURNITURE_CHARS = 80;
+
+/** The categories a mistagged running head arrives as. */
+const MISTAGGED: ReadonlySet<DotsCategory> =
+  new Set<DotsCategory>(['Title', 'Section-header', 'Text']);
+
+/**
+ * Take the book's running heads out of the book, including the ones the model
+ * did not label.
+ *
+ * `parseDotsPage` removes what was TAGGED Page-header or Page-footer, and on
+ * Nuremberg that is 168 pages of `NUREMBERG` and 5 of `INDEX`. The same heads
+ * arrive as a Title on 3 more pages and as a Section-header on 16, and every
+ * one of those became a chapter that cut a sentence in half — 17 documents in
+ * the converted EPUB were titled "INDEX".
+ *
+ * TWO facts must hold, never one, and page 306 of that book is why. `THE
+ * DEFENSE` is the running head of 55 pages AND the name of the book's third
+ * part; the divider is the one page where those words are the reader's. What
+ * separates them is nothing about the words at all — it is that the head sits
+ * at 7% down the page and the divider's title at 26%. Attestation alone would
+ * delete the part divider; the band alone would delete a chapter that happens
+ * to open high on its page. On the real book this pass removes 22 blocks and
+ * leaves every one of the nine real openers, including the `INDEX` title on
+ * page 539 that the seventeen `INDEX` heads after it were being confused with.
+ *
+ * A key of nothing but digits is never attested: that is a bare folio, and a
+ * bare number the model called a Section-header is a section mark rather than a
+ * page number — `proposeChapters` stops it proposing a chapter, and it stays in
+ * the book where the printer put it.
+ *
+ * Mutates the pages, which is how `buildDotsBook`'s dehyphenation pass already
+ * works, and returns what it took so the run can say so. A book that silently
+ * lost seventeen blocks is a book nobody can check.
+ */
+export function suppressRunningHeads(pages: readonly DotsParsedPage[]): DotsBlock[] {
+  const taggedHead = new Set<string>();
+  const taggedFoot = new Set<string>();
+  const headerPages = new Map<string, Set<number>>();
+  const footerPages = new Map<string, Set<number>>();
+
+  const note = (where: Map<string, Set<number>>, key: string, page: number): void => {
+    const seen = where.get(key);
+    if (seen === undefined) where.set(key, new Set([page]));
+    else seen.add(page);
+  };
+
+  for (const page of pages) {
+    for (const block of page.furniture) {
+      const key = furnitureKey(block.text);
+      if (key.length === 0) continue;
+      const foot = block.category === 'Page-footer';
+      (foot ? taggedFoot : taggedHead).add(key);
+      note(foot ? footerPages : headerPages, key, block.page);
+    }
+    // The mistagged copies count towards the same evidence, so they are read in
+    // the same sweep — a block in the band whose text a header elsewhere in the
+    // book also carries is a page of that head, whatever the model called it.
+    for (const block of page.blocks) {
+      if (!MISTAGGED.has(block.category) || block.text.length >= FURNITURE_CHARS) continue;
+      const key = furnitureKey(block.text);
+      if (key.length === 0) continue;
+      if (topFraction(block) <= FURNITURE_BAND) note(headerPages, key, block.page);
+      if (bottomFraction(block) >= 1 - FURNITURE_BAND) note(footerPages, key, block.page);
+    }
+  }
+
+  const attested = (
+    tagged: ReadonlySet<string>,
+    where: Map<string, Set<number>>,
+    key: string,
+  ): boolean =>
+    tagged.has(key) && /[A-Z]/.test(key) && (where.get(key)?.size ?? 0) >= FURNITURE_PAGES;
+
+  const removed: DotsBlock[] = [];
+  for (const page of pages) {
+    const kept = page.blocks.filter((block) => {
+      if (!MISTAGGED.has(block.category) || block.text.length >= FURNITURE_CHARS) return true;
+      const key = furnitureKey(block.text);
+      if (key.length === 0) return true;
+      const isHead = topFraction(block) <= FURNITURE_BAND
+        && attested(taggedHead, headerPages, key);
+      const isFoot = bottomFraction(block) >= 1 - FURNITURE_BAND
+        && attested(taggedFoot, footerPages, key);
+      if (!isHead && !isFoot) return true;
+      removed.push(block);
+      return false;
+    });
+    page.blocks.length = 0;
+    page.blocks.push(...kept);
+  }
+  return removed;
+}
+
 // ── chapter proposals ───────────────────────────────────────────────────────
 
 const CHAPTERISH = new RegExp(
@@ -180,6 +331,39 @@ const CHAPTERISH = new RegExp(
   + '|^[IVXLC]+\\.?$|^\\d{1,2}\\.?$',
   'i',
 );
+
+/** `16`, `16.` — a heading that is nothing but an arabic number. */
+const BARE_NUMBER = /^(\d{1,3})\.?$/;
+
+/**
+ * Does this book number its CHAPTERS in arabic, or its sections?
+ *
+ * `CHAPTERISH` accepts a bare number, and it has to: a novel whose chapters are
+ * called `1`, `2`, `3` gets its splits from nothing else. But a bare number is
+ * also how a work of history marks the mini-sections inside a chapter, and
+ * Nuremberg has about 150 of them — an arbitrary subset of which became
+ * chapters called "22", "23", "26".
+ *
+ * The two are told apart by the SEQUENCE, which is a fact about the whole book
+ * and invisible from any one page. Chapter numbers run 1, 2, 3 … to the end and
+ * never go back; section numbers RESTART, once per chapter or once per part —
+ * Nuremberg has four parts and numbers each one from 1, so `2` is a heading on
+ * three separate pages and `3` on four. So: two or more bare numbers that do
+ * not strictly increase across the book are section marks, and none of them
+ * proposes a chapter. They still render exactly where the printer put them.
+ *
+ * One bare number in a book is not evidence of either, and is left alone.
+ */
+export function bareNumbersAreSectionMarks(blocks: readonly DotsBlock[]): boolean {
+  const numbers: number[] = [];
+  for (const block of blocks) {
+    if (block.category !== 'Title' && block.category !== 'Section-header') continue;
+    const match = BARE_NUMBER.exec(block.text.trim());
+    if (match !== null) numbers.push(Number(match[1]));
+  }
+  if (numbers.length < 2) return false;
+  return numbers.some((value, i) => i > 0 && value <= numbers[i - 1]);
+}
 
 export interface DotsChapterProposal {
   /** Index into the book's flat block list — where the section would open. */
@@ -223,6 +407,10 @@ export function proposeChapters(
     if (!firstIndexOnPage.has(block.page)) firstIndexOnPage.set(block.page, index);
   }
 
+  // Asked once, of the whole book, before a single page is looked at — the
+  // answer is a fact about the book's numbering and cannot be read off a page.
+  const sectionMarks = bareNumbersAreSectionMarks(blocks);
+
   const proposals: DotsChapterProposal[] = [];
   const claimed = new Set<number>(spokenFor);
   for (const [index, block] of blocks.entries()) {
@@ -231,6 +419,7 @@ export function proposeChapters(
     if (firstIndexOnPage.get(block.page) !== index) continue;
     if (topFraction(block) > 0.45) continue;
     if (block.text.length >= 80) continue;
+    if (sectionMarks && BARE_NUMBER.test(block.text.trim())) continue;
 
     const why: string[] = [];
     if (CHAPTERISH.test(block.text)) why.push('chapterish-text');
@@ -434,9 +623,24 @@ const CATEGORY_ATTRIBUTE: Record<string, string> = {
   Title: 'title',
 };
 
+/**
+ * The one `data-bf-cat` value that is not a dots category.
+ *
+ * It is BookForge's, not the model's: the picker's palette has a `chapter`
+ * category called "Chapter Openings — the EPUB split points", and it is how a
+ * person sees and moves where the book divides. dots has no such category —
+ * the heading that opens a chapter is a Title or a Section-header like any
+ * other, and which one it is says nothing about whether a chapter starts there.
+ * That is `proposeChapters`'s answer, and this is where it is written down.
+ */
+const CHAPTER_ATTRIBUTE = 'chapter';
+
 /** `data-bf-page` and `data-bf-cat` — see this file's header. */
-function stamp(block: DotsBlock): string {
-  return ` data-bf-page="${block.page}" data-bf-cat="${CATEGORY_ATTRIBUTE[block.category]}"`;
+function stamp(
+  block: DotsBlock,
+  attribute: string = CATEGORY_ATTRIBUTE[block.category],
+): string {
+  return ` data-bf-page="${block.page}" data-bf-cat="${attribute}"`;
 }
 
 /**
@@ -462,19 +666,28 @@ const KIND_LABEL: Partial<Record<DotsPageKind, string>> = {
  * rather than on each block because the kind is a fact about the SECTION — the
  * page announced it, and the blocks that follow belong to what it announced.
  *
- * `chapter` IS NOT STAMPED, and that is the whole distinction this file draws.
- * The four kinds above are what a PAGE said it was, loudly enough to be named;
- * `chapter` is `proposeChapters`, a deliberately generous rule whose output a
- * person curates — it offers the second half-title of For the Soul of the
- * People as a chapter, and it is supposed to. A proposal belongs in the
- * proposal file, where it is labelled a proposal. Written into the book as an
- * attribute it stops being an offer and becomes a claim, and the claim is
- * sometimes false.
+ * `chapter` IS NOT A KIND HERE, and the reason is narrower than it used to be.
+ * The four kinds above are what a PAGE said it was; `chapter` is
+ * `proposeChapters`, a rule whose output a person curates. A `data-bf-kind`
+ * wrapper is a statement about a whole SECTION — everything inside this file is
+ * a part divider — and wrapping a proposal in one would make a claim about
+ * every block a possibly-wrong split happened to enclose. So no wrapper.
  *
- * So a section with no kind, and a section that is only a chapter proposal, are
- * emitted exactly as they were before any of this existed. That is the
- * classifier's silence reaching the file: a book whose pages said nothing comes
- * out byte for byte the book it was.
+ * THE BLOCK-LEVEL STAMP IS A DIFFERENT QUESTION, AND THE ANSWER CHANGED. This
+ * comment used to argue that a proposal must not be written into the book at
+ * all, because an attribute stops being an offer and becomes a claim. That was
+ * wrong about who reads it. The picker's palette HAS a `chapter` category —
+ * "Chapter Openings — the EPUB split points" — and it is the control a person
+ * uses to move a split, add one, or take one away. A proposal that is not
+ * stamped is not visible there, so a book converted this way arrived with no
+ * chapter openings in the picker at all and nothing to curate: the offer was
+ * unreadable, which is worse than an offer that is sometimes wrong. So the
+ * heading a chapter proposal points at, and the display headings of a part
+ * divider, carry `data-bf-cat="chapter"` — see `openingHeadings` — and the
+ * curation the old comment was protecting is the thing that now works.
+ *
+ * A section with no kind is still emitted exactly as it was before any of this
+ * existed. That is the classifier's silence reaching the file.
  */
 function stampKind(xhtml: string, kind: DotsPageKind | null, page: number): string {
   if (kind === null || kind === 'chapter') return xhtml;
@@ -506,6 +719,17 @@ export interface DotsChapterOptions {
   firstNote: number;
   /** Running picture number, for the same reason. */
   firstPicture: number;
+  /**
+   * The headings that OPEN this section, indexed into `blocks` as it is passed
+   * — this span's own numbering, not the book's.
+   *
+   * They get `data-bf-cat="chapter"` in place of their category, which is what
+   * puts them in the picker's Chapter Openings palette. Empty for a span
+   * nothing proposed, and the caller that knows which those are is
+   * `buildDotsBook`: a span does not know whether a heading at its top is a
+   * split point or the first heading inside one.
+   */
+  openers: ReadonlySet<number>;
 }
 
 export interface DotsChapterBody {
@@ -548,7 +772,7 @@ export function buildChapterBody(
     return pageBreak(block.page);
   };
 
-  for (const block of blocks) {
+  for (const [index, block] of blocks.entries()) {
     if (block.category === 'List-item') {
       const tag = /^\d+[.)]/.test(block.text) ? 'ol' : 'ul';
       if (openList !== tag) {
@@ -566,9 +790,13 @@ export function buildChapterBody(
       case 'Title':
       case 'Section-header': {
         const xhtml = inline(block.text);
+        // The TAG still comes from the true category: `h1` for a Title and `h2`
+        // for a Section-header is the book's own hierarchy, and a chapter that
+        // opens on a Section-header did not become a Title by opening one.
         const tag = block.category === 'Title' ? 'h1' : 'h2';
         const align = alignmentClass(block.box, opts.column);
-        out.push(`<${tag}${classOf(align)}${stamp(block)}>${marker(block)}${xhtml}</${tag}>`);
+        const cat = opts.openers.has(index) ? CHAPTER_ATTRIBUTE : CATEGORY_ATTRIBUTE[block.category];
+        out.push(`<${tag}${classOf(align)}${stamp(block, cat)}>${marker(block)}${xhtml}</${tag}>`);
         label ??= plainText(xhtml);
         lastParagraph = null;
         break;
@@ -726,6 +954,107 @@ function appendToParagraph(
   return `${open} ${marker}${inline(next)}</p>`;
 }
 
+// ── the paragraph the model forgot to reflow ────────────────────────────────
+
+/**
+ * The shortest line a JUSTIFIED column produces, in characters.
+ *
+ * Measured on Nuremberg, over every Text block that kept a newline and has no
+ * blank line in it — 3,175 non-final lines, and the distribution is two humps
+ * with a hole between them:
+ *
+ * ```
+ *    0- 9 |  19       50- 59 |   52
+ *   10-19 |  66       60- 69 | 1796
+ *   20-29 | 443       70- 79 |  375
+ *   30-39 | 355       80-119 |   22
+ *   40-49 |  21
+ * ```
+ *
+ * The right hump is wrapped prose: a 65-character line, every line the same
+ * length because the column is justified. The left hump is everything a break
+ * is deliberate in — verse, an address, a list of abbreviations, a contents
+ * entry. Between them, 40 to 59, sits 2.3% of all the lines in the book. 45 is
+ * in that hole rather than against either side of it, so the number is not
+ * carrying any weight it was not measured for.
+ */
+const JUSTIFIED_LINE_CHARS = 45;
+
+/**
+ * A run of breaks that all land on a full stop is a LIST, not a paragraph.
+ *
+ * The line-length rule alone is wrong about one thing in Nuremberg, and only
+ * one: the bibliography. Its entries are set one to a line and each is long
+ * enough to pass — `POSNER, Gerald L. Hitler's Children. New York: Random
+ * House, 1991.` is 66 characters — so a 13-entry block reflows into a single
+ * run-on paragraph and the reader loses the list.
+ *
+ * What is different about it is WHERE the breaks fall. A wrapped column breaks
+ * wherever the margin arrives, which is mid-sentence almost every time; a list
+ * breaks at the end of every entry. Over the whole book, 8 of the 366 blocks
+ * the length rule accepts have every break on terminal punctuation, and six of
+ * those are two-line blocks where one sentence simply happened to end at the
+ * margin. Requiring THREE such breaks leaves exactly the two bibliography
+ * blocks — the coincidence stops being available at three, and the measurement
+ * says so rather than the arithmetic.
+ */
+const STRUCTURED_BREAKS = 3;
+const ENDS_A_SENTENCE = /[.!?][*"'”’)]?$/;
+
+/**
+ * Put back the paragraphs the model did not reflow.
+ *
+ * `dotsInline` turns a surviving newline into `<br/>`, on the model's own
+ * behaviour: it reflows wrapped prose, so a newline it kept is a line ending
+ * somebody meant. It reflowed 1,870 of Nuremberg's long Text blocks and MISSED
+ * 386, and those 386 reach the reader as prose chopped at the width of the
+ * printed page — a defect nothing else in the pipeline can see, because every
+ * one of those newlines is indistinguishable from a line of verse when you are
+ * looking at one newline.
+ *
+ * Looking at the whole block tells them apart. Three conditions, all of them
+ * about the block and none about its words:
+ *
+ *  - it is a Text block. A Quote is where the verse is, and verse set as
+ *    long lines is exactly what this rule would destroy; a heading's second
+ *    line is a line the designer chose. Neither is touched.
+ *  - it has no BLANK line in it. A blank line is structure the model went out
+ *    of its way to keep — Nuremberg's list of abbreviations is one block with
+ *    paragraph breaks in it — and a block that says that much about its own
+ *    shape is believed.
+ *  - every line but the last is at least `JUSTIFIED_LINE_CHARS`. This is the
+ *    measurement that does the work: a justified column ends every line but its
+ *    last at the right margin, and nothing else in a book does.
+ *  - its breaks do not all land on a full stop — see `STRUCTURED_BREAKS`, which
+ *    is what keeps the bibliography a bibliography.
+ *
+ * The last line is exempt from both because a paragraph's last line is short by
+ * definition and ends a sentence by definition.
+ *
+ * Runs AFTER the dehyphenation pass, and the order matters: dehyphenation fuses
+ * the `word-\nword` seams, so by the time this runs the newlines that are left
+ * are plain wrapped lines and the line lengths are the ones the reader would
+ * have seen. Mutates, and returns the blocks it changed so the run can say how
+ * many there were.
+ */
+export function reflowWrappedProse(blocks: readonly DotsBlock[]): DotsBlock[] {
+  const reflowed: DotsBlock[] = [];
+  for (const block of blocks) {
+    if (block.category !== 'Text' || !block.text.includes('\n')) continue;
+    if (/\n[ \t]*\n/.test(block.text)) continue;
+    const lines = block.text.split('\n');
+    const wrapped = lines.slice(0, -1).map((line) => line.trim());
+    if (wrapped.some((line) => line.length < JUSTIFIED_LINE_CHARS)) continue;
+    if (wrapped.length >= STRUCTURED_BREAKS && wrapped.every((l) => ENDS_A_SENTENCE.test(l))) continue;
+    // The spaces either side of the break go with it: the line ended at the
+    // margin and the next began at it, and a book with `word  word` in it is a
+    // book somebody has to explain.
+    block.text = block.text.replace(/[ \t]*\n[ \t]*/g, ' ');
+    reflowed.push(block);
+  }
+  return reflowed;
+}
+
 // ── the book ────────────────────────────────────────────────────────────────
 
 const STYLESHEET = `/* Foundry — vlm-convert, dots.ocr. No per-book font decisions, ever. */
@@ -750,6 +1079,45 @@ td, th { border: none; padding: 0.35em 1.1em; }
 th { border-bottom: 1px solid currentColor; }
 `;
 
+/**
+ * The headings at the top of a section that ARE the split point, as indices
+ * into the section's own blocks.
+ *
+ * A chapter often opens on two of them — `CHAPTER I` and then `PRELUDE TO
+ * JUDGMENT`, two blocks on page 25 of Nuremberg — and a person curating the
+ * split needs both, because deleting one and leaving the other leaves a chapter
+ * called `CHAPTER I` and an orphan line at the top of it. So the run is taken
+ * whole: display headings from the top of the section's first page, stopping at
+ * the first thing that is not one.
+ *
+ * A part divider does not stop there. It carries nothing but its announcement
+ * (`partVerdict` measured that before naming it), so a Picture or a stray line
+ * between its numeral and its title is part of the same announcement rather
+ * than the start of the prose. A chapter's first paragraph, on the other hand,
+ * is right underneath its title, and is where its headings end.
+ *
+ * Nothing else is stamped. A title page, a copyright page and a contents page
+ * are already named by a `data-bf-kind` wrapper, which is the stronger
+ * statement, and they are not places a reader wants the book to divide.
+ */
+export function openingHeadings(
+  span: readonly DotsBlock[],
+  kind: DotsPageKind | null,
+): Set<number> {
+  const openers = new Set<number>();
+  if (span.length === 0 || (kind !== 'chapter' && kind !== 'part')) return openers;
+  const page = span[0].page;
+  for (const [index, block] of span.entries()) {
+    if (block.page !== page) break;
+    if (block.category === 'Title' || block.category === 'Section-header') {
+      openers.add(index);
+      continue;
+    }
+    if (kind === 'chapter') break;
+  }
+  return openers;
+}
+
 export interface DotsBookOptions {
   metadata: VlmEpubMetadata;
   /** In page order. */
@@ -768,6 +1136,14 @@ export interface DotsBookResult {
   pictures: number;
   /** Pages whose opening paragraph was joined onto the previous page's. */
   joinedPages: number[];
+  /**
+   * The running heads the model mistagged, taken out of the book by
+   * `suppressRunningHeads` — page and text, because a removal nobody can read
+   * is a removal nobody can check.
+   */
+  suppressedHeads: { page: number; text: string }[];
+  /** Text blocks whose print line breaks were reflowed back into prose. */
+  reflowedBlocks: number;
   lexiconWords: number;
   xhtmlSeconds: number;
   zipSeconds: number;
@@ -775,6 +1151,13 @@ export interface DotsBookResult {
 
 export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResult> {
   const started = Date.now();
+
+  // FIRST, before the blocks are flattened and before anything counts them: the
+  // running heads the model did not label are not part of the book, and every
+  // pass after this — the lexicon, the chapter proposals, the body column —
+  // would otherwise be reading them as if they were.
+  const suppressed = suppressRunningHeads(opts.pages);
+
   const blocks = opts.pages.flatMap((p) => p.blocks);
   if (blocks.length === 0) {
     throw new Error('no blocks survived the pages — there is no book to write');
@@ -787,6 +1170,7 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
   for (const block of blocks) {
     if (block.text.includes('-\n')) block.text = lexicon.dehyphenate(block.text);
   }
+  const reflowed = reflowWrappedProse(blocks);
 
   const column = bodyColumn(blocks, blocks[0].pageWidth);
   const proposals = proposeSections(opts.pages);
@@ -809,6 +1193,7 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
 
   for (const [index, [from, to]] of spans.entries()) {
     const span = blocks.slice(from, to);
+    const kind = opens[index]?.kind ?? null;
     const body = buildChapterBody(span, {
       column,
       lexicon,
@@ -816,13 +1201,13 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
       stripNoteMarkers: opts.stripNoteMarkers,
       firstNote: notes,
       firstPicture: crops.length,
+      openers: openingHeadings(span, kind),
     });
     notes += body.notes;
     crops.push(...body.crops);
     joinedPages.push(...body.joinedPages);
 
     const n = String(index + 1).padStart(4, '0');
-    const kind = opens[index]?.kind ?? null;
     const pages = span.map((b) => b.page);
     const firstPage = Math.min(...pages);
     /*
@@ -886,6 +1271,8 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
     footnotes: notes - 1,
     pictures: resources.length,
     joinedPages,
+    suppressedHeads: suppressed.map((b) => ({ page: b.page, text: b.text })),
+    reflowedBlocks: reflowed.length,
     lexiconWords: lexicon.size,
     xhtmlSeconds,
     zipSeconds: packaged.zipSeconds,

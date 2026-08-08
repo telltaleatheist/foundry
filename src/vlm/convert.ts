@@ -121,6 +121,11 @@ export interface VlmConvertReport {
   footnotes: number;
   pictures: number;
   joinedPages: number[];
+  /**
+   * Running heads the model tagged as headings, found by the book's own
+   * repetition and taken out. Blocks DELETED, so they are named.
+   */
+  suppressedHeads: { page: number; text: string }[];
   timings: {
     loadSeconds: number;
     renderSeconds: number;
@@ -316,7 +321,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
           render: { width: page.width, height: page.height },
           maxPixels: maxPixels!,
         });
-        droppedFurniture += parsed.dropped;
+        droppedFurniture += parsed.furniture.length;
         geometryPages.push(parsed);
       } catch (err) {
         if (!(err instanceof DotsPageError)) throw err;
@@ -364,6 +369,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     let footnotes = 0;
     let pictures = 0;
     let joinedPages: number[] = [];
+    let suppressedHeads: { page: number; text: string }[] = [];
 
     if (geometric) {
       blocks = geometryPages.reduce((sum, p) => sum + p.blocks.length, 0);
@@ -392,8 +398,25 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       opts.log(
         `vlm-convert: ${built.lexiconWords} words in the book's own lexicon, `
         + `${joinedPages.length} paragraph(s) joined across a page turn, `
+        + `${built.reflowedBlocks} paragraph(s) reflowed out of print lines, `
         + `${footnotes} footnote(s), ${pictures} picture(s)`,
       );
+      /*
+       * The running heads the model mistagged, and what they said.
+       *
+       * Printed like `dropped` and never silently: this pass DELETES blocks
+       * that the model called a Title, and a deletion nobody can read is a
+       * deletion nobody can check. The distinct texts are listed rather than
+       * every page, because seventeen lines reading INDEX is not a report.
+       */
+      suppressedHeads = built.suppressedHeads;
+      if (suppressedHeads.length > 0) {
+        const texts = [...new Set(suppressedHeads.map((h) => h.text))];
+        opts.log(
+          `vlm-convert: ${suppressedHeads.length} mistagged running head(s) suppressed — `
+          + texts.map((t) => JSON.stringify(t)).join(', '),
+        );
+      }
       // What the pages said they were. Printed even when the answer is nothing,
       // because "no page carried a signature" and "nobody looked" are different
       // facts and only one of them is a reason to go and read the book.
@@ -452,6 +475,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       footnotes,
       pictures,
       joinedPages,
+      suppressedHeads,
       timings: {
         loadSeconds: run.loadSeconds,
         renderSeconds: run.renderSeconds,
