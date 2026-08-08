@@ -26,6 +26,7 @@
  */
 import { writeZip, zipText, type ZipEntry } from '../export/zip.js';
 import type { VlmBlock } from './dialect.js';
+import type { DotsPageKind } from './dots.js';
 
 export class VlmEpubError extends Error {
   constructor(message: string) {
@@ -57,6 +58,27 @@ export interface VlmChapter {
   blocks: number;
   firstPage: number;
   lastPage: number;
+  /**
+   * What this section IS, when its opening page said so loudly enough
+   * (`classifyPage` in `dots.ts`). Absent is the ordinary answer, and the only
+   * one the prose emitter ever gives.
+   */
+  kind?: DotsPageKind;
+}
+
+/**
+ * One entry in the nav document, and its children.
+ *
+ * A flat list of chapters is what most books are and what every book was until
+ * a book with PARTS in it arrived. EPUB3's nav is an `<ol>` and nests by
+ * carrying another `<ol>` inside an `<li>`, which is the shape a publisher's
+ * contents page has always had; a reader that ignores the nesting still gets
+ * every entry, in order.
+ */
+export interface VlmNavItem {
+  href: string;
+  label: string;
+  children?: readonly VlmNavItem[];
 }
 
 export interface VlmEpubResult {
@@ -150,6 +172,15 @@ export function packageVlmEpub(
   documents: readonly VlmDocument[],
   resources: readonly VlmResource[],
   stylesheet: string,
+  /**
+   * The nav, when the book has a shape the documents' order does not carry.
+   *
+   * Absent means one entry per document in spine order, which is what a book
+   * without parts is and what every caller wanted until one of them could tell
+   * a part from a chapter. A caller that passes a flat tree gets byte-identical
+   * output to one that passes nothing.
+   */
+  nav?: readonly VlmNavItem[],
 ): { bytes: Uint8Array; zipSeconds: number } {
   if (documents.length === 0) {
     throw new VlmEpubError('no text survived the pages — there is no book to write');
@@ -177,9 +208,7 @@ export function packageVlmEpub(
     entries.push({ path: `${OPF_DIR}/${resource.href}`, data: resource.data });
   }
 
-  const navItems = documents
-    .map((d) => `      <li><a href="${esc(d.href)}">${esc(d.label)}</a></li>`)
-    .join('\n');
+  const navItems = renderNav(nav ?? documents.map((d) => ({ href: d.href, label: d.label })), 6);
   entries.push(zipText(`${OPF_DIR}/nav.xhtml`,
     `<?xml version="1.0" encoding="UTF-8"?>\n`
     + `<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"`
@@ -216,6 +245,24 @@ export function packageVlmEpub(
   const zipStarted = Date.now();
   const bytes = writeZip(entries);
   return { bytes, zipSeconds: (Date.now() - zipStarted) / 1000 };
+}
+
+/**
+ * The nav's `<li>`s, nested where the tree is.
+ *
+ * A childless item renders exactly as the flat list always did, so a book with
+ * no parts in it produces the same bytes it did before nesting existed.
+ */
+function renderNav(items: readonly VlmNavItem[], indent: number): string {
+  const pad = ' '.repeat(indent);
+  return items.map((item) => {
+    const anchor = `<a href="${esc(item.href)}">${esc(item.label)}</a>`;
+    if (item.children === undefined || item.children.length === 0) {
+      return `${pad}<li>${anchor}</li>`;
+    }
+    return `${pad}<li>${anchor}\n${pad}  <ol>\n`
+      + `${renderNav(item.children, indent + 4)}\n${pad}  </ol>\n${pad}</li>`;
+  }).join('\n');
 }
 
 /** A block with the page it was read from, which is what gets rendered. */

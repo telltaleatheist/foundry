@@ -30,6 +30,14 @@
  *    design. A human curates the list in the picker; a rule that silently
  *    dropped a real chapter would be uncorrectable, and one that offers an
  *    extra costs a click.
+ *  - **A page that says what it IS opens its own section, and a part NESTS the
+ *    chapters after it.** `classifyPage` (in `dots.ts`) names a title page, a
+ *    copyright page, a contents page or a part divider when the page's
+ *    signature is loud, and says nothing otherwise — which is the ordinary
+ *    outcome and what an article gets from end to end. What it names becomes a
+ *    section of its own, carries `data-bf-kind` for the picker to select on,
+ *    and, for a part, becomes a parent in the nav. A book the classifier is
+ *    silent about is assembled exactly as it was before any of this existed.
  *
  * EVERY ELEMENT CARRIES WHERE IT CAME FROM AND WHAT IT WAS. `data-bf-page` is
  * the PDF page, and `data-bf-cat` is the dots category, lower-cased, verbatim —
@@ -48,8 +56,10 @@ import {
   alignmentClass,
   BookLexicon,
   bodyColumn,
+  carriesBodyProse,
   centerOffset,
   checkTableHtml,
+  classifyPage,
   continuesTextually,
   dotsInline,
   leadingWord,
@@ -60,6 +70,7 @@ import {
   type BodyColumn,
   type DotsBlock,
   type DotsBox,
+  type DotsPageKind,
   type DotsParsedPage,
 } from './dots.js';
 import {
@@ -69,6 +80,7 @@ import {
   type VlmChapter,
   type VlmDocument,
   type VlmEpubMetadata,
+  type VlmNavItem,
   type VlmResource,
 } from './epub.js';
 
@@ -161,12 +173,25 @@ const CHAPTERISH = new RegExp(
 );
 
 export interface DotsChapterProposal {
-  /** Index into the book's flat block list — where the chapter would open. */
+  /** Index into the book's flat block list — where the section would open. */
   index: number;
   page: number;
   text: string;
   /** Every rule that fired, so the list can be read rather than trusted. */
   why: string[];
+  /**
+   * What the opening page IS, when it said so loudly (`classifyPage`).
+   *
+   * `chapter` is this file's own proposal rule; the other four come from the
+   * page classifier. Null is the ordinary answer for a page that opens a
+   * section without announcing what sort of section it is.
+   */
+  kind: DotsPageKind | null;
+  /**
+   * The TOC label the classifier justified, when the section's first heading is
+   * not the whole of it. Only a part sets one — see `DotsPageVerdict.label`.
+   */
+  label: string | null;
 }
 
 /**
@@ -175,15 +200,22 @@ export interface DotsChapterProposal {
  * Deliberately generous. See this file's header: the list is curated by a
  * person, so a false positive costs a click and a false negative costs a
  * chapter nobody can get back.
+ *
+ * `spokenFor` is the pages the classifier has already named. A title page is a
+ * page of centered display type and would be proposed as a chapter by every
+ * rule below; it is not one, and the page has already said so.
  */
-export function proposeChapters(blocks: readonly DotsBlock[]): DotsChapterProposal[] {
+export function proposeChapters(
+  blocks: readonly DotsBlock[],
+  spokenFor: ReadonlySet<number> = new Set(),
+): DotsChapterProposal[] {
   const firstIndexOnPage = new Map<number, number>();
   for (const [index, block] of blocks.entries()) {
     if (!firstIndexOnPage.has(block.page)) firstIndexOnPage.set(block.page, index);
   }
 
   const proposals: DotsChapterProposal[] = [];
-  const claimed = new Set<number>();
+  const claimed = new Set<number>(spokenFor);
   for (const [index, block] of blocks.entries()) {
     if (block.category !== 'Title' && block.category !== 'Section-header') continue;
     if (claimed.has(block.page)) continue;
@@ -198,9 +230,124 @@ export function proposeChapters(blocks: readonly DotsBlock[]): DotsChapterPropos
     if (why.length === 0) continue;
 
     claimed.add(block.page);
-    proposals.push({ index, page: block.page, text: block.text, why });
+    proposals.push({ index, page: block.page, text: block.text, why, kind: 'chapter', label: null });
   }
   return proposals;
+}
+
+/**
+ * Every place the book starts a new document, in order: the pages that said
+ * what they are, and the chapters proposed among the rest.
+ *
+ * The classifier is asked FIRST and its answers are binding, because the four
+ * kinds it knows are all things the chapter rule would otherwise propose as
+ * chapters — a half-title, a contents page and a part divider are each a short
+ * centered heading first on its page. A page that is a title page is not also a
+ * chapter.
+ */
+export function proposeSections(pages: readonly DotsParsedPage[]): DotsChapterProposal[] {
+  // Does anything follow? Computed backwards once, because a part opens
+  // something and the last divider-shaped page in a book is a colophon.
+  const bodyAfter = new Array<boolean>(pages.length).fill(false);
+  for (let i = pages.length - 2; i >= 0; i -= 1) {
+    bodyAfter[i] = bodyAfter[i + 1] || carriesBodyProse(pages[i + 1].blocks);
+  }
+
+  // Where each page's blocks begin in the flat list, and where the book ends.
+  const pageStart = new Array<number>(pages.length + 1).fill(0);
+  for (const [position, page] of pages.entries()) {
+    pageStart[position + 1] = pageStart[position] + page.blocks.length;
+  }
+
+  const named: DotsChapterProposal[] = [];
+  const closes: { index: number; page: number }[] = [];
+  const spokenFor = new Set<number>();
+  for (const [position, page] of pages.entries()) {
+    const verdict = classifyPage(page.blocks, { index: position, bodyFollows: bodyAfter[position] });
+    if (verdict === null) continue;
+    spokenFor.add(page.page);
+    named.push({
+      index: pageStart[position],
+      page: page.page,
+      text: page.blocks[0].text,
+      why: verdict.why,
+      kind: verdict.kind,
+      label: verdict.label,
+    });
+    /*
+     * WHERE A NAMED SECTION ENDS, and this is the difference between a label
+     * and a lie.
+     *
+     * The kind belongs to ONE page. Everything after it, up to the next section
+     * start, would otherwise be inside the section the picker was told is a
+     * part divider — and For the Soul of the People proves the cost: the
+     * chapter after part IV opens with a Quote block rather than a heading, so
+     * no chapter is proposed there, and the whole of it sat inside the part.
+     * "Delete the part divider" would have deleted a chapter.
+     *
+     * So a named section closes at the first page after it that carries
+     * ANYTHING: body prose, or a heading. What it keeps is the blank leaf and
+     * the dedication — pages with neither — because those are the same piece of
+     * front matter as the page that named itself, and splitting them off would
+     * put "Chapter 4: BLANK PAGE" in the nav of every book with a title page.
+     */
+    for (let after = position + 1; after < pages.length; after += 1) {
+      const next = pages[after];
+      const substantial = carriesBodyProse(next.blocks)
+        || next.blocks.some((b) => b.category === 'Title' || b.category === 'Section-header');
+      if (!substantial) continue;
+      closes.push({ index: pageStart[after], page: next.page });
+      break;
+    }
+  }
+
+  const chapters = proposeChapters(pages.flatMap((p) => p.blocks), spokenFor);
+  const starts = new Map<number, DotsChapterProposal>();
+  for (const close of closes) {
+    // An unnamed section, opened only because the named one had to end. It
+    // takes its label from its own first heading, like any other section does.
+    starts.set(close.index, { ...close, text: '', why: [], kind: null, label: null });
+  }
+  // A real proposal at the same index wins: it knows what it is.
+  for (const proposal of [...chapters, ...named]) starts.set(proposal.index, proposal);
+  return [...starts.values()].sort((a, b) => a.index - b.index);
+}
+
+// ── the nav ─────────────────────────────────────────────────────────────────
+
+/**
+ * A section whose name says it is not part of the book's argument.
+ *
+ * NOT A KIND, and deliberately not one: nothing is stamped with it and nothing
+ * downstream can select on it. It decides one thing only — whether an open part
+ * stays open — and it exists because the alternative is worse. Everything after
+ * a part divider nests under it until the next one, so with no rule at all the
+ * Index of a book with four parts is a child of Part IV, which is a claim about
+ * the book that is simply false. The failure this rule can produce instead is a
+ * chapter genuinely called "Notes" sitting at the top level of the nav, beside
+ * the parts rather than inside one — visible, and true about nothing.
+ */
+const BACK_MATTER = /^(notes|bibliograph|sources|index|appendi|glossar|about the author|further reading)\b/i;
+
+/** Chapters nest under the part they follow; everything else is top level. */
+export function navTree(chapters: readonly VlmChapter[]): VlmNavItem[] {
+  const root: VlmNavItem[] = [];
+  let open: { href: string; label: string; children: VlmNavItem[] } | null = null;
+  for (const chapter of chapters) {
+    const item = { href: chapter.href, label: chapter.label };
+    if (chapter.kind === 'part') {
+      open = { ...item, children: [] };
+      root.push(open);
+      continue;
+    }
+    if (open !== null && !BACK_MATTER.test(chapter.label)) {
+      open.children.push(item);
+      continue;
+    }
+    open = null;
+    root.push(item);
+  }
+  return root;
 }
 
 // ── the page turn ───────────────────────────────────────────────────────────
@@ -263,6 +410,48 @@ const CATEGORY_ATTRIBUTE: Record<string, string> = {
 /** `data-bf-page` and `data-bf-cat` — see this file's header. */
 function stamp(block: DotsBlock): string {
   return ` data-bf-page="${block.page}" data-bf-cat="${CATEGORY_ATTRIBUTE[block.category]}"`;
+}
+
+/**
+ * What a section is called when its own words do not say.
+ *
+ * A copyright page has no heading on it — that is half of what identifies it —
+ * so the nav needs a word, and the honest word is the one the classifier used.
+ * A part and a contents page usually carry their own and never reach this.
+ */
+const KIND_LABEL: Partial<Record<DotsPageKind, string>> = {
+  'title-page': 'Title Page',
+  copyright: 'Copyright',
+  contents: 'Contents',
+  part: 'Part',
+};
+
+/**
+ * `data-bf-kind` on a wrapper around the section, and ONLY when there is one.
+ *
+ * The same contract as `data-bf-page` and `data-bf-cat`: an attribute the
+ * picker selects on, so that "delete the title page" is one click rather than a
+ * person reading four documents to find out which is which. It is on a wrapper
+ * rather than on each block because the kind is a fact about the SECTION — the
+ * page announced it, and the blocks that follow belong to what it announced.
+ *
+ * `chapter` IS NOT STAMPED, and that is the whole distinction this file draws.
+ * The four kinds above are what a PAGE said it was, loudly enough to be named;
+ * `chapter` is `proposeChapters`, a deliberately generous rule whose output a
+ * person curates — it offers the second half-title of For the Soul of the
+ * People as a chapter, and it is supposed to. A proposal belongs in the
+ * proposal file, where it is labelled a proposal. Written into the book as an
+ * attribute it stops being an offer and becomes a claim, and the claim is
+ * sometimes false.
+ *
+ * So a section with no kind, and a section that is only a chapter proposal, are
+ * emitted exactly as they were before any of this existed. That is the
+ * classifier's silence reaching the file: a book whose pages said nothing comes
+ * out byte for byte the book it was.
+ */
+function stampKind(xhtml: string, kind: DotsPageKind | null, page: number): string {
+  if (kind === null || kind === 'chapter') return xhtml;
+  return `<section data-bf-kind="${kind}" data-bf-page="${page}">\n${xhtml}\n</section>`;
 }
 
 /**
@@ -573,10 +762,16 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
   }
 
   const column = bodyColumn(blocks, blocks[0].pageWidth);
-  const proposals = proposeChapters(blocks);
+  const proposals = proposeSections(opts.pages);
 
+  // The leading span, when the book does not open on a section start. It has no
+  // proposal behind it and therefore no kind: nothing said what it is.
+  const opens: (DotsChapterProposal | null)[] = [...proposals];
   const starts = proposals.map((p) => p.index);
-  if (starts.length === 0 || starts[0] !== 0) starts.unshift(0);
+  if (starts.length === 0 || starts[0] !== 0) {
+    starts.unshift(0);
+    opens.unshift(null);
+  }
   const spans = starts.map((start, i) => [start, starts[i + 1] ?? blocks.length] as const);
 
   const documents: VlmDocument[] = [];
@@ -600,22 +795,37 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
     joinedPages.push(...body.joinedPages);
 
     const n = String(index + 1).padStart(4, '0');
-    const label = body.label ?? `Chapter ${index + 1}`;
+    const kind = opens[index]?.kind ?? null;
+    const pages = span.map((b) => b.page);
+    const firstPage = Math.min(...pages);
+    /*
+     * The label, in the order of who actually knows it.
+     *
+     * The classifier's, when it composed one — a part's number and its name are
+     * two blocks and only the classifier knows they belong together. Then the
+     * section's own first heading, which is what every chapter has. Then the
+     * kind, which is the honest name for a copyright page: it carries no
+     * heading at all, and `Chapter 2` in the nav for it is worse than a
+     * guess, it is the wrong word.
+     */
+    const label = opens[index]?.label ?? body.label ?? KIND_LABEL[kind ?? 'chapter']
+      ?? `Chapter ${index + 1}`;
     const href = `text/c${n}.xhtml`;
     documents.push({
       id: `c${n}`,
       href,
       label,
-      xhtml: XHTML_HEAD(label, opts.metadata.language) + body.xhtml + '\n' + XHTML_TAIL,
+      xhtml: XHTML_HEAD(label, opts.metadata.language)
+        + stampKind(body.xhtml, kind, firstPage) + '\n' + XHTML_TAIL,
     });
-    const pages = span.map((b) => b.page);
     chapters.push({
       id: `c${n}`,
       href,
       label,
       blocks: span.length,
-      firstPage: Math.min(...pages),
+      firstPage,
       lastPage: Math.max(...pages),
+      ...(kind !== null ? { kind } : {}),
     });
   }
 
@@ -637,7 +847,9 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
   for (const block of blocks) categories[block.category] = (categories[block.category] ?? 0) + 1;
 
   const xhtmlSeconds = (Date.now() - started) / 1000;
-  const packaged = packageVlmEpub(opts.metadata, documents, resources, STYLESHEET);
+  const packaged = packageVlmEpub(
+    opts.metadata, documents, resources, STYLESHEET, navTree(chapters),
+  );
   return {
     bytes: packaged.bytes,
     chapters,

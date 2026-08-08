@@ -37,7 +37,9 @@ import {
   buildDotsBook,
   carriesOver,
   inkExtentIn,
+  navTree,
   proposeChapters,
+  proposeSections,
   splitNotes,
   type DotsPageImages,
 } from '../../src/vlm/dots-book.js';
@@ -622,6 +624,171 @@ test('a paragraph joined across a page turn is one paragraph, hyphen resolved', 
   // And the second page's marker went INSIDE the paragraph, where the page
   // turn actually happened.
   assert.match(chapter, /<span epub:type="pagebreak"[^>]*id="pb-2"/);
+});
+
+// ── the sections a named page opens ─────────────────────────────────────────
+
+/** No ink anywhere: the page-turn join is not what these tests are about. */
+const blindImages: DotsPageImages = { inkExtent: () => null, crop: async () => [] };
+
+function page(number: number, blocks: DotsBlock[]) {
+  return {
+    page: number,
+    dropped: 0,
+    rawExtent: { x: 1100, y: 700 },
+    blocks: blocks.map((b) => ({ ...b, page: number })),
+  };
+}
+
+/** The shape of For the Soul of the People, in the fewest blocks that carry it. */
+function partedBook() {
+  const prose = (text: string): DotsBlock => soul({ text: `${text} ${'word '.repeat(30)}` });
+  return [
+    page(1, [soul({ category: 'Title', text: 'FOR THE SOUL OF THE PEOPLE', box: { x1: 666, y1: 251, x2: 1046, y2: 540 } })]),
+    page(2, [soul({ text: 'BLANK PAGE', box: { x1: 733, y1: 542, x2: 960, y2: 571 } })]),
+    page(3, [
+      soul({ text: 'Copyright © 1992 by Victoria Barnett. All rights reserved.' }),
+      soul({ text: 'ISBN 0-19-505306-0' }),
+    ]),
+    page(4, [
+      soul({ category: 'Title', text: 'Contents', box: { x1: 759, y1: 368, x2: 1106, y2: 448 } }),
+      soul({ category: 'List-item', text: '1. The Lost Empire, 9' }),
+      soul({ category: 'List-item', text: '2. The Weimar Years, 18' }),
+      soul({ category: 'List-item', text: '3. The Early Period, 30' }),
+    ]),
+    page(5, [
+      soul({ category: 'Title', text: 'The Lost Empire', box: { x1: 528, y1: 274, x2: 1171, y2: 365 } }),
+      prose('THEY WERE BORN during the German Empire.'),
+    ]),
+    page(6, [prose('Human memory and loyalty are affected by what follows.')]),
+    page(7, [prose('So this is what they would remember: the German Empire.')]),
+    // Past the front-matter window, which is where a divider page is a part
+    // rather than a half-title.
+    page(8, [
+      soul({ category: 'Section-header', text: 'III', box: { x1: 799, y1: 235, x2: 894, y2: 326 } }),
+      soul({ category: 'Section-header', text: 'RESISTANCE AND GUILT', box: { x1: 484, y1: 478, x2: 1205, y2: 693 } }),
+    ]),
+    page(9, [soul({ text: 'Blank Page', box: { x1: 763, y1: 399, x2: 929, y2: 436 } })]),
+    // The chapter after the part opens with a Quote — the model read its big
+    // display numeral as one — so NOTHING proposes a chapter here. This is the
+    // page that proved a named section has to end at its own page.
+    page(10, [
+      soul({ category: 'Quote', text: '11 >' }),
+      soul({ category: 'Section-header', text: 'Postwar Germans and Their Church', box: { x1: 359, y1: 306, x2: 1318, y2: 603 } }),
+      prose('IN 1967, THE NEUROLOGIST Alexander Mitscherlich observed.'),
+    ]),
+    page(11, [
+      soul({ category: 'Title', text: 'Index', box: { x1: 734, y1: 390, x2: 955, y2: 464 } }),
+      prose('Adenauer, Konrad, 206, 212, 225.'),
+    ]),
+  ];
+}
+
+test('the named pages open their own sections, and a part ends at its own page', () => {
+  const sections = proposeSections(partedBook());
+  assert.deepEqual(sections.map((s) => [s.page, s.kind]), [
+    [1, 'title-page'],
+    [3, 'copyright'],
+    [4, 'contents'],
+    [5, 'chapter'],
+    [8, 'part'],
+    // Opened only because the part had to end: page 9 is a blank leaf and page
+    // 10 is the chapter the part opens. Nothing named it, so it has no kind.
+    [10, null],
+    [11, 'chapter'],
+  ]);
+  assert.equal(sections.find((s) => s.page === 8)?.label, 'III RESISTANCE AND GUILT');
+});
+
+test('a blank leaf stays with the page that named itself', () => {
+  // Page 2 carries neither prose nor a heading, so it does not close page 1's
+  // section — a nav entry reading `Chapter 2: BLANK PAGE` helps nobody.
+  const sections = proposeSections(partedBook());
+  assert.equal(sections.some((s) => s.page === 2 || s.page === 9), false);
+});
+
+test('a named page is never also a chapter proposal', () => {
+  // Every one of these would be proposed as a chapter by the chapter rule: a
+  // short centered heading, first on its page, near the top.
+  const kinds = proposeSections(partedBook()).filter((s) => s.kind !== null && s.kind !== 'chapter');
+  assert.deepEqual(kinds.map((s) => s.kind), ['title-page', 'copyright', 'contents', 'part']);
+  for (const section of kinds) assert.equal(section.why.length > 0, true);
+});
+
+test('the nav nests the chapters under their part, and back matter beside it', () => {
+  const chapters = [
+    { id: 'c1', href: 'text/c0001.xhtml', label: 'Introduction', blocks: 1, firstPage: 1, lastPage: 1 },
+    { id: 'c2', href: 'text/c0002.xhtml', label: 'III RESISTANCE', blocks: 1, firstPage: 2, lastPage: 2, kind: 'part' as const },
+    { id: 'c3', href: 'text/c0003.xhtml', label: 'Reflections', blocks: 1, firstPage: 3, lastPage: 3 },
+    { id: 'c4', href: 'text/c0004.xhtml', label: 'The Guilt of Others', blocks: 1, firstPage: 4, lastPage: 4 },
+    // Named for what it is, so it is not part of the argument of Part III.
+    { id: 'c5', href: 'text/c0005.xhtml', label: 'Index', blocks: 1, firstPage: 5, lastPage: 5 },
+  ];
+  assert.deepEqual(navTree(chapters), [
+    { href: 'text/c0001.xhtml', label: 'Introduction' },
+    {
+      href: 'text/c0002.xhtml',
+      label: 'III RESISTANCE',
+      children: [
+        { href: 'text/c0003.xhtml', label: 'Reflections' },
+        { href: 'text/c0004.xhtml', label: 'The Guilt of Others' },
+      ],
+    },
+    { href: 'text/c0005.xhtml', label: 'Index' },
+  ]);
+});
+
+test('a book with no parts gets the nav it always got', () => {
+  const chapters = [
+    { id: 'c1', href: 'text/c0001.xhtml', label: 'One', blocks: 1, firstPage: 1, lastPage: 1 },
+    { id: 'c2', href: 'text/c0002.xhtml', label: 'Two', blocks: 1, firstPage: 2, lastPage: 2 },
+  ];
+  assert.deepEqual(navTree(chapters), [
+    { href: 'text/c0001.xhtml', label: 'One' },
+    { href: 'text/c0002.xhtml', label: 'Two' },
+  ]);
+});
+
+test('a named section is stamped for the picker, and a proposed chapter is not', async () => {
+  const built = await buildDotsBook({
+    metadata: { title: 'A Book', language: 'en', identifier: 'urn:x:1' },
+    pages: partedBook(),
+    images: blindImages,
+    stripNoteMarkers: false,
+  });
+  const entries = unzipMap(built.bytes);
+  for (const [path, entry] of entries) {
+    if (!path.endsWith('.xhtml') && !path.endsWith('.opf') && !path.endsWith('.xml')) continue;
+    checkXml(entry.text(), path, { xhtml: path.endsWith('.xhtml') });
+  }
+
+  assert.deepEqual(
+    built.chapters.map((c) => c.kind),
+    ['title-page', 'copyright', 'contents', 'chapter', 'part', undefined, 'chapter'],
+  );
+  assert.match(
+    entries.get('EPUB/text/c0001.xhtml')!.text(),
+    /<section data-bf-kind="title-page" data-bf-page="1">/,
+  );
+  assert.match(
+    entries.get('EPUB/text/c0005.xhtml')!.text(),
+    /<section data-bf-kind="part" data-bf-page="8">/,
+  );
+  // The chapter rule is a proposal a person curates. It stays out of the book.
+  assert.equal(entries.get('EPUB/text/c0004.xhtml')!.text().includes('data-bf-kind'), false);
+
+  // A copyright page carries no heading, so the nav needs a word for it, and
+  // the honest word is the one the classifier used.
+  assert.deepEqual(built.chapters.map((c) => c.label), [
+    'FOR THE SOUL OF THE PEOPLE', 'Copyright', 'Contents', 'The Lost Empire',
+    'III RESISTANCE AND GUILT', 'Postwar Germans and Their Church', 'Index',
+  ]);
+
+  // And the nav nests, with the chapter the part opened inside it.
+  assert.match(
+    entries.get('EPUB/nav.xhtml')!.text(),
+    /<li><a href="text\/c0005.xhtml">III RESISTANCE AND GUILT<\/a>\n\s+<ol>\n\s+<li><a href="text\/c0006.xhtml">/,
+  );
 });
 
 test('the container is an EPUB and every document parses', async () => {
