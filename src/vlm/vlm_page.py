@@ -69,7 +69,14 @@ protocol, which is why nothing here prints.
 """
 import json
 import os
-import resource
+# Unix only. Windows has no `resource`, and this mode reaches Windows through
+# --vlm-endpoint: the model runs on a server (vLLM), while the PAGES are still
+# rendered here, by this script, in PyMuPDF. Imported conditionally rather than
+# guarded at the call site so the absence is stated once, next to the reason.
+try:
+    import resource
+except ModuleNotFoundError:  # pragma: no cover - platform-dependent
+    resource = None
 import sys
 import time
 
@@ -86,7 +93,15 @@ def emit(obj):
 
 
 def peak_rss_bytes():
-    """macOS reports ru_maxrss in BYTES; Linux reports it in kilobytes."""
+    """macOS reports ru_maxrss in BYTES; Linux reports it in kilobytes.
+
+    None where the platform cannot answer. That is a REAL absence and is
+    reported as one — a zero would be indistinguishable from a process that
+    somehow used no memory, and this number only ever appears in a log line
+    about how much the run cost.
+    """
+    if resource is None:
+        return None
     raw = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return raw if sys.platform == 'darwin' else raw * 1024
 

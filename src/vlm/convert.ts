@@ -131,7 +131,8 @@ export interface VlmConvertReport {
     writeSeconds: number;
     totalSeconds: number;
   };
-  peakRssBytes: number;
+  /** Null where the platform has no `resource` module to ask — Windows. */
+  peakRssBytes: number | null;
 }
 
 export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertReport> {

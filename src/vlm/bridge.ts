@@ -112,8 +112,14 @@ export interface VlmRunResult {
   loadSeconds: number;
   renderSeconds: number;
   inferenceSeconds: number;
-  /** macOS reports this in bytes; the helper normalises Linux's kilobytes. */
-  peakRssBytes: number;
+  /**
+   * macOS reports this in bytes; the helper normalises Linux's kilobytes.
+   *
+   * NULL on Windows, where there is no `resource` module to ask. That is a real
+   * absence — the platform cannot answer — and it is carried as null rather than
+   * as 0, which would be indistinguishable from a run that used no memory.
+   */
+  peakRssBytes: number | null;
 }
 
 export interface VlmRunOptions {
@@ -292,7 +298,7 @@ export async function readPagesWithVlm(opts: VlmRunOptions): Promise<VlmRunResul
 
   let document: VlmDocumentInfo | null = null;
   let loadSeconds = 0;
-  let totals: { renderSeconds: number; inferenceSeconds: number; peakRssBytes: number } | null = null;
+  let totals: { renderSeconds: number; inferenceSeconds: number; peakRssBytes: number | null } | null = null;
   const pages: VlmPage[] = [];
   const stderrTail: string[] = [];
 
@@ -330,7 +336,7 @@ export async function readPagesWithVlm(opts: VlmRunOptions): Promise<VlmRunResul
               totals = {
                 renderSeconds: event['renderSeconds'] as number,
                 inferenceSeconds: event['inferenceSeconds'] as number,
-                peakRssBytes: event['peakRssBytes'] as number,
+                peakRssBytes: (event['peakRssBytes'] ?? null) as number | null,
               };
               break;
             default:
@@ -380,7 +386,7 @@ export async function readPagesWithVlm(opts: VlmRunOptions): Promise<VlmRunResul
   if (!document) throw new VlmBridgeError('the helper exited without describing the document');
   if (!totals) throw new VlmBridgeError('the helper exited without a done event — the run is incomplete');
   const doc: VlmDocumentInfo = document;
-  const sums: { renderSeconds: number; inferenceSeconds: number; peakRssBytes: number } = totals;
+  const sums: { renderSeconds: number; inferenceSeconds: number; peakRssBytes: number | null } = totals;
 
   /*
    * The pages this run was ever going to be about, in order.

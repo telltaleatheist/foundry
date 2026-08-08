@@ -2161,9 +2161,13 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
   const struck = report.skippedPages.length === 0
     ? ''
     : `, ${report.skippedPages.length} skipped (${report.skippedPages.join(', ')})`;
+  // The peak is OMITTED where the platform cannot report it, rather than
+  // printed as 0.0 GiB — a number that reads as a measurement and is not one.
+  const peak = report.peakRssBytes === null
+    ? ''
+    : `, peak ${(report.peakRssBytes / 1024 / 1024 / 1024).toFixed(1)} GiB`;
   log(
-    `vlm-convert: ${report.pages.length} pages in ${timings.totalSeconds.toFixed(1)}s (${rate})${struck}, `
-    + `peak ${(report.peakRssBytes / 1024 / 1024 / 1024).toFixed(1)} GiB`,
+    `vlm-convert: ${report.pages.length} pages in ${timings.totalSeconds.toFixed(1)}s (${rate})${struck}${peak}`,
   );
   const categories = Object.entries(report.categories).sort((a, b) => b[1] - a[1]);
   if (categories.length > 0) {
