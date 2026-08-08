@@ -34,14 +34,19 @@ import {
 } from '../../src/vlm/dots.js';
 import {
   adjoins,
+  bareNumbersAreSectionMarks,
   buildChapterBody,
   buildDotsBook,
   carriesOver,
+  furnitureKey,
   inkExtentIn,
   navTree,
+  openingHeadings,
   proposeChapters,
   proposeSections,
+  reflowWrappedProse,
   splitNotes,
+  suppressRunningHeads,
   type DotsPageImages,
 } from '../../src/vlm/dots-book.js';
 import { requireVlmModel } from '../../src/vlm/models.js';
@@ -115,15 +120,18 @@ test('a box is scaled with the budget the reader used', () => {
 const RENDER = { width: 1300, height: 2112 };
 const PARSE = { page: 3, render: RENDER, maxPixels: 11289600 };
 
-test('page furniture is dropped, and counted', () => {
+test('page furniture is out of the book, and kept as evidence', () => {
   const parsed = parseDotsPage(JSON.stringify([
     { bbox: [500, 40, 800, 70], category: 'Page-header', text: 'IAN KERSHAW' },
     { bbox: [100, 200, 1200, 900], category: 'Text', text: 'The body of the page.' },
     { bbox: [500, 2000, 800, 2050], category: 'Page-footer', text: '106' },
   ]), PARSE);
-  assert.equal(parsed.dropped, 2);
+  assert.equal(parsed.furniture.length, 2);
   assert.equal(parsed.blocks.length, 1);
   assert.equal(parsed.blocks[0].text, 'The body of the page.');
+  // What the furniture SAYS is the only thing that can identify the same
+  // running head on a page where the model called it a Title.
+  assert.deepEqual(parsed.furniture.map((b) => b.text), ['IAN KERSHAW', '106']);
 });
 
 test('a category the prompt does not name stops the page by name', () => {
@@ -254,6 +262,75 @@ test('a hyphen at end of line is repaired inside a block', () => {
   assert.equal(lexicon.dehyphenate('the Ko-\nreans of'), 'the Koreans of');
 });
 
+// ── the paragraph the model forgot to reflow ────────────────────────────────
+
+/** Five lines of a justified column, 66 characters each but the last. */
+const PRINT_LINES = 'Through the years I dipped casually into the story. What I encoun\n'
+  + 'tered was a considerable literature dealing with the legal dust ki\n'
+  + 'cked up by the trial of the Nazis before the International Militar\n'
+  + 'y Tribunal of Nuremberg. Most of these books made a contribution t\n'
+  + 'o understanding.';
+
+test('a paragraph the model did not reflow is put back together', () => {
+  const paragraph = block({ text: PRINT_LINES });
+  assert.deepEqual(reflowWrappedProse([paragraph]), [paragraph]);
+  assert.equal(paragraph.text.includes('\n'), false);
+  assert.match(paragraph.text, /^Through the years I dipped casually into the story\. What I encoun tered /);
+});
+
+test('verse is short lines, and short lines are never reflowed', () => {
+  // The same block shape, and the measurement that separates them is the only
+  // thing there is: a justified column fills every line but its last.
+  const verse = block({ text: 'Half a league, half a league,\nHalf a league onward,\nAll in the valley of Death' });
+  assert.deepEqual(reflowWrappedProse([verse]), []);
+  assert.match(verse.text, /league,\nHalf/);
+});
+
+test('a blank line is structure the model went out of its way to keep', () => {
+  const abbreviations = block({
+    text: 'AFN Armed Forces Network, the broadcaster that carried the verdict\n\n'
+      + 'BAP Papers of Colonel Burton Andrus, the commandant of the prison',
+  });
+  assert.deepEqual(reflowWrappedProse([abbreviations]), []);
+});
+
+test('a bibliography breaks at the end of every entry, and stays a list', () => {
+  // Each entry is long enough to pass the line-length rule on its own. What
+  // says these are entries rather than a wrapped column is that EVERY break
+  // lands on a full stop, which is not where a margin arrives.
+  const bibliography = block({
+    text: 'POSNER, Gerald L. *Hitler\'s Children*. New York: Random House, 1991.\n'
+      + 'ROSENBAUM, Ron. *Travels with Dr. Death and Other Investigations*. New York: Penguin, 1991.\n'
+      + 'SHIRER, William L. *End of a Berlin Diary*. New York: Alfred A. Knopf, 1947.\n'
+      + 'SPEER, Albert. *Inside the Third Reich*. New York: Macmillan, 1970.',
+  });
+  assert.deepEqual(reflowWrappedProse([bibliography]), []);
+
+  // Two lines that both end in a full stop are one sentence that happened to
+  // end at the margin, which is a coincidence a book produces constantly.
+  const prose = block({
+    text: 'To the very end of it, he had been quite unable to turn his back on Hitler.\n'
+      + 'And he had never found the right moment to deliver his brave speech.',
+  });
+  assert.deepEqual(reflowWrappedProse([prose]), [prose]);
+});
+
+test('only a Text block is reflowed — a Quote is where the verse is', () => {
+  const quote = block({ category: 'Quote', text: PRINT_LINES });
+  const heading = block({ category: 'Title', text: PRINT_LINES });
+  assert.deepEqual(reflowWrappedProse([quote, heading]), []);
+  assert.equal(quote.text, PRINT_LINES);
+  assert.equal(heading.text, PRINT_LINES);
+});
+
+test('the hyphen the page ends on is still there for the page-turn join', () => {
+  // Reflow runs after dehyphenation and before the join, so a block that ends
+  // mid-word still ends mid-word.
+  const paragraph = block({ text: `${PRINT_LINES.replace(/\n[^\n]*$/, '')}\no understanding of the inti-` });
+  assert.deepEqual(reflowWrappedProse([paragraph]), [paragraph]);
+  assert.match(paragraph.text, /inti-$/);
+});
+
 // ── alignment ───────────────────────────────────────────────────────────────
 
 test('alignment is judged against the body column, not the page', () => {
@@ -381,6 +458,134 @@ test('one Footnote block carrying three notes becomes three paragraphs', () => {
   );
 });
 
+// ── the running head the model mistagged ────────────────────────────────────
+
+/**
+ * Nuremberg's defect, in the fewest pages that reproduce it.
+ *
+ * The running head `NUREMBERG` is tagged Page-header on three pages and a Title
+ * on a fourth; `THE DEFENSE` is a running head on three pages AND the name of
+ * the book's third part. Every number here is off the real book: the heads sit
+ * at 0.07 of the page and the openers at 0.24, and there is nothing in between.
+ */
+function parsed(number: number, blocks: DotsBlock[], furniture: DotsBlock[] = []) {
+  return {
+    page: number,
+    furniture: furniture.map((b) => ({ ...b, page: number })),
+    rawExtent: { x: 1100, y: 700 },
+    blocks: blocks.map((b) => ({ ...b, page: number })),
+  };
+}
+
+/** A block in the top 7% of the page — where every running head in that book is. */
+function head(text: string, category: DotsBlock['category'] = 'Title'): DotsBlock {
+  return block({ category, text, box: { x1: 500, y1: 150, x2: 800, y2: 210 } });
+}
+
+/** A block a quarter of the way down — where every real opener in that book is. */
+function opener(text: string, category: DotsBlock['category'] = 'Section-header'): DotsBlock {
+  return block({ category, text, box: { x1: 500, y1: 500, x2: 800, y2: 590 } });
+}
+
+test('the same words are a running head at the top of the page and a heading below it', () => {
+  const pages = [
+    parsed(1, [block({ text: 'Body.' })], [head('NUREMBERG', 'Page-header')]),
+    parsed(2, [block({ text: 'Body.' })], [head('NUREMBERG', 'Page-header')]),
+    parsed(3, [block({ text: 'Body.' })], [head('NUREMBERG', 'Page-header')]),
+    // The miss: the same head, called a Title, in the same place on the page.
+    parsed(4, [head('NUREMBERG'), block({ text: 'Body.' })]),
+    // The half-title, which is the one page where those words are the reader's.
+    parsed(5, [opener('NUREMBERG', 'Title')]),
+  ];
+  const removed = suppressRunningHeads(pages);
+  assert.deepEqual(removed.map((b) => [b.page, b.text]), [[4, 'NUREMBERG']]);
+  assert.deepEqual(pages[3].blocks.map((b) => b.text), ['Body.']);
+  assert.deepEqual(pages[4].blocks.map((b) => b.text), ['NUREMBERG']);
+});
+
+test('the REAL part divider survives its own running head', () => {
+  // Page 306 of Nuremberg. `THE DEFENSE` heads 55 pages and names Part III, and
+  // nothing about the words says which is which — only where they sit.
+  const pages = [
+    parsed(1, [block({ text: 'Body.' })], [head('THE DEFENSE', 'Page-header')]),
+    parsed(2, [block({ text: 'Body.' })], [head('THE DEFENSE', 'Page-header')]),
+    parsed(3, [head('THE DEFENSE')], [head('■ THE DEFENSE ■', 'Page-header')]),
+    parsed(4, [opener('CHAPTER III'), opener('THE DEFENSE')]),
+  ];
+  const removed = suppressRunningHeads(pages);
+  assert.deepEqual(removed.map((b) => b.page), [3]);
+  assert.deepEqual(pages[3].blocks.map((b) => b.text), ['CHAPTER III', 'THE DEFENSE']);
+});
+
+test('letter-spacing and decoration are not what makes two heads different', () => {
+  assert.equal(furnitureKey('N U R E M B E R G'), 'NUREMBERG');
+  assert.equal(furnitureKey('■ INDEX ■'), 'INDEX');
+  assert.equal(furnitureKey('• Index •'), 'INDEX');
+  // The folio moves and the head does not, so every run of digits is one mark.
+  assert.equal(furnitureKey('NUREMBERG 42'), furnitureKey('NUREMBERG 317'));
+});
+
+test('two pages are not a book\'s furniture', () => {
+  // A heading that appears twice is a heading that appears twice. Three is
+  // where repetition stops being something a book does by accident.
+  const pages = [
+    parsed(1, [block({ text: 'Body.' })], [head('AFTERMATH', 'Page-header')]),
+    parsed(2, [head('AFTERMATH')]),
+  ];
+  assert.deepEqual(suppressRunningHeads(pages), []);
+  assert.deepEqual(pages[1].blocks.map((b) => b.text), ['AFTERMATH']);
+});
+
+test('the model has to have called it furniture at least once', () => {
+  // Four pages opening on the same short heading, and nothing anywhere in the
+  // book saying any of them is a running head. Shape alone does not delete a
+  // block: the model's own answer is the anchor.
+  const pages = [1, 2, 3, 4].map((n) => parsed(n, [head('PART ONE')]));
+  assert.deepEqual(suppressRunningHeads(pages), []);
+});
+
+test('a running FOOT is judged at the bottom of the page', () => {
+  const foot = (text: string, category: DotsBlock['category']): DotsBlock =>
+    block({ category, text, box: { x1: 500, y1: 1950, x2: 800, y2: 2010 } });
+  const pages = [
+    parsed(1, [block({ text: 'Body.' })], [foot('THE NUREMBERG TRIAL', 'Page-footer')]),
+    parsed(2, [block({ text: 'Body.' })], [foot('THE NUREMBERG TRIAL', 'Page-footer')]),
+    parsed(3, [block({ text: 'Body.' })], [foot('THE NUREMBERG TRIAL', 'Page-footer')]),
+    parsed(4, [block({ text: 'Body.' }), foot('THE NUREMBERG TRIAL', 'Text')]),
+    // The same words in the body of the page are the book's, not the printer's.
+    parsed(5, [opener('THE NUREMBERG TRIAL', 'Title')]),
+  ];
+  assert.deepEqual(suppressRunningHeads(pages).map((b) => b.page), [4]);
+  assert.deepEqual(pages[4].blocks.map((b) => b.text), ['THE NUREMBERG TRIAL']);
+});
+
+test('a bare folio never attests anything, so a section mark is not deleted', () => {
+  // This book sets its folio in the running head, at the top of the page, so
+  // `#` is attested in the same band and on more pages than anything else. A
+  // `16` the model called a Section-header is a section mark and belongs in the
+  // book — `proposeChapters` is what stops it opening a chapter.
+  const pages = [
+    parsed(1, [block({ text: 'Body.' })], [head('204', 'Page-header')]),
+    parsed(2, [block({ text: 'Body.' })], [head('205', 'Page-header')]),
+    parsed(3, [block({ text: 'Body.' })], [head('206', 'Page-header')]),
+    parsed(4, [head('16', 'Section-header'), block({ text: 'Body.' })]),
+  ];
+  assert.deepEqual(suppressRunningHeads(pages), []);
+  assert.deepEqual(pages[3].blocks.map((b) => b.text), ['16', 'Body.']);
+});
+
+test('a long block is never a running head, whatever it says', () => {
+  const sentence = 'NUREMBERG was the city where the trial was held, and this is a sentence '
+    + 'from the body of the page that happens to open with the same word.';
+  const pages = [
+    parsed(1, [block({ text: 'Body.' })], [head('NUREMBERG', 'Page-header')]),
+    parsed(2, [block({ text: 'Body.' })], [head('NUREMBERG', 'Page-header')]),
+    parsed(3, [block({ text: 'Body.' })], [head('NUREMBERG', 'Page-header')]),
+    parsed(4, [block({ text: sentence, box: { x1: 200, y1: 150, x2: 1100, y2: 300 } })]),
+  ];
+  assert.deepEqual(suppressRunningHeads(pages), []);
+});
+
 // ── chapters ────────────────────────────────────────────────────────────────
 
 test('a chapter is proposed with its reasons, and only the first block on a page', () => {
@@ -393,6 +598,67 @@ test('a chapter is proposed with its reasons, and only the first block on a page
   assert.equal(proposals.length, 1);
   assert.equal(proposals[0].text, 'CHAPTER ONE');
   assert.deepEqual(proposals[0].why, ['chapterish-text', 'title-class', 'centered']);
+});
+
+// ── the bare number: a chapter, or a section mark ───────────────────────────
+
+/**
+ * Nuremberg's numbering, in the fewest headings that carry it: four parts, each
+ * numbered from 1. A novel's, in the same shape: 1, 2, 3, straight through.
+ */
+function numbered(values: readonly number[]): DotsBlock[] {
+  return values.map((value, i) => block({
+    page: i + 1,
+    category: 'Section-header',
+    text: String(value),
+    box: { x1: 620, y1: 200, x2: 680, y2: 260 },
+  }));
+}
+
+test('bare numbers that restart are section marks, and propose nothing', () => {
+  // 1, 2, 3 … then 1 again at the second part. The restart is the evidence, and
+  // it is not on any page — only the whole book has it.
+  const blocks = numbered([1, 2, 3, 1, 2]);
+  assert.equal(bareNumbersAreSectionMarks(blocks), true);
+  assert.deepEqual(proposeChapters(blocks), []);
+});
+
+test('a repeat is a restart too, wherever it falls', () => {
+  assert.equal(bareNumbersAreSectionMarks(numbered([1, 2, 2, 3])), true);
+});
+
+test('a numeral-chaptered novel keeps every split it always had', () => {
+  const blocks = numbered([1, 2, 3, 4]);
+  assert.equal(bareNumbersAreSectionMarks(blocks), false);
+  assert.deepEqual(proposeChapters(blocks).map((p) => p.text), ['1', '2', '3', '4']);
+});
+
+test('one bare number in a book is evidence of neither', () => {
+  const blocks = numbered([7]);
+  assert.equal(bareNumbersAreSectionMarks(blocks), false);
+  assert.deepEqual(proposeChapters(blocks).map((p) => p.text), ['7']);
+});
+
+test('a section-marked book still proposes its worded chapters', () => {
+  // The rule takes away the bare numbers and nothing else: `CHAPTER III` on the
+  // page after a restart is still a chapter.
+  const blocks = [
+    ...numbered([1, 2, 1]),
+    block({ page: 4, category: 'Section-header', text: 'CHAPTER III', box: { x1: 560, y1: 200, x2: 740, y2: 260 } }),
+  ];
+  assert.deepEqual(proposeChapters(blocks).map((p) => p.text), ['CHAPTER III']);
+});
+
+test('a roman numeral is the part rule\'s business and is left alone', () => {
+  // `II` after `III` is not increasing by any arithmetic this rule does — it
+  // never looks at a numeral, so a book of roman-numbered divisions is
+  // unchanged by the whole pass.
+  const blocks = [
+    block({ page: 1, category: 'Section-header', text: 'III', box: { x1: 620, y1: 200, x2: 680, y2: 260 } }),
+    block({ page: 2, category: 'Section-header', text: 'II', box: { x1: 620, y1: 200, x2: 680, y2: 260 } }),
+  ];
+  assert.equal(bareNumbersAreSectionMarks(blocks), false);
+  assert.deepEqual(proposeChapters(blocks).map((p) => p.text), ['III', 'II']);
 });
 
 // ── what a page IS ──────────────────────────────────────────────────────────
@@ -602,6 +868,7 @@ function chapterOptions() {
     stripNoteMarkers: false,
     firstNote: 1,
     firstPicture: 0,
+    openers: new Set<number>(),
   };
 }
 
@@ -631,13 +898,13 @@ test('a paragraph joined across a page turn is one paragraph, hyphen resolved', 
   const pages = [
     {
       page: 1,
-      dropped: 0,
+      furniture: [],
       rawExtent: { x: 1100, y: 700 },
       blocks: [block({ page: 1, category: 'Text', text: 'The Ko-' })],
     },
     {
       page: 2,
-      dropped: 0,
+      furniture: [],
       rawExtent: { x: 1100, y: 700 },
       blocks: [block({ page: 2, category: 'Text', text: 'reans arrived. The Koreans left.' })],
     },
@@ -667,7 +934,7 @@ const blindImages: DotsPageImages = { inkExtent: () => null, crop: async () => [
 function page(number: number, blocks: DotsBlock[]) {
   return {
     page: number,
-    dropped: 0,
+    furniture: [],
     rawExtent: { x: 1100, y: 700 },
     blocks: blocks.map((b) => ({ ...b, page: number })),
   };
@@ -782,7 +1049,48 @@ test('a book with no parts gets the nav it always got', () => {
   ]);
 });
 
-test('a named section is stamped for the picker, and a proposed chapter is not', async () => {
+test('a chapter opener is stamped for the picker, both halves of it', () => {
+  // Page 25 of Nuremberg: `CHAPTER I` and then `PRELUDE TO JUDGMENT`, two
+  // blocks. A person moving the split needs both — one deleted and one left
+  // behind is a chapter called `CHAPTER I` with an orphan line under it.
+  const span = [
+    block({ page: 25, category: 'Section-header', text: 'CHAPTER I' }),
+    block({ page: 25, category: 'Section-header', text: 'PRELUDE TO JUDGMENT' }),
+    block({ page: 25, category: 'Text', text: 'THE PRISONER awoke.' }),
+    // The next page's heading is inside the chapter, not the start of one.
+    block({ page: 26, category: 'Section-header', text: '2' }),
+  ];
+  const openers = openingHeadings(span, 'chapter');
+  assert.deepEqual([...openers], [0, 1]);
+  const body = buildChapterBody(span, { ...chapterOptions(), openers });
+  assert.equal(body.xhtml.match(/data-bf-cat="chapter"/g)?.length, 2);
+  assert.match(body.xhtml, /<h2[^>]*data-bf-cat="chapter">.*CHAPTER I<\/h2>/);
+  // The tag still comes from the true category, and the heading inside the
+  // chapter still carries the model's own word for what it is.
+  assert.match(body.xhtml, /<h2[^>]*data-bf-cat="section-header">.*2<\/h2>/);
+});
+
+test('a part divider\'s announcement is a split point too', () => {
+  // Its numeral and its name, with the page's stray blocks between them: a
+  // divider carries nothing but its announcement, so nothing ends the run.
+  const span = [
+    block({ page: 8, category: 'Section-header', text: 'III' }),
+    block({ page: 8, category: 'Picture', text: '' }),
+    block({ page: 8, category: 'Section-header', text: 'RESISTANCE AND GUILT' }),
+  ];
+  assert.deepEqual([...openingHeadings(span, 'part')], [0, 2]);
+  // A chapter's first paragraph is right under its title, and ends the run.
+  assert.deepEqual([...openingHeadings(span, 'chapter')], [0]);
+});
+
+test('a section nothing proposed has no opener, and no chapter stamp', () => {
+  const span = [block({ page: 10, category: 'Section-header', text: 'Postwar Germans' })];
+  for (const kind of [null, 'title-page', 'copyright', 'contents'] as const) {
+    assert.equal(openingHeadings(span, kind).size, 0);
+  }
+});
+
+test('a named section is stamped for the picker, and a chapter opener with it', async () => {
   const built = await buildDotsBook({
     metadata: { title: 'A Book', language: 'en', identifier: 'urn:x:1' },
     pages: partedBook(),
@@ -807,8 +1115,25 @@ test('a named section is stamped for the picker, and a proposed chapter is not',
     entries.get('EPUB/text/c0005.xhtml')!.text(),
     /<section data-bf-kind="part" data-bf-page="8">/,
   );
-  // The chapter rule is a proposal a person curates. It stays out of the book.
-  assert.equal(entries.get('EPUB/text/c0004.xhtml')!.text().includes('data-bf-kind'), false);
+  // The chapter rule is a proposal a person curates, and a proposal nobody can
+  // see is nothing to curate: no `data-bf-kind` wrapper — that is a statement
+  // about a whole section — and a `chapter` stamp on the heading it points at,
+  // which is what puts it in the picker's Chapter Openings palette.
+  const chapter = entries.get('EPUB/text/c0004.xhtml')!.text();
+  assert.equal(chapter.includes('data-bf-kind'), false);
+  assert.match(chapter, /<h1[^>]*data-bf-cat="chapter">.*The Lost Empire<\/h1>/);
+
+  // A part divider is stamped on both blocks of its announcement, and keeps its
+  // `data-bf-kind` wrapper: the two say different things and both are true.
+  const part = entries.get('EPUB/text/c0005.xhtml')!.text();
+  assert.equal(part.match(/data-bf-cat="chapter"/g)?.length, 2);
+
+  // The section nothing named and nothing proposed is untouched — its heading
+  // is still a section header, which is all anything here knows about it.
+  assert.match(
+    entries.get('EPUB/text/c0006.xhtml')!.text(),
+    /<h2[^>]*data-bf-cat="section-header">/,
+  );
 
   // A copyright page carries no heading, so the nav needs a word for it, and
   // the honest word is the one the classifier used.
@@ -829,7 +1154,7 @@ test('the container is an EPUB and every document parses', async () => {
     metadata: { title: 'A & B', language: 'en', identifier: 'urn:x:1' },
     pages: [{
       page: 1,
-      dropped: 0,
+      furniture: [],
       rawExtent: { x: 1100, y: 700 },
       blocks: [
         block({ page: 1, category: 'Title', text: 'CHAPTER ONE', box: { x1: 450, y1: 200, x2: 860, y2: 260 } }),
