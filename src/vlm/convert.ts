@@ -362,6 +362,17 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
         + `${joinedPages.length} paragraph(s) joined across a page turn, `
         + `${footnotes} footnote(s), ${pictures} picture(s)`,
       );
+      // What the pages said they were. Printed even when the answer is nothing,
+      // because "no page carried a signature" and "nobody looked" are different
+      // facts and only one of them is a reason to go and read the book.
+      const named = chapters
+        .filter((chapter) => chapter.kind !== undefined && chapter.kind !== 'chapter')
+        .map((chapter) => `${chapter.kind} p${chapter.firstPage}`);
+      opts.log(
+        named.length === 0
+          ? 'vlm-convert: no page carried a title-page, copyright, contents or part signature'
+          : `vlm-convert: pages named — ${named.join(', ')}`,
+      );
     } else {
       blocks = prosePages.reduce((sum, p) => sum + p.blocks.length, 0);
       opts.log(
@@ -379,7 +390,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
     fs.writeFileSync(outPath, bytes);
     if (opts.chaptersPath !== undefined) {
-      writeProposals(path.resolve(opts.chaptersPath), proposals, skipped);
+      writeProposals(path.resolve(opts.chaptersPath), proposals, chapters, skipped);
       opts.log(`vlm-convert: ${proposals.length} chapter proposal(s) written to ${opts.chaptersPath}`);
     }
     const writeSeconds = (Date.now() - writeStarted) / 1000;
@@ -504,19 +515,30 @@ function checkPixelBudget(
 }
 
 /**
- * The chapter proposals, and the pages that are not in the book.
+ * What the rules PROPOSED, what was EMITTED, and the pages that are not in the
+ * book at all.
  *
- * Written as data because the decision is not this program's: the list
+ * Written as data because the decision is not this program's: the proposal list
  * over-includes on purpose (`dots-book.ts`), and a person confirms it in the
- * picker. The skipped pages travel in the same file because they are the other
- * half of "what is this book missing", and a report that answers one and not
- * the other is a report that gets half read.
+ * picker. Both lists carry `kind` — what a page said it was, when it said so
+ * loudly — and that is what lets the picker offer "delete the title page"
+ * rather than making somebody open four documents to find out which is which.
+ *
+ * The two lists are not the same list. A proposal is a place the rules would
+ * open a section; a section is a document that exists, with an `href` to act
+ * on. A book that does not open on a proposal has a leading section with no
+ * proposal behind it, and the picker needs the href either way.
+ *
+ * The skipped pages travel in the same file because they are the other half of
+ * "what is this book missing", and a report that answers one and not the other
+ * is a report that gets half read.
  */
 function writeProposals(
   filePath: string,
   proposals: readonly DotsChapterProposal[],
+  sections: readonly VlmChapter[],
   unreadable: readonly VlmUnreadablePage[],
 ): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify({ proposals, unreadable }, null, 1)}\n`);
+  fs.writeFileSync(filePath, `${JSON.stringify({ proposals, sections, unreadable }, null, 1)}\n`);
 }
