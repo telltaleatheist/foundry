@@ -44,7 +44,7 @@ import {
 import { DEFAULT_VLM_CONCURRENCY, readPagesFromEndpoint } from './endpoint.js';
 import { buildVlmEpub, type VlmChapter, type VlmEpubMetadata, type VlmPageBlocks } from './epub.js';
 import { requireVlmModel, type VlmModelDef } from './models.js';
-import { VlmReadings } from './readings.js';
+import { openReadingsBank, writeCompletionMarker } from './readings.js';
 
 /**
  * The resolution every page is rendered at, and not a setting.
@@ -80,6 +80,23 @@ export interface VlmConvertOptions {
   concurrency?: number;
   /** JSONL of per-page answers, appended as they land. Makes a run resumable. */
   readingsPath?: string;
+  /**
+   * Archive whatever is banked and read every page — `--fresh-readings`.
+   *
+   * The EXPLICIT form of the rule `readings.ts` applies on its own when a
+   * completion marker is present, for a caller whose own records know the
+   * conversion finished. A bank written before markers existed carries no
+   * marker, and the caller that scheduled the job is the only thing that knows.
+   */
+  freshReadings?: boolean;
+  /**
+   * Answer out of the bank even though a run completed here — `--reuse-readings`.
+   *
+   * The deliberate free reconvert: iterate on the parser or the assembler over
+   * answers that cost hours. Without it, a completed run's bank is archived and
+   * the book is read again, because that is what ordering the conversion means.
+   */
+  reuseReadings?: boolean;
   /**
    * Pages that are not part of the book — `--skip-pages`, and `pages.ts` has
    * the reasoning. Never rendered, never read, never in the EPUB; every other
@@ -148,6 +165,16 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
   const geometric = model.dialect === 'dots-json';
   const viaEndpoint = opts.endpoint !== undefined;
 
+  // Both readings flags are instructions ABOUT A BANK, and without --readings
+  // there is no bank. Refused rather than ignored: an instruction this program
+  // drops on the floor is the failure this whole file was changed to close.
+  if (opts.readingsPath === undefined && (opts.freshReadings === true || opts.reuseReadings === true)) {
+    throw new Error(
+      `${opts.freshReadings === true ? 'freshReadings' : 'reuseReadings'} was set without a readings`
+      + ' file, so there is no bank for it to act on.',
+    );
+  }
+
   /*
    * The pixel budget, and the one number the two routes disagree about.
    *
@@ -189,10 +216,24 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     );
   }
 
-  const readings = opts.readingsPath !== undefined ? VlmReadings.open(opts.readingsPath) : null;
-  if (readings !== null && readings.size > 0) {
-    opts.log(`vlm-convert: ${readings.size} page(s) already in ${opts.readingsPath} — not re-read`);
-  }
+  /*
+   * What this run does about the readings it found, decided once and STATED.
+   *
+   * `readings.ts` owns the rule; what happens here is that the sentence it
+   * returns is printed before a single page is rendered, so the log of a
+   * forty-minute run opens by saying whether that run is going to read the book
+   * or replay it. A run with no `--readings` at all has no bank, no decision and
+   * nothing to say.
+   */
+  const bank = opts.readingsPath !== undefined
+    ? openReadingsBank({
+      readingsPath: opts.readingsPath,
+      freshRequested: opts.freshReadings === true,
+      reuseRequested: opts.reuseReadings === true,
+    })
+    : null;
+  if (bank !== null) opts.log(bank.sentence);
+  const readings = bank === null ? null : bank.readings;
   // A banked answer for a page this run skips stays in the file, untouched and
   // unread. The cache is keyed by page and belongs to the PDF; the skip list
   // belongs to the run, and tomorrow's run may keep the page.
@@ -448,6 +489,28 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       writeProposals(path.resolve(opts.chaptersPath), proposals, chapters, skipped, skipPages);
       opts.log(`vlm-convert: ${proposals.length} chapter proposal(s) written to ${opts.chaptersPath}`);
     }
+    /*
+     * The book exists, so this conversion is FINISHED, and the bank beside it
+     * stops being a debt and becomes a record.
+     *
+     * Written after the EPUB and nowhere else: the marker's only job is to let
+     * the next invocation tell a killed run from a finished one, and a marker
+     * written before the bytes landed would answer that question wrong. From
+     * here on, running this conversion again reads the book again unless
+     * somebody asks for the answers back with --reuse-readings.
+     */
+    if (opts.readingsPath !== undefined) {
+      const marker = writeCompletionMarker(opts.readingsPath, {
+        completedAt: new Date().toISOString(),
+        outPath,
+        pages: run.pages.length,
+      });
+      opts.log(
+        `vlm-convert: this conversion is recorded as completed at ${marker.completedAt}, so the next `
+        + 'run over these readings reads the book again rather than replaying them.',
+      );
+    }
+
     const writeSeconds = (Date.now() - writeStarted) / 1000;
 
     opts.log(

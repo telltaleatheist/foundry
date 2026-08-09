@@ -357,6 +357,22 @@ const VLM_READINGS: OptionSpec = {
   describe: 'Bank each page\'s answer here as it lands, and re-read only what is missing.',
 };
 
+/**
+ * The two ways to override what a completion marker decides, and they are
+ * OPPOSITES. Passing both is refused in `runVlmConvert`.
+ */
+const VLM_FRESH_READINGS: OptionSpec = {
+  name: 'fresh-readings',
+  type: 'boolean',
+  describe: 'Archive whatever --readings banks and read every page again, marker or no marker.',
+};
+
+const VLM_REUSE_READINGS: OptionSpec = {
+  name: 'reuse-readings',
+  type: 'boolean',
+  describe: 'Rebuild the book from the banked answers even though a run already completed here.',
+};
+
 const VLM_SKIP_PAGES: OptionSpec = {
   name: 'skip-pages',
   type: 'string',
@@ -2129,6 +2145,28 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
   }
   const skipPages = optionalString(args, 'skip-pages');
 
+  /*
+   * The readings flags, checked here because this is the argv layer.
+   *
+   * Both are instructions about a bank, and both are REFUSED rather than
+   * ignored when there is no bank to act on or when they contradict each other.
+   * A flag that silently does nothing is how a person ends up believing they
+   * ordered a fresh read and getting a cache replay.
+   */
+  const freshReadings = flag(args, 'fresh-readings');
+  const reuseReadings = flag(args, 'reuse-readings');
+  if (freshReadings && reuseReadings) {
+    throw new UsageError(
+      '--fresh-readings and --reuse-readings say opposite things about the same bank. Pass one.',
+    );
+  }
+  if ((freshReadings || reuseReadings) && optionalString(args, 'readings') === undefined) {
+    throw new UsageError(
+      `--${freshReadings ? 'fresh-readings' : 'reuse-readings'} is about the bank --readings names, `
+      + 'and no --readings was given.',
+    );
+  }
+
   const report = await vlmConvert({
     pdfPath: requireString(args, 'pdf', 'the PDF to read'),
     outPath: requireString(args, 'out', 'where the EPUB is written'),
@@ -2140,6 +2178,8 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
       ? { endpointModel: optionalString(args, 'vlm-endpoint-model')! } : {}),
     ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
     ...(optionalString(args, 'readings') ? { readingsPath: optionalString(args, 'readings')! } : {}),
+    ...(freshReadings ? { freshReadings: true } : {}),
+    ...(reuseReadings ? { reuseReadings: true } : {}),
     ...(skipPages !== undefined ? { skipPages: parsePageList(skipPages, '--skip-pages') } : {}),
     ...(optionalString(args, 'chapters') ? { chaptersPath: optionalString(args, 'chapters')! } : {}),
     stripNoteMarkers: flag(args, 'strip-note-markers'),
@@ -2899,6 +2939,23 @@ export const COMMANDS: readonly Command[] = [
       'missing, so a killed run costs one page and a change to the parser or the',
       'assembler costs no GPU at all.',
       '',
+      'A BANK THAT A FINISHED RUN LEFT BEHIND IS NOT A RUN TO RESUME. A run that',
+      'writes its EPUB drops `completed.json` beside its readings, and the next',
+      'run that finds that marker ARCHIVES the bank into `archived-<timestamp>/`',
+      'and reads every page again — because ordering a conversion that already',
+      'finished is ordering the work, not a replay of it. Without the marker the',
+      'bank is an interrupted run and is resumed exactly as before. Nothing is',
+      'ever deleted: a page costs GPU-minutes and a book costs hours.',
+      '',
+      '--reuse-readings overrides that and rebuilds the book from the banked',
+      'answers. That is the deliberate free reconvert — iterating on the parser or',
+      'the assembler over answers that are already known good. --fresh-readings is',
+      'the opposite and the explicit form: archive and re-read whatever the marker',
+      'says, for a caller whose own records know the conversion finished (a bank',
+      'written before markers existed carries no marker). Passing both, or either',
+      'without --readings, is refused rather than half-obeyed. Whichever of the',
+      'three happens, the run says which in one sentence before it renders a page.',
+      '',
       '--skip-pages 3,17,19-24 leaves pages out of the book. They are not',
       'rasterised, not read and not in the EPUB, so a page somebody deleted in a',
       'picker costs nothing. It is a SKIP, NOT A SUBSET: the PDF is not rewritten,',
@@ -2931,7 +2988,8 @@ export const COMMANDS: readonly Command[] = [
     ].join('\n'),
     options: [
       PDF_IN, OUT_PATH, VLM_MODEL, VLM_PYTHON, VLM_RENDERS, VLM_LANGUAGE,
-      VLM_ENDPOINT, VLM_ENDPOINT_MODEL, VLM_CONCURRENCY, VLM_READINGS, VLM_SKIP_PAGES,
+      VLM_ENDPOINT, VLM_ENDPOINT_MODEL, VLM_CONCURRENCY, VLM_READINGS,
+      VLM_FRESH_READINGS, VLM_REUSE_READINGS, VLM_SKIP_PAGES,
       VLM_CHAPTERS, VLM_STRIP_MARKERS,
     ],
     run: runVlmConvert,

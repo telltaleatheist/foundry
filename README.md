@@ -136,7 +136,7 @@ document VLM and takes back a description of the page.
 ```
 foundry vlm-convert --pdf book.pdf --out book.epub \
     [--vlm-model <id>] [--python <path>] [--readings answers.jsonl] \
-    [--skip-pages 3,17,19-24] \
+    [--fresh-readings | --reuse-readings] [--skip-pages 3,17,19-24] \
     [--chapters chapters.json] [--vlm-endpoint http://host:8000/v1]
 ```
 
@@ -215,6 +215,23 @@ dialect parser, and nothing else.
 re-run reads only what is missing. It is a cache of **answers**, not of books:
 the pages are still rendered, parsed and assembled every time, so a change to
 the parser or the assembler costs no GPU at all.
+
+**A bank a finished run left behind is not a run to resume.** A run that writes
+its EPUB drops `completed.json` beside its readings; the next run that finds
+that marker rotates the bank into `archived-<timestamp>/` and **reads every page
+again**, because ordering a conversion that already finished is ordering the
+work rather than a replay of it. Without the marker the bank is an interrupted
+run and is resumed exactly as before. Nothing is ever deleted — a page costs
+GPU-minutes and a book costs hours.
+
+Two flags override that, and they are opposites. `--reuse-readings` rebuilds the
+book from the banked answers despite the marker: the deliberate free reconvert,
+for iterating on the parser or the assembler over answers that are already known
+good. `--fresh-readings` archives and re-reads whatever the marker says — the
+explicit form, for a caller whose own records know the conversion finished, since
+a bank written before markers existed carries none. Passing both, or either
+without `--readings`, is refused rather than half-obeyed, and whichever of the
+three happens the run states it in one sentence before it renders a page.
 
 `--vlm-endpoint <url>` sends the pages to an OpenAI-compatible server (vLLM)
 instead of loading MLX — same verbatim prompt, same 200 dpi render, temperature
