@@ -1,0 +1,52 @@
+/* The whole palette, in one place. Dark-friendly neutral — the document is the
+   only bright thing on screen, which is the point of a viewer that fills the
+   window. */
+:root {
+  --bg-sunken: #0f1115;
+  --bg-base: #16181c;
+  --bg-elevated: #1d2026;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --border-subtle: #262a31;
+  --border-default: #333842;
+  --text-primary: #e8eaed;
+  --text-secondary: #a5abb6;
+  --text-tertiary: #6f7682;
+  --accent: #d98a3f;
+  --accent-soft: rgba(217, 138, 63, 0.16);
+  --ok: #4ec98a;
+  --warn: #e0b020;
+  --error: #e5645c;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  overflow: hidden;
+}
+
+button, input, select, textarea {
+  font: inherit;
+  color: inherit;
+}
+
+input, select, textarea {
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  padding: 6px 8px;
+  width: 100%;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
