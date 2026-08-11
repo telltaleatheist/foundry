@@ -11,9 +11,15 @@ import type {
   BackendSettingsPatch,
   DoctorResult,
   EngineInfo,
+  EnvTooling,
   Job,
   JobRequest,
+  ServerStatus,
   SettingsView,
+  SetupLogEvent,
+  SetupRequest,
+  SetupResult,
+  WslFacts,
 } from './types';
 
 export interface FoundryApi {
@@ -52,6 +58,39 @@ export interface FoundryApi {
   settings: {
     read(): Promise<SettingsView>;
     write(patch: BackendSettingsPatch): Promise<SettingsView>;
+  };
+
+  /**
+   * WSL, and the environment vLLM is served from.
+   *
+   * Facts are re-measured on demand rather than cached in the renderer: a user
+   * who installs a distro while the settings screen is open should be able to
+   * press the button again and see it.
+   */
+  wsl: {
+    /** Which distros exist, or why there are none. */
+    facts(): Promise<WslFacts>;
+    /** What one distro can build an environment with. */
+    tooling(distro: string): Promise<EnvTooling>;
+  };
+
+  backendSetup: {
+    /**
+     * Build the environment. Resolves with the outcome; a failure is a result,
+     * not a rejection, because every one of them is a sentence to read.
+     */
+    run(request: SetupRequest): Promise<SetupResult>;
+    cancel(): Promise<void>;
+    /** Every line, as it happens. Returns its own unsubscribe. */
+    onLog(listener: (event: SetupLogEvent) => void): () => void;
+  };
+
+  vllmServer: {
+    status(): Promise<ServerStatus>;
+    /** Rejects with the guest's log tail when it will not start. */
+    start(): Promise<ServerStatus>;
+    stop(): Promise<ServerStatus>;
+    onStatus(listener: (status: ServerStatus) => void): () => void;
   };
 
   onDocumentOpened(listener: (absolutePath: string) => void): () => void;

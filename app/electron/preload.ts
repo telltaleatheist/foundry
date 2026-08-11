@@ -9,7 +9,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 import type { FoundryApi } from '../shared/api';
-import type { Job } from '../shared/types';
+import type { Job, ServerStatus, SetupLogEvent } from '../shared/types';
 
 function subscribe<T>(channel: string, listener: (value: T) => void): () => void {
   const wrapped = (_event: unknown, value: T): void => listener(value);
@@ -40,6 +40,24 @@ const api: FoundryApi = {
   settings: {
     read: () => ipcRenderer.invoke('settings:read'),
     write: (patch) => ipcRenderer.invoke('settings:write', patch),
+  },
+
+  wsl: {
+    facts: () => ipcRenderer.invoke('wsl:facts'),
+    tooling: (distro) => ipcRenderer.invoke('wsl:tooling', distro),
+  },
+
+  backendSetup: {
+    run: (request) => ipcRenderer.invoke('backend:setup-run', request),
+    cancel: () => ipcRenderer.invoke('backend:setup-cancel'),
+    onLog: (listener) => subscribe<SetupLogEvent>('backend:setup-log', listener),
+  },
+
+  vllmServer: {
+    status: () => ipcRenderer.invoke('vllm:status'),
+    start: () => ipcRenderer.invoke('vllm:start'),
+    stop: () => ipcRenderer.invoke('vllm:stop'),
+    onStatus: (listener) => subscribe<ServerStatus>('vllm:status-changed', listener),
   },
 
   onDocumentOpened: (listener) => subscribe<string>('document:opened', listener),

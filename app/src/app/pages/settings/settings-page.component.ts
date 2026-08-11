@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import type { BackendMode, DoctorReport, EngineInfo, TierReport } from '@shared/types';
 
 import { api } from '../../core/foundry';
+import { WslBackendComponent } from './wsl-backend.component';
 
 /**
  * Settings — what this machine can do, and which of it to use.
@@ -20,7 +21,7 @@ import { api } from '../../core/foundry';
  */
 @Component({
   selector: 'app-settings-page',
-  imports: [FormsModule],
+  imports: [FormsModule, WslBackendComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="page">
@@ -122,6 +123,15 @@ import { api } from '../../core/foundry';
             </div>
             @if (saveProblem(); as problem) { <p class="warn">{{ problem }}</p> }
           </div>
+
+          <!--
+            The one backend this app can BUILD, rather than only measure. Windows
+            only: on Apple silicon the answer is MLX, and a card explaining that
+            WSL is a Windows feature is noise on a machine that will never want it.
+          -->
+          @if (isWindows) {
+            <app-wsl-backend [report]="report()" (changed)="probe()" />
+          }
         </div>
       </section>
     </div>
@@ -186,6 +196,8 @@ import { api } from '../../core/foundry';
   `],
 })
 export class SettingsPageComponent {
+  protected readonly isWindows = api?.platform === 'win32';
+
   protected readonly report = signal<DoctorReport | null>(null);
   protected readonly doctorProblem = signal<string | null>(null);
   protected readonly probing = signal(false);

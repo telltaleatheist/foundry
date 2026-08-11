@@ -10,11 +10,18 @@
  * the length of a book; two of them on one machine is two runs that each take
  * twice as long, or an out-of-memory failure at page 200. `pump()` starts the
  * next queued job only when nothing is running.
+ *
+ * A job that reads through the LOCAL vLLM endpoint waits for that server first
+ * (electron/vllm-server.ts). The wait is part of the job, not a thing that
+ * happens beside it: the shelf says "Starting the reading server…", and a
+ * server that will not start fails THAT job with the guest's own log tail.
  */
 import { randomUUID } from 'node:crypto';
 import * as path from 'node:path';
 
 import { parseProgressLine, runEngine, type RunHandle } from './engine';
+import { readSettings } from './settings';
+import { ensureServer, isLocalVllmEndpoint } from './vllm-server';
 import type { Job, JobRequest } from '../shared/types';
 
 const jobs: Job[] = [];
@@ -66,7 +73,10 @@ export function cancel(id: string): void {
     running.handle.cancel();
     return; // the close handler settles the state
   }
-  if (job.state === 'queued') {
+  // Queued, or running-but-not-yet-spawned: a job waiting for the reading
+  // server to come up is `running` with no child of its own, and a cancel that
+  // did nothing there would leave the button dead for the minutes that takes.
+  if (job.state === 'queued' || job.state === 'running') {
     job.state = 'cancelled';
     job.finishedAt = Date.now();
     changed();
@@ -112,8 +122,35 @@ function argsFor(request: JobRequest): string[] {
   return args;
 }
 
+/**
+ * The endpoint this job will actually read through, or null when the run does
+ * not go through one at all.
+ *
+ * The panel's per-job URL wins; failing that it is the settings file's, and
+ * ONLY in `endpoint` mode. Under `auto` the engine picks its own tier and may
+ * well choose `wsl-vllm`, which it serves for itself — starting a server here
+ * because the file happens to hold a URL would spend twenty gigabytes on a
+ * backend the run was never going to use.
+ */
+function endpointFor(request: JobRequest): string | null {
+  const named = request.endpointUrl?.trim();
+  if (named) return named;
+  const settings = readSettings();
+  if (settings.backend.mode !== 'endpoint') return null;
+  return settings.backend.endpointUrl?.trim() || null;
+}
+
+/**
+ * True from the moment pump() claims a job until its engine child is recorded
+ * in `running`. The server wait between those two points is an await — the one
+ * window in this file where a second pump() could see `running === null`, find
+ * the NEXT queued job, and break the serial invariant with two engines on one
+ * GPU. `running` guards the child's lifetime; this guards the gap before it.
+ */
+let starting = false;
+
 async function pump(): Promise<void> {
-  if (running !== null) return;
+  if (running !== null || starting) return;
   const next = jobs.find((job) => job.state === 'queued');
   if (!next) return;
   const request = requests.get(next.id);
@@ -125,10 +162,39 @@ async function pump(): Promise<void> {
     return;
   }
 
+  starting = true;
   next.state = 'running';
   next.startedAt = Date.now();
   next.message = `Starting ${path.basename(next.inputPath)}…`;
   changed();
+
+  // The reading server, before the engine that will post pages to it. A remote
+  // endpoint is used exactly as given — only the local one is ours to start.
+  const endpoint = endpointFor(request);
+  if (endpoint !== null && isLocalVllmEndpoint(endpoint)) {
+    next.message = 'Starting the reading server…';
+    changed();
+    try {
+      await ensureServer();
+    } catch (err) {
+      // The server's own log tail, whole. A conversion that failed because vLLM
+      // ran out of VRAM must say so here, not "the engine exited 1".
+      next.state = 'failed';
+      next.error = err instanceof Error ? err.message : String(err);
+      next.finishedAt = Date.now();
+      changed();
+      starting = false;
+      void pump();
+      return;
+    }
+    // Cancelled while the server was coming up — see `cancel`. Re-read rather
+    // than test `next.state`, which the compiler still believes is 'running'.
+    if (jobs.find((job) => job.id === next.id)?.state === 'cancelled') {
+      starting = false;
+      void pump();
+      return;
+    }
+  }
 
   const handle = runEngine(argsFor(request), (line) => {
     next.message = line;
@@ -146,6 +212,7 @@ async function pump(): Promise<void> {
     changed();
   });
   running = { id: next.id, handle };
+  starting = false;
 
   const result = await handle.done;
   running = null;

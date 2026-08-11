@@ -27,10 +27,13 @@ import {
   type MenuItemConstructorOptions,
 } from 'electron';
 
+import { cancelSetup, setupWslEnv } from './backend-setup';
 import { engineInfo, runDoctor } from './engine';
 import * as queue from './job-queue';
 import { readSettings, writeSettings } from './settings';
-import type { BackendSettingsPatch, JobRequest } from '../shared/types';
+import * as vllm from './vllm-server';
+import { detectEnvTooling, listDistros } from './wsl';
+import type { BackendSettingsPatch, JobRequest, SetupRequest } from '../shared/types';
 
 const isDev = process.argv.includes('--dev');
 const DEV_SERVER = 'http://localhost:4260';
@@ -348,11 +351,32 @@ function registerIpc(): void {
     shell.showItemInFolder(path.resolve(target));
   });
 
-  queue.onQueueChanged((jobs) => {
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send('queue:changed', jobs);
-    }
+  // ── WSL, the environment, and the server ─────────────────────────────────
+  ipcMain.handle('wsl:facts', () => listDistros());
+  ipcMain.handle('wsl:tooling', (_event, distro: string) => detectEnvTooling(distro));
+
+  // The tooling is re-measured HERE rather than trusted from the renderer: the
+  // route the user picked is a choice, but what the distro actually has is a
+  // fact, and a fact the renderer asserted is a fact main did not check.
+  ipcMain.handle('backend:setup-run', async (_event, request: SetupRequest) => {
+    const tooling = await detectEnvTooling(request.distro);
+    return setupWslEnv(request, tooling, (event) => broadcast('backend:setup-log', event));
   });
+  ipcMain.handle('backend:setup-cancel', () => { cancelSetup(); });
+
+  ipcMain.handle('vllm:status', () => vllm.serverStatus());
+  ipcMain.handle('vllm:start', () => vllm.ensureServer());
+  ipcMain.handle('vllm:stop', () => vllm.stopServer('the Stop button'));
+
+  queue.onQueueChanged((jobs) => broadcast('queue:changed', jobs));
+  vllm.onServerStatus((status) => broadcast('vllm:status-changed', status));
+}
+
+/** One push to every window. The renderer holds mirrors; main holds the truth. */
+function broadcast(channel: string, payload: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send(channel, payload);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -387,6 +411,22 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// Quit aborts the run. A conversion that outlived its window would hold a GPU
-// with nothing left to report to.
-app.on('before-quit', () => queue.shutdown());
+/**
+ * Quit aborts the run. A conversion that outlived its window would hold a GPU
+ * with nothing left to report to — and so would the reading server, which is
+ * ~20 GB of VRAM held by a process nothing is left to talk to.
+ *
+ * The quit is DEFERRED once when there is a server of ours to stop, because
+ * that stop is a SIGTERM inside the distro followed by waiting for the CUDA
+ * device to come back, and an Electron that exited underneath it would leave
+ * the guest process orphaned holding the card. A server this app merely FOUND
+ * running is not ours and the quit is immediate.
+ */
+let quitting = false;
+app.on('before-quit', (event) => {
+  queue.shutdown();
+  if (quitting || !vllm.ownsServer()) return;
+  event.preventDefault();
+  quitting = true;
+  void vllm.stopServer('the app is quitting').finally(() => app.quit());
+});

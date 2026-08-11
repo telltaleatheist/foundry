@@ -80,6 +80,14 @@ export interface DoctorReport {
   tiers: TierReport[];
   /** The tier a run would use, or null with the reason in that tier's detail. */
   chosen: TierId | null;
+  /**
+   * WSL itself, separate from the `wsl-vllm` TIER: "WSL exists but nothing in
+   * it can import vllm" is the state the setup screen exists for, and the tier
+   * alone cannot tell it apart from "there is no WSL". OPTIONAL — engine builds
+   * that predate it simply do not carry it, and the app falls back to asking
+   * wsl.exe itself.
+   */
+  wsl?: { available: boolean; distros: string[] };
 }
 
 /**
@@ -100,15 +108,23 @@ export type DoctorResult =
 export type BackendMode = 'auto' | 'endpoint' | 'mlx';
 
 /**
- * The keys this app knows how to edit. It is deliberately a SUBSET of what the
- * engine reads (wslDistro, vllmPython, endpointModel are also legal): the writer
- * preserves every key it does not recognise, so a newer engine's settings
- * survive an older app saving over them.
+ * The keys this app knows how to edit. Still a SUBSET of what the engine reads
+ * (`endpointModel` is also legal): the writer preserves every key it does not
+ * recognise, so a newer engine's settings survive an older app saving over them.
+ *
+ * `wslDistro` and `vllmPython` are written by the SETUP RUNNER rather than
+ * typed into a field — they are the two facts that make an environment this app
+ * built findable by the engine, and the settings form leaves them undefined so
+ * saving a URL never clears them.
  */
 export interface BackendSettingsPatch {
   mode?: BackendMode;
   endpointUrl?: string;
   python?: string;
+  /** The WSL distro the vLLM environment lives in. */
+  wslDistro?: string;
+  /** The interpreter INSIDE that distro that can import vllm. Tilde-form is fine. */
+  vllmPython?: string;
 }
 
 export interface SettingsView {
@@ -117,6 +133,63 @@ export interface SettingsView {
   backend: BackendSettingsPatch;
   /** Set when the file exists but could not be read or parsed. */
   problem?: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WSL — the facts, the setup run, and the server
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface WslFacts {
+  /** True only when wsl.exe ran AND named at least one distro. */
+  available: boolean;
+  distros: string[];
+  /** Why not. Printed verbatim: "not on PATH" and "installed but empty" differ. */
+  reason: string | null;
+}
+
+/** What a distro can build an environment with. Both routes always reported. */
+export interface EnvTooling {
+  /** Path to a conda binary inside the distro, tilde-form, or null. */
+  conda: string | null;
+  /** True when that distro's python3 can import venv. */
+  venv: boolean;
+  detail: string;
+}
+
+/** Which way the environment gets built. The user picks; nothing falls back. */
+export type SetupRoute = 'conda' | 'venv';
+
+export interface SetupRequest {
+  distro: string;
+  route: SetupRoute;
+}
+
+/**
+ * One line out of a setup run. `step` is this app talking (the command about to
+ * run, what was skipped); `stdout`/`stderr` are the guest's, verbatim.
+ */
+export interface SetupLogEvent {
+  stream: 'step' | 'stdout' | 'stderr';
+  line: string;
+}
+
+export interface SetupResult {
+  ok: boolean;
+  /** The interpreter that now exists, when there is one. */
+  pythonPath: string | null;
+  detail: string;
+}
+
+export type ServerState = 'stopped' | 'starting' | 'ready' | 'failed';
+
+export interface ServerStatus {
+  state: ServerState;
+  /** On a failure this carries the guest's log tail. Never paraphrased. */
+  detail: string;
+  url: string;
+  model: string;
+  /** True when the port was already answering: used as-is, never stopped. */
+  external: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
