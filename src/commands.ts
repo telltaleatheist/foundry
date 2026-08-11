@@ -28,6 +28,9 @@ import {
   type OptionSpec,
   type ParsedArgs,
 } from './args.js';
+import { buildReport, formatReport } from './backend/plan.js';
+import { probeEndpoint, probeLocalPython, probeWslVllm } from './backend/probe.js';
+import { loadSettings, settingsPath, type FoundrySettings } from './backend/settings.js';
 import { vlmConvert } from './vlm/convert.js';
 import { DEFAULT_VLM_CONCURRENCY } from './vlm/endpoint.js';
 import { DEFAULT_VLM_MODEL_ID, VLM_MODELS } from './vlm/models.js';
@@ -177,6 +180,31 @@ function log(message: string): void {
   process.stderr.write(`${message}\n`);
 }
 
+/** The endpoint probed when neither a flag nor a setting names one: vLLM's default. */
+const DEFAULT_ENDPOINT_URL = 'http://localhost:8000/v1';
+
+/**
+ * A vlm-convert option that a setting may supply when its flag is absent.
+ *
+ * Flags always win, and an applied setting is LOGGED — a run that reads
+ * through an endpoint nobody typed on this command line must say where the
+ * URL came from, or the settings file becomes spooky action.
+ */
+function fromFlagOrSettings(
+  args: ParsedArgs,
+  flagName: string,
+  settingValue: string | undefined,
+  settingKey: string,
+): string | undefined {
+  const fromFlag = optionalString(args, flagName);
+  if (fromFlag !== undefined) return fromFlag;
+  if (settingValue !== undefined) {
+    log(`vlm-convert: --${flagName} ${settingValue} (from ${settingKey} in ${settingsPath()})`);
+    return settingValue;
+  }
+  return undefined;
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // vlm-convert
 // ═════════════════════════════════════════════════════════════════════════════
@@ -210,15 +238,30 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
     );
   }
 
+  /*
+   * Settings fill in absent flags; they never override one (backend/settings).
+   * The endpoint comes from settings only under mode "endpoint" — the mode is
+   * the operator's statement that runs on this machine read through a server,
+   * and honouring the URL under any other mode would make writing it down
+   * enough to reroute every run.
+   */
+  const settings: FoundrySettings = loadSettings();
+  const endpointFromSettings =
+    settings.backend?.mode === 'endpoint' ? settings.backend.endpointUrl : undefined;
+  const endpoint = fromFlagOrSettings(args, 'vlm-endpoint', endpointFromSettings, 'backend.endpointUrl');
+  const endpointModel = endpoint === undefined
+    ? optionalString(args, 'vlm-endpoint-model')
+    : fromFlagOrSettings(args, 'vlm-endpoint-model', settings.backend?.endpointModel, 'backend.endpointModel');
+  const python = fromFlagOrSettings(args, 'python', settings.backend?.python, 'backend.python');
+
   const report = await vlmConvert({
     pdfPath: requireString(args, 'pdf', 'the PDF to read'),
     outPath: requireString(args, 'out', 'where the EPUB is written'),
     modelId: optionalString(args, 'vlm-model') ?? DEFAULT_VLM_MODEL_ID,
-    ...(optionalString(args, 'python') ? { python: optionalString(args, 'python')! } : {}),
+    ...(python !== undefined ? { python } : {}),
     ...(optionalString(args, 'renders') ? { rendersDir: optionalString(args, 'renders')! } : {}),
-    ...(optionalString(args, 'vlm-endpoint') ? { endpoint: optionalString(args, 'vlm-endpoint')! } : {}),
-    ...(optionalString(args, 'vlm-endpoint-model')
-      ? { endpointModel: optionalString(args, 'vlm-endpoint-model')! } : {}),
+    ...(endpoint !== undefined ? { endpoint } : {}),
+    ...(endpointModel !== undefined ? { endpointModel } : {}),
     ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
     ...(optionalString(args, 'readings') ? { readingsPath: optionalString(args, 'readings')! } : {}),
     ...(freshReadings ? { freshReadings: true } : {}),
@@ -263,6 +306,46 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
       `vlm-convert: ${report.unreadable.length} PAGE(S) ARE NOT IN THE BOOK — `
       + report.unreadable.map((p) => p.number).join(', '),
     );
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// doctor
+// ═════════════════════════════════════════════════════════════════════════════
+
+async function runDoctor(args: ParsedArgs): Promise<void> {
+  const settings = loadSettings();
+  const endpointUrl =
+    optionalString(args, 'endpoint') ?? settings.backend?.endpointUrl ?? DEFAULT_ENDPOINT_URL;
+
+  /*
+   * The four probes are independent measurements, so they run concurrently —
+   * the WSL probe alone can take ten seconds when a distro has to boot, and
+   * nothing about the endpoint answer depends on it.
+   */
+  const [endpoint, wslVllm, mlx, rasteriser] = await Promise.all([
+    probeEndpoint(endpointUrl),
+    probeWslVllm(settings),
+    probeLocalPython('mlx_vlm', settings),
+    probeLocalPython('fitz', settings),
+  ]);
+
+  const report = buildReport({
+    platform: process.platform,
+    mode: settings.backend?.mode ?? 'auto',
+    endpoint,
+    wslVllm,
+    mlx,
+    rasteriser,
+  });
+
+  // The report is the RESULT, so it goes to stdout — both shapes of it. The
+  // app shells this command with --json and reads stdout; a person reads the
+  // same facts formatted.
+  if (flag(args, 'json')) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  } else {
+    process.stdout.write(`${formatReport(report)}\n`);
   }
 }
 
@@ -381,6 +464,52 @@ export const COMMANDS: readonly Command[] = [
       VLM_CHAPTERS, VLM_STRIP_MARKERS,
     ],
     run: runVlmConvert,
+  },
+  {
+    name: 'doctor',
+    summary: 'Probe every reading backend and say which one a run would use.',
+    usage: '[--json] [--endpoint <url>]',
+    detail: [
+      'Answers one question: where would vlm-convert read pages RIGHT NOW, and',
+      'why not anywhere faster? Four probes, concurrent, each reported with a',
+      'detail a person can act on:',
+      '',
+      '  endpoint    GET <url>/models on the OpenAI-compatible server. The first',
+      '              tier everywhere: vLLM in WSL, Docker, or another machine all',
+      '              look identical from here. Probed at --endpoint, else the',
+      '              settings URL, else http://localhost:8000/v1 (vLLM\'s default).',
+      '  wsl-vllm    (Windows) a WSL distro whose named interpreter can import',
+      '              vllm — a server COULD be started there. Nothing is started.',
+      '  mlx         (Apple silicon) a local interpreter can import mlx_vlm.',
+      '  rasteriser  a local interpreter can import fitz (PyMuPDF). EVERY run',
+      '              needs this one, endpoint or not: the pages render locally.',
+      '',
+      'The chosen tier follows the settings mode (auto: first available;',
+      'endpoint/mlx: that tier or nothing). It NAMES and never degrades: an',
+      'explicit mode whose tier is down chooses null and the detail says what to',
+      'fix — the next tier down is 10-100x slower and is not a thing to slide',
+      'into silently.',
+      '',
+      `Settings are read from ${settingsPath()}`,
+      '(FOUNDRY_CONFIG_DIR overrides the directory). Recognised keys, all under',
+      '"backend": mode (auto|endpoint|mlx), endpointUrl, endpointModel,',
+      'wslDistro, vllmPython, python. Flags beat settings everywhere; a value a',
+      'setting supplied is logged on the runs that use it.',
+      '',
+      '--json prints the same facts as versioned JSON for the settings screen of',
+      'a UI. Machine-consumed: fields are added, never renamed, without a',
+      'version bump.',
+    ].join('\n'),
+    options: [
+      { name: 'json', type: 'boolean', describe: 'Print the report as versioned JSON on stdout.' },
+      {
+        name: 'endpoint',
+        type: 'string',
+        placeholder: '<url>',
+        describe: 'Probe this URL instead of the settings/default one.',
+      },
+    ],
+    run: runDoctor,
   },
 ];
 

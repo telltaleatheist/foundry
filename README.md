@@ -144,6 +144,20 @@ wrong and flips every indent test, on a book that reads fine.
   `--python` or `FOUNDRY_VLM_PYTHON`, or a `vlmtest` conda environment is
   looked for.
 
+`foundry doctor` probes all of that and says where a run would read *right
+now*: the endpoint answered or did not, a WSL distro has an interpreter that
+can import vllm or does not, MLX and PyMuPDF are importable or are not — every
+miss with the exact paths tried. `--json` emits the same report versioned, for
+a UI's settings screen.
+
+Settings live in the platform config dir (`%APPDATA%\foundry\settings.json` on
+Windows; `FOUNDRY_CONFIG_DIR` overrides), under one `backend` key: `mode`
+(`auto` | `endpoint` | `mlx`), `endpointUrl`, `endpointModel`, `wslDistro`,
+`vllmPython`, `python`. Flags beat settings everywhere; a run that takes a
+value from settings logs it. The chosen tier **names and never degrades**
+(ARCHITECTURE §8): an explicit mode whose tier is down is an error to fix, not
+a 100×-slower run to slide into.
+
 ## Measured
 
 On a 17-page born-digital article (Kershaw, "Working Towards the Führer", 1993),
