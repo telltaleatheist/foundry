@@ -80,6 +80,17 @@ except ModuleNotFoundError:  # pragma: no cover - platform-dependent
 import sys
 import time
 
+# The protocol channel is the REAL stdout, held privately — and file
+# descriptor 1 is then pointed at stderr. This is not decoration: MuPDF's C
+# library writes its warnings to fd 1 DIRECTLY, below Python, and one such
+# line ("MuPDF error: ...") in the middle of the event stream fails the whole
+# run at the bridge's JSON parser (QAnon book, 2026-08-11: 276/276 pages
+# rendered, then the summary line arrived corrupted). After this swap, nothing
+# in this process — not fitz, not a native library, not a stray print — can
+# reach the protocol except emit().
+_protocol = os.fdopen(os.dup(sys.stdout.fileno()), 'w', encoding='utf-8')
+os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+
 
 def fail(message):
     """Die the way foundry dies: one line naming the thing, nonzero exit."""
@@ -88,8 +99,8 @@ def fail(message):
 
 
 def emit(obj):
-    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + '\n')
-    sys.stdout.flush()
+    _protocol.write(json.dumps(obj, ensure_ascii=False) + '\n')
+    _protocol.flush()
 
 
 def peak_rss_bytes():
