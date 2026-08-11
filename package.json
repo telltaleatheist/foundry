@@ -13,6 +13,9 @@
   },
   "scripts": {
     "start": "bun run src/cli.ts",
+    "electron:dev": "npm --prefix app run electron:dev",
+    "package:win-x64": "npm --prefix app run package:win-x64",
+    "package:mac": "npm --prefix app run package:mac",
     "typecheck": "tsc --noEmit",
     "build": "tools/release-build.sh host",
     "build:mac-arm64": "tools/release-build.sh darwin-arm64",
