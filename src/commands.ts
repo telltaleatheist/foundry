@@ -254,6 +254,21 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
     : fromFlagOrSettings(args, 'vlm-endpoint-model', settings.backend?.endpointModel, 'backend.endpointModel');
   const python = fromFlagOrSettings(args, 'python', settings.backend?.python, 'backend.python');
 
+  /*
+   * Refused HERE, before a page renders: off macOS the only reading path is an
+   * endpoint, and letting the run proceed without one ends in "no Python with
+   * MLX was found" — a true sentence that points a Windows user at entirely
+   * the wrong problem.
+   */
+  if (endpoint === undefined && process.platform !== 'darwin') {
+    throw new Error(
+      'no reading backend for this run: the local MLX path is Apple silicon only, and no endpoint '
+      + 'was named. Pass --vlm-endpoint <url> (e.g. a vLLM server), or set backend.mode to '
+      + `"endpoint" with backend.endpointUrl in ${settingsPath()}. `
+      + '`foundry doctor` reports what this machine has.',
+    );
+  }
+
   const report = await vlmConvert({
     pdfPath: requireString(args, 'pdf', 'the PDF to read'),
     outPath: requireString(args, 'out', 'where the EPUB is written'),
