@@ -250,10 +250,30 @@ function localPythonCandidates(settings: FoundrySettings): string[] {
     path.join(home, 'miniforge3'),
     path.join(home, 'anaconda3'),
   ];
-  return roots.flatMap((root) =>
+  const conda = roots.flatMap((root) =>
     process.platform === 'win32'
       ? [path.join(root, 'envs', 'vlmtest', 'python.exe')]
       : [path.join(root, 'envs', 'vlmtest', 'bin', 'python')]);
+
+  /*
+   * BookForge ships a relocatable Python WITH PyMuPDF in it (ebook2audiobook's
+   * runtime env, unpacked under its user-data directory), and it is how
+   * BookForge already rasterises for this very engine on Windows. A machine
+   * with BookForge on it therefore has a working rasteriser whether or not
+   * anyone made a conda env — named here so foundry finds it too.
+   */
+  const bookforgeRuntime =
+    process.platform === 'win32'
+      ? path.join(process.env['APPDATA'] ?? path.join(home, 'AppData', 'Roaming'), 'bookforge', 'runtime', 'e2a-env', 'python.exe')
+      : process.platform === 'darwin'
+        ? path.join(home, 'Library', 'Application Support', 'bookforge', 'runtime', 'e2a-env', 'bin', 'python')
+        : path.join(home, '.config', 'bookforge', 'runtime', 'e2a-env', 'bin', 'python');
+  const e2aCheckout =
+    process.platform === 'win32'
+      ? path.join(home, 'Projects', 'ebook2audiobook', 'python_env', 'python.exe')
+      : path.join(home, 'Projects', 'ebook2audiobook', 'python_env', 'bin', 'python');
+
+  return [...conda, bookforgeRuntime, e2aCheckout];
 }
 
 /** Can a named local interpreter import `module`? Reports every miss by path. */
