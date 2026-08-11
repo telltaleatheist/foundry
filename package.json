@@ -2,7 +2,7 @@
   "name": "foundry",
   "version": "0.9.1",
   "private": true,
-  "description": "Recast poorly scanned PDFs into clean EPUBs. Pinned Tesseract for segmentation, three Qwen3-4B stage models for labelling, OCR repair and footnote-marker removal.",
+  "description": "Recast poorly scanned PDFs into clean EPUBs. A document vision model (dots-ocr by default) reads each page whole — locally via MLX, or against any OpenAI-compatible server such as vLLM.",
   "type": "module",
   "module": "src/cli.ts",
   "bin": {
@@ -26,9 +26,5 @@
   "devDependencies": {
     "@types/bun": "latest",
     "typescript": "^5.6.0"
-  },
-  "dependencies": {
-    "@cantoo/pdf-lib": "^2.8.1",
-    "pdfjs-dist": "^6.2.108"
   }
 }

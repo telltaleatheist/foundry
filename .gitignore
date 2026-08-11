@@ -1,25 +1,10 @@
-# Weights. These live on HuggingFace (owner: owenmorgan) and are pulled on
-# first run with sha256 verification. A multi-gigabyte GGUF has no business in
-# git, and a weight file in a diff is a sign something resolved to the wrong
-# directory.
+# Weights. VLM weights are pulled by the runtime (mlx-vlm, or the server behind
+# --vlm-endpoint) into the HuggingFace cache. A multi-gigabyte weight file has
+# no business in git, and one in a diff is a sign something resolved to the
+# wrong directory.
 *.gguf
 *.safetensors
-# ANCHORED, deliberately. An unanchored `models/` also matches `src/models/`,
-# which is the catalog/download/paths CODE — git silently refused to stage it.
 /models/
-
-# Vendored binaries: the pinned tesseract + tessdata and the bundled
-# llama-server. Fetched by the packaging step, never committed.
-#
-# The PIN, though, is code. vendor/tesseract/manifest.json records the expected
-# version and the tessdata sha256s and src/scan/tesseract.ts verifies against it
-# before reading a page, so it and its README are re-included. Directory-first:
-# git cannot re-include a file whose parent directory is excluded, so
-# `!/vendor/tesseract/` has to come before the files inside it.
-/vendor/**
-!/vendor/tesseract/
-!/vendor/tesseract/manifest.json
-!/vendor/tesseract/README.md
 
 node_modules/
 dist/
@@ -42,8 +27,3 @@ tmp/
 Thumbs.db
 .idea/
 .vscode/
-
-# Local fixtures: real books, used by the PDF spike and the end-to-end runs.
-# Copyrighted scans of several megabytes each. The tests that use them SKIP when
-# they are absent (test/pdf/fixtures.ts), so the suite is green without them.
-/fixtures/local/

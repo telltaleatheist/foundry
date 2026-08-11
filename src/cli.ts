@@ -2,24 +2,23 @@
 /**
  * foundry — recast a broken scan into a clean book.
  *
- * A type foundry casts worn type into fresh type. This one takes a badly
- * scanned page and casts it back into a readable EPUB: pinned Tesseract finds
- * the lines, three Qwen3-4B stage models decide what each block IS, repair what
- * the OCR got wrong, and strip the footnote markers, and the labels drive the
- * EPUB. Two of the three are LoRA adapters on one shared base; `blocks` is a
- * fused checkpoint and loads on its own (ARCHITECTURE §3).
+ * A type foundry casts worn type into fresh type. This one hands each page of
+ * a badly scanned PDF to a document vision model, takes back marked-up text,
+ * and assembles the answers into a readable EPUB (src/vlm/). The Tesseract +
+ * stage-model pipeline that used to live beside this route is preserved at the
+ * git tag `pre-vlm-strip`.
  *
- * Entry point. Dispatch only — every stage lives in its own module, and this
- * file's job is to turn argv into exactly one of them and to make failure loud.
+ * Entry point. Dispatch only — the work lives in its own modules, and this
+ * file's job is to turn argv into exactly one command and to make failure loud.
  *
- * NO FALLBACKS. An unknown command, a missing file, a missing binary and a
- * missing weight are each an error that names the missing thing and exits
+ * NO FALLBACKS. An unknown command, a missing file, a missing interpreter and
+ * a missing package are each an error that names the missing thing and exits
  * nonzero. Nothing here degrades quietly into doing less than it was asked.
  *
  * Two exit codes, and the distinction is deliberate:
  *   2  the command line was wrong (UsageError) — nothing ran
- *   1  the command ran and failed — read the message; the run directory still
- *      holds every artifact written before the failure
+ *   1  the command ran and failed — read the message; whatever the run banked
+ *      before the failure (--readings) is still on disk
  */
 
 import { UsageError } from './args.js';
@@ -44,27 +43,12 @@ function topLevelHelp(): string {
     'Commands:',
     ...COMMANDS.map((c) => `  ${c.name.padEnd(pad)}  ${c.summary}`),
     '',
-    'Pipeline:',
-    '  page renders → scan → blocks → ocr → footnotes → export → EPUB',
-    '',
-    '  Every stage reads and writes ONE run directory (docs/PIPELINE.md), so a',
-    '  run can be stopped, inspected, edited and resumed, and BookForge can read',
-    '  the artifacts between stages. `convert` runs the lot.',
-    '',
-    'Document mode (docs/DOCUMENT_MODES.md) — the PDF carries its own state:',
-    '  scan --pages … → get-text → blocks --pdf → footnotes --pdf → reflow',
-    '  scan --pdf …                → blocks --pdf →                  reflow',
-    '',
-    '  The original is cast once into a working PDF and every stage after that',
-    '  writes into it: the words as an invisible text layer, the categories as',
-    '  annotations. `reflow` builds the book from that one file.',
-    '',
-    'The other route (src/vlm/models.ts):',
     '  vlm-convert --pdf … --out book.epub',
     '',
-    '  A document vision model reads each page image and writes marked-up text.',
-    '  It shares no stage, no artifact and no model with the pipeline above, on',
-    '  purpose — the two are meant to be comparable. It needs a Python with MLX.',
+    '  A document vision model reads each page image and writes marked-up text,',
+    '  and foundry assembles the answers into an EPUB. It needs a Python with',
+    '  PyMuPDF (and mlx-vlm for the local MLX path); --vlm-endpoint sends the',
+    '  pages to an OpenAI-compatible server (e.g. vLLM) instead.',
     '',
     'Global options:',
     formatOptionsBlock(),
