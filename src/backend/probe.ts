@@ -155,6 +155,12 @@ export async function probeEndpoint(url: string, timeoutMs = 3000): Promise<Endp
 export interface WslVllmProbe extends ProbeReport {
   distro: string | null;
   python: string | null;
+  /**
+   * Every distro wsl.exe listed, whatever else was or was not found — the
+   * facts a setup screen needs to OFFER creating an environment. Empty when
+   * WSL itself is absent (or this is not Windows).
+   */
+  distros: string[];
 }
 
 /** One python -c line: exit 0 if the module resolves, 3 if not. No heavy import. */
@@ -184,7 +190,9 @@ export async function probeWslVllm(
   settings: FoundrySettings,
   run: Runner = spawnRunner,
 ): Promise<WslVllmProbe> {
-  const miss = (detail: string): WslVllmProbe => ({ available: false, detail, distro: null, python: null });
+  let known: string[] = [];
+  const miss = (detail: string): WslVllmProbe =>
+    ({ available: false, detail, distro: null, python: null, distros: known });
   if (process.platform !== 'win32') return miss('WSL is a Windows feature; not win32');
 
   const list = await run('wsl.exe', ['-l', '-q'], 15_000);
@@ -192,6 +200,7 @@ export async function probeWslVllm(
     return miss(`wsl.exe -l -q failed: ${list.failure ?? list.stderr.trim() ?? `exit ${list.exitCode}`}`);
   }
   const distros = list.stdout.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+  known = distros;
   if (distros.length === 0) return miss('wsl.exe lists no installed distros');
 
   const wanted = settings.backend?.wslDistro;
@@ -218,6 +227,7 @@ export async function probeWslVllm(
           detail: `distro ${distro}, ${candidate} can import vllm`,
           distro,
           python: candidate,
+          distros,
         };
       }
       misses.push(`${distro}: ${candidate} (${probe.failure ?? `exit ${probe.exitCode}`})`);

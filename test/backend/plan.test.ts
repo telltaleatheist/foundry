@@ -15,7 +15,7 @@ function inputs(overrides: Partial<PlanInputs>): PlanInputs {
     platform: 'win32',
     mode: 'auto',
     endpoint: { ...MISSING, url: 'http://localhost:8000/v1', models: [], latencyMs: null },
-    wslVllm: { ...MISSING, distro: null, python: null },
+    wslVllm: { ...MISSING, distro: null, python: null, distros: [] },
     mlx: { ...MISSING, python: null },
     rasteriser: { ...MISSING, python: null },
     ...overrides,
@@ -26,14 +26,14 @@ describe('buildReport', () => {
   test('auto picks the endpoint over an available wsl-vllm', () => {
     const report = buildReport(inputs({
       endpoint: { ...AVAILABLE, url: 'http://localhost:8000/v1', models: ['dots.ocr'], latencyMs: 5 },
-      wslVllm: { ...AVAILABLE, distro: 'Ubuntu', python: '~/miniconda3/envs/vllm/bin/python' },
+      wslVllm: { ...AVAILABLE, distro: 'Ubuntu', python: '~/miniconda3/envs/vllm/bin/python', distros: ['Ubuntu'] },
     }));
     expect(report.chosen).toBe('endpoint');
   });
 
   test('auto falls through to wsl-vllm when nothing answers the URL', () => {
     const report = buildReport(inputs({
-      wslVllm: { ...AVAILABLE, distro: 'Ubuntu', python: 'python' },
+      wslVllm: { ...AVAILABLE, distro: 'Ubuntu', python: 'python', distros: ['Ubuntu'] },
     }));
     expect(report.chosen).toBe('wsl-vllm');
   });
@@ -46,7 +46,7 @@ describe('buildReport', () => {
   test('explicit endpoint mode with the endpoint down chooses null, never the next tier', () => {
     const report = buildReport(inputs({
       mode: 'endpoint',
-      wslVllm: { ...AVAILABLE, distro: 'Ubuntu', python: 'python' },
+      wslVllm: { ...AVAILABLE, distro: 'Ubuntu', python: 'python', distros: ['Ubuntu'] },
     }));
     expect(report.chosen).toBeNull();
   });
@@ -73,6 +73,14 @@ describe('buildReport', () => {
     const native = report.tiers.find((t) => t.id === 'native')!;
     expect(native.available).toBe(false);
     expect(native.detail).toContain('not implemented');
+  });
+
+  test('wsl facts are reported even when the tier is a miss — the setup-screen state', () => {
+    const report = buildReport(inputs({
+      wslVllm: { ...MISSING, distro: null, python: null, distros: ['Ubuntu', 'Debian'] },
+    }));
+    expect(report.wsl).toEqual({ available: true, distros: ['Ubuntu', 'Debian'] });
+    expect(report.tiers.find((t) => t.id === 'wsl-vllm')!.available).toBe(false);
   });
 
   test('the report carries the rasteriser verdict verbatim', () => {

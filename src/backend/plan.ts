@@ -39,6 +39,13 @@ export interface DoctorReport {
   platform: NodeJS.Platform;
   /** PyMuPDF — needed by every run on every tier; reported beside the tiers. */
   rasteriser: { available: boolean; python: string | null; detail: string };
+  /**
+   * WSL itself, separate from the wsl-vllm tier: "WSL exists but no
+   * environment does" is the state where a setup screen OFFERS to build one,
+   * and it needs the distro list to offer a choice. Added within version 1 —
+   * fields are added, never renamed.
+   */
+  wsl: { available: boolean; distros: string[] };
   tiers: TierReport[];
   /** The tier a run would use, or null with the reason living in its tier's detail. */
   chosen: TierId | null;
@@ -100,6 +107,10 @@ export function buildReport(inputs: PlanInputs): DoctorReport {
       available: inputs.rasteriser.available,
       python: inputs.rasteriser.python,
       detail: inputs.rasteriser.detail,
+    },
+    wsl: {
+      available: inputs.wslVllm.distros.length > 0,
+      distros: inputs.wslVllm.distros,
     },
     tiers,
     chosen,
