@@ -16,6 +16,7 @@ function inputs(overrides: Partial<PlanInputs>): PlanInputs {
     mode: 'auto',
     endpoint: { ...MISSING, url: 'http://localhost:8000/v1', models: [], latencyMs: null },
     wslVllm: { ...MISSING, distro: null, python: null, distros: [] },
+    vllmLocal: { ...MISSING, python: null },
     mlx: { ...MISSING, python: null },
     rasteriser: { ...MISSING, python: null },
     ...overrides,
@@ -60,19 +61,39 @@ describe('buildReport', () => {
     expect(mlx.detail).toContain('Apple silicon');
   });
 
-  test('darwin ranks mlx ahead of wsl-vllm; win32 the reverse', () => {
+  test('each platform ranks its own local tier right after the endpoint', () => {
     const mac = buildReport(inputs({ platform: 'darwin' }));
     const win = buildReport(inputs({ platform: 'win32' }));
+    const lin = buildReport(inputs({ platform: 'linux' }));
     const order = (r: typeof mac) => r.tiers.map((t) => t.id);
-    expect(order(mac)).toEqual(['endpoint', 'mlx', 'wsl-vllm', 'native']);
-    expect(order(win)).toEqual(['endpoint', 'wsl-vllm', 'mlx', 'native']);
+    expect(order(mac)).toEqual(['endpoint', 'mlx', 'vllm-local', 'wsl-vllm', 'native']);
+    expect(order(win)).toEqual(['endpoint', 'wsl-vllm', 'vllm-local', 'mlx', 'native']);
+    expect(order(lin)).toEqual(['endpoint', 'vllm-local', 'wsl-vllm', 'mlx', 'native']);
+  });
+
+  test('linux auto picks vllm-local when the endpoint is down and vllm imports', () => {
+    const report = buildReport(inputs({
+      platform: 'linux',
+      vllmLocal: { ...AVAILABLE, python: '/home/u/.foundry/envs/wsl-x64/python/bin/python3' },
+    }));
+    expect(report.chosen).toBe('vllm-local');
+  });
+
+  test('vllm-local never reports available off linux, whatever the probe said', () => {
+    const report = buildReport(inputs({
+      platform: 'win32',
+      vllmLocal: { ...AVAILABLE, python: '/some/python' },
+    }));
+    expect(report.tiers.find((t) => t.id === 'vllm-local')!.available).toBe(false);
   });
 
   test('native is always reported and never available', () => {
     const report = buildReport(inputs({}));
     const native = report.tiers.find((t) => t.id === 'native')!;
     expect(native.available).toBe(false);
-    expect(native.detail).toContain('not implemented');
+    expect(native.detail).toContain('not built yet');
+    // The future tier must never read as a fast one.
+    expect(native.detail).toContain('slower');
   });
 
   test('wsl facts are reported even when the tier is a miss — the setup-screen state', () => {

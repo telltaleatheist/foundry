@@ -41,16 +41,14 @@ GONE (each was a BookForge integration surface — find and rework every call si
   rewritten for the one-route engine. Anything BookForge documentation says about run directories
   or stage artifacts is describing the `pre-vlm-strip` tag, not current foundry.
 
-## ⚠️ The update-coupling hazard (read this before anything else)
+## Update coupling: RESOLVED — no hazard
 
-BookForge's foundry-cli component treats its pinned version as a FLOOR and follows
-`/releases/latest` upward at startup (`chooseTargetVersion`). The CURRENT latest is still `v0.9.1`,
-whose binaries predate the strip — so nothing is broken today. **The moment foundry publishes its
-next version release, every BookForge install follows it and the stage commands vanish out from
-under any un-reworked call site.** Sequence the work accordingly: either land BookForge's rework
-first, or pin/cap the foundry version BookForge will accept until the rework ships. (Non-version
-tags like `env-v1` are flagged prerelease and invisible to `/releases/latest`; your
-`versionFromTag` ignores them anyway.)
+An earlier draft of this document warned about a version floor and `chooseTargetVersion`.
+BookForge's own review corrected it: BookForge has no pin, follows `/releases/latest`
+unconditionally, spawns exactly two things (`foundry --version`, `foundry vlm-convert`), and had
+already removed its side of the stage pipeline in Aug 2026 — so the strip needed **zero**
+BookForge call-site changes, and foundry may publish releases freely. (Non-version tags like
+`env-v1` are flagged prerelease and invisible to `/releases/latest`.)
 
 ## New engine behaviours worth knowing
 

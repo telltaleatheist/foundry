@@ -185,6 +185,63 @@ function wslPythonCandidates(settings: FoundrySettings): string[] {
   return [...conda, '~/.venvs/vllm/bin/python'];
 }
 
+/**
+ * linux only: a named interpreter ON THIS MACHINE that can import vllm.
+ *
+ * Linux is the platform vLLM actually targets, and it is also what the engine
+ * IS when the CLI runs inside a WSL distro — so this tier is how a Linux box
+ * with a GPU (or a foundry running in WSL directly) gets a reading path
+ * without anyone hand-starting a server. Same candidate philosophy as
+ * everywhere else: named paths, every miss printed. The first candidate after
+ * the settings override is the environment foundry itself ships
+ * (`~/.foundry/envs/wsl-x64`, installed by the app or by hand from the env-v1
+ * release).
+ */
+export async function probeVllmLocal(
+  settings: FoundrySettings,
+  run: Runner = spawnRunner,
+): Promise<PythonProbe> {
+  if (process.platform !== 'linux') {
+    return {
+      available: false,
+      python: null,
+      detail: process.platform === 'win32'
+        ? 'on Windows vLLM lives in WSL — see the wsl-vllm tier'
+        : 'vLLM has no useful macOS backend; MLX is the Mac path',
+    };
+  }
+  const home = os.homedir();
+  const explicit = settings.backend?.vllmPython;
+  const candidates = explicit
+    ? [explicit]
+    : [
+        path.join(home, '.foundry', 'envs', 'wsl-x64', 'python', 'bin', 'python3'),
+        ...['vllm', 'dots', 'vlmtest'].flatMap((env) =>
+          ['miniconda3', 'miniforge3', 'anaconda3'].map((root) =>
+            path.join(home, root, 'envs', env, 'bin', 'python'))),
+        path.join(home, '.venvs', 'vllm', 'bin', 'python'),
+      ];
+  const misses: string[] = [];
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate)) {
+      misses.push(`${candidate} (does not exist)`);
+      continue;
+    }
+    const probe = await run(candidate, ['-c', findSpecProgram('vllm')], 15_000);
+    if (probe.exitCode === 0) {
+      return { available: true, detail: `${candidate} can import vllm`, python: candidate };
+    }
+    misses.push(`${candidate} (${probe.failure ?? `no module vllm`})`);
+  }
+  return {
+    available: false,
+    python: null,
+    detail:
+      `no local interpreter with vllm found. Tried:\n${misses.map((m) => `  ${m}`).join('\n')}`
+      + '\nName one in settings (backend.vllmPython) if it lives elsewhere.',
+  };
+}
+
 /** win32 only: is there a WSL distro whose named interpreter can import vllm? */
 export async function probeWslVllm(
   settings: FoundrySettings,

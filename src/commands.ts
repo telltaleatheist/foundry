@@ -29,7 +29,7 @@ import {
   type ParsedArgs,
 } from './args.js';
 import { buildReport, formatReport } from './backend/plan.js';
-import { probeEndpoint, probeLocalPython, probeWslVllm } from './backend/probe.js';
+import { probeEndpoint, probeLocalPython, probeVllmLocal, probeWslVllm } from './backend/probe.js';
 import { loadSettings, settingsPath, type FoundrySettings } from './backend/settings.js';
 import { vlmConvert } from './vlm/convert.js';
 import { DEFAULT_VLM_CONCURRENCY } from './vlm/endpoint.js';
@@ -338,9 +338,10 @@ async function runDoctor(args: ParsedArgs): Promise<void> {
    * the WSL probe alone can take ten seconds when a distro has to boot, and
    * nothing about the endpoint answer depends on it.
    */
-  const [endpoint, wslVllm, mlx, rasteriser] = await Promise.all([
+  const [endpoint, wslVllm, vllmLocal, mlx, rasteriser] = await Promise.all([
     probeEndpoint(endpointUrl),
     probeWslVllm(settings),
+    probeVllmLocal(settings),
     probeLocalPython('mlx_vlm', settings),
     probeLocalPython('fitz', settings),
   ]);
@@ -350,6 +351,7 @@ async function runDoctor(args: ParsedArgs): Promise<void> {
     mode: settings.backend?.mode ?? 'auto',
     endpoint,
     wslVllm,
+    vllmLocal,
     mlx,
     rasteriser,
   });

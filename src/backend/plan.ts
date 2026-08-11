@@ -26,7 +26,7 @@ import type { EndpointProbe, PythonProbe, WslVllmProbe } from './probe.js';
 
 export const DOCTOR_REPORT_VERSION = 1;
 
-export type TierId = 'endpoint' | 'wsl-vllm' | 'mlx' | 'native';
+export type TierId = 'endpoint' | 'wsl-vllm' | 'vllm-local' | 'mlx' | 'native';
 
 export interface TierReport {
   id: TierId;
@@ -56,15 +56,23 @@ export interface PlanInputs {
   mode: BackendMode;
   endpoint: EndpointProbe;
   wslVllm: WslVllmProbe;
+  vllmLocal: PythonProbe;
   mlx: PythonProbe;
   rasteriser: PythonProbe;
 }
 
-/** The local transformers path that does not exist yet, stated rather than implied. */
+/**
+ * The planned transformers path in vlm_page.py — a roadmap slot, not vapour.
+ * When it lands it is the OVERNIGHT tier: dots.ocr without vLLM's paged
+ * attention runs the vision tower eagerly, which is quadratic over ~3,450
+ * patches per page (BookForge measured it against 4.8 s/page through vLLM).
+ * The detail says so now so nobody reads the future tier as a fast one.
+ */
 const NATIVE_TIER: TierReport = {
   id: 'native',
   available: false,
-  detail: 'not implemented in this engine build — local non-MLX reading needs a transformers path in vlm_page.py',
+  detail: 'not built yet — a transformers path in vlm_page.py is planned as the runs-anywhere tier;'
+    + ' expect it to be 10-100x slower than vLLM when it lands, and to say so',
 };
 
 export function buildReport(inputs: PlanInputs): DoctorReport {
@@ -78,16 +86,29 @@ export function buildReport(inputs: PlanInputs): DoctorReport {
     available: inputs.wslVllm.available,
     detail: inputs.wslVllm.detail,
   };
+  const vllmLocal: TierReport = {
+    id: 'vllm-local',
+    available: inputs.platform === 'linux' && inputs.vllmLocal.available,
+    detail: inputs.vllmLocal.detail,
+  };
   const mlx: TierReport = {
     id: 'mlx',
     available: inputs.platform === 'darwin' && inputs.mlx.available,
     detail: inputs.platform === 'darwin' ? inputs.mlx.detail : 'MLX is Apple silicon only',
   };
 
+  /*
+   * Fastest-first per platform. Linux ranks vllm-local right after the
+   * endpoint because that IS the vLLM machine class (including foundry run
+   * inside a WSL distro); Windows reaches vLLM through WSL instead; macOS
+   * reads locally through MLX.
+   */
   const tiers: TierReport[] =
     inputs.platform === 'darwin'
-      ? [endpoint, mlx, wslVllm, NATIVE_TIER]
-      : [endpoint, wslVllm, mlx, NATIVE_TIER];
+      ? [endpoint, mlx, vllmLocal, wslVllm, NATIVE_TIER]
+      : inputs.platform === 'linux'
+        ? [endpoint, vllmLocal, wslVllm, mlx, NATIVE_TIER]
+        : [endpoint, wslVllm, vllmLocal, mlx, NATIVE_TIER];
 
   let chosen: TierId | null;
   if (inputs.mode === 'auto') {
