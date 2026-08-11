@@ -31,6 +31,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { ensureDir } from '../fsdirs.js';
 import { cropPageRenders, MLX_MAX_PIXELS, readPagesWithVlm, type VlmPage, type VlmUnreadablePage } from './bridge.js';
 import { parsePage } from './dialect.js';
 import { DotsPageError, parseDotsPage, renderScale, smartResize, type DotsParsedPage } from './dots.js';
@@ -483,7 +484,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     }
 
     const writeStarted = Date.now();
-    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    ensureDir(path.dirname(outPath));
     fs.writeFileSync(outPath, bytes);
     if (opts.chaptersPath !== undefined) {
       writeProposals(path.resolve(opts.chaptersPath), proposals, chapters, skipped, skipPages);
@@ -664,7 +665,7 @@ function writeProposals(
   unreadable: readonly VlmUnreadablePage[],
   skippedPages: readonly number[],
 ): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  ensureDir(path.dirname(filePath));
   fs.writeFileSync(
     filePath,
     `${JSON.stringify({ proposals, sections, unreadable, skippedPages }, null, 1)}\n`,

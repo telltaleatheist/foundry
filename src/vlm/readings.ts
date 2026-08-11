@@ -34,6 +34,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { ensureDir } from '../fsdirs.js';
 import { VERSION } from '../version.js';
 
 export interface VlmReading {
@@ -118,7 +119,7 @@ export class VlmReadings {
   /** Append and fsync. The whole point is that a kill costs one page. */
   append(reading: VlmReading): void {
     this.byPage.set(reading.page, reading);
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
+    ensureDir(path.dirname(this.filePath));
     const handle = fs.openSync(this.filePath, 'a');
     try {
       fs.writeSync(handle, `${JSON.stringify(reading)}\n`);
@@ -203,7 +204,7 @@ export function writeCompletionMarker(
 ): VlmCompletion {
   const record: VlmCompletion = { ...completion, foundryVersion: VERSION };
   const markerPath = completionMarkerPath(readingsPath);
-  fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+  ensureDir(path.dirname(markerPath));
   const tmp = `${markerPath}.tmp`;
   fs.writeFileSync(tmp, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
   fs.renameSync(tmp, markerPath);
@@ -233,7 +234,7 @@ export function archiveReadingsBank(readingsPath: string, at: Date): string {
       + 'mixing two runs\' answers into one directory. Move it aside and run again.',
     );
   }
-  fs.mkdirSync(archiveDir, { recursive: true });
+  ensureDir(archiveDir);
   if (fs.existsSync(resolved)) {
     fs.renameSync(resolved, path.join(archiveDir, path.basename(resolved)));
   }

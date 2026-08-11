@@ -244,13 +244,15 @@ export interface PythonProbe extends ProbeReport {
 }
 
 /**
- * Local interpreter candidates — bridge.ts's list, plus the Windows spellings
- * of the same conda roots (a conda env python on Windows is `<env>\python.exe`,
- * not `<env>\bin\python`).
+ * Local interpreter candidates — ONE list, shared with vlm/bridge.ts.
+ *
+ * The doctor probes these and the bridge runs the first that exists; a
+ * candidate the doctor reports as the rasteriser MUST be one the bridge would
+ * pick, or `doctor` says "ok" about an interpreter no run ever uses. Conda
+ * roots in both their unix (`env/bin/python`) and Windows (`env\python.exe`)
+ * spellings, then the envs BookForge ships.
  */
-function localPythonCandidates(settings: FoundrySettings): string[] {
-  const explicit = settings.backend?.python ?? process.env['FOUNDRY_VLM_PYTHON'];
-  if (explicit) return [explicit];
+export function defaultLocalPythonCandidates(): string[] {
   const home = os.homedir();
   const roots = [
     // The Homebrew cask root is a macOS location; on Windows path.join turns
@@ -292,7 +294,8 @@ export async function probeLocalPython(
   settings: FoundrySettings,
   run: Runner = spawnRunner,
 ): Promise<PythonProbe> {
-  const candidates = localPythonCandidates(settings);
+  const explicit = settings.backend?.python ?? process.env['FOUNDRY_VLM_PYTHON'];
+  const candidates = explicit ? [explicit] : defaultLocalPythonCandidates();
   const misses: string[] = [];
   for (const candidate of candidates) {
     if (!fs.existsSync(candidate)) {

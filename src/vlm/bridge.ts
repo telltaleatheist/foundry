@@ -39,6 +39,8 @@ import { fileURLToPath } from 'node:url';
 // See `scriptPath()` for why this is text rather than a file on disk.
 import VLM_PAGE_SOURCE from './vlm_page.py' with { type: 'text' };
 
+import { defaultLocalPythonCandidates } from '../backend/probe.js';
+import { ensureDir } from '../fsdirs.js';
 import type { VlmModelDef } from './models.js';
 
 export class VlmBridgeError extends Error {
@@ -225,7 +227,7 @@ function scriptPath(): string {
   const dir = path.join(os.tmpdir(), 'foundry-vlm');
   const materialised = path.join(dir, `vlm_page-${digest}.py`);
   if (!fs.existsSync(materialised)) {
-    fs.mkdirSync(dir, { recursive: true });
+    ensureDir(dir);
     // Written beside the target and renamed: two foundry runs starting at once
     // must never hand python a half-written script.
     const partial = `${materialised}.${process.pid}.part`;
@@ -244,13 +246,6 @@ function scriptPath(): string {
  * below names every path that was tried so an operator with a different
  * environment knows exactly what to pass.
  */
-const CONDA_ROOTS = [
-  '/opt/homebrew/Caskroom/miniconda/base',
-  path.join(os.homedir(), 'miniconda3'),
-  path.join(os.homedir(), 'miniforge3'),
-  path.join(os.homedir(), 'anaconda3'),
-];
-
 function resolvePython(explicit?: string): string {
   const named = explicit ?? process.env['FOUNDRY_VLM_PYTHON'];
   if (named) {
@@ -259,13 +254,16 @@ function resolvePython(explicit?: string): string {
     }
     return named;
   }
-  const candidates = CONDA_ROOTS.map((root) => path.join(root, 'envs', 'vlmtest', 'bin', 'python'));
+  // ONE candidate list, owned by backend/probe.ts and shared with `doctor`:
+  // an interpreter doctor reports as the rasteriser must be the one a run
+  // picks, or the report is about a machine this program does not run on.
+  const candidates = defaultLocalPythonCandidates();
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) return candidate;
   }
   throw new VlmBridgeError(
-    'no Python with MLX was found. This mode needs an interpreter with mlx-vlm and PyMuPDF'
-    + ' installed; pass it with --python or FOUNDRY_VLM_PYTHON. Tried:\n'
+    'no Python for this mode was found. Rendering needs PyMuPDF (and local reading needs mlx-vlm);'
+    + ' pass an interpreter with --python or FOUNDRY_VLM_PYTHON. Tried:\n'
     + candidates.map((c) => `  ${c}`).join('\n'),
   );
 }
