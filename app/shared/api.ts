@@ -11,6 +11,9 @@ import type {
   BackendSettingsPatch,
   DoctorResult,
   EngineInfo,
+  EnvCatalogItem,
+  EnvInstallProgress,
+  EnvInstallRequest,
   EnvTooling,
   Job,
   JobRequest,
@@ -72,6 +75,29 @@ export interface FoundryApi {
     facts(): Promise<WslFacts>;
     /** What one distro can build an environment with. */
     tooling(distro: string): Promise<EnvTooling>;
+  };
+
+  /**
+   * The prebuilt environments — the ones the conversions were MEASURED with.
+   *
+   * The app installs what this machine is missing by itself at startup, as rows
+   * in the queue shelf; this surface is the manual path for the cases automation
+   * cannot decide: a different location, a particular WSL distro, a reinstall.
+   */
+  env: {
+    /** Platform-relevant entries, with installed state measured now. */
+    catalog(): Promise<EnvCatalogItem[]>;
+    /**
+     * Queue an install and return its job id. Resolves as soon as it is
+     * QUEUED — the shelf and `onInstallProgress` carry the rest, and a promise
+     * held open across a five-gigabyte download is a promise a reload loses.
+     */
+    install(request: EnvInstallRequest): Promise<string>;
+    cancel(): Promise<void>;
+    /** A directory for an install, or null. Meaningless for a WSL target. */
+    chooseDest(defaultPath: string): Promise<string | null>;
+    /** Every phase change, as it happens. Returns its own unsubscribe. */
+    onInstallProgress(listener: (progress: EnvInstallProgress) => void): () => void;
   };
 
   backendSetup: {

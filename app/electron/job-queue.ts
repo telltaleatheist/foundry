@@ -15,17 +15,32 @@
  * (electron/vllm-server.ts). The wait is part of the job, not a thing that
  * happens beside it: the shelf says "Starting the reading server…", and a
  * server that will not start fails THAT job with the guest's own log tail.
+ *
+ * ── Environment installs share this queue ────────────────────────────────────
+ *
+ * An `env-install` row is not a conversion, but it belongs here rather than
+ * beside here. It is long, it is cancellable, and — the reason that decides it —
+ * a conversion that needs the environment must wait BEHIND it. One serial queue
+ * gives that ordering for free, where a downloader running alongside would let a
+ * run start against the Python it is halfway through replacing.
  */
 import { randomUUID } from 'node:crypto';
 import * as path from 'node:path';
 
-import { parseProgressLine, runEngine, type RunHandle } from './engine';
+import { parseProgressLine, runEngine } from './engine';
+import { ENV_SPECS } from './env-catalog';
+import { destFor, installEnv } from './env-install';
 import { readSettings } from './settings';
 import { ensureServer, isLocalVllmEndpoint } from './vllm-server';
-import type { Job, JobRequest } from '../shared/types';
+import type { EnvInstallRequest, Job, JobRequest } from '../shared/types';
 
 const jobs: Job[] = [];
-let running: { id: string; handle: RunHandle } | null = null;
+/**
+ * The job holding the slot, and the one gesture that stops it. Deliberately not
+ * a `RunHandle`: an engine child and an in-process download have nothing in
+ * common except that both must stop when the row's ✕ is pressed.
+ */
+let running: { id: string; cancel(): void } | null = null;
 let notify: (jobs: Job[]) => void = () => { /* set by main */ };
 
 /** Where the queue publishes. Called on every mutation, with the whole list. */
@@ -35,7 +50,11 @@ export function onQueueChanged(listener: (jobs: Job[]) => void): void {
 
 export function listJobs(): Job[] {
   // A copy: the renderer's mirror must not be able to reach back into the truth.
-  return jobs.map((job) => ({ ...job, progress: job.progress ? { ...job.progress } : null }));
+  return jobs.map((job) => ({
+    ...job,
+    progress: job.progress ? { ...job.progress } : null,
+    envProgress: job.envProgress ? { ...job.envProgress } : null,
+  }));
 }
 
 function changed(): void {
@@ -61,6 +80,45 @@ export function enqueue(request: JobRequest): Job {
 
 /** The full request, kept beside the job — the job itself is the PUBLIC shape. */
 const requests = new Map<string, JobRequest>();
+const envRequests = new Map<string, EnvInstallRequest>();
+
+/**
+ * Put an environment install in the queue.
+ *
+ * Returns the EXISTING row when one for the same target is already waiting or
+ * running: the startup provisioner and a user's Install button can easily arrive
+ * at the same conclusion seconds apart, and two rows downloading five gigabytes
+ * into one directory is the worst outcome available.
+ */
+export function enqueueEnvInstall(request: EnvInstallRequest, reason?: string): Job {
+  const pending = jobs.find(
+    (job) => job.kind === 'env-install'
+      && envRequests.get(job.id)?.target === request.target
+      && (job.state === 'queued' || job.state === 'running'),
+  );
+  if (pending) return pending;
+
+  const spec = ENV_SPECS[request.target];
+  const job: Job = {
+    id: randomUUID(),
+    // An install has no document; these two carry what it is and where it goes,
+    // so the shelf's title attribute and the reveal button still mean something.
+    inputPath: request.target,
+    outputPath: destFor(request),
+    kind: 'env-install',
+    title: spec.label,
+    state: 'queued',
+    progress: null,
+    envProgress: null,
+    message: reason,
+    createdAt: Date.now(),
+  };
+  jobs.push(job);
+  envRequests.set(job.id, request);
+  changed();
+  void pump();
+  return job;
+}
 
 /**
  * Cancel: kill the child if it is this job's, drop it from the queue if it is
@@ -70,7 +128,7 @@ export function cancel(id: string): void {
   const job = jobs.find((j) => j.id === id);
   if (!job) return;
   if (job.state === 'running' && running?.id === id) {
-    running.handle.cancel();
+    running.cancel();
     return; // the close handler settles the state
   }
   // Queued, or running-but-not-yet-spawned: a job waiting for the reading
@@ -83,12 +141,30 @@ export function cancel(id: string): void {
   }
 }
 
+/**
+ * Stop whichever environment install is going, from anywhere.
+ *
+ * Routed through `cancel` rather than reaching into the installer, because the
+ * queue is what decides a row's final STATE: an abort that bypassed it settled
+ * the install as `failed` with "Cancelled." as its error — technically true, and
+ * a red exclamation mark in the shelf for something the user themselves asked to
+ * stop.
+ */
+export function cancelEnvInstalls(): void {
+  for (const job of [...jobs]) {
+    if (job.kind === 'env-install' && (job.state === 'running' || job.state === 'queued')) {
+      cancel(job.id);
+    }
+  }
+}
+
 /** Clear everything that has stopped. The running job and the queue survive. */
 export function clearFinished(): void {
   for (let i = jobs.length - 1; i >= 0; i -= 1) {
     const job = jobs[i];
     if (job && job.state !== 'queued' && job.state !== 'running') {
       requests.delete(job.id);
+      envRequests.delete(job.id);
       jobs.splice(i, 1);
     }
   }
@@ -97,7 +173,7 @@ export function clearFinished(): void {
 
 /** Quit, or a window closing on us: nothing is left holding a GPU. */
 export function shutdown(): void {
-  running?.handle.cancel();
+  running?.cancel();
   running = null;
 }
 
@@ -153,6 +229,12 @@ async function pump(): Promise<void> {
   if (running !== null || starting) return;
   const next = jobs.find((job) => job.state === 'queued');
   if (!next) return;
+
+  if (next.kind === 'env-install') {
+    await runEnvInstall(next);
+    return;
+  }
+
   const request = requests.get(next.id);
   if (!request) {
     next.state = 'failed';
@@ -211,7 +293,7 @@ async function pump(): Promise<void> {
     }
     changed();
   });
-  running = { id: next.id, handle };
+  running = { id: next.id, cancel: () => handle.cancel() };
   starting = false;
 
   const result = await handle.done;
@@ -230,6 +312,61 @@ async function pump(): Promise<void> {
     // Python, the model it could not load, the page it choked on. Never
     // paraphrased, and never replaced with an exit code.
     next.error = result.stderr.trim() || `The engine exited ${result.code} with nothing to say.`;
+  }
+  changed();
+  void pump();
+}
+
+/**
+ * The env-install branch, claiming the same slot a conversion would.
+ *
+ * Every way this ends — not published, no distro chosen, a bad sha256, a
+ * cancel — comes back as an `EnvInstallResult` with a sentence, because
+ * `installEnv` never throws. The row's failure text is that sentence verbatim:
+ * "download this later" and "your download was corrupt" are different problems
+ * with different fixes and a shared exit code would hide both.
+ */
+async function runEnvInstall(job: Job): Promise<void> {
+  const request = envRequests.get(job.id);
+  if (!request) {
+    job.state = 'failed';
+    job.error = 'The install lost its configuration before it started.';
+    changed();
+    void pump();
+    return;
+  }
+
+  starting = true;
+  job.state = 'running';
+  job.startedAt = Date.now();
+  job.message = `Installing ${job.title ?? request.target}…`;
+  changed();
+
+  let cancelled = false;
+  const handle = installEnv(request, (progress) => {
+    job.envProgress = progress;
+    job.message = progress.detail;
+    changed();
+  });
+  running = {
+    id: job.id,
+    cancel: () => { cancelled = true; handle.cancel(); },
+  };
+  starting = false;
+
+  const result = await handle.done;
+  running = null;
+  job.finishedAt = Date.now();
+
+  if (result.ok) {
+    job.state = 'done';
+    job.message = result.detail;
+  } else if (cancelled) {
+    job.state = 'cancelled';
+    job.message = 'Cancelled.';
+  } else {
+    job.state = 'failed';
+    job.error = result.detail;
   }
   changed();
   void pump();

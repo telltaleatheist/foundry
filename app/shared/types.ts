@@ -11,8 +11,19 @@
 // The job queue
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** What a job produces. `epub` is the only thing the engine casts today. */
-export type JobKind = 'epub';
+/**
+ * What a row in the shelf IS.
+ *
+ * `epub` is the only thing the engine casts. `env-install` is not a conversion
+ * at all — it is the app fetching a prebuilt Python — but it shares the queue on
+ * purpose: it is long, it is cancellable, and a conversion that needs the
+ * environment must wait BEHIND it rather than race it. One serial queue gives
+ * that for free.
+ */
+export type JobKind = 'epub' | 'env-install';
+
+/** What the OCR panel can ask for. An env install is never enqueued this way. */
+export type ConversionKind = 'epub';
 
 export type JobState = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 
@@ -33,7 +44,7 @@ export interface JobProgress {
 export interface JobRequest {
   inputPath: string;
   outputPath: string;
-  kind: JobKind;
+  kind: ConversionKind;
   /** Overrides the configured backend endpoint for this job only. */
   endpointUrl?: string;
   /** `--readings`: bank each page's answer so an interrupted run resumes. */
@@ -51,6 +62,17 @@ export interface Job {
   kind: JobKind;
   state: JobState;
   progress: JobProgress | null;
+  /**
+   * What the shelf calls this row. A conversion falls back to the input file's
+   * basename; an env install has no file to name itself after and sets this.
+   */
+  title?: string;
+  /**
+   * Set on `env-install` rows only: which of the four phases, and how far.
+   * Separate from `progress` because pages and megabytes are not the same
+   * quantity and a bar that silently changed units mid-run would be a lie.
+   */
+  envProgress?: EnvInstallProgress | null;
   /** The engine's own words on a failure. Never paraphrased, never an exit code. */
   error?: string;
   /** The last line the engine wrote — the job log, one line deep. */
@@ -190,6 +212,72 @@ export interface ServerStatus {
   model: string;
   /** True when the port was already answering: used as-is, never stopped. */
   external: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Prebuilt Python environments — electron/env-catalog.ts owns the numbers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One environment on the release. Not a platform: `wsl-x64` is driven from win32. */
+export type EnvTarget = 'windows-x64' | 'wsl-x64' | 'mac-arm64';
+
+/**
+ * The four things an install does, in order. Only `download` has a meaningful
+ * percentage — the other three are a bar the UI draws as indeterminate rather
+ * than a number invented to keep it moving.
+ */
+export type EnvPhase = 'download' | 'verify' | 'unpack' | 'configure';
+
+export interface EnvInstallProgress {
+  target: EnvTarget;
+  phase: EnvPhase;
+  /** 0–100 during `download`. Meaningless in the other phases; read `detail`. */
+  percent: number;
+  /** The sentence on screen. Bytes, the part being fetched, files unpacked. */
+  detail: string;
+}
+
+/** A catalog row as the settings card sees it: the fixed facts plus this machine's. */
+export interface EnvCatalogItem {
+  target: EnvTarget;
+  label: string;
+  purpose: string;
+  pythonVersion: string;
+  packages: string[];
+  /** The reassembled download size, or null when the entry is not published. */
+  bytes: number | null;
+  /** How many release assets it arrives in. 1 means it was uploaded whole. */
+  partCount: number;
+  /**
+   * False when the catalog has no sha256 for it. The card says "not yet
+   * published" and disables Install — never downloads it unverified.
+   */
+  published: boolean;
+  /** Where it goes by default. A WSL target names a path inside the distro. */
+  defaultDest: string;
+  /** True when the environment lives in WSL, so there is no directory picker. */
+  inWsl: boolean;
+  /** The interpreter, when one is actually on disk. Null when it is not installed. */
+  installedPath: string | null;
+  /** True when settings.json already points the engine at that interpreter. */
+  configured: boolean;
+  /** One sentence about THIS machine — installed where, or why it could not be checked. */
+  detail: string;
+}
+
+export interface EnvInstallRequest {
+  target: EnvTarget;
+  /** Overrides the default location. Meaningless for a WSL target; ignored there. */
+  dest?: string;
+  /** Which distro to extract into. WSL target only. */
+  distro?: string;
+}
+
+export interface EnvInstallResult {
+  ok: boolean;
+  /** The interpreter that now exists, when there is one. */
+  pythonPath: string | null;
+  detail: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -111,6 +111,51 @@ export function bashArgs(distro: string, command: string): string[] {
   return ['-d', distro, '-e', 'bash', '-lc', command];
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Paths and quoting, across the boundary
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A Windows path as the distro sees it: `C:\a\b` -> `/mnt/c/a/b`.
+ *
+ * Done here rather than by shelling out to `wslpath`, for two reasons. It is one
+ * substitution and the rule has not changed since WSL1; and `wslpath` would have
+ * to be run INSIDE a distro, which means the answer would depend on that
+ * distro's `automount.root` — a setting that, when it is not `/mnt`, breaks the
+ * hardcoded `/mnt/c` in every other guide too. A UNC path (`\\server\share`) has
+ * no such mapping at all and is refused rather than mangled into something that
+ * would silently resolve to nothing.
+ *
+ * Pure, so the conversion is checkable without a distro.
+ */
+export function toWslPath(windowsPath: string): string {
+  const normalised = windowsPath.replace(/\\/g, '/');
+  if (normalised.startsWith('//')) {
+    throw new Error(
+      `${windowsPath} is a network path, which has no /mnt mapping inside WSL. `
+      + 'Use a location on a local drive.',
+    );
+  }
+  const drive = /^([A-Za-z]):\//.exec(normalised);
+  if (!drive || !drive[1]) {
+    throw new Error(`${windowsPath} is not an absolute Windows path, so it has no WSL spelling.`);
+  }
+  return `/mnt/${drive[1].toLowerCase()}${normalised.slice(2)}`;
+}
+
+/**
+ * One argument, safe inside the `bash -lc` string.
+ *
+ * Single quotes, with the only character they cannot contain spliced back in the
+ * standard way (`'\''`). Everything that crosses into a distro goes through
+ * here: a destination under `/mnt/c/Users/Some One/…` is the ordinary case, and
+ * an unquoted space there is two arguments and a tar that writes half its
+ * contents somewhere unexpected.
+ */
+export function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 /** A single command inside a distro, collected. */
 export function runInDistro(distro: string, command: string, timeoutMs: number): Promise<WslRun> {
   return runWsl(bashArgs(distro, command), timeoutMs);

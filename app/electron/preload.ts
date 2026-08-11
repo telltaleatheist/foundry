@@ -9,7 +9,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 import type { FoundryApi } from '../shared/api';
-import type { Job, ServerStatus, SetupLogEvent } from '../shared/types';
+import type { EnvInstallProgress, Job, ServerStatus, SetupLogEvent } from '../shared/types';
 
 function subscribe<T>(channel: string, listener: (value: T) => void): () => void {
   const wrapped = (_event: unknown, value: T): void => listener(value);
@@ -45,6 +45,14 @@ const api: FoundryApi = {
   wsl: {
     facts: () => ipcRenderer.invoke('wsl:facts'),
     tooling: (distro) => ipcRenderer.invoke('wsl:tooling', distro),
+  },
+
+  env: {
+    catalog: () => ipcRenderer.invoke('env:catalog'),
+    install: (request) => ipcRenderer.invoke('env:install', request),
+    cancel: () => ipcRenderer.invoke('env:cancel'),
+    chooseDest: (defaultPath) => ipcRenderer.invoke('env:choose-dest', defaultPath),
+    onInstallProgress: (listener) => subscribe<EnvInstallProgress>('env:install-progress', listener),
   },
 
   backendSetup: {

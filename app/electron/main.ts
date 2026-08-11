@@ -29,11 +29,18 @@ import {
 
 import { cancelSetup, setupWslEnv } from './backend-setup';
 import { engineInfo, runDoctor } from './engine';
+import { catalogForThisMachine, onEnvInstallProgress } from './env-install';
+import { planProvisioning } from './env-provision';
 import * as queue from './job-queue';
 import { readSettings, writeSettings } from './settings';
 import * as vllm from './vllm-server';
 import { detectEnvTooling, listDistros } from './wsl';
-import type { BackendSettingsPatch, JobRequest, SetupRequest } from '../shared/types';
+import type {
+  BackendSettingsPatch,
+  EnvInstallRequest,
+  JobRequest,
+  SetupRequest,
+} from '../shared/types';
 
 const isDev = process.argv.includes('--dev');
 const DEV_SERVER = 'http://localhost:4260';
@@ -241,6 +248,9 @@ function createWindow(): void {
   mainWindow.webContents.once('did-finish-load', () => {
     const named = pdfFromArgv(process.argv);
     if (named) void openDocument(named);
+    // The environments this machine is missing, as shelf rows. Not awaited: the
+    // window is already usable, and a doctor run is seconds.
+    void provision();
   });
 
   // A dropped file must not NAVIGATE the window to itself — the drop is handled
@@ -364,12 +374,41 @@ function registerIpc(): void {
   });
   ipcMain.handle('backend:setup-cancel', () => { cancelSetup(); });
 
+  // ── The prebuilt environments ────────────────────────────────────────────
+  ipcMain.handle('env:catalog', () => catalogForThisMachine());
+
+  // An install is QUEUED, never awaited across IPC. The download is minutes to
+  // an hour, and a renderer reload that dropped the promise would leave a job
+  // running that nothing was left to report to — the same reason conversions
+  // live in main. The shelf and `env:install-progress` carry the rest.
+  ipcMain.handle('env:install', (_event, request: EnvInstallRequest) =>
+    queue.enqueueEnvInstall(request).id);
+  // Through the QUEUE, so the row ends as `cancelled` rather than as a failure
+  // whose error text happens to read "Cancelled."
+  ipcMain.handle('env:cancel', () => { queue.cancelEnvInstalls(); });
+
+  ipcMain.handle('env:choose-dest', async (_event, defaultPath: string) => {
+    const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
+    const options = {
+      title: 'Where should the environment go?',
+      defaultPath,
+      properties: ['openDirectory' as const, 'createDirectory' as const],
+    };
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+
   ipcMain.handle('vllm:status', () => vllm.serverStatus());
   ipcMain.handle('vllm:start', () => vllm.ensureServer());
   ipcMain.handle('vllm:stop', () => vllm.stopServer('the Stop button'));
 
   queue.onQueueChanged((jobs) => broadcast('queue:changed', jobs));
   vllm.onServerStatus((status) => broadcast('vllm:status-changed', status));
+  // Published beside the job row, not instead of it: the shelf reads the queue,
+  // the settings card reads this, and neither of them owns the run.
+  onEnvInstallProgress((progress) => broadcast('env:install-progress', progress));
 }
 
 /** One push to every window. The renderer holds mirrors; main holds the truth. */
@@ -383,12 +422,50 @@ function broadcast(channel: string, payload: unknown): void {
 // Lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TODO(components): BookForge downloads and manages its own binaries
-// (electron/components/: a catalog, a downloader, an update check, and the
-// bottom-right shelf they report into). Nothing in v1 is downloaded — the
-// engine is a dev checkout or a binary beside the app — so a component manager
-// would slot in HERE, between `whenReady` and `createWindow`, and would report
-// into the same queue shelf the conversions use.
+// ─────────────────────────────────────────────────────────────────────────────
+// Provisioning
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Fetch what this machine is missing, once, after the window can show it.
+ *
+ * AFTER `did-finish-load`, not at `whenReady`: the first thing this does is run
+ * `foundry doctor --json`, which takes seconds, and the rows it produces go into
+ * the queue shelf — a job enqueued before there is a renderer to push to is a
+ * download nobody can see or cancel.
+ *
+ * Only ONCE per launch. doctor is re-run after every install (the settings page
+ * does it, and the shelf row's completion is what prompts it), so a second
+ * automatic sweep would only ever find the same answer more slowly.
+ *
+ * `FOUNDRY_NO_AUTO_PROVISION=1` turns it off, for developing against a machine
+ * that is deliberately missing something.
+ */
+let provisioned = false;
+
+async function provision(): Promise<void> {
+  if (provisioned) return;
+  provisioned = true;
+  if (process.env['FOUNDRY_NO_AUTO_PROVISION'] === '1') {
+    console.log('[provision] skipped: FOUNDRY_NO_AUTO_PROVISION=1');
+    return;
+  }
+  try {
+    const { needs, note } = await planProvisioning();
+    console.log(`[provision] ${note}`);
+    for (const need of needs) {
+      // No `dest`, no `distro`: the defaults, silently, which is the whole point
+      // of provisioning. Anything genuinely ambiguous — several WSL distros —
+      // comes back out of the installer as a failed row saying how to choose,
+      // rather than as a guess.
+      queue.enqueueEnvInstall({ target: need.target }, need.reason);
+    }
+  } catch (err) {
+    // Never fatal. An app that will not open a PDF because it could not decide
+    // whether to download a Python is worse than one that simply did not.
+    console.error(`[provision] gave up: ${(err as Error).message}`);
+  }
+}
 
 void app.whenReady().then(() => {
   applyContentSecurityPolicy();

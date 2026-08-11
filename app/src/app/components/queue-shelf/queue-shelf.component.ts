@@ -45,21 +45,33 @@ import { api } from '../../core/foundry';
             @for (job of queue.jobs(); track job.id) {
               <div class="row" [attr.data-state]="job.state">
                 <div class="row-top">
-                  <span class="name" [title]="job.inputPath">{{ baseName(job.inputPath) }}</span>
+                  <span class="name" [title]="job.inputPath">{{ label(job) }}</span>
                   @if (job.state === 'queued' || job.state === 'running') {
                     <button class="x" (click)="queue.cancel(job.id)" title="Cancel">✕</button>
-                  } @else if (job.state === 'done') {
+                  } @else if (job.state === 'done' && job.kind === 'epub') {
                     <button class="x" (click)="reveal(job)" title="Show the book">↗</button>
                   }
                 </div>
 
                 @switch (job.state) {
                   @case ('running') {
-                    <div class="bar"><div class="fill" [style.width.%]="percent(job)"></div></div>
+                    <!--
+                      Indeterminate whenever there is no honest fraction: an env
+                      install only counts bytes during its download phase, and a
+                      bar that kept moving through a sha256 of five gigabytes
+                      would be an animation, not a measurement.
+                    -->
+                    <div class="bar" [class.indeterminate]="!determinate(job)">
+                      <div class="fill" [style.width.%]="percent(job)"></div>
+                    </div>
                     <span class="sub">{{ progressText(job) }}</span>
                   }
-                  @case ('queued') { <span class="sub">Queued</span> }
-                  @case ('done') { <span class="sub ok">Done · {{ baseName(job.outputPath) }}</span> }
+                  @case ('queued') { <span class="sub">{{ job.message ?? 'Queued' }}</span> }
+                  @case ('done') {
+                    <span class="sub ok" [title]="job.message ?? ''">
+                      @if (job.kind === 'env-install') { Installed } @else { Done · {{ baseName(job.outputPath) }} }
+                    </span>
+                  }
                   @case ('cancelled') { <span class="sub">Cancelled</span> }
                   @case ('failed') { <span class="sub bad" [title]="job.error ?? ''">{{ firstLine(job.error) }}</span> }
                 }
@@ -124,6 +136,11 @@ import { api } from '../../core/foundry';
     .aggregate { padding: 0 12px 8px; }
     .bar { height: 4px; background: var(--bg-sunken); border-radius: 2px; overflow: hidden; }
     .fill { height: 100%; background: var(--accent); transition: width 0.2s ease; }
+    .bar.indeterminate .fill { width: 35% !important; animation: slide 1.2s ease-in-out infinite; }
+    @keyframes slide {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(320%); }
+    }
 
     .shelf-body {
       border-bottom: 1px solid var(--border-subtle);
@@ -170,7 +187,7 @@ export class QueueShelfComponent {
     const active = this.queue.running();
     const waiting = this.queue.queued().length;
     if (active) {
-      const name = baseName(active.inputPath);
+      const name = label(active);
       return waiting > 0 ? `${name} · ${waiting} queued` : name;
     }
     const failed = this.queue.failed().length;
@@ -178,17 +195,38 @@ export class QueueShelfComponent {
     return `${this.queue.finished().length} finished`;
   });
 
+  /** True when the bar has a real fraction behind it. See the template's note. */
+  protected determinate(job: Job): boolean {
+    if (job.kind === 'env-install') return job.envProgress?.phase === 'download';
+    return (job.progress?.total ?? 0) > 0;
+  }
+
   protected percent(job: Job): number {
+    if (job.kind === 'env-install') return job.envProgress?.percent ?? 0;
     const p = job.progress;
     if (!p || p.total <= 0) return 0;
     return Math.min(100, Math.round((p.page / p.total) * 100));
   }
 
   protected progressText(job: Job): string {
+    if (job.kind === 'env-install') {
+      const phase = job.envProgress?.phase;
+      const verb = phase === 'download' ? 'Downloading'
+        : phase === 'verify' ? 'Verifying'
+          : phase === 'unpack' ? 'Unpacking'
+            : phase === 'configure' ? 'Configuring'
+              : 'Starting';
+      return `${verb} · ${job.message ?? ''}`;
+    }
     const p = job.progress;
     if (!p) return job.message ?? 'Starting…';
     const verb = p.phase === 'render' ? 'Rendering' : 'Reading';
     return `${verb} ${p.page} / ${p.total} pages`;
+  }
+
+  /** An env install names itself; a conversion is named by its document. */
+  protected label(job: Job): string {
+    return label(job);
   }
 
   protected baseName(filePath: string): string {
@@ -206,4 +244,8 @@ export class QueueShelfComponent {
 
 function baseName(filePath: string): string {
   return filePath.split(/[\\/]/).pop() ?? filePath;
+}
+
+function label(job: Job): string {
+  return job.title ?? baseName(job.inputPath);
 }

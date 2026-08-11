@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import type { BackendMode, DoctorReport, EngineInfo, TierReport } from '@shared/types';
 
 import { api } from '../../core/foundry';
+import { EnvCardComponent } from './env-card.component';
 import { WslBackendComponent } from './wsl-backend.component';
 
 /**
@@ -21,7 +22,7 @@ import { WslBackendComponent } from './wsl-backend.component';
  */
 @Component({
   selector: 'app-settings-page',
-  imports: [FormsModule, WslBackendComponent],
+  imports: [EnvCardComponent, FormsModule, WslBackendComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="page">
@@ -123,6 +124,13 @@ import { WslBackendComponent } from './wsl-backend.component';
             </div>
             @if (saveProblem(); as problem) { <p class="warn">{{ problem }}</p> }
           </div>
+
+          <!--
+            The prebuilt Pythons. Above the WSL card on purpose: downloading the
+            measured environment is now the ordinary way to get one, and building
+            one with pip is the fallback for a machine that wants something else.
+          -->
+          <app-env-card (changed)="probe()" />
 
           <!--
             The one backend this app can BUILD, rather than only measure. Windows
