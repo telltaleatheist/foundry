@@ -29,6 +29,10 @@ build/
 # set has to be reproducible.
 .bun/
 
+# Python bytecode (the VLM sidecar is Python; CPython drops these next to the source)
+__pycache__/
+*.pyc
+
 # Scratch
 *.log
 tmp/
