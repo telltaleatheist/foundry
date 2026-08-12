@@ -31,6 +31,27 @@ cd "$(dirname "$0")/.."
 # under ~/.bun, and a `command not found` at release time is a bad moment to
 # discover the difference.
 BUN="${BUN:-$(command -v bun || echo "$HOME/.bun/bin/bun")}"
+
+# `bash` on a Windows PATH is a race System32 usually wins, so an npm script
+# that says `bash tools/release-build.sh` can land HERE, inside WSL, where
+# ~/.bun is the distro's empty home. The Windows bun still serves: WSL's
+# interop runs .exe files, and a /mnt/c working directory maps back to C:\ for
+# them, so relative paths in the command survive the crossing. Looked for on
+# PATH first (WSL usually appends the Windows PATH), then in the two homes a
+# Windows bun install actually uses — the official ~/.bun and scoop's.
+if [ ! -x "$BUN" ] && grep -qi microsoft /proc/version 2>/dev/null; then
+  for candidate in \
+    "$(command -v bun.exe 2>/dev/null || true)" \
+    /mnt/c/Users/*/.bun/bin/bun.exe \
+    /mnt/c/Users/*/scoop/apps/bun/current/bun.exe \
+    /mnt/c/Users/*/scoop/shims/bun.exe; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      BUN="$candidate"
+      break
+    fi
+  done
+fi
+
 if [ ! -x "$BUN" ]; then
   echo "release-build: no bun executable (looked at '$BUN'). Set BUN=<path>." >&2
   exit 1
