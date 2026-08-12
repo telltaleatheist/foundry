@@ -1,20 +1,19 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive } from '@angular/router';
 
-import { UiService, type ToolId } from '../../core/ui.service';
-
-interface RailTool {
-  id: ToolId;
-  icon: string;
-  label: string;
-}
+import { TabsService } from '../../core/tabs.service';
+import { UiService } from '../../core/ui.service';
 
 /**
- * The left rail — the tools, and the gear.
+ * The left rail — Home, the tools, and the gear.
  *
  * Modelled on BookForge's nav-rail (icon over label, active state, a pinned
  * footer), minus its console-capture and service-toggle machinery, which belong
  * to that app's problems and not to this one.
+ *
+ * HOME IS THE TOP ITEM and it is not a route: it is "no tab is active", so
+ * pressing it puts the documents down without closing them and pressing a tab
+ * picks one back up. A Home that closed your tabs would be a Home nobody presses.
  */
 @Component({
   selector: 'app-tool-rail',
@@ -25,17 +24,43 @@ interface RailTool {
       <div class="rail-brand" title="Foundry">⬙</div>
 
       <div class="rail-tools">
-        @for (tool of tools; track tool.id) {
-          <button
-            class="rail-item"
-            [class.active]="ui.activeTool() === tool.id"
-            [title]="tool.label"
-            (click)="pick(tool.id)"
-          >
-            <span class="rail-icon">{{ tool.icon }}</span>
-            <span class="rail-label">{{ tool.label }}</span>
-          </button>
-        }
+        <button
+          class="rail-item"
+          [class.active]="tabs.activeId() === null"
+          title="Home"
+          (click)="home()"
+        >
+          <span class="rail-icon">⌂</span>
+          <span class="rail-label">Home</span>
+        </button>
+
+        <button
+          class="rail-item"
+          [class.active]="ui.ocrOpen()"
+          title="OCR / Convert"
+          (click)="convert()"
+        >
+          <span class="rail-icon">⌦</span>
+          <span class="rail-label">OCR / Convert</span>
+        </button>
+
+        <!-- The split editor's discoverable half: the same toggle as the
+             button in the book's own toolbar, surfaced where a person who has
+             never opened it will look. Disabled rather than hidden when the
+             active tab is not a book — a tool that vanishes teaches nobody
+             it exists. -->
+        <button
+          class="rail-item"
+          [class.active]="editingActive()"
+          [disabled]="!canEdit()"
+          title="Edit the book's HTML in a split view"
+          (click)="toggleEdit()"
+        >
+          <span class="rail-icon">&lt;/&gt;</span>
+          <span class="rail-label">Edit HTML</span>
+        </button>
+        <!-- TODO: "Searchable PDF" lands here as a second tool once the engine
+             casts one; today it is a disabled option inside the dialog. -->
       </div>
 
       <div class="rail-foot">
@@ -89,6 +114,8 @@ interface RailTool {
       text-decoration: none;
     }
     .rail-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .rail-item:disabled { opacity: 0.35; cursor: default; }
+    .rail-item:disabled:hover { background: transparent; color: var(--text-secondary); }
     .rail-item.active {
       background: var(--accent-soft);
       border-left-color: var(--accent);
@@ -101,18 +128,35 @@ interface RailTool {
 })
 export class ToolRailComponent {
   protected readonly ui = inject(UiService);
+  protected readonly tabs = inject(TabsService);
   private readonly router = inject(Router);
 
-  // TODO: "Searchable PDF" lands here as a second output kind once the engine
-  // casts one; the rail is the only thing that has to change.
-  protected readonly tools: RailTool[] = [
-    { id: 'ocr', icon: '⌦', label: 'OCR / Convert' },
-  ];
+  /** Editable means an unpacked book is in front of the user right now. */
+  protected canEdit(): boolean {
+    const tab = this.tabs.active();
+    return tab !== null && tab.kind === 'epub' && tab.book !== null;
+  }
 
-  protected pick(tool: ToolId): void {
-    // A tool is a thing you do to the open document, so picking one from the
-    // settings screen takes you back to the document.
+  protected editingActive(): boolean {
+    return this.tabs.active()?.editing === true;
+  }
+
+  protected toggleEdit(): void {
+    const tab = this.tabs.active();
+    if (tab && tab.kind === 'epub' && tab.book !== null) this.tabs.toggleEditing(tab.id);
+  }
+
+  protected home(): void {
     void this.router.navigateByUrl('/');
-    this.ui.toggleTool(tool);
+    this.tabs.goHome();
+  }
+
+  /**
+   * A conversion is a thing you do to the document in front of you, so opening
+   * the dialog from Settings takes you back to the documents first.
+   */
+  protected convert(): void {
+    void this.router.navigateByUrl('/');
+    this.ui.openOcr();
   }
 }

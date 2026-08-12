@@ -9,28 +9,41 @@
  */
 import type {
   BackendSettingsPatch,
+  CloseWarning,
   DoctorResult,
   EngineInfo,
   EnvCatalogItem,
   EnvInstallProgress,
   EnvInstallRequest,
   EnvTooling,
+  EpubBook,
   Job,
   JobRequest,
+  RecentDocument,
   ServerStatus,
   SettingsView,
   SetupLogEvent,
   SetupRequest,
   SetupResult,
+  WorkspacePlan,
   WslFacts,
 } from './types';
+
+/**
+ * What the File menu asked for, since main cannot press a button in a tab.
+ *
+ * The accelerators live on the MENU rather than on a renderer keydown handler:
+ * a menu item with `CmdOrCtrl+S` on it and a `keydown` listener for the same
+ * chord both fire, and the menu is the half a user can discover.
+ */
+export type MenuAction = 'save' | 'save-as' | 'close-tab';
 
 export interface FoundryApi {
   /** process.platform, for the one or two places the UI says "on Windows". */
   platform: string;
 
   /** The menu's File→Open, callable from the UI too. Resolves to the path, or null. */
-  openPdfDialog(): Promise<string | null>;
+  openDocumentDialog(): Promise<string | null>;
   /**
    * A dropped file's path, admitted by main or refused. The renderer cannot read
    * the file either way — this only tells the viewer what it may ask for.
@@ -42,10 +55,80 @@ export interface FoundryApi {
    * preload at all.
    */
   pathForFile(file: File): string;
-  /** The `foundry-file://` URL an <iframe> can point at. */
+  /** The `foundry-file://` URL an <iframe> can point at. PDFs; a book has its own. */
   documentUrl(absolutePath: string): string;
-  chooseOutputPath(defaultPath: string): Promise<string | null>;
   reveal(target: string): Promise<void>;
+  /**
+   * The native box asked before a tab with something to lose closes. True means
+   * close it. Native rather than an in-app modal because the question is modal
+   * to the WINDOW, and because main already owns every other dialog in this app.
+   *
+   * Main picks the wording from the two flags — "no copy anywhere you chose" and
+   * "the copy you chose is older than this" are different warnings.
+   */
+  confirmClose(warning: CloseWarning): Promise<boolean>;
+
+  /**
+   * The managed workspace: where a conversion writes.
+   *
+   * A conversion never asks the user where to put anything — `plan` hands the
+   * dialog the two paths a job needs, and the book lands in
+   * `<libraryDir>/workspace`. Getting it OUT of there is `epub.save` below,
+   * which repacks the working copy rather than copying a file, because by then
+   * the book may have been edited.
+   */
+  workspace: {
+    plan(inputPath: string): Promise<WorkspacePlan>;
+  };
+
+  /**
+   * A book: unpacked in main, served to a sandboxed <iframe>, edited as text,
+   * and packed back up.
+   *
+   * `close` is not optional housekeeping: it deletes the temp directory the
+   * chapters are served from, and a tab that closed without calling it leaves a
+   * book on disk and a live protocol route to it.
+   */
+  epub: {
+    open(filePath: string): Promise<EpubBook>;
+    close(id: string): Promise<void>;
+    /** One chapter's XHTML source, off the working copy. */
+    readMember(id: string, href: string): Promise<string>;
+    /**
+     * Replace one chapter's source AND repack the workspace copy, so an edit is
+     * never only in a temp directory. Resolves with the book's new size.
+     */
+    writeMember(id: string, href: string, text: string): Promise<number>;
+    /**
+     * The save picker, opening on the library folder. Null when dismissed.
+     * Takes the book's id because the answer is also a GRANT: main records it,
+     * and `save` refuses any destination that was never granted — either by
+     * this dialog or by being the file the book was opened from.
+     */
+    chooseSavePath(id: string, suggestedName: string): Promise<string | null>;
+    /** Repack the working copy to a granted path. Rejects for any other. */
+    save(id: string, destination: string): Promise<void>;
+  };
+
+  /**
+   * The library folder — where conversions land and where the pickers open.
+   *
+   * Changing it affects NEW work only: nothing is migrated, and recents keep
+   * the absolute paths they were recorded with.
+   */
+  library: {
+    dir(): Promise<string>;
+    /** The directory picker. Chooses without saving; `set` is the commit. */
+    choose(current: string): Promise<string | null>;
+    set(dir: string): Promise<string>;
+  };
+
+  /** Home's list. Persisted in the APP's userData, never in the engine's settings. */
+  recents: {
+    list(): Promise<RecentDocument[]>;
+    forget(filePath: string): Promise<RecentDocument[]>;
+    clear(): Promise<RecentDocument[]>;
+  };
 
   queue: {
     list(): Promise<Job[]>;
@@ -121,4 +204,6 @@ export interface FoundryApi {
 
   onDocumentOpened(listener: (absolutePath: string) => void): () => void;
   onNavigate(listener: (route: string) => void): () => void;
+  /** File→Save As / Close Tab, which are accelerators on the menu. */
+  onMenuAction(listener: (action: MenuAction) => void): () => void;
 }

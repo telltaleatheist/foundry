@@ -8,7 +8,7 @@
  */
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
-import type { FoundryApi } from '../shared/api';
+import type { FoundryApi, MenuAction } from '../shared/api';
 import type { EnvInstallProgress, Job, ServerStatus, SetupLogEvent } from '../shared/types';
 
 function subscribe<T>(channel: string, listener: (value: T) => void): () => void {
@@ -20,12 +20,37 @@ function subscribe<T>(channel: string, listener: (value: T) => void): () => void
 const api: FoundryApi = {
   platform: process.platform,
 
-  openPdfDialog: () => ipcRenderer.invoke('dialog:open-pdf'),
+  openDocumentDialog: () => ipcRenderer.invoke('dialog:open-document'),
   openPath: (candidate) => ipcRenderer.invoke('document:open-path', candidate),
   pathForFile: (file) => webUtils.getPathForFile(file),
   documentUrl: (absolutePath) => `foundry-file://open/?p=${encodeURIComponent(absolutePath)}`,
-  chooseOutputPath: (defaultPath) => ipcRenderer.invoke('dialog:choose-output', defaultPath),
   reveal: (target) => ipcRenderer.invoke('shell:reveal', target),
+  confirmClose: (warning) => ipcRenderer.invoke('document:confirm-close', warning),
+
+  workspace: {
+    plan: (inputPath) => ipcRenderer.invoke('workspace:plan', inputPath),
+  },
+
+  epub: {
+    open: (filePath) => ipcRenderer.invoke('epub:open', filePath),
+    close: (id) => ipcRenderer.invoke('epub:close', id),
+    readMember: (id, href) => ipcRenderer.invoke('epub:read-member', id, href),
+    writeMember: (id, href, text) => ipcRenderer.invoke('epub:write-member', id, href, text),
+    chooseSavePath: (id, suggestedName) => ipcRenderer.invoke('epub:choose-save-path', id, suggestedName),
+    save: (id, destination) => ipcRenderer.invoke('epub:save', id, destination),
+  },
+
+  library: {
+    dir: () => ipcRenderer.invoke('library:dir'),
+    choose: (current) => ipcRenderer.invoke('library:choose', current),
+    set: (dir) => ipcRenderer.invoke('library:set', dir),
+  },
+
+  recents: {
+    list: () => ipcRenderer.invoke('recents:list'),
+    forget: (filePath) => ipcRenderer.invoke('recents:forget', filePath),
+    clear: () => ipcRenderer.invoke('recents:clear'),
+  },
 
   queue: {
     list: () => ipcRenderer.invoke('queue:list'),
@@ -70,6 +95,7 @@ const api: FoundryApi = {
 
   onDocumentOpened: (listener) => subscribe<string>('document:opened', listener),
   onNavigate: (listener) => subscribe<string>('navigate', listener),
+  onMenuAction: (listener) => subscribe<MenuAction>('menu:action', listener),
 };
 
 contextBridge.exposeInMainWorld('foundry', api);

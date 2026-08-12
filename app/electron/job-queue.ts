@@ -180,21 +180,30 @@ export function shutdown(): void {
 /**
  * The command line, assembled in ONE place.
  *
- * `--readings` is passed whenever the panel named a bank: it is what makes an
- * interrupted 300-page run resumable, and foundry decides for itself whether a
- * bank beside a completion marker is a resume or a re-read (README §Reading the
- * pages somewhere else, and only once). This app does not second-guess it.
+ * `--readings` is passed on EVERY job — electron/workspace.ts names the bank,
+ * and there is no switch that turns it off. It is what makes an interrupted
+ * 300-page run resumable, and foundry decides for itself whether a bank beside a
+ * completion marker is a resume or a re-read (README §Reading the pages
+ * somewhere else, and only once). This app does not second-guess it.
+ *
+ * No `--vlm-endpoint`. The settings screen owns which backend reads the pages,
+ * the engine reads that same settings.json for itself, and a per-job override
+ * here was a second opinion about a decision that has one owner.
  */
 function argsFor(request: JobRequest): string[] {
-  const args = ['vlm-convert', '--pdf', request.inputPath, '--out', request.outputPath];
-  if (request.endpointUrl && request.endpointUrl.trim().length > 0) {
-    args.push('--vlm-endpoint', request.endpointUrl.trim());
-  }
-  if (request.readingsPath) args.push('--readings', request.readingsPath);
+  const args = [
+    'vlm-convert',
+    '--pdf', request.inputPath,
+    '--out', request.outputPath,
+    '--readings', request.readingsPath,
+  ];
   if (request.skipPages && request.skipPages.trim().length > 0) {
     args.push('--skip-pages', request.skipPages.trim());
   }
-  if (request.chaptersPath) args.push('--chapters', request.chaptersPath);
+  if (request.stripNoteMarkers === true) args.push('--strip-note-markers');
+  if (request.language && request.language.trim().length > 0) {
+    args.push('--language', request.language.trim());
+  }
   return args;
 }
 
@@ -202,15 +211,12 @@ function argsFor(request: JobRequest): string[] {
  * The endpoint this job will actually read through, or null when the run does
  * not go through one at all.
  *
- * The panel's per-job URL wins; failing that it is the settings file's, and
- * ONLY in `endpoint` mode. Under `auto` the engine picks its own tier and may
- * well choose `wsl-vllm`, which it serves for itself — starting a server here
- * because the file happens to hold a URL would spend twenty gigabytes on a
- * backend the run was never going to use.
+ * The settings file's, and ONLY in `endpoint` mode. Under `auto` the engine
+ * picks its own tier and may well choose `wsl-vllm`, which it serves for
+ * itself — starting a server here because the file happens to hold a URL would
+ * spend twenty gigabytes on a backend the run was never going to use.
  */
-function endpointFor(request: JobRequest): string | null {
-  const named = request.endpointUrl?.trim();
-  if (named) return named;
+function endpointFor(): string | null {
   const settings = readSettings();
   if (settings.backend.mode !== 'endpoint') return null;
   return settings.backend.endpointUrl?.trim() || null;
@@ -252,7 +258,7 @@ async function pump(): Promise<void> {
 
   // The reading server, before the engine that will post pages to it. A remote
   // endpoint is used exactly as given — only the local one is ours to start.
-  const endpoint = endpointFor(request);
+  const endpoint = endpointFor();
   if (endpoint !== null && isLocalVllmEndpoint(endpoint)) {
     next.message = 'Starting the reading server…';
     changed();

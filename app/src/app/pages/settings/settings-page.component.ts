@@ -5,6 +5,7 @@ import type { BackendMode, DoctorReport, EngineInfo, TierReport } from '@shared/
 
 import { api } from '../../core/foundry';
 import { EnvCardComponent } from './env-card.component';
+import { LibraryCardComponent } from './library-card.component';
 import { WslBackendComponent } from './wsl-backend.component';
 
 /**
@@ -22,7 +23,7 @@ import { WslBackendComponent } from './wsl-backend.component';
  */
 @Component({
   selector: 'app-settings-page',
-  imports: [EnvCardComponent, FormsModule, WslBackendComponent],
+  imports: [EnvCardComponent, FormsModule, LibraryCardComponent, WslBackendComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="page">
@@ -124,6 +125,13 @@ import { WslBackendComponent } from './wsl-backend.component';
             </div>
             @if (saveProblem(); as problem) { <p class="warn">{{ problem }}</p> }
           </div>
+
+          <!--
+            Where the books go. Above the environment cards because it is the one
+            setting on this screen that is about the user's own files rather than
+            about which Python reads a page.
+          -->
+          <app-library-card />
 
           <!--
             The prebuilt Pythons. Above the WSL card on purpose: downloading the

@@ -27,3 +27,6 @@ tmp/
 Thumbs.db
 .idea/
 .vscode/
+
+# Claude Code local state (permissions, agent worktrees)
+.claude/

@@ -40,19 +40,29 @@ export interface JobProgress {
   phase: 'render' | 'read';
 }
 
-/** Everything the OCR panel decides before a job is enqueued. */
+/**
+ * Everything the OCR dialog decides before a job is enqueued.
+ *
+ * PER-JOB CHOICES ONLY. There is no endpoint field and no backend field: the
+ * settings screen owns which backend reads the pages, and a second place to
+ * override it was a second place for the two to disagree. There is no output
+ * path either — `outputPath` and `readingsPath` come from `workspace.plan`, not
+ * from a text box, because a conversion opens in the app when it is done and is
+ * copied out on Save As (electron/workspace.ts).
+ */
 export interface JobRequest {
   inputPath: string;
+  /** From `WorkspacePlan.outputPath`. The managed workspace, always. */
   outputPath: string;
   kind: ConversionKind;
-  /** Overrides the configured backend endpoint for this job only. */
-  endpointUrl?: string;
-  /** `--readings`: bank each page's answer so an interrupted run resumes. */
-  readingsPath?: string;
+  /** `--readings`, from `WorkspacePlan.readingsPath`. Always passed; see workspace.ts. */
+  readingsPath: string;
   /** `--skip-pages`, verbatim: "3,17,19-24". */
   skipPages?: string;
-  /** `--chapters`: write the chapter proposals out beside the book. */
-  chaptersPath?: string;
+  /** `--strip-note-markers`: drop footnote reference numbers. For a narration build. */
+  stripNoteMarkers?: boolean;
+  /** `--language`: the BCP-47 tag written as `dc:language`. Declared, never detected. */
+  language?: string;
 }
 
 export interface Job {
@@ -292,4 +302,96 @@ export interface EngineInfo {
   source: string;
   /** `foundry --version`, or null when it could not be asked. */
   version: string | null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The managed workspace — electron/workspace.ts owns the naming
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Where one conversion writes, decided by main and never typed by a user.
+ *
+ * Both paths share one key derived from the PDF's CONTENT, so the same book
+ * always lands on the same workspace file and resumes against the same bank of
+ * answers however it was named or wherever it was dragged from.
+ */
+export interface WorkspacePlan {
+  /** `<basename>-<8 hex>` — the shared stem of both files below. */
+  key: string;
+  /** `<userData>/workspace/<key>.epub`. */
+  outputPath: string;
+  /** `<userData>/readings/<key>.jsonl`. Passed as `--readings` on every job. */
+  readingsPath: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tabs, the documents in them, and Home's list
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The two things this app opens. Everything else is refused at the door. */
+export type RecentKind = 'pdf' | 'epub';
+
+export interface RecentDocument {
+  path: string;
+  kind: RecentKind;
+  /** The EPUB's `dc:title` where there is one, the file's basename otherwise. */
+  title: string;
+  openedAt: number;
+  /** True while the file still lives in the managed workspace and nowhere else. */
+  managed: boolean;
+  /**
+   * Measured on every read, never stored: a book on a drive that is not plugged
+   * in is missing this minute and present the next.
+   */
+  missing?: boolean;
+}
+
+/** One entry in the chapter sidebar. Spine order; the nav supplies label and indent. */
+export interface EpubChapter {
+  /** The document's path inside the book, forward-slashed, OPF-relative resolved. */
+  href: string;
+  label: string;
+  /** 0 for a chapter, 1 for a chapter inside a part, and so on. */
+  depth: number;
+  /** The `foundry-file://epub/<id>/<href>` URL the iframe points at. */
+  url: string;
+}
+
+/**
+ * What a tab has to say for itself before it closes.
+ *
+ * TWO FACTS, kept apart because they are different losses. `unsaved` is "no copy
+ * of this exists anywhere you chose" — the Chrome dot. `modified` is "you have
+ * edited this since the copy you chose was written", which only means anything
+ * once there IS such a copy. Main writes a different sentence for each, and a
+ * tab that is neither closes without a question.
+ */
+export interface CloseWarning {
+  title: string;
+  unsaved: boolean;
+  modified: boolean;
+  /** Where a copy was last written, when there is one. */
+  savedPath: string | null;
+}
+
+/**
+ * An unpacked book. `id` is what closes it again — a tab that is closed, and
+ * every tab on quit, hands its id back so the temp directory goes with it.
+ */
+export interface EpubBook {
+  id: string;
+  /** The .epub on disk this was unpacked from. */
+  filePath: string;
+  /**
+   * True when `filePath` lives in the app's own workspace. Measured by MAIN,
+   * because it decides where edits land: a managed book's write-through targets
+   * the file itself, an unmanaged one gets a workspace copy on first edit and
+   * the user's original is only written by an explicit Save. The renderer uses
+   * it to seed `savedPath` — an unmanaged book already IS a copy somewhere the
+   * user chose.
+   */
+  managed: boolean;
+  title: string;
+  author: string | null;
+  chapters: EpubChapter[];
 }

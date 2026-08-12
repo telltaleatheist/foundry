@@ -3,6 +3,7 @@ import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/c
 import type { Job } from '@shared/types';
 
 import { QueueService } from '../../core/queue.service';
+import { TabsService } from '../../core/tabs.service';
 import { UiService } from '../../core/ui.service';
 import { api } from '../../core/foundry';
 
@@ -49,7 +50,14 @@ import { api } from '../../core/foundry';
                   @if (job.state === 'queued' || job.state === 'running') {
                     <button class="x" (click)="queue.cancel(job.id)" title="Cancel">✕</button>
                   } @else if (job.state === 'done' && job.kind === 'epub') {
-                    <button class="x" (click)="reveal(job)" title="Show the book">↗</button>
+                    <!--
+                      Open comes FIRST because it is what a finished conversion is
+                      for. Reveal stays beside it: the book is in the app's
+                      workspace until it is saved a copy of, and "where is it
+                      actually" is a fair question to be able to answer.
+                    -->
+                    <button class="open" (click)="open(job)" title="Open this book in a tab">Open</button>
+                    <button class="x" (click)="reveal(job)" title="Show it in the file manager">↗</button>
                   }
                 </div>
 
@@ -166,6 +174,14 @@ import { api } from '../../core/foundry';
     .x { background: transparent; border: none; cursor: pointer; color: var(--text-tertiary); font-size: 12px; }
     .x:hover { color: var(--text-primary); }
 
+    .open {
+      flex: 0 0 auto;
+      padding: 2px 9px; border-radius: 6px; cursor: pointer;
+      background: transparent; border: 1px solid var(--border-default);
+      color: var(--text-secondary); font-size: 11.5px;
+    }
+    .open:hover { color: var(--text-primary); border-color: var(--accent); }
+
     .shelf-foot { display: flex; justify-content: flex-end; padding: 8px 12px; }
     .ghost {
       font-size: 12px; padding: 4px 12px; border-radius: 6px; cursor: pointer;
@@ -178,6 +194,7 @@ import { api } from '../../core/foundry';
 export class QueueShelfComponent {
   protected readonly queue = inject(QueueService);
   protected readonly ui = inject(UiService);
+  private readonly tabs = inject(TabsService);
 
   /**
    * The pill's one line: what is running, and how many are waiting behind it.
@@ -239,6 +256,17 @@ export class QueueShelfComponent {
 
   protected reveal(job: Job): void {
     void api?.reveal(job.outputPath);
+  }
+
+  /**
+   * Open a finished conversion in a tab.
+   *
+   * `managed: true` — the book is still only in the workspace, so the tab gets
+   * the unsaved dot. Re-opening one that is already open just focuses its tab
+   * (TabsService), so this button is safe to press twice.
+   */
+  protected open(job: Job): void {
+    void this.tabs.openFile(job.outputPath, true);
   }
 }
 
