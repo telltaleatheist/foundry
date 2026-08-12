@@ -1113,6 +1113,47 @@ test('a book with no parts gets the nav it always got', () => {
   ]);
 });
 
+test('a chapter\'s section headers nest under it in the nav, as anchors into it', () => {
+  const chapters = [
+    {
+      id: 'c1', href: 'text/c0001.xhtml', label: 'One', blocks: 4, firstPage: 1, lastPage: 9,
+      headings: [{ id: 'sh1', label: 'The purge' }, { id: 'sh2', label: 'The oath' }],
+    },
+  ];
+  assert.deepEqual(navTree(chapters), [
+    {
+      href: 'text/c0001.xhtml',
+      label: 'One',
+      children: [
+        { href: 'text/c0001.xhtml#sh1', label: 'The purge' },
+        { href: 'text/c0001.xhtml#sh2', label: 'The oath' },
+      ],
+    },
+  ]);
+});
+
+test('inside a chapter, a later h2 is anchored and reported; the title heading is not', () => {
+  const body = buildChapterBody([
+    block({ page: 25, category: 'Section-header', text: 'PRELUDE' }),
+    block({ page: 25, category: 'Text', text: 'THE PRISONER awoke.' }),
+    block({ page: 25, category: 'Section-header', text: 'The purge' }),
+  ], chapterOptions());
+  assert.deepEqual(body.headings, [{ id: 'sh1', label: 'The purge' }]);
+  assert.match(body.xhtml, /<h2 id="sh1" data-bf-page="25" data-bf-cat="section-header">The purge<\/h2>/);
+  // The first heading is the chapter's own title — no anchor, no entry.
+  assert.match(body.xhtml, /<h2 data-bf-page="25" data-bf-cat="section-header">.*PRELUDE<\/h2>/);
+});
+
+test('an opening heading never becomes a section entry, even when it is not the label', () => {
+  const span = [
+    block({ page: 25, category: 'Section-header', text: 'CHAPTER I' }),
+    block({ page: 25, category: 'Section-header', text: 'PRELUDE TO JUDGMENT' }),
+    block({ page: 25, category: 'Text', text: 'THE PRISONER awoke.' }),
+  ];
+  const body = buildChapterBody(span, { ...chapterOptions(), openers: openingHeadings(span, 'chapter') });
+  assert.deepEqual(body.headings, []);
+});
+
 test('a chapter opener is stamped for the picker, both halves of it', () => {
   // Page 25 of Nuremberg: `CHAPTER I` and then `PRELUDE TO JUDGMENT`, two
   // blocks. A person moving the split needs both — one deleted and one left

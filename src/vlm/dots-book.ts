@@ -533,14 +533,30 @@ export function proposeSections(pages: readonly DotsParsedPage[]): DotsChapterPr
  */
 const BACK_MATTER = /^(notes|bibliograph|sources|index|appendi|glossar|about the author|further reading)\b/i;
 
-/** Chapters nest under the part they follow; everything else is top level. */
+/**
+ * Chapters nest under the part they follow; everything else is top level.
+ *
+ * A chapter's own section headers nest under IT — `href#anchor` entries into
+ * the same document, which is the shape a publisher's contents page has for
+ * "Chapter 3 … The Röhm purge … The oath". A part contributes no headings of
+ * its own: whatever headings its divider span carries are display, not
+ * sections.
+ */
 export function navTree(chapters: readonly VlmChapter[]): VlmNavItem[] {
   const root: VlmNavItem[] = [];
   let open: { href: string; label: string; children: VlmNavItem[] } | null = null;
   for (const chapter of chapters) {
-    const item = { href: chapter.href, label: chapter.label };
+    const sections = (chapter.kind === 'part' ? [] : chapter.headings ?? []).map((h) => ({
+      href: `${chapter.href}#${h.id}`,
+      label: h.label,
+    }));
+    const item: VlmNavItem = {
+      href: chapter.href,
+      label: chapter.label,
+      ...(sections.length > 0 ? { children: sections } : {}),
+    };
     if (chapter.kind === 'part') {
-      open = { ...item, children: [] };
+      open = { href: chapter.href, label: chapter.label, children: [] };
       root.push(open);
       continue;
     }
@@ -745,6 +761,11 @@ export interface DotsChapterBody {
   notes: number;
   /** The pages whose first paragraph was joined onto the previous page's. */
   joinedPages: number[];
+  /**
+   * The section headers inside this chapter, in order, each anchored in the
+   * xhtml as `<h2 id="...">`. What the nav lists under the chapter.
+   */
+  headings: { id: string; label: string }[];
 }
 
 /**
@@ -782,6 +803,7 @@ export function buildChapterBody(
   const out: string[] = [];
   const crops: DotsCrop[] = [];
   const joinedPages: number[] = [];
+  const headings: { id: string; label: string }[] = [];
 
   /*
    * The chapter's notes, gathered BEFORE the prose renders. The prose is where
@@ -873,7 +895,23 @@ export function buildChapterBody(
         const tag = block.category === 'Title' ? 'h1' : 'h2';
         const align = alignmentClass(block.box, opts.column);
         const cat = opts.openers.has(index) ? CHAPTER_ATTRIBUTE : CATEGORY_ATTRIBUTE[block.category];
-        out.push(`<${tag}${classOf(align)}${stamp(block, cat)}>${marker(block)}${xhtml}</${tag}>`);
+        /*
+         * A Section-header that is neither the chapter's own title (the first
+         * heading, where `label` comes from) nor one of its opening headings
+         * is a section INSIDE the chapter. It gets an anchor so the nav can
+         * list it under the chapter — a contents page that stops at chapter
+         * names is describing a shallower book than the one that was written.
+         */
+        let anchor = '';
+        if (tag === 'h2' && label !== null && !opts.openers.has(index)) {
+          const text = plainText(xhtml);
+          if (text.length > 0) {
+            const id = `sh${headings.length + 1}`;
+            anchor = ` id="${id}"`;
+            headings.push({ id, label: text });
+          }
+        }
+        out.push(`<${tag}${anchor}${classOf(align)}${stamp(block, cat)}>${marker(block)}${xhtml}</${tag}>`);
         label ??= plainText(xhtml);
         lastParagraph = null;
         break;
@@ -983,7 +1021,7 @@ export function buildChapterBody(
     out.push('</section>');
   }
 
-  return { xhtml: out.join('\n'), label, crops, notes: notes.length, joinedPages };
+  return { xhtml: out.join('\n'), label, crops, notes: notes.length, joinedPages, headings };
 }
 
 function classOf(align: string): string {
@@ -1334,6 +1372,7 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
       firstPage,
       lastPage: Math.max(...pages),
       ...(kind !== null ? { kind } : {}),
+      ...(body.headings.length > 0 ? { headings: body.headings } : {}),
     });
   }
 

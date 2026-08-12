@@ -217,6 +217,21 @@ function decodeEntities(text: string): string {
     .replace(/&amp;/g, '&');
 }
 
+/** The inverse, for text this app WRITES into a book (a renamed heading). */
+function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/** A literal string on its way into a RegExp source. */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /** `OEBPS/ch001.xhtml` + `../img/a.png` -> `img/a.png`. Forward slashes throughout. */
 function joinHref(base: string, href: string): string {
   const stack = base.split('/').slice(0, -1);
@@ -236,17 +251,33 @@ interface ManifestItem {
 }
 
 /**
- * The nav document's table of contents, as href -> label and depth.
+ * One entry of the nav's table of contents, in nav order.
+ *
+ * `fragment` is kept: a fragmentless entry names a chapter DOCUMENT, and a
+ * fragment entry names a section header inside one (`c0003.xhtml#sh2` — what
+ * the engine emits for the h2s it anchored). The sidebar nests the second
+ * kind one level under the first.
+ */
+interface NavEntry {
+  /** The target document, nav-relative href resolved to an OPF-rooted path. */
+  file: string;
+  fragment: string | null;
+  label: string;
+  depth: number;
+}
+
+/**
+ * The nav document's table of contents, in order.
  *
  * Depth comes from counting `<ol>` nesting, which is exactly how EPUB3 expresses
  * a part containing chapters and exactly what src/vlm/epub.ts's `renderNav`
  * emits. Only the `epub:type="toc"` nav is read — the landmarks nav is hidden
  * and would otherwise contribute a phantom "Beginning" row.
  */
-function readNavLabels(xhtml: string, navHref: string): Map<string, { label: string; depth: number }> {
-  const labels = new Map<string, { label: string; depth: number }>();
+function readNavEntries(xhtml: string, navHref: string): NavEntry[] {
+  const entries: NavEntry[] = [];
   const toc = /<nav\b[^>]*epub:type\s*=\s*"toc"[^>]*>([\s\S]*?)<\/nav>/i.exec(xhtml);
-  if (!toc?.[1]) return labels;
+  if (!toc?.[1]) return entries;
 
   let depth = 0;
   const tokens = toc[1].matchAll(/<(\/?)(ol|a)\b([^>]*)>([\s\S]*?)(?=<)/gi);
@@ -264,12 +295,16 @@ function readNavLabels(xhtml: string, navHref: string): Map<string, { label: str
     if (label.length === 0) continue;
     // The nav's hrefs are relative to the NAV, which lives beside the OPF here,
     // but joining rather than assuming costs nothing and survives a book whose
-    // nav is in a subdirectory. The fragment is dropped: two entries into one
-    // chapter are one chapter.
-    const target = joinHref(navHref, (href.split('#')[0] ?? href));
-    if (!labels.has(target)) labels.set(target, { label, depth: Math.max(0, depth - 1) });
+    // nav is in a subdirectory.
+    const [filePart, fragmentPart] = href.split('#');
+    entries.push({
+      file: joinHref(navHref, filePart ?? href),
+      fragment: fragmentPart && fragmentPart.length > 0 ? fragmentPart : null,
+      label,
+      depth: Math.max(0, depth - 1),
+    });
   }
-  return labels;
+  return entries;
 }
 
 /** The `<title>` of an XHTML document, for a spine entry the nav never names. */
@@ -299,6 +334,12 @@ interface Unpacked {
    * write. Their original is only ever written by an explicit Save to it.
    */
   writeTarget: string | null;
+  /**
+   * The nav document's path inside the book, when the manifest names one.
+   * Renaming a chapter has to rewrite its nav label — the nav is the TOC's
+   * truth — and this is where the nav is.
+   */
+  nav: string | null;
   /**
    * Every file this unpack produced, by its forward-slashed relative path, IN
    * THE ORDER THE ARCHIVE HELD THEM.
@@ -372,14 +413,26 @@ export async function writeEpubMember(
     throw new EpubError(`"${memberPath}" is not part of a book this app has open.`);
   }
   await fs.promises.writeFile(resolved, text, 'utf8');
+  return flushToWorkspace(book);
+}
 
+/**
+ * Repack the working copy to the workspace, creating the copy the first time.
+ *
+ * The shared tail of every edit path — the chapter editor's flush and a
+ * heading rename both end here. One place owns the lazy-copy rule so the two
+ * paths cannot drift: managed books repack onto themselves, unmanaged ones get
+ * a workspace copy keyed off the ORIGINAL's content on their first edit, and
+ * the copy is put in recents the moment it exists so Home can offer it back.
+ */
+async function flushToWorkspace(book: Unpacked): Promise<number> {
   const created = book.writeTarget === null;
   if (book.writeTarget === null) {
     const key = `${slugify(path.basename(book.source))}-${await contentKey(book.source)}`;
     await fs.promises.mkdir(workspaceDir(), { recursive: true });
     book.writeTarget = path.join(workspaceDir(), `${key}.epub`);
   }
-  const bytes = await repackEpub(id, book.writeTarget);
+  const bytes = await repackEpub(book.id, book.writeTarget);
   if (created) {
     // A copy that just came into being has to be findable: Home's list is the
     // only door back to it once the tab closes. Recorded AFTER the repack so
@@ -387,6 +440,172 @@ export async function writeEpubMember(
     rememberRecent(book.writeTarget, 'epub', path.basename(book.writeTarget), true);
   }
   return bytes;
+}
+
+/**
+ * Rename a TOC entry: the nav label, and the heading it stands for.
+ *
+ * `entryHref` is a sidebar row's href — `text/c0003.xhtml` for a chapter,
+ * `text/c0003.xhtml#sh2` for a section header inside one. What changes:
+ *
+ *   FRAGMENT entry — precise by construction: the `<h_ id="sh2">` heading in
+ *   that document gets the new inner text, and so does the nav anchor that
+ *   points at `#sh2`.
+ *
+ *   CHAPTER entry — the nav anchor ALWAYS changes: the nav is the TOC's truth
+ *   and renaming the TOC row is exactly what was asked. The chapter document's
+ *   own first heading and its `<title>` change ONLY when their text equals the
+ *   old nav label exactly — when the classifier composed a label the heading
+ *   never carried ("Part II — The Road to War" over a page that says "II"),
+ *   the content is not touched: the user renamed the table of contents, not
+ *   the words on the page.
+ *
+ * Attributes are never rewritten — data-bf-*, ids, classes and the pagebreak
+ * span a heading opens with all survive; only inner TEXT changes, XML-escaped.
+ * The writes go through the same workspace flush as every other edit: a
+ * managed book repacks onto itself, an unmanaged one gets its lazy workspace
+ * copy and the user's original file is not written.
+ *
+ * Throws when nothing in the book matches the entry — a rename that changed
+ * nothing must not report success and mark the tab modified.
+ */
+export async function renameEpubHeading(
+  id: string,
+  entryHref: string,
+  newLabel: string,
+): Promise<void> {
+  const book = unpacked.get(id);
+  if (!book) throw new EpubError('That book is not open in this app any more.');
+  const label = newLabel.trim();
+  if (label.length === 0) throw new EpubError('A heading cannot be renamed to nothing.');
+  const escaped = escapeXml(label);
+
+  const [file, fragment = null] = entryHref.split('#') as [string, string?];
+  const member = resolveEpubMember(id, file);
+  if (member === null) {
+    throw new EpubError(`"${file}" is not part of a book this app has open.`);
+  }
+
+  let changed = false;
+
+  // ── The nav, first: it holds the OLD label the content rule needs. ───────
+  let oldLabel: string | null = null;
+  const navFile = book.nav === null ? null : resolveEpubMember(id, book.nav);
+  if (navFile !== null && book.nav !== null) {
+    const navText = await fs.promises.readFile(navFile, 'utf8');
+    const renamed = renameNavAnchor(navText, book.nav, file, fragment, escaped);
+    oldLabel = renamed.oldLabel;
+    if (renamed.changed) {
+      await fs.promises.writeFile(navFile, renamed.text, 'utf8');
+      changed = true;
+    }
+  }
+
+  // ── The content. ─────────────────────────────────────────────────────────
+  const markup = await fs.promises.readFile(member, 'utf8');
+  let edited = markup;
+  if (fragment !== null) {
+    edited = renameHeadingById(markup, fragment, escaped);
+  } else {
+    // No nav (a foreign book): the sidebar label came from the document's own
+    // <title>, so that is the "old label" the equality rule compares against.
+    const previous = oldLabel ?? documentTitle(markup);
+    if (previous !== null) {
+      edited = renameChapterHeading(markup, previous, escaped);
+    }
+  }
+  if (edited !== markup) {
+    await fs.promises.writeFile(member, edited, 'utf8');
+    changed = true;
+  }
+
+  if (!changed) {
+    throw new EpubError(
+      'Nothing in the book carries that label — the nav names no such entry and no heading matched.',
+    );
+  }
+  await flushToWorkspace(book);
+}
+
+/**
+ * Replace the text of the toc anchors that point at (file, fragment).
+ *
+ * Scoped to the `epub:type="toc"` nav element: the landmarks nav also points
+ * at chapter files, but its labels ("Beginning") are semantics, not names,
+ * and a rename must not overwrite them.
+ */
+function renameNavAnchor(
+  navText: string,
+  navHref: string,
+  file: string,
+  fragment: string | null,
+  escaped: string,
+): { text: string; oldLabel: string | null; changed: boolean } {
+  const toc = /(<nav\b[^>]*epub:type\s*=\s*"toc"[^>]*>)([\s\S]*?)(<\/nav>)/i.exec(navText);
+  if (!toc || toc.index === undefined) return { text: navText, oldLabel: null, changed: false };
+
+  let oldLabel: string | null = null;
+  let changed = false;
+  const body = (toc[2] ?? '').replace(
+    /(<a\b[^>]*>)([\s\S]*?)(<\/a\s*>)/gi,
+    (whole, open: string, inner: string, close: string) => {
+      const href = attribute(open, 'href');
+      if (href === null) return whole;
+      const [filePart, fragmentPart] = href.split('#');
+      const targetFile = joinHref(navHref, filePart ?? href);
+      const targetFragment = fragmentPart && fragmentPart.length > 0 ? fragmentPart : null;
+      if (targetFile !== file || targetFragment !== fragment) return whole;
+      oldLabel ??= plainText(inner);
+      changed = true;
+      return `${open}${escaped}${close}`;
+    },
+  );
+  if (!changed) return { text: navText, oldLabel: null, changed: false };
+  const start = toc.index + (toc[1] ?? '').length;
+  const end = toc.index + toc[0].length - (toc[3] ?? '').length;
+  return { text: navText.slice(0, start) + body + navText.slice(end), oldLabel, changed };
+}
+
+/**
+ * The leading pagebreak span(s) of a heading's inner markup, kept on a rename.
+ *
+ * The engine puts the page marker INSIDE the first element of its page, which
+ * is often a heading — a rename that replaced the whole inner text would
+ * silently delete the page anchor.
+ */
+const LEADING_SPANS = /^(?:\s*<span\b[^>]*>\s*<\/span>)*\s*/;
+
+/** Rewrite the inner text of the heading carrying `id="<fragment>"`. */
+function renameHeadingById(markup: string, fragment: string, escaped: string): string {
+  const pattern = new RegExp(
+    `(<h([1-6])\\b[^>]*\\bid\\s*=\\s*"${escapeRegExp(fragment)}"[^>]*>)([\\s\\S]*?)(</h\\2\\s*>)`,
+    'i',
+  );
+  return markup.replace(pattern, (_whole, open: string, _level, inner: string, close: string) => {
+    const lead = LEADING_SPANS.exec(inner)?.[0] ?? '';
+    return `${open}${lead}${escaped}${close}`;
+  });
+}
+
+/**
+ * Rewrite the document's FIRST heading and its <title>, each only when its
+ * text equals `oldLabel` — see renameEpubHeading's chapter rule.
+ */
+function renameChapterHeading(markup: string, oldLabel: string, escaped: string): string {
+  let out = markup.replace(
+    /(<h([1-6])\b[^>]*>)([\s\S]*?)(<\/h\2\s*>)/i,
+    (whole, open: string, _level, inner: string, close: string) => {
+      if (plainText(inner) !== oldLabel) return whole;
+      const lead = LEADING_SPANS.exec(inner)?.[0] ?? '';
+      return `${open}${lead}${escaped}${close}`;
+    },
+  );
+  out = out.replace(
+    /(<title[^>]*>)([\s\S]*?)(<\/title>)/i,
+    (whole, open: string, inner: string, close: string) =>
+      (plainText(inner) === oldLabel ? `${open}${escaped}${close}` : whole),
+  );
+  return out;
 }
 
 /**
@@ -459,9 +678,13 @@ export async function openEpub(filePath: string): Promise<EpubBook> {
 
   const navItem = [...manifest.values()].find((item) => item.properties.split(/\s+/).includes('nav'));
   const navText = navItem ? text(navItem.href) : null;
-  const navLabels = navItem && navText !== null
-    ? readNavLabels(navText, navItem.href)
-    : new Map<string, { label: string; depth: number }>();
+  const navEntries = navItem && navText !== null ? readNavEntries(navText, navItem.href) : [];
+  const entriesByFile = new Map<string, NavEntry[]>();
+  for (const entry of navEntries) {
+    const list = entriesByFile.get(entry.file);
+    if (list) list.push(entry);
+    else entriesByFile.set(entry.file, [entry]);
+  }
 
   // ── On disk ──────────────────────────────────────────────────────────────
   const id = crypto.randomUUID();
@@ -482,22 +705,38 @@ export async function openEpub(filePath: string): Promise<EpubBook> {
     source: resolved,
     managed,
     writeTarget: managed ? resolved : null,
+    nav: navItem?.href ?? null,
     files,
   });
 
   // ── What the sidebar shows ───────────────────────────────────────────────
-  // The SPINE is the list, because it is complete and in reading order; the nav
-  // supplies the label and the indent where it names that document. A nav-driven
-  // list would silently drop a chapter the table of contents forgot.
-  const chapters: EpubChapter[] = spine.map((item) => {
-    const named = navLabels.get(item.href);
+  // The SPINE is the backbone, because it is complete and in reading order; the
+  // nav supplies the label and the indent where it names that document. A
+  // nav-driven list would silently drop a chapter the table of contents forgot.
+  // The nav's FRAGMENT entries — the section headers the engine anchored — nest
+  // one level under their spine item; a book from before that engine change has
+  // none and renders exactly as it always did.
+  const chapters: EpubChapter[] = spine.flatMap((item) => {
+    const entries = entriesByFile.get(item.href) ?? [];
+    const named = entries.find((entry) => entry.fragment === null);
     const fromDocument = named ? null : documentTitle(text(item.href) ?? '');
-    return {
+    const depth = named?.depth ?? 0;
+    const rows: EpubChapter[] = [{
       href: item.href,
       label: named?.label ?? fromDocument ?? item.href.split('/').pop() ?? item.href,
-      depth: named?.depth ?? 0,
+      depth,
       url: memberUrl(id, item.href),
-    };
+    }];
+    for (const entry of entries) {
+      if (entry.fragment === null) continue;
+      rows.push({
+        href: `${item.href}#${entry.fragment}`,
+        label: entry.label,
+        depth: depth + 1,
+        url: `${memberUrl(id, item.href)}#${encodeURIComponent(entry.fragment)}`,
+      });
+    }
+    return rows;
   });
 
   const titleMatch = /<dc:title[^>]*>([\s\S]*?)<\/dc:title>/i.exec(opf);

@@ -64,6 +64,12 @@ export interface VlmChapter {
    * one the prose emitter ever gives.
    */
   kind?: DotsPageKind;
+  /**
+   * The section headers INSIDE the chapter, in order — each one anchored in
+   * the chapter's own markup (`<h2 id="...">`), so the nav can point at it.
+   * The chapter's opening headings are not here: they are what `label` is.
+   */
+  headings?: readonly { id: string; label: string }[];
 }
 
 /**

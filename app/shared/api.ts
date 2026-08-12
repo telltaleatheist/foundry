@@ -100,6 +100,13 @@ export interface FoundryApi {
      */
     writeMember(id: string, href: string, text: string): Promise<number>;
     /**
+     * Rename a TOC entry: `href` is a sidebar row's — a chapter document, or
+     * `document#fragment` for a section header inside one. Main rewrites the
+     * nav label and, when its text matched, the heading itself; rejects when
+     * nothing in the book carries the entry. Same write-through as an edit.
+     */
+    renameHeading(id: string, href: string, label: string): Promise<void>;
+    /**
      * The save picker, opening on the library folder. Null when dismissed.
      * Takes the book's id because the answer is also a GRANT: main records it,
      * and `save` refuses any destination that was never granted — either by

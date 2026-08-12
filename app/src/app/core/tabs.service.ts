@@ -321,7 +321,8 @@ export class TabsService {
   /** One chapter's XHTML source, for the editor pane. */
   async chapterSource(tab: Tab, href: string): Promise<string> {
     if (!api || tab.book === null) return '';
-    return api.epub.readMember(tab.book.id, href);
+    // A section-header row's href carries a #fragment; the FILE is the member.
+    return api.epub.readMember(tab.book.id, memberOf(href));
   }
 
   /**
@@ -339,11 +340,44 @@ export class TabsService {
     const tab = this.all().find((candidate) => candidate.id === id);
     if (!api || !tab || tab.book === null) return;
     try {
-      await api.epub.writeMember(tab.book.id, href, text);
+      await api.epub.writeMember(tab.book.id, memberOf(href), text);
       this.patch(id, { modified: true, revision: tab.revision + 1 });
     } catch (err) {
       this.notice.set(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  /**
+   * Rename a TOC entry — a chapter, or a section header inside one.
+   *
+   * Main does the writing (nav label + the heading when it matched, through
+   * the same workspace write-through as an edit); this side only mirrors the
+   * new label into the sidebar and marks the tab edited. The tab's TITLE does
+   * not change — that is the book's dc:title, not a chapter's name. Returns
+   * whether the rename happened, so the sidebar can keep its input open on a
+   * refusal.
+   */
+  async renameHeading(id: string, href: string, newLabel: string): Promise<boolean> {
+    const tab = this.all().find((candidate) => candidate.id === id);
+    if (!api || !tab || tab.book === null) return false;
+    const label = newLabel.trim();
+    if (label.length === 0) return false;
+    try {
+      await api.epub.renameHeading(tab.book.id, href, label);
+    } catch (err) {
+      this.notice.set(err instanceof Error ? err.message : String(err));
+      return false;
+    }
+    const chapters = tab.book.chapters.map((chapter) =>
+      (chapter.href === href ? { ...chapter, label } : chapter));
+    // The revision bump reloads the rendered pane: when the heading itself was
+    // rewritten, the page must show it.
+    this.patch(id, {
+      book: { ...tab.book, chapters },
+      modified: true,
+      revision: tab.revision + 1,
+    });
+    return true;
   }
 
   // ── Saving ───────────────────────────────────────────────────────────────
@@ -408,6 +442,11 @@ export class TabsService {
 /** Windows paths differ by case and separator and are the same file. */
 function normalise(filePath: string): string {
   return filePath.replace(/\\/g, '/').toLowerCase();
+}
+
+/** A sidebar href without its #fragment — the member file it lives in. */
+function memberOf(href: string): string {
+  return href.split('#')[0] ?? href;
 }
 
 function baseName(filePath: string): string {

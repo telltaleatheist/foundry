@@ -81,14 +81,30 @@ import { TabsService, type Tab } from '../../core/tabs.service';
           </header>
           <ul>
             @for (chapter of book.chapters; track chapter.href) {
-              <li>
-                <button
-                  class="chapter"
-                  [class.active]="tab().chapterHref === chapter.href"
-                  [style.padding-left.px]="12 + chapter.depth * 14"
-                  [title]="chapter.label"
-                  (click)="show(chapter)"
-                >{{ chapter.label }}</button>
+              <li class="entry">
+                @if (renamingHref() === chapter.href) {
+                  <input
+                    #renameBox
+                    class="rename"
+                    [style.margin-left.px]="12 + chapter.depth * 14"
+                    [value]="renameText()"
+                    (input)="renameText.set(renameBox.value)"
+                    (keydown.enter)="commitRename(chapter)"
+                    (keydown.escape)="cancelRename()"
+                    (blur)="cancelRename()"
+                    [attr.aria-label]="'Rename ' + chapter.label"
+                  >
+                } @else {
+                  <button
+                    class="chapter"
+                    [class.active]="tab().chapterHref === chapter.href"
+                    [style.padding-left.px]="12 + chapter.depth * 14"
+                    [title]="chapter.label"
+                    (click)="show(chapter)"
+                    (dblclick)="startRename(chapter)"
+                  >{{ chapter.label }}</button>
+                  <button class="pencil" title="Rename" (click)="startRename(chapter)">✎</button>
+                }
               </li>
             }
           </ul>
@@ -170,9 +186,34 @@ import { TabsService, type Tab } from '../../core/tabs.service';
 
     .chapters ul { list-style: none; margin: 0; padding: 4px 0; overflow-y: auto; flex: 1; }
 
+    .entry { display: flex; align-items: center; }
+    .pencil {
+      flex-shrink: 0;
+      visibility: hidden;
+      margin-right: 6px;
+      padding: 2px 5px;
+      background: transparent; border: none; border-radius: 4px;
+      color: var(--text-tertiary); font-size: 11px; cursor: pointer;
+    }
+    .entry:hover .pencil { visibility: visible; }
+    .pencil:hover { color: var(--text-primary); background: var(--bg-hover); }
+    .rename {
+      flex: 1;
+      min-width: 0;
+      margin: 2px 8px 2px 0;
+      padding: 4px 6px;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      font-size: 12.5px;
+    }
+    .rename:focus { outline: none; }
+
     .chapter {
       display: block;
-      width: 100%;
+      flex: 1;
+      min-width: 0;
       padding: 7px 12px;
       background: transparent;
       border: none;
@@ -265,6 +306,11 @@ export class EpubViewComponent implements OnDestroy {
 
   private readonly frame = viewChild<ElementRef<HTMLIFrameElement>>('frame');
   private readonly sourceArea = viewChild<ElementRef<HTMLTextAreaElement>>('source');
+  private readonly renameBox = viewChild<ElementRef<HTMLInputElement>>('renameBox');
+
+  /** Which sidebar row is being renamed, and the text in its box. */
+  protected readonly renamingHref = signal<string | null>(null);
+  protected readonly renameText = signal('');
 
   /**
    * The click reporter's messages. Bound once so add/removeEventListener see
@@ -313,6 +359,16 @@ export class EpubViewComponent implements OnDestroy {
     });
 
     window.addEventListener('message', this.onFrameMessage);
+
+    // The rename input exists only while a row is being renamed; the moment it
+    // renders, the whole current label is selected so typing replaces it.
+    effect(() => {
+      const box = this.renameBox()?.nativeElement;
+      if (box) {
+        box.focus();
+        box.select();
+      }
+    });
   }
 
   ngOnDestroy(): void {
@@ -371,13 +427,42 @@ export class EpubViewComponent implements OnDestroy {
     if (chapter === undefined) return null;
     // `?v=` is what makes an edit visible: the bytes changed and the URL did
     // not, and an <iframe> already showing a URL does nothing when told to show
-    // it again. The protocol handler reads the path and ignores the query.
-    const url = current.revision === 0 ? chapter.url : `${chapter.url}?v=${current.revision}`;
+    // it again. The protocol handler reads the path and ignores the query. A
+    // section-header row's url carries a #fragment, and the query has to go
+    // BEFORE it — `file#frag?v=2` is a fragment named "frag?v=2".
+    const [base, fragment] = chapter.url.split('#');
+    const url = current.revision === 0
+      ? chapter.url
+      : `${base}?v=${current.revision}${fragment !== undefined ? `#${fragment}` : ''}`;
     return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   });
 
   protected show(chapter: EpubChapter): void {
     this.tabs.showChapter(this.tab().id, chapter.href);
+  }
+
+  // ── Renaming a TOC entry ─────────────────────────────────────────────────
+
+  protected startRename(chapter: EpubChapter): void {
+    this.renameText.set(chapter.label);
+    this.renamingHref.set(chapter.href);
+  }
+
+  protected cancelRename(): void {
+    this.renamingHref.set(null);
+  }
+
+  /**
+   * Enter. An empty or unchanged label is a cancel, not an error — and the box
+   * closes BEFORE the IPC round trip so a slow disk never shows a stale input.
+   * A refusal (main found nothing carrying the entry) lands in the notice
+   * strip via TabsService.
+   */
+  protected async commitRename(chapter: EpubChapter): Promise<void> {
+    const label = this.renameText().trim();
+    this.renamingHref.set(null);
+    if (label.length === 0 || label === chapter.label) return;
+    await this.tabs.renameHeading(this.tab().id, chapter.href, label);
   }
 
   protected onType(event: Event): void {

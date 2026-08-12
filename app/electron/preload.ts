@@ -36,6 +36,7 @@ const api: FoundryApi = {
     close: (id) => ipcRenderer.invoke('epub:close', id),
     readMember: (id, href) => ipcRenderer.invoke('epub:read-member', id, href),
     writeMember: (id, href, text) => ipcRenderer.invoke('epub:write-member', id, href, text),
+    renameHeading: (id, href, label) => ipcRenderer.invoke('epub:rename-heading', id, href, label),
     chooseSavePath: (id, suggestedName) => ipcRenderer.invoke('epub:choose-save-path', id, suggestedName),
     save: (id, destination) => ipcRenderer.invoke('epub:save', id, destination),
   },

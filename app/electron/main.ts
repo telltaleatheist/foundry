@@ -39,6 +39,7 @@ import {
   closeEpub,
   openEpub,
   readEpubMember,
+  renameEpubHeading,
   repackEpub,
   resolveEpubMember,
   writeEpubMember,
@@ -634,6 +635,10 @@ function registerIpc(): void {
   // holds the text; main holds the file. No Node in the renderer, ever.
   ipcMain.handle('epub:write-member', (_event, id: string, href: string, text: string) =>
     writeEpubMember(id, href, text));
+  // Renames a TOC entry — the nav label, and the heading when it carried the
+  // same text. Same write-through as an edit; the user's own file is untouched.
+  ipcMain.handle('epub:rename-heading', (_event, id: string, href: string, label: string) =>
+    renameEpubHeading(id, href, label));
 
   ipcMain.handle('epub:choose-save-path', async (_event, id: string, suggestedName: string) => {
     const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
