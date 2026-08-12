@@ -27,11 +27,12 @@
 import { randomUUID } from 'node:crypto';
 import * as path from 'node:path';
 
+import { readAppSettings } from './app-settings';
 import { parseProgressLine, runEngine } from './engine';
 import { ENV_SPECS } from './env-catalog';
 import { destFor, installEnv } from './env-install';
 import { readSettings } from './settings';
-import { ensureServer, isLocalVllmEndpoint } from './vllm-server';
+import { ensureServer, isLocalVllmEndpoint, noteQueueBusy, noteQueueIdle } from './vllm-server';
 import type { EnvInstallRequest, Job, JobRequest } from '../shared/types';
 
 const jobs: Job[] = [];
@@ -138,6 +139,9 @@ export function cancel(id: string): void {
     job.state = 'cancelled';
     job.finishedAt = Date.now();
     changed();
+    // A cancel can be the thing that empties the queue, and the drain signal
+    // lives in pump()'s nothing-to-do branch — which nothing else would visit.
+    void pump();
   }
 }
 
@@ -234,7 +238,15 @@ let starting = false;
 async function pump(): Promise<void> {
   if (running !== null || starting) return;
   const next = jobs.find((job) => job.state === 'queued');
-  if (!next) return;
+  if (!next) {
+    // The queue just drained: nothing running, nothing starting, nothing
+    // waiting. The reading server's lifetime follows the queue's
+    // (electron/vllm-server.ts) — stopped now by default, or after the
+    // keep-warm window the user set. Every job's end funnels through here, so
+    // this is the one place drain can be declared.
+    noteQueueIdle(readAppSettings().keepServerWarmMinutes);
+    return;
+  }
 
   if (next.kind === 'env-install') {
     await runEnvInstall(next);
@@ -255,6 +267,13 @@ async function pump(): Promise<void> {
   next.startedAt = Date.now();
   next.message = `Starting ${path.basename(next.inputPath)}…`;
   changed();
+
+  // Whatever idle countdown was armed, a conversion is starting — and not only
+  // an endpoint-mode one: under `auto` the ENGINE probes port 8000 for itself
+  // and will happily read through a still-warm server this app owns, so a
+  // timer allowed to keep ticking here could pull the backend out from under a
+  // running book.
+  noteQueueBusy();
 
   // The reading server, before the engine that will post pages to it. A remote
   // endpoint is used exactly as given — only the local one is ours to start.

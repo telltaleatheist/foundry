@@ -28,14 +28,19 @@
  *     the documented way to wedge WSL until a reboot. The Windows-side tree kill
  *     is a last resort, after the graceful stop has been given its minute.
  *
- * ── What is deliberately NOT taken ───────────────────────────────────────────
+ * ── The lifetime: up while the queue has work, down when it drains ───────────
  *
- * BookForge reference-counts the server and tears it down the moment the last
- * conversion lets go, because it arbitrates one GPU between vLLM and TTS. This
- * app has no other GPU tenant and a serial queue that usually has more books
- * behind the one running, so paying ~44 s of model load between every pair of
- * them would be a tax on nothing. The server stays up until the app quits or
- * the user stops it.
+ * BookForge reference-counts the server per conversion because it arbitrates
+ * one GPU between vLLM and TTS. This app has no second tenant, so it counts
+ * nothing — but it reaches the same conclusion at a coarser grain: the queue
+ * DRAINING stops the server. Teardown is on drain, not between jobs, so a
+ * queue with three books in it loads the model once; but an empty queue has
+ * no claim on half the card's VRAM (which under WSL is committed host RAM
+ * too), and bringing the model back for the next job costs ~44 s — the cheap
+ * side of that trade. The queue signals through noteQueueBusy/noteQueueIdle
+ * below. An optional keep-warm window delays the stop for someone feeding
+ * jobs one at a time by hand; it is a window with a number on it, never
+ * "stay up indefinitely".
  *
  * ── The one rule about somebody else's server ────────────────────────────────
  *
@@ -295,6 +300,10 @@ async function askModelList(): Promise<{ up: boolean; models: string[] }> {
  * no further word is the least useful failure a conversion can have.
  */
 export async function ensureServer(): Promise<ServerStatus> {
+  // Demand for the server cancels any pending idle stop, even when the caller
+  // forgot to say noteQueueBusy first.
+  cancelIdleStop();
+
   // Somebody else's, or our own from a moment ago. Either way the port answers
   // and there is nothing to start.
   const existing = await askModelList();
@@ -400,6 +409,57 @@ async function startServer(): Promise<ServerStatus> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Idle teardown
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The pending stop, while a drained queue's keep-warm window runs out. */
+let idleStop: NodeJS.Timeout | null = null;
+
+function cancelIdleStop(): void {
+  if (idleStop !== null) {
+    clearTimeout(idleStop);
+    idleStop = null;
+  }
+}
+
+/**
+ * A job is about to need the server: whatever idle countdown was running is
+ * over. The queue calls this BEFORE ensureServer, so a job that arrives inside
+ * the keep-warm window keeps the warm server instead of racing its stop.
+ */
+export function noteQueueBusy(): void {
+  cancelIdleStop();
+}
+
+/**
+ * The queue just drained: stop the server this app started — immediately when
+ * `keepWarmMinutes` is 0 (the default), otherwise once the window runs out.
+ *
+ * The policy number comes from the CALLER (the queue reads the app's own
+ * settings); this module only executes it, which keeps it free of Electron
+ * imports and testable. A server this app merely found on the port is not
+ * ours and is left exactly alone, whatever the setting says. A stop is never
+ * mid-job by construction: the queue only reports idle when nothing is
+ * running, and anything that starts afterwards cancels the countdown.
+ */
+export function noteQueueIdle(keepWarmMinutes: number): void {
+  cancelIdleStop();
+  if (!ownsServer()) return;
+  if (keepWarmMinutes <= 0) {
+    void stopServer('the queue is empty');
+    return;
+  }
+  const distro = server?.distro ?? 'WSL';
+  publish('ready',
+    `Serving ${MODEL} from ${distro} on ${URL_BASE}. The queue is empty — stopping in `
+    + `${keepWarmMinutes} min unless another job arrives.`);
+  idleStop = setTimeout(() => {
+    idleStop = null;
+    void stopServer(`the queue has been empty for ${keepWarmMinutes} min`);
+  }, keepWarmMinutes * 60_000);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Stopping
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -438,6 +498,9 @@ async function terminate(entry: RunningServer, reason: string): Promise<void> {
  * it either.
  */
 export async function stopServer(reason = 'asked to stop'): Promise<ServerStatus> {
+  // A manual stop supersedes a scheduled one; a timer left armed would fire
+  // later and re-announce a stop that already happened.
+  cancelIdleStop();
   if (external) {
     publish('ready', `That server was already running before this app started it, so it is left alone.`);
     return serverStatus();

@@ -200,6 +200,14 @@ export interface FoundryApi {
     start(): Promise<ServerStatus>;
     stop(): Promise<ServerStatus>;
     onStatus(listener: (status: ServerStatus) => void): () => void;
+    /**
+     * Minutes an app-started server outlives a drained queue. 0 — the default
+     * — stops it the moment the queue empties; the ceiling is main's
+     * (app-settings.ts), so whatever is asked for, an idle server always has a
+     * scheduled end. `setKeepWarm` returns the value as clamped and stored.
+     */
+    keepWarm(): Promise<number>;
+    setKeepWarm(minutes: number): Promise<number>;
   };
 
   onDocumentOpened(listener: (absolutePath: string) => void): () => void;

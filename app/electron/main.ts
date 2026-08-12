@@ -758,6 +758,13 @@ function registerIpc(): void {
   ipcMain.handle('vllm:status', () => vllm.serverStatus());
   ipcMain.handle('vllm:start', () => vllm.ensureServer());
   ipcMain.handle('vllm:stop', () => vllm.stopServer('the Stop button'));
+  // The keep-warm knob is APP policy, not engine settings: the engine neither
+  // starts nor stops servers, so its settings.json never carries this. The
+  // queue reads it at every drain (job-queue.ts), so a change applies to the
+  // very next one — no restart, no re-plumb.
+  ipcMain.handle('vllm:keep-warm', () => readAppSettings().keepServerWarmMinutes);
+  ipcMain.handle('vllm:set-keep-warm', (_event, minutes: number) =>
+    writeAppSettings({ keepServerWarmMinutes: minutes }).keepServerWarmMinutes);
 
   queue.onQueueChanged((jobs) => broadcast('queue:changed', jobs));
   vllm.onServerStatus((status) => broadcast('vllm:status-changed', status));

@@ -95,6 +95,15 @@ import { api } from '../../core/foundry';
             <pre class="detail pre">{{ s.detail }}</pre>
             <p class="small mono">{{ s.url }} · {{ s.model }}</p>
           }
+
+          <!-- The server's lifetime follows the queue: stopped when it drains.
+               This knob buys it minutes past that, never indefinitely. -->
+          <label class="keepwarm">
+            <span>After the queue empties, keep the server warm for</span>
+            <input type="number" min="0" max="240" step="1" name="keepWarm"
+                   [ngModel]="keepWarm()" (ngModelChange)="saveKeepWarm($event)">
+            <span>min <span class="muted">(0 = stop immediately)</span></span>
+          </label>
         } @else {
           <p class="detail">
             WSL is here, but nothing in it can import vllm yet. Build an environment and the engine
@@ -194,6 +203,17 @@ import { api } from '../../core/foundry';
     .server .state { font-size: 12.5px; }
     .spacer { flex: 1; }
 
+    .keepwarm {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      margin-top: 10px; font-size: 12.5px; color: var(--text-secondary);
+    }
+    .keepwarm input {
+      width: 64px; padding: 3px 6px;
+      background: var(--bg-base); color: var(--text-primary);
+      border: 1px solid var(--border-default); border-radius: 6px;
+      font-size: 12.5px;
+    }
+
     .setup {
       margin-top: 12px; padding-top: 12px;
       border-top: 1px solid var(--border-subtle);
@@ -252,6 +272,7 @@ export class WslBackendComponent {
   protected readonly status = signal<ServerStatus | null>(null);
   protected readonly serverBusy = signal(false);
   protected readonly showSetup = signal(false);
+  protected readonly keepWarm = signal(0);
 
   /**
    * The doctor's `wsl` block when the engine carries one, our own probe when it
@@ -292,6 +313,7 @@ export class WslBackendComponent {
       // the one to preselect, and facts cannot prefer it if it has not arrived.
       void this.loadSettings().then(() => this.loadFacts());
       void api.vllmServer.status().then((status) => this.status.set(status));
+      void api.vllmServer.keepWarm().then((minutes) => this.keepWarm.set(minutes));
     }
 
     // A distro was chosen (or the list arrived): ask what it has to build with.
@@ -400,5 +422,16 @@ export class WslBackendComponent {
     } finally {
       this.serverBusy.set(false);
     }
+  }
+
+  /**
+   * Saved on every change, and the STORED value is what the field then shows:
+   * main clamps (0..240, whole minutes), and a field that displayed the number
+   * the user typed while the file holds another would be a quiet lie.
+   */
+  protected async saveKeepWarm(minutes: number | null): Promise<void> {
+    if (!api) return;
+    const stored = await api.vllmServer.setKeepWarm(typeof minutes === 'number' ? minutes : 0);
+    this.keepWarm.set(stored);
   }
 }

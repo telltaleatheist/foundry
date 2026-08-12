@@ -91,6 +91,8 @@ const api: FoundryApi = {
     start: () => ipcRenderer.invoke('vllm:start'),
     stop: () => ipcRenderer.invoke('vllm:stop'),
     onStatus: (listener) => subscribe<ServerStatus>('vllm:status-changed', listener),
+    keepWarm: () => ipcRenderer.invoke('vllm:keep-warm'),
+    setKeepWarm: (minutes) => ipcRenderer.invoke('vllm:set-keep-warm', minutes),
   },
 
   onDocumentOpened: (listener) => subscribe<string>('document:opened', listener),
