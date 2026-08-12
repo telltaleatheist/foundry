@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
-import type { JobRequest } from '@shared/types';
+import type { ConversionKind, JobRequest } from '@shared/types';
 
 import { QueueService } from '../../core/queue.service';
 import { TabsService } from '../../core/tabs.service';
@@ -60,6 +60,7 @@ import { api } from '../../core/foundry';
             <span class="label">Output</span>
             <select [ngModel]="kind()" (ngModelChange)="kind.set($event)" name="kind">
               <option value="epub">EPUB</option>
+              <option value="txt">Plain text</option>
               <!--
                 Disabled rather than absent: "foundry cannot do this yet" and
                 "foundry will never do this" look identical when the option is
@@ -69,6 +70,21 @@ import { api } from '../../core/foundry';
               <option value="pdf" disabled>Searchable PDF — coming soon</option>
             </select>
           </label>
+
+          <!--
+            Said here rather than discovered afterwards: plain text is the same
+            conversion and the same reading of the pages, but it is not a book
+            this app can open, and finding that out from a completed job with no
+            Open button on it would read as something having gone wrong.
+          -->
+          @if (kind() === 'txt') {
+            <p class="note">
+              Plain text is the same book with the markup taken off — headings, paragraphs,
+              and footnotes as [1] at the end of each chapter. Pictures do not survive it,
+              and Foundry cannot open a text file in a tab: the queue will show you where
+              it was written.
+            </p>
+          }
 
           <label class="field">
             <span class="label">Language <em>declared, not detected</em></span>
@@ -85,10 +101,17 @@ import { api } from '../../core/foundry';
                becomes a narrator saying "fourteen". Foundry converts books to
                be READ: markers are kept and linked to their notes, which is
                part of what converting to EPUB means here. -->
-          <p class="note">
-            The book is written into Foundry's workspace and opens here when it is done.
-            Save a copy from the tab once you have looked at it.
-          </p>
+          @if (kind() === 'epub') {
+            <p class="note">
+              The book is written into Foundry's workspace and opens here when it is done.
+              Save a copy from the tab once you have looked at it.
+            </p>
+          } @else {
+            <p class="note">
+              The file is written into Foundry's workspace. Use ↗ on the finished job to
+              show it in the file manager.
+            </p>
+          }
 
           @if (problem(); as reason) {
             <p class="problem">{{ reason }}</p>
@@ -189,7 +212,8 @@ export class OcrDialogComponent {
     return tab !== null && tab.kind === 'pdf' ? tab.path : null;
   });
 
-  protected readonly kind = signal<'epub'>('epub');
+  /** EPUB unless asked otherwise — it is the format this app can also read. */
+  protected readonly kind = signal<ConversionKind>('epub');
   protected readonly skipPages = signal('');
   protected readonly language = signal('en');
   protected readonly problem = signal<string | null>(null);
@@ -218,12 +242,15 @@ export class OcrDialogComponent {
     this.problem.set(null);
     try {
       // Main names both files. The renderer no longer has an opinion about where
-      // a conversion goes, which is the whole point of the workspace.
-      const plan = await api.workspace.plan(input);
+      // a conversion goes, which is the whole point of the workspace — but the
+      // KIND has to travel with the request, because it decides the extension
+      // and the engine refuses an output whose name disagrees with its format.
+      const kind = this.kind();
+      const plan = await api.workspace.plan(input, kind);
       const request: JobRequest = {
         inputPath: input,
         outputPath: plan.outputPath,
-        kind: this.kind(),
+        kind,
         readingsPath: plan.readingsPath,
       };
       const skip = this.skipPages().trim();

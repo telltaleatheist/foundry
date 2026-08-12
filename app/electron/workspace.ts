@@ -40,7 +40,7 @@ import * as path from 'node:path';
 import { app } from 'electron';
 
 import { readAppSettings } from './app-settings';
-import type { WorkspacePlan } from '../shared/types';
+import type { ConversionKind, WorkspacePlan } from '../shared/types';
 
 /**
  * `<libraryDir>/workspace` — under the user's library, not under userData.
@@ -133,14 +133,34 @@ export function contentKey(filePath: string): Promise<string> {
  * is handed two paths and a path whose parent does not exist is a run that dies
  * after the last page.
  */
-export async function planConversion(inputPath: string): Promise<WorkspacePlan> {
+export async function planConversion(
+  inputPath: string,
+  /**
+   * What the output will hold, which is what it gets called.
+   *
+   * The engine refuses an `--out` whose extension contradicts its `--format`
+   * (src/vlm/text-out.ts), and it is right to: a `.epub` full of plain text
+   * opens wrong everywhere. So the kind reaches the NAME rather than only the
+   * command line, and the app cannot construct that contradiction.
+   */
+  kind: ConversionKind = 'epub',
+): Promise<WorkspacePlan> {
   const resolved = path.resolve(inputPath);
   const key = `${slugify(path.basename(resolved))}-${await contentKey(resolved)}`;
   await fsp.mkdir(workspaceDir(), { recursive: true });
   await fsp.mkdir(readingsDir(), { recursive: true });
   return {
     key,
-    outputPath: path.join(workspaceDir(), `${key}.epub`),
+    outputPath: path.join(workspaceDir(), `${key}.${kind}`),
+    /*
+     * The bank is keyed by the BOOK, not by the format.
+     *
+     * Both outputs are assembled from the same per-page answers, so converting a
+     * book to text after converting it to EPUB must not read three hundred pages
+     * again — and a readings path with the format in it would guarantee that it
+     * did. What the engine then does with a bank a finished run left behind is
+     * the engine's rule, and this app does not second-guess it.
+     */
     readingsPath: path.join(readingsDir(), `${key}.jsonl`),
   };
 }

@@ -27,6 +27,7 @@
 import { writeZip, zipText, type ZipEntry } from '../export/zip.js';
 import type { VlmBlock } from './dialect.js';
 import type { DotsPageKind } from './dots.js';
+import { packageVlmText, type VlmOutputFormat } from './text-out.js';
 
 export class VlmEpubError extends Error {
   constructor(message: string) {
@@ -324,6 +325,14 @@ function splitLevel(pages: readonly VlmPageBlocks[]): number | null {
 export function buildVlmEpub(
   metadata: VlmEpubMetadata,
   pages: readonly VlmPageBlocks[],
+  /**
+   * How the finished documents get written down — see `text-out.ts`.
+   *
+   * It reaches only the last line of this function, and that is the whole
+   * claim `--format` makes: the book is assembled once, identically, and the
+   * format decides nothing about what is in it.
+   */
+  format: VlmOutputFormat = 'epub',
 ): VlmEpubResult {
   const started = Date.now();
   const placed: PlacedBlock[] = pages.flatMap((p) => p.blocks.map((block) => ({ page: p.number, block })));
@@ -372,6 +381,8 @@ export function buildVlmEpub(
   });
 
   const xhtmlSeconds = (Date.now() - started) / 1000;
-  const packaged = packageVlmEpub(metadata, documents, [], STYLESHEET);
+  const packaged = format === 'txt'
+    ? packageVlmText(metadata, documents)
+    : packageVlmEpub(metadata, documents, [], STYLESHEET);
   return { bytes: packaged.bytes, chapters, xhtmlSeconds, zipSeconds: packaged.zipSeconds };
 }

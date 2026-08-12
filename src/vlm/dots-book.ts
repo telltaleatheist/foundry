@@ -100,6 +100,7 @@ import {
   type VlmNavItem,
   type VlmResource,
 } from './epub.js';
+import { packageVlmText, type VlmOutputFormat } from './text-out.js';
 
 // ── the page images ─────────────────────────────────────────────────────────
 
@@ -1258,6 +1259,16 @@ export interface DotsBookOptions {
   pages: readonly DotsParsedPage[];
   images: DotsPageImages;
   stripNoteMarkers: boolean;
+  /**
+   * How the finished documents get written down — see `text-out.ts`.
+   *
+   * It is read on the LAST line of `buildDotsBook` and nowhere before it. Every
+   * measurement in this file — the body column, the page-turn join, the note
+   * matching, the picture crops — happens identically whichever way the answer
+   * is written out, which is what makes `--format` a choice about the file
+   * rather than a second pipeline.
+   */
+  format?: VlmOutputFormat;
 }
 
 export interface DotsBookResult {
@@ -1376,8 +1387,22 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
     });
   }
 
-  const cropped = crops.length > 0 ? await opts.images.crop(crops) : [];
-  if (cropped.length !== crops.length) {
+  /*
+   * The pictures are cropped for the format that can hold one.
+   *
+   * A crop reaches back into the page renders through a subprocess, and its
+   * entire product is a PNG inside the EPUB's container. A text book has no
+   * container to put one in, so doing the work anyway would cost a run the
+   * renders it had already finished with — and, worse, would let a text
+   * conversion FAIL on a picture it was never going to carry.
+   *
+   * The report does not move. `crops` is how many pictures the book has, which
+   * is the number the EPUB path reports too: the check below is precisely what
+   * makes `resources.length` equal to it.
+   */
+  const wantsPictures = opts.format !== 'txt';
+  const cropped = wantsPictures && crops.length > 0 ? await opts.images.crop(crops) : [];
+  if (wantsPictures && cropped.length !== crops.length) {
     throw new Error(
       `${crops.length} pictures were asked for and ${cropped.length} came back. A figure missing`
       + ' from the container is a broken image in the reader, on a book that opened without an error.',
@@ -1394,9 +1419,9 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
   for (const block of blocks) categories[block.category] = (categories[block.category] ?? 0) + 1;
 
   const xhtmlSeconds = (Date.now() - started) / 1000;
-  const packaged = packageVlmEpub(
-    opts.metadata, documents, resources, STYLESHEET, navTree(chapters),
-  );
+  const packaged = opts.format === 'txt'
+    ? packageVlmText(opts.metadata, documents)
+    : packageVlmEpub(opts.metadata, documents, resources, STYLESHEET, navTree(chapters));
   return {
     bytes: packaged.bytes,
     chapters,
@@ -1404,7 +1429,10 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
     blocks: blocks.length,
     categories,
     footnotes: notes - 1,
-    pictures: resources.length,
+    // What the BOOK has, not what the container carried — the two are the same
+    // number wherever there is a container, and a picture count that fell to
+    // zero on a text run would be a report about the file rather than the book.
+    pictures: crops.length,
     joinedPages,
     suppressedHeads: suppressed.map((b) => ({ page: b.page, text: b.text })),
     reflowedBlocks: reflowed.length,

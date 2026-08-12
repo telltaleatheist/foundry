@@ -35,6 +35,7 @@ import { vlmConvert } from './vlm/convert.js';
 import { DEFAULT_VLM_CONCURRENCY } from './vlm/endpoint.js';
 import { DEFAULT_VLM_MODEL_ID, VLM_MODELS } from './vlm/models.js';
 import { parsePageList } from './vlm/pages.js';
+import { formatConflict, VLM_OUTPUT_FORMATS, type VlmOutputFormat } from './vlm/text-out.js';
 import { versionString } from './version.js';
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -64,7 +65,20 @@ const OUT_PATH: OptionSpec = {
   name: 'out',
   type: 'string',
   placeholder: '<path>',
-  describe: 'Where the EPUB is written. Required; foundry never invents a name.',
+  describe: 'Where the book is written. Required; foundry never invents a name.',
+};
+
+/**
+ * What `--out` is written AS, which is a different question from where.
+ *
+ * An extension that names the other format is refused rather than obeyed or
+ * corrected — `text-out.ts` owns the rule and the sentence.
+ */
+const VLM_FORMAT: OptionSpec = {
+  name: 'format',
+  type: 'string',
+  placeholder: '<epub|txt>',
+  describe: 'What --out is written as. Default epub; txt is readable plain text.',
 };
 
 const VLM_MODEL: OptionSpec = {
@@ -210,6 +224,26 @@ function fromFlagOrSettings(
 // ═════════════════════════════════════════════════════════════════════════════
 
 async function runVlmConvert(args: ParsedArgs): Promise<void> {
+  /*
+   * The output, and what it is going to be.
+   *
+   * Read together and checked here because the pair can CONTRADICT: `--format
+   * txt --out book.epub` is two instructions about one file that cannot both be
+   * obeyed, and neither renaming the file nor ignoring the flag is a thing this
+   * program does (ARCHITECTURE §8). `text-out.ts` decides and words it; this
+   * layer only chooses the exit code, and 2 is right because nothing has run.
+   */
+  const outPath = requireString(args, 'out', 'where the book is written');
+  const named = optionalString(args, 'format');
+  if (named !== undefined && !VLM_OUTPUT_FORMATS.includes(named as VlmOutputFormat)) {
+    throw new UsageError(
+      `--format takes ${VLM_OUTPUT_FORMATS.join(' or ')}, not "${named}"`,
+    );
+  }
+  const format = (named ?? 'epub') as VlmOutputFormat;
+  const conflict = formatConflict(outPath, format);
+  if (conflict !== null) throw new UsageError(conflict);
+
   const concurrency = optionalString(args, 'vlm-concurrency');
   if (concurrency !== undefined && !/^[1-9]\d*$/.test(concurrency)) {
     throw new UsageError(`--vlm-concurrency takes a positive whole number, not "${concurrency}"`);
@@ -271,7 +305,8 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
 
   const report = await vlmConvert({
     pdfPath: requireString(args, 'pdf', 'the PDF to read'),
-    outPath: requireString(args, 'out', 'where the EPUB is written'),
+    outPath,
+    format,
     modelId: optionalString(args, 'vlm-model') ?? DEFAULT_VLM_MODEL_ID,
     ...(python !== undefined ? { python } : {}),
     ...(optionalString(args, 'renders') ? { rendersDir: optionalString(args, 'renders')! } : {}),
@@ -373,8 +408,8 @@ async function runDoctor(args: ParsedArgs): Promise<void> {
 export const COMMANDS: readonly Command[] = [
   {
     name: 'vlm-convert',
-    summary: 'A vision model reads the pages: PDF in, EPUB out.',
-    usage: '--pdf <file.pdf> --out <book.epub> [--vlm-model <id>] [--python <path>]',
+    summary: 'A vision model reads the pages: PDF in, EPUB or plain text out.',
+    usage: '--pdf <file.pdf> --out <book.epub> [--format <epub|txt>] [--vlm-model <id>] [--python <path>]',
     detail: [
       'A document vision model reads each page picture and hands back marked-up',
       'text, and foundry assembles those answers into an EPUB. No Tesseract, no',
@@ -466,6 +501,21 @@ export const COMMANDS: readonly Command[] = [
       'list over-includes on purpose, because an extra costs a click and a missed',
       'chapter cannot be recovered.',
       '',
+      '--format txt writes readable plain text instead: chapter titles ruled with',
+      '=, section headings with -, paragraphs separated by blank lines and never',
+      'hard-wrapped, footnote references as [14] with the notes as [14] ... at the',
+      'end of their chapter, and a picture as the page it was cropped from. It is',
+      'the SAME BOOK — every rule above runs first and only the last stage differs',
+      '— so a conversion whose answers are banked can be written out again as text',
+      'with --reuse-readings for no GPU at all. An element with no plain-text rule',
+      'stops the run and names its tag rather than arriving as a book quietly',
+      'missing a table.',
+      '',
+      '--out AND --format MUST AGREE. `--format txt --out book.epub` is refused,',
+      'and so is the reverse: foundry does not rename a file somebody chose and',
+      'does not ignore a flag somebody typed. An --out with no extension, or with',
+      'one that names neither format, is the caller\'s business and is left alone.',
+      '',
       'NOTHING DEGRADES SILENTLY. A page that came back empty, a page that hit the',
       'token cap while the model was still writing, a page whose answer does not',
       'parse and a block this program has no rule for are each named. For the',
@@ -475,7 +525,7 @@ export const COMMANDS: readonly Command[] = [
       'line of the run. What never happens is a page quietly guessed at.',
     ].join('\n'),
     options: [
-      PDF_IN, OUT_PATH, VLM_MODEL, VLM_PYTHON, VLM_RENDERS, VLM_LANGUAGE,
+      PDF_IN, OUT_PATH, VLM_FORMAT, VLM_MODEL, VLM_PYTHON, VLM_RENDERS, VLM_LANGUAGE,
       VLM_ENDPOINT, VLM_ENDPOINT_MODEL, VLM_CONCURRENCY, VLM_READINGS,
       VLM_FRESH_READINGS, VLM_REUSE_READINGS, VLM_SKIP_PAGES,
       VLM_CHAPTERS, VLM_STRIP_MARKERS,

@@ -28,7 +28,7 @@ const api: FoundryApi = {
   confirmClose: (warning) => ipcRenderer.invoke('document:confirm-close', warning),
 
   workspace: {
-    plan: (inputPath) => ipcRenderer.invoke('workspace:plan', inputPath),
+    plan: (inputPath, kind) => ipcRenderer.invoke('workspace:plan', inputPath, kind),
   },
 
   epub: {

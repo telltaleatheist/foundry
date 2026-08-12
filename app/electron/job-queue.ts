@@ -201,6 +201,11 @@ function argsFor(request: JobRequest): string[] {
     '--out', request.outputPath,
     '--readings', request.readingsPath,
   ];
+  // Passed only when it is not the default, so an EPUB job's command line is the
+  // one it has always been and a diff of two runs shows what actually differed.
+  // The extension `planConversion` chose already agrees with it; the engine
+  // refuses the pair outright if it ever stops agreeing.
+  if (request.kind === 'txt') args.push('--format', 'txt');
   if (request.skipPages && request.skipPages.trim().length > 0) {
     args.push('--skip-pages', request.skipPages.trim());
   }

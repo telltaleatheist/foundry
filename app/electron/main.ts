@@ -54,6 +54,7 @@ import type { MenuAction } from '../shared/api';
 import type {
   BackendSettingsPatch,
   CloseWarning,
+  ConversionKind,
   EnvInstallRequest,
   JobRequest,
   RecentKind,
@@ -594,7 +595,10 @@ function registerIpc(): void {
   });
 
   // ── The managed workspace ────────────────────────────────────────────────
-  ipcMain.handle('workspace:plan', (_event, inputPath: string) => planConversion(inputPath));
+  ipcMain.handle(
+    'workspace:plan',
+    (_event, inputPath: string, kind: ConversionKind) => planConversion(inputPath, kind),
+  );
 
   // ── Books ────────────────────────────────────────────────────────────────
 

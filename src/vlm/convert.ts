@@ -46,6 +46,7 @@ import { DEFAULT_VLM_CONCURRENCY, readPagesFromEndpoint } from './endpoint.js';
 import { buildVlmEpub, type VlmChapter, type VlmEpubMetadata, type VlmPageBlocks } from './epub.js';
 import { requireVlmModel, type VlmModelDef } from './models.js';
 import { openReadingsBank, writeCompletionMarker } from './readings.js';
+import { formatConflict, type VlmOutputFormat } from './text-out.js';
 
 /**
  * The resolution every page is rendered at, and not a setting.
@@ -59,6 +60,14 @@ export const VLM_DPI = 200;
 export interface VlmConvertOptions {
   pdfPath: string;
   outPath: string;
+  /**
+   * What `--out` is written as. EPUB unless somebody says otherwise.
+   *
+   * The book is assembled identically either way and only the last stage
+   * differs (`text-out.ts`), which is why a conversion whose answers are
+   * already banked can be re-emitted as text for free with `--reuse-readings`.
+   */
+  format?: VlmOutputFormat;
   modelId: string;
   /** Explicit interpreter. See `bridge.ts` for what is tried without one. */
   python?: string;
@@ -119,6 +128,8 @@ export interface VlmConvertOptions {
 export interface VlmConvertReport {
   model: VlmModelDef;
   outPath: string;
+  /** What was written there. The bytes below are of that, not of an EPUB. */
+  format: VlmOutputFormat;
   bytes: number;
   title: string;
   author: string;
@@ -165,6 +176,14 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
   const outPath = path.resolve(opts.outPath);
   const geometric = model.dialect === 'dots-json';
   const viaEndpoint = opts.endpoint !== undefined;
+  const format = opts.format ?? 'epub';
+
+  // The output's name and the output's format, checked before a page renders.
+  // `commands.ts` refuses the same pairing as a usage error; a caller that
+  // reaches this function with it gets a run that failed instead, and both read
+  // the identical sentence.
+  const conflict = formatConflict(outPath, format);
+  if (conflict !== null) throw new Error(conflict);
 
   // Both readings flags are instructions ABOUT A BANK, and without --readings
   // there is no bank. Refused rather than ignored: an instruction this program
@@ -422,6 +441,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       const built = await buildDotsBook({
         metadata,
         pages: geometryPages,
+        format,
         stripNoteMarkers: opts.stripNoteMarkers === true,
         images: openPageImages(
           (page) => path.join(rendersDir, `page-${String(page).padStart(4, '0')}.pgm`),
@@ -476,7 +496,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
         `vlm-convert: ${blocks} blocks parsed in ${parseSeconds.toFixed(2)}s, `
         + `${droppedFurniture} page-furniture tag(s) dropped`,
       );
-      const built = buildVlmEpub(metadata, prosePages);
+      const built = buildVlmEpub(metadata, prosePages, format);
       bytes = built.bytes;
       chapters = built.chapters;
       xhtmlSeconds = built.xhtmlSeconds;
@@ -514,9 +534,13 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
 
     const writeSeconds = (Date.now() - writeStarted) / 1000;
 
+    // The middle phase is named for what it actually did. Both formats turn the
+    // assembled documents into bytes; only one of them zips, and a run that
+    // wrote plain text under the word "zip" would be a phase breakdown nobody
+    // could use to work out where the seconds went.
     opts.log(
       `vlm-convert: ${chapters.length} chapters, ${bytes.length} bytes — `
-      + `${xhtmlSeconds.toFixed(2)}s XHTML, ${zipSeconds.toFixed(2)}s zip, `
+      + `${xhtmlSeconds.toFixed(2)}s XHTML, ${zipSeconds.toFixed(2)}s ${format === 'txt' ? 'text' : 'zip'}, `
       + `${writeSeconds.toFixed(2)}s write`,
     );
     opts.log(`vlm-convert: wrote ${outPath}`);
@@ -524,6 +548,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     return {
       model,
       outPath,
+      format,
       bytes: bytes.length,
       title,
       author: run.document.author,

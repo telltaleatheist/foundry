@@ -20,10 +20,17 @@
  * environment must wait BEHIND it rather than race it. One serial queue gives
  * that for free.
  */
-export type JobKind = 'epub' | 'env-install';
+export type JobKind = ConversionKind | 'env-install';
 
-/** What the OCR panel can ask for. An env install is never enqueued this way. */
-export type ConversionKind = 'epub';
+/**
+ * What the OCR panel can ask for. An env install is never enqueued this way.
+ *
+ * It is also the engine's `--format`, spelled the same, because it is the same
+ * decision: a job's kind IS the extension its output carries, and the two
+ * drifting apart would mean the app naming a file `.epub` and the engine
+ * writing text into it — which the engine refuses outright (src/vlm/text-out.ts).
+ */
+export type ConversionKind = 'epub' | 'txt';
 
 export type JobState = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 

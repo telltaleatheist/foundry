@@ -10,6 +10,7 @@
 import type {
   BackendSettingsPatch,
   CloseWarning,
+  ConversionKind,
   DoctorResult,
   EngineInfo,
   EnvCatalogItem,
@@ -78,7 +79,8 @@ export interface FoundryApi {
    * the book may have been edited.
    */
   workspace: {
-    plan(inputPath: string): Promise<WorkspacePlan>;
+    /** The kind decides the output's EXTENSION, not just its `--format`. */
+    plan(inputPath: string, kind: ConversionKind): Promise<WorkspacePlan>;
   };
 
   /**
