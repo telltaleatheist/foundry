@@ -28,8 +28,14 @@
  *    not a unit of a reflowable book, and seventeen little note sections in a
  *    chapter is seventeen interruptions. One Footnote block routinely carries
  *    several notes, so it is split at its superscript starts and each note gets
- *    its own paragraph — a note nobody can see the start of is a note nobody
- *    reads.
+ *    its own `<aside epub:type="footnote">` — a note nobody can see the start
+ *    of is a note nobody reads.
+ *  - **Markers LINK to their notes, and notes link back.** `¹⁴` in the prose
+ *    becomes `<a epub:type="noteref" href="#fnN">`, matched by (page, printed
+ *    number) because in print a footnote sits at the bottom of the page its
+ *    reference is on — printed numbering restarts too often for the number
+ *    alone to name a note. A marker with no matching note stays a plain
+ *    `<sup>`: no link beats a wrong one.
  *  - **A Picture is the actual picture**, cropped out of the page render by its
  *    box and carried into the container with its Caption.
  *  - **Chapters are PROPOSED, not decided.** The rule is deterministic and
@@ -741,16 +747,87 @@ export interface DotsChapterBody {
   joinedPages: number[];
 }
 
+/**
+ * One note of the chapter, known before any prose is rendered.
+ *
+ * `printed` is the number the BOOK gave it — the leading superscript run of
+ * its text — and it is the only name a reference marker in the prose can use.
+ * It is not `seq`: printed numbering restarts wherever the book restarted it
+ * (per chapter, per page, sometimes mid-chapter), while `seq` runs through the
+ * whole book because it mints element ids. What disambiguates two notes that
+ * are both printed "1" is the PAGE: in print, a footnote sits at the bottom of
+ * the page its reference is on, so (page, printed) names a note as precisely
+ * as the book itself does.
+ */
+interface ChapterNote {
+  block: DotsBlock;
+  text: string;
+  printed: number | null;
+  seq: number;
+  /** The id of the FIRST prose marker that linked here — where the backlink aims. */
+  refId: string | null;
+}
+
+const LEADING_SUPERSCRIPT = /^[⁰¹²³⁴⁵⁶⁷⁸⁹]+/;
+const SUPERSCRIPT_VALUE = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+
+function printedNumber(run: string): number {
+  return Number([...run].map((c) => String(SUPERSCRIPT_VALUE.indexOf(c))).join(''));
+}
+
 export function buildChapterBody(
   blocks: readonly DotsBlock[],
   opts: DotsChapterOptions,
 ): DotsChapterBody {
   const out: string[] = [];
-  const footnotes: DotsBlock[] = [];
   const crops: DotsCrop[] = [];
   const joinedPages: number[] = [];
-  const inline = (text: string): string =>
-    dotsInline(text, { stripNoteMarkers: opts.stripNoteMarkers });
+
+  /*
+   * The chapter's notes, gathered BEFORE the prose renders. The prose is where
+   * the reference markers live, and a marker can only become a link to a note
+   * that is already known — rendering in one pass would mean the first half of
+   * a page's prose could never reach the notes at that page's bottom.
+   */
+  const notes: ChapterNote[] = [];
+  {
+    let seq = opts.firstNote;
+    for (const block of blocks) {
+      if (block.category !== 'Footnote') continue;
+      for (const text of splitNotes(block.text)) {
+        const lead = LEADING_SUPERSCRIPT.exec(text);
+        notes.push({ block, text, printed: lead ? printedNumber(lead[0]) : null, seq, refId: null });
+        seq += 1;
+      }
+    }
+  }
+
+  /*
+   * (page, printed) -> the note, or null — and null means the marker stays a
+   * plain `<sup>`. The one-page grace covers a note whose block the model read
+   * on the following page; a wrong link would be worse than no link, so the
+   * search never goes wider than that.
+   */
+  const noteFor = (page: number, printed: number): ChapterNote | null =>
+    notes.find((n) => n.printed === printed && n.block.page === page)
+    ?? notes.find((n) => n.printed === printed && n.block.page === page + 1)
+    ?? null;
+
+  const inline = (text: string, page?: number): string =>
+    dotsInline(text, {
+      stripNoteMarkers: opts.stripNoteMarkers,
+      noteref: page === undefined ? undefined : (printed) => {
+        const note = noteFor(page, printed);
+        if (note === null) return null;
+        // Only the FIRST reference carries an id: ids are unique, and the
+        // backlink can only aim one place. A second marker for the same note
+        // still links forward.
+        const first = note.refId === null;
+        if (first) note.refId = `ref-fn${note.seq}`;
+        return `<a${first ? ` id="${note.refId}"` : ''} class="noteref" epub:type="noteref"`
+          + ` role="doc-noteref" href="#fn${note.seq}"><sup>${printed}</sup></a>`;
+      },
+    });
 
   let label: string | null = null;
   let openList: 'ol' | 'ul' | null = null;
@@ -780,7 +857,7 @@ export function buildChapterBody(
         out.push(`<${tag}${stamp(block)}>`);
         openList = tag;
       }
-      out.push(`  <li${stamp(block)}>${marker(block)}${inline(block.text)}</li>`);
+      out.push(`  <li${stamp(block)}>${marker(block)}${inline(block.text, block.page)}</li>`);
       lastParagraph = null;
       continue;
     }
@@ -789,7 +866,7 @@ export function buildChapterBody(
     switch (block.category) {
       case 'Title':
       case 'Section-header': {
-        const xhtml = inline(block.text);
+        const xhtml = inline(block.text, block.page);
         // The TAG still comes from the true category: `h1` for a Title and `h2`
         // for a Section-header is the book's own hierarchy, and a chapter that
         // opens on a Section-header did not become a Title by opening one.
@@ -803,14 +880,14 @@ export function buildChapterBody(
       }
       case 'Quote':
         out.push(
-          `<blockquote${stamp(block)}><p${stamp(block)}>${marker(block)}${inline(block.text)}</p></blockquote>`,
+          `<blockquote${stamp(block)}><p${stamp(block)}>${marker(block)}${inline(block.text, block.page)}</p></blockquote>`,
         );
         lastParagraph = null;
         break;
       case 'Footnote':
-        // Held back to the end of the chapter. The page marker is not consumed
-        // here: a note is not where its page's body begins.
-        footnotes.push(block);
+        // Already in `notes`, held back to the end of the chapter. The page
+        // marker is not consumed here: a note is not where its page's body
+        // begins.
         break;
       case 'Table':
         out.push(
@@ -820,7 +897,7 @@ export function buildChapterBody(
         lastParagraph = null;
         break;
       case 'Formula':
-        out.push(`<p class="formula"${stamp(block)}>${marker(block)}${inline(block.text)}</p>`);
+        out.push(`<p class="formula"${stamp(block)}>${marker(block)}${inline(block.text, block.page)}</p>`);
         lastParagraph = null;
         break;
       case 'Picture': {
@@ -834,7 +911,7 @@ export function buildChapterBody(
         break;
       }
       case 'Caption':
-        out.push(`<p class="caption"${stamp(block)}>${marker(block)}${inline(block.text)}</p>`);
+        out.push(`<p class="caption"${stamp(block)}>${marker(block)}${inline(block.text, block.page)}</p>`);
         lastParagraph = null;
         break;
       default: {
@@ -859,11 +936,11 @@ export function buildChapterBody(
             block.text,
             lastParagraphText,
             opts.lexicon,
-            inline,
+            (text) => inline(text, block.page),
           );
           lastParagraphText = joinTexts(lastParagraphText, block.text, opts.lexicon);
         } else {
-          out.push(`<p${classOf(align)}${stamp(block)}>${marker(block)}${inline(block.text)}</p>`);
+          out.push(`<p${classOf(align)}${stamp(block)}>${marker(block)}${inline(block.text, block.page)}</p>`);
           lastParagraph = out.length - 1;
           lastParagraphText = block.text;
         }
@@ -873,22 +950,40 @@ export function buildChapterBody(
   }
   closeList();
 
-  let note = opts.firstNote;
-  if (footnotes.length > 0) {
+  if (notes.length > 0) {
     out.push('<section class="footnotes" epub:type="footnotes">');
     out.push('<hr/>');
-    for (const block of footnotes) {
-      for (const part of splitNotes(block.text)) {
-        out.push(
-          `<p class="footnote" epub:type="footnote" id="fn${note}"${stamp(block)}>${inline(part)}</p>`,
-        );
-        note += 1;
-      }
+    for (const note of notes) {
+      /*
+       * An <aside epub:type="footnote"> rather than a <p>: that is the element
+       * reading systems recognise for pop-up notes, and it costs nothing to a
+       * reader that just renders it in place. The note's own number becomes
+       * the BACKLINK when some marker in the prose claimed it — click the
+       * number, land back where you were reading — and stays a plain <sup>
+       * when nothing did, because a link to nowhere teaches a reader not to
+       * click the next one. The rest of the note is rendered WITHOUT the
+       * linker (no page passed): a superscript inside a note's text is a
+       * reference in the note's own prose, and (page, printed) would resolve
+       * it to a sibling note at the same page bottom — a wrong link, made
+       * confidently.
+       */
+      const lead = opts.stripNoteMarkers ? null : LEADING_SUPERSCRIPT.exec(note.text);
+      const printed = lead ? printedNumber(lead[0]) : null;
+      const rest = lead ? note.text.slice(lead[0].length).replace(/^\s+/, '') : note.text;
+      const number = printed === null
+        ? ''
+        : note.refId !== null
+          ? `<a class="fn-back" epub:type="backlink" role="doc-backlink" href="#${note.refId}"><sup>${printed}</sup></a> `
+          : `<sup>${printed}</sup> `;
+      out.push(
+        `<aside class="footnote" epub:type="footnote" role="doc-footnote" id="fn${note.seq}"`
+        + `${stamp(note.block)}>${number}${inline(rest)}</aside>`,
+      );
     }
     out.push('</section>');
   }
 
-  return { xhtml: out.join('\n'), label, crops, notes: note - opts.firstNote, joinedPages };
+  return { xhtml: out.join('\n'), label, crops, notes: notes.length, joinedPages };
 }
 
 function classOf(align: string): string {
@@ -1072,7 +1167,8 @@ figure { text-align: center; margin: 1em 0; }
 figure img { max-width: 100%; }
 sup { font-size: 0.75em; line-height: 0; vertical-align: super; }
 .footnotes { font-size: 0.85em; margin-top: 2em; }
-.footnotes p { text-indent: 0; margin-bottom: 0.5em; }
+.footnotes .footnote { text-indent: 0; margin-bottom: 0.5em; }
+a.noteref, a.fn-back { text-decoration: none; }
 .tablewrap { margin: 1em 0; overflow-x: auto; }
 table { border-collapse: collapse; margin: 0 auto; }
 td, th { border: none; padding: 0.35em 1.1em; }

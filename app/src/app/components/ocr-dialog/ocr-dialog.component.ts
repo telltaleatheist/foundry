@@ -80,14 +80,11 @@ import { api } from '../../core/foundry';
             <input type="text" placeholder="3,17,19-24" [ngModel]="skipPages()" (ngModelChange)="skipPages.set($event)" name="skip">
           </label>
 
-          <label class="check">
-            <input type="checkbox" [ngModel]="stripNoteMarkers()" (ngModelChange)="stripNoteMarkers.set($event)" name="strip">
-            <span>
-              Strip footnote markers
-              <em>drops the reference numbers out of the prose — for a narration build</em>
-            </span>
-          </label>
-
+          <!-- No strip-footnote-markers option, deliberately. The engine flag
+               exists for BookForge's narration builds, where a reference number
+               becomes a narrator saying "fourteen". Foundry converts books to
+               be READ: markers are kept and linked to their notes, which is
+               part of what converting to EPUB means here. -->
           <p class="note">
             The book is written into Foundry's workspace and opens here when it is done.
             Save a copy from the tab once you have looked at it.
@@ -195,7 +192,6 @@ export class OcrDialogComponent {
   protected readonly kind = signal<'epub'>('epub');
   protected readonly skipPages = signal('');
   protected readonly language = signal('en');
-  protected readonly stripNoteMarkers = signal(false);
   protected readonly problem = signal<string | null>(null);
   /** The workspace plan is a hash of the whole PDF; a 400 MB scan is not instant. */
   protected readonly busy = signal(false);
@@ -232,7 +228,6 @@ export class OcrDialogComponent {
       };
       const skip = this.skipPages().trim();
       if (skip.length > 0) request.skipPages = skip;
-      if (this.stripNoteMarkers()) request.stripNoteMarkers = true;
       const language = this.language().trim();
       if (language.length > 0) request.language = language;
 

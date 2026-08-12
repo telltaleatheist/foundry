@@ -406,6 +406,18 @@ export interface DotsInlineOptions {
    * its references is a book somebody has to check.
    */
   stripNoteMarkers?: boolean;
+  /**
+   * Turn a reference number into a LINK to its note, when the caller knows one.
+   *
+   * Called with the printed number (`¹⁴` arrives as 14) and returns the full
+   * replacement markup, or null to fall back to the plain `<sup>`. The caller
+   * is `buildChapterBody`, which is the only place that knows the chapter's
+   * notes and the page the marker sits on — the two facts that identify WHICH
+   * note a number names, since printed numbering restarts wherever the book
+   * felt like restarting it. Never consulted under `stripNoteMarkers`: a
+   * marker that is being removed has nothing to link.
+   */
+  noteref?: (printed: number) => string | null;
 }
 
 /**
@@ -422,7 +434,7 @@ export function dotsInline(raw: string, opts: DotsInlineOptions = {}): string {
   out = out.replace(SUPERSCRIPT_RUN, (run) => {
     if (opts.stripNoteMarkers) return '';
     const digits = [...run].map((c) => String(SUPERSCRIPT_DIGITS.indexOf(c))).join('');
-    return `<sup>${digits}</sup>`;
+    return opts.noteref?.(Number(digits)) ?? `<sup>${digits}</sup>`;
   });
   // The one place a newline is content: a break that reached here is a break the
   // page had — a contents entry, a line of verse, the second line of a heading.

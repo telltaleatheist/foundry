@@ -458,6 +458,67 @@ test('one Footnote block carrying three notes becomes three paragraphs', () => {
   );
 });
 
+test('a marker links to its note and the note links back', () => {
+  const body = buildChapterBody([
+    block({ page: 4, category: 'Text', text: 'As Kershaw argues.¹' }),
+    block({ page: 4, category: 'Footnote', text: '¹ Kershaw, p. 4.' }),
+  ], chapterOptions());
+  // Forward: the printed number, wrapped in a noteref that aims at the note.
+  assert.match(
+    body.xhtml,
+    /<a id="ref-fn1" class="noteref" epub:type="noteref" role="doc-noteref" href="#fn1"><sup>1<\/sup><\/a>/,
+  );
+  // Back: the note is an aside whose own number aims at the first reference.
+  assert.match(
+    body.xhtml,
+    /<aside class="footnote" epub:type="footnote" role="doc-footnote" id="fn1"[^>]*>/,
+  );
+  assert.match(
+    body.xhtml,
+    /<a class="fn-back" epub:type="backlink" role="doc-backlink" href="#ref-fn1"><sup>1<\/sup><\/a> Kershaw, p\. 4\./,
+  );
+});
+
+test('printed numbers restart per page, and the page is what disambiguates them', () => {
+  // Pages 4 and 6, not 4 and 5: adjacent Text blocks would ask the cross-page
+  // ink join, which needs page rasters this test has no reason to build.
+  const body = buildChapterBody([
+    block({ page: 4, category: 'Text', text: 'First claim.¹' }),
+    block({ page: 4, category: 'Footnote', text: '¹ Note on page four.' }),
+    block({ page: 6, category: 'Text', text: 'Second claim.¹' }),
+    block({ page: 6, category: 'Footnote', text: '¹ Note on page six.' }),
+  ], chapterOptions());
+  // Both markers are printed "1"; each links to its own page's note.
+  assert.match(body.xhtml, /Second claim\.<a id="ref-fn2"[^>]*href="#fn2">/);
+  assert.match(body.xhtml, /id="fn2"[^>]*>.*Note on page six/);
+});
+
+test('a marker with no matching note stays a plain sup — no link beats a wrong one', () => {
+  const body = buildChapterBody([
+    block({ page: 4, category: 'Text', text: 'A claim.⁷' }),
+    block({ page: 4, category: 'Footnote', text: '¹ The only note.' }),
+  ], chapterOptions());
+  assert.match(body.xhtml, /A claim\.<sup>7<\/sup>/);
+  assert.doesNotMatch(body.xhtml, /A claim\.<a /);
+});
+
+test('a note the model read one page late is still found', () => {
+  const body = buildChapterBody([
+    block({ page: 4, category: 'Text', text: 'A claim.¹' }),
+    block({ page: 5, category: 'Footnote', text: '¹ The note, read on the next page.' }),
+  ], chapterOptions());
+  assert.match(body.xhtml, /A claim\.<a id="ref-fn1"[^>]*href="#fn1">/);
+});
+
+test('stripping the markers strips the links with them', () => {
+  const body = buildChapterBody([
+    block({ page: 4, category: 'Text', text: 'As Kershaw argues.¹' }),
+    block({ page: 4, category: 'Footnote', text: '¹ Kershaw, p. 4.' }),
+  ], { ...chapterOptions(), stripNoteMarkers: true });
+  assert.match(body.xhtml, /As Kershaw argues\.<\/p>/);
+  assert.doesNotMatch(body.xhtml, /noteref|fn-back/);
+});
+
 // ── the running head the model mistagged ────────────────────────────────────
 
 /**
@@ -880,7 +941,10 @@ test('every element carries the page it came from and the model\'s own category'
   ], chapterOptions());
   assert.match(body.xhtml, /<h1 data-bf-page="7" data-bf-cat="title">/);
   assert.match(body.xhtml, /<p data-bf-page="7" data-bf-cat="text">/);
-  assert.match(body.xhtml, /class="footnote" epub:type="footnote" id="fn1" data-bf-page="7" data-bf-cat="footnote"/);
+  assert.match(
+    body.xhtml,
+    /class="footnote" epub:type="footnote" role="doc-footnote" id="fn1" data-bf-page="7" data-bf-cat="footnote"/,
+  );
   // The print-source page marker, once per page, at the first element from it.
   assert.equal(body.xhtml.match(/epub:type="pagebreak"/g)?.length, 1);
 });
