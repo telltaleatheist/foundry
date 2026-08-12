@@ -1,0 +1,4 @@
+# Shell scripts are executed by bash (Git Bash, WSL), where a CRLF ending
+# turns `set -euo pipefail` into `set: pipefail\r: invalid option name`.
+# Pinned to LF so core.autocrlf=true checkouts on Windows cannot break them.
+*.sh text eol=lf
