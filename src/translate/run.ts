@@ -148,6 +148,8 @@ export interface TranslateReport {
   skipped: Map<string, number>;
   /** Answers that failed verification and were asked again. */
   retries: number;
+  /** Blocks that carried no prose at all and were kept exactly as written. */
+  wordless: number;
   navRelabelled: number;
   navUnmapped: number;
   seconds: number;
@@ -181,10 +183,17 @@ interface PendingBlock {
  * and because a person debugging a bad translation should be able to read the
  * exact words the model was given without instrumenting a run (ARCHITECTURE §4).
  */
+/** Which kinds of marker THIS block actually carries — see `systemPrompt`. */
+export interface MarkerInventory {
+  paired: boolean;
+  atomic: boolean;
+}
+
 export function systemPrompt(
   from: NamedLanguage | null,
   to: NamedLanguage,
   instructions: string | undefined,
+  inventory: MarkerInventory = { paired: true, atomic: true },
 ): string {
   const source = from === null
     ? 'the language it is written in, which you should determine from the text itself'
@@ -199,13 +208,7 @@ export function systemPrompt(
     + ' vocabulary literally, as written. This is a historical document; its wording is the evidence.',
     '- Keep the source\'s paragraph as one paragraph. Do not add line breaks.',
     '',
-    'MARKERS: the text contains markers written between ⟦ and ⟧.',
-    `- A pair such as ⟦e1⟧…⟦/e1⟧ wraps a phrase. Translate the phrase and keep the pair around`
-    + ' its translation, properly nested.',
-    '- A single marker such as ⟦m1⟧ stands for something that is not words — a footnote reference,'
-    + ' a page marker, a line break. Place it where it belongs in the translated sentence.',
-    '- Reproduce every marker exactly once, spelled exactly as it appears. Never invent, drop,'
-    + ' duplicate, renumber or translate a marker.',
+    ...markerRules(inventory),
     '',
     'OUTPUT ONLY THE TRANSLATION. No preamble, no notes, no explanations, no quotation marks around'
     + ' it, no code fences.',
@@ -219,6 +222,48 @@ export function systemPrompt(
     );
   }
   return lines.join('\n');
+}
+
+/**
+ * The marker rules, and ONLY the ones this block needs.
+ *
+ * Measured on the first real run (Völkischer Beobachter, qwen3:32b): three
+ * blocks refused three attempts each for containing ⟦e1⟧…⟦/e1⟧ pairs that were
+ * NEVER SENT. Every one of those blocks carried no markers at all — the model
+ * had been taught the pair vocabulary by the prompt and then helpfully applied
+ * it to text it judged emphatic (one was a bold subdeck). A model cannot invent
+ * a notation it was never shown, so a block with no pairs gets no pair rule, a
+ * block with no atomics gets no atomic rule, and a block with neither is told
+ * the one thing it needs to hear: never write these characters. The inventory
+ * is per BLOCK because the failure was per block — the same run's blocks that
+ * did carry pairs round-tripped them fine.
+ */
+export function markerRules(inventory: MarkerInventory): string[] {
+  if (!inventory.paired && !inventory.atomic) {
+    return [
+      'The text contains no ⟦…⟧ markers. Never write the characters ⟦ or ⟧ in your answer, for'
+      + ' emphasis or anything else.',
+    ];
+  }
+  const rules = ['MARKERS: the text contains markers written between ⟦ and ⟧.'];
+  if (inventory.paired) {
+    rules.push(
+      '- A pair such as ⟦e1⟧…⟦/e1⟧ wraps a phrase. Translate the phrase and keep the pair around'
+      + ' its translation, properly nested.',
+    );
+  }
+  if (inventory.atomic) {
+    rules.push(
+      '- A single marker such as ⟦m1⟧ stands for something that is not words — a footnote reference,'
+      + ' a page marker, a line break. Place it where it belongs in the translated sentence.',
+    );
+  }
+  rules.push(
+    '- Reproduce every marker exactly once, spelled exactly as it appears. Never invent, drop,'
+    + ' duplicate, renumber or translate a marker'
+    + (inventory.paired ? '.' : ', and never write a marker not in the source.'),
+  );
+  return rules;
 }
 
 /**
@@ -329,13 +374,35 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
 
   // ── the work ──────────────────────────────────────────────────────────────
 
-  const system = systemPrompt(from, to, opts.instructions);
   const translated = new Map<PendingBlock, string>();
   const refusals: string[] = [];
   let retries = 0;
+  let wordless = 0;
 
   for (const block of pending) {
     const sourceText = block.masked.text;
+
+    /*
+     * A block with nothing left after the edge peel — a heading that is only a
+     * pagebreak span, a paragraph that is only a <br/>. There are no words, so
+     * there is nothing to ask a model, and asking anyway is how a run gets an
+     * answer it then has to refuse. The block goes into the translation
+     * exactly as the book wrote it.
+     */
+    if (stripMarkers(sourceText).length === 0 && block.masked.markers.length === 0) {
+      // Edges plus whatever whitespace sat between them IS the whole block, so
+      // the reassembly below is byte-identical to the source.
+      translated.set(block, block.masked.leading + sourceText + block.masked.trailing);
+      wordless += 1;
+      continue;
+    }
+
+    // The prompt teaches ONLY the marker kinds this block carries — see
+    // `markerRules`, and the three refusals that made it exist.
+    const system = systemPrompt(from, to, opts.instructions, {
+      paired: block.masked.markers.some((m) => m.kind === 'paired'),
+      atomic: block.masked.markers.some((m) => m.kind === 'atomic'),
+    });
     let accepted: string | null = null;
     let lastComplaint = '';
 
@@ -364,7 +431,12 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
       continue;
     }
 
-    translated.set(block, restoreMarkers(block.masked, accepted));
+    // The edges the model never saw go back on mechanically — the start of a
+    // block is the start of its translation, in any language.
+    translated.set(
+      block,
+      block.masked.leading + restoreMarkers(block.masked, accepted) + block.masked.trailing,
+    );
     opts.log(`translate: block ${block.ordinal}/${pending.length} (${block.documentPath})`);
   }
 
@@ -462,6 +534,7 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
     documents: perDocument.size,
     skipped,
     retries,
+    wordless,
     navRelabelled: nav?.relabelled ?? 0,
     navUnmapped: nav?.unmapped ?? 0,
     seconds,

@@ -21,8 +21,43 @@ test('a block with emphasis and a noteref round-trips byte for byte', () => {
   const inner = `${PAGEBREAK}Ein <em>voelkischer</em> Staat war das Ziel${NOTEREF} der Bewegung.`;
   const masked = maskBlock(inner);
 
-  assert.equal(masked.text, '⟦m1⟧Ein ⟦e1⟧voelkischer⟦/e1⟧ Staat war das Ziel⟦m2⟧ der Bewegung.');
-  assert.equal(restoreMarkers(masked, masked.text), inner);
+  // The pagebreak leads the block, so it is PEELED — the model never sees it
+  // and never has to be trusted with it. The noteref is interior; its position
+  // depends on the sentence, so it travels.
+  assert.equal(masked.text, 'Ein ⟦e1⟧voelkischer⟦/e1⟧ Staat war das Ziel⟦m2⟧ der Bewegung.');
+  assert.equal(masked.leading, PAGEBREAK);
+  assert.equal(masked.trailing, '');
+  assert.equal(masked.leading + restoreMarkers(masked, masked.text) + masked.trailing, inner);
+});
+
+test('edge atomics peel with their whitespace, and the model owes nothing for them', () => {
+  // The failure this exists for: "Kirchenwahlen 1932" — a two-word heading
+  // whose only marker was its leading pagebreak — refused three attempts
+  // running because qwen3:32b kept dropping the token. A heading that is
+  // mostly token sheds the part that is not words; so the part that is not
+  // words no longer travels.
+  const inner = `${PAGEBREAK}Kirchenwahlen 1932`;
+  const masked = maskBlock(inner);
+  assert.equal(masked.text, 'Kirchenwahlen 1932');
+  assert.deepEqual(masked.markers, []);
+  assert.equal(masked.leading + restoreMarkers(masked, 'Church Elections 1932') + masked.trailing,
+    `${PAGEBREAK}Church Elections 1932`);
+
+  // Trailing, with a space that belongs to the edge: byte-for-byte back.
+  const tail = maskBlock(`Am Ende. <br/>`);
+  assert.equal(tail.text, 'Am Ende.');
+  assert.equal(tail.trailing, ' <br/>');
+  assert.equal(tail.leading + restoreMarkers(tail, tail.text) + tail.trailing, 'Am Ende. <br/>');
+});
+
+test('a block that is nothing but markup keeps everything on its edges', () => {
+  // A heading that is only its pagebreak span: no words, no markers left, and
+  // the edges reassemble to the source exactly. `run.ts` skips the model for
+  // this shape — there is nothing to ask it.
+  const masked = maskBlock(`${PAGEBREAK}<br/>`);
+  assert.equal(masked.text, '');
+  assert.deepEqual(masked.markers, []);
+  assert.equal(masked.leading + masked.text + masked.trailing, `${PAGEBREAK}<br/>`);
 });
 
 test('an atomic element inside a paired one nests, and still round-trips', () => {

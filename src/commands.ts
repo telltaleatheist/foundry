@@ -473,10 +473,13 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
   const skipped = [...report.skipped].sort((a, b) => b[1] - a[1]);
   const struck = skipped.length === 0 ? '' : `, skipped ${skipped.map(([c, n]) => `${n} ${c}`).join(', ')}`;
   const asked = report.retries === 0 ? '' : `, ${report.retries} answers rejected and asked again`;
+  const kept = report.wordless === 0
+    ? ''
+    : `, ${report.wordless} wordless block(s) kept as written`;
   log(
     `translate: ${report.blocks} blocks in ${report.seconds.toFixed(1)}s `
     + `(${(report.blocks / Math.max(report.seconds, 0.001)).toFixed(2)} a second, ${report.model})`
-    + `${struck}${asked}`,
+    + `${struck}${asked}${kept}`,
   );
   if (report.navUnmapped > 0) {
     log(

@@ -113,6 +113,24 @@ export interface MaskedBlock {
   /** What the model is sent: prose, with tokens where the markup was. */
   text: string;
   markers: Marker[];
+  /**
+   * Markup peeled off the block's EDGES, never shown to the model at all.
+   *
+   * Measured on the first real run of this command (Völkischer Beobachter,
+   * qwen3:32b): the heading "Kirchenwahlen 1932" refused three times running
+   * because the model kept dropping its one atomic token — a pagebreak span,
+   * which `dots-book.ts` writes at the START of the first block of every page,
+   * so nearly every page's first block carries one. A two-word heading is
+   * mostly token, and a model translating two words sheds the part that is not
+   * words. But an atomic marker at the edge of a block needs nothing from the
+   * model: it has no prose inside it and its position is an invariant — the
+   * start stays the start in any language. So it is removed here and
+   * reattached mechanically after `restoreMarkers`, and the model's obligation
+   * shrinks to the markers whose position genuinely depends on the sentence:
+   * the interior ones.
+   */
+  leading: string;
+  trailing: string;
 }
 
 /**
@@ -192,7 +210,35 @@ export function maskBlock(inner: string): MaskedBlock {
     return out;
   };
 
-  return { text: walk(root), markers };
+  let text = walk(root);
+  const byId = new Map(markers.map((m) => [m.id, m] as const));
+  const peeled = new Set<string>();
+  let leading = '';
+  let trailing = '';
+
+  /*
+   * The edge peel — see `MaskedBlock.leading`. Whitespace travels with the
+   * side it was on, so `<span/>Wort` and `<span/> Wort` both come back exactly
+   * as written. Only ATOMIC tokens peel: a paired token at the edge wraps
+   * prose, and prose is the model's. The loops run until the edge is prose,
+   * so a block opening on two spans loses both.
+   */
+  const LEAD = /^(\s*)⟦(m\d+)⟧(\s*)/;
+  const TAIL = /(\s*)⟦(m\d+)⟧(\s*)$/;
+  for (let hit = LEAD.exec(text); hit !== null; hit = LEAD.exec(text)) {
+    const marker = byId.get(hit[2]) as AtomicMarker;
+    leading += hit[1] + marker.source + hit[3];
+    peeled.add(marker.id);
+    text = text.slice(hit[0].length);
+  }
+  for (let hit = TAIL.exec(text); hit !== null; hit = TAIL.exec(text)) {
+    const marker = byId.get(hit[2]) as AtomicMarker;
+    trailing = hit[1] + marker.source + hit[3] + trailing;
+    peeled.add(marker.id);
+    text = text.slice(0, hit.index);
+  }
+
+  return { text, markers: markers.filter((m) => !peeled.has(m.id)), leading, trailing };
 }
 
 /**

@@ -161,27 +161,33 @@ test('three bad answers refuse the block by name and write no book at all', asyn
       (error: Error) => {
         assert.ok(error instanceof TranslateError);
         /*
-         * SIX of the seven, not all seven — and the one that got through is the
-         * honest limit of a ratio test rather than a defect. "nope" is four
-         * characters against "Die Ordnung"'s eleven, which is over a quarter,
-         * so a two-word section header is short enough that a junk answer is
-         * not distinguishable from a terse translation by length alone. That is
-         * exactly why the length rule is one of five checks and not the check:
-         * every block carrying a marker was refused on the markers.
+         * FIVE of the seven, and the two that got through are the honest limit
+         * of a ratio test. "nope" is four characters against "Die Ordnung"'s
+         * eleven and "Der Staat"'s nine — over a quarter of each — so a
+         * two-word heading is short enough that a junk answer is not
+         * distinguishable from a terse translation by length alone. "Der
+         * Staat" used to be refused, and for a reason that was an ACCIDENT:
+         * its only marker was its leading pagebreak span, and the junk answer
+         * dropped it. The same accident refused three correct translations of
+         * "Kirchenwahlen 1932" on the first real run — a heading that is
+         * mostly token sheds the token — which is why edge atomics no longer
+         * travel to the model at all (`markers.ts`), and why length is one of
+         * five checks rather than the check: every block with an INTERIOR
+         * marker is still refused on the markers.
          */
-        assert.match(error.message, /6 of 7 blocks could not be translated/);
+        assert.match(error.message, /5 of 7 blocks could not be translated/);
         assert.match(error.message, /NOTHING WAS WRITTEN/);
         // Named: the document, the block, its category, its page, its words.
-        assert.match(error.message, /EPUB\/text\/c0001\.xhtml block 1 \(chapter, page 7\): "Der Staat…"/);
         assert.match(error.message, /block 2 \(text, page 7\)[^\n]*dropped 2 of 2 marker/);
         assert.match(error.message, /block 5 \(quote, page 8\)[^\n]*under 25%/);
         assert.match(error.message, /block 7 \(footnote, page 9\)/);
+        assert.doesNotMatch(error.message, /block 1 /);
         assert.doesNotMatch(error.message, /block 3 /);
         return true;
       },
     );
     assert.equal(fs.existsSync(out), false, 'no partial book is left behind');
-    assert.equal(server.asked.length, 19, 'three attempts each, and one block that passed');
+    assert.equal(server.asked.length, 17, 'three attempts each, and two blocks that passed');
     assert.ok(logged.some((l) => l.startsWith('translate: REFUSED ')));
   } finally {
     clean();
@@ -307,4 +313,30 @@ test('with no --from the model is told to determine the language itself', () => 
   const prompt = systemPrompt(null, readLanguage('en', '--to'), undefined);
   assert.match(prompt, /determine from the text itself/);
   assert.doesNotMatch(prompt, /ADDITIONAL INSTRUCTIONS/);
+});
+
+test('the prompt teaches only the marker kinds the block carries', () => {
+  // Measured on the first real run: three blocks with NO markers refused three
+  // attempts each for answers containing ⟦e1⟧…⟦/e1⟧ pairs the prompt itself
+  // had taught. A model cannot invent a notation it was never shown.
+  const en = readLanguage('en', '--to');
+  const none = systemPrompt(null, en, undefined, { paired: false, atomic: false });
+  assert.match(none, /contains no ⟦…⟧ markers/);
+  assert.match(none, /Never write the characters ⟦ or ⟧/);
+  assert.doesNotMatch(none, /A pair such as/);
+  assert.doesNotMatch(none, /A single marker such as/);
+
+  const atomicOnly = systemPrompt(null, en, undefined, { paired: false, atomic: true });
+  assert.match(atomicOnly, /A single marker such as/);
+  assert.doesNotMatch(atomicOnly, /A pair such as/);
+  assert.match(atomicOnly, /never write a marker not in the source/);
+
+  const pairedOnly = systemPrompt(null, en, undefined, { paired: true, atomic: false });
+  assert.match(pairedOnly, /A pair such as/);
+  assert.doesNotMatch(pairedOnly, /A single marker such as/);
+
+  // The default is both — the shape every earlier assertion in this file pins.
+  const both = systemPrompt(null, en, undefined);
+  assert.match(both, /A pair such as/);
+  assert.match(both, /A single marker such as/);
 });
