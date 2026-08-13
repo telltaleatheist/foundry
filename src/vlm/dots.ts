@@ -170,6 +170,18 @@ const FURNITURE: ReadonlySet<DotsCategory> = new Set<DotsCategory>(['Page-header
 export interface DotsBlock {
   /** 1-based, the PDF's own numbering. */
   page: number;
+  /**
+   * Where this block stood in the model's answer, which IS its reading order.
+   *
+   * Kept because `blocks` and `furniture` are two lists and the model wrote
+   * one. Every book route drops the furniture and never has to put the two back
+   * together; `pdf-layer.ts` keeps it, and a running head that arrives after
+   * the page's last paragraph is a running head somebody's copy-and-paste finds
+   * at the bottom of a page it was printed at the top of. Sub-blocks a markdown
+   * split produced share their parent's number — they were one answer element —
+   * and a stable sort is what keeps them in the order the split made them.
+   */
+  order: number;
   category: DotsCategory;
   /** Scaled into the render's pixel frame. */
   box: DotsBox;
@@ -272,6 +284,7 @@ export function parseDotsPage(answer: string, opts: DotsParseOptions): DotsParse
 
     const block: DotsBlock = {
       page,
+      order: index,
       category: category as DotsCategory,
       box,
       text,

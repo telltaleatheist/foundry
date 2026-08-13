@@ -77,8 +77,8 @@ const OUT_PATH: OptionSpec = {
 const VLM_FORMAT: OptionSpec = {
   name: 'format',
   type: 'string',
-  placeholder: '<epub|txt>',
-  describe: 'What --out is written as. Default epub; txt is readable plain text.',
+  placeholder: '<epub|txt|pdf>',
+  describe: 'What --out is written as. Default epub; txt is plain text; pdf is the scan, made searchable.',
 };
 
 const VLM_MODEL: OptionSpec = {
@@ -408,8 +408,8 @@ async function runDoctor(args: ParsedArgs): Promise<void> {
 export const COMMANDS: readonly Command[] = [
   {
     name: 'vlm-convert',
-    summary: 'A vision model reads the pages: PDF in, EPUB or plain text out.',
-    usage: '--pdf <file.pdf> --out <book.epub> [--format <epub|txt>] [--vlm-model <id>] [--python <path>]',
+    summary: 'A vision model reads the pages: PDF in, EPUB, plain text or a searchable PDF out.',
+    usage: '--pdf <file.pdf> --out <book.epub> [--format <epub|txt|pdf>] [--vlm-model <id>] [--python <path>]',
     detail: [
       'A document vision model reads each page picture and hands back marked-up',
       'text, and foundry assembles those answers into an EPUB. No Tesseract, no',
@@ -511,10 +511,29 @@ export const COMMANDS: readonly Command[] = [
       'stops the run and names its tag rather than arriving as a book quietly',
       'missing a table.',
       '',
+      '--format pdf writes THE SCAN BACK OUT, made searchable. Every page of the',
+      'input PDF is carried through untouched — same images, same bytes, same',
+      'metadata — and the recognised text is drawn over it in rendering mode 3,',
+      'which draws nothing. The file still looks exactly like the scan and now',
+      'answers to search, select and copy. This is the evidentiary mode: what the',
+      'page printed is what the layer says. Nothing that turns pages into a BOOK',
+      'runs on this route — no chapters, no page-turn joins, no dehyphenation, no',
+      'note markers, no reflow, no pictures — and the running heads and the page',
+      'numbers are KEPT, because they are on the page. Text goes down verbatim,',
+      'block by block, in the model\'s own reading order. It needs a dialect that',
+      'answers with geometry (dots-ocr does, and it is the default); a prose',
+      'dialect is refused, because there are no positions to place anything at. A',
+      'page that could not be read gets no layer and is reported like any other,',
+      'and a character the layer\'s font cannot write stops the run and names',
+      'itself rather than vanishing out of a file that claims to be searchable.',
+      '',
       '--out AND --format MUST AGREE. `--format txt --out book.epub` is refused,',
       'and so is the reverse: foundry does not rename a file somebody chose and',
       'does not ignore a flag somebody typed. An --out with no extension, or with',
-      'one that names neither format, is the caller\'s business and is left alone.',
+      'one that names none of the formats, is the caller\'s business and is left',
+      'alone. `--out` may never be `--pdf`, whatever the format: foundry reads the',
+      'one and writes the other, and a scan overwritten by its own conversion is',
+      'the single input that running the command again cannot recover.',
       '',
       'NOTHING DEGRADES SILENTLY. A page that came back empty, a page that hit the',
       'token cap while the model was still writing, a page whose answer does not',

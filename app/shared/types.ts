@@ -29,8 +29,13 @@ export type JobKind = ConversionKind | 'env-install';
  * decision: a job's kind IS the extension its output carries, and the two
  * drifting apart would mean the app naming a file `.epub` and the engine
  * writing text into it — which the engine refuses outright (src/vlm/text-out.ts).
+ *
+ * `pdf` is not a third way of writing the book. It is the SOURCE document with
+ * an invisible text layer over its pages — the scan, made searchable — so it
+ * comes out looking like what went in and the app can open it in the same PDF
+ * tab it opens any other (src/vlm/pdf-layer.ts).
  */
-export type ConversionKind = 'epub' | 'txt';
+export type ConversionKind = 'epub' | 'txt' | 'pdf';
 
 export type JobState = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 

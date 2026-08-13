@@ -49,7 +49,7 @@ import { api } from '../../core/foundry';
                   <span class="name" [title]="job.inputPath">{{ label(job) }}</span>
                   @if (job.state === 'queued' || job.state === 'running') {
                     <button class="x" (click)="queue.cancel(job.id)" title="Cancel">✕</button>
-                  } @else if (job.state === 'done' && (job.kind === 'epub' || job.kind === 'txt')) {
+                  } @else if (job.state === 'done' && job.kind !== 'env-install') {
                     <!--
                       Open comes FIRST because it is what a finished conversion is
                       for. Reveal stays beside it: the book is in the app's
@@ -64,9 +64,15 @@ import { api } from '../../core/foundry';
                       tab strip, the recents and the file allow-list to show a
                       file every OS already opens. Reveal is one button and points
                       at the thing that was actually made.
+
+                      A SEARCHABLE PDF OPENS, and needs nothing new to do it: the
+                      tab kinds are epub and pdf, and what this job made is a PDF.
+                      That is also the only way to see that it worked — the file
+                      looks exactly like the scan until somebody searches it.
                     -->
-                    @if (job.kind === 'epub') {
-                      <button class="open" (click)="open(job)" title="Open this book in a tab">Open</button>
+                    @if (job.kind === 'epub' || job.kind === 'pdf') {
+                      <button class="open" (click)="open(job)"
+                              [title]="job.kind === 'pdf' ? 'Open this PDF in a tab' : 'Open this book in a tab'">Open</button>
                     }
                     <button class="x" (click)="reveal(job)" title="Show it in the file manager">↗</button>
                   }

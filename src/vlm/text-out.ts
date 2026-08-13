@@ -46,15 +46,37 @@ export class VlmTextError extends Error {
   }
 }
 
-/** What `--format` chooses between. */
-export type VlmOutputFormat = 'epub' | 'txt';
+/**
+ * What `--format` chooses between.
+ *
+ * Two of the three are the same book written down differently and are built by
+ * this file and `epub.ts` from one assembly. `pdf` is not one of them: it is
+ * the ORIGINAL document with an invisible text layer over its pages, it forks
+ * out of the pipeline before a book is assembled at all, and `pdf-layer.ts`
+ * owns it end to end. It lives in this type because `--format` is one choice
+ * about one file, and the rules below — the extension, the contradiction — are
+ * about the file rather than about how it was made.
+ */
+export type VlmOutputFormat = 'epub' | 'txt' | 'pdf';
 
-export const VLM_OUTPUT_FORMATS: readonly VlmOutputFormat[] = ['epub', 'txt'];
+export const VLM_OUTPUT_FORMATS: readonly VlmOutputFormat[] = ['epub', 'txt', 'pdf'];
 
 /** The extension a format's own files carry, and the only one it answers to. */
 const FORMAT_EXTENSION: Readonly<Record<VlmOutputFormat, string>> = {
   epub: '.epub',
   txt: '.txt',
+  pdf: '.pdf',
+};
+
+/**
+ * What is actually inside one of those files, in the words the refusal below
+ * needs. A sentence about a mismatch has to be able to say what the mismatch
+ * would put in the file.
+ */
+const FORMAT_CONTENT: Readonly<Record<VlmOutputFormat, string>> = {
+  epub: 'a zip',
+  txt: 'plain text',
+  pdf: 'a PDF',
 };
 
 /**
@@ -68,7 +90,7 @@ const FORMAT_EXTENSION: Readonly<Record<VlmOutputFormat, string>> = {
  *
  * Only a KNOWN format's extension can contradict anything. `--out notes.md`
  * under `--format txt` is not a contradiction: `.md` makes no claim about which
- * of foundry's two output formats the file holds, and a rule that refused every
+ * of foundry's output formats the file holds, and a rule that refused every
  * extension but its own would be foundry having an opinion about what a person
  * may call their own file.
  *
@@ -83,8 +105,8 @@ export function formatConflict(outPath: string, format: VlmOutputFormat): string
   if (claimed === undefined || claimed === format) return null;
   return `--format ${format} writes ${FORMAT_EXTENSION[format]} and --out names "${outPath}", which `
     + `is ${FORMAT_EXTENSION[claimed]}. Change one of them: a ${FORMAT_EXTENSION[claimed]} holding `
-    + `${format === 'txt' ? 'plain text' : 'a zip'} is a file that opens wrong everywhere, and `
-    + 'foundry does not rename a file somebody chose.';
+    + `${FORMAT_CONTENT[format]} is a file that opens wrong everywhere, and foundry does not rename `
+    + 'a file somebody chose.';
 }
 
 // ── the shape of the page ───────────────────────────────────────────────────

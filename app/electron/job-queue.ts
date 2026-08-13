@@ -205,7 +205,7 @@ function argsFor(request: JobRequest): string[] {
   // one it has always been and a diff of two runs shows what actually differed.
   // The extension `planConversion` chose already agrees with it; the engine
   // refuses the pair outright if it ever stops agreeing.
-  if (request.kind === 'txt') args.push('--format', 'txt');
+  if (request.kind !== 'epub') args.push('--format', request.kind);
   if (request.skipPages && request.skipPages.trim().length > 0) {
     args.push('--skip-pages', request.skipPages.trim());
   }

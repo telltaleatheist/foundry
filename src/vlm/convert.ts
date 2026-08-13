@@ -45,6 +45,7 @@ import {
 import { DEFAULT_VLM_CONCURRENCY, readPagesFromEndpoint } from './endpoint.js';
 import { buildVlmEpub, type VlmChapter, type VlmEpubMetadata, type VlmPageBlocks } from './epub.js';
 import { requireVlmModel, type VlmModelDef } from './models.js';
+import { buildSearchablePdf } from './pdf-layer.js';
 import { openReadingsBank, writeCompletionMarker } from './readings.js';
 import { formatConflict, type VlmOutputFormat } from './text-out.js';
 
@@ -184,6 +185,42 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
   // the identical sentence.
   const conflict = formatConflict(outPath, format);
   if (conflict !== null) throw new Error(conflict);
+
+  /*
+   * `--out` IS NEVER `--pdf`. One path is read and one is written and no
+   * command takes one path for both (`PDF_IN` in commands.ts) — but `--format
+   * pdf` is the first format whose output has the input's extension, so the
+   * two can now be typed the same by accident, and the accident destroys the
+   * scan. Checked here rather than beside the other pair because it is a
+   * question about the filesystem — case, links, a relative path and an
+   * absolute one naming one file — and the argv layer's checks are pure.
+   */
+  if (sameFile(pdfPath, outPath)) {
+    throw new Error(
+      `--out and --pdf name the same file (${outPath}). foundry reads the PDF and writes the book, `
+      + 'and it will not write one over the other: a scan that has been overwritten by its own '
+      + 'conversion is the one input that cannot be recovered by running this again.',
+    );
+  }
+
+  /*
+   * A searchable PDF NEEDS BOXES, and only one dialect has them.
+   *
+   * Every other format is built out of what the model said; this one is built
+   * out of where it said it, and a dialect that answers with prose has no
+   * "where" to give. Refused before a page renders rather than at the end of a
+   * forty-minute run, and refused rather than quietly emitted as an EPUB: a
+   * flag this program drops on the floor is the failure the format plumbing
+   * exists to close (ARCHITECTURE §8).
+   */
+  if (format === 'pdf' && !geometric) {
+    throw new Error(
+      `--format pdf places the recognised text at the position it was printed, and ${model.id} `
+      + `answers in the ${model.dialect} dialect, which is prose: it reports what a page says and `
+      + 'never where on the page it says it. There is nothing to place. Use a dialect that answers '
+      + 'with geometry — dots-ocr does, and it is the default — or pick another --format.',
+    );
+  }
 
   // Both readings flags are instructions ABOUT A BANK, and without --readings
   // there is no bank. Refused rather than ignored: an instruction this program
@@ -382,7 +419,10 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
           render: { width: page.width, height: page.height },
           maxPixels: maxPixels!,
         });
-        droppedFurniture += parsed.furniture.length;
+        // Not dropped on the PDF route, so not counted as dropped. The layer
+        // keeps the folio and the running head — they are what the page
+        // printed, and this format's claim is about the page (`pdf-layer.ts`).
+        if (format !== 'pdf') droppedFurniture += parsed.furniture.length;
         geometryPages.push(parsed);
       } catch (err) {
         if (!(err instanceof DotsPageError)) throw err;
@@ -431,8 +471,73 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     let pictures = 0;
     let joinedPages: number[] = [];
     let suppressedHeads: { page: number; text: string }[] = [];
+    /** Set on the PDF route only, and what its phase line is made of. */
+    let layer: { pages: number; lines: number } | null = null;
 
-    if (geometric) {
+    if (format === 'pdf') {
+      /*
+       * THE FORK, and it is a fork out of the book rather than inside it.
+       *
+       * `buildDotsBook` is where chapters get proposed, page turns get joined,
+       * words get dehyphenated against the book's own lexicon, note markers get
+       * linked and running heads get suppressed — every rule that turns pages
+       * into a BOOK. None of them runs here, because none of them is about the
+       * page, and this format's whole claim is that the layer says what the
+       * page printed. The blocks go down where the model put them, in the order
+       * it answered in, furniture and all.
+       */
+      const renders = new Map(run.pages.map((page) => [page.number, page]));
+      blocks = geometryPages.reduce((sum, p) => sum + p.blocks.length + p.furniture.length, 0);
+      const furniture = geometryPages.reduce((sum, p) => sum + p.furniture.length, 0);
+      categories = countCategories(geometryPages);
+      opts.log(
+        `vlm-convert: ${blocks} blocks over ${geometryPages.length} pages in `
+        + `${parseSeconds.toFixed(2)}s, ${furniture} header/footer block(s) KEPT — a searchable PDF `
+        + 'is a record of the page, and the folio is on the page',
+      );
+      const built = await buildSearchablePdf({
+        pdfBytes: fs.readFileSync(pdfPath),
+        dpi: VLM_DPI,
+        pages: geometryPages.map((page) => {
+          const render = renders.get(page.page)!;
+          return {
+            page: page.page,
+            render: { width: render.width, height: render.height },
+            // Stable by `order`, which is the model's own reading order, so the
+            // two lists `parseDotsPage` splits its answer into go back together
+            // as the one list it answered with (`dots.ts`).
+            blocks: [...page.blocks, ...page.furniture]
+              .sort((a, b) => a.order - b.order)
+              .map((block) => ({ box: block.box, text: block.text })),
+          };
+        }),
+      });
+      bytes = built.bytes;
+      chapters = [];
+      // Genuinely zero: there is no XHTML phase on this route, and a number
+      // printed for a phase that did not happen is worse than no number.
+      xhtmlSeconds = 0;
+      zipSeconds = built.zipSeconds;
+      layer = { pages: built.overlaidPages, lines: built.lines };
+      /*
+       * A layer that was already there and has been taken back out, SAID.
+       *
+       * This is the one thing in the run that deletes something, and the reason
+       * it is allowed to is that foundry wrote it: a second layer over the
+       * first would double every search hit in the book while looking identical
+       * in a viewer. A deletion nobody can read is a deletion nobody can check,
+       * so it is a line in the log with the version and the date the old layer
+       * recorded about itself.
+       */
+      if (built.replaced !== null) {
+        const { pages, by, at } = built.replaced;
+        opts.log(
+          `vlm-convert: replaced the existing foundry text layer on ${pages} page(s)`
+          + `${by !== null ? `, written by foundry ${by}` : ''}${at !== null ? ` on ${at}` : ''}`
+          + ' — a layer is replaced and never stacked, because two of them double every search hit',
+        );
+      }
+    } else if (geometric) {
       blocks = geometryPages.reduce((sum, p) => sum + p.blocks.length, 0);
       opts.log(
         `vlm-convert: ${blocks} blocks over ${geometryPages.length} pages in `
@@ -534,14 +639,24 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
 
     const writeSeconds = (Date.now() - writeStarted) / 1000;
 
-    // The middle phase is named for what it actually did. Both formats turn the
-    // assembled documents into bytes; only one of them zips, and a run that
-    // wrote plain text under the word "zip" would be a phase breakdown nobody
-    // could use to work out where the seconds went.
+    /*
+     * The middle phase is named for what it actually did.
+     *
+     * All three formats turn what was read into bytes; one of them zips, one
+     * renders text and one draws a layer over a document it did not make, and a
+     * run that wrote a PDF overlay under the word "zip" would be a phase
+     * breakdown nobody could use to work out where the seconds went. The PDF
+     * line counts pages and lines rather than chapters, because it has no
+     * chapters — it never looked for any.
+     */
     opts.log(
-      `vlm-convert: ${chapters.length} chapters, ${bytes.length} bytes — `
-      + `${xhtmlSeconds.toFixed(2)}s XHTML, ${zipSeconds.toFixed(2)}s ${format === 'txt' ? 'text' : 'zip'}, `
-      + `${writeSeconds.toFixed(2)}s write`,
+      layer !== null
+        ? `vlm-convert: ${layer.pages} page(s) overlaid, ${layer.lines} line(s) of invisible text, `
+          + `${bytes.length} bytes — ${zipSeconds.toFixed(2)}s overlay, `
+          + `${writeSeconds.toFixed(2)}s write`
+        : `vlm-convert: ${chapters.length} chapters, ${bytes.length} bytes — `
+          + `${xhtmlSeconds.toFixed(2)}s XHTML, ${zipSeconds.toFixed(2)}s `
+          + `${format === 'txt' ? 'text' : 'zip'}, ${writeSeconds.toFixed(2)}s write`,
     );
     opts.log(`vlm-convert: wrote ${outPath}`);
 
@@ -580,6 +695,47 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
   } finally {
     if (!keepRenders) fs.rmSync(rendersDir, { recursive: true, force: true });
   }
+}
+
+/**
+ * Do two paths name one file?
+ *
+ * `realpathSync` where the file exists, so that a link, a short name and a
+ * different spelling of the same directory all collapse; the resolved path
+ * where it does not, which is the ordinary case for an output. Compared
+ * case-insensitively on Windows, where `Book.pdf` and `book.pdf` ARE one file
+ * and a case-sensitive test would happily let a run destroy its own input.
+ */
+function sameFile(a: string, b: string): boolean {
+  const real = (filePath: string): string => {
+    try {
+      return fs.realpathSync.native(filePath);
+    } catch {
+      return filePath;
+    }
+  };
+  const [left, right] = [real(a), real(b)];
+  return process.platform === 'win32'
+    ? left.toLowerCase() === right.toLowerCase()
+    : left === right;
+}
+
+/**
+ * What the model called the blocks, counted.
+ *
+ * The book routes get this out of the assembler, which is the thing that sees
+ * every block on its way into a document. The PDF route has no assembler, so it
+ * counts them here — off the same pages, furniture included, because on that
+ * route the furniture is in the output.
+ */
+function countCategories(pages: readonly DotsParsedPage[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const page of pages) {
+    for (const block of [...page.blocks, ...page.furniture]) {
+      counts[block.category] = (counts[block.category] ?? 0) + 1;
+    }
+  }
+  return counts;
 }
 
 function requireMaxPixels(model: VlmModelDef): number {

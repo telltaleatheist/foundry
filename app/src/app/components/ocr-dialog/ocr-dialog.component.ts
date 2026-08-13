@@ -61,13 +61,7 @@ import { api } from '../../core/foundry';
             <select [ngModel]="kind()" (ngModelChange)="kind.set($event)" name="kind">
               <option value="epub">EPUB</option>
               <option value="txt">Plain text</option>
-              <!--
-                Disabled rather than absent: "foundry cannot do this yet" and
-                "foundry will never do this" look identical when the option is
-                simply missing, and a searchable PDF is the single most asked-for
-                second output.
-              -->
-              <option value="pdf" disabled>Searchable PDF — coming soon</option>
+              <option value="pdf">Searchable PDF</option>
             </select>
           </label>
 
@@ -83,6 +77,23 @@ import { api } from '../../core/foundry';
               and footnotes as [1] at the end of each chapter. Pictures do not survive it,
               and Foundry cannot open a text file in a tab: the queue will show you where
               it was written.
+            </p>
+          }
+
+          <!--
+            Said here because a searchable PDF is not a book and looks like one
+            that failed. It comes out looking EXACTLY like what went in — that is
+            the point — so somebody who expected a converted book needs to know
+            before they order it that the change is invisible and lives in the
+            search box.
+          -->
+          @if (kind() === 'pdf') {
+            <p class="note">
+              A searchable PDF is your scan, unchanged — same pages, same images — with the
+              recognised text laid over it invisibly, so search, select and copy start working.
+              Nothing is rebuilt into chapters, and the running heads and page numbers are kept,
+              because they are on the page. Run it again and the layer is replaced, never doubled;
+              a PDF that already has text of its own is refused rather than written over.
             </p>
           }
 
@@ -105,6 +116,17 @@ import { api } from '../../core/foundry';
             <p class="note">
               The book is written into Foundry's workspace and opens here when it is done.
               Save a copy from the tab once you have looked at it.
+            </p>
+          } @else if (kind() === 'pdf') {
+            <!--
+              Open, not just reveal: this app has a PDF tab and a searchable PDF
+              is a PDF. Not opened AUTOMATICALLY, though — a finished EPUB opens
+              because looking at it is the next thing anybody does, and a
+              searchable PDF is a file you take away.
+            -->
+            <p class="note">
+              The file is written into Foundry's workspace. Open it from the finished job to
+              try the search, or use ↗ to show it in the file manager.
             </p>
           } @else {
             <p class="note">
