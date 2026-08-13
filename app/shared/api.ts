@@ -38,7 +38,7 @@ import type {
  * a menu item with `CmdOrCtrl+S` on it and a `keydown` listener for the same
  * chord both fire, and the menu is the half a user can discover.
  */
-export type MenuAction = 'save' | 'save-as' | 'close-tab' | 'split-right';
+export type MenuAction = 'save' | 'save-as' | 'close-tab' | 'split-right' | 'toggle-documents';
 
 export interface FoundryApi {
   /** process.platform, for the one or two places the UI says "on Windows". */

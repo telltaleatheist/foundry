@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import { Router } from '@angular/router';
 
 import type { RecentDocument } from '@shared/types';
@@ -19,11 +19,22 @@ import { UiService } from '../../core/ui.service';
  * A row for a book still in the workspace says so. "Open" means something
  * different for the two: one is a file you can hand to a reader, and one exists
  * only because this app has not been asked to throw it away.
+ *
+ * IT IS ALSO WHAT AN EMPTY COLUMN SHOWS. Ctrl+\ makes a column with nothing in
+ * it, and the useful thing to put in a column with nothing in it is the library
+ * — so opening a book from this list lands in the column you are looking at.
+ * When it is drawn as a column rather than as the whole window it carries a ✕,
+ * because a column you asked for and changed your mind about has to be a column
+ * you can put away; the ✕ closes the COLUMN and never a document.
  */
 @Component({
   selector: 'app-home',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
+    @if (closable()) {
+      <button class="close-column" title="Close this column" (click)="closeColumn()">✕</button>
+    }
+
     <div class="home">
       <div class="hero">
         <div class="mark">⬙</div>
@@ -75,7 +86,24 @@ import { UiService } from '../../core/ui.service';
     </div>
   `,
   styles: [`
-    :host { display: block; height: 100%; overflow-y: auto; background: var(--bg-base); }
+    :host { position: relative; display: block; height: 100%; overflow-y: auto; background: var(--bg-base); }
+
+    /* Sticky rather than absolute: this host scrolls, and a corner button that
+       scrolled away with the hero would be missing exactly when a long recents
+       list made the column feel permanent. */
+    .close-column {
+      position: sticky;
+      top: 8px;
+      float: right;
+      margin-right: 8px;
+      z-index: 1;
+      background: transparent; border: none; cursor: pointer;
+      color: var(--text-tertiary); font-size: 11px;
+      padding: 4px 6px; border-radius: var(--radius-sm);
+      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  color 100ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .close-column:hover { background: var(--bg-hover); color: var(--text-primary); }
 
     .home {
       max-width: 720px;
@@ -187,10 +215,33 @@ import { UiService } from '../../core/ui.service';
   `],
 })
 export class HomeComponent {
+  /**
+   * The column this is filling, when it is filling one.
+   *
+   * Null — the default — is Home as the WHOLE WINDOW, which is what the app is
+   * with nothing open. The input exists only so the ✕ knows what it would be
+   * closing; everything else on this screen is the same either way.
+   */
+  readonly pane = input<string | null>(null);
+
   protected readonly recents = inject(RecentsService);
   protected readonly tabs = inject(TabsService);
   protected readonly ui = inject(UiService);
   private readonly router = inject(Router);
+
+  /**
+   * Only with a neighbour to go back to. Closing the only column would leave
+   * zero columns, which draws this same screen across the same window — a
+   * button whose whole effect is invisible is a button that teaches people the
+   * app does not respond.
+   */
+  protected readonly closable = computed(() =>
+    this.pane() !== null && this.tabs.panes().length > 1);
+
+  protected closeColumn(): void {
+    const id = this.pane();
+    if (id !== null) this.tabs.closePane(id);
+  }
 
   constructor() {
     // Re-read every time Home is constructed, which is every time it comes back

@@ -1,7 +1,10 @@
-import { ChangeDetectionStrategy, Component, HostListener, effect, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy, Component, HostListener, computed, effect, inject, signal,
+} from '@angular/core';
 import { Router, RouterOutlet } from '@angular/router';
 
 import { OcrDialogComponent } from './components/ocr-dialog/ocr-dialog.component';
+import { OpenDocumentsComponent } from './components/open-documents/open-documents.component';
 import { TranslateDialogComponent } from './components/translate-dialog/translate-dialog.component';
 import { QueueShelfComponent } from './components/queue-shelf/queue-shelf.component';
 import { ToolRailComponent } from './components/tool-rail/tool-rail.component';
@@ -10,8 +13,16 @@ import { UiService } from './core/ui.service';
 import { api } from './core/foundry';
 
 /**
- * The shell: the rail on the left, whatever route is open in the middle, the
- * queue shelf floating over both, and the OCR dialog over everything.
+ * The shell, left to right: the tool rail, the open-documents panel, and
+ * whatever route is open — with the queue shelf floating over all three and the
+ * dialogs over everything.
+ *
+ * THE PANEL IS IN THE SHELL AND NOT IN THE WORKSPACE PAGE, because the documents
+ * are not a fact about a route: the list stays up on Settings, and clicking a
+ * row there navigates back to the workspace on its way to showing the document.
+ * It is hidden outright while nothing is open, so Home keeps the whole window it
+ * has always had rather than opening beside 220 pixels of an empty list, and it
+ * can be put away by hand from the rail or with Ctrl+B.
  *
  * The DROP TARGET is the whole window rather than the viewer, because a person
  * dropping a book at the app is not aiming at a rectangle — and because with an
@@ -19,25 +30,31 @@ import { api } from './core/foundry';
  *
  * ── The keyboard ─────────────────────────────────────────────────────────────
  *
- * Ctrl/Cmd+S, Ctrl/Cmd+W and Ctrl/Cmd+\ are MENU items (electron/main.ts) and
- * arrive here as `menu:action`: a menu accelerator and a keydown listener for
- * the same chord both fire, and only the menu is discoverable. Splitting is on
- * the menu for exactly that reason — with one pane open there is nothing on
- * screen that says a second is possible, so the View menu is where a person
- * finds out. Ctrl/Cmd+Tab is handled here because a menu item labelled "Next
- * tab" is noise, Ctrl/Cmd+1…5 because a menu of five "Focus pane N" items is
- * five items of noise, and Escape because a dialog that will not dismiss on
- * Escape is a dialog people learn to avoid opening.
+ * Ctrl/Cmd+S, Ctrl/Cmd+W, Ctrl/Cmd+\ and Ctrl/Cmd+B are MENU items
+ * (electron/main.ts) and arrive here as `menu:action`: a menu accelerator and a
+ * keydown listener for the same chord both fire, and only the menu is
+ * discoverable. Splitting is on the menu for exactly that reason — with one pane
+ * open there is nothing on screen that says a second is possible, so the View
+ * menu is where a person finds out — and the documents panel is there because a
+ * panel you have hidden leaves nothing on screen to bring it back except the
+ * rail. Ctrl/Cmd+Tab is handled here because a menu item labelled "Next tab" is
+ * noise, Ctrl/Cmd+1…5 because a menu of five "Focus pane N" items is five items
+ * of noise, and Escape because a dialog that will not dismiss on Escape is a
+ * dialog people learn to avoid opening.
  */
 @Component({
   selector: 'app-root',
   imports: [
-    RouterOutlet, ToolRailComponent, QueueShelfComponent, OcrDialogComponent, TranslateDialogComponent,
+    RouterOutlet, ToolRailComponent, OpenDocumentsComponent, QueueShelfComponent,
+    OcrDialogComponent, TranslateDialogComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="shell">
       <app-tool-rail />
+      @if (documentsUp()) {
+        <app-open-documents />
+      }
       <main class="main"><router-outlet /></main>
       <app-queue-shelf />
 
@@ -82,6 +99,18 @@ export class App {
   protected readonly ui = inject(UiService);
   private readonly router = inject(Router);
 
+  /**
+   * The panel is up when it has been asked for AND there is something to list.
+   *
+   * The second half is not a shortcut for the first: an empty list is 220 pixels
+   * of nothing taken off Home, which is the one screen in this app that wants
+   * the window. Hiding it costs nothing, because it comes back by itself with
+   * the first document — and `documentsShown` remembers what the user chose
+   * across that, so a panel put away by hand stays away.
+   */
+  protected readonly documentsUp = computed(() =>
+    this.ui.documentsShown() && this.tabs.tabs().length > 0);
+
   protected readonly dropping = signal(false);
   private dragDepth = 0;
 
@@ -89,12 +118,14 @@ export class App {
     // The File menu's Settings item. Main cannot route; it can only say where.
     api?.onNavigate((route) => { void this.router.navigateByUrl(route); });
 
-    // Save a copy / Close tab / Split right. All three act on the FOCUSED
-    // pane's active tab, which is renderer state, so main asks rather than does.
+    // Save a copy / Close tab / Split right / Documents. Every one of them acts
+    // on renderer state — the focused pane, its document, the panel — so main
+    // asks rather than does.
     api?.onMenuAction((action) => {
       if (action === 'save') void this.tabs.saveActive();
       else if (action === 'save-as') void this.tabs.saveActiveAs();
-      else if (action === 'split-right') this.tabs.splitActive();
+      else if (action === 'split-right') this.tabs.newEmptyPane();
+      else if (action === 'toggle-documents') this.toggleDocuments();
       else void this.tabs.closeActive();
     });
 
@@ -112,10 +143,26 @@ export class App {
         return;
       }
       // One bullet for either kind of "not filed away yet". The window list is a
-      // glance, not a status report; the tab strip and its tooltip carry which.
+      // glance, not a status report; the document list and its tooltip say which.
       const mark = tab.unsaved || tab.modified ? ' •' : '';
       document.title = `${tab.title}${mark} — Foundry`;
     });
+  }
+
+  /**
+   * Ctrl+B, from the menu.
+   *
+   * The rail's own button is DISABLED with nothing open, but an accelerator
+   * cannot grey itself out against renderer state — so the one way this cannot
+   * do anything arrives as a sentence rather than as a keypress that appears to
+   * have been swallowed.
+   */
+  private toggleDocuments(): void {
+    if (this.tabs.tabs().length === 0) {
+      this.tabs.notice.set('There are no open documents to list — the panel appears with the first one.');
+      return;
+    }
+    this.ui.toggleDocuments();
   }
 
   @HostListener('window:keydown', ['$event'])
@@ -157,10 +204,11 @@ export class App {
   /**
    * A FILE drag, and only a file drag.
    *
-   * Tabs are dragged between panes with the same platform mechanism, and
-   * without this test the veil ("Drop a PDF to open it") would slap itself over
-   * the whole window the moment a tab left its strip. `types` is the only part
-   * of a drag payload readable before the drop, which is exactly what it is for.
+   * A document is dragged out of the list into a column with the same platform
+   * mechanism, and without this test the veil ("Drop a PDF to open it") would
+   * slap itself over the whole window the moment a row left the panel. `types`
+   * is the only part of a drag payload readable before the drop, which is
+   * exactly what it is for.
    */
   @HostListener('window:dragenter', ['$event'])
   protected onDragEnter(event: DragEvent): void {

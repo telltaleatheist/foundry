@@ -566,15 +566,30 @@ function buildMenu(): void {
            * The one place the split is DISCOVERABLE.
            *
            * A single-pane workspace is meant to look exactly like the app that
-           * had no panes at all — no divider, no split button, nothing on the
-           * strip hinting at a second column — so a person who has never used
-           * the feature would never find it on screen. They find it here.
-           * (Ctrl+\ is VS Code's chord for the same operation.) The renderer
-           * owns which tab and which pane; main only says "split".
+           * had no panes at all — no divider, no split button, nothing hinting
+           * at a second column — so a person who has never used the feature
+           * would never find it on screen. They find it here. (Ctrl+\ is VS
+           * Code's chord for the same operation.) It opens an EMPTY column
+           * beside the focused one, which the user then fills from the document
+           * list; main owns none of that and only says "split".
            */
           label: 'Split right',
           accelerator: 'CmdOrCtrl+\\',
           click: () => sendMenuAction('split-right'),
+        },
+        {
+          /**
+           * The open-documents panel, hidden and brought back.
+           *
+           * NOT A CHECKBOX ITEM, though it toggles: whether the panel is up is
+           * renderer state (it also depends on whether anything is open at all),
+           * and a menu that drew its own tick from a value main is guessing at
+           * would be wrong the first time the two disagreed. Ctrl+B is the chord
+           * every editor with a side panel uses.
+           */
+          label: 'Documents',
+          accelerator: 'CmdOrCtrl+B',
+          click: () => sendMenuAction('toggle-documents'),
         },
         { type: 'separator' },
         { role: 'reload' },

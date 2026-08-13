@@ -17,6 +17,24 @@ export class UiService {
   readonly shelfExpanded = signal(false);
 
   /**
+   * Whether the open-documents panel is up.
+   *
+   * ON by default, and it still shows nothing until there is a document — the
+   * panel is hidden outright while the app is empty (see App), so Home keeps the
+   * whole window it has always had rather than opening beside 220 pixels of an
+   * empty list.
+   *
+   * IN MEMORY ONLY, like the panes' widths: which panels are open is an
+   * arrangement for the work in front of you, and restoring last week's is
+   * furniture arriving in the wrong room.
+   */
+  readonly documentsShown = signal(true);
+
+  toggleDocuments(): void {
+    this.documentsShown.update((shown) => !shown);
+  }
+
+  /**
    * ONE AT A TIME. Both dialogs are full-screen scrims at the same z-index, so
    * two open at once is two overlapping cards where the click-outside of the
    * upper one dismisses nothing visible. Opening either closes the other rather

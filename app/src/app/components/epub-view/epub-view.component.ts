@@ -103,6 +103,11 @@ import { TabsService, type Tab } from '../../core/tabs.service';
 
         <div class="reading">
           <header class="toolbar">
+            <!-- WHAT THIS COLUMN IS SHOWING, and it is here because nothing else
+                 says it any more: the Chrome-style strip that used to sit above
+                 this row is gone, and with five columns open a person needs to
+                 read the title off the pane rather than count along the list. -->
+            <span class="doc-title" [title]="tab().title">{{ tab().title }}</span>
             <!-- A toggle over the editor TAB: on while one is open for this
                  book anywhere in the workspace, and pressing it again closes
                  that tab. It opens in a pane of its own, beside this one. -->
@@ -228,6 +233,15 @@ import { TabsService, type Tab } from '../../core/tabs.service';
       background: var(--bg-elevated);
       border-bottom: 1px solid var(--border-subtle);
       flex-shrink: 0;
+    }
+    /* Capped at a share of the row rather than allowed to flex: the buttons
+       beside it are the reason the row exists, and a long title must not push
+       Save off the end of a narrow column. */
+    .doc-title {
+      flex: 0 1 auto;
+      max-width: 40%;
+      font-size: 12px; font-weight: 500; color: var(--text-primary);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .state { flex: 1; min-width: 0; font-size: 11px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 

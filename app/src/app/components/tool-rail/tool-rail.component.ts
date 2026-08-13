@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive } from '@angular/router';
 
 import { TabsService } from '../../core/tabs.service';
@@ -32,6 +32,21 @@ import { UiService } from '../../core/ui.service';
         >
           <span class="rail-icon">⌂</span>
           <span class="rail-label">Home</span>
+        </button>
+
+        <!-- The document list. Disabled with nothing open rather than hidden,
+             on this rail's usual principle — and because with nothing open the
+             panel is not on screen anyway, so a button that toggled a hidden
+             thing would be a button with no visible effect. -->
+        <button
+          class="rail-item"
+          [class.active]="documentsUp()"
+          [disabled]="tabs.tabs().length === 0"
+          title="Show or hide the open documents (Ctrl+B)"
+          (click)="ui.toggleDocuments()"
+        >
+          <span class="rail-icon">☰</span>
+          <span class="rail-label">Documents</span>
         </button>
 
         <button
@@ -157,6 +172,10 @@ export class ToolRailComponent {
   protected readonly ui = inject(UiService);
   protected readonly tabs = inject(TabsService);
   private readonly router = inject(Router);
+
+  /** Lit when the panel is actually on screen, which needs both halves of it. */
+  protected readonly documentsUp = computed(() =>
+    this.ui.documentsShown() && this.tabs.tabs().length > 0);
 
   /**
    * Editable means an unpacked book is in front of the user right now.

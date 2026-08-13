@@ -117,6 +117,11 @@ import { api } from '../../core/foundry';
   template: `
     <div class="pdf">
       <header class="toolbar">
+        <!-- WHAT THIS COLUMN IS SHOWING. The strip above this row is gone (the
+             documents are a list in the shell now), so the pane has to name
+             itself or five columns of scanned paper are five columns of
+             scanned paper. -->
+        <span class="doc-title" [title]="tab().title">{{ tab().title }}</span>
         <button
           class="ghost"
           [class.on]="tab().layerView"
@@ -253,6 +258,15 @@ import { api } from '../../core/foundry';
       background: var(--bg-elevated);
       border-bottom: 1px solid var(--border-subtle);
       flex-shrink: 0;
+    }
+    /* Narrower here than in the book's toolbar, because this row already
+       carries a search box, a zoom group and a page counter: 25% is a readable
+       stub of a filename without taking the controls off the end. */
+    .doc-title {
+      flex: 0 1 auto;
+      max-width: 25%;
+      font-size: 12px; font-weight: 500; color: var(--text-primary);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .counter {
       min-width: 72px;

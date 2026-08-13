@@ -6,8 +6,8 @@ import { QueueService } from './queue.service';
 import { api } from './foundry';
 
 /**
- * The open documents — Chrome-style tabs, and the one place that knows which is
- * which.
+ * The open documents — the list down the left, and the one place that knows
+ * which is which.
  *
  * TABS ARE RENDERER STATE, on purpose. Main owns everything with a lifetime — a
  * conversion, an unpacked book's temp directory, the allow-list — but which of
@@ -22,12 +22,20 @@ import { api } from './foundry';
  *
  * ── Panes ────────────────────────────────────────────────────────────────────
  *
- * The workspace is one to five PANES side by side, each with its own strip and
- * its own active tab — VS Code's editor groups. It exists for one comparison in
- * particular: a book beside its translation, the German page and the English
- * page under two hands at once. Everything else about panes follows from that,
- * including the auto-open rule (a finished job lands in a pane of its OWN, so a
- * translation appears beside its source rather than on top of it).
+ * The workspace is one to five PANES side by side, and A PANE SHOWS EXACTLY ONE
+ * DOCUMENT. They exist for one comparison in particular: a book beside its
+ * translation, the German page and the English page under two hands at once.
+ * Everything else about panes follows from that, including the auto-open rule (a
+ * finished job lands in a pane of its OWN, so a translation appears beside its
+ * source rather than on top of it).
+ *
+ * EACH PANE USED TO CARRY A CHROME-STYLE STRIP of its own — VS Code's editor
+ * groups, a stack of tabs per column. Five columns on a 1920-wide window give
+ * each strip 370 pixels, and three tabs in one of them are unreadable stubs, so
+ * the strips are gone and the documents are a VERTICAL LIST in a panel of their
+ * own (app-open-documents). A list does not degrade with the number of columns,
+ * every pane got its 44px strip back as page, and the list is the only place a
+ * document's order exists.
  *
  * THE TABS STAY IN ONE FLAT LIST and the panes hold ids into it. A pane owning
  * whole Tab objects would put `patch()` — the one function every edit, save and
@@ -36,10 +44,16 @@ import { api } from './foundry';
  * another pane showed the other. One list, one identity per tab; the panes
  * decide only where each is shown.
  *
+ * A DOCUMENT IS IN AT MOST ONE PANE. Clicking a row for something already on
+ * screen REVEALS it rather than putting a second viewer over one unpack — the
+ * rule `adopt()` has always enforced for files — and dragging a row MOVES it.
+ * Two panes on one tab would also share its `chapterHref`, so the two columns
+ * would look scroll-locked to each other for reasons nothing on screen explains.
+ *
  * ONE PANE IS FOCUSED, and it is what the rail, the menu and the keyboard mean
- * by "the document": `active()` is the focused pane's active tab and nothing
- * else. With a single pane open, that is exactly the app that existed before
- * panes did — the feature is meant to be invisible until it is used.
+ * by "the document": `active()` is the focused pane's document and nothing else.
+ * With a single pane open, that is exactly the app that existed before panes did
+ * — the feature is meant to be invisible until it is used.
  *
  * ── The HTML editor is a tab, not a mode ─────────────────────────────────────
  *
@@ -130,16 +144,16 @@ export interface Tab {
 }
 
 /**
- * A column of the workspace: its own strip, its own active tab.
+ * A column of the workspace: one document, or none.
  *
- * `activeTabId` of null means this pane is showing HOME — which is what a pane
- * with no tab active has always shown, back when there was only ever one.
+ * `tabId` of null means this pane is showing HOME — which is what a column with
+ * nothing in it has always shown, back when there was only ever one. It is also
+ * what Ctrl+\ makes: an empty column to drop a document into.
  */
 export interface Pane {
   id: string;
-  /** The strip's order, left to right. Ids into the flat tab list. */
-  tabIds: readonly string[];
-  activeTabId: string | null;
+  /** The document on screen here. An id into the flat tab list, or Home. */
+  tabId: string | null;
   /**
    * The pane's share of the row, as a flex-grow number.
    *
@@ -155,7 +169,9 @@ export interface Pane {
  *
  * A sixth column on a 1920-wide window is 300 pixels of book, which is a column
  * of hyphens. The cap is also what makes the auto-open rule terminate: past it,
- * a finished job joins the rightmost pane instead of narrowing everything.
+ * a finished job takes the RIGHTMOST column's slot instead of narrowing
+ * everything — and the book that was there is still open in the list, one click
+ * from coming back.
  */
 export const MAX_PANES = 5;
 
@@ -192,7 +208,13 @@ export class TabsService {
   private readonly columns = signal<Pane[]>([]);
   private readonly focused = signal<string | null>(null);
 
-  /** Every open tab, in no particular order — the panes carry the order. */
+  /**
+   * Every open document, in the order the list shows them.
+   *
+   * THE ORDER IS THIS LIST'S, now that the strips are gone: there is nowhere
+   * else a document sits in a sequence, so `reorder` writes here and the panel
+   * renders it straight.
+   */
   readonly tabs = this.all.asReadonly();
   readonly panes = this.columns.asReadonly();
   readonly focusedPaneId = this.focused.asReadonly();
@@ -201,7 +223,7 @@ export class TabsService {
     this.columns().find((pane) => pane.id === this.focused()) ?? null);
 
   /** Null means Home — which is also what "no panes open at all" looks like. */
-  readonly activeId = computed<string | null>(() => this.focusedPane()?.activeTabId ?? null);
+  readonly activeId = computed<string | null>(() => this.focusedPane()?.tabId ?? null);
   readonly active = computed<Tab | null>(() => this.byId(this.activeId()));
 
   /**
@@ -230,6 +252,22 @@ export class TabsService {
 
   /** The tab whose chapter is being written right now, for the "Writing…" line. */
   readonly writingTo = signal<string | null>(null);
+
+  /**
+   * True from the moment a row leaves the document list until the drag ends.
+   *
+   * IT EXISTS BECAUSE OF THE <iframe>. A rendered chapter is a frame with its
+   * own browsing context, and a drag over it delivers dragover/drop to THAT
+   * document — the pane underneath would never see the pointer, so a book could
+   * not be dropped onto the one thing a person aims at. The workspace lays a
+   * transparent shield over every pane while this is on, and takes it away the
+   * instant the drag is over so nothing normal is intercepted.
+   *
+   * Whether a drag is happening, and NOT what it carries: the id is unreadable
+   * until the drop (that is the platform's rule, not ours), so the drop preview
+   * is still driven by the pointer's position alone.
+   */
+  readonly draggingDocument = signal(false);
 
   /** The most recent click-to-source, for whichever editor is watching that book. */
   readonly sourceJump = signal<SourceJump | null>(null);
@@ -421,23 +459,14 @@ export class TabsService {
 
   // ── Panes ────────────────────────────────────────────────────────────────
 
-  /** Every tab in a pane, in the pane's own order. Missing ids cannot happen; they are dropped anyway. */
-  tabsIn(paneId: string): Tab[] {
-    const pane = this.columns().find((candidate) => candidate.id === paneId);
-    if (!pane) return [];
-    const tabs = this.all();
-    return pane.tabIds
-      .map((id) => tabs.find((tab) => tab.id === id))
-      .filter((tab): tab is Tab => tab !== undefined);
-  }
-
   byId(id: string | null): Tab | null {
     if (id === null) return null;
     return this.all().find((tab) => tab.id === id) ?? null;
   }
 
+  /** The column showing this document, if any is. At most one, by construction. */
   paneOf(tabId: string): Pane | null {
-    return this.columns().find((pane) => pane.tabIds.includes(tabId)) ?? null;
+    return this.columns().find((pane) => pane.tabId === tabId) ?? null;
   }
 
   /**
@@ -456,12 +485,19 @@ export class TabsService {
   }
 
   /**
-   * Put a tab in a pane and give it the focus.
+   * Put a newly opened tab in a pane and give it the focus.
    *
    * The first document makes the first pane. After that: a finished job asks
-   * for one of its own (up to the cap, past which it joins the rightmost), and
-   * everything else — a drop, Home's list, the shelf's Open — joins the pane
-   * the user is working in, because they aimed at it.
+   * for one of its own (up to the cap, past which it takes the rightmost pane's
+   * slot), and everything else — a drop, Home's list, the shelf's Open — lands
+   * in the pane the user is working in, because they aimed at it.
+   *
+   * LANDING IN THE FOCUSED PANE NOW REPLACES what that pane was showing, since
+   * a pane holds one document. Nothing is lost: the displaced document stays
+   * open in the list with its unpack, its edits and its dot, one click from
+   * being back on screen. What it is NOT allowed to do is displace a book with
+   * a translation of it — that is why a finished job still asks for a column of
+   * its own, and why the two rules read differently.
    *
    * `beside` names a pane the new one must open DIRECTLY to the right of, which
    * is what an HTML editor asks for: it is a face of one particular book, and a
@@ -487,121 +523,161 @@ export class TabsService {
       return;
     }
     const target = ownPane
-      ? panes[panes.length - 1]!
+      ? crowdedTarget(panes, beside)
       : (this.focusedPane() ?? panes[panes.length - 1]!);
-    this.columns.set(panes.map((pane) => (pane.id === target.id
-      ? { ...pane, tabIds: [...pane.tabIds, tabId], activeTabId: tabId }
-      : pane)));
+    this.columns.set(panes.map((pane) => (pane.id === target.id ? { ...pane, tabId } : pane)));
     this.focused.set(target.id);
   }
 
-  private makePane(tabId: string): Pane {
+  private makePane(tabId: string | null): Pane {
     this.paneSequence += 1;
-    return { id: `pane-${this.paneSequence}`, tabIds: [tabId], activeTabId: tabId, flex: 1 };
+    return { id: `pane-${this.paneSequence}`, tabId, flex: 1 };
   }
 
-  /** Show a tab: focus its pane, make it that pane's active one. */
+  /**
+   * Put a document in front of the user — a click on its row in the list.
+   *
+   * ON SCREEN ALREADY: only the focus moves. A second viewer over one unpack is
+   * two scroll positions fighting over one document — the thing `adopt` refuses
+   * to make for two files — and (because `chapterHref` lives on the tab) two
+   * columns that appear scroll-locked with nothing on screen saying why.
+   *
+   * NOT ON SCREEN: it lands in the focused pane, replacing what was there. The
+   * displaced document stays in the list — nothing about it is thrown away.
+   */
   reveal(tabId: string): void {
+    if (this.byId(tabId) === null) return;
     const pane = this.paneOf(tabId);
-    if (!pane) return;
-    this.columns.update((panes) => panes.map((candidate) =>
-      (candidate.id === pane.id ? { ...candidate, activeTabId: tabId } : candidate)));
-    this.focused.set(pane.id);
+    if (pane) {
+      this.focused.set(pane.id);
+      return;
+    }
+    this.place(tabId, false);
   }
 
   /**
-   * Move a tab into a pane — the drag between two strips, and a reorder within
-   * one, which are the same operation with the same two ends.
+   * Show a document in a named column — a row dropped on a pane's middle.
    *
-   * `beforeTabId` names the tab it lands in front of; null means the end. A
-   * source pane left empty goes with it, on the same rule as closing the last
-   * tab in one.
+   * THE COLUMN IT CAME FROM GOES WITH IT, when it had one: a document is in at
+   * most one pane, so the source is left empty by the move, and an empty column
+   * nobody asked for is furniture in the way of the two the user is comparing.
+   * (An empty column somebody DID ask for — Ctrl+\ — is a different thing and
+   * stays until it is filled or closed.)
    */
-  moveTab(tabId: string, targetPaneId: string, beforeTabId: string | null = null): void {
-    if (tabId === beforeTabId) return;
+  show(tabId: string, paneId: string): void {
     const panes = this.columns();
-    const owner = panes.find((pane) => pane.tabIds.includes(tabId));
-    if (!owner || !panes.some((pane) => pane.id === targetPaneId)) return;
-
-    const at = owner.tabIds.indexOf(tabId);
-    const lifted = panes.map((pane) => {
-      if (pane.id !== owner.id) return pane;
-      const tabIds = pane.tabIds.filter((id) => id !== tabId);
-      // The pane it LEFT keeps showing something: the tab that took its place.
-      // (Unless it is also the destination, in which case the move below sets it.)
-      const activeTabId = pane.id === targetPaneId || pane.activeTabId !== tabId
-        ? pane.activeTabId
-        : tabIds[Math.min(at, tabIds.length - 1)] ?? null;
-      return { ...pane, tabIds, activeTabId };
-    });
-
-    const dropped = lifted.map((pane) => {
-      if (pane.id !== targetPaneId) return pane;
-      const before = beforeTabId === null ? -1 : pane.tabIds.indexOf(beforeTabId);
-      const index = before < 0 ? pane.tabIds.length : before;
-      return {
-        ...pane,
-        tabIds: [...pane.tabIds.slice(0, index), tabId, ...pane.tabIds.slice(index)],
-        activeTabId: tabId,
-      };
-    });
-
-    this.columns.set(dropped.filter((pane) => pane.tabIds.length > 0));
-    this.focused.set(targetPaneId);
+    if (this.byId(tabId) === null || !panes.some((pane) => pane.id === paneId)) return;
+    const from = panes.find((pane) => pane.tabId === tabId) ?? null;
+    if (from !== null && from.id === paneId) {
+      this.focused.set(paneId);
+      return;
+    }
+    this.columns.set(panes
+      .map((pane) => (pane.id === paneId ? { ...pane, tabId } : pane))
+      .filter((pane) => from === null || pane.id !== from.id));
+    this.focused.set(paneId);
   }
 
   /**
-   * Open this tab in a new pane to its right — the split.
+   * Insert a column at `atIndex` showing this document — a row dropped on the
+   * left or right edge band of a pane.
    *
-   * It MOVES rather than copies: two panes onto one tab would be two viewers
-   * over one document, which is the thing `adopt` refuses to make by hand. A
-   * pane holding only this tab splits into nothing.
-   *
-   * BOTH REFUSALS ARE SAID. This is reachable from a menu item and a keyboard
-   * chord, neither of which can grey itself out per-pane, so the two ways it
-   * cannot happen have to arrive as sentences — a Ctrl+\ that silently does
-   * nothing is indistinguishable from a Ctrl+\ that is broken.
+   * THE CAP IS SAID BY NAME. The drop preview does not light up an edge band
+   * once there are five columns (a target that lights and then does nothing is
+   * worse than one that visibly will not take it), so this is only reachable by
+   * a drop the preview never promised — and a gesture that lands on nothing has
+   * to say why. Refused even when the document is already in a column and the
+   * move would be net-zero: the preview cannot offer that without knowing what
+   * the drag carries, and an operation that works only when you cannot see that
+   * it will is not an operation.
    */
-  splitRight(tabId: string): void {
+  openInNewPane(tabId: string, atIndex: number): void {
     const panes = this.columns();
+    if (this.byId(tabId) === null) return;
     if (panes.length >= MAX_PANES) {
       this.notice.set(`${MAX_PANES} columns is as wide as this window splits — close one first.`);
       return;
     }
-    const owner = panes.find((pane) => pane.tabIds.includes(tabId));
-    if (!owner) return;
-    if (owner.tabIds.length < 2) {
-      this.notice.set('Splitting moves a tab into a column of its own — this one has nothing else in it.');
-      return;
-    }
-
-    const at = owner.tabIds.indexOf(tabId);
-    const tabIds = owner.tabIds.filter((id) => id !== tabId);
-    const stripped: Pane = {
-      ...owner,
-      tabIds,
-      activeTabId: owner.activeTabId === tabId
-        ? tabIds[Math.min(at, tabIds.length - 1)] ?? null
-        : owner.activeTabId,
-    };
+    const from = panes.find((pane) => pane.tabId === tabId) ?? null;
     const fresh = this.makePane(tabId);
-
-    const next: Pane[] = [];
-    for (const pane of panes) {
-      if (pane.id !== owner.id) { next.push(pane); continue; }
-      next.push(stripped, fresh);
-    }
-    this.columns.set(equalise(next));
+    const at = Math.max(0, Math.min(atIndex, panes.length));
+    this.columns.set(equalise([...panes.slice(0, at), fresh, ...panes.slice(at)]
+      .filter((pane) => from === null || pane.id !== from.id)));
     this.focused.set(fresh.id);
   }
 
-  splitActive(): void {
-    const id = this.activeId();
-    if (id === null) {
-      this.notice.set('There is no document here to put in a column of its own.');
+  /**
+   * Ctrl+\ and View → Split right: an EMPTY column beside the focused one.
+   *
+   * It used to move the active tab out of a stack, which is an operation that
+   * no longer exists — a pane holds one document, so there is nothing to move
+   * out of it. What the chord means now is "make me somewhere to put something",
+   * and the user fills it by clicking a row in the list, dragging one onto it,
+   * or opening a book from the Home page it shows until they do.
+   *
+   * ALL THREE REFUSALS ARE SAID. This is reachable from a menu item and a
+   * keyboard chord, neither of which can grey itself out against renderer
+   * state, so the ways it cannot happen have to arrive as sentences — a Ctrl+\
+   * that silently does nothing is indistinguishable from a Ctrl+\ that is broken.
+   */
+  newEmptyPane(): void {
+    const panes = this.columns();
+    if (panes.length === 0) {
+      this.notice.set('There is nothing open to put a column beside — open a document first.');
       return;
     }
-    this.splitRight(id);
+    if (panes.length >= MAX_PANES) {
+      this.notice.set(`${MAX_PANES} columns is as wide as this window splits — close one first.`);
+      return;
+    }
+    const at = panes.findIndex((pane) => pane.id === this.focused());
+    if (at >= 0 && panes[at]!.tabId === null) {
+      this.notice.set('This column is already empty — put a document in it before making another.');
+      return;
+    }
+    const fresh = this.makePane(null);
+    const index = at < 0 ? panes.length : at + 1;
+    this.columns.set(equalise([...panes.slice(0, index), fresh, ...panes.slice(index)]));
+    this.focused.set(fresh.id);
+  }
+
+  /**
+   * Take a column away without closing what is in it.
+   *
+   * The ✕ on an empty column's Home page, which is the only way an empty one
+   * can go: a column with a document in it is closed by closing the document
+   * (see `dropFromPanes`), and there is deliberately no gesture that puts a book
+   * away and leaves a hole where it was.
+   */
+  closePane(paneId: string): void {
+    const panes = this.columns();
+    const at = panes.findIndex((pane) => pane.id === paneId);
+    if (at < 0) return;
+    const kept = panes.filter((pane) => pane.id !== paneId);
+    // Not equalised, for the reason `dropFromPanes` gives: the survivors keep
+    // the shares the user dragged and flex reflows them across the width.
+    this.columns.set(kept);
+    if (this.focused() === paneId) {
+      this.focused.set(kept[Math.min(at, kept.length - 1)]?.id ?? null);
+    }
+  }
+
+  /**
+   * Move a document in the list — a row dragged onto another row.
+   *
+   * `beforeTabId` names the document it lands in front of; null means the end.
+   * This is the ONLY place a document's order is decided now that the strips
+   * are gone, which is why it writes the flat list rather than any pane.
+   */
+  reorder(tabId: string, beforeTabId: string | null): void {
+    if (tabId === beforeTabId) return;
+    const tabs = this.all();
+    const moving = tabs.find((tab) => tab.id === tabId);
+    if (!moving) return;
+    const without = tabs.filter((tab) => tab.id !== tabId);
+    const at = beforeTabId === null ? -1 : without.findIndex((tab) => tab.id === beforeTabId);
+    const index = at < 0 ? without.length : at;
+    this.all.set([...without.slice(0, index), moving, ...without.slice(index)]);
   }
 
   /**
@@ -621,30 +697,42 @@ export class TabsService {
 
   // ── Living with them ─────────────────────────────────────────────────────
 
-  /** Clicking a tab in a strip. Focuses that pane too — a click is an aim. */
-  activate(tabId: string): void {
-    this.reveal(tabId);
-  }
-
-  /** The rail's Home. Home is "no tab is active in this pane", not a tab of its own. */
+  /** The rail's Home. Home is "this column has nothing in it", not a document. */
   goHome(): void {
     const pane = this.focusedPane();
     if (!pane) return;
     this.columns.update((panes) => panes.map((candidate) =>
-      (candidate.id === pane.id ? { ...candidate, activeTabId: null } : candidate)));
+      (candidate.id === pane.id ? { ...candidate, tabId: null } : candidate)));
   }
 
   showChapter(id: string, href: string): void {
     this.patch(id, { chapterHref: href });
   }
 
-  /** Ctrl/Cmd+Tab. Cycles the FOCUSED pane's strip, wraps, no-ops on an empty app. */
+  /**
+   * Ctrl/Cmd+Tab. Walks the FOCUSED column through the list, wrapping.
+   *
+   * DOCUMENTS ALREADY IN ANOTHER COLUMN ARE SKIPPED, because putting one there
+   * would take it off the screen it is currently on — the cycle would swap two
+   * columns' contents rather than advance one. The walk always terminates: at
+   * worst every other document is taken and it arrives back at this column's
+   * own, which is a no-op nobody notices.
+   */
   nextTab(): void {
     const pane = this.focusedPane();
-    if (!pane || pane.tabIds.length === 0) return;
-    const at = pane.activeTabId === null ? -1 : pane.tabIds.indexOf(pane.activeTabId);
-    const next = pane.tabIds[(at + 1) % pane.tabIds.length];
-    if (next !== undefined) this.reveal(next);
+    const tabs = this.all();
+    if (!pane || tabs.length === 0) return;
+    const taken = new Set(this.columns()
+      .filter((candidate) => candidate.id !== pane.id)
+      .map((candidate) => candidate.tabId)
+      .filter((id): id is string => id !== null));
+    const at = pane.tabId === null ? -1 : tabs.findIndex((tab) => tab.id === pane.tabId);
+    for (let step = 1; step <= tabs.length; step += 1) {
+      const candidate = tabs[(at + step) % tabs.length];
+      if (candidate === undefined || taken.has(candidate.id)) continue;
+      this.show(candidate.id, pane.id);
+      return;
+    }
   }
 
   /**
@@ -704,28 +792,27 @@ export class TabsService {
   }
 
   /**
-   * Take closed tabs out of their panes, and take out any pane they emptied.
+   * CLOSING A DOCUMENT CLOSES THE COLUMN IT WAS IN, and the survivors reflow.
    *
-   * The replacement active tab is the neighbour, the way a browser does it: the
-   * tab that took its place, or the new last one. A pane with nothing left goes
-   * entirely, and the focus lands on the pane that took ITS place — the same
-   * rule one level up.
+   * A pane holds one document, so there is nothing for the column to fall back
+   * to — and leaving an empty one behind would mean closing four books left four
+   * Home pages side by side, which is a workspace nobody arranged. Closing the
+   * last document takes the last column with it and the window is Home again,
+   * exactly as it was before any of this.
+   *
+   * The focus lands on the column that took the closed one's place, which is
+   * the browser's rule for tabs one level up.
    */
   private dropFromPanes(going: ReadonlySet<string>): void {
     const panes = this.columns();
     const kept: Pane[] = [];
     let focusAt = -1;
     for (const pane of panes) {
-      const tabIds = pane.tabIds.filter((tabId) => !going.has(tabId));
-      if (tabIds.length === 0) {
+      if (pane.tabId !== null && going.has(pane.tabId)) {
         if (pane.id === this.focused()) focusAt = kept.length;
         continue;
       }
-      const at = pane.activeTabId === null ? -1 : pane.tabIds.indexOf(pane.activeTabId);
-      const activeTabId = pane.activeTabId !== null && going.has(pane.activeTabId)
-        ? tabIds[Math.min(at, tabIds.length - 1)] ?? null
-        : pane.activeTabId;
-      kept.push({ ...pane, tabIds, activeTabId });
+      kept.push(pane);
     }
     // Not equalised: the panes that remain keep their shares and flex reflows
     // them across the width, which is what the user arranged. Only ADDING a
@@ -754,7 +841,10 @@ export class TabsService {
    * ONE EDITOR PER BOOK, and it goes in a pane of its own by the same rule a
    * finished conversion does: the point of editing a chapter is watching the
    * rendered page change as you fix it, which is a thing you cannot do if the
-   * editor is stacked on top of the book in the same column.
+   * editor is in the column the book was in. At the cap it takes the slot of the
+   * column NEXT TO the book (see `crowdedTarget`) — whatever was there stays
+   * open in the list, and the two faces of the one document the user just asked
+   * to edit are on screen beside each other, which is the whole promise.
    */
   async toggleEditor(bookTabId: string): Promise<void> {
     const book = this.byId(bookTabId);
@@ -782,8 +872,22 @@ export class TabsService {
     if (!editor) return;
     this.jumpSeq += 1;
     this.sourceJump.set({ tabId, bf, tag, index, seq: this.jumpSeq });
-    // The editor is no use if it is behind another tab in its own pane.
-    this.reveal(editor.id);
+    /**
+     * The jump is no use in a column nobody can see.
+     *
+     * ON SCREEN IS ENOUGH — the caret has already moved and the focus stays
+     * with the book, because the hand that clicked a paragraph is reading the
+     * page, not the source. `reveal` is deliberately NOT used: it would put the
+     * editor in the FOCUSED pane, which is the book's, and swap the page the
+     * user just clicked in for its own markup.
+     *
+     * Off screen, it comes back beside the book. At the cap that is refused by
+     * name inside `openInNewPane` rather than silently doing nothing, which is
+     * the one thing a click-to-source must never do.
+     */
+    if (this.paneOf(editor.id) !== null) return;
+    const at = this.columns().findIndex((pane) => pane.tabId === tabId);
+    this.openInNewPane(editor.id, at + 1);
   }
 
   /**
@@ -998,6 +1102,29 @@ export class TabsService {
  */
 function equalise(panes: readonly Pane[]): Pane[] {
   return panes.map((pane) => ({ ...pane, flex: 1 }));
+}
+
+/**
+ * Which column a document that wanted one of its OWN has to settle for, once
+ * there are five and there are no more to make.
+ *
+ * The rightmost, normally — a conversion's output has no opinion about where it
+ * lands, and the far end displaces the least of what the user was looking at.
+ *
+ * BUT NOT WHEN IT ASKED TO BE BESIDE SOMETHING. An HTML editor is a face of one
+ * particular book, and at the cap "the rightmost column" can BE that book's
+ * column: pressing Edit HTML would then replace the page with its own source,
+ * which is the one arrangement the feature exists to avoid. So it takes the
+ * column just right of the book instead, or just left when the book is already
+ * the last one. Something is displaced either way — that is what a full window
+ * means — but never the document the gesture was about.
+ */
+function crowdedTarget(panes: readonly Pane[], beside: string | null): Pane {
+  const last = panes[panes.length - 1]!;
+  if (beside === null) return last;
+  const at = panes.findIndex((pane) => pane.id === beside);
+  if (at < 0) return last;
+  return panes[at + 1] ?? panes[at - 1] ?? last;
 }
 
 /** Windows paths differ by case and separator and are the same file. */

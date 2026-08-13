@@ -1,38 +1,56 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 
 import { HomeComponent } from '../../components/home/home.component';
 import { NoticeBarComponent } from '../../components/notice-bar/notice-bar.component';
-import { TabStripComponent } from '../../components/tab-strip/tab-strip.component';
+import { DOCUMENT_MIME } from '../../components/open-documents/open-documents.component';
 import { ViewerComponent } from '../../components/viewer/viewer.component';
 import { TabsService, type Pane } from '../../core/tabs.service';
 
 /**
- * The documents: one to five columns, each a strip of tabs with whichever one is
- * active under it.
+ * The documents: one to five columns, one document in each.
  *
- * ONE PANE IS THE OLD APP, EXACTLY. No divider is drawn, the strip spans the
+ * ONE PANE IS THE OLD APP, EXACTLY. No divider is drawn, the viewer spans the
  * window, and nothing on screen mentions that a second column is possible — the
  * split is a thing you go and do, not a thing the app keeps offering. Everything
  * below that is only reached once there are two.
  *
- * No tab active in a pane — which includes having no panes at all — is HOME.
- * Home is not a route and not a tab: it is what a column is when there is
- * nothing in it to show, which means closing the last tab lands somewhere useful
- * instead of on a grey rectangle.
+ * THE STRIPS ARE GONE. Each column used to carry a Chrome-style strip of its own
+ * and the pane held a stack; the documents are a list in the shell's left panel
+ * now (app-open-documents), and a column holds one of them. What a column is
+ * showing is said by the title at the left of its own toolbar, because with no
+ * strip nothing else says it.
  *
- * The strip is above the viewer and outside it, so the PDF plugin's own toolbar
- * and the app's chrome never fight for the same row.
+ * A pane with no document — which includes having no panes at all — is HOME.
+ * Home is not a route and not a document: it is what a column is when there is
+ * nothing in it to show, which means closing the last document lands somewhere
+ * useful instead of on a grey rectangle, and Ctrl+\ can make an empty column to
+ * drop something into.
  *
- * FOCUS IS A POINTERDOWN IN THE CAPTURE PHASE, which is the whole model. Capture
- * rather than bubble because the thing clicked — a tab, a chapter, a Save button
- * — usually acts on "the focused pane", and it has to be this one by the time it
- * runs. Pointerdown rather than click because a drag that begins in a pane also
- * means that pane, and a click that never completes still moved the user's
- * attention.
+ * FOCUS IS A POINTERDOWN ON THE PANE, which is the whole model. Pointerdown and
+ * not click, for two reasons: it lands before the `click` of the same gesture,
+ * so a Save button that acts on "the focused pane" already has this one by the
+ * time it runs; and a drag that begins in a pane also means that pane, where a
+ * click that never completes would have said nothing.
+ *
+ * ── Taking a dropped row ─────────────────────────────────────────────────────
+ *
+ * A row dragged out of the list lands here, and where in a pane it lands decides
+ * what happens: the MIDDLE shows it in that column, an EDGE BAND opens a new
+ * column on that side. The preview says which before the mouse comes up, because
+ * a drag with no preview is a guess.
+ *
+ * THE SHIELD IS NOT OPTIONAL. A rendered chapter is an <iframe> with its own
+ * browsing context, and a drag over one delivers dragover/drop to the frame — so
+ * without a transparent layer over each pane, a book could not be dropped onto
+ * the page it is meant to replace, which is the middle of the target. The shield
+ * exists only while a row is actually being dragged (TabsService.draggingDocument)
+ * so nothing else in the app ever has a sheet of glass over it, and the preview
+ * rectangle inside it is `pointer-events: none` — a preview that took the pointer
+ * would take the dragover events the preview is computed from.
  */
 @Component({
   selector: 'app-workspace',
-  imports: [HomeComponent, NoticeBarComponent, TabStripComponent, ViewerComponent],
+  imports: [HomeComponent, NoticeBarComponent, ViewerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <!--
@@ -71,11 +89,25 @@ import { TabsService, type Pane } from '../../core/tabs.service';
               [style.flex]="pane.flex + ' 1 0'"
               (pointerdown)="tabs.focusPane(pane.id)"
             >
-              <app-tab-strip [pane]="pane" />
-              @if (activeIn(pane); as tab) {
+              @if (documentIn(pane); as tab) {
                 <app-viewer [tab]="tab" />
               } @else {
-                <app-home />
+                <app-home [pane]="pane.id" />
+              }
+
+              @if (tabs.draggingDocument()) {
+                <div
+                  class="shield"
+                  (dragover)="onOver($event, pane)"
+                  (dragleave)="onLeave()"
+                  (drop)="onDrop($event, pane, index)"
+                >
+                  @if (preview(); as landing) {
+                    @if (landing.paneId === pane.id) {
+                      <div class="landing" [class.left]="landing.zone === 'left'" [class.right]="landing.zone === 'right'"></div>
+                    }
+                  }
+                </div>
               }
             </section>
           }
@@ -95,8 +127,12 @@ import { TabsService, type Pane } from '../../core/tabs.service';
       sideways and a whole column would be off screen, which is worse than a
       cramped one. The floor is enforced where it can be enforced honestly:
       while a divider is being dragged.
+
+      \`position: relative\` is what the shield and its preview are measured and
+      painted against.
     */
     .pane {
+      position: relative;
       display: flex;
       flex-direction: column;
       min-width: 0;
@@ -122,10 +158,37 @@ import { TabsService, type Pane } from '../../core/tabs.service';
       transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1);
     }
     .divider:hover::after { background: var(--accent); }
+
+    /* Over everything in the pane, iframes included, and only while a row is in
+       the air. 30 puts it above the viewer's own content and below the rail
+       (40), the shelf (900) and the dialogs (1200) — the drag comes FROM the
+       panel beside the rail, so the shield must never be over it. */
+    .shield { position: absolute; inset: 0; z-index: 30; }
+
+    /*
+      The preview. \`pointer-events: none\` is load-bearing: an element that took
+      the pointer would take the shield's dragover events with it, and the
+      preview would flicker itself out of existence the moment it appeared.
+    */
+    .landing {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: var(--accent-faint);
+      border: 2px solid var(--accent);
+    }
+    /* An edge drop makes a column, so it is drawn as the half of the pane the
+       new column would occupy — not as a line, which says "insert here" without
+       saying how much of the room it takes. */
+    .landing.left { right: 50%; }
+    .landing.right { left: 50%; }
   `],
 })
 export class WorkspaceComponent {
   protected readonly tabs = inject(TabsService);
+
+  /** Which pane the pointer is over, and what a drop there would do. */
+  protected readonly preview = signal<Landing | null>(null);
 
   /** The pane being resized, with the pixel widths the drag started from. */
   private drag: {
@@ -137,9 +200,63 @@ export class WorkspaceComponent {
     x: number;
   } | null = null;
 
-  protected activeIn(pane: Pane) {
-    return this.tabs.byId(pane.activeTabId);
+  protected documentIn(pane: Pane) {
+    return this.tabs.byId(pane.tabId);
   }
+
+  // ── Taking a dropped row ─────────────────────────────────────────────────
+
+  protected onOver(event: DragEvent, pane: Pane): void {
+    if (!carriesDocument(event)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    this.preview.set({ paneId: pane.id, zone: this.zoneAt(event, box) });
+  }
+
+  protected onLeave(): void {
+    this.preview.set(null);
+  }
+
+  protected onDrop(event: DragEvent, pane: Pane, index: number): void {
+    const id = event.dataTransfer?.getData(DOCUMENT_MIME);
+    // Recomputed from this event rather than read off the preview signal, so
+    // what happens is what the geometry under the pointer says — a preview left
+    // over from the pane next door could otherwise decide the drop.
+    const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const zone = this.zoneAt(event, box);
+    this.preview.set(null);
+    this.tabs.draggingDocument.set(false);
+    if (!id) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (zone === 'middle') this.tabs.show(id, pane.id);
+    else this.tabs.openInNewPane(id, zone === 'left' ? index : index + 1);
+  }
+
+  /**
+   * Which third of the pane the pointer is in.
+   *
+   * The band is a QUARTER of the pane, floored at 60px so a narrow column still
+   * has a target a hand can hit and capped at 160 so a wide one does not turn
+   * half the page into a splitter. Everything between them is the middle, which
+   * is the drop a person means by default.
+   *
+   * AT THE CAP THE BANDS DO NOT EXIST: `canSplit` is false, the whole pane is a
+   * middle drop, and nothing lights up along the edges. A target that highlights
+   * and then refuses is worse than one that visibly will not take it — and the
+   * refusal is still there by name, in `openInNewPane`, for a drop that arrives
+   * some other way.
+   */
+  private zoneAt(event: DragEvent, box: DOMRect): Zone {
+    if (!this.tabs.canSplit()) return 'middle';
+    const band = Math.max(60, Math.min(160, box.width * 0.25));
+    if (event.clientX < box.left + band) return 'left';
+    if (event.clientX > box.right - band) return 'right';
+    return 'middle';
+  }
+
+  // ── The dividers ─────────────────────────────────────────────────────────
 
   /**
    * Take the two panes' REAL widths and the two panes' flex, and hold the sum
@@ -188,6 +305,14 @@ export class WorkspaceComponent {
     if (divider.hasPointerCapture(event.pointerId)) divider.releasePointerCapture(event.pointerId);
     this.drag = null;
   }
+}
+
+type Zone = 'left' | 'middle' | 'right';
+interface Landing { paneId: string; zone: Zone }
+
+/** Whether this drag is a document out of the list, rather than files from the OS. */
+function carriesDocument(event: DragEvent): boolean {
+  return event.dataTransfer?.types.includes(DOCUMENT_MIME) === true;
 }
 
 /**
