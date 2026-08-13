@@ -157,6 +157,17 @@ import { api } from '../../core/foundry';
           <button class="icon" title="Previous match" [disabled]="matches().length === 0" (click)="step(-1)">‹</button>
           <button class="icon" title="Next match" [disabled]="matches().length === 0" (click)="step(1)">›</button>
         </div>
+
+        <!--
+          The same primary button, same corner, as the EPUB tab's Save — a
+          conversion's output lives in the workspace until this puts a copy
+          somewhere the user chose. "Save a copy" and not "Save" because that is
+          literally what happens: nothing in this app edits a PDF, so there is
+          no state to flush, only a finished file to place.
+        -->
+        <button class="primary" [disabled]="doc() === null" (click)="tabs.saveActiveAs()">
+          {{ tab().savedPath === null ? 'Save a copy…' : 'Saved' }}
+        </button>
       </header>
 
       @if (problem(); as reason) {
@@ -166,7 +177,7 @@ import { api } from '../../core/foundry';
         </div>
       } @else {
         <div class="panes" [class.split]="tab().layerView">
-          <div class="viewport" #viewport (scroll)="onScroll()">
+          <div class="viewport" #viewport (scroll)="onScroll()" (wheel)="onWheel($event)">
             <div class="reel">
               @for (shell of shells(); track shell.number) {
                 <div
@@ -187,7 +198,7 @@ import { api } from '../../core/foundry';
           </div>
 
           @if (tab().layerView) {
-            <div class="viewport paper-side" #layerViewport (scroll)="onLayerScroll()">
+            <div class="viewport paper-side" #layerViewport (scroll)="onLayerScroll()" (wheel)="onWheel($event)">
               <div class="reel">
                 @for (shell of shells(); track shell.number) {
                   <div
@@ -378,6 +389,12 @@ import { api } from '../../core/foundry';
     }
     .icon.wide { min-width: 34px; }
     .icon:hover:not(:disabled) { color: var(--text-primary); border-color: var(--text-tertiary); }
+    .primary {
+      padding: 5px 14px; border-radius: 6px; cursor: pointer; font-size: 12px;
+      border: 1px solid var(--accent); background: var(--accent-soft); color: var(--text-primary);
+      white-space: nowrap;
+    }
+    .primary:hover:not(:disabled) { background: var(--accent); color: #16181c; }
     button:disabled { opacity: 0.4; cursor: default; }
   `],
 })
@@ -847,6 +864,48 @@ export class PdfViewComponent implements OnDestroy {
 
   // ── Zoom ─────────────────────────────────────────────────────────────────
 
+  /**
+   * Ctrl (Cmd on a Mac) + wheel zooms the DOCUMENT, and only the document.
+   *
+   * The scale signal only reaches the page shells and their canvases, so the
+   * toolbar, the tabs and the rest of the window cannot move — this is not
+   * Chromium's page zoom and must never trigger it, which is what the
+   * preventDefault is for. A trackpad pinch arrives as exactly this event
+   * (ctrlKey wheel), so pinch-to-zoom works unasked.
+   *
+   * ANCHORED UNDER THE CURSOR: the content point under the pointer stays under
+   * it, which is what makes wheel zoom usable at all — zooming toward the top
+   * of the document while reading page 40 is a teleport. The new scrollTop is
+   * set a frame later, once Angular has resized the shells the arithmetic
+   * assumed. Continuous rather than stepped, because a wheel is continuous;
+   * the +/− buttons keep their fixed stops.
+   */
+  protected onWheel(event: WheelEvent): void {
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    const scroller = event.currentTarget as HTMLElement;
+    // deltaMode 1 is lines (a plugged-in mouse on Firefox conventions); pixels
+    // otherwise. 16 is the browsers' own line height for this conversion.
+    const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+    const before = this.scale();
+    const after = Math.min(
+      ZOOM_STEPS[ZOOM_STEPS.length - 1]!,
+      Math.max(ZOOM_STEPS[0]!, before * Math.exp(-delta * WHEEL_RATE)),
+    );
+    if (after === before) return;
+    const rect = scroller.getBoundingClientRect();
+    const anchorX = event.clientX - rect.left;
+    const anchorY = event.clientY - rect.top;
+    const ratio = after / before;
+    const top = (scroller.scrollTop + anchorY) * ratio - anchorY;
+    const left = (scroller.scrollLeft + anchorX) * ratio - anchorX;
+    this.scale.set(after);
+    requestAnimationFrame(() => {
+      scroller.scrollTop = top;
+      scroller.scrollLeft = left;
+    });
+  }
+
   protected zoomIn(): void {
     const now = this.scale();
     this.scale.set(ZOOM_STEPS.find((step) => step > now + 0.001) ?? now);
@@ -1019,6 +1078,8 @@ interface PdfPage {
 const PDFJS_ASSETS = new URL('pdfjs/', document.baseURI);
 
 const ZOOM_STEPS = [0.25, 0.4, 0.5, 0.67, 0.8, 1, 1.25, 1.5, 2, 3, 4] as const;
+/** e^(100·rate) ≈ 1.2 — one wheel notch is one comfortable zoom step. */
+const WHEEL_RATE = 0.0018;
 const THUMB_WIDTH = 84;
 /** Long enough that typing a word is one search, short enough to feel live. */
 const QUERY_DELAY_MS = 250;
