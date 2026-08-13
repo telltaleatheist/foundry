@@ -922,6 +922,15 @@ async function provision(): Promise<void> {
   }
 }
 
+/*
+ * Animated wheel scrolling, which Chromium has and Electron ships turned OFF.
+ * In a browser a wheel notch glides; in a default Electron app it teleports
+ * ~100px, which reads as the page "jumping" under the reader — most visible in
+ * the PDF viewer, where the thing being scrolled is a page of a book. Must be
+ * set before the app is ready or it is silently ignored.
+ */
+app.commandLine.appendSwitch('enable-smooth-scrolling');
+
 void app.whenReady().then(() => {
   applyContentSecurityPolicy();
   registerFileProtocol();
