@@ -261,13 +261,17 @@ export class OcrDialogComponent {
   private readonly queue = inject(QueueService);
 
   /**
-   * The PDF this conversion is OF: the active tab, when it holds one.
+   * The PDF this conversion is OF: the focused pane's document, when it is one.
+   *
+   * The FOCUSED pane and not "the app's document", because with five panes open
+   * there is no such thing — the one the user last clicked in is the one they
+   * mean, and it is the same pane the rail's buttons and Ctrl+S act on.
    *
    * An EPUB tab is not a source — it is already the output — so the dialog says
    * "open a PDF first" over a book rather than offering to convert it.
    */
   protected readonly source = computed(() => {
-    const tab = this.tabs.active();
+    const tab = this.tabs.activeDocument();
     return tab !== null && tab.kind === 'pdf' ? tab.path : null;
   });
 

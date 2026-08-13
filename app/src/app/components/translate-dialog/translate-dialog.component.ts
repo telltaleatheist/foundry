@@ -248,7 +248,8 @@ export class TranslateDialogComponent {
   private readonly queue = inject(QueueService);
 
   /**
-   * The book this translation is OF: the active tab, when it holds an EPUB.
+   * The book this translation is OF: the focused pane's document, when it is a
+   * book. (Its HTML editor counts as the book — one document, two faces.)
    *
    * The path is the file on disk the tab was opened from — which for a
    * conversion is already the managed workspace copy, and for a book the user
@@ -256,7 +257,7 @@ export class TranslateDialogComponent {
    * engine never writes to its input, and the OUTPUT is placed by main.
    */
   protected readonly source = computed(() => {
-    const tab = this.tabs.active();
+    const tab = this.tabs.activeDocument();
     return tab !== null && tab.kind === 'epub' ? tab.path : null;
   });
 

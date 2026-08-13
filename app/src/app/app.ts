@@ -19,11 +19,15 @@ import { api } from './core/foundry';
  *
  * ── The keyboard ─────────────────────────────────────────────────────────────
  *
- * Ctrl/Cmd+S and Ctrl/Cmd+W are MENU items (electron/main.ts) and arrive here as
- * `menu:action`: a menu accelerator and a keydown listener for the same chord
- * both fire, and only the menu is discoverable. Ctrl/Cmd+Tab is handled here
- * because a menu item labelled "Next tab" is noise, and Escape because a dialog
- * that will not dismiss on Escape is a dialog people learn to avoid opening.
+ * Ctrl/Cmd+S, Ctrl/Cmd+W and Ctrl/Cmd+\ are MENU items (electron/main.ts) and
+ * arrive here as `menu:action`: a menu accelerator and a keydown listener for
+ * the same chord both fire, and only the menu is discoverable. Splitting is on
+ * the menu for exactly that reason — with one pane open there is nothing on
+ * screen that says a second is possible, so the View menu is where a person
+ * finds out. Ctrl/Cmd+Tab is handled here because a menu item labelled "Next
+ * tab" is noise, Ctrl/Cmd+1…5 because a menu of five "Focus pane N" items is
+ * five items of noise, and Escape because a dialog that will not dismiss on
+ * Escape is a dialog people learn to avoid opening.
  */
 @Component({
   selector: 'app-root',
@@ -85,18 +89,24 @@ export class App {
     // The File menu's Settings item. Main cannot route; it can only say where.
     api?.onNavigate((route) => { void this.router.navigateByUrl(route); });
 
-    // Save a copy / Close tab. Both act on the active TAB, which is renderer
-    // state, so main asks rather than does.
+    // Save a copy / Close tab / Split right. All three act on the FOCUSED
+    // pane's active tab, which is renderer state, so main asks rather than does.
     api?.onMenuAction((action) => {
       if (action === 'save') void this.tabs.saveActive();
       else if (action === 'save-as') void this.tabs.saveActiveAs();
+      else if (action === 'split-right') this.tabs.splitActive();
       else void this.tabs.closeActive();
     });
 
     // The window says which document is open. The OS window list is the one
     // place a person looks when three of these are running against three books.
+    //
+    // The DOCUMENT rather than the active tab: an HTML editor is a face of its
+    // book and carries neither its name nor its flags, so a window titled
+    // "Bleak House — HTML" with no dot on it would be lying twice about a book
+    // that has unsaved edits.
     effect(() => {
-      const tab = this.tabs.active();
+      const tab = this.tabs.activeDocument();
       if (tab === null) {
         document.title = 'Foundry';
         return;
@@ -121,15 +131,40 @@ export class App {
       return;
     }
     // Ctrl+Tab. `event.key` is 'Tab' with ctrlKey, and preventDefault is what
-    // stops the browser moving focus through the rail's buttons instead.
+    // stops the browser moving focus through the rail's buttons instead. It
+    // cycles the FOCUSED pane's strip — a Ctrl+Tab that walked all five panes'
+    // tabs in a row would move the document under a hand that meant "the next
+    // one over here".
     if (event.key === 'Tab' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       this.tabs.nextTab();
+      return;
+    }
+    // Ctrl+1…5 puts the focus in a column, which is what the rail, the menu and
+    // Ctrl+S all follow. Shift is excluded so it cannot fire from a chord meant
+    // for something else, and the guard on `panes` keeps Ctrl+3 from doing
+    // anything at all in an app with two columns open.
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey
+      && event.key >= '1' && event.key <= '5') {
+      const index = Number(event.key) - 1;
+      if (index < this.tabs.panes().length) {
+        event.preventDefault();
+        this.tabs.focusPaneAt(index);
+      }
     }
   }
 
+  /**
+   * A FILE drag, and only a file drag.
+   *
+   * Tabs are dragged between panes with the same platform mechanism, and
+   * without this test the veil ("Drop a PDF to open it") would slap itself over
+   * the whole window the moment a tab left its strip. `types` is the only part
+   * of a drag payload readable before the drop, which is exactly what it is for.
+   */
   @HostListener('window:dragenter', ['$event'])
   protected onDragEnter(event: DragEvent): void {
+    if (!carriesFiles(event)) return;
     event.preventDefault();
     this.dragDepth += 1;
     this.dropping.set(true);
@@ -137,6 +172,7 @@ export class App {
 
   @HostListener('window:dragover', ['$event'])
   protected onDragOver(event: DragEvent): void {
+    if (!carriesFiles(event)) return;
     // Without this the browser navigates the window to the dropped file, which
     // replaces the whole app with a PDF and no way back.
     event.preventDefault();
@@ -144,6 +180,7 @@ export class App {
 
   @HostListener('window:dragleave', ['$event'])
   protected onDragLeave(event: DragEvent): void {
+    if (!carriesFiles(event)) return;
     event.preventDefault();
     this.dragDepth = Math.max(0, this.dragDepth - 1);
     if (this.dragDepth === 0) this.dropping.set(false);
@@ -151,6 +188,7 @@ export class App {
 
   @HostListener('window:drop', ['$event'])
   protected onDrop(event: DragEvent): void {
+    if (!carriesFiles(event)) return;
     event.preventDefault();
     this.dragDepth = 0;
     this.dropping.set(false);
@@ -160,4 +198,9 @@ export class App {
       void this.tabs.openDropped(file);
     }
   }
+}
+
+/** Whether a drag is carrying files from outside the app, rather than a tab. */
+function carriesFiles(event: DragEvent): boolean {
+  return event.dataTransfer?.types.includes('Files') === true;
 }

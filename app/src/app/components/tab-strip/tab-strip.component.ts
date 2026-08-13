@@ -1,10 +1,10 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 import { Router } from '@angular/router';
 
-import { TabsService, type Tab } from '../../core/tabs.service';
+import { TabsService, type Pane, type Tab } from '../../core/tabs.service';
 
 /**
- * The tab strip — Chrome's anatomy, and Chrome's gestures.
+ * The tab strip — Chrome's anatomy, and Chrome's gestures. One per pane.
  *
  * Title, an unsaved dot, a close ✕; middle-click closes; overflow SCROLLS rather
  * than shrinking tabs to nothing, because a strip of twelve unreadable stubs is
@@ -14,21 +14,53 @@ import { TabsService, type Tab } from '../../core/tabs.service';
  * the settings screen navigates back to the workspace first — the document is
  * what a tab means, and it cannot be shown on a page that is not showing
  * documents.
+ *
+ * ── Dragging ─────────────────────────────────────────────────────────────────
+ *
+ * A tab can be dragged within its strip to reorder and onto ANOTHER pane's strip
+ * to move it there — which is the second half of the split, and the half that
+ * matters once there are two columns and the wrong book is in one of them.
+ * Native HTML5 drag and drop, not a hand-rolled pointer system: the strip needs
+ * exactly what the platform already does (a grab, a drop target, an insertion
+ * point) and the app's window-wide file drop is taught to tell the two apart by
+ * looking for `Files` in the payload.
+ *
+ * ── Which pane is focused ────────────────────────────────────────────────────
+ *
+ * The accent only appears once there are two panes: with one, this component
+ * paints exactly what it painted before panes existed, down to the pixel. With
+ * two or more, the focused pane's active tab carries a full-strength cyan line
+ * and the others carry a grey one — the rail, the menu and Ctrl+S all act on
+ * that tab, so which one it is has to be visible without being loud.
  */
 @Component({
   selector: 'app-tab-strip',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="strip">
-      @for (tab of tabs.tabs(); track tab.id) {
+    <div
+      class="strip"
+      [class.multi]="multi()"
+      [class.unfocused]="multi() && !focused()"
+      [class.landing]="landing()"
+      (dragover)="onStripOver($event)"
+      (dragleave)="onStripLeave()"
+      (drop)="onDrop($event, null)"
+    >
+      @for (tab of items(); track tab.id) {
         <div
           class="tab"
-          [class.active]="tabs.activeId() === tab.id"
+          [class.active]="pane().activeTabId === tab.id"
+          [class.before]="before() === tab.id"
           [title]="tooltip(tab)"
+          draggable="true"
           (click)="pick(tab)"
           (auxclick)="onAux($event, tab)"
+          (dragstart)="onDragStart($event, tab)"
+          (dragend)="onDragEnd()"
+          (dragover)="onTabOver($event, tab)"
+          (drop)="onDrop($event, tab)"
         >
-          <span class="kind">{{ tab.kind === 'epub' ? '▤' : '▦' }}</span>
+          <span class="kind">{{ glyph(tab) }}</span>
           <span class="name">{{ tab.title }}</span>
           <!--
             TWO marks, because they are two different things to fix. The dot is
@@ -45,13 +77,6 @@ import { TabsService, type Tab } from '../../core/tabs.service';
         </div>
       }
     </div>
-
-    @if (tabs.notice(); as message) {
-      <div class="notice">
-        <span>{{ message }}</span>
-        <button class="x" (click)="tabs.notice.set(null)" title="Dismiss">✕</button>
-      </div>
-    }
   `,
   styles: [`
     :host { display: block; }
@@ -69,6 +94,8 @@ import { TabsService, type Tab } from '../../core/tabs.service';
       scrollbar-width: none;
     }
     .strip::-webkit-scrollbar { height: 0; }
+    /* Where a dragged tab would land, when it is over the empty end of a strip. */
+    .strip.landing { background: var(--accent-faint); }
 
     .tab {
       display: flex;
@@ -96,6 +123,22 @@ import { TabsService, type Tab } from '../../core/tabs.service';
       color: var(--text-primary);
       font-weight: 500;
     }
+    /* The insertion point: a line down the edge the dragged tab would land on. */
+    .tab.before { box-shadow: inset 2px 0 0 0 var(--accent); }
+
+    /*
+      EVERYTHING BELOW IS GATED ON \`.multi\`, and that is the point. With one
+      pane open this component paints what it always painted; the focus marks
+      only exist once there is a second column that could hold the focus
+      instead.
+    */
+    .strip.multi .tab.active { box-shadow: inset 0 2px 0 0 var(--accent); }
+    .strip.multi.unfocused .tab.active {
+      box-shadow: inset 0 2px 0 0 var(--border-strong);
+      color: var(--text-secondary);
+      font-weight: 400;
+    }
+    .strip.multi.unfocused .tab.active .dot { color: var(--text-tertiary); }
 
     .kind { flex: 0 0 auto; opacity: 0.6; font-size: 11px; }
     .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -110,21 +153,26 @@ import { TabsService, type Tab } from '../../core/tabs.service';
       transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1);
     }
     .x:hover { background: var(--bg-hover); color: var(--text-primary); }
-
-    .notice {
-      display: flex; align-items: center; gap: 10px;
-      padding: 7px 12px;
-      background: var(--warn-soft);
-      border-bottom: 1px solid var(--border-subtle);
-      color: var(--warn);
-      font-size: 12px;
-    }
-    .notice span { flex: 1; min-width: 0; }
   `],
 })
 export class TabStripComponent {
+  readonly pane = input.required<Pane>();
+
   protected readonly tabs = inject(TabsService);
   private readonly router = inject(Router);
+
+  protected readonly items = computed<Tab[]>(() => this.tabs.tabsIn(this.pane().id));
+  protected readonly multi = computed(() => this.tabs.panes().length > 1);
+  protected readonly focused = computed(() => this.tabs.focusedPaneId() === this.pane().id);
+
+  /** The tab a drop would land in front of, and whether the end of the strip is the target. */
+  protected readonly before = signal<string | null>(null);
+  protected readonly landing = signal(false);
+
+  protected glyph(tab: Tab): string {
+    if (tab.kind === 'editor') return '</>';
+    return tab.kind === 'epub' ? '▤' : '▦';
+  }
 
   protected pick(tab: Tab): void {
     void this.router.navigateByUrl('/');
@@ -145,7 +193,93 @@ export class TabStripComponent {
     void this.tabs.close(tab.id);
   }
 
+  // ── Dragging a tab between strips ────────────────────────────────────────
+
+  protected onDragStart(event: DragEvent, tab: Tab): void {
+    // The id travels in a type of our own. Nothing else in the app reads it,
+    // and the window-wide file drop looks for `Files` — so the two kinds of
+    // drag over this window can never be confused for one another.
+    event.dataTransfer?.setData(TAB_MIME, tab.id);
+    // `text/plain` as well, because a drag with no standard type is refused
+    // outright by some platforms before a drop can happen at all.
+    event.dataTransfer?.setData('text/plain', tab.title);
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+  }
+
+  protected onDragEnd(): void {
+    this.before.set(null);
+    this.landing.set(false);
+  }
+
+  /**
+   * Over a tab: the drop lands before it or after it, by which half the pointer
+   * is in. Chrome's rule, and the only one that lets a tab be put at the very
+   * end of a strip that is full.
+   */
+  protected onTabOver(event: DragEvent, tab: Tab): void {
+    if (!this.carriesTab(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const after = event.clientX > box.left + box.width / 2;
+    const list = this.items();
+    const at = list.findIndex((candidate) => candidate.id === tab.id);
+    const target = after ? list[at + 1]?.id ?? null : tab.id;
+    this.before.set(target);
+    this.landing.set(target === null);
+  }
+
+  protected onStripOver(event: DragEvent): void {
+    if (!this.carriesTab(event)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    this.before.set(null);
+    this.landing.set(true);
+  }
+
+  protected onStripLeave(): void {
+    this.before.set(null);
+    this.landing.set(false);
+  }
+
+  protected onDrop(event: DragEvent, tab: Tab | null): void {
+    const id = event.dataTransfer?.getData(TAB_MIME);
+    // Where it lands was worked out on the way in, and is READ BEFORE the drag
+    // state is cleared — clearing first would drop every tab at the end of the
+    // strip and quietly undo the insertion point the user was just shown.
+    const target = this.before() ?? (tab === null ? null : this.beforeFor(event, tab));
+    this.onDragEnd();
+    if (!id) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.tabs.moveTab(id, this.pane().id, target);
+    void this.router.navigateByUrl('/');
+  }
+
+  private beforeFor(event: DragEvent, tab: Tab): string | null {
+    const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    if (event.clientX <= box.left + box.width / 2) return tab.id;
+    const list = this.items();
+    const at = list.findIndex((candidate) => candidate.id === tab.id);
+    return list[at + 1]?.id ?? null;
+  }
+
+  /**
+   * Whether this drag is one of ours.
+   *
+   * `types` is readable during a drag; the DATA is not, by design, which is why
+   * the id can only be read on drop. A file drag has `Files` here and is left
+   * alone for the window's own handler to open.
+   */
+  private carriesTab(event: DragEvent): boolean {
+    return event.dataTransfer?.types.includes(TAB_MIME) === true;
+  }
+
   protected tooltip(tab: Tab): string {
+    if (tab.kind === 'editor') {
+      return `The HTML of the chapter open in ${tab.title.replace(/ — HTML$/, '')}`;
+    }
     const lines = [tab.path];
     if (tab.savedPath !== null) lines.push(`Saved to ${tab.savedPath}`);
     if (tab.unsaved) lines.push("In Foundry's library workspace only — Ctrl+S files it somewhere.");
@@ -153,3 +287,6 @@ export class TabStripComponent {
     return lines.join('\n');
   }
 }
+
+/** Ours, so a tab drag and a file drag can never be mistaken for each other. */
+const TAB_MIME = 'application/x-foundry-tab';

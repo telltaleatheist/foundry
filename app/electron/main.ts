@@ -561,6 +561,22 @@ function buildMenu(): void {
       // anybody meant in a document app. Zooming a DOCUMENT is the PDF
       // viewer's own Ctrl+wheel/pinch and +/− buttons.
       submenu: [
+        {
+          /**
+           * The one place the split is DISCOVERABLE.
+           *
+           * A single-pane workspace is meant to look exactly like the app that
+           * had no panes at all — no divider, no split button, nothing on the
+           * strip hinting at a second column — so a person who has never used
+           * the feature would never find it on screen. They find it here.
+           * (Ctrl+\ is VS Code's chord for the same operation.) The renderer
+           * owns which tab and which pane; main only says "split".
+           */
+          label: 'Split right',
+          accelerator: 'CmdOrCtrl+\\',
+          click: () => sendMenuAction('split-right'),
+        },
+        { type: 'separator' },
         { role: 'reload' },
         { role: 'toggleDevTools' },
         { type: 'separator' },

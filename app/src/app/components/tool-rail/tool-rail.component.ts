@@ -158,19 +158,27 @@ export class ToolRailComponent {
   protected readonly tabs = inject(TabsService);
   private readonly router = inject(Router);
 
-  /** Editable means an unpacked book is in front of the user right now. */
+  /**
+   * Editable means an unpacked book is in front of the user right now.
+   *
+   * `activeDocument` and not `active`: with the editor pane focused, the tab in
+   * front of the user IS the editor, and a rail that greyed out its own toggle
+   * the moment you clicked into the thing it opened would be a rail you could
+   * not press twice.
+   */
   protected canEdit(): boolean {
-    const tab = this.tabs.active();
+    const tab = this.tabs.activeDocument();
     return tab !== null && tab.kind === 'epub' && tab.book !== null;
   }
 
   protected editingActive(): boolean {
-    return this.tabs.active()?.editing === true;
+    const tab = this.tabs.activeDocument();
+    return tab !== null && tab.kind === 'epub' && this.tabs.editorFor(tab.id) !== null;
   }
 
   protected toggleEdit(): void {
-    const tab = this.tabs.active();
-    if (tab && tab.kind === 'epub' && tab.book !== null) this.tabs.toggleEditing(tab.id);
+    const tab = this.tabs.activeDocument();
+    if (tab && tab.kind === 'epub' && tab.book !== null) void this.tabs.toggleEditor(tab.id);
   }
 
   protected home(): void {
@@ -195,7 +203,7 @@ export class ToolRailComponent {
    * scan rather than opening a dialog whose only message is "not this file".
    */
   protected canTranslate(): boolean {
-    return this.tabs.active()?.kind === 'epub';
+    return this.tabs.activeDocument()?.kind === 'epub';
   }
 
   protected translate(): void {

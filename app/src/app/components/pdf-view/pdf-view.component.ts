@@ -166,7 +166,7 @@ import { api } from '../../core/foundry';
           literally what happens: nothing in this app edits a PDF, so there is
           no state to flush, only a finished file to place.
         -->
-        <button class="primary" [disabled]="doc() === null" (click)="tabs.saveActiveAs()">
+        <button class="primary" [disabled]="doc() === null" (click)="tabs.saveAs(tab().id)">
           {{ tab().savedPath === null ? 'Save a copy…' : 'Saved' }}
         </button>
       </header>
@@ -515,10 +515,17 @@ export class PdfViewComponent implements OnDestroy {
      * signals it also reads (`doc`, `boxes`), so a tracked call would make the
      * document it just loaded the reason to load it again, forever. The path is
      * the only thing this effect is allowed to watch.
+     *
+     * WATCHED THROUGH A COMPUTED, and that part is load-bearing too: reading
+     * `this.tab()` here would depend on the whole TAB, and every patch makes a
+     * new tab object — so pressing "Thumbnails" or "Text layer" would re-read
+     * the file from disk and throw the reader back to page one. The computed
+     * only fires when the string changes.
      */
+    const path = computed(() => this.tab().path);
     effect(() => {
-      const path = this.tab().path;
-      untracked(() => { void this.open(path); });
+      const file = path();
+      untracked(() => { void this.open(file); });
     });
 
     /**

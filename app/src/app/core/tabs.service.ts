@@ -19,9 +19,39 @@ import { api } from './foundry';
  * whether the file is openable at all) and arrive back here as that event. So
  * this service never has to decide whether a path is real, and there is exactly
  * one code path that creates a tab.
+ *
+ * ── Panes ────────────────────────────────────────────────────────────────────
+ *
+ * The workspace is one to five PANES side by side, each with its own strip and
+ * its own active tab — VS Code's editor groups. It exists for one comparison in
+ * particular: a book beside its translation, the German page and the English
+ * page under two hands at once. Everything else about panes follows from that,
+ * including the auto-open rule (a finished job lands in a pane of its OWN, so a
+ * translation appears beside its source rather than on top of it).
+ *
+ * THE TABS STAY IN ONE FLAT LIST and the panes hold ids into it. A pane owning
+ * whole Tab objects would put `patch()` — the one function every edit, save and
+ * flag in this file goes through — behind a search of a list of lists, and the
+ * first thing to rot would be an edit landing in one pane's copy of a tab while
+ * another pane showed the other. One list, one identity per tab; the panes
+ * decide only where each is shown.
+ *
+ * ONE PANE IS FOCUSED, and it is what the rail, the menu and the keyboard mean
+ * by "the document": `active()` is the focused pane's active tab and nothing
+ * else. With a single pane open, that is exactly the app that existed before
+ * panes did — the feature is meant to be invisible until it is used.
+ *
+ * ── The HTML editor is a tab, not a mode ─────────────────────────────────────
+ *
+ * "Edit HTML" used to split the book's own tab down the middle. It opens a tab
+ * now — kind `editor`, pointed at the book's tab through `sourceTabId` — which
+ * the pane rules then place beside the book like anything else. One document
+ * with two faces rather than two documents: the editor has no book of its own,
+ * reads the source tab's chapter, and writes through the same `writeChapter`
+ * that bumps the source's revision and reloads whatever pane is rendering it.
  */
 
-export type TabKind = 'pdf' | 'epub';
+export type TabKind = 'pdf' | 'epub' | 'editor';
 
 export interface Tab {
   id: string;
@@ -63,15 +93,22 @@ export interface Tab {
   book: EpubBook | null;
   /** Which chapter the viewer is showing. */
   chapterHref: string | null;
-  /** True while the split HTML editor is open beside the rendered chapter. EPUB only. */
-  editing: boolean;
+  /**
+   * For an `editor` tab: the EPUB tab whose chapter it is editing.
+   *
+   * The link runs THIS WAY ONLY. A book pointing at its editor as well would be
+   * two facts to keep agreeing, and the one that fell behind would be the one
+   * the close cascade reads — so the book's editor is FOUND (`editorFor`) and
+   * never stored.
+   */
+  sourceTabId: string | null;
   /**
    * True while the PDF viewer is showing the text layer beside the page.
    *
-   * On the TAB rather than in the component, for the same reason `editing` is:
-   * only the active tab's viewer is in the DOM, so a component that held this
-   * would forget it the moment the user looked at something else. A view mode
-   * that resets itself when you glance away is a view mode you stop using.
+   * On the TAB rather than in the component, for the same reason `thumbnails`
+   * is: only the active tab's viewer is in the DOM, so a component that held
+   * this would forget it the moment the user looked at something else. A view
+   * mode that resets itself when you glance away is a view mode you stop using.
    */
   layerView: boolean;
   /** True while the PDF viewer's thumbnail strip is up. ON by default — it sits
@@ -83,12 +120,44 @@ export interface Tab {
    * It is what makes the rendered pane refresh: the chapter's URL does not
    * change when its bytes do, and an <iframe> pointed at a URL it is already
    * showing does nothing at all. This rides along as a query parameter the
-   * protocol handler ignores.
+   * protocol handler ignores. Cross-pane for free, now that the editor is its
+   * own tab: the bytes land, the source tab's revision moves, and every pane
+   * rendering that book reloads.
    */
   revision: number;
   /** Why this tab has nothing in it, when that happens. Never swallowed. */
   problem: string | null;
 }
+
+/**
+ * A column of the workspace: its own strip, its own active tab.
+ *
+ * `activeTabId` of null means this pane is showing HOME — which is what a pane
+ * with no tab active has always shown, back when there was only ever one.
+ */
+export interface Pane {
+  id: string;
+  /** The strip's order, left to right. Ids into the flat tab list. */
+  tabIds: readonly string[];
+  activeTabId: string | null;
+  /**
+   * The pane's share of the row, as a flex-grow number.
+   *
+   * In memory only, and deliberately: a layout is a thing you arrange for the
+   * comparison you are doing right now, and restoring last week's column widths
+   * over this week's two books would be furniture arriving in the wrong room.
+   */
+  flex: number;
+}
+
+/**
+ * Five, and the number is a judgement rather than a limit of the code.
+ *
+ * A sixth column on a 1920-wide window is 300 pixels of book, which is a column
+ * of hyphens. The cap is also what makes the auto-open rule terminate: past it,
+ * a finished job joins the rightmost pane instead of narrowing everything.
+ */
+export const MAX_PANES = 5;
 
 /**
  * The job kinds that become a tab when they finish.
@@ -100,17 +169,56 @@ export interface Tab {
  */
 const OPENS_ITSELF: ReadonlySet<JobKind> = new Set<JobKind>(['epub', 'pdf', 'translate']);
 
+/** What a rendered chapter reported being clicked, for the editor to jump to. */
+export interface SourceJump {
+  /** The EPUB tab the click came from. Its editor, if any, is the one that moves. */
+  tabId: string;
+  bf: boolean;
+  tag: string;
+  index: number;
+  /**
+   * Bumped per click, and it is what makes a SECOND click on the same block do
+   * anything at all: the payload would otherwise be identical, the signal would
+   * not change, and the editor's effect would never run.
+   */
+  seq: number;
+}
+
 @Injectable({ providedIn: 'root' })
 export class TabsService {
   private readonly queue = inject(QueueService);
 
   private readonly all = signal<Tab[]>([]);
-  private readonly current = signal<string | null>(null);
+  private readonly columns = signal<Pane[]>([]);
+  private readonly focused = signal<string | null>(null);
 
+  /** Every open tab, in no particular order — the panes carry the order. */
   readonly tabs = this.all.asReadonly();
-  /** Null means Home — which is also what "no tabs open" looks like. */
-  readonly activeId = this.current.asReadonly();
-  readonly active = computed(() => this.all().find((tab) => tab.id === this.current()) ?? null);
+  readonly panes = this.columns.asReadonly();
+  readonly focusedPaneId = this.focused.asReadonly();
+
+  readonly focusedPane = computed<Pane | null>(() =>
+    this.columns().find((pane) => pane.id === this.focused()) ?? null);
+
+  /** Null means Home — which is also what "no panes open at all" looks like. */
+  readonly activeId = computed<string | null>(() => this.focusedPane()?.activeTabId ?? null);
+  readonly active = computed<Tab | null>(() => this.byId(this.activeId()));
+
+  /**
+   * The DOCUMENT the user is working on, which is not always the active tab.
+   *
+   * An editor tab is a face of its book, so with the editor pane focused the
+   * rail's Translate, the OCR dialog's source and Ctrl+S must all still mean
+   * the book. Everything that acts on "what I am looking at" reads this;
+   * `active()` stays literal, for the things that mean the tab itself.
+   */
+  readonly activeDocument = computed<Tab | null>(() => {
+    const tab = this.active();
+    if (tab === null) return null;
+    return tab.kind === 'editor' ? this.byId(tab.sourceTabId) : tab;
+  });
+
+  readonly canSplit = computed(() => this.columns().length < MAX_PANES);
 
   /**
    * The last thing that went wrong out here rather than inside a tab: a drop
@@ -119,6 +227,13 @@ export class TabsService {
    * user gets to wonder about.
    */
   readonly notice = signal<string | null>(null);
+
+  /** The tab whose chapter is being written right now, for the "Writing…" line. */
+  readonly writingTo = signal<string | null>(null);
+
+  /** The most recent click-to-source, for whichever editor is watching that book. */
+  readonly sourceJump = signal<SourceJump | null>(null);
+  private jumpSeq = 0;
 
   /**
    * Paths that will arrive as UNSAVED tabs: a conversion's output, or a
@@ -130,10 +245,25 @@ export class TabsService {
    */
   private readonly expectUnsaved = new Set<string>();
 
+  /** Paths that will arrive wanting a pane of their own. Same round trip, same trick. */
+  private readonly expectOwnPane = new Set<string>();
+
   /** Conversions already turned into a tab, so a queue push cannot open a second. */
   private readonly openedJobs = new Set<string>();
 
+  /**
+   * An open editor's "write what is in the box, now".
+   *
+   * Registered by the editor component, because the draft lives in its textarea
+   * and nothing out here can see it. `close()` awaits it before it asks the user
+   * anything: the debounce is 700 ms, and closing a tab inside that window used
+   * to throw away the last sentence typed AND ask a question about a `modified`
+   * flag that had not been set yet.
+   */
+  private readonly pendingFlush = new Map<string, () => Promise<void>>();
+
   private sequence = 0;
+  private paneSequence = 0;
 
   constructor() {
     api?.onDocumentOpened((absolutePath) => { this.adopt(absolutePath); });
@@ -155,6 +285,10 @@ export class TabsService {
      * runs for hours, so the person who ordered it is not watching, and the
      * book appearing in a tab is how they find out it finished at all.
      *
+     * IN A PANE OF ITS OWN, which is what the panes are for: the translation
+     * arrives beside the book it was made from, and the two are readable
+     * against each other without a single gesture from the user.
+     *
      * Jobs already finished when this window loaded are marked as seen without
      * opening: a reload should not reopen five books somebody closed.
      */
@@ -166,7 +300,7 @@ export class TabsService {
         if (this.openedJobs.has(job.id)) continue;
         this.openedJobs.add(job.id);
         if (first) continue;
-        this.openManaged(job.outputPath);
+        this.openFinished(job.outputPath);
       }
       if (jobs.length > 0) first = false;
     });
@@ -197,55 +331,64 @@ export class TabsService {
   /** Open a path this window already knows about: Home's list, the shelf's Open. */
   async openFile(filePath: string, managed = false): Promise<void> {
     if (!api) return;
-    if (managed) this.expectUnsaved.add(normalise(filePath));
+    const key = normalise(filePath);
+    if (managed) this.expectUnsaved.add(key);
     const admitted = await api.openPath(filePath);
     if (admitted === null) {
-      this.expectUnsaved.delete(normalise(filePath));
+      this.expectUnsaved.delete(key);
+      this.expectOwnPane.delete(key);
       this.notice.set(`${filePath} is no longer there.`);
     }
   }
 
-  /** A book that is still only in the workspace — it opens with the dot on. */
-  private openManaged(filePath: string): void {
+  /** A conversion's output: unsaved, and in a pane of its own if there is room. */
+  private openFinished(filePath: string): void {
+    this.expectOwnPane.add(normalise(filePath));
     void this.openFile(filePath, true);
   }
 
   /**
    * The single tab factory. Focuses an existing tab for the same file rather
    * than opening a second — two tabs onto one book are two scroll positions
-   * fighting over one document.
+   * fighting over one document, and with panes it would be two of them fighting
+   * over one unpack.
    */
   private adopt(absolutePath: string): void {
     const key = normalise(absolutePath);
-    const existing = this.all().find((tab) => normalise(tab.path) === key);
+    const ownPane = this.expectOwnPane.delete(key);
+    const existing = this.all().find((tab) => normalise(tab.path) === key && tab.kind !== 'editor');
     if (existing) {
-      this.current.set(existing.id);
+      this.reveal(existing.id);
       return;
     }
 
-    this.sequence += 1;
-    const id = `tab-${this.sequence}`;
     const kind: TabKind = key.endsWith('.epub') ? 'epub' : 'pdf';
     const unsaved = this.expectUnsaved.delete(key);
-    const tab: Tab = {
-      id,
+    const tab = this.blankTab(kind, absolutePath, baseName(absolutePath));
+    tab.unsaved = unsaved;
+    this.all.update((tabs) => [...tabs, tab]);
+    this.place(tab.id, ownPane);
+    if (kind === 'epub') void this.unpack(tab.id, absolutePath);
+  }
+
+  private blankTab(kind: TabKind, path: string, title: string): Tab {
+    this.sequence += 1;
+    return {
+      id: `tab-${this.sequence}`,
       kind,
-      path: absolutePath,
-      title: baseName(absolutePath),
-      unsaved,
+      path,
+      title,
+      unsaved: false,
       modified: false,
       savedPath: null,
       book: null,
       chapterHref: null,
-      editing: false,
+      sourceTabId: null,
       layerView: false,
       thumbnails: true,
       revision: 0,
       problem: null,
     };
-    this.all.update((tabs) => [...tabs, tab]);
-    this.current.set(id);
-    if (kind === 'epub') void this.unpack(id, absolutePath);
   }
 
   /**
@@ -276,28 +419,232 @@ export class TabsService {
     }
   }
 
-  // ── Living with them ─────────────────────────────────────────────────────
+  // ── Panes ────────────────────────────────────────────────────────────────
 
-  activate(id: string | null): void {
-    this.current.set(id);
+  /** Every tab in a pane, in the pane's own order. Missing ids cannot happen; they are dropped anyway. */
+  tabsIn(paneId: string): Tab[] {
+    const pane = this.columns().find((candidate) => candidate.id === paneId);
+    if (!pane) return [];
+    const tabs = this.all();
+    return pane.tabIds
+      .map((id) => tabs.find((tab) => tab.id === id))
+      .filter((tab): tab is Tab => tab !== undefined);
   }
 
-  /** The rail's Home. Home is "no tab is active", not a tab of its own. */
+  byId(id: string | null): Tab | null {
+    if (id === null) return null;
+    return this.all().find((tab) => tab.id === id) ?? null;
+  }
+
+  paneOf(tabId: string): Pane | null {
+    return this.columns().find((pane) => pane.tabIds.includes(tabId)) ?? null;
+  }
+
+  /**
+   * Clicking anywhere in a pane focuses it — that is the whole focus model, and
+   * it is why nothing else in the app has to ask which pane it is in.
+   */
+  focusPane(paneId: string): void {
+    if (this.focused() === paneId) return;
+    if (this.columns().some((pane) => pane.id === paneId)) this.focused.set(paneId);
+  }
+
+  /** Ctrl+1…5. Out of range is a no-op rather than a clamp — 4 means the fourth. */
+  focusPaneAt(index: number): void {
+    const pane = this.columns()[index];
+    if (pane) this.focused.set(pane.id);
+  }
+
+  /**
+   * Put a tab in a pane and give it the focus.
+   *
+   * The first document makes the first pane. After that: a finished job asks
+   * for one of its own (up to the cap, past which it joins the rightmost), and
+   * everything else — a drop, Home's list, the shelf's Open — joins the pane
+   * the user is working in, because they aimed at it.
+   *
+   * `beside` names a pane the new one must open DIRECTLY to the right of, which
+   * is what an HTML editor asks for: it is a face of one particular book, and a
+   * column of source three panes away from the page it belongs to helps nobody.
+   * A conversion's output passes nothing and lands on the end.
+   */
+  private place(tabId: string, ownPane: boolean, beside: string | null = null): void {
+    const panes = this.columns();
+    if (panes.length === 0) {
+      const pane = this.makePane(tabId);
+      this.columns.set([pane]);
+      this.focused.set(pane.id);
+      return;
+    }
+    if (ownPane && panes.length < MAX_PANES) {
+      const pane = this.makePane(tabId);
+      const at = beside === null ? -1 : panes.findIndex((candidate) => candidate.id === beside);
+      const next = at < 0
+        ? [...panes, pane]
+        : [...panes.slice(0, at + 1), pane, ...panes.slice(at + 1)];
+      this.columns.set(equalise(next));
+      this.focused.set(pane.id);
+      return;
+    }
+    const target = ownPane
+      ? panes[panes.length - 1]!
+      : (this.focusedPane() ?? panes[panes.length - 1]!);
+    this.columns.set(panes.map((pane) => (pane.id === target.id
+      ? { ...pane, tabIds: [...pane.tabIds, tabId], activeTabId: tabId }
+      : pane)));
+    this.focused.set(target.id);
+  }
+
+  private makePane(tabId: string): Pane {
+    this.paneSequence += 1;
+    return { id: `pane-${this.paneSequence}`, tabIds: [tabId], activeTabId: tabId, flex: 1 };
+  }
+
+  /** Show a tab: focus its pane, make it that pane's active one. */
+  reveal(tabId: string): void {
+    const pane = this.paneOf(tabId);
+    if (!pane) return;
+    this.columns.update((panes) => panes.map((candidate) =>
+      (candidate.id === pane.id ? { ...candidate, activeTabId: tabId } : candidate)));
+    this.focused.set(pane.id);
+  }
+
+  /**
+   * Move a tab into a pane — the drag between two strips, and a reorder within
+   * one, which are the same operation with the same two ends.
+   *
+   * `beforeTabId` names the tab it lands in front of; null means the end. A
+   * source pane left empty goes with it, on the same rule as closing the last
+   * tab in one.
+   */
+  moveTab(tabId: string, targetPaneId: string, beforeTabId: string | null = null): void {
+    if (tabId === beforeTabId) return;
+    const panes = this.columns();
+    const owner = panes.find((pane) => pane.tabIds.includes(tabId));
+    if (!owner || !panes.some((pane) => pane.id === targetPaneId)) return;
+
+    const at = owner.tabIds.indexOf(tabId);
+    const lifted = panes.map((pane) => {
+      if (pane.id !== owner.id) return pane;
+      const tabIds = pane.tabIds.filter((id) => id !== tabId);
+      // The pane it LEFT keeps showing something: the tab that took its place.
+      // (Unless it is also the destination, in which case the move below sets it.)
+      const activeTabId = pane.id === targetPaneId || pane.activeTabId !== tabId
+        ? pane.activeTabId
+        : tabIds[Math.min(at, tabIds.length - 1)] ?? null;
+      return { ...pane, tabIds, activeTabId };
+    });
+
+    const dropped = lifted.map((pane) => {
+      if (pane.id !== targetPaneId) return pane;
+      const before = beforeTabId === null ? -1 : pane.tabIds.indexOf(beforeTabId);
+      const index = before < 0 ? pane.tabIds.length : before;
+      return {
+        ...pane,
+        tabIds: [...pane.tabIds.slice(0, index), tabId, ...pane.tabIds.slice(index)],
+        activeTabId: tabId,
+      };
+    });
+
+    this.columns.set(dropped.filter((pane) => pane.tabIds.length > 0));
+    this.focused.set(targetPaneId);
+  }
+
+  /**
+   * Open this tab in a new pane to its right — the split.
+   *
+   * It MOVES rather than copies: two panes onto one tab would be two viewers
+   * over one document, which is the thing `adopt` refuses to make by hand. A
+   * pane holding only this tab splits into nothing.
+   *
+   * BOTH REFUSALS ARE SAID. This is reachable from a menu item and a keyboard
+   * chord, neither of which can grey itself out per-pane, so the two ways it
+   * cannot happen have to arrive as sentences — a Ctrl+\ that silently does
+   * nothing is indistinguishable from a Ctrl+\ that is broken.
+   */
+  splitRight(tabId: string): void {
+    const panes = this.columns();
+    if (panes.length >= MAX_PANES) {
+      this.notice.set(`${MAX_PANES} columns is as wide as this window splits — close one first.`);
+      return;
+    }
+    const owner = panes.find((pane) => pane.tabIds.includes(tabId));
+    if (!owner) return;
+    if (owner.tabIds.length < 2) {
+      this.notice.set('Splitting moves a tab into a column of its own — this one has nothing else in it.');
+      return;
+    }
+
+    const at = owner.tabIds.indexOf(tabId);
+    const tabIds = owner.tabIds.filter((id) => id !== tabId);
+    const stripped: Pane = {
+      ...owner,
+      tabIds,
+      activeTabId: owner.activeTabId === tabId
+        ? tabIds[Math.min(at, tabIds.length - 1)] ?? null
+        : owner.activeTabId,
+    };
+    const fresh = this.makePane(tabId);
+
+    const next: Pane[] = [];
+    for (const pane of panes) {
+      if (pane.id !== owner.id) { next.push(pane); continue; }
+      next.push(stripped, fresh);
+    }
+    this.columns.set(equalise(next));
+    this.focused.set(fresh.id);
+  }
+
+  splitActive(): void {
+    const id = this.activeId();
+    if (id === null) {
+      this.notice.set('There is no document here to put in a column of its own.');
+      return;
+    }
+    this.splitRight(id);
+  }
+
+  /**
+   * A divider drag. Two neighbours, one number moved between them.
+   *
+   * Only the pair either side of the divider changes, so the rest of the row
+   * does not twitch while a divider is dragged — the caller does the pixel
+   * arithmetic against the real widths and hands back the two shares.
+   */
+  resize(leftPaneId: string, leftFlex: number, rightPaneId: string, rightFlex: number): void {
+    this.columns.update((panes) => panes.map((pane) => {
+      if (pane.id === leftPaneId) return { ...pane, flex: Math.max(0.05, leftFlex) };
+      if (pane.id === rightPaneId) return { ...pane, flex: Math.max(0.05, rightFlex) };
+      return pane;
+    }));
+  }
+
+  // ── Living with them ─────────────────────────────────────────────────────
+
+  /** Clicking a tab in a strip. Focuses that pane too — a click is an aim. */
+  activate(tabId: string): void {
+    this.reveal(tabId);
+  }
+
+  /** The rail's Home. Home is "no tab is active in this pane", not a tab of its own. */
   goHome(): void {
-    this.current.set(null);
+    const pane = this.focusedPane();
+    if (!pane) return;
+    this.columns.update((panes) => panes.map((candidate) =>
+      (candidate.id === pane.id ? { ...candidate, activeTabId: null } : candidate)));
   }
 
   showChapter(id: string, href: string): void {
     this.patch(id, { chapterHref: href });
   }
 
-  /** Ctrl/Cmd+Tab. Wraps, and does nothing sensible with none open — so it does nothing. */
+  /** Ctrl/Cmd+Tab. Cycles the FOCUSED pane's strip, wraps, no-ops on an empty app. */
   nextTab(): void {
-    const tabs = this.all();
-    if (tabs.length === 0) return;
-    const at = tabs.findIndex((tab) => tab.id === this.current());
-    const next = tabs[(at + 1) % tabs.length];
-    if (next) this.current.set(next.id);
+    const pane = this.focusedPane();
+    if (!pane || pane.tabIds.length === 0) return;
+    const at = pane.activeTabId === null ? -1 : pane.tabIds.indexOf(pane.activeTabId);
+    const next = pane.tabIds[(at + 1) % pane.tabIds.length];
+    if (next !== undefined) this.reveal(next);
   }
 
   /**
@@ -307,36 +654,86 @@ export class TabsService {
    * dialog in this app is main's). The book is NOT deleted either way — see
    * electron/workspace.ts — so the question is only whether they meant to stop
    * tracking it.
+   *
+   * A PENDING EDIT IS FLUSHED FIRST, before the question is asked. The editor
+   * writes 700 ms after the last keystroke, and a close inside that window used
+   * to lose the sentence being typed and then ask about a `modified` flag that
+   * had not been set yet — the dialog would say the book was untouched while
+   * the last edit evaporated.
+   *
+   * CLOSING A BOOK CLOSES ITS EDITOR. They are one document with two faces, and
+   * an editor pane left holding a book that is no longer open is a pane with
+   * nothing it can do.
    */
   async close(id: string): Promise<void> {
     const doomed = this.all().find((candidate) => candidate.id === id);
     if (!doomed) return;
-    if ((doomed.unsaved || doomed.modified) && api) {
+
+    const editor = doomed.kind === 'epub' ? this.editorFor(doomed.id) : null;
+    await this.flushPending(doomed.kind === 'editor' ? doomed.id : editor?.id ?? null);
+
+    // Re-read: the flush may have set `modified`, which is the whole reason the
+    // question is asked after it rather than before.
+    const current = this.all().find((candidate) => candidate.id === id);
+    if (!current) return;
+    if ((current.unsaved || current.modified) && api) {
       const go = await api.confirmClose({
-        title: doomed.title,
-        unsaved: doomed.unsaved,
-        modified: doomed.modified,
-        savedPath: doomed.savedPath,
+        title: current.title,
+        unsaved: current.unsaved,
+        modified: current.modified,
+        savedPath: current.savedPath,
       });
       if (!go) return;
     }
+
     // The list is re-read AFTER the dialog: that box is modal to the window but
     // not to the app, and a conversion can finish and open a tab while it is up.
+    const going = new Set<string>([id]);
+    if (editor) going.add(editor.id);
     const tabs = this.all();
-    const at = tabs.findIndex((candidate) => candidate.id === id);
-    if (at < 0) return;
+    if (!tabs.some((candidate) => candidate.id === id)) return;
 
     // The temp directory the chapters were served from goes with the tab. Not
     // awaited: the tab must close now, and a %TEMP% removal that loses a race
     // with the iframe's last read is retried on quit.
-    if (doomed.book && api) void api.epub.close(doomed.book.id);
+    if (current.book && api) void api.epub.close(current.book.id);
 
-    const remaining = tabs.filter((candidate) => candidate.id !== id);
-    this.all.set(remaining);
-    if (this.current() !== id) return;
-    // The neighbour, the way a browser does it: the tab that took its place, or
-    // the new last one, or Home.
-    this.current.set(remaining[Math.min(at, remaining.length - 1)]?.id ?? null);
+    this.all.set(tabs.filter((candidate) => !going.has(candidate.id)));
+    for (const gone of going) this.pendingFlush.delete(gone);
+    this.dropFromPanes(going);
+  }
+
+  /**
+   * Take closed tabs out of their panes, and take out any pane they emptied.
+   *
+   * The replacement active tab is the neighbour, the way a browser does it: the
+   * tab that took its place, or the new last one. A pane with nothing left goes
+   * entirely, and the focus lands on the pane that took ITS place — the same
+   * rule one level up.
+   */
+  private dropFromPanes(going: ReadonlySet<string>): void {
+    const panes = this.columns();
+    const kept: Pane[] = [];
+    let focusAt = -1;
+    for (const pane of panes) {
+      const tabIds = pane.tabIds.filter((tabId) => !going.has(tabId));
+      if (tabIds.length === 0) {
+        if (pane.id === this.focused()) focusAt = kept.length;
+        continue;
+      }
+      const at = pane.activeTabId === null ? -1 : pane.tabIds.indexOf(pane.activeTabId);
+      const activeTabId = pane.activeTabId !== null && going.has(pane.activeTabId)
+        ? tabIds[Math.min(at, tabIds.length - 1)] ?? null
+        : pane.activeTabId;
+      kept.push({ ...pane, tabIds, activeTabId });
+    }
+    // Not equalised: the panes that remain keep their shares and flex reflows
+    // them across the width, which is what the user arranged. Only ADDING a
+    // pane resets to equal, because a new column has no share to keep.
+    this.columns.set(kept);
+    if (focusAt >= 0) {
+      this.focused.set(kept[Math.min(focusAt, kept.length - 1)]?.id ?? null);
+    }
   }
 
   async closeActive(): Promise<void> {
@@ -344,11 +741,69 @@ export class TabsService {
     if (tab) await this.close(tab.id);
   }
 
-  // ── Editing ──────────────────────────────────────────────────────────────
+  // ── The HTML editor ──────────────────────────────────────────────────────
 
-  toggleEditing(id: string): void {
-    this.all.update((tabs) =>
-      tabs.map((tab) => (tab.id === id ? { ...tab, editing: !tab.editing } : tab)));
+  /** The editor tab pointed at this book, if one is open. */
+  editorFor(bookTabId: string): Tab | null {
+    return this.all().find((tab) => tab.kind === 'editor' && tab.sourceTabId === bookTabId) ?? null;
+  }
+
+  /**
+   * "Edit HTML" — opens the editor beside the book, or closes it.
+   *
+   * ONE EDITOR PER BOOK, and it goes in a pane of its own by the same rule a
+   * finished conversion does: the point of editing a chapter is watching the
+   * rendered page change as you fix it, which is a thing you cannot do if the
+   * editor is stacked on top of the book in the same column.
+   */
+  async toggleEditor(bookTabId: string): Promise<void> {
+    const book = this.byId(bookTabId);
+    if (!book || book.kind !== 'epub' || book.book === null) return;
+    const open = this.editorFor(bookTabId);
+    if (open) {
+      await this.close(open.id);
+      return;
+    }
+    const tab = this.blankTab('editor', book.path, `${book.title} — HTML`);
+    tab.sourceTabId = bookTabId;
+    this.all.update((tabs) => [...tabs, tab]);
+    this.place(tab.id, true, this.paneOf(bookTabId)?.id ?? null);
+  }
+
+  /**
+   * A click in the rendered chapter, on its way to the editor's textarea.
+   *
+   * Through the service because the two are in different panes now — the same
+   * Calibre gesture, one component further apart. The editor decides whether the
+   * jump is for it (it names its own source tab) and does the counting.
+   */
+  reportSourceClick(tabId: string, bf: boolean, tag: string, index: number): void {
+    const editor = this.editorFor(tabId);
+    if (!editor) return;
+    this.jumpSeq += 1;
+    this.sourceJump.set({ tabId, bf, tag, index, seq: this.jumpSeq });
+    // The editor is no use if it is behind another tab in its own pane.
+    this.reveal(editor.id);
+  }
+
+  /**
+   * The editor lends the service its "write the box now".
+   *
+   * Registered while the component is alive and dropped on destroy, so `close()`
+   * can make the draft real before it asks a question about it.
+   */
+  registerFlush(editorTabId: string, flush: () => Promise<void>): void {
+    this.pendingFlush.set(editorTabId, flush);
+  }
+
+  unregisterFlush(editorTabId: string): void {
+    this.pendingFlush.delete(editorTabId);
+  }
+
+  private async flushPending(editorTabId: string | null): Promise<void> {
+    if (editorTabId === null) return;
+    const flush = this.pendingFlush.get(editorTabId);
+    if (flush) await flush();
   }
 
   // ── The PDF viewer's two view modes ──────────────────────────────────────
@@ -379,16 +834,22 @@ export class TabsService {
    * older" rather than "your work is in a temp directory".
    *
    * `revision` is bumped last, because it is what reloads the rendered pane and
-   * reloading it before the bytes landed would show the previous version.
+   * reloading it before the bytes landed would show the previous version. The
+   * pane doing the reloading may now be a different one from the pane the
+   * keystroke happened in, which costs this code nothing: the revision is on the
+   * tab, and every viewer of that tab is watching it.
    */
   async writeChapter(id: string, href: string, text: string): Promise<void> {
     const tab = this.all().find((candidate) => candidate.id === id);
     if (!api || !tab || tab.book === null) return;
+    this.writingTo.set(id);
     try {
       await api.epub.writeMember(tab.book.id, memberOf(href), text);
       this.patch(id, { modified: true, revision: tab.revision + 1 });
     } catch (err) {
       this.notice.set(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (this.writingTo() === id) this.writingTo.set(null);
     }
   }
 
@@ -438,14 +899,22 @@ export class TabsService {
    * PDF, so a silent re-save to the same destination would copy identical bytes
    * over identical bytes — the one thing Ctrl+S could do for it is ask where.
    */
-  async saveActive(): Promise<void> {
-    const tab = this.active();
+  async save(id: string): Promise<void> {
+    const tab = this.byId(id);
     if (!tab) return;
-    if (tab.kind === 'pdf' || tab.savedPath === null) {
-      await this.saveActiveAs();
+    // A save typed into the editor is a save of the book it edits.
+    if (tab.kind === 'editor') {
+      await this.flushPending(tab.id);
+      if (tab.sourceTabId !== null) await this.save(tab.sourceTabId);
       return;
     }
-    await this.writeBook(tab, tab.savedPath);
+    if (tab.kind === 'pdf' || tab.savedPath === null) {
+      await this.saveAs(tab.id);
+      return;
+    }
+    await this.flushPending(this.editorFor(tab.id)?.id ?? null);
+    // Re-read: the flush wrote through the workspace copy this repack reads.
+    await this.writeBook(this.byId(tab.id) ?? tab, tab.savedPath);
   }
 
   /**
@@ -457,9 +926,14 @@ export class TabsService {
    * searchable PDF in a folder I know about". An EPUB repacks from its working
    * copy instead (electron/epub-reader.ts), because its edits live there.
    */
-  async saveActiveAs(): Promise<void> {
-    const tab = this.active();
+  async saveAs(id: string): Promise<void> {
+    const tab = this.byId(id);
     if (!api || !tab) return;
+    if (tab.kind === 'editor') {
+      await this.flushPending(tab.id);
+      if (tab.sourceTabId !== null) await this.saveAs(tab.sourceTabId);
+      return;
+    }
     if (tab.kind === 'pdf') {
       try {
         const destination = await api.documentSaveCopy(tab.path, suggestName(tab.title, '.pdf'));
@@ -474,9 +948,21 @@ export class TabsService {
       this.notice.set('This book is still opening — try again in a moment.');
       return;
     }
+    await this.flushPending(this.editorFor(tab.id)?.id ?? null);
     const chosen = await api.epub.chooseSavePath(tab.book.id, suggestName(tab.title, '.epub'));
     if (chosen === null) return;
-    await this.writeBook(tab, chosen);
+    await this.writeBook(this.byId(tab.id) ?? tab, chosen);
+  }
+
+  /** The menu's Save / Save As. The focused pane's document, editor or book. */
+  async saveActive(): Promise<void> {
+    const tab = this.active();
+    if (tab) await this.save(tab.id);
+  }
+
+  async saveActiveAs(): Promise<void> {
+    const tab = this.active();
+    if (tab) await this.saveAs(tab.id);
   }
 
   /**
@@ -499,6 +985,19 @@ export class TabsService {
     this.all.update((tabs) =>
       tabs.map((tab) => (tab.id === id ? { ...tab, ...changes } : tab)));
   }
+}
+
+/**
+ * Every pane an equal share.
+ *
+ * Applied when a pane is ADDED and not when one is removed: a new column has no
+ * share of its own to keep, and taking the row back to equal is the only
+ * arrangement that does not favour whichever neighbour happened to be widest.
+ * Removing a pane leaves the others alone — flex already reflows them in
+ * proportion, which is the arrangement the user made.
+ */
+function equalise(panes: readonly Pane[]): Pane[] {
+  return panes.map((pane) => ({ ...pane, flex: 1 }));
 }
 
 /** Windows paths differ by case and separator and are the same file. */
