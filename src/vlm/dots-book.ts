@@ -101,6 +101,13 @@ import {
   type VlmResource,
 } from './epub.js';
 import { packageVlmText, type VlmOutputFormat } from './text-out.js';
+import {
+  bodyTypeSize,
+  deriveTypography,
+  measureTypeSizes,
+  typeSize,
+  type TypographyReport,
+} from './typography.js';
 
 // ── the page images ─────────────────────────────────────────────────────────
 
@@ -238,9 +245,62 @@ const FURNITURE_PAGES = 3;
  */
 const FURNITURE_CHARS = 80;
 
+/**
+ * How much bigger than the body's line height a block may be and still be
+ * furniture.
+ *
+ * A running head is set at body size or under it — it is the printer's mark on
+ * a page of the book, not an announcement — and NO BOOK SETS A CHAPTER OPENER
+ * AT BODY SIZE. That asymmetry is the whole of the size gate below: it cannot
+ * tell a head from an opener by the words (they are frequently the same words,
+ * which is the defect this pass exists for) and it cannot tell them apart by
+ * the model's answer either when the model got every copy wrong. It can tell
+ * them apart by how big they are printed.
+ *
+ * 1.25 rather than 1.0 because the measurement is `lineHeight`, which quantises
+ * — see `typography.ts`, where a one-line block's estimate can land anywhere
+ * from 20 to 60 px around a 40 px line. A head is one line, so it is exactly
+ * the case that wobbles most; the allowance is set above the wobble and far
+ * below display type, which in these books runs 2× the body and up.
+ */
+const FURNITURE_BODY_SIZE = 1.25;
+
+/** Which evidence took a block out of the book — see `suppressRunningHeads`. */
+export type FurnitureEvidence = 'tagged' | 'body-sized';
+
+/**
+ * A block this pass deleted, and the evidence that deleted it.
+ *
+ * The block itself, so that everything that identified it — the page, the box,
+ * the category the model gave it — is still readable; `why` on top, because two
+ * different arguments can now condemn a block and a report that does not say
+ * which one fired cannot be checked.
+ */
+export interface SuppressedHead extends DotsBlock {
+  why: FurnitureEvidence;
+}
+
 /** The categories a mistagged running head arrives as. */
 const MISTAGGED: ReadonlySet<DotsCategory> =
   new Set<DotsCategory>(['Title', 'Section-header', 'Text']);
+
+/**
+ * The categories the SIZE path may delete, and it is narrower than `MISTAGGED`
+ * on purpose.
+ *
+ * The size path acts without the model's own word for it (see
+ * `suppressRunningHeads`), so it is allowed to act only where NOT acting does
+ * structural damage. A head mistagged as a Title or a Section-header becomes a
+ * heading: a chapter split, a document of its own, a line in the nav, and a
+ * sentence cut in half at the place it split. A head the model called Text
+ * becomes a stray line in the middle of the prose — visible to any reader,
+ * ugly, and a claim about nothing. The attested path deletes both because the
+ * model itself identified the words as furniture somewhere; the size path is an
+ * inference off the book's shape, and an inference gets the case where being
+ * wrong is cheap and being right matters.
+ */
+const UNATTESTED_MISTAGGED: ReadonlySet<DotsCategory> =
+  new Set<DotsCategory>(['Title', 'Section-header']);
 
 /**
  * Take the book's running heads out of the book, including the ones the model
@@ -267,15 +327,63 @@ const MISTAGGED: ReadonlySet<DotsCategory> =
  * page number — `proposeChapters` stops it proposing a chapter, and it stays in
  * the book where the printer put it.
  *
+ * THERE IS A SECOND EVIDENCE PATH, AND THE HOLE IT CLOSES IS THE WORST CASE OF
+ * THE FIRST. Attestation anchors the rule to the model's own answer, which is
+ * the right anchor whenever the model got the head right ANYWHERE — Nuremberg's
+ * INDEX head is tagged on 5 pages, and those 5 kill the 16 mistags. But a head
+ * the model mistags on EVERY page of the book is never attested by anything,
+ * and under the attested rule alone every single copy of it survives as a
+ * chapter that cuts a sentence in half. That is not a hypothetical: it is what
+ * the front matter of the books in this library keeps arriving as.
+ *
+ * So a key that was NEVER tagged, anywhere, in either position, is still
+ * furniture when four independent things hold at once:
+ *
+ *  - the block is a Title or a Section-header (`UNATTESTED_MISTAGGED`), which
+ *    is where the damage of leaving it is a bogus chapter rather than a stray
+ *    line;
+ *  - it RECURS in the band on `FURNITURE_PAGES` pages, which is the same
+ *    repetition the attested path already requires and which no chapter opener
+ *    in a book produces;
+ *  - it contains a LETTER, the same guard as the attested path — a bare folio
+ *    stays exactly as the doc comment above says it stays;
+ *  - EVERY banded copy of it is set at BODY SIZE (`FURNITURE_BODY_SIZE`). This
+ *    is the condition doing the real work, and it is what makes the whole path
+ *    safe. Nothing that a reader is supposed to read as an opening is printed
+ *    the size of the prose under it; a page-306-style divider whose words also
+ *    head 55 pages is set in display type, and one copy of it measuring big is
+ *    enough to disqualify the key everywhere. The band already keeps that
+ *    particular divider out — it sits at 26% and the band ends at 15% — and the
+ *    size gate is the second, independent reason it survives.
+ *
+ * One tagged copy anywhere still beats all of it: a key the model called
+ * furniture on some page takes the attested path and is never asked about its
+ * size, because the model's own word is the better evidence and always was.
+ *
  * Mutates the pages, which is how `buildDotsBook`'s dehyphenation pass already
- * works, and returns what it took so the run can say so. A book that silently
- * lost seventeen blocks is a book nobody can check.
+ * works, and returns what it took — with the path that took it — so the run can
+ * say so. A book that silently lost seventeen blocks is a book nobody can check.
  */
-export function suppressRunningHeads(pages: readonly DotsParsedPage[]): DotsBlock[] {
+export function suppressRunningHeads(pages: readonly DotsParsedPage[]): SuppressedHead[] {
   const taggedHead = new Set<string>();
   const taggedFoot = new Set<string>();
   const headerPages = new Map<string, Set<number>>();
   const footerPages = new Map<string, Set<number>>();
+  /** Keys with at least one banded copy bigger than the body. Never body-sized. */
+  const oversized = new Set<string>();
+
+  /*
+   * The body's line height, taken off the pages this pass was already handed.
+   *
+   * Measured HERE and not passed in, because this pass runs first in
+   * `buildDotsBook` — before the lexicon, before dehyphenation, before the
+   * reflow — which is the only moment in the run when every block still carries
+   * the newlines `typeSize` counts its lines from. A number computed later
+   * would be several times too large on every reflowed paragraph in the book.
+   * Null for a book with no Text block in it, and a null body size simply
+   * closes this path: no baseline, no size argument, no deletion.
+   */
+  const bodyPx = bodyTypeSize(pages.flatMap((p) => p.blocks));
 
   const note = (where: Map<string, Set<number>>, key: string, page: number): void => {
     const seen = where.get(key);
@@ -298,30 +406,72 @@ export function suppressRunningHeads(pages: readonly DotsParsedPage[]): DotsBloc
       if (!MISTAGGED.has(block.category) || block.text.length >= FURNITURE_CHARS) continue;
       const key = furnitureKey(block.text);
       if (key.length === 0) continue;
-      if (topFraction(block) <= FURNITURE_BAND) note(headerPages, key, block.page);
-      if (bottomFraction(block) >= 1 - FURNITURE_BAND) note(footerPages, key, block.page);
+      const head = topFraction(block) <= FURNITURE_BAND;
+      const foot = bottomFraction(block) >= 1 - FURNITURE_BAND;
+      if (head) note(headerPages, key, block.page);
+      if (foot) note(footerPages, key, block.page);
+      /*
+       * One copy printed bigger than the body is enough to say the words are an
+       * announcement somewhere in this book, and a key that announces anything
+       * is not deleted anywhere on the strength of its size.
+       *
+       * `typeSize`, NOT `lineHeight`, and `typography.ts` has the arithmetic:
+       * `lineHeight` maximises over a one-line-per-40-pixels estimate and so
+       * reports a 120 px chapter title as three 40 px body lines — it flattens
+       * the exact distinction this gate is made of. Every block that reaches
+       * here is under `FURNITURE_CHARS` characters and was therefore never
+       * reflowed out of anything, so its box over its own line breaks IS how
+       * big the page printed it.
+       */
+      if (
+        (head || foot) && bodyPx !== null
+        && typeSize(block) > bodyPx * FURNITURE_BODY_SIZE
+      ) {
+        oversized.add(key);
+      }
     }
   }
 
-  const attested = (
+  /**
+   * What condemns this key in this position, or nothing.
+   *
+   * The two paths in the order of how good the evidence is: the model's own
+   * word first, and the book's own printing only where the model never said a
+   * word at all. `null` is the ordinary answer and the only one a real chapter
+   * opener ever gets.
+   */
+  const evidence = (
     tagged: ReadonlySet<string>,
     where: Map<string, Set<number>>,
     key: string,
-  ): boolean =>
-    tagged.has(key) && /[A-Z]/.test(key) && (where.get(key)?.size ?? 0) >= FURNITURE_PAGES;
+    category: DotsCategory,
+  ): FurnitureEvidence | null => {
+    if (!/[A-Z]/.test(key)) return null;
+    if ((where.get(key)?.size ?? 0) < FURNITURE_PAGES) return null;
+    if (tagged.has(key)) return 'tagged';
+    // Tagged in the OTHER position and not this one: the model has spoken about
+    // these words, and it did not say this. The size argument is for keys the
+    // model never labelled at all.
+    if (taggedHead.has(key) || taggedFoot.has(key)) return null;
+    if (!UNATTESTED_MISTAGGED.has(category)) return null;
+    if (bodyPx === null || oversized.has(key)) return null;
+    return 'body-sized';
+  };
 
-  const removed: DotsBlock[] = [];
+  const removed: SuppressedHead[] = [];
   for (const page of pages) {
     const kept = page.blocks.filter((block) => {
       if (!MISTAGGED.has(block.category) || block.text.length >= FURNITURE_CHARS) return true;
       const key = furnitureKey(block.text);
       if (key.length === 0) return true;
-      const isHead = topFraction(block) <= FURNITURE_BAND
-        && attested(taggedHead, headerPages, key);
-      const isFoot = bottomFraction(block) >= 1 - FURNITURE_BAND
-        && attested(taggedFoot, footerPages, key);
-      if (!isHead && !isFoot) return true;
-      removed.push(block);
+      const why = (topFraction(block) <= FURNITURE_BAND
+        ? evidence(taggedHead, headerPages, key, block.category)
+        : null)
+        ?? (bottomFraction(block) >= 1 - FURNITURE_BAND
+          ? evidence(taggedFoot, footerPages, key, block.category)
+          : null);
+      if (why === null) return true;
+      removed.push({ ...block, why });
       return false;
     });
     page.blocks.length = 0;
@@ -516,6 +666,103 @@ export function proposeSections(pages: readonly DotsParsedPage[]): DotsChapterPr
   // A real proposal at the same index wins: it knows what it is.
   for (const proposal of [...chapters, ...named]) starts.set(proposal.index, proposal);
   return [...starts.values()].sort((a, b) => a.index - b.index);
+}
+
+// ── the section the book opened twice ───────────────────────────────────────
+
+/** A section proposal that was folded into the one above it, and what it said. */
+export interface DotsFold {
+  page: number;
+  text: string;
+}
+
+/**
+ * What a section will be CALLED, worked out before it is rendered.
+ *
+ * The same order `buildDotsBook` uses for the finished label, and it has to be:
+ * the fold below is about two entries in the nav that read the same, so it must
+ * compare the strings the nav is actually going to carry. The classifier's
+ * composed label first — a part's number and its name are two blocks and only
+ * the classifier knows they belong together — and otherwise the section's own
+ * first display heading, which is where `buildChapterBody`'s `label` comes from.
+ *
+ * A section with neither gets an empty string, and an empty string never folds
+ * anything. A copyright page has no heading on it, and two consecutive sections
+ * that are both nameless are two sections this rule knows nothing about.
+ */
+function sectionName(span: readonly DotsBlock[], opens: DotsChapterProposal | null): string {
+  const label = opens?.label;
+  if (label !== null && label !== undefined && label.length > 0) return label;
+  const heading = span.find((b) => b.category === 'Title' || b.category === 'Section-header');
+  return heading?.text ?? '';
+}
+
+/**
+ * Fold a section back into the one above it when the book printed its opening
+ * twice.
+ *
+ * MEASURED ON A REAL CONVERSION. Michelle Remembers (Congdon & Lattès, 1980),
+ * converted by this pipeline, opens its nav with THREE documents called
+ * "Michelle Remembers" — the cover on page 1, the half-title on page 7 and the
+ * title page on page 9, each of which sets the book's title in display type and
+ * each of which therefore proposes a section. It then has a "contents" on page
+ * 13 and a "Contents" on page 14, because the contents run over the leaf and
+ * the printer reset the heading. Then a "PART I" on page 27 and another "PART
+ * I" on page 28, because the divider is printed on both sides of its leaf and
+ * `classifyPage` correctly calls both of them parts. Nine documents into the
+ * book, six of them are the same three things said twice or three times.
+ *
+ * Every one of those pairs has the same shape and it is a shape a book cannot
+ * make by accident: the second section OPENS WITH THE SAME WORDS as the first
+ * (`furnitureKey`, so letter-spacing, decoration and a folio do not make two
+ * out of one) AND CARRIES NO PROSE OF ITS OWN. The second condition is the one
+ * that makes this safe, and it is refused rather than weakened:
+ *
+ *   A LATER SECTION THAT CARRIES BODY PROSE IS NEVER FOLDED, whatever it is
+ *   called. A diary that heads two chapters "1943" has two chapters, and a
+ *   reference work with two sections called "Notes" has two. Both of them carry
+ *   prose, so neither is touched. The asymmetry is the same one `proposeChapters`
+ *   is built on: a split that was wrongly removed is uncorrectable from the
+ *   finished book, and a section that stayed merged costs a reader one scroll.
+ *
+ * Iterates rather than sweeping once, so a title printed three times folds to
+ * one: after each fold the survivor is compared against the NEXT section, and
+ * because the survivor's name is still its own first heading, the run collapses
+ * from the top. The survivor keeps the first section's proposal — its label, its
+ * kind and its `data-bf-kind` wrapper — which is why a doubled part divider ends
+ * as one part rather than as a part with a stray divider inside it.
+ *
+ * Mutates `starts` and `opens`, the way the rest of this file's passes mutate,
+ * and returns what it folded so the run can name it.
+ */
+export function foldDuplicateSections(
+  blocks: readonly DotsBlock[],
+  starts: number[],
+  opens: (DotsChapterProposal | null)[],
+): DotsFold[] {
+  const folded: DotsFold[] = [];
+  for (let i = 1; i < starts.length;) {
+    const earlier = blocks.slice(starts[i - 1], starts[i]);
+    const later = blocks.slice(starts[i], starts[i + 1] ?? blocks.length);
+    const key = furnitureKey(sectionName(earlier, opens[i - 1]));
+    const name = sectionName(later, opens[i]);
+    if (
+      later.length === 0
+      || key.length === 0
+      || furnitureKey(name) !== key
+      || carriesBodyProse(later)
+    ) {
+      i += 1;
+      continue;
+    }
+    folded.push({ page: later[0].page, text: name });
+    starts.splice(i, 1);
+    opens.splice(i, 1);
+    // `i` does not move: the section that was after the folded one is now at
+    // `i`, and it is compared against the span it just grew into. That is what
+    // turns three copies of a title into one document rather than two.
+  }
+  return folded;
 }
 
 // ── the nav ─────────────────────────────────────────────────────────────────
@@ -753,6 +1000,18 @@ export interface DotsChapterOptions {
    * split point or the first heading inside one.
    */
   openers: ReadonlySet<number>;
+  /**
+   * The inline `font-size` an OUTLIER block keeps, pre-formatted (`1.48em`),
+   * keyed by block identity — `BookTypography.sizes`, and nothing else ever.
+   *
+   * Only the blocks that measured a different size from the rest of their
+   * category are in it, so the ordinary case is a lookup that misses and an
+   * element written exactly as it always was. The map is passed rather than the
+   * measurements because the decision — whether this block is an outlier, and
+   * what its size is as a ratio of the body — belongs to `typography.ts`, which
+   * has the whole book to compare against; a chapter has one chapter.
+   */
+  sizes?: ReadonlyMap<DotsBlock, string>;
 }
 
 export interface DotsChapterBody {
@@ -865,6 +1124,23 @@ export function buildChapterBody(
     openList = null;
   };
 
+  /**
+   * The size this block keeps, when it is not the size the rest of its category
+   * is. Empty for every block that is, which is nearly all of them.
+   *
+   * NOT WRITTEN ON EVERY ELEMENT KIND, and the omissions are deliberate. A
+   * `List-item` block is a whole run of items in one box, so its measured line
+   * height is the list's leading rather than any item's type; a `Table`'s text
+   * is the model's own HTML and nothing in this file reaches inside it to style
+   * a cell; a `Formula`'s box is its own layout and not a line of type; a
+   * `Picture` has no type in it. None of those four is a size that could be
+   * measured, so none of them is a size that gets written.
+   */
+  const sized = (block: DotsBlock): string => {
+    const em = opts.sizes?.get(block);
+    return em === undefined ? '' : ` style="font-size:${em}"`;
+  };
+
   /** The page marker owed to this block, if it opens a page. Consumed once. */
   const marker = (block: DotsBlock): string => {
     if (pagesSeen.has(block.page)) return '';
@@ -912,14 +1188,18 @@ export function buildChapterBody(
             headings.push({ id, label: text });
           }
         }
-        out.push(`<${tag}${anchor}${classOf(align)}${stamp(block, cat)}>${marker(block)}${xhtml}</${tag}>`);
+        out.push(
+          `<${tag}${anchor}${classOf(align)}${sized(block)}${stamp(block, cat)}>`
+          + `${marker(block)}${xhtml}</${tag}>`,
+        );
         label ??= plainText(xhtml);
         lastParagraph = null;
         break;
       }
       case 'Quote':
         out.push(
-          `<blockquote${stamp(block)}><p${stamp(block)}>${marker(block)}${inline(block.text, block.page)}</p></blockquote>`,
+          `<blockquote${stamp(block)}><p${sized(block)}${stamp(block)}>`
+          + `${marker(block)}${inline(block.text, block.page)}</p></blockquote>`,
         );
         lastParagraph = null;
         break;
@@ -950,7 +1230,10 @@ export function buildChapterBody(
         break;
       }
       case 'Caption':
-        out.push(`<p class="caption"${stamp(block)}>${marker(block)}${inline(block.text, block.page)}</p>`);
+        out.push(
+          `<p class="caption"${sized(block)}${stamp(block)}>`
+          + `${marker(block)}${inline(block.text, block.page)}</p>`,
+        );
         lastParagraph = null;
         break;
       default: {
@@ -979,7 +1262,14 @@ export function buildChapterBody(
           );
           lastParagraphText = joinTexts(lastParagraphText, block.text, opts.lexicon);
         } else {
-          out.push(`<p${classOf(align)}${stamp(block)}>${marker(block)}${inline(block.text, block.page)}</p>`);
+          // The size is written when a paragraph OPENS and never when one is
+          // continued onto: a paragraph broken over a page turn is one
+          // paragraph, and one paragraph is one size — the size of the half
+          // that started it.
+          out.push(
+            `<p${classOf(align)}${sized(block)}${stamp(block)}>`
+            + `${marker(block)}${inline(block.text, block.page)}</p>`,
+          );
           lastParagraph = out.length - 1;
           lastParagraphText = block.text;
         }
@@ -1016,7 +1306,7 @@ export function buildChapterBody(
           : `<sup>${printed}</sup> `;
       out.push(
         `<aside class="footnote" epub:type="footnote" role="doc-footnote" id="fn${note.seq}"`
-        + `${stamp(note.block)}>${number}${inline(rest)}</aside>`,
+        + `${sized(note.block)}${stamp(note.block)}>${number}${inline(rest)}</aside>`,
       );
     }
     out.push('</section>');
@@ -1191,7 +1481,33 @@ export function reflowWrappedProse(blocks: readonly DotsBlock[]): DotsBlock[] {
 
 // ── the book ────────────────────────────────────────────────────────────────
 
-const STYLESHEET = `/* Foundry — vlm-convert, dots.ocr. No per-book font decisions, ever. */
+/**
+ * The book's stylesheet, and the line at the top of it used to read "No
+ * per-book font decisions, ever."
+ *
+ * THAT RULE IS REVERSED HERE, DELIBERATELY, AND ONLY BECAUSE THE EVIDENCE
+ * CHANGED. It was written when a font decision could only ever have been a
+ * GUESS — the prose dialects report what a page says and never how big it says
+ * it, so any size this program chose for a footnote would have been a number
+ * somebody made up and then defended. The sizes below are not chosen. They are
+ * the ratios `typography.ts` measured off every box in this particular book:
+ * how much smaller its footnotes are than its prose, how much bigger its
+ * chapter titles, taken as medians over the whole book. The same class of fact
+ * as `bodyColumn`'s column and `BookLexicon`'s vocabulary, and the reason the
+ * old rule does not apply to it is that it is not a decision about fonts at
+ * all — it is a report of one the book's designer already made.
+ *
+ * The numbers in the base sheet stay, and stay meaningful. They are the
+ * defaults for a book that could not be measured, and — because a derived rule
+ * is appended AFTER them at identical specificity — the value that stands for
+ * every category the measurement stayed silent about. A book with three
+ * captions in it gets `0.9em` captions, exactly as it always did.
+ *
+ * Still no point sizes and still no font families: everything derived is an
+ * `em` against the reader's own body size, so the reader decides how big the
+ * book is and the book decides what is bigger than what.
+ */
+const STYLESHEET_BASE = `/* Foundry — vlm-convert, dots.ocr. Sizes are the book's own, as em ratios. */
 html { font-size: 100%; }
 body { margin: 0 5%; line-height: 1.5; }
 h1, h2 { line-height: 1.2; margin: 1.4em 0 0.8em; }
@@ -1213,6 +1529,51 @@ table { border-collapse: collapse; margin: 0 auto; }
 td, th { border: none; padding: 0.35em 1.1em; }
 th { border-bottom: 1px solid currentColor; }
 `;
+
+/**
+ * Where each measured category writes itself, and there are only five.
+ *
+ * Each selector already carries a font-size in the base sheet, or — for the two
+ * headings — carries none and inherits one from the reading system. Both are
+ * things the book itself can now answer better, and neither is a place where a
+ * wrong number could do anything but make a heading the wrong size.
+ */
+const DERIVED_RULES: ReadonlyArray<readonly [DotsCategory, string]> = [
+  ['Footnote', '.footnotes'],
+  ['Caption', 'p.caption'],
+  ['Quote', 'blockquote p'],
+  ['Title', 'h1'],
+  ['Section-header', 'h2'],
+];
+
+/**
+ * The stylesheet this book gets: the base sheet, and whatever its own type
+ * could be measured saying.
+ *
+ * A category with no entry in `typography.categories` produces NO RULE — see
+ * `typography.ts`, where a category needs four blocks before its median is a
+ * measurement. That silence is the point rather than an omission: the base
+ * sheet's value stands, and nothing in the finished book claims to have been
+ * measured when it was not. A book that could not be measured at all gets the
+ * base sheet byte for byte, which is the stylesheet every book got before any
+ * of this existed.
+ */
+export function dotsStylesheet(typography: TypographyReport | null): string {
+  const derived = DERIVED_RULES.flatMap(([category, selector]) => {
+    const measured = typography?.categories[category];
+    return measured === undefined
+      // Two decimals: the third one is smaller than the quantisation of the
+      // measurement it came from, and printing it would be a precision the
+      // number has not got.
+      ? []
+      : [`${selector} { font-size: ${measured.ratio.toFixed(2)}em; }`];
+  });
+  if (derived.length === 0) return STYLESHEET_BASE;
+  return `${STYLESHEET_BASE}\n/* Measured from this book: `
+    + `${typography!.bodyPx.toFixed(1)}px body line, `
+    + `${typography!.outliers.length} block(s) kept at their own size. */\n`
+    + `${derived.join('\n')}\n`;
+}
 
 /**
  * The headings at the top of a section that ARE the split point, as indices
@@ -1283,10 +1644,27 @@ export interface DotsBookResult {
   joinedPages: number[];
   /**
    * The running heads the model mistagged, taken out of the book by
-   * `suppressRunningHeads` — page and text, because a removal nobody can read
-   * is a removal nobody can check.
+   * `suppressRunningHeads` — page, text and the evidence path that condemned
+   * them, because a removal nobody can read is a removal nobody can check, and
+   * a removal that does not say WHICH argument removed it cannot be argued
+   * with.
    */
-  suppressedHeads: { page: number; text: string }[];
+  suppressedHeads: { page: number; text: string; why: FurnitureEvidence }[];
+  /**
+   * The duplicated section openings folded back into the section above them by
+   * `foldDuplicateSections`. Same promise as `suppressedHeads`: a document that
+   * quietly stopped existing is a document nobody can ask about.
+   */
+  foldedSections: DotsFold[];
+  /**
+   * What this book's own type measures — `typography.ts`, and null for a book
+   * with no body prose in it to measure against.
+   *
+   * The stylesheet's `em` ratios and every inline size in the documents come
+   * from here, so this is the record of a decision the finished EPUB otherwise
+   * states without justifying.
+   */
+  typography: TypographyReport | null;
   /** Text blocks whose print line breaks were reflowed back into prose. */
   reflowedBlocks: number;
   lexiconWords: number;
@@ -1308,6 +1686,21 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
     throw new Error('no blocks survived the pages — there is no book to write');
   }
 
+  /*
+   * THE TYPE IS MEASURED HERE, AND THE POSITION IS THE MEASUREMENT.
+   *
+   * `lineHeight` divides a block's box by how many lines are in it, and it
+   * counts those lines off the newlines the model kept. The two passes
+   * immediately below take those newlines away — `dehyphenate` fuses the
+   * `word-\nword` seams and `reflowWrappedProse` turns a wrapped paragraph back
+   * into one long line — so a measurement taken after either of them reads a
+   * five-line paragraph as one line in a five-line box and calls the book's
+   * body type five times its real size. The blocks are the same OBJECTS all the
+   * way through the pipeline, so the answer is carried forward in a map keyed
+   * by identity and read again at the end, where the outliers are worked out.
+   */
+  const measured = measureTypeSizes(blocks);
+
   // The lexicon is built from the text as the model wrote it, hyphens and all:
   // a compound that appears mid-line anywhere in the book is the evidence that
   // decides every line-broken instance of it (`BookLexicon`).
@@ -1316,6 +1709,10 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
     if (block.text.includes('-\n')) block.text = lexicon.dehyphenate(block.text);
   }
   const reflowed = reflowWrappedProse(blocks);
+
+  // Read off the measurements above, and after the rewriting, so that the
+  // snippet naming an outlier in the report reads the way the book reads.
+  const typography = deriveTypography(blocks, measured);
 
   const column = bodyColumn(blocks, blocks[0].pageWidth);
   const proposals = proposeSections(opts.pages);
@@ -1328,6 +1725,20 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
     starts.unshift(0);
     opens.unshift(null);
   }
+  /*
+   * The book printed its own opening twice, and the second copy is not a
+   * section. Folded HERE, between the starts and the spans, because the rule
+   * needs both: a proposal's index says where a section would begin, and only
+   * the span it would cover says whether anything in it is the reader's. The
+   * fold edits `starts` and `opens` in place, so the spans below are the ones
+   * the book actually gets.
+   *
+   * `proposals` is deliberately left alone. It is the list of places the rules
+   * WOULD open a section, which is what the picker curates and what
+   * `writeProposals` documents it as; the fold is a decision taken after it,
+   * and it is recorded as one in `foldedSections`.
+   */
+  const folded = foldDuplicateSections(blocks, starts, opens);
   const spans = starts.map((start, i) => [start, starts[i + 1] ?? blocks.length] as const);
 
   const documents: VlmDocument[] = [];
@@ -1347,6 +1758,7 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
       firstNote: notes,
       firstPicture: crops.length,
       openers: openingHeadings(span, kind),
+      ...(typography !== null ? { sizes: typography.sizes } : {}),
     });
     notes += body.notes;
     crops.push(...body.crops);
@@ -1421,7 +1833,7 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
   const xhtmlSeconds = (Date.now() - started) / 1000;
   const packaged = opts.format === 'txt'
     ? packageVlmText(opts.metadata, documents)
-    : packageVlmEpub(opts.metadata, documents, resources, STYLESHEET, navTree(chapters));
+    : packageVlmEpub(opts.metadata, documents, resources, dotsStylesheet(typography), navTree(chapters));
   return {
     bytes: packaged.bytes,
     chapters,
@@ -1434,7 +1846,14 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
     // zero on a text run would be a report about the file rather than the book.
     pictures: crops.length,
     joinedPages,
-    suppressedHeads: suppressed.map((b) => ({ page: b.page, text: b.text })),
+    suppressedHeads: suppressed.map((b) => ({ page: b.page, text: b.text, why: b.why })),
+    foldedSections: folded,
+    // The working map of per-block sizes stays out of the report: it is keyed
+    // by block identity, which means nothing once the blocks are gone, and
+    // everything a reader of the report wants about it is in `outliers`.
+    typography: typography === null
+      ? null
+      : { bodyPx: typography.bodyPx, categories: typography.categories, outliers: typography.outliers },
     reflowedBlocks: reflowed.length,
     lexiconWords: lexicon.size,
     xhtmlSeconds,

@@ -32,12 +32,14 @@ import {
   type DotsBlock,
   type DotsPagePlace,
 } from '../../src/vlm/dots.js';
+import { bodyTypeSize, typeSize } from '../../src/vlm/typography.js';
 import {
   adjoins,
   bareNumbersAreSectionMarks,
   buildChapterBody,
   buildDotsBook,
   carriesOver,
+  foldDuplicateSections,
   furnitureKey,
   inkExtentIn,
   navTree,
@@ -601,7 +603,10 @@ test('two pages are not a book\'s furniture', () => {
 test('the model has to have called it furniture at least once', () => {
   // Four pages opening on the same short heading, and nothing anywhere in the
   // book saying any of them is a running head. Shape alone does not delete a
-  // block: the model's own answer is the anchor.
+  // block: the model's own answer is the anchor — and where the model never
+  // gave one, the BOOK has to, which these pages also cannot do. There is no
+  // prose on any of them, so there is no body size to measure a head against
+  // and the size path below has nothing to say either.
   const pages = [1, 2, 3, 4].map((n) => parsed(n, [head('PART ONE')]));
   assert.deepEqual(suppressRunningHeads(pages), []);
 });
@@ -646,6 +651,112 @@ test('a long block is never a running head, whatever it says', () => {
     parsed(4, [block({ text: sentence, box: { x1: 200, y1: 150, x2: 1100, y2: 300 } })]),
   ];
   assert.deepEqual(suppressRunningHeads(pages), []);
+});
+
+// ── the head the model NEVER tagged ─────────────────────────────────────────
+
+/**
+ * The hole the attested rule leaves, and the size evidence that closes it.
+ *
+ * Attestation works whenever the model got the head right ANYWHERE — five
+ * tagged pages of Nuremberg's INDEX kill sixteen mistags. A head the model
+ * mistags on EVERY page of the book is attested by nothing, and every copy of
+ * it survives as a chapter that cuts a sentence in half. That is what the front
+ * matter of the books in this library keeps arriving as.
+ *
+ * What identifies it without the model is that NO BOOK SETS A CHAPTER OPENER AT
+ * BODY SIZE. Every block below is measured off that one fact, and the numbers
+ * are a 40 px body line at 200 dpi — a line of 10 pt type — against an 80 px
+ * display line.
+ */
+const BODY_LINES = 'The court rose at ten and the prisoner was brought in through the door '
+  + 'behind the dock, and the room fell silent as the clerk began to read the indictment.';
+
+/** A paragraph of the book's column: 200 px of box, five reflowed lines in it. */
+function bodyProse(): DotsBlock {
+  return block({ box: { x1: 200, y1: 600, x2: 1100, y2: 800 }, text: BODY_LINES });
+}
+
+/** A head at the top of the page, set at the size of the prose under it. */
+function bodyHead(text: string, category: DotsBlock['category'] = 'Section-header'): DotsBlock {
+  return block({ category, text, box: { x1: 500, y1: 120, x2: 800, y2: 160 } });
+}
+
+/** The same words in the same place, set at twice the body — an announcement. */
+function displayHead(text: string, category: DotsBlock['category'] = 'Section-header'): DotsBlock {
+  return block({ category, text, box: { x1: 500, y1: 120, x2: 800, y2: 200 } });
+}
+
+test('the body of the page measures 40 px a line, and a display head 80', () => {
+  // The whole of the rule below rests on these two numbers being different, so
+  // they are asserted before anything is deleted on the strength of them.
+  assert.equal(bodyTypeSize([bodyProse()]), 40);
+  assert.equal(typeSize(bodyHead('THE WITNESSES')), 40);
+  assert.equal(typeSize(displayHead('THE WITNESSES')), 80);
+});
+
+test('a head the model never tagged once is furniture when the book itself says so', () => {
+  // Four pages, the same short heading at the top of every one of them, at the
+  // size of the prose underneath, and nothing anywhere in the book calling it a
+  // running head. Under attestation alone all four survive as chapters.
+  const pages = [1, 2, 3, 4].map((n) => parsed(n, [bodyHead('THE WITNESSES'), bodyProse()]));
+  const removed = suppressRunningHeads(pages);
+  assert.deepEqual(removed.map((b) => [b.page, b.why]), [
+    [1, 'body-sized'], [2, 'body-sized'], [3, 'body-sized'], [4, 'body-sized'],
+  ]);
+  for (const page of pages) assert.deepEqual(page.blocks.map((b) => b.text), [BODY_LINES]);
+});
+
+test('the same words in display type are the reader\'s, and are never touched', () => {
+  // This is the whole safety of the path. `THE DEFENSE` heads 55 pages of
+  // Nuremberg AND names its third part; the band keeps that particular divider
+  // out because it sits at 26% of the page, and the size gate is the second,
+  // independent reason a real opener survives — even one printed high.
+  const pages = [1, 2, 3, 4].map((n) => parsed(n, [displayHead('THE WITNESSES'), bodyProse()]));
+  assert.deepEqual(suppressRunningHeads(pages), []);
+});
+
+test('one copy set big disqualifies the words everywhere in the book', () => {
+  // Three body-sized copies and one display copy: the fourth page says these
+  // words are an announcement somewhere, and a key that announces anything is
+  // not deleted anywhere on the strength of its size.
+  const pages = [
+    parsed(1, [bodyHead('THE DEFENSE'), bodyProse()]),
+    parsed(2, [bodyHead('THE DEFENSE'), bodyProse()]),
+    parsed(3, [bodyHead('THE DEFENSE'), bodyProse()]),
+    parsed(4, [displayHead('THE DEFENSE')]),
+  ];
+  assert.deepEqual(suppressRunningHeads(pages), []);
+});
+
+test('without the model\'s word, only a HEADING is deleted — never a paragraph', () => {
+  // The size path is an inference off the book's shape rather than the model's
+  // own answer, so it acts only where leaving the block does structural damage.
+  // A head mistagged as a Title becomes a chapter and a nav entry; the same
+  // words mistagged as Text are a stray line a reader can see, and a weaker
+  // argument does not get to delete those.
+  const pages = [1, 2, 3, 4].map((n) => parsed(n, [bodyHead('THE WITNESSES', 'Text'), bodyProse()]));
+  assert.deepEqual(suppressRunningHeads(pages), []);
+});
+
+test('a bare folio is not furniture by size either', () => {
+  // 201, 202, 203, 204 all reduce to `#`, on four pages, at body size, in the
+  // band. The letter guard is the same one the attested path has and it is what
+  // keeps a section mark in the book where the printer put it.
+  const pages = [1, 2, 3, 4].map((n) => parsed(n, [bodyHead(String(200 + n)), bodyProse()]));
+  assert.deepEqual(suppressRunningHeads(pages), []);
+});
+
+test('the model\'s own word outranks the book\'s shape, and the record says which fired', () => {
+  const pages = [
+    parsed(1, [bodyProse()], [bodyHead('NUREMBERG', 'Page-header')]),
+    parsed(2, [bodyProse()], [bodyHead('NUREMBERG', 'Page-header')]),
+    parsed(3, [bodyProse()], [bodyHead('NUREMBERG', 'Page-header')]),
+    parsed(4, [bodyHead('NUREMBERG', 'Title'), bodyProse()]),
+  ];
+  // Body-sized and unattested-shaped, but the model called it a Page-header on
+  // three pages, so the better evidence is the one that is reported.
+  assert.deepEqual(suppressRunningHeads(pages).map((b) => [b.page, b.why]), [[4, 'tagged']]);
 });
 
 // ── chapters ────────────────────────────────────────────────────────────────
@@ -1253,6 +1364,121 @@ test('a named section is stamped for the picker, and a chapter opener with it', 
     entries.get('EPUB/nav.xhtml')!.text(),
     /<li><a href="text\/c0005.xhtml">III RESISTANCE AND GUILT<\/a>\n\s+<ol>\n\s+<li><a href="text\/c0006.xhtml">/,
   );
+});
+
+// ── the section the book opened twice ───────────────────────────────────────
+
+/**
+ * Michelle Remembers (Congdon & Lattès, 1980), in the fewest pages that carry
+ * its defect — and every one of them is off the conversion this pipeline
+ * actually produced.
+ *
+ * Its nav opens with three documents called "Michelle Remembers": the cover on
+ * page 1, the half-title on page 7 and the title page on page 9, each of which
+ * sets the book's title in display type and each of which therefore proposes a
+ * section. Then a "contents" and a "Contents", because the contents run over
+ * the leaf and the printer reset the heading. Then "PART I" twice, because the
+ * divider is printed on both sides of its leaf and `classifyPage` is right
+ * about both of them. Nine documents into the book, six of them are the same
+ * three things said twice or three times.
+ */
+function doubledBook() {
+  const display = (text: string, category: DotsBlock['category'] = 'Title'): DotsBlock =>
+    soul({ category, text, box: { x1: 600, y1: 300, x2: 1100, y2: 460 } });
+  const prose = (text: string): DotsBlock => soul({ text: `${text} ${'word '.repeat(30)}` });
+  const entries = (from: number): DotsBlock[] => [1, 2, 3].map((i) =>
+    soul({ category: 'List-item', text: `${from + i}. A chapter of the book, ${(from + i) * 9}` }));
+  return [
+    page(1, [display('MICHELLE REMEMBERS'), soul({ text: 'The true story of a year-long contest' })]),
+    page(2, [display('Michelle Remembers')]),
+    page(3, [display('Michelle Remembers'), soul({ text: 'by Michelle Smith and Lawrence Pazder' })]),
+    page(4, [display('Contents'), ...entries(0)]),
+    page(5, [display('Contents'), ...entries(3)]),
+    page(6, [prose('A NOTE FROM THE PUBLISHER: the reader is invited upon a journey.')]),
+    // Past the front-matter window, which is where a divider page is a part.
+    page(7, [display('PART I')]),
+    page(8, [display('PART I', 'Section-header')]),
+    page(9, [prose('MICHELLE WAS TWENTY-SEVEN when she came to Dr. Pazder.')]),
+  ];
+}
+
+test('a title the book printed three times is one section, and the folds are named', async () => {
+  const built = await buildDotsBook({
+    metadata: { title: 'Michelle Remembers', language: 'en', identifier: 'urn:x:1' },
+    pages: doubledBook(),
+    images: blindImages,
+    stripNoteMarkers: false,
+  });
+  // Five documents where there were nine. The survivor of each run is the FIRST
+  // of it, so it keeps that section's label and its kind — a doubled part ends
+  // as one part rather than as a part with a stray divider inside it.
+  assert.deepEqual(built.chapters.map((c) => [c.firstPage, c.label, c.kind]), [
+    [1, 'MICHELLE REMEMBERS', 'title-page'],
+    [4, 'Contents', 'contents'],
+    [6, 'Chapter 3', undefined],
+    [7, 'PART I', 'part'],
+    [9, 'Chapter 5', undefined],
+  ]);
+  // A document that quietly stopped existing is a document nobody can ask
+  // about, so every fold names the page it was on and the words that opened it.
+  assert.deepEqual(built.foldedSections, [
+    { page: 2, text: 'Michelle Remembers' },
+    { page: 3, text: 'Michelle Remembers' },
+    { page: 5, text: 'Contents' },
+    { page: 8, text: 'PART I' },
+  ]);
+  // And nothing was thrown away: the folded pages' blocks are inside the
+  // section above them, where the reader can still get to them.
+  const entries = unzipMap(built.bytes);
+  const first = entries.get('EPUB/text/c0001.xhtml')!.text();
+  assert.match(first, /by Michelle Smith and Lawrence Pazder/);
+  assert.equal(first.match(/id="pb-[123]"/g)?.length, 3);
+});
+
+test('a decoration or a folio does not make two openings out of one', () => {
+  // `furnitureKey` is what reduces them, exactly as it does for a running head:
+  // letter-spacing, a printer's ornament and a page number are the three things
+  // that vary between two printings of the same words.
+  assert.equal(furnitureKey('MICHELLE\nREMEMBERS'), furnitureKey('Michelle Remembers'));
+  assert.equal(furnitureKey('■ PART I ■'), furnitureKey('PART I'));
+});
+
+test('two sections with the same name that BOTH carry prose are both kept', () => {
+  // The counter-case, and the reason the prose test is the one that cannot be
+  // weakened: a diary that heads two chapters with the same year has two
+  // chapters, and a reference work with two sections called "Notes" has two. A
+  // split that was wrongly removed is uncorrectable from the finished book, and
+  // a section that stayed merged costs a reader one scroll — so the rule
+  // refuses whenever the later section is somebody's reading.
+  const prose = (text: string): DotsBlock => soul({ text: `${text} ${'word '.repeat(30)}` });
+  const heading = (): DotsBlock =>
+    soul({ category: 'Title', text: 'DIARY', box: { x1: 700, y1: 500, x2: 1000, y2: 600 } });
+  const pages = [
+    page(1, [heading(), prose('THE FIRST ENTRY was written in the spring.')]),
+    page(2, [heading(), prose('THE SECOND ENTRY was written a year later.')]),
+  ];
+  const sections = proposeSections(pages);
+  assert.deepEqual(sections.map((s) => [s.page, s.text]), [[1, 'DIARY'], [2, 'DIARY']]);
+
+  const starts = sections.map((s) => s.index);
+  const opens: (typeof sections[number] | null)[] = [...sections];
+  assert.deepEqual(foldDuplicateSections(pages.flatMap((p) => p.blocks), starts, opens), []);
+  assert.deepEqual(starts, sections.map((s) => s.index));
+});
+
+test('a nameless section folds nothing and is folded into nothing', () => {
+  // A copyright page carries no heading — that is half of what identifies it —
+  // so there is no opening text to reduce, and an empty key never matches
+  // another empty key. Absence of a name is not evidence that two sections are
+  // the same section.
+  const blocks = [
+    block({ page: 1, text: 'Copyright © 1980. All rights reserved. ISBN 0-86553-001-7.' }),
+    block({ page: 2, text: 'Printed in the United States of America by Haddon Craftsmen.' }),
+  ];
+  const starts = [0, 1];
+  const opens = [null, null];
+  assert.deepEqual(foldDuplicateSections(blocks, starts, opens), []);
+  assert.deepEqual(starts, [0, 1]);
 });
 
 test('the container is an EPUB and every document parses', async () => {

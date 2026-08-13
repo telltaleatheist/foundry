@@ -41,6 +41,8 @@ import {
   type DotsChapterProposal,
   type DotsCrop,
   type DotsCropped,
+  type DotsFold,
+  type FurnitureEvidence,
 } from './dots-book.js';
 import { DEFAULT_VLM_CONCURRENCY, readPagesFromEndpoint } from './endpoint.js';
 import { buildVlmEpub, type VlmChapter, type VlmEpubMetadata, type VlmPageBlocks } from './epub.js';
@@ -153,9 +155,16 @@ export interface VlmConvertReport {
   joinedPages: number[];
   /**
    * Running heads the model tagged as headings, found by the book's own
-   * repetition and taken out. Blocks DELETED, so they are named.
+   * repetition and taken out. Blocks DELETED, so they are named — and each one
+   * carries the evidence that condemned it, because there are now two arguments
+   * that can and they are not equally strong.
    */
-  suppressedHeads: { page: number; text: string }[];
+  suppressedHeads: { page: number; text: string; why: FurnitureEvidence }[];
+  /**
+   * Section openings the book printed twice, folded back into the section above
+   * them. Documents that stopped existing, so they are named too.
+   */
+  foldedSections: DotsFold[];
   timings: {
     loadSeconds: number;
     renderSeconds: number;
@@ -470,7 +479,8 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     let footnotes = 0;
     let pictures = 0;
     let joinedPages: number[] = [];
-    let suppressedHeads: { page: number; text: string }[] = [];
+    let suppressedHeads: { page: number; text: string; why: FurnitureEvidence }[] = [];
+    let foldedSections: DotsFold[] = [];
     /** Set on the PDF route only, and what its phase line is made of. */
     let layer: { pages: number; lines: number } | null = null;
 
@@ -594,13 +604,65 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
        * that the model called a Title, and a deletion nobody can read is a
        * deletion nobody can check. The distinct texts are listed rather than
        * every page, because seventeen lines reading INDEX is not a report.
+       *
+       * Each text now carries the evidence path that condemned it. `tagged` is
+       * the model's own answer somewhere else in the book; `body-sized` is the
+       * book's own printing, for a head the model never labelled once — the
+       * weaker of the two arguments, and the one somebody reading this line
+       * would want to go and look at the page for.
        */
       suppressedHeads = built.suppressedHeads;
       if (suppressedHeads.length > 0) {
-        const texts = [...new Set(suppressedHeads.map((h) => h.text))];
+        const paths = new Map<string, FurnitureEvidence>();
+        for (const head of suppressedHeads) if (!paths.has(head.text)) paths.set(head.text, head.why);
         opts.log(
           `vlm-convert: ${suppressedHeads.length} mistagged running head(s) suppressed — `
-          + texts.map((t) => JSON.stringify(t)).join(', '),
+          + [...paths].map(([text, why]) => `${JSON.stringify(text)} (${why})`).join(', '),
+        );
+      }
+      /*
+       * The sections the book opened twice, folded into one.
+       *
+       * The same promise as the line above, for the same reason: this one
+       * removes DOCUMENTS — a nav entry a person would otherwise have gone
+       * looking for — and it removes them on a rule about repetition and the
+       * absence of prose. Every fold is named with the page it was on and the
+       * words that opened it, so the one time the rule is wrong is the one time
+       * somebody can see that it was.
+       */
+      foldedSections = built.foldedSections;
+      if (foldedSections.length > 0) {
+        opts.log(
+          `vlm-convert: ${foldedSections.length} duplicated section opening(s) folded into the `
+          + 'section above — '
+          + foldedSections.map((f) => `${JSON.stringify(f.text)} p${f.page}`).join(', '),
+        );
+      }
+      /*
+       * What the book's own type measures, and what was done about it.
+       *
+       * The stylesheet this run wrote is not the stylesheet the last one wrote:
+       * every ratio in it came off this book's boxes (`typography.ts`). A
+       * program that silently sizes a book differently from the book beside it
+       * is a program whose output nobody can compare, so the medians, the
+       * categories that had enough blocks to be measured at all, and the blocks
+       * that kept a size of their own are all said out loud.
+       */
+      const typography = built.typography;
+      if (typography === null) {
+        opts.log(
+          'vlm-convert: no body prose to measure, so the stylesheet is the static one and no type '
+          + 'size in this book came from the book',
+        );
+      } else {
+        const derived = Object.entries(typography.categories)
+          .map(([category, m]) => `${category} ${m.ratio.toFixed(2)}em (${m.samples} blocks)`);
+        opts.log(
+          `vlm-convert: body type measures ${typography.bodyPx.toFixed(1)}px per line; `
+          + (derived.length === 0
+            ? 'no category had enough blocks to calibrate, so the stylesheet\'s own sizes stand'
+            : `derived — ${derived.join(', ')}`)
+          + `; ${typography.outliers.length} block(s) kept a size of their own`,
         );
       }
       // What the pages said they were. Printed even when the answer is nothing,
@@ -699,6 +761,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       pictures,
       joinedPages,
       suppressedHeads,
+      foldedSections,
       timings: {
         loadSeconds: run.loadSeconds,
         renderSeconds: run.renderSeconds,
