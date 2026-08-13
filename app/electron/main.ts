@@ -423,6 +423,21 @@ function createWindow(): void {
 
   mainWindow.once('ready-to-show', () => mainWindow?.show());
 
+  /*
+   * The APP does not zoom. Chromium persists page zoom per origin across
+   * launches, so one accidental Ctrl+- used to leave the whole interface at a
+   * fraction of itself forever — toolbar, tabs, everything — with nothing in
+   * the app able to explain why. The zoom roles are gone from the View menu
+   * (below) so it cannot happen again; this line clears whatever zoom a
+   * previous launch already recorded. Pinch is pinned too: the PDF viewer
+   * turns pinch and Ctrl+wheel into DOCUMENT zoom, which is the one kind of
+   * bigger this app means.
+   */
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainWindow?.webContents.setZoomFactor(1);
+    void mainWindow?.webContents.setVisualZoomLevelLimits(1, 1);
+  });
+
   if (isDev) {
     void mainWindow.loadURL(DEV_SERVER);
   } else {
@@ -538,13 +553,13 @@ function buildMenu(): void {
     { role: 'editMenu' },
     {
       label: 'View',
+      // No zoom roles, on purpose: they scale the APPLICATION — every button
+      // and tab, persisted by Chromium across launches — which is never what
+      // anybody meant in a document app. Zooming a DOCUMENT is the PDF
+      // viewer's own Ctrl+wheel/pinch and +/− buttons.
       submenu: [
         { role: 'reload' },
         { role: 'toggleDevTools' },
-        { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
         { type: 'separator' },
         { role: 'togglefullscreen' },
       ],
