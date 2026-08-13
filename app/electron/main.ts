@@ -67,34 +67,43 @@ const DEV_SERVER = 'http://localhost:4260';
 let mainWindow: BrowserWindow | null = null;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// foundry-file:// — how a PDF on disk reaches an <iframe>
+// foundry-file:// — how a book's chapters reach an <iframe>
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * The renderer is a page on http://localhost:4260 (dev) or file:// (packaged),
  * and neither may point an <iframe> at an arbitrary `file://` URL. So the app
- * serves the bytes itself, on a scheme of its own, and Chromium's built-in PDF
- * viewer takes it from the `application/pdf` content type.
+ * serves the bytes itself, on a scheme of its own.
  *
- * TWO HOSTS, because the two things served have different addressing needs:
+ * ONE HOST: `foundry-file://epub/<book id>/<path inside the book>` — a chapter
+ * out of an unpacked EPUB. PATH-shaped and not query-shaped because an XHTML
+ * document resolves `style.css` and `img/plate-3.png` RELATIVELY: served from a
+ * query string, every one of those would resolve to a URL with no `?p=` at all
+ * and the book would render unstyled and pictureless.
  *
- *   `foundry-file://open/?p=<abs path>` — one whole file, named absolutely.
- *   That is a PDF, and Chromium's viewer only ever asks for the one URL it was
- *   given, so a query parameter is enough.
- *
- *   `foundry-file://epub/<book id>/<path inside the book>` — a chapter out of an
- *   unpacked EPUB. PATH-shaped and not query-shaped because an XHTML document
- *   resolves `style.css` and `img/plate-3.png` RELATIVELY: served from a query
- *   string, every one of those would resolve to a URL with no `?p=` at all and
- *   the book would render unstyled and pictureless.
- *
- * Both are ALLOW-LISTED, not path-checked. A PDF is servable only once the user
- * opened it through the menu, a drop or the dialog; a book's member is servable
- * only if it is in the set of files that unpack actually wrote (epub-reader.ts).
- * A renderer that was talked into asking for `C:\Users\…\id_rsa` gets a 403,
- * rather than a cleverer path check that has to stay right forever.
+ * There USED to be a second host — `foundry-file://open/?p=<abs path>`, a whole
+ * PDF for Chromium's built-in viewer — and it is gone with the viewer: PDFs go
+ * to the app's own pdf.js component through `document:read-bytes` now, and a
+ * serving route with no consumer is a door into files on disk kept open for
+ * nobody. Members are ALLOW-LISTED, not path-checked: servable only if in the
+ * set of files that unpack actually wrote (epub-reader.ts). A renderer that was
+ * talked into asking for `C:\Users\…\id_rsa` gets a 403, rather than a cleverer
+ * path check that has to stay right forever.
  */
 const openable = new Set<string>();
+
+/**
+ * The allow-list question, asked in ONE place — today for one caller,
+ * `document:read-bytes`, which hands an opened document to the app's own pdf.js
+ * viewer. Kept as a named function rather than inlined so the next door that
+ * needs the answer asks HERE: a second copy of `openable.has(path.resolve(…))`
+ * is a second authorization path, and the day one copy learns a new rule is the
+ * day the other one is a hole. Null means no.
+ */
+function admitted(candidate: string): string | null {
+  const resolved = path.resolve(candidate);
+  return openable.has(resolved) ? resolved : null;
+}
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -275,14 +284,10 @@ function registerFileProtocol(): void {
       return serveFile(resolved, EPUB_HEADERS);
     }
 
-    const target = url.searchParams.get('p');
-    if (!target) return new Response('No file was named.', { status: 400 });
-
-    const resolved = path.resolve(target);
-    if (!openable.has(resolved)) {
-      return new Response('That file was never opened in this app.', { status: 403 });
-    }
-    return serveFile(resolved, {});
+    // The old `open` host served whole PDFs to Chromium's viewer; the viewer is
+    // gone and so is the route. 404 rather than silence, so a stale URL says
+    // what happened to it.
+    return new Response('This app no longer serves whole files; books only.', { status: 404 });
   });
 }
 
@@ -558,6 +563,30 @@ function registerIpc(): void {
   // A drop hands the renderer a path (webUtils, in the preload); main decides
   // whether it is openable. The renderer never gets to assert that a file is.
   ipcMain.handle('document:open-path', (_event, candidate: string) => openDocument(candidate));
+
+  /**
+   * A whole open document's bytes, for the app's own PDF viewer.
+   *
+   * IPC RATHER THAN `fetch` ON `foundry-file://`, and it is the renderer's own
+   * policy that decides it: the page is served under `connect-src 'self'`, which
+   * refuses a fetch to any other scheme — and widening the document's policy so
+   * it may connect to a scheme that serves whole files off disk is a bigger
+   * hole than this handler is, for a viewer that has to hold the file in memory
+   * anyway. (The scheme once had a whole-file route for Chromium's viewer; it
+   * went with the viewer.) The gate is `admitted`, the same one everything that
+   * serves a document asks — a second DOOR, not a second rule.
+   *
+   * BUFFERED, WHOLE, deliberately: pdf.js is handed a buffer and searches every
+   * page of it, so the scan is resident regardless and streaming would only add
+   * a second copy.
+   */
+  ipcMain.handle('document:read-bytes', async (_event, target: string) => {
+    const resolved = admitted(target);
+    if (resolved === null) {
+      throw new Error(`${target} was never opened in this app.`);
+    }
+    return fsp.readFile(resolved);
+  });
 
   /**
    * The warning before a tab with something to lose closes.

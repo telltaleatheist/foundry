@@ -63,8 +63,19 @@ export interface Tab {
   book: EpubBook | null;
   /** Which chapter the viewer is showing. */
   chapterHref: string | null;
-  /** True while the split HTML editor is open beside the rendered chapter. */
+  /** True while the split HTML editor is open beside the rendered chapter. EPUB only. */
   editing: boolean;
+  /**
+   * True while the PDF viewer is showing the text layer beside the page.
+   *
+   * On the TAB rather than in the component, for the same reason `editing` is:
+   * only the active tab's viewer is in the DOM, so a component that held this
+   * would forget it the moment the user looked at something else. A view mode
+   * that resets itself when you glance away is a view mode you stop using.
+   */
+  layerView: boolean;
+  /** True while the PDF viewer's thumbnail strip is up. Off by default; see above. */
+  thumbnails: boolean;
   /**
    * Bumped on every flush that reached disk.
    *
@@ -207,6 +218,8 @@ export class TabsService {
       book: null,
       chapterHref: null,
       editing: false,
+      layerView: false,
+      thumbnails: false,
       revision: 0,
       problem: null,
     };
@@ -316,6 +329,18 @@ export class TabsService {
   toggleEditing(id: string): void {
     this.all.update((tabs) =>
       tabs.map((tab) => (tab.id === id ? { ...tab, editing: !tab.editing } : tab)));
+  }
+
+  // ── The PDF viewer's two view modes ──────────────────────────────────────
+
+  toggleLayerView(id: string): void {
+    this.all.update((tabs) =>
+      tabs.map((tab) => (tab.id === id ? { ...tab, layerView: !tab.layerView } : tab)));
+  }
+
+  toggleThumbnails(id: string): void {
+    this.all.update((tabs) =>
+      tabs.map((tab) => (tab.id === id ? { ...tab, thumbnails: !tab.thumbnails } : tab)));
   }
 
   /** One chapter's XHTML source, for the editor pane. */

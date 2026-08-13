@@ -23,7 +23,7 @@ const api: FoundryApi = {
   openDocumentDialog: () => ipcRenderer.invoke('dialog:open-document'),
   openPath: (candidate) => ipcRenderer.invoke('document:open-path', candidate),
   pathForFile: (file) => webUtils.getPathForFile(file),
-  documentUrl: (absolutePath) => `foundry-file://open/?p=${encodeURIComponent(absolutePath)}`,
+  documentBytes: (absolutePath) => ipcRenderer.invoke('document:read-bytes', absolutePath),
   reveal: (target) => ipcRenderer.invoke('shell:reveal', target),
   confirmClose: (warning) => ipcRenderer.invoke('document:confirm-close', warning),
 

@@ -56,8 +56,14 @@ export interface FoundryApi {
    * preload at all.
    */
   pathForFile(file: File): string;
-  /** The `foundry-file://` URL an <iframe> can point at. PDFs; a book has its own. */
-  documentUrl(absolutePath: string): string;
+  /**
+   * The whole file, for the app's own pdf.js viewer.
+   *
+   * The renderer still cannot read a path it names: main answers only for files
+   * already in the open allow-list, and rejects by name for anything else — the
+   * same `admitted` check everything that serves a document asks.
+   */
+  documentBytes(absolutePath: string): Promise<Uint8Array>;
   reveal(target: string): Promise<void>;
   /**
    * The native box asked before a tab with something to lose closes. True means
