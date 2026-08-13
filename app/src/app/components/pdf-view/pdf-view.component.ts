@@ -44,8 +44,9 @@ import { api } from '../../core/foundry';
  * job is showing a page. And there is no way to SEE the invisible text layer:
  * the one thing foundry adds to a PDF is the one thing Chromium's viewer is
  * built never to draw, so a conversion that laid the layer half a page off
- * looks exactly like one that got it right. The strip here is along the BOTTOM
- * and starts hidden; the layer view (below) is the other half.
+ * looks exactly like one that got it right. The strip here is along the BOTTOM,
+ * on by default and one click to dismiss; the layer view (below) is the other
+ * half.
  *
  * ── The worker ───────────────────────────────────────────────────────────────
  *

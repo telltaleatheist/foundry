@@ -74,7 +74,8 @@ export interface Tab {
    * that resets itself when you glance away is a view mode you stop using.
    */
   layerView: boolean;
-  /** True while the PDF viewer's thumbnail strip is up. Off by default; see above. */
+  /** True while the PDF viewer's thumbnail strip is up. ON by default — it sits
+   *  along the bottom where it costs little, and Owen wants the pages in reach. */
   thumbnails: boolean;
   /**
    * Bumped on every flush that reached disk.
@@ -224,7 +225,7 @@ export class TabsService {
       chapterHref: null,
       editing: false,
       layerView: false,
-      thumbnails: false,
+      thumbnails: true,
       revision: 0,
       problem: null,
     };
