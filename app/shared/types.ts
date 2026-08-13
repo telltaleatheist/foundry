@@ -19,8 +19,17 @@
  * purpose: it is long, it is cancellable, and a conversion that needs the
  * environment must wait BEHIND it rather than race it. One serial queue gives
  * that for free.
+ *
+ * `translate` is a conversion whose INPUT is an EPUB and whose output is
+ * another one. It is not in `ConversionKind` and that is deliberate: a
+ * conversion kind doubles as the output's file extension (see below), and a
+ * file called `book.translate` is not a thing. Its output is named by
+ * `planTranslation` instead, which knows the language tag belongs in the
+ * middle. It shares the serial queue for the same reason an install does — it
+ * holds a GPU for hours and two at once is two runs that each take twice as
+ * long.
  */
-export type JobKind = ConversionKind | 'env-install';
+export type JobKind = ConversionKind | 'env-install' | 'translate';
 
 /**
  * What the OCR panel can ask for. An env install is never enqueued this way.
@@ -48,8 +57,13 @@ export interface JobProgress {
    * Which pass is counting. The endpoint route rasterises the whole book first
    * (`page 3/317: rendered`) and then reads it, and a bar that did not say
    * which of the two it was tracking would appear to restart halfway.
+   *
+   * `translate` counts BLOCKS, not pages, which is why the phase has to reach
+   * the UI: "412/2,081" means paragraphs and the shelf must not call them
+   * pages. The field is still `page` because it is the same quantity to every
+   * bar that draws it — a count of finished things out of a known total.
    */
-  phase: 'render' | 'read';
+  phase: 'render' | 'read' | 'translate';
 }
 
 /**
@@ -75,6 +89,38 @@ export interface JobRequest {
   stripNoteMarkers?: boolean;
   /** `--language`: the BCP-47 tag written as `dc:language`. Declared, never detected. */
   language?: string;
+}
+
+/**
+ * Everything the Translate dialog decides before a job is enqueued.
+ *
+ * A SEPARATE SHAPE from `JobRequest` rather than more optional fields on it,
+ * because nothing the two carry is the same field: there is no readings bank
+ * (a translation is not resumable — the engine banks nothing), no page skips,
+ * no `--format`. Two shapes that share a queue is what `EnvInstallRequest`
+ * already is, and it is the pattern that keeps `argsFor` honest — a request
+ * cannot carry a flag the command it will become does not have.
+ *
+ * The endpoint IS here, unlike the conversion request's reading backend. Ollama
+ * is not a backend this app owns, starts or configures anywhere else, so there
+ * is no settings screen for the dialog to contradict.
+ */
+export interface TranslateRequest {
+  kind: 'translate';
+  /** The EPUB to read. Never written to. */
+  inputPath: string;
+  /** From `WorkspacePlan.outputPath`. The managed workspace, always. */
+  outputPath: string;
+  /** `--to`: the BCP-47 tag to translate INTO. */
+  to: string;
+  /** `--from`. Absent means the model is told to determine it. */
+  from?: string;
+  /** `--model`: the Ollama model that translates. */
+  model: string;
+  /** `--ollama`: the server's URL. Used, never started. */
+  ollama: string;
+  /** `--instructions`: appended to the system prompt verbatim, per book. */
+  instructions?: string;
 }
 
 export interface Job {

@@ -18,6 +18,8 @@
  *    model in `src/vlm/models.ts` is asked the exact string its own model card
  *    documents; this file wires argv to the run and never reshapes a prompt.
  */
+import * as path from 'node:path';
+
 import {
   flag,
   formatOptions,
@@ -36,6 +38,11 @@ import { DEFAULT_VLM_CONCURRENCY } from './vlm/endpoint.js';
 import { DEFAULT_VLM_MODEL_ID, VLM_MODELS } from './vlm/models.js';
 import { parsePageList } from './vlm/pages.js';
 import { formatConflict, VLM_OUTPUT_FORMATS, type VlmOutputFormat } from './vlm/text-out.js';
+import {
+  DEFAULT_OLLAMA_ENDPOINT,
+  DEFAULT_TRANSLATE_MODEL,
+  translateEpub,
+} from './translate/run.js';
 import { versionString } from './version.js';
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -171,6 +178,57 @@ const VLM_STRIP_MARKERS: OptionSpec = {
   name: 'strip-note-markers',
   type: 'boolean',
   describe: 'Remove footnote reference numbers from the prose. For a narration build.',
+};
+
+// ── translate ────────────────────────────────────────────────────────────────
+
+const TR_EPUB_IN: OptionSpec = {
+  name: 'epub',
+  type: 'string',
+  placeholder: '<book.epub>',
+  describe: 'The foundry-converted EPUB to translate. Never written to.',
+};
+
+const TR_TO: OptionSpec = {
+  name: 'to',
+  type: 'string',
+  placeholder: '<bcp47>',
+  describe: 'The language to translate INTO, e.g. en, de, pt-BR. Required.',
+};
+
+const TR_FROM: OptionSpec = {
+  name: 'from',
+  type: 'string',
+  placeholder: '<bcp47>',
+  describe: 'The language of the book. Left out, the model is told to determine it.',
+};
+
+const TR_OUT: OptionSpec = {
+  name: 'out',
+  type: 'string',
+  placeholder: '<path>',
+  describe: 'Where the translation is written. Default: the input with .<to> before .epub.',
+};
+
+const TR_MODEL: OptionSpec = {
+  name: 'model',
+  type: 'string',
+  placeholder: '<name>',
+  describe: `The Ollama model that translates. Default ${DEFAULT_TRANSLATE_MODEL}.`,
+};
+
+const TR_OLLAMA: OptionSpec = {
+  name: 'ollama',
+  type: 'string',
+  placeholder: '<url>',
+  describe: `The Ollama server. Default ${DEFAULT_OLLAMA_ENDPOINT}. Used, never started.`,
+};
+
+const TR_INSTRUCTIONS: OptionSpec = {
+  name: 'instructions',
+  type: 'string',
+  placeholder: '<text>',
+  describe: 'Appended to the system prompt verbatim — terminology rules for THIS book.',
 };
 
 export interface Command {
@@ -357,6 +415,77 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
       + report.unreadable.map((p) => p.number).join(', '),
     );
   }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// translate
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * `Book.epub` → `Book.en.epub`, and `Book` → `Book.en`.
+ *
+ * The tag goes BEFORE the extension so the file is still an `.epub` to every
+ * reader and every file manager, and so the two editions of one book sort next
+ * to each other in a directory listing.
+ */
+export function defaultTranslationOut(epubPath: string, to: string): string {
+  const dot = epubPath.lastIndexOf('.');
+  const slash = Math.max(epubPath.lastIndexOf('/'), epubPath.lastIndexOf('\\'));
+  if (dot <= slash + 1) return `${epubPath}.${to}`;
+  return `${epubPath.slice(0, dot)}.${to}${epubPath.slice(dot)}`;
+}
+
+async function runTranslate(args: ParsedArgs): Promise<void> {
+  const epubPath = requireString(args, 'epub', 'the EPUB to translate');
+  const to = requireString(args, 'to', 'the language to translate into');
+  const outPath = optionalString(args, 'out') ?? defaultTranslationOut(epubPath, to);
+
+  /*
+   * Refused here, before a byte is read. `--out` equal to `--epub` is the one
+   * mistake this command cannot recover from: the input is somebody's converted
+   * book, the run takes hours, and an output written over it destroys the only
+   * copy of the thing being translated — including the source text every
+   * refusal message would have pointed at.
+   */
+  if (path.resolve(outPath) === path.resolve(epubPath)) {
+    throw new UsageError(
+      `--out ${outPath} is the input itself. foundry reads the one and writes the other; a book `
+      + 'overwritten by its own translation is the single input this command cannot get back.',
+    );
+  }
+
+  const report = await translateEpub({
+    epubPath,
+    outPath,
+    to,
+    ...(optionalString(args, 'from') !== undefined ? { from: optionalString(args, 'from')! } : {}),
+    ...(optionalString(args, 'model') !== undefined ? { model: optionalString(args, 'model')! } : {}),
+    ...(optionalString(args, 'ollama') !== undefined ? { endpoint: optionalString(args, 'ollama')! } : {}),
+    ...(optionalString(args, 'instructions') !== undefined
+      ? { instructions: optionalString(args, 'instructions')! }
+      : {}),
+    log,
+  });
+
+  // The skipped blocks and the retries are on the completion line, not only in
+  // the scroll above it: a book that came back with fourteen untranslated
+  // tables in it has to say so at the moment somebody is looking at the result.
+  const skipped = [...report.skipped].sort((a, b) => b[1] - a[1]);
+  const struck = skipped.length === 0 ? '' : `, skipped ${skipped.map(([c, n]) => `${n} ${c}`).join(', ')}`;
+  const asked = report.retries === 0 ? '' : `, ${report.retries} answers rejected and asked again`;
+  log(
+    `translate: ${report.blocks} blocks in ${report.seconds.toFixed(1)}s `
+    + `(${(report.blocks / Math.max(report.seconds, 0.001)).toFixed(2)} a second, ${report.model})`
+    + `${struck}${asked}`,
+  );
+  if (report.navUnmapped > 0) {
+    log(
+      `translate: ${report.navRelabelled} contents entries relabelled, ${report.navUnmapped} LEFT IN `
+      + `THE SOURCE LANGUAGE — ${report.navUnmapped === 1 ? 'it is not a copy' : 'they are not copies'} `
+      + 'of a heading this run translated',
+    );
+  }
+  process.stdout.write(`${report.outPath}\n`);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -553,6 +682,100 @@ export const COMMANDS: readonly Command[] = [
       VLM_CHAPTERS, VLM_STRIP_MARKERS,
     ],
     run: runVlmConvert,
+  },
+  {
+    name: 'translate',
+    summary: 'Translate a foundry EPUB with a local Ollama model: EPUB in, a second EPUB out.',
+    usage: '--epub <book.epub> --to <lang> [--from <lang>] [--out <path>] [--model <name>] [--instructions <text>]',
+    detail: [
+      'Reads a book foundry converted and writes a SECOND BOOK beside it with the',
+      'same structure, the same pictures and the same page provenance, and the',
+      'text inside every category replaced by a translation. The input is never',
+      'written to. Default --out puts the language tag before the extension:',
+      'Buch.epub becomes Buch.en.epub.',
+      '',
+      'THE MODEL IS OLLAMA, AND OLLAMA IS SOMEBODY ELSE\'S SERVER. foundry sends it',
+      'HTTP at --ollama (default http://localhost:11434) and does not start it,',
+      'stop it, pull a model or configure it. A server that is not answering ends',
+      'the run with the URL that was tried in the message; a model the server has',
+      'not got ends it with the list of models the server HAS.',
+      '',
+      'WHY THIS READS AN EPUB AND NOT A PDF. Measured on an OCR\'d 1933 German',
+      'book: paragraph-sized inputs translate well and page FRAGMENTS are',
+      'catastrophic — a model handed half a sentence omits it, invents a',
+      'completion for it, or hands the source language back untouched, and all',
+      'three look like text. A foundry EPUB has already rejoined the paragraphs',
+      'that ran over a page turn, so translating it block by block means that',
+      'failure cannot happen here. A block is never split.',
+      '',
+      'WHICH BLOCKS. Everything foundry stamped with a category that has words in',
+      'it: text, title, section-header, quote, footnote, caption, list-item and',
+      'the chapter openings. THREE ARE SKIPPED AND COUNTED — table, formula and',
+      'picture. A table is the vision model\'s own HTML, and a table whose columns',
+      'quietly swapped in translation is worse than one nobody translated; a',
+      'formula has no words in it. The counts are on the last line of the run. A',
+      'picture\'s CAPTION is a block of its own and is translated.',
+      '',
+      'AN EPUB WITHOUT FOUNDRY\'S STAMPS IS REFUSED. This command replaces the text',
+      'inside the categories foundry writes, so a publisher\'s EPUB has no blocks',
+      'in it and the run would "succeed" by copying the book and changing its',
+      'declared language — a file claiming to be an English edition that is',
+      'entirely in German.',
+      '',
+      'INLINE MARKUP IS NEVER SENT TO THE MODEL. Emphasis, superscripts, footnote',
+      'anchors and the print-page markers are replaced with opaque tokens before',
+      'the request and put back from the ORIGINAL bytes afterwards, so no',
+      'attribute is ever retyped by a language model. Asked to reproduce an',
+      '<a epub:type="noteref" href="#fn12"> a model will occasionally hand back a',
+      'reference to #fn13: a footnote pointing at the wrong note, in a book that',
+      'renders perfectly.',
+      '',
+      'EVERY ANSWER IS VERIFIED MECHANICALLY, because prompt compliance is',
+      'probabilistic and a rule that holds for 1,900 blocks out of 2,000 has',
+      'failed a hundred times in one book. An answer is rejected when it is empty,',
+      'when it drops, doubles, invents or crosses a marker, when it is under a',
+      'quarter of the source\'s length (an omission — qwen2.5:14b\'s signature',
+      'failure), when it is over three times it (commentary or repetition), or',
+      'when it is the source handed back unchanged. A rejected block is asked',
+      'again, twice, at the same fixed temperature.',
+      '',
+      'A BLOCK THAT FAILS THREE TIMES IS REFUSED BY NAME AND THE JOB FAILS — with',
+      'the document, the block number, its page, its category, its opening words',
+      'and what was wrong with the last answer, for every refused block. Nothing',
+      'is written. A book that is 99% translated and looks finished is the worst',
+      'thing this command could produce: nobody can find the missing 1%, and the',
+      'file gets read and quoted as an edition.',
+      '',
+      '--model picks the translator. qwen3:32b is the default and is the best of',
+      'the three measured; it can invent smoothing text and soften loaded',
+      'vocabulary, which is why the verification exists and why --instructions',
+      'does. qwen2.5:14b is roughly twice as fast and good for a draft, but omits',
+      'silently. qwen2.5:7b inverted meanings — sentences whose translation said',
+      'the opposite of the source, fluently — and should not be used for this at',
+      'all. For a qwen3 model the request carries "think": false, because a',
+      'reasoning pass on a translation is latency and nothing else; qwen2.5 models',
+      'do not get the field, because Ollama rejects it on a model without thinking',
+      'support.',
+      '',
+      '--instructions is appended to the system prompt verbatim, and it is the',
+      'control that matters on a historical text: "Leave \'völkisch\'',
+      'untranslated. Render racial terminology literally; do not soften it."',
+      'Terminology is per-book and no default can be right about it.',
+      '',
+      'WHAT IS NOT TRANSLATED, DELIBERATELY: dc:title and dc:creator. The title is',
+      'the book\'s NAME — somebody looking for this file is looking for the name on',
+      'the German cover, and a library listing an invented English title for a',
+      'book with no English edition is a catalogue that lies. dc:language becomes',
+      '--to, and so does xml:lang on every chapter, because a document declaring',
+      'the wrong language hyphenates by the wrong rules and reads aloud in the',
+      'wrong voice. Contents entries are relabelled from the translated headings',
+      'they were copied from, and any entry that cannot be PROVEN to be such a',
+      'copy is left in the source language and reported rather than translated a',
+      'second time — a contents page and a chapter heading that disagree is a book',
+      'assembled from two editions.',
+    ].join('\n'),
+    options: [TR_EPUB_IN, TR_TO, TR_FROM, TR_OUT, TR_MODEL, TR_OLLAMA, TR_INSTRUCTIONS],
+    run: runTranslate,
   },
   {
     name: 'doctor',

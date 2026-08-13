@@ -202,6 +202,21 @@ export function parseProgressLine(line: string): JobProgress | null {
     return { phase: 'render', page: Number(rendered[1]), total: Number(rendered[2]) };
   }
 
+  /*
+   * `translate: block 412/2081 (EPUB/text/c0003.xhtml)`.
+   *
+   * Matched before the `vlm-convert:` gate because it is a different command
+   * with its own prefix, and matched on `block` specifically so the engine's
+   * OTHER translate lines — the rejected-answer notices, which also carry a
+   * fraction (`attempt 2/3`) — cannot be read as progress. A bar that jumped to
+   * 67% because an answer was retried would be a bar reporting the wrong
+   * quantity entirely.
+   */
+  const block = /^translate:\s+block\s+(\d+)\/(\d+)\b/.exec(trimmed);
+  if (block) {
+    return { phase: 'translate', page: Number(block[1]), total: Number(block[2]) };
+  }
+
   if (!trimmed.startsWith('vlm-convert:')) return null;
 
   const viaEndpoint = /\bpage\s+\d+\s+\((\d+)\/(\d+)\)/.exec(trimmed);

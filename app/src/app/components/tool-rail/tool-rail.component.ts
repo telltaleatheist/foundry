@@ -44,6 +44,21 @@ import { UiService } from '../../core/ui.service';
           <span class="rail-label">OCR / Convert</span>
         </button>
 
+        <!-- Translate. Disabled rather than hidden away from a book, on the
+             same principle as Edit HTML below: a translation is a thing you do
+             to a book Foundry converted, and somebody looking at a scan should
+             be able to see that the tool exists and is not applicable yet. -->
+        <button
+          class="rail-item"
+          [class.active]="ui.translateOpen()"
+          [disabled]="!canTranslate()"
+          title="Translate this book into another language"
+          (click)="translate()"
+        >
+          <span class="rail-icon">⇄</span>
+          <span class="rail-label">Translate</span>
+        </button>
+
         <!-- The split editor's discoverable half: the same toggle as the
              button in the book's own toolbar, surfaced where a person who has
              never opened it will look. Disabled rather than hidden when the
@@ -170,5 +185,21 @@ export class ToolRailComponent {
   protected convert(): void {
     void this.router.navigateByUrl('/');
     this.ui.openOcr();
+  }
+
+  /**
+   * Enabled over a book, on the same test the dialog itself applies.
+   *
+   * A PDF has no blocks to translate — the categories a translation replaces
+   * are stamped when foundry BUILDS the EPUB — so the button is dead over a
+   * scan rather than opening a dialog whose only message is "not this file".
+   */
+  protected canTranslate(): boolean {
+    return this.tabs.active()?.kind === 'epub';
+  }
+
+  protected translate(): void {
+    void this.router.navigateByUrl('/');
+    this.ui.openTranslate();
   }
 }

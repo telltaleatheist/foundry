@@ -48,7 +48,7 @@ import * as queue from './job-queue';
 import { clearRecents, forgetRecent, listRecents, rememberRecent } from './recents';
 import { readSettings, writeSettings } from './settings';
 import * as vllm from './vllm-server';
-import { isManaged, planConversion, workspaceDir } from './workspace';
+import { isManaged, planConversion, planTranslation, workspaceDir } from './workspace';
 import { detectEnvTooling, listDistros } from './wsl';
 import type { MenuAction } from '../shared/api';
 import type {
@@ -59,6 +59,7 @@ import type {
   JobRequest,
   RecentKind,
   SetupRequest,
+  TranslateRequest,
 } from '../shared/types';
 
 const isDev = process.argv.includes('--dev');
@@ -685,6 +686,17 @@ function registerIpc(): void {
     'workspace:plan',
     (_event, inputPath: string, kind: ConversionKind) => planConversion(inputPath, kind),
   );
+  /*
+   * A translation reads a file the renderer already has open, so the input is
+   * checked against the SAME allow-list every other read is. Without it this
+   * handler would hash — and then hand the engine — any path a compromised
+   * renderer named.
+   */
+  ipcMain.handle('workspace:plan-translation', (_event, inputPath: string, targetLanguage: string) => {
+    const source = admitted(inputPath);
+    if (source === null) throw new Error(`${inputPath} was never opened in this app.`);
+    return planTranslation(source, targetLanguage);
+  });
 
   // ── Books ────────────────────────────────────────────────────────────────
 
@@ -798,6 +810,15 @@ function registerIpc(): void {
 
   ipcMain.handle('queue:list', () => queue.listJobs());
   ipcMain.handle('queue:enqueue', (_event, request: JobRequest) => queue.enqueue(request));
+  ipcMain.handle('queue:enqueue-translate', (_event, request: TranslateRequest) => {
+    // The input again, because a request can arrive with any `inputPath` at all
+    // — `workspace:plan-translation` checked the one it was given, not the one
+    // that ends up here.
+    if (admitted(request.inputPath) === null) {
+      throw new Error(`${request.inputPath} was never opened in this app.`);
+    }
+    return queue.enqueueTranslate(request);
+  });
   ipcMain.handle('queue:cancel', (_event, id: string) => { queue.cancel(id); });
   ipcMain.handle('queue:clear-finished', () => { queue.clearFinished(); });
 

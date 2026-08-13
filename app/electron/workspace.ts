@@ -166,6 +166,38 @@ export async function planConversion(
 }
 
 /**
+ * Where this book's TRANSLATION goes.
+ *
+ * The language tag is part of the key rather than only part of the extension,
+ * so the German original and its English and French editions are three files
+ * that coexist in one workspace: `Buch-a1b2c3d4.epub`,
+ * `Buch-a1b2c3d4.en.epub`, `Buch-a1b2c3d4.fr.epub`. Keying on the SOURCE
+ * book's content means asking for the same translation twice lands on the same
+ * file, which is the behaviour every other job in this app has.
+ *
+ * It still ends in `.epub`, and that is load-bearing: main's `openDocument`
+ * admits a finished file by its extension, so an output named anything else
+ * could never be opened, read or shown in a tab.
+ *
+ * No readings bank. A translation banks nothing — the engine holds every block
+ * in memory and writes one file at the end — so `WorkspacePlan.readingsPath`
+ * would be a path to a file that never exists.
+ */
+export async function planTranslation(
+  inputPath: string,
+  targetLanguage: string,
+): Promise<{ key: string; outputPath: string }> {
+  const resolved = path.resolve(inputPath);
+  const key = `${slugify(path.basename(resolved))}-${await contentKey(resolved)}`;
+  // The tag reaches a filename, so it is reduced to the same character set
+  // everything else here is. `pt-BR` survives that unchanged; the engine has
+  // already refused anything that is not a language tag.
+  const tag = targetLanguage.trim().replace(/[^A-Za-z0-9-]+/g, '') || 'translated';
+  await fsp.mkdir(workspaceDir(), { recursive: true });
+  return { key, outputPath: path.join(workspaceDir(), `${key}.${tag}.epub`) };
+}
+
+/**
  * Copy a workspace file to where the user says, and leave the original alone.
  *
  * A COPY and not a move, and that is the whole design of the unsaved dot: the

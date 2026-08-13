@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, HostListener, effect, inject, signa
 import { Router, RouterOutlet } from '@angular/router';
 
 import { OcrDialogComponent } from './components/ocr-dialog/ocr-dialog.component';
+import { TranslateDialogComponent } from './components/translate-dialog/translate-dialog.component';
 import { QueueShelfComponent } from './components/queue-shelf/queue-shelf.component';
 import { ToolRailComponent } from './components/tool-rail/tool-rail.component';
 import { TabsService } from './core/tabs.service';
@@ -26,7 +27,9 @@ import { api } from './core/foundry';
  */
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, ToolRailComponent, QueueShelfComponent, OcrDialogComponent],
+  imports: [
+    RouterOutlet, ToolRailComponent, QueueShelfComponent, OcrDialogComponent, TranslateDialogComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="shell">
@@ -36,6 +39,10 @@ import { api } from './core/foundry';
 
       @if (ui.ocrOpen()) {
         <app-ocr-dialog />
+      }
+
+      @if (ui.translateOpen()) {
+        <app-translate-dialog />
       }
 
       @if (dropping()) {
@@ -106,6 +113,11 @@ export class App {
     if (event.key === 'Escape' && this.ui.ocrOpen()) {
       event.preventDefault();
       this.ui.closeOcr();
+      return;
+    }
+    if (event.key === 'Escape' && this.ui.translateOpen()) {
+      event.preventDefault();
+      this.ui.closeTranslate();
       return;
     }
     // Ctrl+Tab. `event.key` is 'Tab' with ctrlKey, and preventDefault is what

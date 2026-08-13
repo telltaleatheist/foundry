@@ -31,6 +31,8 @@ const api: FoundryApi = {
 
   workspace: {
     plan: (inputPath, kind) => ipcRenderer.invoke('workspace:plan', inputPath, kind),
+    planTranslation: (inputPath, targetLanguage) =>
+      ipcRenderer.invoke('workspace:plan-translation', inputPath, targetLanguage),
   },
 
   epub: {
@@ -58,6 +60,7 @@ const api: FoundryApi = {
   queue: {
     list: () => ipcRenderer.invoke('queue:list'),
     enqueue: (request) => ipcRenderer.invoke('queue:enqueue', request),
+    enqueueTranslate: (request) => ipcRenderer.invoke('queue:enqueue-translate', request),
     cancel: (id) => ipcRenderer.invoke('queue:cancel', id),
     clearFinished: () => ipcRenderer.invoke('queue:clear-finished'),
     onChanged: (listener) => subscribe<Job[]>('queue:changed', listener),

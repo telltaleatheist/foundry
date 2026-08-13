@@ -26,6 +26,7 @@ import type {
   SetupLogEvent,
   SetupRequest,
   SetupResult,
+  TranslateRequest,
   WorkspacePlan,
   WslFacts,
 } from './types';
@@ -93,6 +94,14 @@ export interface FoundryApi {
   workspace: {
     /** The kind decides the output's EXTENSION, not just its `--format`. */
     plan(inputPath: string, kind: ConversionKind): Promise<WorkspacePlan>;
+    /**
+     * Where a translation of this book goes: `<key>.<lang>.epub`.
+     *
+     * Separate from `plan` because it answers a smaller question — there is no
+     * readings bank to name, and the language rather than a format decides the
+     * name.
+     */
+    planTranslation(inputPath: string, targetLanguage: string): Promise<{ key: string; outputPath: string }>;
   };
 
   /**
@@ -154,6 +163,8 @@ export interface FoundryApi {
   queue: {
     list(): Promise<Job[]>;
     enqueue(request: JobRequest): Promise<Job>;
+    /** The same serial queue, a different command. See `TranslateRequest`. */
+    enqueueTranslate(request: TranslateRequest): Promise<Job>;
     cancel(id: string): Promise<void>;
     clearFinished(): Promise<void>;
     /** Every change, whole list. Returns its own unsubscribe. */

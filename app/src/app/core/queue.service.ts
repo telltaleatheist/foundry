@@ -1,6 +1,6 @@
 import { Injectable, computed, signal } from '@angular/core';
 
-import type { Job, JobRequest } from '@shared/types';
+import type { Job, JobRequest, TranslateRequest } from '@shared/types';
 
 import { api } from './foundry';
 
@@ -33,6 +33,10 @@ export class QueueService {
 
   async enqueue(request: JobRequest): Promise<void> {
     await api?.queue.enqueue(request);
+  }
+
+  async enqueueTranslate(request: TranslateRequest): Promise<void> {
+    await api?.queue.enqueueTranslate(request);
   }
 
   async cancel(id: string): Promise<void> {

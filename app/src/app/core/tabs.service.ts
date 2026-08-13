@@ -1,6 +1,6 @@
 import { Injectable, computed, effect, inject, signal } from '@angular/core';
 
-import type { EpubBook } from '@shared/types';
+import type { EpubBook, JobKind } from '@shared/types';
 
 import { QueueService } from './queue.service';
 import { api } from './foundry';
@@ -90,6 +90,16 @@ export interface Tab {
   problem: string | null;
 }
 
+/**
+ * The job kinds that become a tab when they finish.
+ *
+ * A set rather than a chain of comparisons because the list has grown twice
+ * now, and each time the test lived inline it was one `||` away from a kind
+ * that finishes and is never seen. What is NOT here is deliberate: `txt` has no
+ * tab to open into, and `env-install` made no document at all.
+ */
+const OPENS_ITSELF: ReadonlySet<JobKind> = new Set<JobKind>(['epub', 'pdf', 'translate']);
+
 @Injectable({ providedIn: 'root' })
 export class TabsService {
   private readonly queue = inject(QueueService);
@@ -141,6 +151,10 @@ export class TabsService {
      * the ONLY way to see that anything happened at all. txt stays shelf-only:
      * there is no text tab, and the OS opens it from reveal.
      *
+     * A TRANSLATION IS THE THIRD, and it is the one this matters most for: it
+     * runs for hours, so the person who ordered it is not watching, and the
+     * book appearing in a tab is how they find out it finished at all.
+     *
      * Jobs already finished when this window loaded are marked as seen without
      * opening: a reload should not reopen five books somebody closed.
      */
@@ -148,7 +162,7 @@ export class TabsService {
     effect(() => {
       const jobs = this.queue.jobs();
       for (const job of jobs) {
-        if ((job.kind !== 'epub' && job.kind !== 'pdf') || job.state !== 'done') continue;
+        if (!OPENS_ITSELF.has(job.kind) || job.state !== 'done') continue;
         if (this.openedJobs.has(job.id)) continue;
         this.openedJobs.add(job.id);
         if (first) continue;

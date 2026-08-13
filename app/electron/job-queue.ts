@@ -33,7 +33,16 @@ import { ENV_SPECS } from './env-catalog';
 import { destFor, installEnv } from './env-install';
 import { readSettings } from './settings';
 import { ensureServer, isLocalVllmEndpoint, noteQueueBusy, noteQueueIdle } from './vllm-server';
-import type { EnvInstallRequest, Job, JobRequest } from '../shared/types';
+import type { EnvInstallRequest, Job, JobRequest, TranslateRequest } from '../shared/types';
+
+/**
+ * The two things that become an engine child.
+ *
+ * They share `requests`, `pump()` and the whole run-and-report path because
+ * from here they are the same job: spawn foundry, read its stderr, report what
+ * it wrote. Only `argsFor` and the reading-server wait can tell them apart.
+ */
+type EngineRequest = JobRequest | TranslateRequest;
 
 const jobs: Job[] = [];
 /**
@@ -80,8 +89,33 @@ export function enqueue(request: JobRequest): Job {
 }
 
 /** The full request, kept beside the job — the job itself is the PUBLIC shape. */
-const requests = new Map<string, JobRequest>();
+const requests = new Map<string, EngineRequest>();
 const envRequests = new Map<string, EnvInstallRequest>();
+
+/**
+ * Put a translation in the queue.
+ *
+ * Behind whatever is already running, always. The engine holds an Ollama model
+ * for the length of a book and a conversion holds a vision model for the length
+ * of another; running both means two models resident on one GPU, which on the
+ * hardware this is built for is an out-of-memory failure four hours in.
+ */
+export function enqueueTranslate(request: TranslateRequest): Job {
+  const job: Job = {
+    id: randomUUID(),
+    inputPath: request.inputPath,
+    outputPath: request.outputPath,
+    kind: 'translate',
+    state: 'queued',
+    progress: null,
+    createdAt: Date.now(),
+  };
+  jobs.push(job);
+  requests.set(job.id, request);
+  changed();
+  void pump();
+  return job;
+}
 
 /**
  * Put an environment install in the queue.
@@ -194,7 +228,30 @@ export function shutdown(): void {
  * the engine reads that same settings.json for itself, and a per-job override
  * here was a second opinion about a decision that has one owner.
  */
-function argsFor(request: JobRequest): string[] {
+function argsFor(request: EngineRequest): string[] {
+  if (request.kind === 'translate') {
+    /*
+     * A translation shares nothing with a conversion's command line but the
+     * program name. No `--readings` (nothing is banked), no `--format` (the
+     * output is an EPUB by definition), and `--ollama` IS passed — unlike the
+     * reading backend, which the settings screen owns and which the engine
+     * reads for itself. Ollama has no settings screen here because it is not a
+     * server this app manages.
+     */
+    const args = [
+      'translate',
+      '--epub', request.inputPath,
+      '--out', request.outputPath,
+      '--to', request.to,
+      '--model', request.model,
+      '--ollama', request.ollama,
+    ];
+    if (request.from && request.from.trim().length > 0) args.push('--from', request.from.trim());
+    if (request.instructions && request.instructions.trim().length > 0) {
+      args.push('--instructions', request.instructions.trim());
+    }
+    return args;
+  }
   const args = [
     'vlm-convert',
     '--pdf', request.inputPath,
@@ -282,7 +339,12 @@ async function pump(): Promise<void> {
 
   // The reading server, before the engine that will post pages to it. A remote
   // endpoint is used exactly as given — only the local one is ours to start.
-  const endpoint = endpointFor();
+  //
+  // A TRANSLATION NEVER WAITS FOR IT. Its model is Ollama, which this app does
+  // not start, and standing up twenty gigabytes of vLLM so that a job which
+  // will never send it a page can begin is a five-minute wait that buys
+  // nothing — and puts two models on one GPU if a conversion follows.
+  const endpoint = next.kind === 'translate' ? null : endpointFor();
   if (endpoint !== null && isLocalVllmEndpoint(endpoint)) {
     next.message = 'Starting the reading server…';
     changed();

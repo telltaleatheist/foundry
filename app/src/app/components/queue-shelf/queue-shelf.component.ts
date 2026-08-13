@@ -69,8 +69,12 @@ import { api } from '../../core/foundry';
                       tab kinds are epub and pdf, and what this job made is a PDF.
                       That is also the only way to see that it worked — the file
                       looks exactly like the scan until somebody searches it.
+
+                      A TRANSLATION OPENS for the same reason as a conversion:
+                      what it made is an EPUB, and the tab that reads one already
+                      exists.
                     -->
-                    @if (job.kind === 'epub' || job.kind === 'pdf') {
+                    @if (job.kind === 'epub' || job.kind === 'pdf' || job.kind === 'translate') {
                       <button class="open" (click)="open(job)"
                               [title]="job.kind === 'pdf' ? 'Open this PDF in a tab' : 'Open this book in a tab'">Open</button>
                     }
@@ -270,6 +274,16 @@ export class QueueShelfComponent {
     }
     const p = job.progress;
     if (!p) return job.message ?? 'Starting…';
+    /*
+     * A translation counts PARAGRAPHS, and the noun has to change with the
+     * number. "Translating 412 / 2,081 pages" for a 300-page book is a
+     * measurement of the wrong thing, and the counts are grouped because the
+     * right-hand side of this fraction reaches four digits on a real book —
+     * which is also the honest signal that this job runs for hours.
+     */
+    if (p.phase === 'translate') {
+      return `Translating ${p.page.toLocaleString()} / ${p.total.toLocaleString()} blocks`;
+    }
     const verb = p.phase === 'render' ? 'Rendering' : 'Reading';
     return `${verb} ${p.page} / ${p.total} pages`;
   }
