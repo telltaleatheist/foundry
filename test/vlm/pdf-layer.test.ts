@@ -18,8 +18,10 @@
  *    the check is made through the extracted content stream rather than by
  *    counting objects, because doubling is a fact about what a reader finds.
  *  - THE REFUSALS: a prose dialect, an `--out` that is the input, a page number
- *    the document does not have, a character outside the font, and somebody
- *    else's text layer.
+ *    the document does not have, a whole script outside the font, and somebody
+ *    else's text layer. A STRAY character outside the font is not one of them:
+ *    it becomes U+FFFD and is reported by name, because one model glitch is not
+ *    worth a book — only a script's worth of them is.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -409,7 +411,37 @@ test('a render that is not of this page stops the run rather than skewing it', a
   );
 });
 
-test('a character the layer\'s font cannot write names itself and its page', async () => {
+test('a character the font cannot write becomes U+FFFD, named, counted, paged', async () => {
+  const built = await buildSearchablePdf({
+    pdfBytes: await scanOf(2),
+    dpi: 200,
+    pages: [
+      {
+        page: 1,
+        render: RENDER,
+        // The one found in the wild: dots.ocr wrote 帮 — Chinese for "help" —
+        // over the "hel" of "helpers". A semantic hallucination, one character
+        // in a book, and not a reason to lose the other sixteen pages.
+        blocks: [{ box: { x1: 200, y1: 300, x2: 1100, y2: 360 }, text: 'their 帮pers arrived' }],
+      },
+      {
+        page: 2,
+        render: RENDER,
+        blocks: [{ box: { x1: 200, y1: 300, x2: 1100, y2: 360 }, text: '帮 again here' }],
+      },
+    ],
+  });
+  // The book still came out, both pages overlaid — and the report says exactly
+  // what was traded for that: which character, how many times, on which pages.
+  assert.equal(built.overlaidPages, 2);
+  assert.ok(built.substituted !== null);
+  assert.equal(built.substituted.count, 2);
+  assert.deepEqual(built.substituted.characters, [
+    { char: '帮', code: 0x5e2e, count: 2, pages: [1, 2] },
+  ]);
+});
+
+test('substitutions at the scale of a script refuse rather than write holes', async () => {
   await assert.rejects(
     buildSearchablePdf({
       pdfBytes: await scanOf(1),
@@ -417,15 +449,21 @@ test('a character the layer\'s font cannot write names itself and its page', asy
       pages: [{
         page: 1,
         render: RENDER,
-        // Hangul: outside DejaVu, and a book in it needs a font that covers it
-        // rather than a search layer with holes where its words were.
-        blocks: [{ box: { x1: 200, y1: 300, x2: 1100, y2: 360 }, text: '조선' }],
+        // Hangul: outside DejaVu, and every character of it. This is not a
+        // glitch to patch over — it is a book in a script the font does not
+        // cover, and a layer that is all replacement characters would report
+        // itself searchable while not one of its words is findable.
+        blocks: [{
+          box: { x1: 200, y1: 300, x2: 1100, y2: 360 },
+          text: '조선민주주의인민공화국의 조선말은',
+        }],
       }],
     }),
     (err: Error) => {
       assert.ok(err instanceof VlmPdfError);
-      assert.match(err.message, /page 1 contains "조" \(U\+C870\)/);
-      assert.match(err.message, /no glyph for/);
+      assert.match(err.message, /have no glyph in the text layer's font/);
+      assert.match(err.message, /"조" \(U\+C870/);
+      assert.match(err.message, /does not cover the book's script/);
       return true;
     },
   );

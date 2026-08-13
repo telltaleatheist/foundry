@@ -45,11 +45,19 @@
  * what to do with a table. The words inside the markup are still the words, so
  * they still match a search; what is not there is a second opinion about them.
  *
- * A CHARACTER THIS FONT CANNOT WRITE STOPS THE RUN AND NAMES ITSELF. That is
- * the one failure this format is most exposed to, because it is invisible by
+ * A CHARACTER THIS FONT CANNOT WRITE BECOMES U+FFFD, AND SAYS SO BY NAME. That
+ * is the one failure this format is most exposed to, because it is invisible by
  * construction: a glyph quietly dropped from a layer nobody can see is a word
  * that simply does not exist in a file that claims to be searchable, and
- * nothing downstream would ever say so (ARCHITECTURE §8).
+ * nothing downstream would ever say so (ARCHITECTURE §8). The answer is not a
+ * stop — a vision model glitches one character in a forty-page book, and a book
+ * held hostage to one glyph is a cure worse than the disease — but it is not
+ * silence either. The character is replaced with U+FFFD �, the replacement
+ * character, whose entire meaning is "something stood here that could not be
+ * written", and every one of them is reported with its code point, its count
+ * and its pages. What stays a refusal is SCALE: substitutions past one in a
+ * thousand characters are not a glitch, they are a script this font does not
+ * cover, and a layer that is mostly holes is not a search layer at all.
  *
  * ────────────────────────────────────────────────────────────────────────────
  * A LAYER IS REPLACED, NEVER STACKED — and the difference is what makes this
@@ -201,6 +209,30 @@ const LINE_FACTOR = 1.2;
 
 /** How many times the size is allowed to shrink to make the wrap fit its box. */
 const FIT_ATTEMPTS = 4;
+
+/**
+ * What an unwritable character becomes: U+FFFD, the replacement character.
+ *
+ * Chosen because saying "something was here" is its entire job in Unicode, a
+ * reader who selects the line sees at a glance that one character is a stand-in,
+ * and DejaVu carries its glyph — which is checked once at embed time, because a
+ * substitute the font also cannot write would be this mechanism eating itself.
+ */
+const REPLACEMENT = '�';
+const REPLACEMENT_CODE = 0xfffd;
+
+/**
+ * Where substitution stops being a repair and becomes a refusal.
+ *
+ * One character in a thousand is a model glitch — a hallucinated CJK glyph in
+ * an English book, once — and the book should not be held hostage to it. Past
+ * that ratio the font does not cover the book's SCRIPT, and substituting on
+ * would produce a layer that is mostly holes while reporting success, which is
+ * the exact failure §8 exists to stop. The floor keeps a tiny run honest: a
+ * ratio of a handful of characters is noise, not evidence of anything.
+ */
+const SUBSTITUTION_RATIO = 1 / 1000;
+const SUBSTITUTION_FLOOR = 10;
 
 /**
  * How far the render may disagree with the page it is supposed to be of.
@@ -379,6 +411,25 @@ export interface SearchablePdfResult {
     /** When, ISO-8601. Null if the old layer recorded no date. */
     at: string | null;
   } | null;
+  /**
+   * Characters the font could not write, each replaced with U+FFFD — or null
+   * when every character went down as itself. Reported rather than absorbed:
+   * a substitution in an invisible layer is undetectable by looking, so the
+   * log line built from this is the only place it exists.
+   */
+  substituted: {
+    /** Occurrences over the whole book. */
+    count: number;
+    /** Each distinct character, with everywhere it happened. */
+    characters: { char: string; code: number; count: number; pages: number[] }[];
+  } | null;
+}
+
+/** The running tally the pages write substitutions into as they are drawn. */
+interface SubstitutionTally {
+  /** Every character drawn, substituted or not — the ratio's denominator. */
+  chars: number;
+  perChar: Map<string, { code: number; count: number; pages: Set<number> }>;
 }
 
 // ── the overlay ─────────────────────────────────────────────────────────────
@@ -446,16 +497,22 @@ export async function buildSearchablePdf(
   doc.registerFontkit(fontkit);
   const font = await doc.embedFont(fs.readFileSync(FONT_PATH), { subset: true });
   const covered = new Set(font.getCharacterSet());
+  if (!covered.has(REPLACEMENT_CODE)) {
+    // Unreachable with DejaVu, which carries U+FFFD. Here so a future font swap
+    // cannot leave the substitute itself unwritable.
+    throw new VlmPdfError('the text layer\'s font has no glyph for U+FFFD, its own substitute.');
+  }
 
   let lines = 0;
   let overlaidPages = 0;
+  const tally: SubstitutionTally = { chars: 0, perChar: new Map() };
 
   for (const reading of opts.pages) {
     const page = doc.getPage(reading.page - 1);
     const frame = frameOf(page, reading.render, reading.page);
     checkScale(frame, reading.page, opts.dpi);
 
-    const drawn = drawPage(reading, frame, font, covered);
+    const drawn = drawPage(reading, frame, font, covered, tally);
     if (drawn.lines === 0) continue;
     registerFont(page, font, reading.page);
     prependOperators(page, drawn.operators);
@@ -463,8 +520,58 @@ export async function buildSearchablePdf(
     lines += drawn.lines;
   }
 
+  const substituted = closeTally(tally);
+
   const bytes = await doc.save();
-  return { bytes, zipSeconds: (Date.now() - started) / 1000, overlaidPages, lines, replaced };
+  return {
+    bytes,
+    zipSeconds: (Date.now() - started) / 1000,
+    overlaidPages,
+    lines,
+    replaced,
+    substituted,
+  };
+}
+
+/**
+ * The tally, judged and folded into the report — or the run stopped.
+ *
+ * The judgement happens HERE, over the whole book, rather than at the first bad
+ * character, because one character cannot tell a glitch from a script: only the
+ * ratio can. Nothing has been written yet — the bytes are made after this — so
+ * a refusal here has cost time and nothing else.
+ */
+function closeTally(tally: SubstitutionTally): SearchablePdfResult['substituted'] {
+  if (tally.perChar.size === 0) return null;
+  const characters = [...tally.perChar.entries()]
+    .map(([char, entry]) => ({
+      char,
+      code: entry.code,
+      count: entry.count,
+      pages: [...entry.pages].sort((a, b) => a - b),
+    }))
+    .sort((a, b) => b.count - a.count);
+  const count = characters.reduce((sum, entry) => sum + entry.count, 0);
+
+  const allowed = Math.max(SUBSTITUTION_FLOOR, tally.chars * SUBSTITUTION_RATIO);
+  if (count > allowed) {
+    const named = characters.slice(0, 8)
+      .map((entry) => `${JSON.stringify(entry.char)} (U+${hex(entry.code)}, ×${entry.count})`)
+      .join(', ');
+    throw new VlmPdfError(
+      `${count} of the ${tally.chars} characters in this book have no glyph in the text layer's `
+      + `font — ${named}${characters.length > 8 ? ', and more' : ''}. One stray character is a `
+      + 'model glitch and is replaced with U+FFFD by name, but at this scale the font does not '
+      + 'cover the book\'s script, and a layer that is mostly holes would report itself as '
+      + 'searchable while most of its words are not findable. The font is DejaVu Sans '
+      + '(src/vlm/assets); a book in a script it does not cover needs one that does.',
+    );
+  }
+  return { count, characters };
+}
+
+function hex(code: number): string {
+  return code.toString(16).toUpperCase().padStart(4, '0');
 }
 
 /**
@@ -542,6 +649,7 @@ function drawPage(
   frame: PageFrame,
   font: PDFFont,
   covered: ReadonlySet<number>,
+  tally: SubstitutionTally,
 ): { operators: PDFOperator[]; lines: number } {
   const body: PDFOperator[] = [];
   let lines = 0;
@@ -565,9 +673,9 @@ function drawPage(
     const printed = block.text
       .split(/\r\n|\r|\n/)
       .map((line) => line.replace(/[\t\v\f]/g, ' ').trim())
-      .filter((line) => line.length > 0);
+      .filter((line) => line.length > 0)
+      .map((line) => substituteUnwritable(line, reading.page, covered, tally));
     if (printed.length === 0) continue;
-    for (const line of printed) checkEncodable(line, reading.page, covered);
 
     const laid = layoutBlock(printed, rect, font);
     if (laid === null) continue;
@@ -685,26 +793,38 @@ function wrapLines(
 }
 
 /**
- * Every character, checked against what the font can actually write.
+ * Every character, checked against what the font can actually write — and the
+ * ones it cannot, replaced with U+FFFD and put on the tally.
  *
  * pdf-lib does not do this and cannot be made to: a character the font has no
  * glyph for is encoded as .notdef and silently becomes a blank in the layer, so
  * the word it was in stops being findable and the file still opens, still looks
- * right and still reports success. Named here — the page, the character and its
- * code point — because that is the only place all three are known.
+ * right and still reports success. Substituted here — with the page, the
+ * character and its code point recorded — because this is the only place all
+ * three are known, and whether the book's WORTH of them is a glitch or a script
+ * is `closeTally`'s question, asked once, at the end.
  */
-function checkEncodable(line: string, page: number, covered: ReadonlySet<number>): void {
+function substituteUnwritable(
+  line: string,
+  page: number,
+  covered: ReadonlySet<number>,
+  tally: SubstitutionTally,
+): string {
+  let out = '';
   for (const character of line) {
+    tally.chars += 1;
     const code = character.codePointAt(0)!;
-    if (covered.has(code)) continue;
-    throw new VlmPdfError(
-      `page ${page} contains ${JSON.stringify(character)} (U+${code.toString(16).toUpperCase()
-        .padStart(4, '0')}), which the text layer's font has no glyph for. Written anyway it would `
-      + 'vanish from the layer, and the word it is in would not be findable in a file that says it '
-      + 'is searchable. The font is DejaVu Sans (src/vlm/assets); a book in a script it does not '
-      + 'cover needs one that does, not a layer with holes in it.',
-    );
+    if (covered.has(code)) {
+      out += character;
+      continue;
+    }
+    const entry = tally.perChar.get(character) ?? { code, count: 0, pages: new Set<number>() };
+    entry.count += 1;
+    entry.pages.add(page);
+    tally.perChar.set(character, entry);
+    out += REPLACEMENT;
   }
+  return out;
 }
 
 /**

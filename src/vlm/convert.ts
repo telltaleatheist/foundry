@@ -537,6 +537,25 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
           + ' — a layer is replaced and never stacked, because two of them double every search hit',
         );
       }
+      /*
+       * Every character the font could not write, SAID. The substitution is
+       * invisible twice over — an invisible layer, and a � where a glyph was —
+       * so this line is the only place it exists. Each one is a word that will
+       * not match a search, and usually a model hallucination worth a look at
+       * the page (the first one found in the wild was 帮 for "hel" in
+       * "helpers": the model wrote the Chinese word for help).
+       */
+      if (built.substituted !== null) {
+        const named = built.substituted.characters
+          .map((entry) => `${JSON.stringify(entry.char)} (U+${entry.code.toString(16).toUpperCase()
+            .padStart(4, '0')}) ×${entry.count} on page(s) ${entry.pages.join(', ')}`)
+          .join('; ');
+        opts.log(
+          `vlm-convert: ${built.substituted.count} character(s) the layer's font cannot write `
+          + `became U+FFFD (�): ${named} — the words they sit in will not match a search, and a `
+          + 'character this far outside the book\'s script is usually the model misreading the page',
+        );
+      }
     } else if (geometric) {
       blocks = geometryPages.reduce((sum, p) => sum + p.blocks.length, 0);
       opts.log(
