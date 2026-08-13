@@ -589,6 +589,46 @@ function registerIpc(): void {
   });
 
   /**
+   * Save a copy of an open document where the user says — the PDF tab's Save.
+   *
+   * DIALOG AND COPY IN ONE HANDLER, where the EPUB flow splits them. A book is
+   * repacked from a working copy that can still be changing, so its grant and
+   * its write are separate steps with a grant list between them; a PDF is one
+   * finished file this app never edits, and the dialog's answer can be spent on
+   * the spot. The source is still gated by `admitted` — the dialog authorizes
+   * the DESTINATION, and only the user's own choice of one, but what may be
+   * read out of the workspace remains the allow-list's question.
+   */
+  ipcMain.handle('document:save-copy', async (_event, source: string, suggestedName: string) => {
+    const resolved = admitted(source);
+    if (resolved === null) {
+      throw new Error(`${source} was never opened in this app.`);
+    }
+    const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
+    // The library, same as the book pickers: the folder the user pointed this
+    // app at is where its outputs go unless they steer elsewhere.
+    const library = readAppSettings().libraryDir;
+    await fsp.mkdir(library, { recursive: true });
+    const options = {
+      title: 'Save a copy of this PDF',
+      defaultPath: path.join(library, suggestedName),
+      filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    };
+    const result = win
+      ? await dialog.showSaveDialog(win, options)
+      : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return null;
+    if (path.resolve(result.filePath) === resolved) {
+      // Copying a file onto itself truncates it before it can be read. The
+      // dialog makes this easy to do by accident — it opens on the library —
+      // and the answer is a refusal, not a clever in-place no-op.
+      throw new Error('That is the file itself. Pick somewhere else to put the copy.');
+    }
+    await fsp.copyFile(resolved, result.filePath);
+    return result.filePath;
+  });
+
+  /**
    * The warning before a tab with something to lose closes.
    *
    * Worded around what is ACTUALLY at risk, which is never the book itself:

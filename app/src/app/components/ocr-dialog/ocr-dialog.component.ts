@@ -119,14 +119,14 @@ import { api } from '../../core/foundry';
             </p>
           } @else if (kind() === 'pdf') {
             <!--
-              Open, not just reveal: this app has a PDF tab and a searchable PDF
-              is a PDF. Not opened AUTOMATICALLY, though — a finished EPUB opens
-              because looking at it is the next thing anybody does, and a
-              searchable PDF is a file you take away.
+              Opens automatically like a finished book does — the viewer's text
+              layer pane is the only way to SEE that an invisible layer worked,
+              so looking at it is the next thing anybody does here too.
             -->
             <p class="note">
-              The file is written into Foundry's workspace. Open it from the finished job to
-              try the search, or use ↗ to show it in the file manager.
+              The PDF is written into Foundry's workspace and opens here when it is done —
+              use the Text layer button to see what was embedded, and Save a copy to put
+              the file somewhere of your own.
             </p>
           } @else {
             <p class="note">

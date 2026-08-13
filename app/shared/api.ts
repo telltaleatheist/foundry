@@ -64,6 +64,12 @@ export interface FoundryApi {
    * same `admitted` check everything that serves a document asks.
    */
   documentBytes(absolutePath: string): Promise<Uint8Array>;
+  /**
+   * Copy an open document to a destination the user picks in main's own save
+   * dialog. Returns where it went, or null for a cancel. The source must be in
+   * the open allow-list — the dialog authorizes the destination, never the read.
+   */
+  documentSaveCopy(absolutePath: string, suggestedName: string): Promise<string | null>;
   reveal(target: string): Promise<void>;
   /**
    * The native box asked before a tab with something to lose closes. True means

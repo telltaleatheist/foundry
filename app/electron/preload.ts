@@ -24,6 +24,8 @@ const api: FoundryApi = {
   openPath: (candidate) => ipcRenderer.invoke('document:open-path', candidate),
   pathForFile: (file) => webUtils.getPathForFile(file),
   documentBytes: (absolutePath) => ipcRenderer.invoke('document:read-bytes', absolutePath),
+  documentSaveCopy: (absolutePath, suggestedName) =>
+    ipcRenderer.invoke('document:save-copy', absolutePath, suggestedName),
   reveal: (target) => ipcRenderer.invoke('shell:reveal', target),
   confirmClose: (warning) => ipcRenderer.invoke('document:confirm-close', warning),
 

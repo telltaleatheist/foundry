@@ -135,6 +135,11 @@ export class TabsService {
      * Settings, and (because main owns the queue) outlives a reload of this
      * window. The only fact that matters is that a row reached `done`.
      *
+     * EPUB and PDF both, because both have a tab to open into and looking at
+     * the result is the next thing anybody does — for a searchable PDF it is
+     * the ONLY way to see that anything happened at all. txt stays shelf-only:
+     * there is no text tab, and the OS opens it from reveal.
+     *
      * Jobs already finished when this window loaded are marked as seen without
      * opening: a reload should not reopen five books somebody closed.
      */
@@ -142,7 +147,7 @@ export class TabsService {
     effect(() => {
       const jobs = this.queue.jobs();
       for (const job of jobs) {
-        if (job.kind !== 'epub' || job.state !== 'done') continue;
+        if ((job.kind !== 'epub' && job.kind !== 'pdf') || job.state !== 'done') continue;
         if (this.openedJobs.has(job.id)) continue;
         this.openedJobs.add(job.id);
         if (first) continue;
@@ -413,11 +418,15 @@ export class TabsService {
    * The fallback to Save As is the behaviour of every editor, and it is what
    * makes the editor's Save button worth having: after the first time it stops
    * asking a question the user has already answered.
+   *
+   * A PDF always goes through the picker instead. Nothing in this app edits a
+   * PDF, so a silent re-save to the same destination would copy identical bytes
+   * over identical bytes — the one thing Ctrl+S could do for it is ask where.
    */
   async saveActive(): Promise<void> {
     const tab = this.active();
     if (!tab) return;
-    if (tab.savedPath === null) {
+    if (tab.kind === 'pdf' || tab.savedPath === null) {
       await this.saveActiveAs();
       return;
     }
@@ -427,17 +436,30 @@ export class TabsService {
   /**
    * Ctrl/Cmd+Shift+S. Always the picker.
    *
-   * Only ever offered for an EPUB: a PDF in a tab was opened from somewhere the
-   * user already has it, and saving a copy of it is a file manager's job.
+   * A PDF saves as a COPY of the finished file: a conversion's output lives in
+   * the workspace until this puts it somewhere the user chose, and that is the
+   * whole difference between "foundry made me a searchable PDF" and "there is a
+   * searchable PDF in a folder I know about". An EPUB repacks from its working
+   * copy instead (electron/epub-reader.ts), because its edits live there.
    */
   async saveActiveAs(): Promise<void> {
     const tab = this.active();
     if (!api || !tab) return;
-    if (tab.kind !== 'epub' || tab.book === null) {
-      this.notice.set('Only a book can be saved — this tab is the PDF you opened.');
+    if (tab.kind === 'pdf') {
+      try {
+        const destination = await api.documentSaveCopy(tab.path, suggestName(tab.title, '.pdf'));
+        if (destination === null) return;
+        this.patch(tab.id, { unsaved: false, savedPath: destination });
+      } catch (err) {
+        this.notice.set(err instanceof Error ? err.message : String(err));
+      }
       return;
     }
-    const chosen = await api.epub.chooseSavePath(tab.book.id, suggestName(tab.title));
+    if (tab.book === null) {
+      this.notice.set('This book is still opening — try again in a moment.');
+      return;
+    }
+    const chosen = await api.epub.chooseSavePath(tab.book.id, suggestName(tab.title, '.epub'));
     if (chosen === null) return;
     await this.writeBook(tab, chosen);
   }
@@ -486,8 +508,8 @@ function baseName(filePath: string): string {
  * opened pre-filled with an illegal name would fail on OK with a message from
  * the OS rather than from us.
  */
-function suggestName(title: string): string {
+function suggestName(title: string, extension: '.epub' | '.pdf'): string {
   const cleaned = title.replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim();
   const stem = cleaned.length > 0 ? cleaned : 'book';
-  return stem.toLowerCase().endsWith('.epub') ? stem : `${stem}.epub`;
+  return stem.toLowerCase().endsWith(extension) ? stem : `${stem}${extension}`;
 }
