@@ -298,6 +298,16 @@ import { api } from '../../core/foundry';
       The text layer. Invisible over the scan (that is the format's whole
       promise) and inked in the layer pane — one geometry, two paints.
       \`user-select: text\` on both, because copying out of either is the point.
+
+      EVERY span RULE GOES THROUGH ::ng-deep, and it is load-bearing: the spans
+      are made by \`layoutText\` with document.createElement, and Angular's style
+      emulation scopes a component's CSS by stamping an attribute on template
+      elements — an attribute a dynamically created element never receives. The
+      first version of this file wrote these as plain \`.text span\` and every
+      rule silently missed: no absolute positioning (the whole layer piled up
+      in the page's top-left), no transparent ink over the scan, no dark ink in
+      the layer pane. The \`.text\` ancestor IS from the template, so the rules
+      stay this component's own; only the leap to its children is unscoped.
     */
     .text {
       position: absolute; inset: 0;
@@ -306,19 +316,19 @@ import { api } from '../../core/foundry';
       user-select: text;
       -webkit-user-select: text;
     }
-    .text span {
+    .text ::ng-deep span {
       position: absolute;
       white-space: pre;
       transform-origin: 0% 0%;
       color: transparent;
       cursor: text;
     }
-    .text ::selection { background: rgba(217, 138, 63, 0.4); }
-    .text.shown span { color: #23201a; }
+    .text ::ng-deep span::selection { background: rgba(217, 138, 63, 0.4); }
+    .text.shown ::ng-deep span { color: #23201a; }
     /* Over the scan the hit is a BOX and the text under it stays invisible —
        painting it would double the ink the highlight is pointing at. */
-    .text span.hit { background: rgba(217, 138, 63, 0.55); border-radius: 2px; }
-    .text.shown span.hit { background: rgba(217, 138, 63, 0.85); }
+    .text ::ng-deep span.hit { background: rgba(217, 138, 63, 0.55); border-radius: 2px; }
+    .text.shown ::ng-deep span.hit { background: rgba(217, 138, 63, 0.85); }
 
     .strip {
       /* Positioned for the same reason the viewport is — revealThumb reads
