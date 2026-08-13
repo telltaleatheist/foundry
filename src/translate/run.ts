@@ -150,6 +150,8 @@ export interface TranslateReport {
   retries: number;
   /** Blocks that carried no prose at all and were kept exactly as written. */
   wordless: number;
+  /** Short blocks kept in the source language on the model's persistent word. */
+  echoKept: number;
   navRelabelled: number;
   navUnmapped: number;
   seconds: number;
@@ -222,6 +224,22 @@ export function systemPrompt(
     );
   }
   return lines.join('\n');
+}
+
+/**
+ * The longest text an echo may survive on, in words.
+ *
+ * Eight covers the two measured cases — a five-word company imprint and a
+ * seven-word headline of names — with a margin, and stays far under a
+ * sentence of prose: the shortest real paragraph in the books this was built
+ * against runs well past it. See the echo-acceptance comment in the block
+ * loop for why the bound is on LENGTH and not on anything about the words.
+ */
+const ECHO_KEEP_WORDS = 8;
+
+/** Words, the way `wordCount` in `dots.ts` counts them: runs of non-space. */
+function wordCount(text: string): number {
+  return text.split(/\s+/).filter((w) => w.length > 0).length;
 }
 
 /**
@@ -378,6 +396,7 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
   const refusals: string[] = [];
   let retries = 0;
   let wordless = 0;
+  let echoKept = 0;
 
   for (const block of pending) {
     const sourceText = block.masked.text;
@@ -405,15 +424,54 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
     });
     let accepted: string | null = null;
     let lastComplaint = '';
+    let echoes = 0;
+    let lastAnswer = '';
 
     for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
       const answer = (await chat(transport, endpoint, model, system, sourceText)).trim();
       const complaint = checkMarkers(block.masked, answer) ?? checkAnswer(sourceText, answer);
       if (complaint === null) { accepted = answer; break; }
+      if (complaint.includes('echoed')) echoes += 1;
+      lastAnswer = answer;
       lastComplaint = complaint;
       retries += 1;
       opts.log(
         `translate: block ${block.ordinal} attempt ${attempt}/${ATTEMPTS} rejected — ${complaint}`,
+      );
+    }
+
+    /*
+     * THE ECHO THAT IS RIGHT. "Henkel & Cie. A.-G., Düsseldorf" does not
+     * translate — its English is itself — and on the first real run the echo
+     * check refused it three times for being correct, along with a headline
+     * that is six proper names and the word "an". The check cannot be dropped:
+     * a model that hands back a German paragraph unchanged is the laziness it
+     * exists to catch. So an echo is accepted on two witnesses together:
+     *
+     *  - PERSISTENCE. The model must echo on every attempt. One echo is a
+     *    lapse; the same answer three times, asked three times, is a claim
+     *    that this text does not change.
+     *  - BREVITY. Short display text only. A name-plate, an imprint, a
+     *    headline of names is where translation-invariant text lives; a
+     *    paragraph that comes back unchanged three times is a broken run,
+     *    whatever the model insists.
+     *
+     * The text's SPELLING was tried as the second witness and it fails in
+     * both directions on German alone: "Kirchenwahlen 1932" has no lowercase
+     * word and translates, the Hermans headline has one and does not. There
+     * is no mechanical test for "translatable" — but there is a mechanical
+     * bound on the harm: the worst wrong acceptance leaves one short heading
+     * in the source language, SAID OUT LOUD below and counted in the report,
+     * while the wrong refusal it replaces killed a 96-block job for being
+     * right twice.
+     */
+    const short = wordCount(stripMarkers(sourceText)) <= ECHO_KEEP_WORDS;
+    if (accepted === null && echoes === ATTEMPTS && short) {
+      accepted = lastAnswer;
+      echoKept += 1;
+      opts.log(
+        `translate: block ${block.ordinal} KEPT IN THE SOURCE LANGUAGE — the model answered `
+        + `${ATTEMPTS} times that "${stripMarkers(sourceText).slice(0, 40)}" does not change`,
       );
     }
 
@@ -535,6 +593,7 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
     skipped,
     retries,
     wordless,
+    echoKept,
     navRelabelled: nav?.relabelled ?? 0,
     navUnmapped: nav?.unmapped ?? 0,
     seconds,

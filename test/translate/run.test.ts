@@ -194,6 +194,37 @@ test('three bad answers refuse the block by name and write no book at all', asyn
   }
 });
 
+test('a persistent echo keeps a short block and still refuses a paragraph', async () => {
+  // The first real run: "Henkel & Cie. A.-G., Düsseldorf" — whose English IS
+  // itself — refused three times for being correct, and the refusals killed a
+  // 96-block job that was otherwise done. An echo is now accepted on two
+  // witnesses: the model held its answer on every attempt, and the block is
+  // short display text. A PARAGRAPH echoed three times is still the laziness
+  // the check exists for, and still refuses — whatever the model insists.
+  const { epub, out, clean } = scratch();
+  try {
+    const logged: string[] = [];
+    const server = fakeOllama((user) => user); // echoes everything, always
+    await assert.rejects(
+      translateEpub({
+        epubPath: epub, outPath: out, to: 'en', transport: server, log: (m) => logged.push(m),
+      }),
+      (error: Error) => {
+        assert.ok(error instanceof TranslateError);
+        // The prose blocks refuse on the echo, by name.
+        assert.match(error.message, /echoed the text instead of translating it/);
+        return true;
+      },
+    );
+    // The short display blocks — the two-word chapter heading among them —
+    // were kept, said out loud, not refused.
+    assert.ok(logged.some((l) => /KEPT IN THE SOURCE LANGUAGE/.test(l)));
+    assert.equal(fs.existsSync(out), false);
+  } finally {
+    clean();
+  }
+});
+
 test('a server that stops answering ends the run instead of retrying the book', async () => {
   const { epub, out, clean } = scratch();
   try {
