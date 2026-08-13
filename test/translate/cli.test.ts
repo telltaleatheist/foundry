@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { UsageError } from '../../src/args.js';
 import { defaultTranslationOut, findCommand, runCommand } from '../../src/commands.js';
 import { LanguageError, readLanguage } from '../../src/translate/languages.js';
-import { chatBody, normaliseEndpoint, takesThinkField } from '../../src/translate/ollama.js';
+import { answerBudget, chatBody, normaliseEndpoint, takesThinkField } from '../../src/translate/ollama.js';
 
 const translate = findCommand('translate')!;
 
@@ -95,11 +95,34 @@ test('the request body is what Ollama documents, at the measured settings', () =
   assert.equal(body.model, 'qwen3:32b');
   assert.equal(body.stream, false);
   assert.equal(body.think, false);
-  assert.deepEqual(body.options, { temperature: 0.2, num_ctx: 8192 });
+  assert.deepEqual(body.options, { temperature: 0.2, num_ctx: 8192, num_predict: 128 });
   assert.deepEqual(body.messages, [
     { role: 'system', content: 'SYS' },
     { role: 'user', content: 'USER' },
   ]);
+});
+
+test('the answer is bounded by the block, above the length the check would refuse', () => {
+  /*
+   * MEASURED: `HV111$007458S` — a library accession number stamped on the
+   * flyleaf of the Dannenmann scan — drew a 16,876-character answer out of
+   * qwen3:32b, three times, at minutes a go, before the length check refused
+   * each one. Nothing told the server how long an answer could be.
+   *
+   * The bound must sit ABOVE the ceiling `checkAnswer` enforces (LONG_RATIO,
+   * 3× the source) or it would truncate answers that were going to be accepted.
+   * At 4× the source in characters and 2.5 characters a token, it does.
+   */
+  const stamp = 'HV111$007458S';
+  assert.equal(answerBudget(stamp), 128, 'the floor, which is a paragraph a short block cannot reach');
+
+  const paragraph = 'x'.repeat(2000);
+  const budget = answerBudget(paragraph);
+  // Room for an answer 4× the source, which is comfortably past the 3× the
+  // verification refuses — so a truncation here can only ever hit an answer
+  // that was already doomed.
+  assert.ok(budget * 2.5 > paragraph.length * 3, 'the cap clears the refusal ceiling');
+  assert.equal(budget, 3200);
 });
 
 test('a model without thinking support carries no think field at all', () => {

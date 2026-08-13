@@ -476,13 +476,21 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
   const kept = report.wordless === 0
     ? ''
     : `, ${report.wordless} wordless block(s) kept as written`;
-  const echoed = report.echoKept === 0
+  const echoed = report.markerNotes === 0
     ? ''
-    : `, ${report.echoKept} short block(s) KEPT IN THE SOURCE LANGUAGE on the model's persistent word`;
+    : `, ${report.markerNotes} answer(s) came back missing inline markup and were kept anyway`;
+  // The blocks the model could not do at all. On the completion line for the
+  // same reason the skipped tables are: this is the line somebody reads when
+  // they come back to a run that took four hours, and a book with untranslated
+  // blocks in it must say so there rather than only in the scroll.
+  const stuck = report.keptUntranslated.length === 0
+    ? ''
+    : `, ${report.keptUntranslated.length} block(s) LEFT IN THE SOURCE LANGUAGE — the model could `
+      + 'not translate them';
   log(
     `translate: ${report.blocks} blocks in ${report.seconds.toFixed(1)}s `
     + `(${(report.blocks / Math.max(report.seconds, 0.001)).toFixed(2)} a second, ${report.model})`
-    + `${struck}${asked}${kept}${echoed}`,
+    + `${struck}${asked}${kept}${echoed}${stuck}`,
   );
   if (report.navUnmapped > 0) {
     log(

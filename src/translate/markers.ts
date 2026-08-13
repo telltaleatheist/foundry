@@ -328,8 +328,19 @@ export function restoreMarkers(masked: MaskedBlock, response: string): string {
   for (const match of response.matchAll(TOKEN)) {
     out += escapeText(response.slice(at, match.index));
     const marker = table.get(match[2]);
+    /*
+     * A TOKEN THIS BLOCK NEVER SENT IS DROPPED, not thrown on.
+     *
+     * It used to end the block, which ended the run. But an invented ⟦e9⟧ is
+     * the model copying the shape of the vocabulary it was taught — it names no
+     * markup, so there is nothing it could restore to, and writing the token
+     * itself into the book would put our own private syntax in front of a
+     * reader. Dropping it keeps every word around it and loses only a thing
+     * that never existed. The words are the book; the tokens are scaffolding.
+     */
     if (marker === undefined) {
-      throw new MarkerError(`${OPEN}${match[2]}${CLOSE} is not a marker this block sent`);
+      at = match.index + match[0].length;
+      continue;
     }
     out += marker.kind === 'atomic'
       ? marker.source

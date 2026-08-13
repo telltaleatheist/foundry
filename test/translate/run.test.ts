@@ -13,7 +13,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { readZipMap } from '../../src/translate/unzip.js';
-import { checkAnswer, systemPrompt, translateEpub, TranslateError } from '../../src/translate/run.js';
+import { checkAnswer, systemPrompt, translateEpub, unfence, TranslateError } from '../../src/translate/run.js';
 import { readLanguage } from '../../src/translate/languages.js';
 import { CHAPTER_PATH, NAV_PATH, OPF_PATH, PICTURE, fakeOllama, foundryEpub, plainEpub, shout } from './fixture.js';
 
@@ -148,19 +148,28 @@ test('a rejected answer is asked again, and a good second answer is kept', async
   }
 });
 
-test('three bad answers refuse the block by name and write no book at all', async () => {
+test('three bad answers leave the block in the source language and finish the book', async () => {
+  /*
+   * IT USED TO THROW AWAY THE WHOLE BOOK, on the argument that a book missing a
+   * paragraph and looking finished is worse than no book. Measured against a
+   * real scan, that argument cost 455 translated blocks: block 8 of the
+   * Dannenmann book is `HV111$007458S`, a library accession number stamped on
+   * the flyleaf, and no model will ever translate it. The blocks that cannot be
+   * done are now left exactly as the book wrote them, named in the log, named
+   * in the report, and counted on the completion line.
+   */
   const { epub, out, clean } = scratch();
   try {
     const logged: string[] = [];
     // Every answer drops the markers and is far too short.
     const server = fakeOllama(() => 'nope');
-    await assert.rejects(
-      translateEpub({
-        epubPath: epub, outPath: out, to: 'en', transport: server, log: (m) => logged.push(m),
-      }),
-      (error: Error) => {
-        assert.ok(error instanceof TranslateError);
-        /*
+    const report = await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: server, log: (m) => logged.push(m),
+    });
+
+    {
+      const named = report.keptUntranslated.join('\n');
+      /*
          * FIVE of the seven, and the two that got through are the honest limit
          * of a ratio test. "nope" is four characters against "Die Ordnung"'s
          * eleven and "Der Staat"'s nine — over a quarter of each — so a
@@ -173,53 +182,94 @@ test('three bad answers refuse the block by name and write no book at all', asyn
          * mostly token sheds the token — which is why edge atomics no longer
          * travel to the model at all (`markers.ts`), and why length is one of
          * five checks rather than the check: every block with an INTERIOR
-         * marker is still refused on the markers.
-         */
-        assert.match(error.message, /5 of 7 blocks could not be translated/);
-        assert.match(error.message, /NOTHING WAS WRITTEN/);
-        // Named: the document, the block, its category, its page, its words.
-        assert.match(error.message, /block 2 \(text, page 7\)[^\n]*dropped 2 of 2 marker/);
-        assert.match(error.message, /block 5 \(quote, page 8\)[^\n]*under 25%/);
-        assert.match(error.message, /block 7 \(footnote, page 9\)/);
-        assert.doesNotMatch(error.message, /block 1 /);
-        assert.doesNotMatch(error.message, /block 3 /);
-        return true;
-      },
-    );
-    assert.equal(fs.existsSync(out), false, 'no partial book is left behind');
+       * marker is still refused on the markers.
+       */
+      assert.equal(report.keptUntranslated.length, 5);
+      // Named: the document, the block, its category, its page, its words.
+      assert.match(named, /block 2 \(text, page 7\)[^\n]*under 25%/);
+      assert.match(named, /block 5 \(quote, page 8\)[^\n]*under 25%/);
+      assert.match(named, /block 7 \(footnote, page 9\)/);
+      assert.doesNotMatch(named, /block 1 /);
+      assert.doesNotMatch(named, /block 3 /);
+    }
+
     assert.equal(server.asked.length, 17, 'three attempts each, and two blocks that passed');
-    assert.ok(logged.some((l) => l.startsWith('translate: REFUSED ')));
+    assert.ok(logged.some((l) => /block 2 LEFT IN THE SOURCE LANGUAGE after 3 attempts/.test(l)));
+    // Said again at the end, as a list, where somebody returning to a finished
+    // run will see it without scrolling back through the whole log.
+    assert.ok(logged.some((l) => /5 of 7 blocks stayed in the source language/.test(l)));
+
+    // THE BOOK EXISTS, and the five carry their original German — untouched,
+    // because a block with no translation is a range the splice never visits.
+    const chapter = readZipMap(new Uint8Array(fs.readFileSync(out))).get(CHAPTER_PATH)!.text();
+    assert.match(chapter, /Ein <em>voelkischer<\/em> Staat war das Ziel/);
+    assert.match(chapter, /Siehe dazu das Werk von gestern\./);
+    // And the two the ratio let through carry the junk, because that is what
+    // "write what the model hands back" means: "nope" against a two-word
+    // heading is not distinguishable from a terse translation by length, and
+    // length is the only thing the engine still judges.
+    assert.match(chapter, /<\/span>nope<\/h1>/);
   } finally {
     clean();
   }
 });
 
-test('a persistent echo keeps a short block and still refuses a paragraph', async () => {
-  // The first real run: "Henkel & Cie. A.-G., Düsseldorf" — whose English IS
-  // itself — refused three times for being correct, and the refusals killed a
-  // 96-block job that was otherwise done. An echo is now accepted on two
-  // witnesses: the model held its answer on every attempt, and the block is
-  // short display text. A PARAGRAPH echoed three times is still the laziness
-  // the check exists for, and still refuses — whatever the model insists.
+test('a book where nothing at all passed verification is refused outright', async () => {
+  /*
+   * The floor under the rule above. Leaving a stamp in German is a fact about
+   * one block; "translating" a book into its own source text and stamping the
+   * package `en` is a lie about the file, and it would look exactly like a
+   * success to anyone reading the completion line.
+   */
   const { epub, out, clean } = scratch();
   try {
-    const logged: string[] = [];
-    const server = fakeOllama((user) => user); // echoes everything, always
+    // Junk short enough to fail the ratio test on every block, markers dropped.
+    const server = fakeOllama(() => 'x');
     await assert.rejects(
-      translateEpub({
-        epubPath: epub, outPath: out, to: 'en', transport: server, log: (m) => logged.push(m),
-      }),
+      translateEpub({ epubPath: epub, outPath: out, to: 'en', transport: server, log: quiet }),
       (error: Error) => {
         assert.ok(error instanceof TranslateError);
-        // The prose blocks refuse on the echo, by name.
-        assert.match(error.message, /echoed the text instead of translating it/);
+        assert.match(error.message, /not one of 7 blocks came back as a translation/);
+        assert.match(error.message, /NOTHING WAS WRITTEN/);
         return true;
       },
     );
-    // The short display blocks — the two-word chapter heading among them —
-    // were kept, said out loud, not refused.
-    assert.ok(logged.some((l) => /KEPT IN THE SOURCE LANGUAGE/.test(l)));
-    assert.equal(fs.existsSync(out), false);
+    assert.equal(fs.existsSync(out), false, 'no partial book is left behind');
+  } finally {
+    clean();
+  }
+});
+
+test('a model that echoes everything is written out, and is the operator\'s problem', async () => {
+  /*
+   * THIS IS THE COST OF DROPPING THE ECHO TEST, written down so it is a choice
+   * rather than a surprise.
+   *
+   * A model that hands every block back unchanged now produces a book that is
+   * entirely its source text with `en` on the package. The engine does not
+   * police that any more, and the reason it does not is the first real run: the
+   * echo test refused three CORRECT translations ("Henkel & Cie. A.-G.,
+   * Düsseldorf", whose English is itself) and killed a 96-block job to do it.
+   * Two witnesses and a word-count floor were not enough to make it safe.
+   *
+   * The remedy for a lazy model is a different model or a better prompt — both
+   * one flag away — not an engine that decides which German sentences are
+   * allowed to resemble English ones. What the engine still guarantees is that
+   * nothing is INVENTED and nothing is LOST: every word the model returned is
+   * in the book, and the run says how many blocks it could not do at all.
+   */
+  const { epub, out, clean } = scratch();
+  try {
+    const server = fakeOllama((user) => user); // echoes everything, always
+    const report = await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: server, log: quiet,
+    });
+
+    assert.equal(report.keptUntranslated.length, 0, 'an echo is an answer, not a failure');
+    assert.equal(report.retries, 0, 'and it costs nothing to accept');
+
+    const chapter = readZipMap(new Uint8Array(fs.readFileSync(out))).get(CHAPTER_PATH)!.text();
+    assert.match(chapter, /Ein <em>voelkischer<\/em> Staat war das Ziel/);
   } finally {
     clean();
   }
@@ -298,21 +348,33 @@ test('an answer over three times the source is commentary', () => {
   assert.match(checkAnswer('Ein kurzer Satz hier.', 'A short sentence. '.repeat(12))!, /over 3×/);
 });
 
-test('an echoed source is rejected once there is enough of it to be sure', () => {
+test('an answer identical to its source is written, not refused', () => {
+  /*
+   * THE ECHO TEST IS GONE, deliberately. It cost three correct translations on
+   * the first real run — "Henkel & Cie. A.-G., Düsseldorf", whose English is
+   * itself — and needed two witnesses and a word-count floor to survive at all.
+   * A model that hands back the source is a model to replace or a prompt to
+   * fix; it is not a run to kill, and the engine is no longer in the business
+   * of deciding which German sentences are allowed to look like English ones.
+   */
   const source = 'Ein sehr langer deutscher Satz mit vielen Woertern.';
-  assert.match(checkAnswer(source, source)!, /echoed the text/);
-});
-
-test('a short proper noun that translates to itself is NOT called an echo', () => {
-  // The failure this exemption prevents: three wasted retries and a hard stop
-  // on a chapter heading whose correct translation is the word it already is.
+  assert.equal(checkAnswer(source, source), null);
   assert.equal(checkAnswer('Berlin', 'Berlin'), null);
-  assert.equal(checkAnswer('Karl Marx', 'Karl Marx'), null);
 });
 
-test('a code fence is markup the model added and is rejected', () => {
+test('a code fence is peeled off the answer rather than costing the block', () => {
+  // A fence is the model formatting its reply; the translation inside it is
+  // usually perfect, and refusing it used to cost three attempts and the run.
   const source = 'Ein langer deutscher Satz mit vielen Woertern darin.';
-  assert.match(checkAnswer(source, '```\nA long German sentence with many words in it.\n```')!, /code fence/);
+  const fenced = '```\nA long German sentence with many words in it.\n```';
+  assert.equal(checkAnswer(source, fenced), null);
+  assert.equal(unfence(fenced), 'A long German sentence with many words in it.');
+  assert.equal(unfence('```xml\n<p>Hallo</p>\n```'), '<p>Hallo</p>');
+
+  // A fence in the MIDDLE is part of the text — a book about code has code in
+  // it — and is left exactly where it is.
+  const inside = 'Erst Text.\n```\ncode\n```\nDann mehr Text.';
+  assert.equal(unfence(inside), inside);
 });
 
 test('markers do not count toward the length checks', () => {
@@ -338,6 +400,22 @@ test('the system prompt names both languages and carries instructions verbatim',
   assert.match(prompt, /Do not soften, sanitise, modernise or euphemise/);
   assert.match(prompt, /OUTPUT ONLY THE TRANSLATION/);
   assert.match(prompt, /Leave 'völkisch' untranslated\./);
+});
+
+test('the prompt gives the model an honest way out of a block with no language in it', () => {
+  /*
+   * The upstream half of the accession-number fix. A block arrives with no
+   * context, and the front matter of a scanned book is full of things that are
+   * not prose: a stamp, a shelf mark, OCR noise. Told nothing, qwen3 invented
+   * 16,876 characters for a thirteen-character one. Told it may hand the block
+   * back, it lands in the echo rule that already exists — kept, said out loud,
+   * and counted — instead of burning three attempts to be refused.
+   */
+  const prompt = systemPrompt(null, readLanguage('en', '--to'), undefined);
+  assert.match(prompt, /ONE block from a book/);
+  assert.match(prompt, /library stamp, an accession number/);
+  assert.match(prompt, /RETURN IT EXACTLY AS GIVEN/);
+  assert.match(prompt, /never pad the answer/);
 });
 
 test('with no --from the model is told to determine the language itself', () => {

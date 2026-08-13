@@ -100,30 +100,14 @@ const SHORT_RATIO = 0.25;
 const LONG_RATIO = 3;
 
 /**
- * How many refused blocks end the run early.
+ * How many blocks the model can fail before the run stops trying.
  *
- * Twenty-five failures is not twenty-five bad paragraphs. It is the wrong
- * model, a prompt the model will not follow, or a book whose language nobody
- * declared — and the remaining blocks would take hours of GPU to prove the same
- * thing again. The run stops and says so.
+ * Twenty-five is not twenty-five bad paragraphs. It is the wrong model, a
+ * prompt this one will not follow, or a book whose language nobody declared —
+ * and the remaining blocks would take hours of GPU to prove the same thing
+ * again. The run stops and says so.
  */
 const REFUSAL_LIMIT = 25;
-
-/**
- * The echo test needs a floor, and this is the honest reason for it.
- *
- * A translation that equals its source is normally the model echoing the
- * language it was given, which is 7b's and occasionally 14b's failure. But some
- * blocks are legitimately identical in both languages: a heading that is a
- * proper noun ("Berlin"), a caption that is a date, a one-word section header.
- * Refusing those would fail an entire book over a place name — three wasted
- * retries and then a hard stop on a block whose translation was correct the
- * first time. So the test applies only where identity cannot be a coincidence:
- * a run of real prose. Four words and twenty-four characters is comfortably
- * past any proper noun and comfortably below any sentence.
- */
-const ECHO_MIN_CHARS = 24;
-const ECHO_MIN_WORDS = 4;
 
 export interface TranslateOptions {
   epubPath: string;
@@ -150,8 +134,17 @@ export interface TranslateReport {
   retries: number;
   /** Blocks that carried no prose at all and were kept exactly as written. */
   wordless: number;
-  /** Short blocks kept in the source language on the model's persistent word. */
-  echoKept: number;
+  /**
+   * Answers kept even though the model gave back fewer markers than it was
+   * sent. The words are all there; an <em> or a noteref is not.
+   */
+  markerNotes: number;
+  /**
+   * Blocks the model could not translate in `ATTEMPTS` tries, left in the book
+   * exactly as it wrote them. Each entry names the block and says why — a count
+   * alone would be a number nobody could act on.
+   */
+  keptUntranslated: string[];
   navRelabelled: number;
   navUnmapped: number;
   seconds: number;
@@ -209,6 +202,27 @@ export function systemPrompt(
     '- Do not soften, sanitise, modernise or euphemise. Render loaded, archaic, technical or offensive'
     + ' vocabulary literally, as written. This is a historical document; its wording is the evidence.',
     '- Keep the source\'s paragraph as one paragraph. Do not add line breaks.',
+    /*
+     * THE TEXT IS ONE BLOCK OF A WHOLE BOOK, and the model is never told what
+     * came before it. That matters most at the front, where a scanned book
+     * carries things that are not language at all: a library accession number
+     * (`HV111$007458S`), a shelf mark, a stamp read badly by the OCR. Asked to
+     * translate one of those with no way to say "there is nothing here", qwen3
+     * answered a thirteen-character stamp with SIXTEEN THOUSAND characters of
+     * invention, three times, at minutes a go.
+     *
+     * Giving it the honest way out is the upstream fix for that, and it lands
+     * in machinery that already exists: an answer identical to its source is
+     * accepted when the model persists in it and the block is short (see
+     * ECHO_KEEP_WORDS). So a stamp echoed three times is KEPT, said out loud
+     * and counted — where the same stamp invented over is refused three times
+     * and then kept anyway, having burnt ten minutes of GPU to get there.
+     */
+    '- The text is ONE block from a book, given without its context. Some blocks are not prose at all:'
+    + ' a library stamp, an accession number, a shelf mark, a catalogue code, a line of OCR noise from'
+    + ' the front matter. If a block has nothing in it to translate, RETURN IT EXACTLY AS GIVEN.'
+    + ' Returning it unchanged is a correct answer. Never invent a meaning for it, never explain what'
+    + ' you think it might be, and never pad the answer to make it look like a translation.',
     '',
     ...markerRules(inventory),
     '',
@@ -224,22 +238,6 @@ export function systemPrompt(
     );
   }
   return lines.join('\n');
-}
-
-/**
- * The longest text an echo may survive on, in words.
- *
- * Eight covers the two measured cases — a five-word company imprint and a
- * seven-word headline of names — with a margin, and stays far under a
- * sentence of prose: the shortest real paragraph in the books this was built
- * against runs well past it. See the echo-acceptance comment in the block
- * loop for why the bound is on LENGTH and not on anything about the words.
- */
-const ECHO_KEEP_WORDS = 8;
-
-/** Words, the way `wordCount` in `dots.ts` counts them: runs of non-space. */
-function wordCount(text: string): number {
-  return text.split(/\s+/).filter((w) => w.length > 0).length;
 }
 
 /**
@@ -292,11 +290,8 @@ export function markerRules(inventory: MarkerInventory): string[] {
  * answer is short" about the same broken response.
  */
 export function checkAnswer(sourceText: string, answer: string): string | null {
-  const trimmed = answer.trim();
+  const trimmed = unfence(answer).trim();
   if (trimmed.length === 0) return 'the answer is empty';
-  if (trimmed.includes('```')) {
-    return 'the answer is wrapped in a code fence — that is markup the model added to the book';
-  }
 
   const before = stripMarkers(sourceText);
   const after = stripMarkers(trimmed);
@@ -304,18 +299,29 @@ export function checkAnswer(sourceText: string, answer: string): string | null {
 
   if (after.length < before.length * SHORT_RATIO) {
     return `the answer is ${after.length} characters against the source's ${before.length}`
-      + ` — under ${Math.round(SHORT_RATIO * 100)}%, which is an omission rather than a translation`;
+      + ` — under ${Math.round(SHORT_RATIO * 100)}%, which is a summary rather than a translation`;
   }
   if (after.length > before.length * LONG_RATIO) {
     return `the answer is ${after.length} characters against the source's ${before.length}`
       + ` — over ${LONG_RATIO}×, which is commentary or repetition rather than a translation`;
   }
-
-  const words = before.split(/\s+/).filter((w) => w.length > 0).length;
-  if (before.length >= ECHO_MIN_CHARS && words >= ECHO_MIN_WORDS && after === before) {
-    return 'the answer is the source, unchanged — the model echoed the text instead of translating it';
-  }
   return null;
+}
+
+/**
+ * Take a ``` fence off an answer, rather than refusing the answer for having one.
+ *
+ * A fence is the model formatting its reply, not a claim about the text: the
+ * translation inside it is usually perfect. This used to cost the block three
+ * attempts and then the whole run. Peeling it is mechanical, so it is done
+ * mechanically — the same reasoning as the edge-marker peel in `markers.ts`.
+ *
+ * Only a fence that wraps the WHOLE answer is peeled. One in the middle is part
+ * of the text (a book about code has code in it) and is left exactly alone.
+ */
+export function unfence(answer: string): string {
+  const match = /^\s*```[^\n]*\n([\s\S]*?)\n?```\s*$/.exec(answer);
+  return match?.[1] ?? answer;
 }
 
 /** How a block is named in a log line and in a refusal. */
@@ -379,9 +385,12 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
     );
   }
 
+  // "12 picture" read like a typo in the one line a person sees before a run
+  // that takes hours. Every skipped category is a single English noun (table,
+  // picture, formula), so an `s` is the whole of the grammar needed.
   const skippedNote = skipped.size === 0
     ? ''
-    : `; skipping ${[...skipped].map(([c, n]) => `${n} ${c}`).join(', ')}`;
+    : `; skipping ${[...skipped].map(([c, n]) => `${n} ${c}${n === 1 ? '' : 's'}`).join(', ')}`;
   opts.log(
     `translate: ${pending.length} blocks across ${perDocument.size} `
     + `document${perDocument.size === 1 ? '' : 's'}${skippedNote}`,
@@ -393,10 +402,14 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
   // ── the work ──────────────────────────────────────────────────────────────
 
   const translated = new Map<PendingBlock, string>();
-  const refusals: string[] = [];
+  /** Blocks the model could not do, left in the source language and named. */
+  const kept: string[] = [];
   let retries = 0;
   let wordless = 0;
-  let echoKept = 0;
+  /** Answers kept despite giving back fewer markers than they were sent. */
+  let markerNotes = 0;
+  /** Blocks the model actually answered for. Zero of these is a failed run. */
+  let answered = 0;
 
   for (const block of pending) {
     const sourceText = block.masked.text;
@@ -422,17 +435,35 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
       paired: block.masked.markers.some((m) => m.kind === 'paired'),
       atomic: block.masked.markers.some((m) => m.kind === 'atomic'),
     });
+    /*
+     * TWO GUARDS, AND THEY ARE THE OBVIOUS TWO.
+     *
+     * An answer far shorter than its source is a summary or a dropped half; an
+     * answer far longer is a ramble — sixteen thousand characters where the
+     * source was a thirteen-character shelf mark. Everything else the model does
+     * with a block is WRITTEN AS GIVEN, and that is a deliberate reversal.
+     *
+     * What used to be here and is gone:
+     *
+     *  - THE ECHO TEST. It cost three correct translations on the first real
+     *    run and needed two witnesses and a word-count floor to be survivable
+     *    at all. A model that hands back the source is a model to replace or a
+     *    prompt to fix, not a run to kill.
+     *  - THE MARKER REFUSAL. A dropped ⟦e1⟧ loses an <em>, not a sentence. It
+     *    is now a note in the log and the answer is kept.
+     *  - THE CODE FENCE. Peeled mechanically (`unfence`), because a fence is
+     *    the model formatting its reply and the translation inside it is fine.
+     *
+     * The principle: guard the TEXT, which cannot be recovered, and stop
+     * guarding the FORM, which can be fixed by hand or ignored.
+     */
     let accepted: string | null = null;
     let lastComplaint = '';
-    let echoes = 0;
-    let lastAnswer = '';
 
     for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-      const answer = (await chat(transport, endpoint, model, system, sourceText)).trim();
-      const complaint = checkMarkers(block.masked, answer) ?? checkAnswer(sourceText, answer);
+      const answer = unfence(await chat(transport, endpoint, model, system, sourceText)).trim();
+      const complaint = checkAnswer(sourceText, answer);
       if (complaint === null) { accepted = answer; break; }
-      if (complaint.includes('echoed')) echoes += 1;
-      lastAnswer = answer;
       lastComplaint = complaint;
       retries += 1;
       opts.log(
@@ -441,53 +472,62 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
     }
 
     /*
-     * THE ECHO THAT IS RIGHT. "Henkel & Cie. A.-G., Düsseldorf" does not
-     * translate — its English is itself — and on the first real run the echo
-     * check refused it three times for being correct, along with a headline
-     * that is six proper names and the word "an". The check cannot be dropped:
-     * a model that hands back a German paragraph unchanged is the laziness it
-     * exists to catch. So an echo is accepted on two witnesses together:
-     *
-     *  - PERSISTENCE. The model must echo on every attempt. One echo is a
-     *    lapse; the same answer three times, asked three times, is a claim
-     *    that this text does not change.
-     *  - BREVITY. Short display text only. A name-plate, an imprint, a
-     *    headline of names is where translation-invariant text lives; a
-     *    paragraph that comes back unchanged three times is a broken run,
-     *    whatever the model insists.
-     *
-     * The text's SPELLING was tried as the second witness and it fails in
-     * both directions on German alone: "Kirchenwahlen 1932" has no lowercase
-     * word and translates, the Hermans headline has one and does not. There
-     * is no mechanical test for "translatable" — but there is a mechanical
-     * bound on the harm: the worst wrong acceptance leaves one short heading
-     * in the source language, SAID OUT LOUD below and counted in the report,
-     * while the wrong refusal it replaces killed a 96-block job for being
-     * right twice.
+     * The markers the model did not give back. A NOTE, not a refusal: the words
+     * are all there and an <em> is missing, which is a thing a person can see
+     * and fix in the HTML editor — where a refused block is a paragraph that
+     * never got translated at all.
      */
-    const short = wordCount(stripMarkers(sourceText)) <= ECHO_KEEP_WORDS;
-    if (accepted === null && echoes === ATTEMPTS && short) {
-      accepted = lastAnswer;
-      echoKept += 1;
-      opts.log(
-        `translate: block ${block.ordinal} KEPT IN THE SOURCE LANGUAGE — the model answered `
-        + `${ATTEMPTS} times that "${stripMarkers(sourceText).slice(0, 40)}" does not change`,
-      );
+    if (accepted !== null) {
+      const dropped = checkMarkers(block.masked, accepted);
+      if (dropped !== null) {
+        markerNotes += 1;
+        opts.log(`translate: block ${block.ordinal} — ${dropped}; the answer was kept anyway`);
+      }
     }
 
+    /*
+     * A BLOCK THE MODEL CANNOT DO DOES NOT KILL THE RUN.
+     *
+     * It used to. Every refusal was collected and the whole job threw at the
+     * end, on the argument that a book missing a paragraph and looking finished
+     * is worse than no book. That argument is right about a PARAGRAPH and was
+     * measured wrong about the front matter: block 8 of the Dannenmann scan is
+     * `HV111$007458S`, a library accession number stamped on the flyleaf, and
+     * an untranslatable stamp on page zero threw away 455 translated blocks and
+     * four hours of GPU.
+     *
+     * So the block is LEFT IN THE SOURCE LANGUAGE — which needs no code at all,
+     * because a block with no entry in `translated` is a range the splice below
+     * does not touch, and the book keeps exactly what it said. What it needs is
+     * to be IMPOSSIBLE TO MISS: the block, its text and the model's complaint go
+     * in the log at the moment it happens, they are counted in the report, and
+     * the run prints the whole list again at the end. That is the same treatment
+     * `wordless` and `echoKept` already get, for the same reason — text that
+     * comes out of a translation still in the source language is a fact about
+     * the book, and the person who ordered it has to be told which blocks.
+     *
+     * The systemic guard STAYS. Twenty-five is not a run of stamps; it is the
+     * wrong model or a prompt this one will not follow, and the remaining blocks
+     * would cost hours to prove it again.
+     */
     if (accepted === null) {
-      refusals.push(`${describe(block, sourceText)} — ${lastComplaint}`);
-      opts.log(`translate: REFUSED ${describe(block, sourceText)}`);
-      if (refusals.length >= REFUSAL_LIMIT) {
+      kept.push(`${describe(block, sourceText)} — ${lastComplaint}`);
+      opts.log(
+        `translate: block ${block.ordinal} LEFT IN THE SOURCE LANGUAGE after ${ATTEMPTS} attempts `
+        + `— ${describe(block, sourceText)} — ${lastComplaint}`,
+      );
+      if (kept.length >= REFUSAL_LIMIT) {
         throw new TranslateError(
-          `${refusals.length} blocks refused, which is not a run of bad paragraphs — it is the wrong `
-          + `model for this text, or a prompt ${model} will not follow. The remaining `
-          + `${pending.length - block.ordinal} blocks would cost hours to prove the same thing.\n\n`
-          + refusals.map((r) => `  - ${r}`).join('\n'),
+          `${kept.length} blocks could not be translated, which is not a run of bad paragraphs — it `
+          + `is the wrong model for this text, or a prompt ${model} will not follow. The remaining `
+          + `${pending.length - block.ordinal} blocks would cost hours to prove the same thing. `
+          + 'NOTHING WAS WRITTEN.\n\n'
+          + kept.map((r) => `  - ${r}`).join('\n'),
         );
       }
       continue;
     }
+    answered += 1;
 
     // The edges the model never saw go back on mechanically — the start of a
     // block is the start of its translation, in any language.
@@ -498,14 +538,31 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
     opts.log(`translate: block ${block.ordinal}/${pending.length} (${block.documentPath})`);
   }
 
-  if (refusals.length > 0) {
+  /*
+   * A TRANSLATION THAT TRANSLATED NOTHING IS NOT ONE.
+   *
+   * This is what is left of the old all-or-nothing refusal, and it is the part
+   * that was always right: if not one block came back from the model in a state
+   * worth writing, the output would be the source book with a different
+   * `dc:language` on it — a lie about the file, and one that looks exactly like
+   * a success. Blocks kept for having no words in them (`wordless`) do not
+   * count as work: nothing was asked of the model for those.
+   */
+  if (answered === 0) {
     throw new TranslateError(
-      `${refusals.length} of ${pending.length} blocks could not be translated to a standard worth `
-      + `writing into a book, after ${ATTEMPTS} attempts each. NOTHING WAS WRITTEN: a book that is `
-      + 'missing a paragraph and looks finished is worse than no book. Pin the terminology with '
-      + '--instructions, or try another --model.\n\n'
-      + refusals.map((r) => `  - ${r}`).join('\n'),
+      `not one of ${pending.length} blocks came back as a translation, after ${ATTEMPTS} attempts `
+      + `each. NOTHING WAS WRITTEN: this book would have been its own source text with "${to.tag}" `
+      + 'stamped on it. The model, the endpoint or the prompt is wrong, not the book.\n\n'
+      + kept.map((r) => `  - ${r}`).join('\n'),
     );
+  }
+
+  if (kept.length > 0) {
+    opts.log(
+      `translate: ${kept.length} of ${pending.length} blocks stayed in the source language — `
+      + 'they are in the book exactly as it wrote them:',
+    );
+    for (const one of kept) opts.log(`translate:   - ${one}`);
   }
 
   // ── the book ──────────────────────────────────────────────────────────────
@@ -593,7 +650,8 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
     skipped,
     retries,
     wordless,
-    echoKept,
+    markerNotes,
+    keptUntranslated: kept,
     navRelabelled: nav?.relabelled ?? 0,
     navUnmapped: nav?.unmapped ?? 0,
     seconds,

@@ -120,6 +120,39 @@ export function takesThinkField(model: string): boolean {
   return /^qwen3(\.|:|-|$)/i.test(model.trim());
 }
 
+/**
+ * How much answer one block may generate, in tokens.
+ *
+ * MEASURED, and the measurement is the whole reason this exists. Block 8 of the
+ * Dannenmann scan is `HV111$007458S` — a library accession number stamped on
+ * the flyleaf, thirteen characters with no language in them. Asked to translate
+ * it, qwen3:32b answered with 16,876 characters and took minutes to do it; the
+ * verification refused all three attempts, correctly, and the run had spent ten
+ * minutes of GPU proving that a shelf mark is not German.
+ *
+ * The cap is derived from the ceiling the answer must pass anyway. `run.ts`
+ * refuses anything over LONG_RATIO (3×) the source's length as commentary, so
+ * generation past ~4× the source is provably wasted: every token of it belongs
+ * to an answer that is already going to be thrown away. Four rather than three
+ * so the cap can only ever truncate an answer that was doomed — a translation
+ * that would have been ACCEPTED can never be cut short by this.
+ *
+ * The floor is what keeps a one-word source honest: "Vorwort" is seven
+ * characters and its answer needs room to be a sentence if the block turns out
+ * to be a caption. 128 tokens is a paragraph, which no short block will reach.
+ *
+ * Chars per token is deliberately LOW (2.5). Guessing high would make the cap
+ * bite legitimate answers; guessing low only wastes a little generation on the
+ * blocks that were going to be refused anyway.
+ */
+const ANSWER_CHAR_CEILING = 4;
+const CHARS_PER_TOKEN = 2.5;
+const PREDICT_FLOOR = 128;
+
+export function answerBudget(source: string): number {
+  return Math.max(PREDICT_FLOOR, Math.ceil((source.length * ANSWER_CHAR_CEILING) / CHARS_PER_TOKEN));
+}
+
 /** The exact JSON body sent for one block. Separate so a test can read it. */
 export function chatBody(model: string, system: string, user: string): string {
   const body: Record<string, unknown> = {
@@ -129,7 +162,10 @@ export function chatBody(model: string, system: string, user: string): string {
       { role: 'system', content: system },
       { role: 'user', content: user },
     ],
-    options: { temperature: 0.2, num_ctx: 8192 },
+    // `num_predict` is sized from the block — see `answerBudget`. It is the
+    // difference between a model that rambles for two minutes and a model that
+    // rambles for two seconds, on a block whose answer is refused either way.
+    options: { temperature: 0.2, num_ctx: 8192, num_predict: answerBudget(user) },
   };
   if (takesThinkField(model)) body['think'] = false;
   return JSON.stringify(body);
