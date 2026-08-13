@@ -48,23 +48,31 @@ import { api } from '../../core/foundry';
       display: flex; flex-direction: column; gap: 10px;
     }
     .card-head { display: flex; align-items: center; gap: 8px; }
-    .card-title { font-weight: 600; font-size: 13px; }
+    .card-title { font-family: var(--font-display); font-weight: 600; font-size: 13px; }
 
-    .mono { font-family: ui-monospace, Consolas, monospace; word-break: break-all; margin: 0; }
-    .small { font-size: 11.5px; color: var(--text-tertiary); }
+    .mono { font-family: var(--font-mono); word-break: break-all; margin: 0; }
+    .small { font-size: 11px; color: var(--text-tertiary); }
     .hint { margin: 0; font-size: 12px; color: var(--text-tertiary); line-height: 1.5; }
-    .hint code { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; color: var(--text-secondary); }
+    .hint code { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); }
 
     .actions { display: flex; align-items: center; gap: 10px; }
     .ok-note { font-size: 12px; color: var(--ok); }
     .warn { margin: 0; font-size: 12px; color: var(--warn); }
 
     .ghost {
-      padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px;
-      background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary);
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 26px; padding: 0 12px;
+      border-radius: var(--radius-sm);
+      font-size: 12px; font-weight: 500; line-height: 1;
+      cursor: pointer;
+      background: var(--bg-input);
+      border: 1px solid var(--border-default);
+      color: var(--text-primary);
+      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  border-color 100ms cubic-bezier(0, 0, 0.2, 1);
     }
-    .ghost:hover:not(:disabled) { color: var(--text-primary); border-color: var(--text-tertiary); }
-    .ghost:disabled { opacity: 0.5; cursor: default; }
+    .ghost:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--border-strong); }
+    .ghost:disabled { opacity: 0.5; cursor: not-allowed; }
   `],
 })
 export class LibraryCardComponent {

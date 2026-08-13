@@ -411,7 +411,9 @@ function createWindow(): void {
     height: 960,
     minWidth: 900,
     minHeight: 640,
-    backgroundColor: '#16181c',
+    // --bg-base in app/src/styles.scss. A mismatch here is the colour the
+    // window flashes for the frame before the renderer paints.
+    backgroundColor: '#181715',
     show: false,
     webPreferences: {
       nodeIntegration: false,
@@ -447,7 +449,7 @@ function createWindow(): void {
       void mainWindow?.loadURL(
         'data:text/html,'
         + encodeURIComponent(
-          `<body style="background:#16181c;color:#eee;font:14px system-ui;padding:40px">
+          `<body style="background:#181715;color:#faf9f7;font:13px 'Segoe UI',system-ui;padding:40px">
            <h1>The renderer did not load</h1><p>${err.message}</p><p>${index}</p>
            <p>Run <code>npm run build</code> first, or <code>npm start</code> for the dev server.</p>
            </body>`,

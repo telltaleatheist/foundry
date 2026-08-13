@@ -161,7 +161,7 @@ import { api } from '../../core/foundry';
       padding: 12px 14px;
     }
     .card-head { display: flex; align-items: center; gap: 8px; }
-    .card-title { font-weight: 600; font-size: 13px; flex: 1; }
+    .card-title { font-family: var(--font-display); font-weight: 600; font-size: 13px; flex: 1; }
 
     .env {
       margin-top: 12px; padding-top: 12px;
@@ -169,31 +169,34 @@ import { api } from '../../core/foundry';
       display: flex; flex-direction: column; gap: 6px;
     }
     .env-head { display: flex; align-items: center; gap: 8px; }
-    .env-title { font-weight: 600; font-size: 12.5px; flex: 1; }
+    .env-title { font-weight: 600; font-size: 12px; flex: 1; }
 
     .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-tertiary); flex-shrink: 0; }
     .dot[data-ok="true"] { background: var(--ok); }
 
     .badge {
-      font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
-      color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 1px 7px;
+      font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 2px 8px;
     }
-    .badge.warn-badge { color: var(--warn); border-color: var(--warn); }
+    .badge.warn-badge { color: var(--warn); background: var(--warn-soft); }
 
-    .detail { margin: 0; font-size: 12.5px; color: var(--text-secondary); word-break: break-word; }
-    .mono { font-family: ui-monospace, Consolas, monospace; word-break: break-all; }
-    .small { font-size: 11.5px; color: var(--text-tertiary); margin: 0; }
+    .detail { margin: 0; font-size: 12px; color: var(--text-secondary); word-break: break-word; }
+    .mono { font-family: var(--font-mono); word-break: break-all; }
+    .small { font-size: 11px; color: var(--text-tertiary); margin: 0; }
     .muted { color: var(--text-tertiary); font-size: 12px; }
-    .warn { color: var(--warn); font-size: 12.5px; margin: 0; white-space: pre-wrap; }
-    .ok-note { color: var(--ok); font-size: 12.5px; margin: 0; }
-    .phase { font-size: 11.5px; color: var(--text-secondary); }
+    .warn { color: var(--warn); font-size: 12px; margin: 0; white-space: pre-wrap; }
+    .ok-note { color: var(--ok); font-size: 12px; margin: 0; }
+    .phase { font-size: 11px; color: var(--text-secondary); }
 
-    .field { display: flex; flex-direction: column; gap: 4px; }
-    .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); }
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .label {
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--text-tertiary);
+    }
     .dest { display: flex; gap: 6px; align-items: center; }
-    .dest input { flex: 1; min-width: 0; font-size: 11.5px; }
+    .dest input { flex: 1; min-width: 0; height: 26px; padding: 0 10px; font-size: 11px; border-radius: var(--radius-sm); }
 
-    .bar { height: 4px; background: var(--bg-sunken, #0e1013); border-radius: 2px; overflow: hidden; }
+    .bar { height: 4px; background: var(--bg-sunken); border-radius: 2px; overflow: hidden; }
     .fill { height: 100%; background: var(--accent); transition: width 0.2s ease; }
     /* No honest percentage for verify/unpack/configure — see env-install.ts. */
     .bar.indeterminate .fill { width: 35% !important; animation: slide 1.2s ease-in-out infinite; }
@@ -204,19 +207,32 @@ import { api } from '../../core/foundry';
 
     .actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .spacer { flex: 1; }
+    .primary, .ghost {
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 26px; padding: 0 12px;
+      border-radius: var(--radius-sm);
+      font-size: 12px; font-weight: 500; line-height: 1;
+      cursor: pointer;
+      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  border-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  transform 100ms cubic-bezier(0, 0, 0.2, 1);
+    }
     .primary {
-      padding: 6px 16px; border-radius: 8px; cursor: pointer; font-size: 12.5px;
-      border: 1px solid var(--accent); background: var(--accent-soft); color: var(--text-primary);
+      border: none;
+      background: var(--accent); color: var(--text-inverse);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.1);
     }
-    .primary:hover:not(:disabled) { background: var(--accent); color: #16181c; }
-    .primary:disabled { opacity: 0.4; cursor: default; }
+    .primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .primary:active:not(:disabled) { background: var(--accent-active); transform: scale(0.98); }
+    .primary:disabled { opacity: 0.5; cursor: not-allowed; }
     .ghost {
-      font-size: 12px; padding: 5px 14px; border-radius: 6px; cursor: pointer;
-      background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary);
+      background: var(--bg-input);
+      border: 1px solid var(--border-default);
+      color: var(--text-primary);
     }
-    .ghost.tiny { padding: 3px 10px; font-size: 11px; }
-    .ghost:hover:not(:disabled) { color: var(--text-primary); border-color: var(--text-tertiary); }
-    .ghost:disabled { opacity: 0.4; cursor: default; }
+    .ghost.tiny { height: 22px; padding: 0 8px; font-size: 11px; }
+    .ghost:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--border-strong); }
+    .ghost:disabled { opacity: 0.5; cursor: not-allowed; }
   `],
 })
 export class EnvCardComponent {

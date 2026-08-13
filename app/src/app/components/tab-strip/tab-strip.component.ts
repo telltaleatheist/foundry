@@ -79,17 +79,22 @@ import { TabsService, type Tab } from '../../core/tabs.service';
       padding: 7px 8px 7px 10px;
       border: 1px solid transparent;
       border-bottom: none;
-      border-radius: 8px 8px 0 0;
+      border-radius: var(--radius) var(--radius) 0 0;
       color: var(--text-tertiary);
-      font-size: 12.5px;
+      font-size: 12px;
       cursor: default;
       user-select: none;
+      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  color 100ms cubic-bezier(0, 0, 0.2, 1);
     }
     .tab:hover { background: var(--bg-hover); color: var(--text-secondary); }
+    /* --bg-elevated, which is also the viewer toolbar's: the active tab and the
+       row under it are meant to read as one surface. */
     .tab.active {
-      background: var(--bg-base);
+      background: var(--bg-elevated);
       border-color: var(--border-subtle);
       color: var(--text-primary);
+      font-weight: 500;
     }
 
     .kind { flex: 0 0 auto; opacity: 0.6; font-size: 11px; }
@@ -101,14 +106,15 @@ import { TabsService, type Tab } from '../../core/tabs.service';
       flex: 0 0 auto;
       background: transparent; border: none; cursor: pointer;
       color: var(--text-tertiary); font-size: 10px;
-      padding: 2px 3px; border-radius: 4px;
+      padding: 2px 3px; border-radius: var(--radius-sm);
+      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1);
     }
     .x:hover { background: var(--bg-hover); color: var(--text-primary); }
 
     .notice {
       display: flex; align-items: center; gap: 10px;
       padding: 7px 12px;
-      background: rgba(224, 176, 32, 0.12);
+      background: var(--warn-soft);
       border-bottom: 1px solid var(--border-subtle);
       color: var(--warn);
       font-size: 12px;

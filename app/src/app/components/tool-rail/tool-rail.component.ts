@@ -84,7 +84,7 @@ import { UiService } from '../../core/ui.service';
       display: flex;
       flex-direction: column;
       background: var(--bg-elevated);
-      border-right: 1px solid var(--border-subtle);
+      border-right: 1px solid var(--border-default);
       padding: 8px 0;
       z-index: 40;
     }
@@ -96,34 +96,46 @@ import { UiService } from '../../core/ui.service';
       padding: 6px 0 12px;
     }
 
-    .rail-tools { display: flex; flex-direction: column; gap: 4px; flex: 1; }
-    .rail-foot { border-top: 1px solid var(--border-subtle); padding-top: 8px; }
+    .rail-tools {
+      display: flex; flex-direction: column; align-items: center;
+      gap: 4px; flex: 1;
+    }
+    .rail-foot {
+      display: flex; flex-direction: column; align-items: center;
+      border-top: 1px solid var(--border-subtle); padding-top: 8px;
+    }
 
     .rail-item {
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 4px;
-      width: 100%;
-      padding: 10px 4px;
+      justify-content: center;
+      gap: 2px;
+      width: 76px;
+      padding: 8px 4px;
       background: transparent;
       border: none;
-      border-left: 2px solid transparent;
+      border-radius: var(--radius);
       color: var(--text-secondary);
       cursor: pointer;
       text-decoration: none;
+      transition: background-color 150ms ease, color 150ms ease;
     }
     .rail-item:hover { background: var(--bg-hover); color: var(--text-primary); }
     .rail-item:disabled { opacity: 0.35; cursor: default; }
     .rail-item:disabled:hover { background: transparent; color: var(--text-secondary); }
     .rail-item.active {
       background: var(--accent-soft);
-      border-left-color: var(--accent);
-      color: var(--text-primary);
+      color: var(--accent);
     }
+    .rail-item.active .rail-icon { transform: scale(1.1); }
 
-    .rail-icon { font-size: 19px; line-height: 1; }
-    .rail-label { font-size: 10.5px; letter-spacing: 0.02em; text-align: center; }
+    .rail-icon { font-size: 19px; line-height: 1; transition: transform 150ms ease; }
+    .rail-label {
+      font-size: 10px; font-weight: 500; line-height: 1.2;
+      text-transform: uppercase; letter-spacing: 0.02em;
+      text-align: center; opacity: 0.85;
+    }
   `],
 })
 export class ToolRailComponent {

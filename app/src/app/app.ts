@@ -55,10 +55,13 @@ import { api } from './core/foundry';
       display: flex;
       align-items: center;
       justify-content: center;
-      background: rgba(15, 17, 21, 0.82);
+      background: var(--bg-overlay);
+      backdrop-filter: blur(4px);
       border: 2px dashed var(--accent);
       color: var(--text-primary);
+      font-family: var(--font-display);
       font-size: 16px;
+      font-weight: 600;
       pointer-events: none;
     }
   `],

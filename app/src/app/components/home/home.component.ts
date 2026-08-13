@@ -88,7 +88,7 @@ import { UiService } from '../../core/ui.service';
 
     .hero { text-align: center; }
     .mark { font-size: 40px; color: var(--accent); line-height: 1; }
-    .hero h1 { margin: 10px 0 4px; font-size: 22px; font-weight: 600; }
+    .hero h1 { margin: 10px 0 4px; font-size: 24px; font-weight: 700; }
     .hero p { margin: 0 0 24px; font-size: 13px; color: var(--text-tertiary); }
 
     .target {
@@ -99,9 +99,11 @@ import { UiService } from '../../core/ui.service';
       border: 2px dashed var(--border-default);
       border-radius: var(--radius);
       color: var(--text-tertiary);
-      font-size: 13.5px;
+      font-size: 13px;
       background: var(--bg-sunken);
+      transition: border-color 150ms ease, color 150ms ease;
     }
+    .target:hover { border-color: var(--accent); color: var(--text-secondary); }
 
     .actions { display: flex; gap: 8px; justify-content: center; margin-top: 20px; }
 
@@ -109,7 +111,7 @@ import { UiService } from '../../core/ui.service';
     .recents h2 {
       flex: 1;
       margin: 0;
-      font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
       color: var(--text-tertiary); font-weight: 600;
     }
     .none { margin: 0; font-size: 13px; color: var(--text-tertiary); }
@@ -122,8 +124,11 @@ import { UiService } from '../../core/ui.service';
       flex: 1; min-width: 0;
       display: flex; align-items: center; gap: 10px;
       padding: 10px 8px;
-      background: transparent; border: none; color: var(--text-secondary);
+      background: transparent; border: none; border-radius: var(--radius-md);
+      color: var(--text-secondary);
       font-size: 13px; text-align: left; cursor: pointer;
+      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  color 100ms cubic-bezier(0, 0, 0.2, 1);
     }
     .row:hover:not(:disabled) { color: var(--text-primary); background: var(--bg-hover); }
     .row:disabled { cursor: default; opacity: 0.55; }
@@ -134,29 +139,51 @@ import { UiService } from '../../core/ui.service';
 
     .tag {
       flex: 0 0 auto;
-      font-size: 10px; letter-spacing: 0.03em;
-      padding: 2px 6px; border-radius: 999px;
+      font-size: 10px; font-weight: 600; letter-spacing: 0.03em;
+      padding: 2px 8px; border-radius: 999px;
       background: var(--accent-soft); color: var(--accent);
     }
-    .tag.gone { background: rgba(229, 100, 92, 0.14); color: var(--error); }
+    .tag.gone { background: var(--error-soft); color: var(--error); }
 
+    /* Primary / secondary / ghost, one shape apart: 32px tall, 6px radius, the
+       label at 13px/500. */
+    .primary, .ghost {
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 32px; padding: 0 16px;
+      border-radius: var(--radius-md);
+      font-size: 13px; font-weight: 500; line-height: 1;
+      cursor: pointer;
+      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  border-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  transform 100ms cubic-bezier(0, 0, 0.2, 1);
+    }
     .primary {
-      padding: 8px 18px; border-radius: 8px; cursor: pointer;
-      border: 1px solid var(--accent); background: var(--accent-soft); color: var(--text-primary);
+      border: none;
+      background: var(--accent); color: var(--text-inverse);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.1);
     }
-    .primary:hover { background: var(--accent); color: #16181c; }
+    .primary:hover { background: var(--accent-hover); }
+    .primary:active { background: var(--accent-active); transform: scale(0.98); }
     .ghost {
-      padding: 8px 16px; border-radius: 8px; cursor: pointer;
-      background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-default);
+      color: var(--text-primary);
     }
-    .ghost:hover { color: var(--text-primary); border-color: var(--text-tertiary); }
+    .ghost:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+    .ghost:active { background: var(--bg-active); transform: scale(0.98); }
+
     .link {
       background: transparent; border: none; cursor: pointer;
-      color: var(--text-tertiary); font-size: 11.5px; text-decoration: underline;
+      color: var(--text-tertiary); font-size: 11px;
     }
-    .link:hover { color: var(--text-primary); }
-    .x { background: transparent; border: none; cursor: pointer; color: var(--text-tertiary); font-size: 11px; padding: 6px; }
-    .x:hover { color: var(--text-primary); }
+    .link:hover { color: var(--accent); }
+    .x {
+      background: transparent; border: none; cursor: pointer;
+      color: var(--text-tertiary); font-size: 11px;
+      padding: 6px; border-radius: var(--radius-sm);
+    }
+    .x:hover { background: var(--bg-hover); color: var(--text-primary); }
   `],
 })
 export class HomeComponent {

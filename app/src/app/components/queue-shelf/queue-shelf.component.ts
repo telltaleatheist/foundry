@@ -124,8 +124,10 @@ import { api } from '../../core/foundry';
       flex-direction: column-reverse;
       background: var(--bg-elevated);
       border: 1px solid var(--border-default);
-      border-radius: var(--radius);
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+      border-radius: var(--radius-lg);
+      box-shadow:
+        0 10px 15px -3px rgba(0, 0, 0, 0.2),
+        0 20px 40px -10px rgba(0, 0, 0, 0.35);
       overflow: hidden;
       font-size: 13px;
     }
@@ -143,7 +145,11 @@ import { api } from '../../core/foundry';
       text-align: left;
     }
     .shelf-head:hover { background: var(--bg-hover); }
-    .head-text { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .head-text {
+      flex: 1; min-width: 0;
+      font-family: var(--font-display); font-weight: 600;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
     .chev { color: var(--text-tertiary); }
 
     .spinner {
@@ -184,28 +190,38 @@ import { api } from '../../core/foundry';
     .row-top { display: flex; align-items: center; gap: 8px; }
     .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-    .sub { font-size: 11.5px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sub { font-size: 11px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .sub.ok { color: var(--ok); }
     .sub.bad { color: var(--error); white-space: normal; }
 
-    .x { background: transparent; border: none; cursor: pointer; color: var(--text-tertiary); font-size: 12px; }
-    .x:hover { color: var(--text-primary); }
-
-    .open {
-      flex: 0 0 auto;
-      padding: 2px 9px; border-radius: 6px; cursor: pointer;
-      background: transparent; border: 1px solid var(--border-default);
-      color: var(--text-secondary); font-size: 11.5px;
+    .x {
+      background: transparent; border: none; cursor: pointer;
+      color: var(--text-tertiary); font-size: 12px;
+      padding: 3px 5px; border-radius: var(--radius-sm);
+      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1);
     }
-    .open:hover { color: var(--text-primary); border-color: var(--accent); }
+    .x:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+    .open, .ghost {
+      display: inline-flex; align-items: center; justify-content: center;
+      flex: 0 0 auto;
+      height: 22px; padding: 0 8px;
+      border-radius: var(--radius-sm);
+      font-size: 11px; font-weight: 500; line-height: 1;
+      cursor: pointer;
+      background: var(--bg-input);
+      border: 1px solid var(--border-default);
+      color: var(--text-primary);
+      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  border-color 100ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .open:hover, .ghost:hover:not(:disabled) {
+      background: var(--bg-hover); border-color: var(--border-strong);
+    }
 
     .shelf-foot { display: flex; justify-content: flex-end; padding: 8px 12px; }
-    .ghost {
-      font-size: 12px; padding: 4px 12px; border-radius: 6px; cursor: pointer;
-      background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary);
-    }
-    .ghost:disabled { opacity: 0.4; cursor: default; }
-    .ghost:hover:not(:disabled) { color: var(--text-primary); border-color: var(--text-tertiary); }
+    .ghost { height: 26px; padding: 0 10px; font-size: 12px; }
+    .ghost:disabled { opacity: 0.5; cursor: not-allowed; }
   `],
 })
 export class QueueShelfComponent {

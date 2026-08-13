@@ -181,7 +181,10 @@ import { TabsService, type Tab } from '../../core/tabs.service';
       padding: 12px;
       border-bottom: 1px solid var(--border-subtle);
     }
-    .book-title { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .book-title {
+      font-family: var(--font-display); font-size: 13px; font-weight: 600;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
     .book-author { font-size: 11px; color: var(--text-tertiary); }
 
     .chapters ul { list-style: none; margin: 0; padding: 4px 0; overflow-y: auto; flex: 1; }
@@ -192,7 +195,7 @@ import { TabsService, type Tab } from '../../core/tabs.service';
       visibility: hidden;
       margin-right: 6px;
       padding: 2px 5px;
-      background: transparent; border: none; border-radius: 4px;
+      background: transparent; border: none; border-radius: var(--radius-sm);
       color: var(--text-tertiary); font-size: 11px; cursor: pointer;
     }
     .entry:hover .pencil { visibility: visible; }
@@ -201,45 +204,50 @@ import { TabsService, type Tab } from '../../core/tabs.service';
       flex: 1;
       min-width: 0;
       margin: 2px 8px 2px 0;
-      padding: 4px 6px;
-      background: var(--bg-base);
+      padding: 4px 8px;
+      background: var(--bg-input);
       color: var(--text-primary);
       border: 1px solid var(--accent);
-      border-radius: 4px;
-      font-size: 12.5px;
+      border-radius: var(--radius-sm);
+      font-size: 12px;
     }
-    .rename:focus { outline: none; }
+    .rename:focus { outline: none; box-shadow: var(--focus-ring); }
 
     .chapter {
       display: block;
       flex: 1;
       min-width: 0;
-      padding: 7px 12px;
+      margin: 0 6px;
+      padding: 6px 10px;
       background: transparent;
       border: none;
-      border-left: 2px solid transparent;
+      border-radius: var(--radius-md);
       color: var(--text-secondary);
-      font-size: 12.5px;
+      font-size: 12px;
       text-align: left;
       cursor: pointer;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  color 100ms cubic-bezier(0, 0, 0.2, 1);
     }
     .chapter:hover { background: var(--bg-hover); color: var(--text-primary); }
     .chapter.active {
       background: var(--accent-soft);
-      border-left-color: var(--accent);
-      color: var(--text-primary);
+      color: var(--accent);
+      font-weight: 500;
     }
 
     .reading { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
     .toolbar {
-      display: flex; align-items: center; gap: 10px;
-      padding: 6px 12px;
-      background: var(--bg-base);
+      display: flex; align-items: center; gap: 8px;
+      height: 44px;
+      padding: 0 12px;
+      background: var(--bg-elevated);
       border-bottom: 1px solid var(--border-subtle);
+      flex-shrink: 0;
     }
-    .state { flex: 1; min-width: 0; font-size: 11.5px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .state { flex: 1; min-width: 0; font-size: 11px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
     .panes { flex: 1; min-height: 0; display: flex; }
     .panes.split .editor { flex: 1 1 50%; min-width: 0; }
@@ -256,7 +264,7 @@ import { TabsService, type Tab } from '../../core/tabs.service';
       padding: 12px;
       background: var(--bg-sunken);
       color: var(--text-primary);
-      font: 12.5px/1.55 ui-monospace, 'Cascadia Mono', Consolas, monospace;
+      font: 12px/1.55 var(--font-mono);
       tab-size: 2;
       white-space: pre;
       overflow: auto;
@@ -275,17 +283,30 @@ import { TabsService, type Tab } from '../../core/tabs.service';
     .problem h1 { margin: 0; font-size: 16px; font-weight: 600; color: var(--error); }
     .problem p { margin: 0; font-size: 13px; max-width: 60ch; white-space: pre-wrap; }
 
+    .ghost, .primary {
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 26px; padding: 0 10px;
+      border-radius: var(--radius-sm);
+      font-size: 12px; font-weight: 500; line-height: 1;
+      cursor: pointer;
+      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  border-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  color 100ms cubic-bezier(0, 0, 0.2, 1);
+    }
     .ghost {
-      padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
-      background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary);
+      background: var(--bg-input);
+      border: 1px solid var(--border-default);
+      color: var(--text-primary);
     }
-    .ghost:hover { color: var(--text-primary); border-color: var(--text-tertiary); }
-    .ghost.on { background: var(--accent-soft); border-color: var(--accent); color: var(--text-primary); }
+    .ghost:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+    .ghost.on { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
     .primary {
-      padding: 5px 14px; border-radius: 6px; cursor: pointer; font-size: 12px;
-      border: 1px solid var(--accent); background: var(--accent-soft); color: var(--text-primary);
+      border: none;
+      background: var(--accent); color: var(--text-inverse);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.1);
     }
-    .primary:hover { background: var(--accent); color: #16181c; }
+    .primary:hover { background: var(--accent-hover); }
+    .primary:active { transform: scale(0.98); }
   `],
 })
 export class EpubViewComponent implements OnDestroy {

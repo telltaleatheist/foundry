@@ -247,24 +247,26 @@ import { api } from '../../core/foundry';
 
     /* The same row as epub-view's, so the two viewers do not feel like two apps. */
     .toolbar {
-      display: flex; align-items: center; gap: 10px;
-      padding: 6px 12px;
-      background: var(--bg-base);
+      display: flex; align-items: center; gap: 8px;
+      height: 44px;
+      padding: 0 12px;
+      background: var(--bg-elevated);
       border-bottom: 1px solid var(--border-subtle);
+      flex-shrink: 0;
     }
     .counter {
       min-width: 72px;
-      font-size: 11.5px;
+      font-size: 11px;
       color: var(--text-tertiary);
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
     }
     .zoom { display: flex; gap: 4px; }
     .find { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; justify-content: flex-end; }
-    .find input { width: 220px; max-width: 40vw; padding: 4px 8px; font-size: 12px; }
+    .find input { width: 220px; max-width: 40vw; height: 26px; padding: 0 10px; font-size: 12px; border-radius: var(--radius-sm); }
     .hits {
       min-width: 82px;
-      font-size: 11.5px;
+      font-size: 11px;
       color: var(--text-tertiary);
       text-align: right;
       white-space: nowrap;
@@ -285,7 +287,11 @@ import { api } from '../../core/foundry';
     .viewport { position: relative; flex: 1; min-width: 0; overflow: auto; }
     .reel { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 14px; }
 
-    .page { position: relative; flex-shrink: 0; background: #fff; box-shadow: 0 1px 6px rgba(0, 0, 0, 0.45); }
+    .page {
+      position: relative; flex-shrink: 0;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
     .page canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 
     /* Paper, not white: the right pane is a reconstruction and should not be
@@ -296,7 +302,9 @@ import { api } from '../../core/foundry';
       position: absolute; inset: 0; margin: 0;
       display: flex; align-items: center; justify-content: center;
       padding: 24px;
-      color: var(--error); font-size: 12.5px; text-align: center;
+      /* Not --error: this one is printed ON the page, and the chrome's red is
+         mixed for a dark surface. */
+      color: #dc2626; font-size: 12px; text-align: center;
     }
 
     .no-layer {
@@ -335,12 +343,14 @@ import { api } from '../../core/foundry';
       color: transparent;
       cursor: text;
     }
-    .text ::ng-deep span::selection { background: rgba(217, 138, 63, 0.4); }
+    .text ::ng-deep span::selection { background: rgba(6, 182, 212, 0.4); }
     .text.shown ::ng-deep span { color: #23201a; }
     /* Over the scan the hit is a BOX and the text under it stays invisible —
-       painting it would double the ink the highlight is pointing at. */
-    .text ::ng-deep span.hit { background: rgba(217, 138, 63, 0.55); border-radius: 2px; }
-    .text.shown ::ng-deep span.hit { background: rgba(217, 138, 63, 0.85); }
+       painting it would double the ink the highlight is pointing at. The fill
+       is the accent, but at an alpha that stays findable on a full white page
+       rather than at the chrome's. */
+    .text ::ng-deep span.hit { background: rgba(6, 182, 212, 0.55); border-radius: 2px; }
+    .text.shown ::ng-deep span.hit { background: rgba(6, 182, 212, 0.85); }
 
     .strip {
       /* Positioned for the same reason the viewport is — revealThumb reads
@@ -350,7 +360,7 @@ import { api } from '../../core/foundry';
       display: flex; gap: 8px;
       padding: 8px 10px;
       overflow-x: auto; overflow-y: hidden;
-      background: var(--bg-base);
+      background: var(--bg-elevated);
       border-top: 1px solid var(--border-subtle);
     }
     .thumb {
@@ -358,16 +368,18 @@ import { api } from '../../core/foundry';
       display: flex; flex-direction: column; align-items: center; gap: 3px;
       padding: 0;
       background: transparent; border: none; cursor: pointer;
-      color: var(--text-tertiary); font-size: 10.5px;
+      color: var(--text-tertiary); font-size: 10px;
+      font-variant-numeric: tabular-nums;
     }
     .thumb canvas {
       display: block; width: 100%;
       background: #fff;
-      border: 2px solid transparent; border-radius: 2px;
+      border: 2px solid transparent; border-radius: var(--radius-sm);
+      transition: border-color 100ms cubic-bezier(0, 0, 0.2, 1);
     }
-    .thumb:hover canvas { border-color: var(--border-default); }
+    .thumb:hover canvas { border-color: var(--border-strong); }
     .thumb.on canvas { border-color: var(--accent); }
-    .thumb.on { color: var(--text-primary); }
+    .thumb.on { color: var(--accent); font-weight: 500; }
 
     .problem {
       flex: 1;
@@ -378,25 +390,37 @@ import { api } from '../../core/foundry';
     .problem h1 { margin: 0; font-size: 16px; font-weight: 600; color: var(--error); }
     .problem p { margin: 0; font-size: 13px; max-width: 70ch; white-space: pre-wrap; }
 
-    .ghost {
-      padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
-      background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary);
+    /* One button shape across the row — 26px tall, 4px radius — so the toolbar
+       reads as a strip of controls rather than a line of separate widgets. */
+    .ghost, .icon, .primary {
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 26px; padding: 0 10px;
+      border-radius: var(--radius-sm);
+      font-size: 12px; font-weight: 500; line-height: 1;
+      cursor: pointer; white-space: nowrap;
+      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  border-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  color 100ms cubic-bezier(0, 0, 0.2, 1);
     }
-    .ghost:hover:not(:disabled) { color: var(--text-primary); border-color: var(--text-tertiary); }
-    .ghost.on { background: var(--accent-soft); border-color: var(--accent); color: var(--text-primary); }
-    .icon {
-      min-width: 26px; padding: 4px 7px; border-radius: 6px; cursor: pointer; font-size: 12px;
-      background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary);
+    .ghost, .icon {
+      background: var(--bg-input);
+      border: 1px solid var(--border-default);
+      color: var(--text-primary);
     }
+    .ghost:hover:not(:disabled), .icon:hover:not(:disabled) {
+      background: var(--bg-hover); border-color: var(--border-strong);
+    }
+    .ghost.on { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+    .icon { min-width: 26px; padding: 0 6px; }
     .icon.wide { min-width: 34px; }
-    .icon:hover:not(:disabled) { color: var(--text-primary); border-color: var(--text-tertiary); }
     .primary {
-      padding: 5px 14px; border-radius: 6px; cursor: pointer; font-size: 12px;
-      border: 1px solid var(--accent); background: var(--accent-soft); color: var(--text-primary);
-      white-space: nowrap;
+      border: none;
+      background: var(--accent); color: var(--text-inverse);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.1);
     }
-    .primary:hover:not(:disabled) { background: var(--accent); color: #16181c; }
-    button:disabled { opacity: 0.4; cursor: default; }
+    .primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .primary:active:not(:disabled) { background: var(--accent-active); transform: scale(0.98); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
   `],
 })
 export class PdfViewComponent implements OnDestroy {

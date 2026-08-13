@@ -160,7 +160,12 @@ import { api } from '../../core/foundry';
   styles: [`
     :host { position: fixed; inset: 0; z-index: 1200; display: block; }
 
-    .scrim { position: absolute; inset: 0; background: rgba(9, 10, 13, 0.62); }
+    .scrim {
+      position: absolute; inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(4px);
+      animation: fade 120ms cubic-bezier(0, 0, 0.2, 1);
+    }
 
     .card {
       position: relative;
@@ -172,8 +177,18 @@ import { api } from '../../core/foundry';
       flex-direction: column;
       background: var(--bg-elevated);
       border: 1px solid var(--border-default);
-      border-radius: var(--radius);
-      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+      border-radius: var(--radius-lg);
+      box-shadow:
+        0 10px 15px -3px rgba(0, 0, 0, 0.2),
+        0 20px 40px -10px rgba(0, 0, 0, 0.35);
+      overflow: hidden;
+      animation: rise 140ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes rise {
+      from { opacity: 0; transform: scale(0.94); }
+      to { opacity: 1; transform: scale(1); }
     }
 
     .head {
@@ -181,41 +196,63 @@ import { api } from '../../core/foundry';
       padding: 12px 14px;
       border-bottom: 1px solid var(--border-subtle);
     }
-    .title { flex: 1; font-weight: 600; font-size: 13.5px; }
-    .x { background: transparent; border: none; cursor: pointer; color: var(--text-tertiary); font-size: 13px; }
-    .x:hover { color: var(--text-primary); }
+    .title { flex: 1; font-family: var(--font-display); font-weight: 600; font-size: 16px; }
+    .x {
+      background: transparent; border: none; cursor: pointer;
+      color: var(--text-tertiary); font-size: 13px;
+      padding: 3px 5px; border-radius: var(--radius-sm);
+      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .x:hover { background: var(--bg-hover); color: var(--text-primary); }
 
-    .body { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 13px; }
-    .body.empty { color: var(--text-tertiary); font-size: 13px; }
+    .body { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+    .body.empty { color: var(--text-secondary); font-size: 13px; }
     .body.empty p { margin: 0; }
 
-    .field { display: flex; flex-direction: column; gap: 4px; }
-    .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); }
-    .label em { text-transform: none; letter-spacing: 0; font-style: normal; opacity: 0.7; }
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .label {
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--text-tertiary);
+    }
+    .label em { text-transform: none; letter-spacing: 0; font-style: normal; font-weight: 400; opacity: 0.75; }
 
-    .check { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: var(--text-secondary); }
-    .check input { width: auto; margin-top: 2px; }
+    .check { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: var(--text-secondary); }
+    .check input { width: auto; margin-top: 2px; accent-color: var(--accent-strong); }
     .check em { display: block; font-style: normal; font-size: 11px; color: var(--text-tertiary); }
 
-    .note { margin: 0; font-size: 11.5px; color: var(--text-tertiary); line-height: 1.5; }
+    .note { margin: 0; font-size: 11px; color: var(--text-tertiary); line-height: 1.5; }
     .problem { margin: 0; font-size: 12px; color: var(--warn); }
 
     .foot {
       display: flex; justify-content: flex-end; gap: 8px;
-      padding: 12px 14px;
+      padding: 12px 16px 16px;
       border-top: 1px solid var(--border-subtle);
     }
+    .primary, .ghost {
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 32px; padding: 0 16px;
+      border-radius: var(--radius-md);
+      font-size: 13px; font-weight: 500; line-height: 1;
+      cursor: pointer;
+      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  border-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  transform 100ms cubic-bezier(0, 0, 0.2, 1);
+    }
     .primary {
-      padding: 8px 16px; border-radius: 8px; cursor: pointer;
-      border: 1px solid var(--accent); background: var(--accent-soft); color: var(--text-primary);
+      border: none;
+      background: var(--accent); color: var(--text-inverse);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.1);
     }
-    .primary:hover:not(:disabled) { background: var(--accent); color: #16181c; }
-    .primary:disabled { opacity: 0.4; cursor: default; }
+    .primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .primary:active:not(:disabled) { background: var(--accent-active); transform: scale(0.98); }
+    .primary:disabled { opacity: 0.5; cursor: not-allowed; }
     .ghost {
-      padding: 8px 16px; border-radius: 8px; cursor: pointer;
-      background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary);
+      background: var(--bg-input);
+      border: 1px solid var(--border-default);
+      color: var(--text-primary);
     }
-    .ghost:hover { color: var(--text-primary); border-color: var(--text-tertiary); }
+    .ghost:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+    .ghost:active { background: var(--bg-active); transform: scale(0.98); }
   `],
 })
 export class OcrDialogComponent {
