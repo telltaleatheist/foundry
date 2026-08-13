@@ -28,7 +28,7 @@
             "assets": [
               {
                 "glob": "pdf.worker.min.mjs",
-                "input": "node_modules/pdfjs-dist/build",
+                "input": "node_modules/pdfjs-dist/legacy/build",
                 "output": "pdfjs"
               },
               { "glob": "**/*", "input": "node_modules/pdfjs-dist/cmaps", "output": "pdfjs/cmaps" },

@@ -12,6 +12,15 @@ import {
   viewChild,
   viewChildren,
 } from '@angular/core';
+/*
+ * The LEGACY build, and it is a requirement, not a hedge. pdf.js v6's modern
+ * build calls `Uint8Array.prototype.toHex` — a JavaScript method newer than the
+ * Chromium inside this app's Electron — so the first thing it does with a file
+ * (fingerprint it) dies with "toHex is not a function" before a page exists.
+ * The legacy build carries its own polyfills. The worker in angular.json's
+ * assets comes from the same legacy directory for the same reason: the main
+ * thread and the worker are the same codebase and fail the same way.
+ */
 import {
   PDFWorker,
   Util,
@@ -20,7 +29,7 @@ import {
   type PDFDocumentProxy,
   type PageViewport,
   type RenderTask,
-} from 'pdfjs-dist';
+} from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 import { TabsService, type Tab } from '../../core/tabs.service';
 import { api } from '../../core/foundry';
