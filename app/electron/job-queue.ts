@@ -374,6 +374,13 @@ async function pump(): Promise<void> {
   const handle = runEngine(argsFor(request), (line) => {
     next.message = line;
     const progress = parseProgressLine(line);
+    /*
+     * A count clears the note; anything else becomes it. So `note` reads as
+     * "what the engine has said SINCE the last count", which is empty on a run
+     * that is simply progressing and full of exactly the right sentence on one
+     * that is retrying, falling back, or naming a block it could not do.
+     */
+    next.note = progress ? null : line;
     if (progress) {
       // The rasterising pass finishes the instant reading starts: foundry draws
       // the whole book before it posts the first page, but a book with pages

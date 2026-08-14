@@ -145,6 +145,23 @@ export interface Job {
   error?: string;
   /** The last line the engine wrote — the job log, one line deep. */
   message?: string;
+  /**
+   * The last thing the engine said that was NOT a count, cleared the moment a
+   * count arrives. Null while the run is simply progressing.
+   *
+   * It exists because a bar alone cannot tell working from wedged. A block that
+   * draws a sixteen-thousand-character answer takes two minutes, gets rejected,
+   * and is asked twice more: six minutes in which the count does not move and
+   * the engine is talking the whole time. The shelf showed a frozen fraction,
+   * which is what a hung job looks like — and a person watching a job they
+   * believe is hung kills it, which is how an hour of GPU gets thrown away by
+   * the progress display.
+   *
+   * CLEARED BY THE NEXT COUNT, and that is what makes it mean "since". A note
+   * that lingered would still be on screen ten blocks later, which is the same
+   * lie in the other direction.
+   */
+  note?: string | null;
   createdAt: number;
   startedAt?: number;
   finishedAt?: number;

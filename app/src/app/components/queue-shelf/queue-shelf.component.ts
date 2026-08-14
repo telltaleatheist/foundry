@@ -282,10 +282,10 @@ export class QueueShelfComponent {
      * which is also the honest signal that this job runs for hours.
      */
     if (p.phase === 'translate') {
-      return `Translating ${p.page.toLocaleString()} / ${p.total.toLocaleString()} blocks`;
+      return note(`Translating ${p.page.toLocaleString()} / ${p.total.toLocaleString()} blocks`, job);
     }
     const verb = p.phase === 'render' ? 'Rendering' : 'Reading';
-    return `${verb} ${p.page} / ${p.total} pages`;
+    return note(`${verb} ${p.page} / ${p.total} pages`, job);
   }
 
   /** An env install names itself; a conversion is named by its document. */
@@ -324,3 +324,35 @@ function baseName(filePath: string): string {
 function label(job: Job): string {
   return job.title ?? baseName(job.inputPath);
 }
+
+/**
+ * The count, and what the engine has said since it last moved.
+ *
+ * A COUNT ALONE CANNOT TELL WORKING FROM WEDGED, and that is not a theoretical
+ * complaint: a block that draws a sixteen-thousand-character answer takes two
+ * minutes, is rejected, and is asked twice more — six minutes on one fraction
+ * while the engine talks the whole time. This shelf showed the fraction and
+ * nothing else, which is precisely what a hung job looks like, and a person
+ * watching a job they believe is hung kills it.
+ *
+ * `note` is null on a run that is simply progressing (see Job.note), so the
+ * ordinary case is the line it always was. The engine's own words are used
+ * verbatim and merely shortened — paraphrasing a diagnostic is how the shelf
+ * would end up saying something the log does not.
+ */
+function note(count: string, job: Job): string {
+  const said = job.note?.trim();
+  if (said === undefined || said.length === 0) return count;
+  // The prefix is the command's, on every line, and it is redundant here: the
+  // row already says which job this is.
+  const bare = said.replace(/^(translate|vlm-convert):\s*/, '');
+  const short = bare.length > NOTE_CHARS ? `${bare.slice(0, NOTE_CHARS - 1)}…` : bare;
+  return `${count} · ${short}`;
+}
+
+/**
+ * How much of a note fits. The shelf row is one line and the count has to stay
+ * readable at the left of it — a note that pushed the fraction off the row
+ * would trade one missing fact for another.
+ */
+const NOTE_CHARS = 80;
