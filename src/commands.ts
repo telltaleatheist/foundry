@@ -41,6 +41,7 @@ import { parsePageList } from './vlm/pages.js';
 import { formatConflict, VLM_OUTPUT_FORMATS, type VlmOutputFormat } from './vlm/text-out.js';
 import {
   DEFAULT_OLLAMA_ENDPOINT,
+  DEFAULT_TRANSLATE_CONCURRENCY,
   DEFAULT_TRANSLATE_MODEL,
   translateEpub,
 } from './translate/run.js';
@@ -230,6 +231,27 @@ const TR_INSTRUCTIONS: OptionSpec = {
   type: 'string',
   placeholder: '<text>',
   describe: 'Appended to the system prompt verbatim — terminology rules for THIS book.',
+};
+
+const TR_BANK: OptionSpec = {
+  name: 'bank',
+  type: 'string',
+  placeholder: '<file.jsonl>',
+  describe: 'Bank each answer here as it is accepted, and ask only for the blocks not in it.',
+};
+
+/** The one instruction the bank's key cannot express. See `bank.ts`. */
+const TR_FRESH_BANK: OptionSpec = {
+  name: 'fresh-bank',
+  type: 'boolean',
+  describe: 'Archive whatever --bank holds and ask the model for every block again.',
+};
+
+const TR_CONCURRENCY: OptionSpec = {
+  name: 'concurrency',
+  type: 'string',
+  placeholder: '<n>',
+  describe: `Requests in flight at once. Default ${DEFAULT_TRANSLATE_CONCURRENCY} — a starting point, not a measurement.`,
 };
 
 // ── epub-final ───────────────────────────────────────────────────────────────
@@ -471,10 +493,35 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
     );
   }
 
+  /*
+   * The bank flags, checked here because this is the argv layer.
+   *
+   * `--fresh-bank` is an instruction ABOUT A BANK, and without `--bank` there
+   * is no bank for it to act on. Refused rather than ignored: a flag this
+   * program drops on the floor is how somebody ends up believing they ordered a
+   * fresh translation and got yesterday's answers back (ARCHITECTURE §8). The
+   * engine refuses the same pair again, for a caller that is not this one.
+   */
+  const bankPath = optionalString(args, 'bank');
+  const freshBank = flag(args, 'fresh-bank');
+  if (freshBank && bankPath === undefined) {
+    throw new UsageError('--fresh-bank is about the bank --bank names, and no --bank was given.');
+  }
+
+  // A count of requests, and the only readings of "0", "-2" and "four" are
+  // mistakes. Refused by name rather than rounded up to something workable.
+  const concurrency = optionalString(args, 'concurrency');
+  if (concurrency !== undefined && !/^[1-9]\d*$/.test(concurrency)) {
+    throw new UsageError(`--concurrency takes a positive whole number, not "${concurrency}"`);
+  }
+
   const report = await translateEpub({
     epubPath,
     outPath,
     to,
+    ...(bankPath !== undefined ? { bankPath } : {}),
+    ...(freshBank ? { freshBank: true } : {}),
+    ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
     ...(optionalString(args, 'from') !== undefined ? { from: optionalString(args, 'from')! } : {}),
     ...(optionalString(args, 'model') !== undefined ? { model: optionalString(args, 'model')! } : {}),
     ...(optionalString(args, 'ollama') !== undefined ? { endpoint: optionalString(args, 'ollama')! } : {}),
@@ -510,10 +557,16 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
   // hours wants both — the blocks say how much book, the requests say how much
   // GPU.
   const sent = report.chunks === report.blocks ? '' : ` in ${report.chunks} requests`;
+  // What the bank saved, on the line somebody actually reads. A resumed run
+  // must VISIBLY cost less than the run it resumed, or nobody can tell the
+  // feature is working from a model that happened to be quick today.
+  const banked = bankPath === undefined
+    ? ''
+    : `, ${report.fromBank} from the bank and ${report.answered} asked`;
   log(
     `translate: ${report.blocks} blocks${sent} in ${report.seconds.toFixed(1)}s `
     + `(${(report.blocks / Math.max(report.seconds, 0.001)).toFixed(2)} a second, ${report.model})`
-    + `${struck}${asked}${kept}${echoed}${stuck}`,
+    + `${banked}${struck}${asked}${kept}${echoed}${stuck}`,
   );
   if (report.navUnmapped > 0) {
     log(
@@ -817,7 +870,8 @@ export const COMMANDS: readonly Command[] = [
   {
     name: 'translate',
     summary: 'Translate a foundry EPUB with a local Ollama model: EPUB in, a second EPUB out.',
-    usage: '--epub <book.epub> --to <lang> [--from <lang>] [--out <path>] [--model <name>] [--instructions <text>]',
+    usage: '--epub <book.epub> --to <lang> [--from <lang>] [--out <path>] [--model <name>]'
+      + ' [--instructions <text>] [--bank <file.jsonl>] [--concurrency <n>]',
     detail: [
       'Reads a book foundry converted and writes a SECOND BOOK beside it with the',
       'same structure, the same pictures and the same page provenance, and the',
@@ -915,6 +969,54 @@ export const COMMANDS: readonly Command[] = [
       'untranslated. Render racial terminology literally; do not soften it."',
       'Terminology is per-book and no default can be right about it.',
       '',
+      '--bank NAMES AN ANSWER FILE, AND A KILLED RUN COSTS WHAT WAS IN FLIGHT.',
+      'Every accepted answer is appended and fsynced the moment it is accepted,',
+      'so a run that dies at block 400 of 456 — a crash, an Ollama restart, the',
+      'app closing, somebody pressing stop — has 399 answers on disk and the next',
+      'run pays for what is missing. Without it a translation holds everything in',
+      'memory and writes the book at the very end, which is how 152 translated',
+      'blocks of a real 456-block book became nothing at all.',
+      '',
+      'THE KEY IS THE QUESTION, NOT THE POSITION. An answer is reused only if the',
+      'exact same thing would be asked again: the block\'s own text, the model,',
+      'both languages and --instructions, hashed together. So editing one',
+      'paragraph re-translates that paragraph and nothing else; changing --model',
+      'or --instructions correctly re-translates everything, because every answer',
+      'would have been different; inserting or reordering blocks costs nothing;',
+      'and a paragraph that appears twice in a book is asked once. A block the',
+      'model could NOT do is never banked — a refusal is a fact about a run, not',
+      'an answer, and freezing it into the file would stop a better model ever',
+      'being asked about that paragraph.',
+      '',
+      'A chunk with some parts already banked is still sent WHOLE. The banked',
+      'parts keep their banked answers and only the missing ones are read out of',
+      'the reply — a list item sent alone has lost the list, which is the defect',
+      'chunking exists to prevent, and it would be a different question anyway. A',
+      'chunk whose parts are all banked is never sent at all.',
+      '',
+      '--fresh-bank archives the whole file into `archived-<timestamp>/` beside',
+      'it and asks for every block again. It is the one instruction the key',
+      'cannot express — a person wanting the SAME question asked a second time,',
+      'because a model is not deterministic. Nothing is ever deleted, and',
+      '--fresh-bank without --bank is refused rather than half-obeyed. There is',
+      'no completion marker here and vlm-convert\'s --readings needs one: keyed by',
+      'the question rather than the page, a bank knows for itself when a run',
+      'would ask something new.',
+      '',
+      `--concurrency puts N requests in flight at once, default `
+      + `${DEFAULT_TRANSLATE_CONCURRENCY}. Ollama`,
+      'batches concurrent requests and a serial run leaves the GPU idle between',
+      'blocks: 456 blocks at two seconds each is fifteen minutes of mostly',
+      'waiting. THE DEFAULT IS A STARTING POINT AND NOT A MEASUREMENT — unlike',
+      '--vlm-concurrency, whose 12 is a measured knee — because the right number',
+      'is a property of your GPU and your model\'s size. The log stops arriving in',
+      'order and the counts do not: `block N/M` counts blocks FINISHED and',
+      '`requests done` counts chunks finished, so neither number ever goes',
+      'backwards. Order in the BOOK is unaffected — every block is spliced by its',
+      'own position in its own document, whatever order the answers land in. A',
+      'server error still ends the run at once, and the error reported is the',
+      'first one that happened, not the last one to arrive.',
+      '',
       'WHAT IS NOT TRANSLATED, DELIBERATELY: dc:title and dc:creator. The title is',
       'the book\'s NAME — somebody looking for this file is looking for the name on',
       'the German cover, and a library listing an invented English title for a',
@@ -927,7 +1029,10 @@ export const COMMANDS: readonly Command[] = [
       'second time — a contents page and a chapter heading that disagree is a book',
       'assembled from two editions.',
     ].join('\n'),
-    options: [TR_EPUB_IN, TR_TO, TR_FROM, TR_OUT, TR_MODEL, TR_OLLAMA, TR_INSTRUCTIONS],
+    options: [
+      TR_EPUB_IN, TR_TO, TR_FROM, TR_OUT, TR_MODEL, TR_OLLAMA, TR_INSTRUCTIONS,
+      TR_BANK, TR_FRESH_BANK, TR_CONCURRENCY,
+    ],
     run: runTranslate,
   },
   {

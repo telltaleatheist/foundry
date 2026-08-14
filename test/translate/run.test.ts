@@ -17,10 +17,12 @@ import {
   CHUNK_CHARS, checkAnswer, chunkAmbiguity, parseChunkAnswer, renderChunk, shapeRules,
   systemPrompt, translateEpub, unfence, TranslateError,
 } from '../../src/translate/run.js';
+import { bankKey, TranslateBankError, TranslationBank } from '../../src/translate/bank.js';
 import { readLanguage } from '../../src/translate/languages.js';
+import type { HttpResponse, Transport } from '../../src/translate/ollama.js';
 import {
   CHAPTER_PATH, NAV_PATH, OPF_PATH, PICTURE,
-  chapterWith, fakeOllama, foundryEpub, foundryEpubWith, plainEpub, shout,
+  chapterWith, fakeOllama, foundryEpub, foundryEpubWith, plainEpub, shout, type FakeServer,
 } from './fixture.js';
 
 function scratch(book: Uint8Array = foundryEpub()): { epub: string; out: string; clean: () => void } {
@@ -327,6 +329,14 @@ test('a model that echoes everything is written out, and is the operator\'s prob
 });
 
 test('a server that stops answering ends the run instead of retrying the book', async () => {
+  /*
+   * ONE REQUEST IN FLIGHT, so the count is exact. The rule being pinned is that
+   * a server failure is not retried — a machine that is off will still be off
+   * on the second attempt, and proving it twice costs a minute of somebody's
+   * evening. With several requests in flight the number of calls is whatever
+   * was already out when the first one failed, which is a different fact and is
+   * pinned by its own test below.
+   */
   const { epub, out, clean } = scratch();
   try {
     const server = fakeOllama();
@@ -340,7 +350,9 @@ test('a server that stops answering ends the run instead of retrying the book', 
       },
     };
     await assert.rejects(
-      translateEpub({ epubPath: epub, outPath: out, to: 'en', transport: dying, log: quiet }),
+      translateEpub({
+        epubPath: epub, outPath: out, to: 'en', transport: dying, concurrency: 1, log: quiet,
+      }),
       /answered 500/,
     );
     assert.equal(calls, 3, 'it stops at the first server failure, it does not retry it');
@@ -955,4 +967,669 @@ test('the prompt teaches only the marker kinds the block carries', () => {
   const both = systemPrompt(null, en, undefined);
   assert.match(both, /A pair such as/);
   assert.match(both, /A single marker such as/);
+});
+
+// ── the bank: what a killed run leaves behind, and what a second run pays ─────
+
+/** A book of standalone paragraphs — one block, one chunk, one request each. */
+function paragraphs(...texts: readonly string[]): Uint8Array {
+  return foundryEpubWith(chapterWith(
+    texts.map((t, i) => `<p data-bf-page="${i + 1}" data-bf-cat="text">${t}</p>`).join('\n'),
+  ));
+}
+
+const P1 = 'Der erste lange Absatz dieses Buches steht hier.';
+const P2 = 'Der zweite lange Absatz dieses Buches steht hier.';
+const P3 = 'Der dritte lange Absatz dieses Buches steht hier.';
+
+/** The bank beside a scratch book, and the directory both live in. */
+function bankIn(out: string): { dir: string; bankPath: string } {
+  const dir = path.dirname(out);
+  return { dir, bankPath: path.join(dir, 'answers.jsonl') };
+}
+
+function bankLines(bankPath: string): { key: string; source: string; answer: string }[] {
+  return fs.readFileSync(bankPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+}
+
+test('a killed run leaves every answer it had accepted in the bank, and the next one pays for the rest', async () => {
+  /*
+   * THE MEASUREMENT THIS FEATURE EXISTS FOR. 152 blocks of a 456-block book
+   * were translated, the run was killed, and NOTHING was on disk — the EPUB is
+   * written at the very end, so four hours of GPU came to nothing and the
+   * re-run started at block 1.
+   *
+   * One request in flight, so "the answers accepted before the failure" is an
+   * exact number rather than whatever happened to be out.
+   */
+  const { epub, out, clean } = scratch(paragraphs(P1, P2, P3, 'Der vierte lange Absatz steht hier.'));
+  const { bankPath } = bankIn(out);
+  try {
+    const server = fakeOllama();
+    let calls = 0;
+    const dying: Transport = {
+      ...server,
+      post: async (url: string, body: string): Promise<HttpResponse> => {
+        calls += 1;
+        if (calls > 2) return { status: 500, body: 'model runner has crashed' };
+        return server.post(url, body);
+      },
+    };
+    await assert.rejects(
+      translateEpub({
+        epubPath: epub, outPath: out, to: 'en', transport: dying, bankPath, concurrency: 1, log: quiet,
+      }),
+      /answered 500/,
+    );
+    assert.equal(fs.existsSync(out), false, 'no book — but the answers survived it');
+
+    // BANKED AS THEY LANDED, not at the end: two answers, each with the source
+    // it answers, so the file is a thing a person can read.
+    const lines = bankLines(bankPath);
+    assert.equal(lines.length, 2);
+    assert.equal(lines[0]!.source, P1);
+    assert.equal(lines[0]!.answer, shout(P1));
+    assert.equal(lines[1]!.source, P2);
+
+    // The run that follows asks for the two that are missing and nothing else.
+    const second = fakeOllama();
+    const report = await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: second, bankPath, log: quiet,
+    });
+    assert.equal(second.asked.length, 2, 'the two blocks that never landed, and no others');
+    assert.equal(report.fromBank, 2);
+    assert.equal(report.answered, 2);
+    assert.equal(bankLines(bankPath).length, 4);
+
+    const chapter = readZipMap(new Uint8Array(fs.readFileSync(out))).get(CHAPTER_PATH)!.text();
+    assert.match(chapter, new RegExp(shout(P1)));
+    assert.match(chapter, new RegExp(shout(P3)));
+  } finally {
+    clean();
+  }
+});
+
+test('a second run over the same book with the same bank asks for NOTHING', async () => {
+  /*
+   * The whole promise, over the real fixture: thirty blocks, sixteen requests,
+   * every shape the translator has — a list, a quotation, two tables, a table
+   * that goes one cell per request. The second run sends not one request and
+   * writes the same bytes.
+   */
+  const { epub, out, clean } = scratch();
+  const { bankPath } = bankIn(out);
+  try {
+    const first = fakeOllama();
+    const one = await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: first, bankPath, log: quiet,
+    });
+    assert.equal(first.asked.length, 16);
+    /*
+     * TWENTY-NINE ASKABLE BLOCKS, TWENTY-EIGHT QUESTIONS. The `<td>Jahr</td>`
+     * of the one-cell table and the `<th>Jahr</th>` of the three-column table
+     * are the same words, so they are the same question, and the second one is
+     * answered out of the bank on the FIRST run — the duplicate rule, visible
+     * in the fixture rather than in a test built to show it.
+     */
+    assert.equal(one.answered, 28);
+    assert.equal(one.fromBank, 1);
+    const before = fs.readFileSync(out);
+
+    fs.rmSync(out);
+    const second = fakeOllama();
+    const logged: string[] = [];
+    const two = await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: second, bankPath, log: (m) => logged.push(m),
+    });
+
+    assert.equal(second.asked.length, 0, 'not one request');
+    assert.equal(two.fromBank, 29);
+    assert.equal(two.answered, 0);
+    assert.equal(two.retries, 0);
+    // The zip writer is deterministic, so "the same book" is the same bytes.
+    assert.deepEqual([...fs.readFileSync(out)], [...before]);
+    // And the run SAYS it resumed, before it does anything, and says what the
+    // bank saved when it is finished.
+    // Twenty-eight ANSWERS for twenty-nine blocks: the bank counts questions.
+    assert.ok(logged.some((l) => /28 answer\(s\) are banked in .*answers\.jsonl/.test(l)));
+    assert.ok(logged.some((l) => /29 of 30 block\(s\) came out of the bank and 0 were asked/.test(l)));
+  } finally {
+    clean();
+  }
+});
+
+test('editing one paragraph re-asks that paragraph and nothing else', async () => {
+  /*
+   * THE CONSEQUENCE THAT MAKES THE KEY THE RIGHT KEY. The working copy is a
+   * book somebody is editing, so a bank keyed by POSITION would hand block 2's
+   * old translation to whatever block 2 is today — a book that renders
+   * perfectly and is wrong where nobody can see it.
+   */
+  const { epub, out, clean } = scratch(paragraphs(P1, P2, P3));
+  const { dir, bankPath } = bankIn(out);
+  try {
+    const first = fakeOllama();
+    await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: first, bankPath, log: quiet,
+    });
+    assert.equal(first.asked.length, 3);
+
+    const edited = 'Der zweite Absatz, den jemand von Hand geaendert hat.';
+    const epub2 = path.join(dir, 'Buch-bearbeitet.epub');
+    fs.writeFileSync(epub2, paragraphs(P1, edited, P3));
+    const second = fakeOllama();
+    const report = await translateEpub({
+      epubPath: epub2, outPath: out, to: 'en', transport: second, bankPath, log: quiet,
+    });
+
+    assert.deepEqual(second.asked, [edited], 'exactly the paragraph that changed');
+    assert.equal(report.fromBank, 2);
+    assert.equal(report.answered, 1);
+
+    const chapter = readZipMap(new Uint8Array(fs.readFileSync(out))).get(CHAPTER_PATH)!.text();
+    assert.match(chapter, new RegExp(shout(edited)));
+    assert.match(chapter, new RegExp(shout(P3)), 'and its neighbours kept their banked answers');
+  } finally {
+    clean();
+  }
+});
+
+test('a different model or different instructions re-asks the whole book', async () => {
+  /*
+   * Correctly, and this is the other half of the same argument: every answer
+   * WOULD have been different. A bank that answered a qwen2.5 run out of
+   * qwen3's answers would be a book nobody chose the translator for, and
+   * "leave 'völkisch' untranslated" is an instruction about every block.
+   */
+  const { epub, out, clean } = scratch(paragraphs(P1, P2, P3));
+  const { bankPath } = bankIn(out);
+  const models = ['qwen3:32b', 'qwen2.5:14b'];
+  try {
+    const first = fakeOllama(undefined, models);
+    await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: first, bankPath, log: quiet,
+    });
+
+    const other = fakeOllama(undefined, models);
+    const byModel = await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', model: 'qwen2.5:14b', transport: other, bankPath, log: quiet,
+    });
+    assert.equal(other.asked.length, 3, 'a different model is a different question');
+    assert.equal(byModel.fromBank, 0);
+
+    const told = fakeOllama(undefined, models);
+    const byInstructions = await translateEpub({
+      epubPath: epub,
+      outPath: out,
+      to: 'en',
+      instructions: 'Leave "völkisch" untranslated.',
+      transport: told,
+      bankPath,
+      log: quiet,
+    });
+    assert.equal(told.asked.length, 3, 'and so is a different prompt');
+    assert.equal(byInstructions.fromBank, 0);
+
+    // Three questions, three answers each block: nothing was overwritten.
+    assert.equal(bankLines(bankPath).length, 9);
+  } finally {
+    clean();
+  }
+});
+
+test('--fresh-bank archives what is there and asks for every block again', async () => {
+  const { epub, out, clean } = scratch(paragraphs(P1, P2, P3));
+  const { dir, bankPath } = bankIn(out);
+  try {
+    await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: fakeOllama(), bankPath, log: quiet,
+    });
+    assert.equal(bankLines(bankPath).length, 3);
+
+    const server = fakeOllama();
+    const logged: string[] = [];
+    const report = await translateEpub({
+      epubPath: epub,
+      outPath: out,
+      to: 'en',
+      transport: server,
+      bankPath,
+      freshBank: true,
+      log: (m) => logged.push(m),
+    });
+
+    assert.equal(server.asked.length, 3);
+    assert.equal(report.fromBank, 0);
+    // NOTHING IS DELETED. The old answers are a directory away, not gone.
+    const archived = fs.readdirSync(dir).filter((name) => name.startsWith('archived-'));
+    assert.equal(archived.length, 1);
+    assert.deepEqual(fs.readdirSync(path.join(dir, archived[0]!)), ['answers.jsonl']);
+    assert.equal(bankLines(path.join(dir, archived[0]!, 'answers.jsonl')).length, 3);
+    assert.equal(bankLines(bankPath).length, 3, 'and the live bank was written again from scratch');
+    assert.ok(logged.some((l) => /fresh bank was asked for, so the 3 banked answer\(s\) were archived/.test(l)));
+  } finally {
+    clean();
+  }
+});
+
+test('a bank whose last line was cut off by a kill costs exactly that one block', async () => {
+  const { epub, out, clean } = scratch(paragraphs(P1, P2, P3));
+  const { bankPath } = bankIn(out);
+  try {
+    await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: fakeOllama(), bankPath, log: quiet,
+    });
+    // A process killed mid-append leaves half a line. It is DROPPED, because
+    // that is the normal consequence of the kill this file exists for.
+    const whole = fs.readFileSync(bankPath, 'utf8');
+    fs.writeFileSync(bankPath, whole.slice(0, whole.length - 25));
+
+    const server = fakeOllama();
+    const report = await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: server, bankPath, log: quiet,
+    });
+    assert.deepEqual(server.asked, [P3]);
+    assert.equal(report.fromBank, 2);
+  } finally {
+    clean();
+  }
+});
+
+test('a bank line that is not JSON anywhere but the end is refused, naming the line', () => {
+  /*
+   * The difference that matters: a broken LAST line is an interrupted append,
+   * and a broken line in the middle is a file this program did not write —
+   * about to supply somebody else's answers to a book they are not from.
+   */
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-bank-'));
+  try {
+    const bankPath = path.join(dir, 'answers.jsonl');
+    fs.writeFileSync(
+      bankPath,
+      `${JSON.stringify({ key: 'a', source: 'x', answer: 'y' })}\nnot json at all\n`
+      + `${JSON.stringify({ key: 'b', source: 'x', answer: 'y' })}\n`,
+    );
+    assert.throws(
+      () => TranslationBank.open(bankPath),
+      (error: Error) => error instanceof TranslateBankError
+        && /line 2 is not JSON/.test(error.message)
+        && /not a translation bank/.test(error.message),
+    );
+
+    // A line that parses but carries no answer is the same fact, said the same way.
+    fs.writeFileSync(bankPath, `${JSON.stringify({ page: 3, text: 'hallo' })}\n{}\n`);
+    assert.throws(() => TranslationBank.open(bankPath), /line 1 carries no key and answer/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('freshBank with no bank at all is refused rather than doing nothing', async () => {
+  const { epub, out, clean } = scratch(paragraphs(P1));
+  try {
+    await assert.rejects(
+      translateEpub({
+        epubPath: epub, outPath: out, to: 'en', transport: fakeOllama(), freshBank: true, log: quiet,
+      }),
+      /no bank for it to act on/,
+    );
+  } finally {
+    clean();
+  }
+});
+
+test('the key is the question and nothing else about where the block sits', () => {
+  const question = {
+    text: 'Ein ⟦e1⟧deutscher⟦/e1⟧ Satz.',
+    model: 'qwen3:32b',
+    to: 'en',
+    from: 'de' as string | null,
+    instructions: undefined as string | undefined,
+  };
+  const key = bankKey(question);
+  assert.equal(key, bankKey({ ...question }), 'the same question is the same key');
+  assert.equal(bankKey({ ...question, instructions: '   ' }), key, 'blank instructions are none');
+  assert.notEqual(bankKey({ ...question, model: 'qwen2.5:14b' }), key);
+  assert.notEqual(bankKey({ ...question, to: 'fr' }), key);
+  assert.notEqual(bankKey({ ...question, from: null }), key, 'detecting the source is a question too');
+  assert.notEqual(bankKey({ ...question, instructions: 'Keep names.' }), key);
+  assert.notEqual(bankKey({ ...question, text: 'Ein deutscher Satz.' }), key, 'the markers are part of it');
+  // The fields cannot be run into each other: moving a character across a
+  // boundary is a different question, not the same one.
+  assert.notEqual(
+    bankKey({ ...question, model: 'qwen3:32', to: 'ben' }),
+    bankKey({ ...question, model: 'qwen3:32b', to: 'en' }),
+  );
+});
+
+test('a chunk with some parts banked travels WHOLE, and a refused block is never banked', async () => {
+  /*
+   * TWO RULES IN ONE RUN, because the first is what makes the second visible.
+   *
+   * A refusal is a fact about a run — this model, three attempts — and not an
+   * answer, so it is not banked and the next run asks again. That leaves the
+   * four-item list with three banked parts and one missing, and the chunk goes
+   * out WHOLE: an item sent on its own has lost the list, which is the entire
+   * argument for chunking, and a payload with the banked items removed would be
+   * a different question (three lines, renumbered) whose answer could not be
+   * keyed against anything. What the banked parts do NOT do is take the new
+   * answer — the bank stays authoritative, so a resumed run is idempotent.
+   */
+  const { epub, out, clean } = scratch();
+  const { bankPath } = bankIn(out);
+  try {
+    const first = fakeOllama((user) => {
+      if (user === 'Drittens die Ordnung des Berufsstandes.') return 'no';
+      const lines = user.split('\n');
+      if (lines.length !== 4 || !user.includes('Vertraege')) return shout(user);
+      return lines.map((line, i) => (i === 2 ? '3. no' : shout(line))).join('\n');
+    });
+    const one = await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: first, bankPath, log: quiet,
+    });
+    assert.equal(one.keptUntranslated.length, 1);
+    // Twenty-nine askable blocks, one refused and one answered out of the bank
+    // by the duplicate "Jahr" — so twenty-seven questions reached the model.
+    assert.equal(one.answered, 27);
+    assert.equal(bankLines(bankPath).length, 27, 'and the refusal is not in the file');
+
+    // The second run: everything is banked except the item that was refused.
+    const second = fakeOllama((user) => user.split('\n').map((line) => {
+      const numbered = /^(\d+)\.\s*([\s\S]*)$/.exec(line);
+      return numbered === null ? `${shout(line)} [2]` : `${numbered[1]}. ${shout(numbered[2]!)} [2]`;
+    }).join('\n'));
+    const two = await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: second, bankPath, log: quiet,
+    });
+
+    assert.equal(second.asked.length, 1, 'one request: the chunk that still has a hole in it');
+    assert.equal(second.asked[0]!.split('\n').length, 4, 'and it carried all four items');
+    assert.equal(two.fromBank, 28);
+    assert.equal(two.answered, 1);
+    assert.equal(two.keptUntranslated.length, 0);
+
+    const chapter = readZipMap(new Uint8Array(fs.readFileSync(out))).get(CHAPTER_PATH)!.text();
+    // The part that was missing takes this run's answer...
+    assert.match(chapter, /<li[^>]*>DRITTENS DIE ORDNUNG DES BERUFSSTANDES\. \[2\]<\/li>/);
+    // ...and the three that were banked keep the answers they were banked with,
+    // even though a perfectly good new one came back in the same reply.
+    assert.match(chapter, /<li[^>]*>ERSTENS DIE AUFHEBUNG DER VERTRAEGE\.<\/li>/);
+    assert.match(chapter, /<li[^>]*>VIERTENS DIE <em>FRAGE<\/em> DES BODENS\.<\/li>/);
+  } finally {
+    clean();
+  }
+});
+
+test('a paragraph that appears twice in a book is asked once', async () => {
+  /*
+   * One request in flight, deliberately. Nothing can look inside a request that
+   * has not landed, so two duplicates that go out TOGETHER are asked twice —
+   * which costs one request and nothing else, since the same key gets the same
+   * answer written over it. Serially it is what the key promises.
+   */
+  const { epub, out, clean } = scratch(paragraphs(P1, P2, P1));
+  const { bankPath } = bankIn(out);
+  try {
+    const server = fakeOllama();
+    const report = await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: server, bankPath, concurrency: 1, log: quiet,
+    });
+    assert.deepEqual(server.asked, [P1, P2]);
+    assert.equal(report.fromBank, 1);
+    assert.equal(bankLines(bankPath).length, 2);
+  } finally {
+    clean();
+  }
+});
+
+// ── concurrency: several requests at once, and the same book out of it ────────
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+/**
+ * The fake server, answering after a delay of its own choosing and counting how
+ * many requests are open while it does.
+ *
+ * The delay is what makes the answers arrive in an order that is not the order
+ * they were sent in, which is the whole thing being tested: the book must not
+ * depend on it.
+ */
+interface SlowServer extends FakeServer {
+  /** The most requests that were open at one moment. */
+  maxOpen: () => number;
+  /** How many are open right now. Zero after a run that waited for them. */
+  open: () => number;
+  /** Each request's send position, in the order the answers came back. */
+  answeredOrder: number[];
+}
+
+function slowOllama(base: FakeServer, delayMs: (user: string, order: number) => number): SlowServer {
+  let open = 0;
+  let maxOpen = 0;
+  let sent = 0;
+  const answeredOrder: number[] = [];
+  return {
+    asked: base.asked,
+    answeredOrder,
+    maxOpen: () => maxOpen,
+    open: () => open,
+    get: base.get,
+    post: async (url: string, body: string): Promise<HttpResponse> => {
+      open += 1;
+      maxOpen = Math.max(maxOpen, open);
+      const parsed = JSON.parse(body) as { messages: { content: string }[] };
+      const user = parsed.messages[parsed.messages.length - 1]!.content;
+      sent += 1;
+      const order = sent;
+      try {
+        await sleep(delayMs(user, order));
+        const response = await base.post(url, body);
+        answeredOrder.push(order);
+        return response;
+      } finally {
+        open -= 1;
+      }
+    },
+  };
+}
+
+test('answers arriving in a scrambled order produce the identical book', async () => {
+  /*
+   * The proof that completion order is irrelevant: every block is spliced by
+   * its own offset in its own document, so what comes back when changes only
+   * the log. Two runs over the same book — one serial, one with six requests in
+   * flight answering in a deliberately jumbled order — and the zip writer is
+   * deterministic, so "the same book" means the same bytes.
+   */
+  const { epub, out, clean } = scratch();
+  const serial = path.join(path.dirname(out), 'Serial.epub');
+  try {
+    await translateEpub({
+      epubPath: epub, outPath: serial, to: 'en', transport: fakeOllama(), concurrency: 1, log: quiet,
+    });
+
+    // A delay with no relation to the order the chunks were sent in.
+    const scrambled = slowOllama(fakeOllama(), (_user, order) => ((order * 37) % 11) * 3);
+    const report = await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: scrambled, concurrency: 6, log: quiet,
+    });
+
+    assert.equal(report.chunks, 16);
+    assert.equal(scrambled.asked.length, 16);
+    // The test is only worth anything if the answers really did come back out
+    // of order, so that is asserted rather than assumed.
+    assert.notDeepEqual(
+      scrambled.answeredOrder,
+      [...scrambled.answeredOrder].sort((a, b) => a - b),
+      'the answers came back in the order they were sent — nothing was scrambled',
+    );
+    assert.deepEqual([...fs.readFileSync(out)], [...fs.readFileSync(serial)]);
+  } finally {
+    clean();
+  }
+});
+
+test('concurrency actually overlaps, and one means one', async () => {
+  const { epub, out, clean } = scratch();
+  try {
+    const many = slowOllama(fakeOllama(), () => 5);
+    await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: many, concurrency: 6, log: quiet,
+    });
+    assert.equal(many.maxOpen(), 6, 'six requests were open at the same moment');
+
+    const one = slowOllama(fakeOllama(), () => 1);
+    await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: one, concurrency: 1, log: quiet,
+    });
+    assert.equal(one.maxOpen(), 1, 'and with one worker there is never a second request open');
+  } finally {
+    clean();
+  }
+});
+
+test('the counts stay honest out of order: nothing they report ever goes backwards', async () => {
+  /*
+   * The app draws its progress bar from `translate: block N/M`
+   * (`app/electron/engine.ts`), so N is a COUNT of blocks finished and not a
+   * block's position — a position would send the bar backwards several times a
+   * minute. The same rule applies to the requests line.
+   */
+  const { epub, out, clean } = scratch();
+  try {
+    const logged: string[] = [];
+    const server = slowOllama(fakeOllama(), (_user, order) => ((order * 17) % 7) * 4);
+    await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: server, concurrency: 5, log: (m) => logged.push(m),
+    });
+
+    const rising = (lines: readonly string[], pattern: RegExp, last: number): void => {
+      let previous = 0;
+      let seen = 0;
+      for (const line of lines) {
+        const hit = pattern.exec(line);
+        if (hit === null) continue;
+        seen += 1;
+        assert.ok(Number(hit[1]) > previous, `${line} — after ${previous}`);
+        previous = Number(hit[1]);
+        assert.equal(Number(hit[2]), last);
+      }
+      assert.ok(seen > 1, 'there were lines to check');
+      assert.equal(previous, last, 'and the last one names the whole book');
+    };
+
+    // Thirty blocks, sixteen requests: both lines end on the whole book, and
+    // neither of them ever names a number smaller than the one before it.
+    rising(logged, /^translate: block (\d+)\/(\d+) \(/, 30);
+    rising(logged, /^translate: (\d+)\/(\d+) requests done/, 16);
+  } finally {
+    clean();
+  }
+});
+
+test('a server error ends the run at once, and the error is the FIRST one', async () => {
+  /*
+   * With N in flight, two chunks can fail before either is reported, and the
+   * one that surfaces must be the one that happened FIRST — the failure that
+   * ended the run, not whichever rejection the runtime settled last. The 503
+   * here answers in 5ms and the 500 in 40ms; the 500 was issued first.
+   *
+   * And nothing is left dangling: the run waits for the requests that were
+   * already out rather than returning while they are in flight and leaving
+   * their rejections to land in a run that has finished.
+   */
+  const { epub, out, clean } = scratch();
+  try {
+    const base = fakeOllama();
+    let open = 0;
+    let slowFinished = false;
+    const dying: Transport = {
+      get: base.get,
+      post: async (url: string, body: string): Promise<HttpResponse> => {
+        open += 1;
+        try {
+          const parsed = JSON.parse(body) as { messages: { content: string }[] };
+          const user = parsed.messages[parsed.messages.length - 1]!.content;
+          if (user.includes('voelkischer')) {
+            await sleep(40);
+            slowFinished = true;
+            return { status: 500, body: 'the slow failure' };
+          }
+          if (user.includes('Die Ordnung')) {
+            await sleep(5);
+            return { status: 503, body: 'the quick failure' };
+          }
+          return await base.post(url, body);
+        } finally {
+          open -= 1;
+        }
+      },
+    };
+
+    await assert.rejects(
+      translateEpub({
+        epubPath: epub, outPath: out, to: 'en', transport: dying, concurrency: 4, log: quiet,
+      }),
+      (error: Error) => {
+        assert.match(error.message, /answered 503/);
+        assert.match(error.message, /the quick failure/);
+        assert.doesNotMatch(error.message, /the slow failure/);
+        return true;
+      },
+    );
+    assert.equal(open, 0, 'nothing was left in flight when the run threw');
+    assert.ok(slowFinished, 'and it waited for the slow request rather than walking away from it');
+    assert.equal(fs.existsSync(out), false);
+  } finally {
+    clean();
+  }
+});
+
+test('the wholesale-failure guard still fires, and says truthfully what is left', async () => {
+  /*
+   * Twenty-five refusals is not twenty-five bad paragraphs; it is the wrong
+   * model or a prompt it will not follow, and the rest of the book would cost
+   * hours to prove it again. The message used to work the remainder out from
+   * the refused block's ORDINAL, which read it as a high-water mark — true when
+   * the blocks were done in order and false the moment several are in flight.
+   * It now counts the blocks that have no verdict of any kind, the ones beside
+   * this refusal included.
+   */
+  const many = Array.from({ length: 30 }, (_, i) => `Ein hinreichend langer Absatz mit der Nummer ${i + 1}.`);
+  const { epub, out, clean } = scratch(paragraphs(...many));
+  try {
+    const server = fakeOllama(() => 'x');
+    await assert.rejects(
+      translateEpub({
+        epubPath: epub, outPath: out, to: 'en', transport: server, concurrency: 4, log: quiet,
+      }),
+      (error: Error) => {
+        assert.ok(error instanceof TranslateError);
+        assert.match(error.message, /^25 blocks could not be translated/);
+        assert.match(error.message, /5 block\(s\) this run has not finished would cost hours/);
+        assert.match(error.message, /NOTHING WAS WRITTEN\./);
+        return true;
+      },
+    );
+    assert.equal(fs.existsSync(out), false);
+  } finally {
+    clean();
+  }
+});
+
+test('a concurrency that is not a count of requests is refused before the book is read', async () => {
+  const { epub, out, clean } = scratch();
+  try {
+    for (const bad of [0, -1, 2.5]) {
+      await assert.rejects(
+        translateEpub({
+          epubPath: epub, outPath: out, to: 'en', transport: fakeOllama(), concurrency: bad, log: quiet,
+        }),
+        (error: Error) => error instanceof TranslateError && /at least 1/.test(error.message),
+        `concurrency ${bad}`,
+      );
+    }
+  } finally {
+    clean();
+  }
 });

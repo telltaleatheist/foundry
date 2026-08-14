@@ -19,7 +19,29 @@ const translate = findCommand('translate')!;
 test('the command is registered with its flags', () => {
   assert.ok(translate !== undefined);
   const names = (translate.options ?? []).map((o) => o.name).sort();
-  assert.deepEqual(names, ['epub', 'from', 'instructions', 'model', 'ollama', 'out', 'to']);
+  assert.deepEqual(names, [
+    'bank', 'concurrency', 'epub', 'fresh-bank', 'from', 'instructions', 'model', 'ollama',
+    'out', 'to',
+  ]);
+});
+
+test('--fresh-bank without --bank is refused rather than doing nothing quietly', async () => {
+  // It is an instruction ABOUT A BANK and there is no bank. A flag dropped on
+  // the floor here is somebody believing they ordered a fresh translation.
+  await assert.rejects(
+    runCommand(translate, ['--epub', 'Buch.epub', '--to', 'en', '--fresh-bank']),
+    (error: Error) => error instanceof UsageError && /no --bank was given/.test(error.message),
+  );
+});
+
+test('a concurrency that is not a count of requests is refused by name', async () => {
+  for (const bad of ['0', '-2', 'four', '2.5']) {
+    await assert.rejects(
+      runCommand(translate, ['--epub', 'Buch.epub', '--to', 'en', '--concurrency', bad]),
+      (error: Error) => error instanceof UsageError && /positive whole number/.test(error.message),
+      `--concurrency ${bad}`,
+    );
+  }
 });
 
 test('--out equal to --epub is refused, and the sentence says it is the input', async () => {
@@ -73,6 +95,19 @@ test('the help says what is skipped and what happens to a block that fails', () 
   assert.doesNotMatch(translate.detail, /THE JOB FAILS/);
   assert.doesNotMatch(translate.detail, /drops, doubles, invents or crosses a marker/);
   assert.match(translate.detail, /Used, never started|does not start it/);
+});
+
+test('the help says what the bank is keyed by and that the concurrency default is not measured', () => {
+  // The key is the whole feature: somebody who does not know that editing a
+  // paragraph re-asks that paragraph ONLY cannot predict what a second run
+  // costs, which is the only question anybody has about a cache.
+  assert.match(translate.detail, /THE KEY IS THE QUESTION, NOT THE POSITION/);
+  assert.match(translate.detail, /A block the\nmodel could NOT do is never banked/);
+  assert.match(translate.detail, /A chunk with some parts already banked is still sent WHOLE/);
+  // And the honesty about the default, which is the difference between this
+  // number and --vlm-concurrency's measured knee.
+  assert.match(translate.detail, /THE DEFAULT IS A STARTING POINT AND NOT A MEASUREMENT/);
+  assert.match(translate.detail, /`block N\/M` counts blocks FINISHED/);
 });
 
 // ── languages ────────────────────────────────────────────────────────────────

@@ -93,11 +93,49 @@
  * answering is not — it throws, immediately, and the run ends. Retrying two
  * thousand blocks against a machine that is off would take hours to say
  * "connection refused".
+ *
+ * ────────────────────────────────────────────────────────────────────────────
+ * NOTHING IS PAID FOR TWICE, AND SEVERAL THINGS ARE PAID FOR AT ONCE.
+ *
+ * `--bank` is an answer file, appended and fsynced as each answer is ACCEPTED,
+ * and `bank.ts` holds the whole argument for it — including why it is keyed by
+ * the QUESTION (the masked text, the model, the two languages and
+ * `--instructions`) and never by the block's position. What this file owes that
+ * design is one rule: a chunk with a banked part still travels WHOLE.
+ *
+ * A chunk exists because an item translated without its list has lost the list
+ * and a cell without its column header often cannot be translated at all. That
+ * argument does not weaken because three of the four items happen to be on
+ * disk: sending the fourth alone would buy back the exact defect chunking was
+ * introduced to fix, and it would build a DIFFERENT question — different
+ * numbering, different shape rule — whose answer could not be keyed against
+ * what was banked. So the whole chunk is sent, THE BANKED PARTS KEEP THEIR
+ * BANKED ANSWERS, and only the missing parts are read out of the reply. A chunk
+ * is bounded at about a printed page, so the worst case is one page of tokens
+ * to answer one item properly, and a chunk whose parts are ALL banked is never
+ * sent at all. The bank staying authoritative is also what makes a resume
+ * idempotent: however many times a run is killed, the same book comes out.
+ *
+ * `--concurrency` puts N chunks in flight at once, because Ollama batches
+ * concurrent requests and a serial run leaves the GPU idle between them. What
+ * that costs is the ORDER of the log, which is fine, and what it must not cost
+ * is the honesty of the numbers in it, which is not. So `block N/M` counts
+ * blocks FINISHED and `requests done` counts chunks FINISHED — both monotonic,
+ * neither a position — because the app draws a progress bar from the first of
+ * those and a bar that goes backwards is a bar reporting the wrong quantity.
+ *
+ * A SERVER ERROR STILL ENDS THE RUN, and with N in flight that needs saying
+ * precisely: the FIRST failure in time is the one that surfaces, the workers
+ * stop taking new chunks the moment one is recorded, and the run waits for the
+ * requests that were already out. It cannot cancel them — nothing in
+ * `Transport` can — but leaving them to reject into a dead run is how a later
+ * run inherits somebody else's error.
  */
 import * as fs from 'node:fs';
 
 import { decodeEntities } from '../epub/xml.js';
 import { writeZip, zipText, type ZipEntry } from '../export/zip.js';
+import { bankKey, openTranslationBank } from './bank.js';
 import { findBlocks, retagLanguage, spliceAll, type BlockGroup, type BlockSite } from './blocks.js';
 import { languageRange, navLabels, readFoundryBook, resolveHref, type FoundryBook } from './book.js';
 import { readLanguage, type NamedLanguage } from './languages.js';
@@ -120,6 +158,22 @@ export const DEFAULT_TRANSLATE_MODEL = 'qwen3:32b';
 
 /** Ollama's own default, which is where it is unless somebody moved it. */
 export const DEFAULT_OLLAMA_ENDPOINT = 'http://localhost:11434';
+
+/**
+ * How many requests are in flight at once, unless somebody says otherwise.
+ *
+ * FOUR IS A STARTING POINT AND NOT A MEASUREMENT, and that is said out loud
+ * here and in the help because foundry's other concurrency default is not like
+ * this one: `DEFAULT_VLM_CONCURRENCY` is twelve because twelve is where the
+ * measured knee was on the machine it was built against. Nobody has run that
+ * experiment for Ollama on a translation, so this number is chosen to be
+ * obviously better than one — a serial run leaves the GPU idle between blocks,
+ * and Ollama batches concurrent requests — while being small enough that it
+ * cannot be the reason somebody's server started swapping. The right value is a
+ * property of somebody else's GPU and their model's size, which is why it is a
+ * flag at all.
+ */
+export const DEFAULT_TRANSLATE_CONCURRENCY = 4;
 
 /** Attempts per block: the first, then two retries. */
 const ATTEMPTS = 3;
@@ -195,6 +249,24 @@ export interface TranslateOptions {
   endpoint?: string;
   /** Free text appended to the system prompt, verbatim. */
   instructions?: string;
+  /**
+   * JSONL of accepted answers, appended as each one lands — `--bank`. Makes a
+   * killed run cost the requests that were in flight and nothing else, and
+   * makes a second run over an edited book pay only for what changed.
+   * `bank.ts` owns the rule and the key.
+   */
+  bankPath?: string;
+  /**
+   * Archive whatever is banked and ask for every block again — `--fresh-bank`.
+   *
+   * The one instruction the key cannot express. A banked answer is reused
+   * because the question is identical; this is a person saying they want the
+   * identical question ASKED AGAIN, which a model being non-deterministic makes
+   * a reasonable thing to want.
+   */
+  freshBank?: boolean;
+  /** Requests in flight at once. Default `DEFAULT_TRANSLATE_CONCURRENCY`. */
+  concurrency?: number;
   /** The HTTP boundary. Injected by tests; the real one is `fetchTransport()`. */
   transport?: Transport;
   log: (message: string) => void;
@@ -217,6 +289,15 @@ export interface TranslateReport {
   documents: number;
   /** Skipped category → how many blocks. */
   skipped: Map<string, number>;
+  /**
+   * Blocks the model answered this run, and blocks whose accepted answer came
+   * out of `--bank` instead. Reported as a PAIR because that is the only form
+   * in which either number means anything: a resumed run that says "304 asked"
+   * has not said whether it saved anything, and one that says "152 from the
+   * bank" has not said what it still cost.
+   */
+  answered: number;
+  fromBank: number;
   /** Answers that failed verification and were asked again. */
   retries: number;
   /** Blocks that carried no prose at all and were kept exactly as written. */
@@ -797,6 +878,34 @@ function planChunks(
 
 export async function translateEpub(opts: TranslateOptions): Promise<TranslateReport> {
   const started = Date.now();
+
+  /*
+   * The two things about the REQUEST that can be wrong, refused before a byte
+   * is read (ARCHITECTURE §8).
+   *
+   * `--fresh-bank` with no bank is an instruction about a file that was never
+   * named, and a flag this program silently drops on the floor is how somebody
+   * ends up believing they ordered a fresh translation and got a replay. A
+   * concurrency of zero is not "the default" and not "one" — it is a number
+   * that would send nothing at all, and guessing which of the two was meant is
+   * guessing.
+   */
+  if (opts.bankPath === undefined && opts.freshBank === true) {
+    throw new TranslateError(
+      'freshBank was set without a bank file, so there is no bank for it to act on.',
+    );
+  }
+  if (
+    opts.concurrency !== undefined
+    && (!Number.isInteger(opts.concurrency) || opts.concurrency < 1)
+  ) {
+    throw new TranslateError(
+      `concurrency is how many requests may be in flight at once and must be a whole number of at `
+      + `least 1, not ${opts.concurrency}.`,
+    );
+  }
+  const concurrency = opts.concurrency ?? DEFAULT_TRANSLATE_CONCURRENCY;
+
   const model = opts.model ?? DEFAULT_TRANSLATE_MODEL;
   const endpoint = opts.endpoint ?? DEFAULT_OLLAMA_ENDPOINT;
   const transport = opts.transport ?? fetchTransport();
@@ -814,6 +923,26 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
    * progress makes them read the page first.
    */
   await requireModel(transport, endpoint, model);
+
+  /*
+   * What this run does about the bank it was pointed at, decided once, done
+   * once, and STATED — `bank.ts` owns the rule and the sentence, and the run's
+   * only job is to print it before anything is asked. A log that opens by
+   * saying whether this run is going to translate the book or resume one is a
+   * log somebody can read four hours later.
+   *
+   * AFTER `requireModel`, and that order is load-bearing in exactly one
+   * direction: `--fresh-bank` ARCHIVES, and archiving somebody's GPU-hours and
+   * then failing with "no Ollama server answered at http://localhost:11434"
+   * would have rotated a bank aside to accomplish nothing at all.
+   */
+  const bank = opts.bankPath === undefined
+    ? null
+    : openTranslationBank({
+      bankPath: opts.bankPath,
+      freshRequested: opts.freshBank === true,
+    });
+  if (bank !== null) opts.log(bank.sentence);
 
   // ── the plan ──────────────────────────────────────────────────────────────
 
@@ -927,7 +1056,8 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
     + `document${perDocument.size === 1 ? '' : 's'}${skippedNote}`,
   );
   opts.log(
-    `translate: ${model} at ${endpoint}, ${from === null ? 'detected source' : from.name} → ${to.name}`,
+    `translate: ${model} at ${endpoint}, ${from === null ? 'detected source' : from.name} → ${to.name}`
+    + `, up to ${concurrency} request${concurrency === 1 ? '' : 's'} in flight`,
   );
 
   // ── the work ──────────────────────────────────────────────────────────────
@@ -937,8 +1067,44 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
   let wordless = 0;
   /** Answers kept despite giving back fewer markers than they were sent. */
   let markerNotes = 0;
-  /** Blocks the model actually answered for. Zero of these is a failed run. */
+  /** Blocks the model actually answered for this run. */
   let answered = 0;
+  /** Blocks whose accepted answer came out of the bank. No GPU was spent. */
+  let fromBank = 0;
+  /**
+   * Blocks this run is FINISHED with: translated, kept for having no words, or
+   * refused after every attempt.
+   *
+   * A COUNT, DELIBERATELY, AND NOT A POSITION. With `--concurrency` the blocks
+   * finish out of order, so block 412 can land before block 9 — and the app
+   * draws its progress bar from the number in `block N/M` (see
+   * `app/electron/engine.ts`). A position there would send the bar backwards
+   * several times a minute, reporting a quantity nobody asked about. This is
+   * monotonic by construction, whatever order the network answers in.
+   */
+  let settled = 0;
+
+  /**
+   * This block's question, hashed — see `bank.ts` for what is in it.
+   *
+   * Memoised because it is asked twice for every block that is asked of the
+   * model, once to look for an answer and once to bank the one that came back,
+   * and a real book is two thousand blocks of it.
+   */
+  const keys = new Map<PendingBlock, string>();
+  const keyOf = (block: PendingBlock): string => {
+    const known = keys.get(block);
+    if (known !== undefined) return known;
+    const key = bankKey({
+      text: block.masked.text,
+      model,
+      to: to.tag,
+      from: from === null ? null : from.tag,
+      instructions: opts.instructions,
+    });
+    keys.set(block, key);
+    return key;
+  };
 
   /**
    * An accepted answer, with the book's own markup put back around it.
@@ -948,19 +1114,39 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
    * editor — where a refused block is a paragraph that never got translated at
    * all. The edges the model never saw go back on mechanically; the start of a
    * block is the start of its translation, in any language.
+   *
+   * AN ANSWER OUT OF THE BANK GOES THROUGH HERE TOO, and through exactly the
+   * same checks. It is not re-verified against `checkAnswer` — it passed that
+   * when it was accepted, against the same source text, so the verdict cannot
+   * differ — and that has one consequence worth stating: an answer somebody
+   * CORRECTED BY HAND in the bank file is written into the book as they wrote
+   * it. The file is a record of answers, and a person fixing one is the best
+   * outcome this command has.
    */
-  const accept = (block: PendingBlock, answer: string): void => {
+  const accept = (block: PendingBlock, answer: string, source: 'model' | 'bank'): void => {
     const dropped = checkMarkers(block.masked, answer);
     if (dropped !== null) {
       markerNotes += 1;
       opts.log(`translate: block ${block.ordinal} — ${dropped}; the answer was kept anyway`);
     }
-    answered += 1;
+    if (source === 'model') {
+      /*
+       * BANKED THE MOMENT IT IS ACCEPTED — not at the end of the chunk, not at
+       * the end of the document, and certainly not at the end of the run. The
+       * whole feature is that a kill costs the requests that were in flight,
+       * and every line of delay here is a block somebody pays for twice.
+       */
+      bank?.bank.append({ key: keyOf(block), source: block.masked.text, answer });
+      answered += 1;
+    } else {
+      fromBank += 1;
+    }
+    settled += 1;
     translated.set(
       block,
       block.masked.leading + restoreMarkers(block.masked, answer) + block.masked.trailing,
     );
-    opts.log(`translate: block ${block.ordinal}/${pending.length} (${block.documentPath})`);
+    opts.log(`translate: block ${settled}/${pending.length} (${block.documentPath})`);
   };
 
   /*
@@ -987,16 +1173,37 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
    */
   const refuse = (block: PendingBlock, complaint: string): void => {
     kept.push(`${describe(block, block.masked.text)} — ${complaint}`);
+    settled += 1;
     opts.log(
       `translate: block ${block.ordinal} LEFT IN THE SOURCE LANGUAGE after ${ATTEMPTS} attempts `
       + `— ${describe(block, block.masked.text)} — ${complaint}`,
     );
+    /*
+     * A BLOCK THE MODEL REFUSED IS NOT BANKED, and that is the one thing this
+     * function owes the bank. A refusal is a fact about a RUN — this model,
+     * this evening, three attempts — and not an answer to the question. Banking
+     * it would freeze the failure into the file, so a better model tomorrow
+     * would never be asked about the paragraph its predecessor could not do.
+     */
     if (kept.length >= REFUSAL_LIMIT) {
       throw new TranslateError(
         `${kept.length} blocks could not be translated, which is not a run of bad paragraphs — it `
-        + `is the wrong model for this text, or a prompt ${model} will not follow. The remaining `
-        + `${pending.length - block.ordinal} blocks would cost hours to prove the same thing. `
-        + 'NOTHING WAS WRITTEN.\n\n'
+        + `is the wrong model for this text, or a prompt ${model} will not follow. The `
+        /*
+         * "The remaining blocks" used to be `pending.length - block.ordinal`,
+         * which read the ordinal as a high-water mark — true when the blocks
+         * were done in order and false the moment several are in flight. This
+         * counts what is actually left: every block with no translation, no
+         * refusal and no verdict of any kind yet, including the ones in flight
+         * beside this one.
+         */
+        + `${pending.length - settled} block(s) this run has not finished would cost hours to `
+        + 'prove the same thing. NOTHING WAS WRITTEN'
+        + (bank === null
+          ? '.'
+          : `, though the ${answered} answer(s) this run banked in ${bank.bank.filePath} are on `
+            + 'disk and will not be paid for again.')
+        + '\n\n'
         + kept.map((r) => `  - ${r}`).join('\n'),
       );
     }
@@ -1046,7 +1253,7 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
     }
 
     if (accepted === null) { refuse(block, lastComplaint); return; }
-    accept(block, accepted);
+    accept(block, accepted, 'model');
   };
 
   /**
@@ -1091,12 +1298,14 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
     return null;
   };
 
-  for (const chunk of chunks) {
-    opts.log(
-      `translate: chunk ${chunk.ordinal}/${chunks.length} (${chunk.of}, ${chunk.parts.length} `
-      + `part${chunk.parts.length === 1 ? '' : 's'})`,
-    );
-
+  /**
+   * One chunk, start to finish.
+   *
+   * EVERYTHING A CHUNK NEEDS IS IN HERE, because with `--concurrency` several
+   * of these run at once and anything left outside would happen in whatever
+   * order the network answered in. Nothing in it touches another chunk's parts.
+   */
+  const runChunk = async (chunk: Chunk): Promise<void> => {
     /*
      * A part with nothing left after the edge peel — a heading that is only a
      * pagebreak span, an empty cell in a table. There are no words, so there is
@@ -1113,31 +1322,114 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
       if (!part.wordless) continue;
       translated.set(part, part.masked.leading + part.masked.text + part.masked.trailing);
       wordless += 1;
+      settled += 1;
     }
     const askable = chunk.parts.filter((part) => !part.wordless);
-    if (askable.length === 0) continue;
+    if (askable.length === 0) return;
+
+    /*
+     * WHAT THE BANK ALREADY ANSWERS FOR, TAKEN BEFORE ANYTHING IS SENT.
+     *
+     * A part is looked up by its own question, so a chunk can be PART banked —
+     * a run killed inside a list, a book where one item of six was edited, a
+     * part refused last time and asked again now. Every hit is accepted here
+     * and then left alone: the reply below is read for the missing parts only,
+     * which is what keeps a resume idempotent (see this file's header).
+     *
+     * A chunk with nothing missing is never sent at all. That is the saving.
+     */
+    const missing: PendingBlock[] = [];
+    for (const part of askable) {
+      const banked = bank === null ? undefined : bank.bank.get(keyOf(part));
+      if (banked === undefined) { missing.push(part); continue; }
+      accept(part, banked, 'bank');
+    }
+    if (missing.length === 0) return;
 
     if (chunk.kind === 'single') {
-      await askOne(chunk.parts[0]!);
-      continue;
+      await askOne(missing[0]!);
+      return;
     }
 
+    /*
+     * The whole chunk travels, banked parts included. See this file's header:
+     * the parts are sent together because an item without its list has lost the
+     * list, and dropping the banked ones out of the payload would ask a
+     * DIFFERENT question — different count, different numbering, different
+     * shape rule — of the parts that are left.
+     */
     const answers = await askGroup(chunk);
     if (answers === null) {
-      for (const part of askable) await askOne(part);
-      continue;
+      for (const part of missing) await askOne(part);
+      return;
     }
 
-    for (const part of askable) {
+    for (const part of missing) {
       const answer = answers.get(part)!;
       const complaint = checkAnswer(part.masked.text, answer);
-      if (complaint === null) { accept(part, answer); continue; }
+      if (complaint === null) { accept(part, answer, 'model'); continue; }
       opts.log(
         `translate: block ${part.ordinal} came back inside chunk ${chunk.ordinal} — ${complaint}; `
         + 'asking for it on its own',
       );
       await askOne(part);
     }
+  };
+
+  /**
+   * The pool: `concurrency` workers pulling chunks off one list.
+   *
+   * THE COUNT IS OF CHUNKS FINISHED, not of chunks started, for the same reason
+   * `settled` is. Out of order, a line printed as a request LEAVES says nothing
+   * about how much of the book is done, and two of them can name the same
+   * fraction twice.
+   *
+   * THE FIRST FAILURE IN TIME IS THE ONE THAT SURFACES. `Promise.all` alone
+   * would reject on the first rejection and leave the other workers running
+   * into a function that has already returned — their requests still in flight,
+   * their rejections landing nowhere. So a failure is RECORDED rather than
+   * thrown: the workers stop taking new chunks the moment one is recorded, this
+   * waits for the requests already out, and the recorded error — the first one,
+   * because only the first is ever recorded — is thrown at the end. It cannot
+   * cancel a request, since nothing in `Transport` can, but it can refuse to
+   * walk away from one.
+   */
+  let done = 0;
+  let nextChunk = 0;
+  let firstFailure: unknown = null;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      if (firstFailure !== null) return;
+      const index = nextChunk;
+      nextChunk += 1;
+      const chunk = chunks[index];
+      if (chunk === undefined) return;
+      try {
+        await runChunk(chunk);
+      } catch (error) {
+        if (firstFailure === null) firstFailure = error;
+        return;
+      }
+      done += 1;
+      opts.log(
+        `translate: ${done}/${chunks.length} requests done — chunk ${chunk.ordinal} `
+        + `(${chunk.of}, ${chunk.parts.length} part${chunk.parts.length === 1 ? '' : 's'})`,
+      );
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, () => worker()));
+  if (firstFailure !== null) throw firstFailure;
+
+  /*
+   * What the bank cost and what it saved, in one line, because a resumed run
+   * has to VISIBLY cost less than the run it resumed. "304 asked" on its own
+   * does not say whether anything was saved.
+   */
+  if (bank !== null) {
+    opts.log(
+      `translate: ${fromBank} of ${pending.length} block(s) came out of the bank and ${answered} `
+      + `were asked of ${model}; every answer this run accepted is in ${bank.bank.filePath}.`,
+    );
   }
 
   /*
@@ -1149,8 +1441,14 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
    * `dc:language` on it — a lie about the file, and one that looks exactly like
    * a success. Blocks kept for having no words in them (`wordless`) do not
    * count as work: nothing was asked of the model for those.
+   *
+   * A BANKED ANSWER COUNTS, and it has to. A resumed run whose bank already
+   * holds every block asks the model nothing at all, and that run is the
+   * feature working — the book is fully translated and cost no GPU. What this
+   * guard is about is a book with no translation in it, not a run with no
+   * request in it.
    */
-  if (answered === 0) {
+  if (answered + fromBank === 0) {
     throw new TranslateError(
       `not one of ${pending.length} blocks came back as a translation, after ${ATTEMPTS} attempts `
       + `each. NOTHING WAS WRITTEN: this book would have been its own source text with "${to.tag}" `
@@ -1251,6 +1549,8 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
     chunks: chunks.length,
     documents: perDocument.size,
     skipped,
+    answered,
+    fromBank,
     retries,
     wordless,
     markerNotes,
