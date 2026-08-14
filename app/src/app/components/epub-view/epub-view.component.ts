@@ -66,7 +66,12 @@ import { TabsService, type Tab } from '../../core/tabs.service';
     } @else if (tab().book; as book) {
       <div class="book">
         <nav class="chapters">
+          <!-- WHAT THIS LIST IS, in the same small-caps the documents panel
+               labels itself with. Two vertical lists sit side by side and the
+               eye has to tell them apart at a glance: one is the open files,
+               this one is the chapters of the book below its own title. -->
           <header>
+            <span class="label">Contents</span>
             <span class="book-title" [title]="book.title">{{ book.title }}</span>
             @if (book.author) { <span class="book-author">{{ book.author }}</span> }
           </header>
@@ -114,8 +119,21 @@ import { TabsService, type Tab } from '../../core/tabs.service';
             <button class="ghost" [class.on]="editing()" (click)="toggleEditor()">
               {{ editing() ? 'Done editing' : 'Edit HTML' }}
             </button>
+            <!--
+              SELECT MODE SAYS SO IN WORDS, because it is a mode: the outlines
+              in the page are the only other sign it is on, and a person who
+              pressed the rail button by accident has to be able to read what
+              happened. The keys are named here rather than in a tooltip
+              nobody hovers — Delete and Enter are the whole interface.
+            -->
             <span class="state">
-              @if (writing()) { Writing… }
+              @if (tab().selectMode) {
+                <span class="mode">Select</span>
+                @if (selectedId(); as block) {
+                  {{ block }} — Delete cuts it, Enter edits its words
+                } @else { Click a block to select it }
+              }
+              @else if (writing()) { Writing… }
               @else if (tab().modified) { Edits are in the workspace copy }
               @else if (tab().savedPath) { Saved }
             </span>
@@ -167,6 +185,14 @@ import { TabsService, type Tab } from '../../core/tabs.service';
       display: flex; flex-direction: column; gap: 2px;
       padding: 12px;
       border-bottom: 1px solid var(--border-subtle);
+    }
+    /* The documents panel's own label style, copied deliberately: the two
+       panels are siblings and are meant to read as siblings. */
+    .label {
+      margin-bottom: 4px;
+      font-size: 10px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--text-tertiary);
     }
     .book-title {
       font-family: var(--font-display); font-size: 13px; font-weight: 600;
@@ -244,6 +270,16 @@ import { TabsService, type Tab } from '../../core/tabs.service';
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .state { flex: 1; min-width: 0; font-size: 11px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .mode {
+      display: inline-block;
+      margin-right: 6px;
+      padding: 1px 6px;
+      border-radius: var(--radius-sm);
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 10px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
 
     .panes { flex: 1; min-height: 0; display: flex; }
 
@@ -304,10 +340,23 @@ export class EpubViewComponent implements OnDestroy {
   protected readonly renameText = signal('');
 
   /**
+   * The block the frame says is selected, for the toolbar line.
+   *
+   * IN THE COMPONENT rather than on the Tab, and it is the one piece of select
+   * mode's state that belongs here: a selection lives in the frame's DOM, dies
+   * with the frame, and is never a fact about the book. Everything that IS a
+   * fact about the book — the cut, the words — is an attribute in the working
+   * copy and nothing else.
+   */
+  protected readonly selectedId = signal<string | null>(null);
+
+  /**
    * The click reporter's messages. Bound once so add/removeEventListener see
-   * the same function, and gated hard: only THIS component's iframe is
-   * listened to (event.source), only the expected shape is read, and only
-   * while an editor is open on this book — reading stays reading.
+   * the same function, and gated hard: only THIS component's iframe is listened
+   * to (event.source), and every field of every message is checked before it is
+   * believed. A click-to-source jump goes to whichever editor claims it (or
+   * nowhere); select mode's messages are refused outright unless they carry the
+   * shapes below.
    *
    * A WINDOW LISTENER AND NOT A DOCUMENT ONE, and it stays safe with five panes
    * on screen: `event.source` is the posting window, so each instance answers
@@ -317,17 +366,86 @@ export class EpubViewComponent implements OnDestroy {
   private readonly onFrameMessage = (event: MessageEvent): void => {
     const frame = this.frame()?.nativeElement;
     if (!frame || event.source !== frame.contentWindow) return;
-    const data = event.data as { type?: unknown; bf?: unknown; tag?: unknown; index?: unknown } | null;
-    if (!data || data.type !== 'foundry:block-click') return;
-    if (typeof data.tag !== 'string' || !/^[a-z][a-z0-9]*$/.test(data.tag)) return;
-    if (typeof data.index !== 'number' || !Number.isInteger(data.index) || data.index < 0) return;
-    // The service decides whether anything is listening — the editor is a tab
-    // in another pane now, and this component has no business knowing where.
-    this.tabs.reportSourceClick(this.tab().id, data.bf === true, data.tag, data.index);
+    const data = event.data as FrameMessage | null;
+    if (!data || typeof data.type !== 'string') return;
+
+    if (data.type === 'foundry:block-click') {
+      if (typeof data.tag !== 'string' || !/^[a-z][a-z0-9]*$/.test(data.tag)) return;
+      if (typeof data.index !== 'number' || !Number.isInteger(data.index) || data.index < 0) return;
+      // The service decides whether anything is listening — the editor is a tab
+      // in another pane now, and this component has no business knowing where.
+      this.tabs.reportSourceClick(this.tab().id, data.bf === true, data.tag, data.index);
+      return;
+    }
+
+    /*
+     * SELECT MODE, and every field is checked exactly as `tag` and `index` are
+     * above. The frame renders somebody else's book: foundry wrote most of
+     * them, but the user is free to open one it did not, and what arrives on
+     * this channel is data from a document rather than a call from a component.
+     * An id goes into an IPC call that names an element to change; a length cap
+     * and a character class are what stop it being anything else.
+     */
+    if (data.type === 'foundry:reporter-ready') {
+      // A frame that has just (re)loaded is a frame with the mode off. Telling
+      // it what the tab thinks is what survives the reloads nobody asked for —
+      // an editor flush, a chapter change, the stamping pass.
+      this.pushSelectMode();
+      return;
+    }
+    if (data.type === 'foundry:block-selected') {
+      if (data.id !== null && !isBlockId(data.id)) return;
+      this.selectedId.set(typeof data.id === 'string' ? data.id : null);
+      return;
+    }
+    if (data.type === 'foundry:block-cut') {
+      if (!isBlockId(data.id) || typeof data.cut !== 'boolean') return;
+      void this.tabs.setBlockCut(this.tab().id, data.id, data.cut);
+      return;
+    }
+    if (data.type === 'foundry:block-edited') {
+      if (!isBlockId(data.id)) return;
+      // The cap is not about main, which validates the markup itself; it is
+      // about not putting a megabyte of a book through IPC because a
+      // contenteditable was pointed at the wrong element.
+      if (typeof data.html !== 'string' || data.html.length > MAX_BLOCK_HTML) return;
+      void this.tabs.setBlockHtml(this.tab().id, data.id, data.html);
+      return;
+    }
+    if (data.type === 'foundry:select-refused') {
+      if (typeof data.reason !== 'string') return;
+      // Clamped and stripped of control characters before it is shown: it is
+      // our own script's sentence, but it arrives over the same channel as
+      // everything else and is treated the same way.
+      this.tabs.reportSelectRefusal(data.reason.replace(CONTROL_CHARACTERS, " ").slice(0, 400));
+    }
   };
+
+  /**
+   * PARENT → FRAME, which did not exist until select mode: the reporter has
+   * always been one-way. `targetOrigin` is '*' for the same reason the frame's
+   * own posts use it — a sandboxed frame's origin is opaque, so there is no
+   * origin string that names it, and the frame checks that the SOURCE is its
+   * own parent.
+   */
+  private pushSelectMode(): void {
+    const frame = this.frame()?.nativeElement;
+    frame?.contentWindow?.postMessage(
+      { type: 'foundry:select-mode', on: this.tab().selectMode },
+      '*',
+    );
+  }
 
   constructor() {
     window.addEventListener('message', this.onFrameMessage);
+
+    // The mode, whenever the tab's flag moves. The handshake covers a frame
+    // that reloaded; this covers the button being pressed with one already up.
+    effect(() => {
+      const on = this.tab().selectMode;
+      if (!on) this.selectedId.set(null);
+      this.pushSelectMode();
+    });
 
     // The rename input exists only while a row is being renamed; the moment it
     // renders, the whole current label is selected so typing replaces it.
@@ -392,3 +510,45 @@ export class EpubViewComponent implements OnDestroy {
     await this.tabs.renameHeading(this.tab().id, chapter.href, label);
   }
 }
+
+/**
+ * Everything the frame can say, as fields that are all UNKNOWN until checked.
+ *
+ * Typed this way on purpose rather than as a discriminated union of trusted
+ * shapes: nothing about a message from a sandboxed frame is guaranteed, so the
+ * declaration should not pretend that reading `data.id` gives a string.
+ */
+interface FrameMessage {
+  type?: unknown;
+  bf?: unknown;
+  tag?: unknown;
+  index?: unknown;
+  id?: unknown;
+  cut?: unknown;
+  html?: unknown;
+  reason?: unknown;
+}
+
+/**
+ * The shape of a `data-bf-id`, checked before it is handed to an IPC call that
+ * uses it to name an element to change.
+ *
+ * `p<page>-<n>` is what foundry writes; the class is wider than that so a book
+ * stamped under some later scheme still works, and narrow enough that nothing
+ * arriving here can be quoting, a path, or pattern syntax. Main checks it again
+ * — this is the near gate, not the only one.
+ */
+function isBlockId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/.test(value);
+}
+
+/**
+ * As much markup as one block's words can be before this stops believing the
+ * message. A long paragraph of a scanned book is a couple of kilobytes; the cap
+ * is generous by two orders of magnitude and still refuses to put a chapter
+ * through IPC because a contenteditable ended up on the wrong element.
+ */
+const MAX_BLOCK_HTML = 200_000;
+
+/** Stripped out of a refusal before it is shown, so a sentence stays a sentence. */
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]+/g;

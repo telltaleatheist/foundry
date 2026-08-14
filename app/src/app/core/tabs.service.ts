@@ -1,5 +1,6 @@
 import { Injectable, computed, effect, inject, signal } from '@angular/core';
 
+import type { FoundryApi } from '@shared/api';
 import type { EpubBook, JobKind } from '@shared/types';
 
 import { QueueService } from './queue.service';
@@ -128,6 +129,18 @@ export interface Tab {
   /** True while the PDF viewer's thumbnail strip is up. ON by default — it sits
    *  along the bottom where it costs little, and Owen wants the pages in reach. */
   thumbnails: boolean;
+  /**
+   * True while this book is in SELECT MODE — blocks outlined, click to select,
+   * Delete to cut, Enter to fix a word.
+   *
+   * ON THE TAB AND NOT ON UiService, and that is not a stylistic preference:
+   * five panes can each show a different book, and a global flag would turn the
+   * mode on in all of them at once. It is the same reason `layerView` lives
+   * here. It is also not persisted anywhere — the mode is a thing you are doing
+   * right now, and a book that reopened outlined would be a book that looked
+   * broken until you found the button that was already on.
+   */
+  selectMode: boolean;
   /**
    * Bumped on every flush that reached disk.
    *
@@ -424,6 +437,7 @@ export class TabsService {
       sourceTabId: null,
       layerView: false,
       thumbnails: true,
+      selectMode: false,
       revision: 0,
       problem: null,
     };
@@ -922,6 +936,157 @@ export class TabsService {
       tabs.map((tab) => (tab.id === id ? { ...tab, thumbnails: !tab.thumbnails } : tab)));
   }
 
+  // ── Select mode ──────────────────────────────────────────────────────────
+
+  /**
+   * ONE WRITE IN FLIGHT PER MEMBER, and every write of a chapter goes through
+   * it: an editor flush, a cut, an un-cut, an edited paragraph.
+   *
+   * Each of them is a read-modify-write of one file in the working tree. Two
+   * that overlap both read the SAME text and the second one's write erases the
+   * first one's change — and select mode is a gesture stream, so two cuts a
+   * quarter of a second apart is the normal case rather than a race somebody
+   * has to contrive. Serialised per member rather than globally, because two
+   * chapters are two files and there is nothing for them to fight over.
+   *
+   * A failed write does not poison the chain: the next one runs regardless, and
+   * its caller hears about its own failure.
+   */
+  private readonly memberWrites = new Map<string, Promise<unknown>>();
+
+  private queueMemberWrite<T>(bookId: string, member: string, work: () => Promise<T>): Promise<T> {
+    const key = `${bookId} :: ${member}`;
+    const previous = this.memberWrites.get(key) ?? Promise.resolve();
+    const next = previous.then(work, work);
+    // The tail is dropped once nothing is behind it, so a long session does not
+    // accumulate one settled promise per chapter it ever touched.
+    const settled = next.then(() => { /* kept */ }, () => { /* kept */ }).then(() => {
+      if (this.memberWrites.get(key) === settled) this.memberWrites.delete(key);
+    });
+    this.memberWrites.set(key, settled);
+    return next;
+  }
+
+  /**
+   * The rail's Select toggle.
+   *
+   * TURNING IT ON STAMPS A BOOK THAT WAS CAST BEFORE `data-bf-id` EXISTED. A
+   * cut is recorded against that attribute and every other id in a cast book
+   * renumbers, so a book without it has nothing select mode can address. Main
+   * measures whether the book needs it (all or nothing) and writes through the
+   * ordinary member write; this side only says so in the log and reloads the
+   * rendered pane — which is the ONE revision bump select mode makes, because
+   * the frame is showing markup that has just gained an attribute on every
+   * block and no gesture in the mode would work against it.
+   *
+   * The mode is turned on AFTER the stamping lands, so the first click already
+   * has a name to report.
+   */
+  async toggleSelectMode(id: string): Promise<void> {
+    const tab = this.byId(id);
+    if (!tab || tab.kind !== 'epub' || tab.book === null) return;
+    if (tab.selectMode) {
+      this.patch(id, { selectMode: false });
+      return;
+    }
+    if (api) {
+      // The spine, in reading order, without the #fragment rows: those name a
+      // heading inside a document that is already in the list.
+      const members = [...new Set(tab.book.chapters.map((chapter) => memberOf(chapter.href)))];
+      try {
+        const stamped = await api.epub.mintIds(tab.book.id, members);
+        if (stamped.minted > 0) {
+          console.log(
+            `[select] ${tab.title} was cast before data-bf-id existed: stamped `
+            + `${stamped.minted} elements across ${stamped.documents} documents.`,
+          );
+          const current = this.byId(id);
+          this.patch(id, { modified: true, revision: (current?.revision ?? tab.revision) + 1 });
+        }
+      } catch (err) {
+        this.notice.set(err instanceof Error ? err.message : String(err));
+        return;
+      }
+    }
+    this.patch(id, { selectMode: true });
+  }
+
+  /**
+   * Mark or unmark a block, by the name the frame reported.
+   *
+   * NO REVISION BUMP on success, and that is the point of the whole shape: the
+   * frame painted the mark before this was called, and reloading the iframe
+   * would throw the reader back to the top of the chapter to show them
+   * something already on screen.
+   *
+   * ON A REFUSAL IT BUMPS. The frame is then showing a mark the file does not
+   * carry, and the only honest fix is to reload it and let the book repaint
+   * itself — which works because the cut lives in the document rather than in
+   * anything the frame remembers.
+   */
+  async setBlockCut(id: string, blockId: string, cut: boolean): Promise<void> {
+    await this.blockEdit(id, (bridge, book, member) =>
+      bridge.epub.setCut(book, member, blockId, cut));
+  }
+
+  /** The same shape for an edited block: optimistic, and repainted on a refusal. */
+  async setBlockHtml(id: string, blockId: string, html: string): Promise<void> {
+    await this.blockEdit(id, (bridge, book, member) =>
+      bridge.epub.setBlockHtml(book, member, blockId, html));
+  }
+
+  private async blockEdit(
+    id: string,
+    write: (bridge: FoundryApi, bookId: string, member: string) => Promise<void>,
+  ): Promise<void> {
+    const bridge = api;
+    const tab = this.byId(id);
+    if (!bridge || !tab || tab.book === null || tab.chapterHref === null) return;
+    const bookId = tab.book.id;
+    const member = memberOf(tab.chapterHref);
+    try {
+      await this.queueMemberWrite(bookId, member, () => write(bridge, bookId, member));
+      this.patch(id, { modified: true });
+      this.memberChanged(id, member);
+    } catch (err) {
+      this.notice.set(err instanceof Error ? err.message : String(err));
+      const current = this.byId(id);
+      if (current) this.patch(id, { revision: current.revision + 1 });
+    }
+  }
+
+  /** Something the frame itself refused, said where the user can read it. */
+  reportSelectRefusal(reason: string): void {
+    this.notice.set(reason);
+  }
+
+  /**
+   * A chapter that changed on disk without the HTML editor doing it.
+   *
+   * THE HAZARD THIS EXISTS FOR IS SILENT AND COSTS WORK. The editor holds a
+   * WHOLE chapter in its textarea, loaded when that chapter opened. Cut three
+   * blocks in select mode with the editor open on the same chapter, then type
+   * one character in the editor: its next flush writes the entire textarea
+   * back, which is the text from before the cuts. The marks are gone, nothing
+   * says so, and the only evidence is that `epub-final` later finds nothing to
+   * remove.
+   *
+   * A REVISION BUMP CANNOT SAY THIS. That signal reloads the rendered iframe,
+   * which is exactly what a cut must not do — the frame already painted the
+   * mark. So this is its own counter: the editor watches it, the viewer does
+   * not, and a cut stays as cheap as it was.
+   *
+   * Carries the member, because an editor showing a DIFFERENT chapter of the
+   * same book has nothing to reload and must not be disturbed.
+   */
+  readonly memberWritten = signal<{ tabId: string; member: string; seq: number } | null>(null);
+  private memberSeq = 0;
+
+  private memberChanged(tabId: string, member: string): void {
+    this.memberSeq += 1;
+    this.memberWritten.set({ tabId, member, seq: this.memberSeq });
+  }
+
   /** One chapter's XHTML source, for the editor pane. */
   async chapterSource(tab: Tab, href: string): Promise<string> {
     if (!api || tab.book === null) return '';
@@ -942,14 +1107,29 @@ export class TabsService {
    * pane doing the reloading may now be a different one from the pane the
    * keystroke happened in, which costs this code nothing: the revision is on the
    * tab, and every viewer of that tab is watching it.
+   *
+   * THROUGH THE SAME PER-MEMBER QUEUE select mode's writes use. The editor and
+   * the mode can be open on one chapter at once, and a flush of the whole
+   * chapter overlapping a cut of one block in it is two read-modify-writes of
+   * one file where the loser's change simply vanishes.
    */
   async writeChapter(id: string, href: string, text: string): Promise<void> {
+    const bridge = api;
     const tab = this.all().find((candidate) => candidate.id === id);
-    if (!api || !tab || tab.book === null) return;
+    if (!bridge || !tab || tab.book === null) return;
+    const bookId = tab.book.id;
+    const member = memberOf(href);
     this.writingTo.set(id);
     try {
-      await api.epub.writeMember(tab.book.id, memberOf(href), text);
-      this.patch(id, { modified: true, revision: tab.revision + 1 });
+      await this.queueMemberWrite(
+        bookId,
+        member,
+        () => bridge.epub.writeMember(bookId, member, text),
+      );
+      // Re-read rather than +1 on the tab captured before the queue: a refused
+      // cut repaints by bumping the revision too, so the number this write
+      // lands on may not be the one it started from.
+      this.patch(id, { modified: true, revision: (this.byId(id)?.revision ?? tab.revision) + 1 });
     } catch (err) {
       this.notice.set(err instanceof Error ? err.message : String(err));
     } finally {

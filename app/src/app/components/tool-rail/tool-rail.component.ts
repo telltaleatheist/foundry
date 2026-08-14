@@ -74,6 +74,21 @@ import { UiService } from '../../core/ui.service';
           <span class="rail-label">Translate</span>
         </button>
 
+        <!-- Select mode. Disabled rather than hidden away from a book, like
+             Translate and Edit HTML: the curation pass is the point of the
+             whole app, and somebody looking at a scan should be able to see
+             that the tool exists and is waiting for a cast book. -->
+        <button
+          class="rail-item"
+          [class.active]="selecting()"
+          [disabled]="!canSelect()"
+          title="Outline the blocks: click to select, Delete to cut, Enter to fix a word"
+          (click)="toggleSelect()"
+        >
+          <span class="rail-icon">⧉</span>
+          <span class="rail-label">Select</span>
+        </button>
+
         <!-- The split editor's discoverable half: the same toggle as the
              button in the book's own toolbar, surfaced where a person who has
              never opened it will look. Disabled rather than hidden when the
@@ -188,6 +203,27 @@ export class ToolRailComponent {
   protected canEdit(): boolean {
     const tab = this.tabs.activeDocument();
     return tab !== null && tab.kind === 'epub' && tab.book !== null;
+  }
+
+  /**
+   * Selectable is the same test as editable, and for the same reason it reads
+   * `activeDocument()` rather than `active()`: with the HTML editor pane focused
+   * the tab in front of the user is the editor, and a rail that greyed out the
+   * book's own mode the moment you clicked into its source would be a rail you
+   * could not press twice.
+   */
+  protected canSelect(): boolean {
+    const tab = this.tabs.activeDocument();
+    return tab !== null && tab.kind === 'epub' && tab.book !== null;
+  }
+
+  protected selecting(): boolean {
+    return this.tabs.activeDocument()?.selectMode === true;
+  }
+
+  protected toggleSelect(): void {
+    const tab = this.tabs.activeDocument();
+    if (tab && tab.kind === 'epub' && tab.book !== null) void this.tabs.toggleSelectMode(tab.id);
   }
 
   protected editingActive(): boolean {

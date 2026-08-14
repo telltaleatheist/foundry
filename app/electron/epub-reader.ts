@@ -65,6 +65,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as zlib from 'node:zlib';
 
+// The inline whitelist an in-place edit is held to, read from the module that
+// injects the frame script — so the check the frame makes before a word is
+// typed and the check main makes when the words come back cannot drift apart.
+import { INLINE_TAGS } from './click-reporter';
 import { packEpub, writeAtomically } from './epub-writer';
 import {
   holdWorkingTree,
@@ -438,6 +442,447 @@ export async function writeEpubMember(
   const bytes = Buffer.byteLength(text, 'utf8');
   await fs.promises.writeFile(resolved, text, 'utf8');
   return bytes;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Select mode's three edits — the cut mark, a block's words, and minting ids
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * These three functions are the whole of what select mode may do to a book, and
+ * they are HERE — in main, by targeted string surgery — for the reason
+ * `renameEpubHeading` above is: the app never imports the engine, it spawns it,
+ * so an attribute the app writes is an attribute the app writes itself. The
+ * precedent is that function, down to `LEADING_SPANS`: find the exact thing,
+ * change the smallest part of it, leave every other byte of the document alone.
+ *
+ * WHAT THEY ARE ALLOWED TO CHANGE IS DELIBERATELY TINY. `data-bf-cut="1"` goes
+ * on or comes off ONE start tag; the text between one element's tags is
+ * replaced; ids are stamped into start tags that have none. No repack (that
+ * died with the projects change) and no reformatting: a chapter that has been
+ * cut and uncut is byte-identical to the one that was opened.
+ *
+ * EVERY REFUSAL NAMES THE THING (ARCHITECTURE section 8). An id that is not in
+ * the document, an id that is in it TWICE, an edit that moved a tag — each is a
+ * sentence about that block in that file, never a silent no-op and never a
+ * guess. The duplicate case matters most: two elements with one name means the
+ * book is not the shape this app believes it is, and picking one of them is how
+ * the wrong paragraph disappears out of somebody's book.
+ */
+
+/** The mark `foundry epub-final` removes an element by. Nothing else reads it. */
+const CUT_ATTRIBUTE = 'data-bf-cut';
+
+/** The name a block is addressed by — the only id in a cast book that is stable. */
+const ID_ATTRIBUTE = 'data-bf-id';
+
+/** One start tag, located in a document. `end` is just past its `>`. */
+interface StartTag {
+  name: string;
+  start: number;
+  end: number;
+  text: string;
+  selfClosing: boolean;
+}
+
+/**
+ * The one element carrying `data-bf-id="<blockId>"`, or a refusal that says why
+ * there is not exactly one.
+ *
+ * Scoped to the ONE member being edited rather than to the whole book: this is
+ * the file about to be written, so it is the file in which a second element of
+ * the same name could make the surgery land on the wrong paragraph. (Book-wide
+ * uniqueness is the minting pass's problem, and it is the only thing that ever
+ * invents an id here.)
+ */
+function locateBlock(markup: string, blockId: string, label: string): StartTag {
+  // The shape of an id foundry writes, checked before it is put in a RegExp and
+  // before it is quoted into an error message. Permissive enough for a book
+  // stamped by some later scheme, narrow enough that nothing arriving from a
+  // frame can be pattern syntax.
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/.test(blockId)) {
+    throw new EpubError(
+      `"${blockId}" is not a shape ${ID_ATTRIBUTE} is ever written in, so nothing is being changed.`,
+    );
+  }
+  const quoted = escapeRegExp(blockId);
+  const pattern = new RegExp(
+    `<([a-zA-Z][a-zA-Z0-9-]*)\\b[^>]*\\b${ID_ATTRIBUTE}\\s*=\\s*("${quoted}"|'${quoted}')[^>]*>`,
+    'g',
+  );
+  const found: StartTag[] = [];
+  for (const match of markup.matchAll(pattern)) {
+    const text = match[0];
+    // `index` is optional on the platform's match type and never actually
+    // absent for a match that came from a string; skipping rather than
+    // asserting keeps the count honest either way.
+    if (match.index === undefined) continue;
+    found.push({
+      name: (match[1] ?? '').toLowerCase(),
+      start: match.index,
+      end: match.index + text.length,
+      text,
+      selfClosing: /\/\s*>$/.test(text),
+    });
+  }
+  if (found.length === 0) {
+    throw new EpubError(
+      `Nothing in ${label} carries ${ID_ATTRIBUTE}="${blockId}". The chapter on screen is older `
+      + 'than the file, or this book was re-cast under the tab — reopen it and try again.',
+    );
+  }
+  if (found.length > 1) {
+    throw new EpubError(
+      `${found.length} elements in ${label} carry ${ID_ATTRIBUTE}="${blockId}", and an id names one `
+      + 'element. Refusing to guess which of them you meant.',
+    );
+  }
+  return found[0]!;
+}
+
+/** `<p …>` with the cut mark added, or the tag unchanged when it already has one. */
+function withCutMark(tag: string): string {
+  if (new RegExp(`\\b${CUT_ATTRIBUTE}\\s*=`).test(tag)) return tag;
+  const closeAt = tag.endsWith('/>') ? tag.length - 2 : tag.length - 1;
+  return `${tag.slice(0, closeAt).replace(/\s+$/, '')} ${CUT_ATTRIBUTE}="1"${tag.slice(closeAt)}`;
+}
+
+/** …and with it taken off, whitespace and all, so an un-cut restores the byte. */
+function withoutCutMark(tag: string): string {
+  return tag.replace(new RegExp(`\\s+${CUT_ATTRIBUTE}\\s*=\\s*("[^"]*"|'[^']*')`, 'g'), '');
+}
+
+/**
+ * Set or clear `data-bf-cut` on one block of one member.
+ *
+ * REPACKS NOTHING and does not touch any other member: the chapter file is the
+ * commit, exactly as it is for an editor keystroke. The caller does not bump
+ * the tab's revision either — the frame painted the mark before this was called
+ * and a reload would only throw the reader back to the top of the chapter.
+ */
+export async function setBlockCut(
+  id: string,
+  memberPath: string,
+  blockId: string,
+  cut: boolean,
+): Promise<void> {
+  const member = resolveEpubMember(id, memberPath);
+  if (member === null) {
+    throw new EpubError(`"${memberPath}" is not part of a book this app has open.`);
+  }
+  const markup = await fs.promises.readFile(member, 'utf8');
+  const block = locateBlock(markup, blockId, memberPath);
+  const replacement = cut ? withCutMark(block.text) : withoutCutMark(block.text);
+  if (replacement === block.text) return;
+  await fs.promises.writeFile(
+    member,
+    markup.slice(0, block.start) + replacement + markup.slice(block.end),
+    'utf8',
+  );
+}
+
+/**
+ * Where the element opened by `block` closes — the offset of its `</…>`.
+ *
+ * Depth-counted over its OWN tag name only, which is all that is needed for
+ * well-formed XHTML: a `<blockquote>` inside a `<blockquote>` has to close
+ * before the outer one does, and a `<p>` in between cannot close either. -1
+ * when the document never closes it.
+ */
+function closeTagOffset(markup: string, block: StartTag): number {
+  const pattern = new RegExp(`<(/?)${escapeRegExp(block.name)}\\b([^>]*)>`, 'gi');
+  pattern.lastIndex = block.end;
+  let depth = 1;
+  for (let match = pattern.exec(markup); match !== null; match = pattern.exec(markup)) {
+    if (match[1] === '/') {
+      depth -= 1;
+      if (depth === 0) return match.index;
+    } else if (!/\/\s*$/.test(match[2] ?? '')) {
+      depth += 1;
+    }
+  }
+  return -1;
+}
+
+/** One tag as the scanner sees it, for the comparison below. */
+interface ScannedTag {
+  name: string;
+  closing: boolean;
+  attributes: string;
+}
+
+/**
+ * Every tag in a fragment, in order.
+ *
+ * Regular expressions again, for the reason this whole file gives: the app has
+ * no XML parser, the markup is foundry's own, and the one construct that would
+ * defeat this — a `>` inside an attribute value — is not something the emitter
+ * writes and not something a browser's serializer produces from what it wrote.
+ * Comments, CDATA and processing instructions are refused outright by the
+ * caller before this is reached, so `<` here is always a tag.
+ */
+function scanTags(fragment: string): ScannedTag[] {
+  const tags: ScannedTag[] = [];
+  for (const match of fragment.matchAll(/<(\/?)([a-zA-Z][a-zA-Z0-9:-]*)([^>]*)>/g)) {
+    tags.push({
+      name: (match[2] ?? '').toLowerCase(),
+      closing: match[1] === '/',
+      attributes: (match[3] ?? '').replace(/\/\s*$/, ''),
+    });
+  }
+  return tags;
+}
+
+/**
+ * A start tag reduced to what it MEANS: its name and its attributes, sorted,
+ * with entities decoded.
+ *
+ * NOT the raw tag text, and the difference is the whole reason this function
+ * exists. The old markup comes off disk as the emitter wrote it; the new markup
+ * comes out of a browser's serializer, which is free to re-quote an attribute,
+ * write `&#39;` where the file had `&apos;`, or hand back attributes in a
+ * different order — none of which changes the document at all. Comparing raw
+ * text would refuse honest edits over a serializer's punctuation, which would
+ * make the mode useless; comparing this refuses exactly what it should, because
+ * a footnote reference whose `href` changed, or whose `epub:type` went missing,
+ * produces a different signature every time.
+ *
+ * The cost is that an edit could in principle reorder a tag's attributes. That
+ * is a difference no reader, no parser and no later pass can observe.
+ */
+function tagSignature(tag: ScannedTag): string {
+  const attributes: string[] = [];
+  for (const match of tag.attributes.matchAll(/([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*("([^"]*)"|'([^']*)')/g)) {
+    attributes.push(`${match[1]}=${decodeEntities(match[3] ?? match[4] ?? '')}`);
+  }
+  attributes.sort();
+  return `<${tag.name}${attributes.length > 0 ? ` ${attributes.join(' ')}` : ''}>`;
+}
+
+function countSignatures(tags: readonly ScannedTag[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const tag of tags) {
+    if (tag.closing) continue;
+    const signature = tagSignature(tag);
+    counts.set(signature, (counts.get(signature) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * THE EDIT MUST BE A WORD CHANGE AND NOTHING ELSE. This is where that is true.
+ *
+ * Three refusals, each by name:
+ *
+ *   1. Anything that is not a tag — a comment, a CDATA section, a processing
+ *      instruction — and any tag that is not in the inline whitelist. This is
+ *      what stops a paste of a whole paragraph, and what makes "editing a
+ *      blockquote" a sentence rather than a mystery.
+ *   2. A start tag whose signature is not in the original, or one of the
+ *      original's that is no longer there. Same tags, same attributes, same
+ *      count: a footnote reference, a pagebreak span and their attributes
+ *      cannot be altered, dropped or invented, while the words AROUND them are
+ *      free. That is the entire contract of editing in place.
+ *   3. An unescaped `&`. These documents are XHTML and are parsed strictly; a
+ *      bare ampersand does not produce a slightly wrong paragraph, it produces
+ *      a chapter that will not render at all.
+ *
+ * And one judgement: an edit that empties a block which had words is refused,
+ * because a block with nothing in it is what a CUT is for and the two are one
+ * keystroke apart.
+ */
+function refuseUnlessWordEdit(before: string, after: string, blockId: string, label: string): void {
+  const where = `${ID_ATTRIBUTE}="${blockId}" in ${label}`;
+
+  if (/<[!?]/.test(after)) {
+    throw new EpubError(
+      `That edit to ${where} contains a comment, a CDATA section or a processing instruction. `
+      + 'Editing in place changes words; anything else is the Edit HTML pane.',
+    );
+  }
+  if (/&(?!#[0-9]+;|#[xX][0-9a-fA-F]+;|[a-zA-Z][a-zA-Z0-9]*;)/.test(after)) {
+    throw new EpubError(
+      `That edit to ${where} contains a bare "&". These chapters are XHTML and are parsed `
+      + 'strictly, so an unescaped ampersand would stop the whole chapter rendering.',
+    );
+  }
+
+  const edited = scanTags(after);
+  for (const tag of edited) {
+    if (INLINE_TAGS.has(tag.name)) continue;
+    throw new EpubError(
+      `That edit to ${where} introduces <${tag.name}>, which is not inline markup. Editing in `
+      + `place may change words around ${[...INLINE_TAGS].join(', ')} and nothing else — `
+      + 'structure is the Edit HTML pane\'s job.',
+    );
+  }
+
+  const was = countSignatures(scanTags(before));
+  const now = countSignatures(edited);
+  const dropped: string[] = [];
+  const added: string[] = [];
+  for (const [signature, count] of was) {
+    const left = now.get(signature) ?? 0;
+    if (left < count) dropped.push(`${signature}${count - left > 1 ? ` ×${count - left}` : ''}`);
+  }
+  for (const [signature, count] of now) {
+    const had = was.get(signature) ?? 0;
+    if (count > had) added.push(`${signature}${count - had > 1 ? ` ×${count - had}` : ''}`);
+  }
+  if (dropped.length > 0 || added.length > 0) {
+    const parts: string[] = [];
+    if (dropped.length > 0) parts.push(`it loses ${dropped.join(', ')}`);
+    if (added.length > 0) parts.push(`it gains ${added.join(', ')}`);
+    throw new EpubError(
+      `That edit to ${where} changes the markup inside the block and not only its words: `
+      + `${parts.join(' and ')}. The tags and their attributes have to come back exactly as `
+      + 'they went in — a footnote reference or a page marker is not a word.',
+    );
+  }
+
+  if (before.trim().length > 0 && after.trim().length === 0) {
+    throw new EpubError(
+      `That edit would leave ${where} with no words at all. A block with nothing in it is a `
+      + 'block to CUT — press Delete on it instead.',
+    );
+  }
+}
+
+/**
+ * Replace one block's inner markup with the edited words.
+ *
+ * The whole check is `refuseUnlessWordEdit`; everything here is finding the two
+ * offsets to splice between and refusing when there are not two. Like the cut,
+ * it writes one member and repacks nothing, and the caller does not bump the
+ * revision: the frame is already showing these words.
+ */
+export async function setBlockHtml(
+  id: string,
+  memberPath: string,
+  blockId: string,
+  html: string,
+): Promise<void> {
+  const member = resolveEpubMember(id, memberPath);
+  if (member === null) {
+    throw new EpubError(`"${memberPath}" is not part of a book this app has open.`);
+  }
+  const markup = await fs.promises.readFile(member, 'utf8');
+  const block = locateBlock(markup, blockId, memberPath);
+  if (block.selfClosing) {
+    throw new EpubError(
+      `${ID_ATTRIBUTE}="${blockId}" in ${memberPath} is written as an empty element `
+      + `(<${block.name}/>), so it has no words to edit.`,
+    );
+  }
+  const closeAt = closeTagOffset(markup, block);
+  if (closeAt < 0) {
+    throw new EpubError(
+      `The <${block.name}> carrying ${ID_ATTRIBUTE}="${blockId}" in ${memberPath} is never closed, `
+      + 'so there is no range to replace. That chapter needs the Edit HTML pane.',
+    );
+  }
+  const before = markup.slice(block.end, closeAt);
+  if (before === html) return;
+  refuseUnlessWordEdit(before, html, blockId, memberPath);
+  await fs.promises.writeFile(
+    member,
+    markup.slice(0, block.end) + html + markup.slice(closeAt),
+    'utf8',
+  );
+}
+
+/** Every start tag of a document, for the two passes that walk them all. */
+const START_TAGS = /<[a-zA-Z][a-zA-Z0-9-]*\b[^>]*>/g;
+
+/** A stamped element — one the model read — carries the page it came off. */
+function isStamped(tag: string): boolean {
+  return /\bdata-bf-page\s*=/.test(tag);
+}
+
+/** …and one that has already been named carries an id. */
+function isNamed(tag: string): boolean {
+  return /\bdata-bf-id\s*=/.test(tag);
+}
+
+/**
+ * Stamp `data-bf-id` into a book that was cast before ids existed.
+ *
+ * WHY THIS EXISTS: `data-bf-id` is what a cut is recorded against, and every
+ * other id in a cast book renumbers — `sh1` is chapter-local, `fn7` is
+ * book-wide, `c0003` is a chapter ordinal, so removing one heading renames
+ * everything after it. A book cast before the stamp landed therefore has
+ * nothing select mode can address, and this is the one-time pass that gives it
+ * one, through the ordinary member write like any other edit.
+ *
+ * ALL OR NOTHING, measured the way the plan words it: if ANY stamped element in
+ * the book already carries an id, the book is stamped and nothing is written.
+ * A part-stamped book cannot arise from anything this app or the engine does,
+ * and inventing ids alongside existing ones is how two elements end up sharing
+ * a name.
+ *
+ * THE SCHEME IS THE EMITTER'S, deliberately: `p<page>-<n>`, the ordinal
+ * counting ELEMENTS rather than blocks — a `<ul>` and each of its `<li>` are
+ * separate elements and get separate ids, or one id would be on two elements,
+ * which is invalid XHTML and unaddressable besides. The counters are held
+ * ACROSS documents, so a page whose blocks span a chapter boundary does not
+ * start again at 1 and produce two `p47-1`s in one book.
+ *
+ * `members` is the spine, in reading order, because that is the order the
+ * engine wrote them in and the order that makes the numbering reproducible.
+ * Every one of them is still resolved through the allow-list — the renderer
+ * says which files, main says whether they are files of this book.
+ */
+export async function mintBlockIds(
+  id: string,
+  members: readonly string[],
+): Promise<{ minted: number; documents: number }> {
+  const seen = new Set<string>();
+  const files: { href: string; file: string }[] = [];
+  for (const href of members) {
+    if (seen.has(href)) continue;
+    seen.add(href);
+    const file = resolveEpubMember(id, href);
+    if (file === null) {
+      throw new EpubError(`"${href}" is not part of a book this app has open.`);
+    }
+    files.push({ href, file });
+  }
+
+  const documents: { href: string; file: string; markup: string }[] = [];
+  for (const entry of files) {
+    documents.push({ ...entry, markup: await fs.promises.readFile(entry.file, 'utf8') });
+  }
+
+  for (const document of documents) {
+    for (const match of document.markup.matchAll(START_TAGS)) {
+      if (isStamped(match[0]) && isNamed(match[0])) return { minted: 0, documents: 0 };
+    }
+  }
+
+  const counters = new Map<string, number>();
+  let minted = 0;
+  let touched = 0;
+  for (const document of documents) {
+    const stamped = document.markup.replace(START_TAGS, (tag) => {
+      if (!isStamped(tag)) return tag;
+      const page = attribute(tag, 'data-bf-page');
+      if (page === null || !/^\d+$/.test(page)) {
+        throw new EpubError(
+          `${document.href} has a block whose data-bf-page is "${page ?? ''}" rather than a page `
+          + 'number, so there is no name to give it. This book cannot be stamped.',
+        );
+      }
+      const n = counters.get(page) ?? 1;
+      counters.set(page, n + 1);
+      minted += 1;
+      const closeAt = tag.endsWith('/>') ? tag.length - 2 : tag.length - 1;
+      return `${tag.slice(0, closeAt).replace(/\s+$/, '')} ${ID_ATTRIBUTE}="p${page}-${n}"${tag.slice(closeAt)}`;
+    });
+    if (stamped === document.markup) continue;
+    await fs.promises.writeFile(document.file, stamped, 'utf8');
+    touched += 1;
+  }
+  return { minted, documents: touched };
 }
 
 /**

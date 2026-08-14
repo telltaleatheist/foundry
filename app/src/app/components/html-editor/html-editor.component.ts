@@ -221,6 +221,38 @@ export class HtmlEditorComponent implements OnDestroy {
     // The service runs this before it asks any question about closing — see
     // TabsService.close. Registered by effect rather than in the constructor
     // because the tab's id is an input and inputs are not readable this early.
+    /**
+     * The chapter changed underneath this box, and somebody else did it.
+     *
+     * Select mode writes the same member this editor holds — a cut, a word
+     * fixed in place — and this box is still showing the text from when the
+     * chapter opened. One keystroke here and the debounced flush writes that
+     * whole stale chapter back, taking the cuts with it, silently.
+     *
+     * CLEAN DRAFT: reload, and the box shows the truth.
+     * DIRTY DRAFT: do NOT touch it. Somebody's unsaved sentence is worth more
+     * than the convenience, so the draft stands and the notice says the file
+     * moved — and the flush that follows is now an informed choice rather than
+     * an accident.
+     */
+    effect(() => {
+      const written = this.tabs.memberWritten();
+      const book = this.source();
+      if (written === null || book === null) return;
+      if (written.tabId !== book.id || this.draftHref === null) return;
+      if (memberOf(written.member) !== memberOf(this.draftHref)) return;
+      untracked(() => {
+        if (this.draft() !== this.onDisk) {
+          this.tabs.notice.set(
+            'This chapter changed while you were editing it — a cut or an in-place fix. Your '
+            + 'unsaved text is untouched here, but saving it will write over that change.',
+          );
+          return;
+        }
+        void this.load(book, this.draftHref!);
+      });
+    });
+
     effect(() => {
       this.tabs.registerFlush(this.tab().id, () => this.flushPending());
     });
@@ -329,3 +361,15 @@ export class HtmlEditorComponent implements OnDestroy {
  * delay is about the reader's eye, not about the disk.
  */
 const FLUSH_DELAY_MS = 700;
+
+/**
+ * A sidebar href without its #fragment — the member file it lives in.
+ *
+ * Both sides of the staleness comparison have to be reduced the same way: a
+ * section-header row's href carries a fragment and the write that arrives names
+ * the file, and `text/c0003.xhtml#sh2` and `text/c0003.xhtml` are the same
+ * chapter.
+ */
+function memberOf(href: string): string {
+  return href.split('#')[0] ?? href;
+}

@@ -38,12 +38,15 @@ import {
   closeAllEpubs,
   closeEpub,
   exportWorkingCopy,
+  mintBlockIds,
   openEpub,
   projectOf,
   readEpubMember,
   renameEpubHeading,
   repackEpub,
   resolveEpubMember,
+  setBlockCut,
+  setBlockHtml,
   writeEpubMember,
 } from './epub-reader';
 import * as queue from './job-queue';
@@ -838,6 +841,38 @@ function registerIpc(): void {
   // same text. Into the working tree, like an edit; nothing else is written.
   ipcMain.handle('epub:rename-heading', (_event, id: string, href: string, label: string) =>
     renameEpubHeading(id, href, label));
+
+  /*
+   * ── Select mode's three writes ───────────────────────────────────────────
+   *
+   * All three are member writes into the working tree and all three repack
+   * nothing, like every other edit since the projects change. What is new is
+   * that they are keyed by `data-bf-id` — the one name in a cast book that does
+   * not renumber when something before it is removed — and that each of them
+   * REFUSES BY NAME rather than doing its best: an id that is not there, an id
+   * that is there twice, an edit that moved a tag rather than a word. The
+   * reasons live with the surgery, in epub-reader.ts.
+   *
+   * They are handlers of their own rather than a mode on `epub:write-member`
+   * because the renderer must not be able to hand main a whole chapter and call
+   * it a cut. What crosses this boundary is a block's NAME and either a boolean
+   * or the words inside it; the document is main's the entire time.
+   */
+  ipcMain.handle(
+    'epub:set-cut',
+    (_event, id: string, href: string, blockId: string, cut: boolean) =>
+      setBlockCut(id, href, blockId, cut === true),
+  );
+  ipcMain.handle(
+    'epub:set-block-html',
+    (_event, id: string, href: string, blockId: string, html: string) =>
+      setBlockHtml(id, href, blockId, html),
+  );
+  // The spine, in reading order, from the renderer — which is where the reading
+  // order is known. Every href is still resolved against the book's own
+  // allow-list inside, so naming a file is not the same as reaching one.
+  ipcMain.handle('epub:mint-ids', (_event, id: string, members: string[]) =>
+    mintBlockIds(id, members));
 
   ipcMain.handle('epub:choose-save-path', async (_event, id: string, suggestedName: string) => {
     const win = mainWindow ?? BrowserWindow.getAllWindows()[0];

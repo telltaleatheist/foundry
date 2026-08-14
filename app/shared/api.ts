@@ -143,6 +143,39 @@ export interface FoundryApi {
      */
     renameHeading(id: string, href: string, label: string): Promise<void>;
     /**
+     * Select mode's cut mark: `data-bf-cut="1"` on the element named by
+     * `blockId`, in the chapter member `href`, in the working tree.
+     *
+     * THE CUT LIVES HERE AND NOWHERE ELSE — not in a Set in a service, not in a
+     * sidecar, not in the manifest. One store means the mark survives the
+     * iframe reloads that destroy anything held in memory, the viewer and
+     * `foundry epub-final` read the same fact, and there is no identity problem
+     * because the mark is ON the element.
+     *
+     * Rejects by name when nothing in that member carries the id, or when more
+     * than one element does. Bumps no revision: the frame painted it already.
+     */
+    setCut(id: string, href: string, blockId: string, cut: boolean): Promise<void>;
+    /**
+     * The words of one block, edited in place. `html` is the block's new inner
+     * markup as the frame serialized it.
+     *
+     * Main refuses anything that is not a WORD change: every tag must be inline
+     * markup, and the multiset of start tags with their attributes must be
+     * unchanged — so an `<em>`, a footnote reference and a pagebreak span
+     * cannot be altered, dropped or invented, while the words around them are
+     * free. The refusal says exactly what moved.
+     */
+    setBlockHtml(id: string, href: string, blockId: string, html: string): Promise<void>;
+    /**
+     * Stamp `data-bf-id` into a book cast before ids existed, through the
+     * ordinary member write. `members` is the spine in reading order.
+     *
+     * A no-op returning `{ minted: 0 }` when any stamped element in the book
+     * already carries one — the measurement is all-or-nothing on purpose.
+     */
+    mintIds(id: string, members: string[]): Promise<{ minted: number; documents: number }>;
+    /**
      * The save picker, opening on the library folder. Null when dismissed.
      * Takes the book's id because the answer is also a GRANT: main records it,
      * and `save` refuses any destination that was never granted — either by

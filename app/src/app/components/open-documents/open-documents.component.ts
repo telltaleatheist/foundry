@@ -47,7 +47,10 @@ import { TabsService, type Tab } from '../../core/tabs.service';
   template: `
     <div class="panel">
       <header class="head">
-        <span class="label">Open</span>
+        <!-- "Open" alone read as a verb — a button you press — beside a book's
+             own title in the chapter list next to it. It is a noun: these are
+             the documents that are open. -->
+        <span class="label">Open documents</span>
         <span class="count">{{ tabs.tabs().length }}</span>
       </header>
 

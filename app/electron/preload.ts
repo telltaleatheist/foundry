@@ -41,6 +41,10 @@ const api: FoundryApi = {
     readMember: (id, href) => ipcRenderer.invoke('epub:read-member', id, href),
     writeMember: (id, href, text) => ipcRenderer.invoke('epub:write-member', id, href, text),
     renameHeading: (id, href, label) => ipcRenderer.invoke('epub:rename-heading', id, href, label),
+    setCut: (id, href, blockId, cut) => ipcRenderer.invoke('epub:set-cut', id, href, blockId, cut),
+    setBlockHtml: (id, href, blockId, html) =>
+      ipcRenderer.invoke('epub:set-block-html', id, href, blockId, html),
+    mintIds: (id, members) => ipcRenderer.invoke('epub:mint-ids', id, members),
     chooseSavePath: (id, suggestedName) => ipcRenderer.invoke('epub:choose-save-path', id, suggestedName),
     save: (id, destination) => ipcRenderer.invoke('epub:save', id, destination),
   },
