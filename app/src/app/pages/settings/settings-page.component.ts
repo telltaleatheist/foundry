@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import type { BackendMode, DoctorReport, EngineInfo, TierReport } from '@shared/types';
 
 import { api } from '../../core/foundry';
+import { CurationCardComponent } from './curation-card.component';
 import { EnvCardComponent } from './env-card.component';
 import { LibraryCardComponent } from './library-card.component';
 import { WslBackendComponent } from './wsl-backend.component';
@@ -23,7 +24,9 @@ import { WslBackendComponent } from './wsl-backend.component';
  */
 @Component({
   selector: 'app-settings-page',
-  imports: [EnvCardComponent, FormsModule, LibraryCardComponent, WslBackendComponent],
+  imports: [
+    CurationCardComponent, EnvCardComponent, FormsModule, LibraryCardComponent, WslBackendComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="page">
@@ -132,6 +135,8 @@ import { WslBackendComponent } from './wsl-backend.component';
             about which Python reads a page.
           -->
           <app-library-card />
+
+          <app-curation-card />
 
           <!--
             The prebuilt Pythons. Above the WSL card on purpose: downloading the

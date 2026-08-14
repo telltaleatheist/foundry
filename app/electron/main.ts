@@ -45,8 +45,12 @@ import {
   renameEpubHeading,
   repackEpub,
   resolveEpubMember,
+  restoreBlockHtml,
+  setBlockCategory,
   setBlockCut,
+  setBlockCuts,
   setBlockHtml,
+  setNoteCut,
   writeEpubMember,
 } from './epub-reader';
 import * as queue from './job-queue';
@@ -74,6 +78,9 @@ import type {
   RecentKind,
   SetupRequest,
   TranslateRequest,
+  UnlinkedNote,
+  UnlinkedNoteAnswer,
+  UnlinkedNoteStanding,
 } from '../shared/types';
 
 const isDev = process.argv.includes('--dev');
@@ -747,6 +754,71 @@ function registerIpc(): void {
     return result.response === 0;
   });
 
+  /**
+   * "You deleted this footnote's last reference. Should the footnote go too?"
+   *
+   * MAIN'S NATIVE BOX, like `confirmClose` above and like every other dialog in
+   * this app: the question is modal to the WINDOW — the edit has landed and the
+   * next gesture must not race it — and an in-app modal over a sandboxed iframe
+   * is a rectangle the frame can scroll out from under.
+   *
+   * THE NOTE IS NAMED, both by the number the page printed and by the words it
+   * begins with. "A footnote is now unreachable" tells a person nothing they can
+   * act on; “25 — Kershaw, *Hitler*, p. 412…” tells them exactly what they are
+   * about to lose, which is the whole difference between a question and a
+   * formality.
+   *
+   * THREE ANSWERS AND THEY WRITE THREE DIFFERENT THINGS. Cut strikes the note as
+   * well (`epub:set-note-cut`); Leave writes nothing at all and the note stands
+   * in the book with nothing pointing at it, which is a legitimate edition and
+   * is counted by `epub-final`'s integrity report; Cancel puts the reference
+   * number back, which is a second write of the block's previous markup and is
+   * why the renderer still has to be holding it.
+   *
+   * THE ORDER IS EDIT-THEN-ASK. The edit is already on disk when this box goes
+   * up, because an edit landing the instant it is typed is the whole feel of
+   * select mode and a dialog that interrupted the typing to ask permission would
+   * take that away. Cancel undoes; it does not pre-empt.
+   *
+   * THE CHECKBOX IS REMEMBERED PER ANSWER (app-settings.ts): "always strike it"
+   * and "always leave it" are different standing instructions, and a single
+   * "stop asking" flag would leave main choosing which one the user meant. A
+   * checked box on CANCEL is ignored — a standing instruction to always undo
+   * would make deleting a reference number impossible, with no dialog left to
+   * explain why every attempt reverts itself.
+   */
+  ipcMain.handle('document:confirm-unlinked-note', async (_event, note: UnlinkedNote) => {
+    const standing = readAppSettings().unlinkedNoteAnswer;
+    if (standing !== 'ask') return standing;
+    const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
+    const printed = note.printed.trim();
+    const named = printed.length > 0 ? `Footnote ${printed}` : `The footnote “${note.noteId}”`;
+    const options = {
+      type: 'question' as const,
+      buttons: ['Strike the footnote too', 'Leave the footnote', 'Put the number back'],
+      defaultId: 1,
+      cancelId: 2,
+      checkboxLabel: "Don't ask again — do this every time",
+      checkboxChecked: false,
+      title: 'That was the last reference to a footnote',
+      message: `${named} is no longer reachable from the text.`,
+      detail: (note.opening.length > 0 ? `It reads: “${note.opening}”\n\n` : '')
+        + 'Striking it marks it the way Delete marks any block — it stays in the working copy, '
+        + 'drawn struck through, and only leaves the book when the final edition is built, so '
+        + 'pressing Delete on it brings it back. Leaving it keeps the note in the book with '
+        + 'nothing pointing at it. Putting the number back undoes the edit you just made.',
+    };
+    const result = win
+      ? await dialog.showMessageBox(win, options)
+      : await dialog.showMessageBox(options);
+    const answer: UnlinkedNoteAnswer =
+      result.response === 0 ? 'cut' : result.response === 1 ? 'keep' : 'cancel';
+    if (result.checkboxChecked && answer !== 'cancel') {
+      writeAppSettings({ unlinkedNoteAnswer: answer });
+    }
+    return answer;
+  });
+
   // ── Projects ─────────────────────────────────────────────────────────────
   ipcMain.handle(
     'workspace:plan',
@@ -843,30 +915,63 @@ function registerIpc(): void {
     renameEpubHeading(id, href, label));
 
   /*
-   * ── Select mode's three writes ───────────────────────────────────────────
+   * ── Select mode's writes ─────────────────────────────────────────────────
    *
-   * All three are member writes into the working tree and all three repack
-   * nothing, like every other edit since the projects change. What is new is
-   * that they are keyed by `data-bf-id` — the one name in a cast book that does
-   * not renumber when something before it is removed — and that each of them
-   * REFUSES BY NAME rather than doing its best: an id that is not there, an id
-   * that is there twice, an edit that moved a tag rather than a word. The
-   * reasons live with the surgery, in epub-reader.ts.
+   * Every one of them is a member write into the working tree and every one of
+   * them repacks nothing, like every other edit since the projects change. What
+   * they have in common is that they are keyed by `data-bf-id` — the one name in
+   * a cast book that does not renumber when something before it is removed — and
+   * that each REFUSES BY NAME rather than doing its best: an id that is not
+   * there, an id that is there twice, a category nothing writes, an edit that
+   * moved a tag rather than a word. The reasons live with the surgery, in
+   * epub-reader.ts.
    *
    * They are handlers of their own rather than a mode on `epub:write-member`
    * because the renderer must not be able to hand main a whole chapter and call
-   * it a cut. What crosses this boundary is a block's NAME and either a boolean
-   * or the words inside it; the document is main's the entire time.
+   * it a cut. What crosses this boundary is a block's NAME and either a boolean,
+   * a category, or the words inside it; the document is main's the entire time.
    */
   ipcMain.handle(
     'epub:set-cut',
     (_event, id: string, href: string, blockId: string, cut: boolean) =>
       setBlockCut(id, href, blockId, cut === true),
   );
+  // Select-all-by-category: one read, one write, and every id located before a
+  // byte moves, so the batch either lands whole or refuses whole. Resolves with
+  // how many tags actually changed — which is what the app then says out loud.
+  ipcMain.handle(
+    'epub:set-cuts',
+    (_event, id: string, href: string, blockIds: string[], cut: boolean) =>
+      setBlockCuts(id, href, blockIds, cut === true),
+  );
+  // Resolves with the notes this edit left unreachable, which is a QUESTION for
+  // the app rather than a failure: the write has already landed.
   ipcMain.handle(
     'epub:set-block-html',
     (_event, id: string, href: string, blockId: string, html: string) =>
       setBlockHtml(id, href, blockId, html),
+  );
+  // The "put the number back" answer. A separate door because the ordinary one
+  // forbids markup being GAINED, which is exactly what restoring a deleted
+  // reference number is — see restoreBlockHtml for the check it makes instead.
+  ipcMain.handle(
+    'epub:restore-block-html',
+    (_event, id: string, href: string, blockId: string, html: string) =>
+      restoreBlockHtml(id, href, blockId, html),
+  );
+  // The footnote itself, addressed by its OWN id — the name the reference used,
+  // read out of the href the edit removed. A cut, not a deletion.
+  ipcMain.handle(
+    'epub:set-note-cut',
+    (_event, id: string, href: string, noteId: string, cut: boolean) =>
+      setNoteCut(id, href, noteId, cut === true),
+  );
+  // The inspector's relabel. It changes the LABEL and not the shape — a
+  // paragraph relabelled `footnote` stays a <p> in the prose.
+  ipcMain.handle(
+    'epub:set-category',
+    (_event, id: string, href: string, blockId: string, category: string) =>
+      setBlockCategory(id, href, blockId, category),
   );
   // The spine, in reading order, from the renderer — which is where the reading
   // order is known. Every href is still resolved against the book's own
@@ -932,6 +1037,18 @@ function registerIpc(): void {
     // a project row say the book has been filed at all.
     await recordFinal(destination);
   });
+
+  /*
+   * ── The app's own preferences ────────────────────────────────────────────
+   *
+   * There is one, and it exists so the don't-ask-again checkbox on the
+   * unlinked-footnote dialog is not a one-way door: a preference a person can
+   * set and cannot see or unset is a preference that eventually gets set by
+   * accident and then haunts them. `ask` puts the question back.
+   */
+  ipcMain.handle('prefs:unlinked-note-answer', () => readAppSettings().unlinkedNoteAnswer);
+  ipcMain.handle('prefs:set-unlinked-note-answer', (_event, answer: UnlinkedNoteStanding) =>
+    writeAppSettings({ unlinkedNoteAnswer: answer }).unlinkedNoteAnswer);
 
   // ── The library folder ───────────────────────────────────────────────────
   ipcMain.handle('library:dir', () => readAppSettings().libraryDir);

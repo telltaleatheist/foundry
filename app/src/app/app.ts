@@ -3,6 +3,7 @@ import {
 } from '@angular/core';
 import { Router, RouterOutlet } from '@angular/router';
 
+import { InspectorComponent } from './components/inspector/inspector.component';
 import { OcrDialogComponent } from './components/ocr-dialog/ocr-dialog.component';
 import { OpenDocumentsComponent } from './components/open-documents/open-documents.component';
 import { TranslateDialogComponent } from './components/translate-dialog/translate-dialog.component';
@@ -13,16 +14,30 @@ import { UiService } from './core/ui.service';
 import { api } from './core/foundry';
 
 /**
- * The shell, left to right: the tool rail, the open-documents panel, and
- * whatever route is open — with the queue shelf floating over all three and the
- * dialogs over everything.
+ * The shell: the open-documents panel on the left, whatever route is open in the
+ * middle, the inspector on the right, and the tool dock along the BOTTOM — with
+ * the queue shelf floating over all of it and the dialogs over everything.
  *
- * THE PANEL IS IN THE SHELL AND NOT IN THE WORKSPACE PAGE, because the documents
- * are not a fact about a route: the list stays up on Settings, and clicking a
+ * THE DOCK MOVED OFF THE LEFT EDGE. It was an 88-pixel column beside a
+ * 220-pixel document list, so 308 pixels of a window whose whole job is showing
+ * pages were furniture before a book began. Along the bottom it costs about 58
+ * pixels of height, which no page needs, and the width goes back to the
+ * documents. The z-index ladder is untouched by the move (viewer < shield 30 <
+ * rail 40 < shelf 900 < dialogs 1200): the dock is a flex row rather than a
+ * floating bar, so it overlaps nothing, and the one thing that DID overlap it —
+ * the shelf's pill, fixed at the bottom right — lifts itself by the dock's own
+ * height token.
+ *
+ * BOTH SIDE PANELS ARE IN THE SHELL AND NOT IN THE WORKSPACE PAGE, because
+ * neither is a fact about a route: the lists stay up on Settings, and clicking a
  * row there navigates back to the workspace on its way to showing the document.
- * It is hidden outright while nothing is open, so Home keeps the whole window it
- * has always had rather than opening beside 220 pixels of an empty list, and it
- * can be put away by hand from the rail or with Ctrl+B.
+ * The documents panel is hidden outright while nothing is open, so Home keeps
+ * the whole window it has always had rather than opening beside 220 pixels of an
+ * empty list. It collapses to a 30-pixel stub whose only content is the button
+ * in the window's top-left corner — the same toggle Ctrl+B and the dock's
+ * Documents item press, so the panel has three ways in and the button is never
+ * the one that hides itself. The inspector is up whenever the focused document
+ * is an unpacked book, which is the only state it has anything to say in.
  *
  * The DROP TARGET is the whole window rather than the viewer, because a person
  * dropping a book at the app is not aiming at a rectangle — and because with an
@@ -45,17 +60,25 @@ import { api } from './core/foundry';
 @Component({
   selector: 'app-root',
   imports: [
-    RouterOutlet, ToolRailComponent, OpenDocumentsComponent, QueueShelfComponent,
-    OcrDialogComponent, TranslateDialogComponent,
+    RouterOutlet, ToolRailComponent, OpenDocumentsComponent, InspectorComponent,
+    QueueShelfComponent, OcrDialogComponent, TranslateDialogComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="shell">
+      <div class="body">
+        @if (documentsUp()) {
+          <!-- Collapsed, it is a 30px stub holding the button that brings it
+               back. The class is set HERE, on the element the shell's flex row
+               measures, so the width change and the flag are one pass. -->
+          <app-open-documents [class.shut]="!ui.documentsShown()" />
+        }
+        <main class="main"><router-outlet /></main>
+        @if (inspectorUp()) {
+          <app-inspector />
+        }
+      </div>
       <app-tool-rail />
-      @if (documentsUp()) {
-        <app-open-documents />
-      }
-      <main class="main"><router-outlet /></main>
       <app-queue-shelf />
 
       @if (ui.ocrOpen()) {
@@ -73,7 +96,11 @@ import { api } from './core/foundry';
   `,
   styles: [`
     :host { display: block; height: 100vh; }
-    .shell { display: flex; height: 100%; }
+    /* A column now: the documents and the dock. \`min-height: 0\` on the row is
+       what stops a long chapter list pushing the dock off the bottom of the
+       window — a flex item does not shrink below its content without it. */
+    .shell { display: flex; flex-direction: column; height: 100%; }
+    .body { display: flex; flex: 1; min-height: 0; }
     .main { flex: 1; min-width: 0; height: 100%; overflow: hidden; }
 
     .drop-veil {
@@ -100,16 +127,31 @@ export class App {
   private readonly router = inject(Router);
 
   /**
-   * The panel is up when it has been asked for AND there is something to list.
+   * The panel is in the DOM when there is something to list, and nothing else.
    *
-   * The second half is not a shortcut for the first: an empty list is 220 pixels
-   * of nothing taken off Home, which is the one screen in this app that wants
-   * the window. Hiding it costs nothing, because it comes back by itself with
-   * the first document — and `documentsShown` remembers what the user chose
-   * across that, so a panel put away by hand stays away.
+   * It used to also test `documentsShown`, which is now the panel's own business:
+   * put away, it draws a 30-pixel stub holding the collapse button, so the button
+   * that brings it back is where the button that put it away was. What this still
+   * decides is the empty case — an empty list is 220 pixels of nothing taken off
+   * Home, which is the one screen in this app that wants the window, and there is
+   * nothing to collapse to a stub either. It comes back by itself with the first
+   * document, and `documentsShown` remembers what the user chose across that.
    */
-  protected readonly documentsUp = computed(() =>
-    this.ui.documentsShown() && this.tabs.tabs().length > 0);
+  protected readonly documentsUp = computed(() => this.tabs.tabs().length > 0);
+
+  /**
+   * The inspector is up when there is a book to inspect.
+   *
+   * NOT WHEN THERE IS MERELY A DOCUMENT: a PDF has no chapter list and no
+   * stamped blocks — its categories live in the readings bank, unparsed, behind
+   * an IPC that does not exist — so an inspector beside one would be 260 pixels
+   * of two empty accordions. It follows `activeDocument`, so with the HTML
+   * editor focused it still shows the book that editor is a face of.
+   */
+  protected readonly inspectorUp = computed(() => {
+    const tab = this.tabs.activeDocument();
+    return tab !== null && tab.kind === 'epub' && tab.book !== null;
+  });
 
   protected readonly dropping = signal(false);
   private dragDepth = 0;

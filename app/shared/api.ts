@@ -28,6 +28,9 @@ import type {
   SetupRequest,
   SetupResult,
   TranslateRequest,
+  UnlinkedNote,
+  UnlinkedNoteAnswer,
+  UnlinkedNoteStanding,
   WorkspacePlan,
   WslFacts,
 } from './types';
@@ -82,6 +85,21 @@ export interface FoundryApi {
    * "the copy you chose is older than this" are different warnings.
    */
   confirmClose(warning: CloseWarning): Promise<boolean>;
+  /**
+   * The native box asked when an in-place edit deleted a footnote's LAST
+   * reference. Three answers, and the caller writes something different for each
+   * — see `UnlinkedNoteAnswer`.
+   *
+   * Main answers straight away, without a dialog, when the user has told it to
+   * stop asking: the standing answer lives in `app-settings.json` and is stored
+   * per ANSWER, so "always strike it" and "always leave it" are two different
+   * instructions rather than one silenced question.
+   *
+   * ASKED AFTER THE EDIT HAS LANDED, always. An edit that appears the instant it
+   * is typed is the whole feel of select mode; cancel undoes, it does not
+   * pre-empt.
+   */
+  confirmUnlinkedNote(note: UnlinkedNote): Promise<UnlinkedNoteAnswer>;
 
   /**
    * The managed workspace: where a conversion writes.
@@ -157,16 +175,64 @@ export interface FoundryApi {
      */
     setCut(id: string, href: string, blockId: string, cut: boolean): Promise<void>;
     /**
+     * The same mark on a whole list of blocks — select-all-by-category — in ONE
+     * read and ONE write of the chapter.
+     *
+     * Every id is located before a byte moves, so the batch lands whole or
+     * refuses whole: a hundred separate calls could fail in the middle and leave
+     * a chapter half struck with a count on screen describing neither half.
+     * Resolves with how many tags actually changed, which is not always how many
+     * were named — a block already carrying the mark is not a change.
+     */
+    setCuts(id: string, href: string, blockIds: string[], cut: boolean): Promise<number>;
+    /**
+     * The same cut mark on a FOOTNOTE, addressed by its own id (`fn25`) rather
+     * than by `data-bf-id` — that is the name its reference used, and the only
+     * one available once the reference has been deleted.
+     *
+     * A cut and not a deletion: the `<aside>` is drawn struck through, Delete on
+     * it brings it back, and it leaves the book only when `epub-final` builds
+     * the edition. A footnote is evidence.
+     */
+    setNoteCut(id: string, href: string, noteId: string, cut: boolean): Promise<void>;
+    /**
+     * Relabel one block: a different `data-bf-cat`, the same shape.
+     *
+     * A paragraph relabelled `footnote` STAYS A `<p>` in the prose — it does not
+     * become an `<aside>` and it does not move into the footnotes section. That
+     * re-shaping belongs to `foundry epub-final` and is not in this app. What
+     * the label does is tell the engine and the translator what the block is.
+     *
+     * Rejects by name for a category the emitter never writes, for an id that is
+     * absent or duplicated, and for a block carrying no `data-bf-cat` at all.
+     */
+    setCategory(id: string, href: string, blockId: string, category: string): Promise<void>;
+    /**
      * The words of one block, edited in place. `html` is the block's new inner
      * markup as the frame serialized it.
      *
      * Main refuses anything that is not a WORD change: every tag must be inline
      * markup, and the multiset of start tags with their attributes must be
-     * unchanged — so an `<em>`, a footnote reference and a pagebreak span
-     * cannot be altered, dropped or invented, while the words around them are
-     * free. The refusal says exactly what moved.
+     * unchanged — so an `<em>` and a pagebreak span cannot be altered, dropped
+     * or invented, while the words around them are free. The one exception is a
+     * footnote reference: a `noteref` anchor and a `<sup>` may DISAPPEAR,
+     * because a reference number is a mark on the page an editor may want gone.
+     *
+     * Resolves with the notes that edit left unreachable — a question rather
+     * than a failure, since the write has already landed. `confirmUnlinkedNote`
+     * is what asks it.
      */
-    setBlockHtml(id: string, href: string, blockId: string, html: string): Promise<void>;
+    setBlockHtml(id: string, href: string, blockId: string, html: string): Promise<UnlinkedNote[]>;
+    /**
+     * Put a block's inner markup back exactly as it was — the "cancel" answer.
+     *
+     * A DOOR OF ITS OWN because `setBlockHtml` forbids markup being gained, and
+     * restoring a deleted reference number is a `<sup>` and an anchor
+     * reappearing. Main makes the mirror check instead: what is on disk now must
+     * be a legal word-edit OF the text being restored, or the restore is refused
+     * rather than overwriting somebody else's change.
+     */
+    restoreBlockHtml(id: string, href: string, blockId: string, html: string): Promise<void>;
     /**
      * Stamp `data-bf-id` into a book cast before ids existed, through the
      * ordinary member write. `members` is the spine in reading order.
@@ -184,6 +250,21 @@ export interface FoundryApi {
     chooseSavePath(id: string, suggestedName: string): Promise<string | null>;
     /** Repack the working copy to a granted path. Rejects for any other. */
     save(id: string, destination: string): Promise<void>;
+  };
+
+  /**
+   * The app's own preferences — not the engine's settings.json, which belongs to
+   * the engine and is read by every `vlm-convert` on the machine.
+   *
+   * There is one so far and it earns the surface: a dialog with a
+   * don't-ask-again checkbox that cannot be un-checked anywhere is a trap. The
+   * standing answer is stored per ANSWER (`cut` / `keep`), and `ask` puts the
+   * question back.
+   */
+  prefs: {
+    unlinkedNoteAnswer(): Promise<UnlinkedNoteStanding>;
+    /** Returns the value as stored, so a nonsense one comes back as `ask`. */
+    setUnlinkedNoteAnswer(answer: UnlinkedNoteStanding): Promise<UnlinkedNoteStanding>;
   };
 
   /**

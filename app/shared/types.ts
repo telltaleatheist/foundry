@@ -651,6 +651,44 @@ export interface CloseWarning {
 }
 
 /**
+ * A footnote nothing points at any more, and the number that used to.
+ *
+ * Produced by `setBlockHtml` when an in-place edit deleted the last reference to
+ * a note (electron/epub-reader.ts), carried to the renderer, and handed straight
+ * back to main so the question can be asked with the note NAMED — a person about
+ * to lose a footnote has to be able to tell which one it is, and "a footnote"
+ * tells them nothing.
+ */
+export interface UnlinkedNote {
+  /** The `<aside>`'s own id — `fn25`. */
+  noteId: string;
+  /** What the reference read on the page — the printed number, usually. */
+  printed: string;
+  /** The words the note itself begins with, clipped, so it can be recognised. */
+  opening: string;
+}
+
+/**
+ * What the user said about an unlinked footnote.
+ *
+ * THREE ANSWERS, and they write three different things: `cut` strikes the note
+ * as well, `keep` leaves it standing and unreachable, `cancel` puts the
+ * reference number back by restoring the block's previous markup. Main answers
+ * with the standing preference instead of asking when one has been stored — see
+ * `unlinkedNoteAnswer` in electron/app-settings.ts.
+ */
+export type UnlinkedNoteAnswer = 'cut' | 'keep' | 'cancel';
+
+/**
+ * The stored form of that answer — the two worth remembering, plus `ask`.
+ *
+ * `cancel` is deliberately NOT one of them. "Always put the number back" is an
+ * instruction never to be able to delete a reference number again, with no
+ * dialog left to explain why every attempt undoes itself.
+ */
+export type UnlinkedNoteStanding = 'ask' | 'cut' | 'keep';
+
+/**
  * An open book. `id` is what closes it again — a tab that is closed, and every
  * tab on quit, hands its id back so main stops serving its members.
  *

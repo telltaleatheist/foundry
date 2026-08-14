@@ -81,7 +81,8 @@ import {
   workingTreeFor,
   workingTreeName,
 } from './projects';
-import type { EpubBook, EpubChapter } from '../shared/types';
+import { CATEGORY_IDS } from '../shared/categories';
+import type { EpubBook, EpubChapter, UnlinkedNote } from '../shared/types';
 
 export class EpubError extends Error {
   constructor(message: string) {
@@ -897,14 +898,6 @@ export async function setBlockHtml(
   return notesLeftUnreachable(before, html, written);
 }
 
-/** A footnote nothing points at any more, and the number that used to. */
-export interface UnlinkedNote {
-  /** The `<aside>`'s own id — `fn25`. */
-  noteId: string;
-  /** What the reference read on the page, for the sentence that asks about it. */
-  printed: string;
-}
-
 /**
  * Which notes this edit just cut loose, asked of the WHOLE document.
  *
@@ -937,9 +930,216 @@ function notesLeftUnreachable(before: string, after: string, document: string): 
       .test(document)) continue;
     // And there has to BE a note with that id, or there is nothing to ask about.
     if (!new RegExp(`\\bid\\s*=\\s*["']${escapeForRegExp(noteId)}["']`, 'i').test(document)) continue;
-    out.push({ noteId, printed });
+    out.push({ noteId, printed, opening: noteOpening(document, noteId) });
   }
   return out;
+}
+
+/**
+ * The words the note itself begins with, so the dialog can name it.
+ *
+ * READ HERE, IN MAIN, and not asked of the frame: main is holding the whole
+ * document at this instant, the frame is showing a chapter that may be scrolled
+ * a thousand words away from the note, and a question about a footnote somebody
+ * is about to lose must be answerable from the file rather than from what
+ * happens to be rendered.
+ *
+ * Best effort by construction — the caller has already established that an
+ * element with this id exists, and an empty string here only ever costs the
+ * sentence half its detail. A note whose text cannot be found is still named by
+ * its printed number, which is the half a reader recognises anyway.
+ */
+function noteOpening(document: string, noteId: string): string {
+  const at = new RegExp(
+    `<([a-zA-Z][a-zA-Z0-9-]*)\\b[^>]*\\bid\\s*=\\s*["']${escapeForRegExp(noteId)}["'][^>]*>`,
+    'i',
+  ).exec(document);
+  if (at === null) return '';
+  const text = document
+    .slice(at.index + at[0].length)
+    .replace(/<[^>]*>/g, ' ')
+    // The backlink arrow the emitter writes into every note (U+21A9 and the two
+    // variation selectors that follow it), which is not a word of the note and
+    // would otherwise be the first thing the sentence quoted.
+    .replace(/[↩︎️]/g, ' ')
+    .replace(/&[a-z]+;|&#\d+;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text.length > 90 ? `${text.slice(0, 90).trimEnd()}…` : text;
+}
+
+/**
+ * Put a block's words back exactly as they were before the last edit — the
+ * "cancel" answer to the unlinked-footnote question.
+ *
+ * IT CANNOT GO THROUGH `setBlockHtml`, and the reason is the rule that function
+ * enforces: nothing may be GAINED. Restoring a deleted reference number is a
+ * `<sup>` and an anchor reappearing, which is precisely what an ordinary edit
+ * is forbidden to do — so a cancel routed through that door would be refused
+ * every time, and the third button would be a button that does nothing.
+ *
+ * The check is the SAME check with its arguments the other way round: what is on
+ * disk right now must be a legal word-edit OF the text being restored. If it is,
+ * then what happened between them was an edit this app permits, and writing the
+ * earlier side back is undoing that edit rather than smuggling markup into a
+ * book. If it is not — the file moved under the tab, somebody else wrote the
+ * chapter — the restore is refused by name instead of overwriting whatever is
+ * there now with a paragraph from a document that no longer exists.
+ */
+export async function restoreBlockHtml(
+  id: string,
+  memberPath: string,
+  blockId: string,
+  html: string,
+): Promise<void> {
+  const member = resolveEpubMember(id, memberPath);
+  if (member === null) {
+    throw new EpubError(`"${memberPath}" is not part of a book this app has open.`);
+  }
+  const markup = await fs.promises.readFile(member, 'utf8');
+  const block = locateBlock(markup, blockId, memberPath);
+  const closeAt = closeTagOffset(markup, block);
+  if (closeAt < 0) {
+    throw new EpubError(
+      `The <${block.name}> carrying ${ID_ATTRIBUTE}="${blockId}" in ${memberPath} is never closed, `
+      + 'so there is no range to put back.',
+    );
+  }
+  const current = markup.slice(block.end, closeAt);
+  if (current === html) return;
+  try {
+    refuseUnlessWordEdit(html, current, blockId, memberPath);
+  } catch (err) {
+    throw new EpubError(
+      `The reference number cannot be put back into ${blockId} in ${memberPath}: what is in that `
+      + 'block now is not what the edit being cancelled produced, so restoring it would throw away '
+      + `somebody else's change. (${err instanceof Error ? err.message : String(err)})`,
+    );
+  }
+  await fs.promises.writeFile(
+    member,
+    markup.slice(0, block.end) + html + markup.slice(closeAt),
+    'utf8',
+  );
+}
+
+/**
+ * Give one block a different `data-bf-cat` — the inspector's relabel.
+ *
+ * THE SAME SHAPE AS `setBlockCut`, deliberately: locate the one element carrying
+ * `data-bf-id`, change the smallest part of its start tag, leave every other
+ * byte of the document alone, refuse by name when there is not exactly one. No
+ * revision bump either — the frame repaints its own colour off the attribute it
+ * just set, and reloading the iframe would throw the reader to the top of the
+ * chapter to show them something already on screen.
+ *
+ * ── IT CHANGES THE LABEL, NOT THE SHAPE ──────────────────────────────────────
+ *
+ * A paragraph relabelled `footnote` is still a `<p>`, still in the prose, still
+ * exactly where the page printed it. It does NOT become an `<aside>`, it does
+ * not gain an id, it does not move into the `<section class="footnotes">` and
+ * nothing starts pointing at it. Anybody reading this will assume the two go
+ * together; they do not, and the re-shaping is `foundry epub-final`'s work, in
+ * the engine, not in this app. What this attribute does is tell the engine and
+ * the translator what the block IS — `src/translate/blocks.ts` reads it to
+ * decide what to send the model, and `src/epub/final.ts` reads it to build the
+ * edition — which is why it is worth correcting on its own.
+ *
+ * The category is checked against the emitter's own list before it is written:
+ * a value nothing writes would make `blocks.ts` refuse the whole book by name on
+ * the next translation, and the place to catch that is the keystroke that
+ * invented it.
+ */
+export async function setBlockCategory(
+  id: string,
+  memberPath: string,
+  blockId: string,
+  category: string,
+): Promise<void> {
+  if (!CATEGORY_IDS.has(category)) {
+    throw new EpubError(
+      `"${category}" is not a category foundry writes, so nothing is being relabelled. The ones `
+      + `that exist are ${[...CATEGORY_IDS].join(', ')}.`,
+    );
+  }
+  const member = resolveEpubMember(id, memberPath);
+  if (member === null) {
+    throw new EpubError(`"${memberPath}" is not part of a book this app has open.`);
+  }
+  const markup = await fs.promises.readFile(member, 'utf8');
+  const block = locateBlock(markup, blockId, memberPath);
+  const replacement = block.text.replace(
+    /(\bdata-bf-cat\s*=\s*)("[^"]*"|'[^']*')/i,
+    (_whole, lead: string) => `${lead}"${category}"`,
+  );
+  if (replacement === block.text) {
+    // Either it already says this, or it never carried a category at all — and
+    // those are two different facts, so they are told apart rather than both
+    // passing as "nothing to do".
+    if (new RegExp(`\\bdata-bf-cat\\s*=\\s*("${category}"|'${category}')`, 'i').test(block.text)) {
+      return;
+    }
+    throw new EpubError(
+      `The <${block.name}> carrying ${ID_ATTRIBUTE}="${blockId}" in ${memberPath} has no `
+      + 'data-bf-cat at all, so there is no label on it to change. Relabelling corrects what the '
+      + 'model called a block; it does not category a block the model never read.',
+    );
+  }
+  await fs.promises.writeFile(
+    member,
+    markup.slice(0, block.start) + replacement + markup.slice(block.end),
+    'utf8',
+  );
+}
+
+/**
+ * Strike — or bring back — every block in a list, in ONE read and ONE write.
+ *
+ * Select-all-by-category is one gesture and has to land as one: `setBlockCut`
+ * called two hundred times is two hundred read-modify-writes of the same file,
+ * and a failure in the middle of them leaves a chapter half struck with a count
+ * on screen that describes neither state. So every id is located FIRST — which
+ * is where the refusals happen, by name, exactly as they do for one block — and
+ * only then is a single new text written.
+ *
+ * Returns how many tags actually moved, which is not always how many ids came
+ * in: a block already carrying the mark it is being given is not a change, and
+ * the caller says what happened rather than what was asked for.
+ */
+export async function setBlockCuts(
+  id: string,
+  memberPath: string,
+  blockIds: readonly string[],
+  cut: boolean,
+): Promise<number> {
+  const member = resolveEpubMember(id, memberPath);
+  if (member === null) {
+    throw new EpubError(`"${memberPath}" is not part of a book this app has open.`);
+  }
+  // Deduplicated first, and it is not a formality: the same id twice would be
+  // located twice at the same offset and spliced twice, which puts the mark's
+  // own bytes through `withCutMark` a second time and corrupts the start tag.
+  const wanted = [...new Set(blockIds)];
+  if (wanted.length === 0) {
+    throw new EpubError('No blocks were named, so there is nothing to strike.');
+  }
+  const markup = await fs.promises.readFile(member, 'utf8');
+  // Located before anything is written, and sorted so the splices below run
+  // back to front — an edit at offset 900 must not move the offsets of the one
+  // at 1400 that has not happened yet.
+  const found = wanted.map((blockId) => locateBlock(markup, blockId, memberPath));
+  found.sort((a, b) => b.start - a.start);
+  let changed = 0;
+  let text = markup;
+  for (const block of found) {
+    const replacement = cut ? withCutMark(block.text) : withoutCutMark(block.text);
+    if (replacement === block.text) continue;
+    text = text.slice(0, block.start) + replacement + text.slice(block.end);
+    changed += 1;
+  }
+  if (changed === 0) return 0;
+  await fs.promises.writeFile(member, text, 'utf8');
+  return changed;
 }
 
 function escapeForRegExp(text: string): string {

@@ -120,7 +120,15 @@ import { api } from '../../core/foundry';
     .shelf {
       position: fixed;
       right: 16px;
-      bottom: 16px;
+      /*
+        CLEAR OF THE DOCK. The tool rail runs along the bottom of the window now,
+        and this pill is fixed at z-index 900 — above the rail's 40 — so 16px
+        would put it squarely over the Settings button at the dock's right-hand
+        end. The ladder is unchanged and still holds (viewer < shield 30 <
+        rail 40 < shelf 900 < dialogs 1200); what changed is that the shelf has
+        to be told where the bottom of the DOCUMENT area is, which is the token.
+      */
+      bottom: calc(var(--rail-h) + 16px);
       z-index: 900;
       width: 320px;
       max-width: calc(100vw - 32px);

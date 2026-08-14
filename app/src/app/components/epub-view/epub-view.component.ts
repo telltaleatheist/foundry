@@ -7,17 +7,20 @@ import {
   effect,
   inject,
   input,
-  signal,
   viewChild,
 } from '@angular/core';
 import { DomSanitizer, type SafeResourceUrl } from '@angular/platform-browser';
 
-import type { EpubChapter } from '@shared/types';
-
 import { TabsService, type Tab } from '../../core/tabs.service';
 
 /**
- * The book — a chapter list and the chapter.
+ * The book — the chapter, and the toolbar over it.
+ *
+ * THE CHAPTER LIST USED TO BE THE LEFT COLUMN OF THIS COMPONENT and is now one
+ * accordion of the inspector in the shell (app-inspector). It was 260 pixels
+ * inside every pane, so five open books spent 1300 of them on five lists of the
+ * same shape; there is one now, showing the focused document's contents, and it
+ * sits beside the Category rows a curator works with in the same pass.
  *
  * SCROLLING TEXT, NO PAGINATION, and that is a decision rather than an omission.
  * Pagination in a reflowable book means measuring the rendered text and cutting
@@ -65,47 +68,12 @@ import { TabsService, type Tab } from '../../core/tabs.service';
       </div>
     } @else if (tab().book; as book) {
       <div class="book">
-        <nav class="chapters">
-          <!-- WHAT THIS LIST IS, in the same small-caps the documents panel
-               labels itself with. Two vertical lists sit side by side and the
-               eye has to tell them apart at a glance: one is the open files,
-               this one is the chapters of the book below its own title. -->
-          <header>
-            <span class="label">Contents</span>
-            <span class="book-title" [title]="book.title">{{ book.title }}</span>
-            @if (book.author) { <span class="book-author">{{ book.author }}</span> }
-          </header>
-          <ul>
-            @for (chapter of book.chapters; track chapter.href) {
-              <li class="entry">
-                @if (renamingHref() === chapter.href) {
-                  <input
-                    #renameBox
-                    class="rename"
-                    [style.margin-left.px]="12 + chapter.depth * 14"
-                    [value]="renameText()"
-                    (input)="renameText.set(renameBox.value)"
-                    (keydown.enter)="commitRename(chapter)"
-                    (keydown.escape)="cancelRename()"
-                    (blur)="cancelRename()"
-                    [attr.aria-label]="'Rename ' + chapter.label"
-                  >
-                } @else {
-                  <button
-                    class="chapter"
-                    [class.active]="tab().chapterHref === chapter.href"
-                    [style.padding-left.px]="12 + chapter.depth * 14"
-                    [title]="chapter.label"
-                    (click)="show(chapter)"
-                    (dblclick)="startRename(chapter)"
-                  >{{ chapter.label }}</button>
-                  <button class="pencil" title="Rename" (click)="startRename(chapter)">✎</button>
-                }
-              </li>
-            }
-          </ul>
-        </nav>
-
+        <!-- THE CHAPTER LIST IS NOT HERE ANY MORE. It was a 260px column inside
+             every one of these, so five panes spent 1300 pixels on five copies
+             of the same kind of list. It is one accordion in the inspector on
+             the right of the shell now (app-inspector), which shows the FOCUSED
+             document's — same rows, same rename gesture, same fragment
+             sub-entries, one of it. -->
         <div class="reading">
           <header class="toolbar">
             <!-- WHAT THIS COLUMN IS SHOWING, and it is here because nothing else
@@ -171,84 +139,6 @@ import { TabsService, type Tab } from '../../core/tabs.service';
     :host { display: block; width: 100%; height: 100%; background: var(--bg-sunken); }
 
     .book { display: flex; height: 100%; }
-
-    .chapters {
-      width: 260px;
-      min-width: 260px;
-      height: 100%;
-      display: flex;
-      flex-direction: column;
-      background: var(--bg-elevated);
-      border-right: 1px solid var(--border-subtle);
-    }
-    .chapters header {
-      display: flex; flex-direction: column; gap: 2px;
-      padding: 12px;
-      border-bottom: 1px solid var(--border-subtle);
-    }
-    /* The documents panel's own label style, copied deliberately: the two
-       panels are siblings and are meant to read as siblings. */
-    .label {
-      margin-bottom: 4px;
-      font-size: 10px; font-weight: 600;
-      text-transform: uppercase; letter-spacing: 0.08em;
-      color: var(--text-tertiary);
-    }
-    .book-title {
-      font-family: var(--font-display); font-size: 13px; font-weight: 600;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    }
-    .book-author { font-size: 11px; color: var(--text-tertiary); }
-
-    .chapters ul { list-style: none; margin: 0; padding: 4px 0; overflow-y: auto; flex: 1; }
-
-    .entry { display: flex; align-items: center; }
-    .pencil {
-      flex-shrink: 0;
-      visibility: hidden;
-      margin-right: 6px;
-      padding: 2px 5px;
-      background: transparent; border: none; border-radius: var(--radius-sm);
-      color: var(--text-tertiary); font-size: 11px; cursor: pointer;
-    }
-    .entry:hover .pencil { visibility: visible; }
-    .pencil:hover { color: var(--text-primary); background: var(--bg-hover); }
-    .rename {
-      flex: 1;
-      min-width: 0;
-      margin: 2px 8px 2px 0;
-      padding: 4px 8px;
-      background: var(--bg-input);
-      color: var(--text-primary);
-      border: 1px solid var(--accent);
-      border-radius: var(--radius-sm);
-      font-size: 12px;
-    }
-    .rename:focus { outline: none; box-shadow: var(--focus-ring); }
-
-    .chapter {
-      display: block;
-      flex: 1;
-      min-width: 0;
-      margin: 0 6px;
-      padding: 6px 10px;
-      background: transparent;
-      border: none;
-      border-radius: var(--radius-md);
-      color: var(--text-secondary);
-      font-size: 12px;
-      text-align: left;
-      cursor: pointer;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1),
-                  color 100ms cubic-bezier(0, 0, 0.2, 1);
-    }
-    .chapter:hover { background: var(--bg-hover); color: var(--text-primary); }
-    .chapter.active {
-      background: var(--accent-soft);
-      color: var(--accent);
-      font-weight: 500;
-    }
 
     .reading { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
@@ -333,22 +223,19 @@ export class EpubViewComponent implements OnDestroy {
   protected readonly writing = computed(() => this.tabs.writingTo() === this.tab().id);
 
   private readonly frame = viewChild<ElementRef<HTMLIFrameElement>>('frame');
-  private readonly renameBox = viewChild<ElementRef<HTMLInputElement>>('renameBox');
-
-  /** Which sidebar row is being renamed, and the text in its box. */
-  protected readonly renamingHref = signal<string | null>(null);
-  protected readonly renameText = signal('');
 
   /**
    * The block the frame says is selected, for the toolbar line.
    *
-   * IN THE COMPONENT rather than on the Tab, and it is the one piece of select
-   * mode's state that belongs here: a selection lives in the frame's DOM, dies
-   * with the frame, and is never a fact about the book. Everything that IS a
-   * fact about the book — the cut, the words — is an attribute in the working
-   * copy and nothing else.
+   * NOT A FACT ABOUT THE BOOK — a selection lives in the frame's DOM and dies
+   * with the frame; everything that IS a fact about the book (the cut, the
+   * words, the category) is an attribute in the working copy and nothing else.
+   * It is kept on the SERVICE rather than in this component now, because the
+   * inspector is in the shell and cannot see five viewers' private signals. The
+   * service keys it by tab, so five panes cannot blank each other's.
    */
-  protected readonly selectedId = signal<string | null>(null);
+  protected readonly selectedId = computed(() =>
+    this.tabs.selectionFor(this.tab().id)?.blockId ?? null);
 
   /**
    * The click reporter's messages. Bound once so add/removeEventListener see
@@ -390,12 +277,23 @@ export class EpubViewComponent implements OnDestroy {
       // A frame that has just (re)loaded is a frame with the mode off. Telling
       // it what the tab thinks is what survives the reloads nobody asked for —
       // an editor flush, a chapter change, the stamping pass.
+      //
+      // It is also a frame that has FORGOTTEN WHAT WAS SELECTED, because a
+      // selection lives in a DOM that no longer exists. Saying so keeps the
+      // inspector from offering to relabel a block that is not on screen — and
+      // after a chapter change, is not even in this file.
+      this.tabs.reportSelection(this.tab().id, null, null);
       this.pushSelectMode();
       return;
     }
     if (data.type === 'foundry:block-selected') {
       if (data.id !== null && !isBlockId(data.id)) return;
-      this.selectedId.set(typeof data.id === 'string' ? data.id : null);
+      const category = isCategoryName(data.cat) ? data.cat : null;
+      this.tabs.reportSelection(
+        this.tab().id,
+        typeof data.id === 'string' ? data.id : null,
+        category,
+      );
       return;
     }
     if (data.type === 'foundry:block-cut') {
@@ -409,7 +307,36 @@ export class EpubViewComponent implements OnDestroy {
       // about not putting a megabyte of a book through IPC because a
       // contenteditable was pointed at the wrong element.
       if (typeof data.html !== 'string' || data.html.length > MAX_BLOCK_HTML) return;
-      void this.tabs.setBlockHtml(this.tab().id, data.id, data.html);
+      // `was` is the block as it stood before the edit, and it is the ONLY copy
+      // of it left anywhere once main has written the new words — it is what the
+      // third answer to the unlinked-footnote question ("put the number back")
+      // is restored from. Capped like the other side, and an edit that arrives
+      // without it is still applied: the question then simply has two answers.
+      const was = typeof data.was === 'string' && data.was.length <= MAX_BLOCK_HTML ? data.was : '';
+      void this.tabs.setBlockHtml(this.tab().id, data.id, data.html, was);
+      return;
+    }
+    if (data.type === 'foundry:block-relabelled') {
+      if (!isBlockId(data.id) || !isCategoryName(data.cat)) return;
+      void this.tabs.setBlockCategory(this.tab().id, data.id, data.cat);
+      return;
+    }
+    if (data.type === 'foundry:category-cut') {
+      if (!isCategoryName(data.cat) || typeof data.cut !== 'boolean') return;
+      // Every id checked, and the batch dropped whole if any of them is not a
+      // name this app writes — a partial list would strike some other blocks.
+      // The cap is the number of stamped elements a chapter can plausibly hold;
+      // past it, something is wrong with the message rather than with the book.
+      if (!Array.isArray(data.ids) || data.ids.length === 0 || data.ids.length > MAX_BATCH) return;
+      if (!data.ids.every((one): one is string => isBlockId(one))) return;
+      void this.tabs.cutBlocksByCategory(this.tab().id, data.cat, data.ids, data.cut);
+      return;
+    }
+    if (data.type === 'foundry:category-counts') {
+      const counts = tally(data.counts);
+      const struck = tally(data.struck);
+      if (counts === null || struck === null) return;
+      this.tabs.reportCategoryCounts(this.tab().id, { counts, struck });
       return;
     }
     if (data.type === 'foundry:select-refused') {
@@ -441,20 +368,24 @@ export class EpubViewComponent implements OnDestroy {
 
     // The mode, whenever the tab's flag moves. The handshake covers a frame
     // that reloaded; this covers the button being pressed with one already up.
-    effect(() => {
-      const on = this.tab().selectMode;
-      if (!on) this.selectedId.set(null);
-      this.pushSelectMode();
-    });
+    // `pushSelectMode` reads `tab().selectMode` itself, which is what this
+    // effect tracks — there is nothing else to read here.
+    effect(() => { this.pushSelectMode(); });
 
-    // The rename input exists only while a row is being renamed; the moment it
-    // renders, the whole current label is selected so typing replaces it.
+    /**
+     * The inspector's commands, on their way into the frame.
+     *
+     * THE PANEL IS IN THE SHELL AND THE FRAME IS BEHIND A SANDBOXED ORIGIN, so
+     * the two cannot be introduced: only this <iframe> element can post into
+     * that window. The service holds the command with the tab it is for, and
+     * every viewer ignores the four that are not its own — which is the same
+     * arrangement `sourceJump` uses for a click travelling the other way.
+     */
     effect(() => {
-      const box = this.renameBox()?.nativeElement;
-      if (box) {
-        box.focus();
-        box.select();
-      }
+      const command = this.tabs.frameCommand();
+      if (!command || command.tabId !== this.tab().id) return;
+      const frame = this.frame()?.nativeElement;
+      frame?.contentWindow?.postMessage(command.message, '*');
     });
   }
 
@@ -482,33 +413,6 @@ export class EpubViewComponent implements OnDestroy {
     return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   });
 
-  protected show(chapter: EpubChapter): void {
-    this.tabs.showChapter(this.tab().id, chapter.href);
-  }
-
-  // ── Renaming a TOC entry ─────────────────────────────────────────────────
-
-  protected startRename(chapter: EpubChapter): void {
-    this.renameText.set(chapter.label);
-    this.renamingHref.set(chapter.href);
-  }
-
-  protected cancelRename(): void {
-    this.renamingHref.set(null);
-  }
-
-  /**
-   * Enter. An empty or unchanged label is a cancel, not an error — and the box
-   * closes BEFORE the IPC round trip so a slow disk never shows a stale input.
-   * A refusal (main found nothing carrying the entry) lands in the notice
-   * strip via TabsService.
-   */
-  protected async commitRename(chapter: EpubChapter): Promise<void> {
-    const label = this.renameText().trim();
-    this.renamingHref.set(null);
-    if (label.length === 0 || label === chapter.label) return;
-    await this.tabs.renameHeading(this.tab().id, chapter.href, label);
-  }
 }
 
 /**
@@ -524,8 +428,13 @@ interface FrameMessage {
   tag?: unknown;
   index?: unknown;
   id?: unknown;
+  ids?: unknown;
   cut?: unknown;
+  cat?: unknown;
   html?: unknown;
+  was?: unknown;
+  counts?: unknown;
+  struck?: unknown;
   reason?: unknown;
 }
 
@@ -549,6 +458,50 @@ function isBlockId(value: unknown): value is string {
  * through IPC because a contenteditable ended up on the wrong element.
  */
 const MAX_BLOCK_HTML = 200_000;
+
+/**
+ * As many blocks as one select-all-by-category gesture may name.
+ *
+ * A chapter of a scanned book runs to a few hundred stamped elements; this is an
+ * order of magnitude past the largest real one, and it exists so a message
+ * claiming to strike fifty thousand blocks is refused before it becomes fifty
+ * thousand ids in an IPC call.
+ */
+const MAX_BATCH = 5_000;
+
+/**
+ * A `data-bf-cat` value, checked before it is handed to a call that writes it
+ * into somebody's book.
+ *
+ * NOT checked against the eleven this app knows: the emitter is allowed to grow
+ * a category before the app does, and a book carrying one must still be
+ * relabellable AWAY from it. What this refuses is anything that is not the shape
+ * of a category at all — quoting, pattern syntax, a path. Main checks the value
+ * itself against its own list and refuses an unknown one by name, which is where
+ * that judgement belongs.
+ */
+function isCategoryName(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-z][a-z0-9-]{0,39}$/.test(value);
+}
+
+/**
+ * A `{category: count}` object out of the frame, or null if it is not one.
+ *
+ * Every key and every value is checked, because this arrives from a document
+ * rather than from a component — and it ends up drawn as a number beside a
+ * category's name, where a NaN or a key a hundred characters long would be a
+ * legend nobody can read.
+ */
+function tally(value: unknown): Record<string, number> | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const out: Record<string, number> = {};
+  for (const [key, count] of Object.entries(value as Record<string, unknown>)) {
+    if (!isCategoryName(key)) continue;
+    if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) continue;
+    out[key] = count;
+  }
+  return out;
+}
 
 /** Stripped out of a refusal before it is shown, so a sentence stays a sentence. */
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]+/g;

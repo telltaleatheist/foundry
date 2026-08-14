@@ -59,6 +59,8 @@
  * no capability beyond naming an element by its position in document order.
  */
 
+import { BLOCK_CATEGORIES, UNKNOWN_CATEGORY_COLOUR, categoryRgb } from '../shared/categories';
+
 /** The id segment the protocol handler reserves for app-owned support files. */
 export const REPORTER_ID = '__foundry__';
 export const REPORTER_MEMBER = 'click-reporter.js';
@@ -81,8 +83,9 @@ const BLOCK_TAGS = 'p|h1|h2|h3|h4|h5|h6|li|blockquote|pre|dt|dd|figcaption|td|th
  * anything else before a word is typed; `epub-reader.ts` imports it and refuses
  * the same thing again when the words come back. Two lists would be one edit
  * away from a mode that lets you type into a table and then throws the result
- * away — so this module, which imports nothing, owns it, and main's validator
- * reads it from here.
+ * away — so this module, which imports nothing of main's, owns it, and main's
+ * validator reads it from here. (The one import above is `shared/categories`,
+ * which is a leaf both TypeScript programs compile and cannot cycle back.)
  */
 export const INLINE_TAGS: ReadonlySet<string> = new Set([
   'em', 'strong', 'i', 'b', 'a', 'sup', 'sub', 'span', 'br', 'code', 'cite', 'q', 'small', 'u',
@@ -107,16 +110,48 @@ export const INLINE_TAGS: ReadonlySet<string> = new Set([
  * coordinates, nothing to re-derive when the window is resized.
  */
 const SELECT_CSS = [
-  '[data-bf-cat]{outline:1px dashed rgba(140,140,140,.55);outline-offset:2px;cursor:pointer}',
-  '[data-bf-cat]:hover{outline-color:rgba(200,105,35,.8)}',
-  '[data-bf-sel]{outline:2px solid #c86923;outline-offset:2px;background:rgba(200,105,35,.10)}',
+  /*
+   * THE CATEGORY IS THE COLOUR, and it is carried as a custom property rather
+   * than written into eleven copies of the outline rule. One `--bf-ink` per
+   * category, one rule that reads it: the outline, the hover and the tint are
+   * then written ONCE, and a colour that has to change changes in the table in
+   * shared/categories.ts, which is the same table the inspector draws its
+   * swatches from. Two lists of eleven colours would be one edit away from an
+   * inspector saying a paragraph is green while the page outlines it in amber.
+   *
+   * OUTLINE AND TINT, NEVER TEXT COLOUR. This is a book, and recolouring its
+   * words is unreadable — an outline sits beside the type, a background tint
+   * sits behind it, and both leave the ink the colour the book printed it.
+   *
+   * A category this app has never heard of keeps the fallback grey it always
+   * had, because the emitter is allowed to grow a category before this table
+   * does and a book from the future must still be readable.
+   */
+  `[data-bf-cat]{--bf-ink:${categoryRgb(UNKNOWN_CATEGORY_COLOUR)};`
+  + 'outline:1px dashed rgba(var(--bf-ink),.75);outline-offset:2px;cursor:pointer}',
+  ...BLOCK_CATEGORIES.map((one) => `[data-bf-cat="${one.id}"]{--bf-ink:${categoryRgb(one.colour)}}`),
+  '[data-bf-cat]:hover{outline-style:solid;outline-width:2px;'
+  + 'outline-color:rgb(var(--bf-ink));background:rgba(var(--bf-ink),.10)}',
+  /*
+   * SELECTION BEATS HOVER, which needs the doubled attribute to say: `:hover`
+   * is specificity 0-2-0 and a bare `[data-bf-sel]` is 0-1-0, so the pointer
+   * resting on the selected block would otherwise repaint it as merely hovered
+   * and the one block the keyboard acts on would stop looking different from
+   * the ten around it. The orange is deliberately NOT in the category table —
+   * selection is a state, not a kind, and it must not be mistaken for one.
+   */
+  '[data-bf-cat][data-bf-sel]{outline:2px solid #c86923;outline-offset:2px;'
+  + 'background:rgba(200,105,35,.10)}',
   '[data-bf-cut]{opacity:.42;text-decoration:line-through;'
   + 'background-image:'
   + 'linear-gradient(to top right,transparent 49.5%,rgba(178,54,38,.8) 49.5%,'
   + 'rgba(178,54,38,.8) 50.5%,transparent 50.5%),'
   + 'linear-gradient(to bottom right,transparent 49.5%,rgba(178,54,38,.8) 49.5%,'
   + 'rgba(178,54,38,.8) 50.5%,transparent 50.5%)}',
-  '[data-bf-edit]{outline:2px solid #2f7d4f;outline-offset:2px;'
+  // Doubled and LAST for the same reason the selection rule is doubled: the
+  // block being typed into is also selected and also under the pointer, and it
+  // has to keep saying "your caret is here" over both of them.
+  '[data-bf-cat][data-bf-edit]{outline:2px solid #2f7d4f;outline-offset:2px;'
   + 'background:rgba(47,125,79,.09);cursor:text}',
 ].join('\n');
 
@@ -199,7 +234,119 @@ export const REPORTER_SOURCE = `(function () {
     if (selected) selected.removeAttribute(SEL);
     selected = element;
     if (selected) selected.setAttribute(SEL, '1');
-    post({ type: 'foundry:block-selected', id: selected ? selected.getAttribute(ID) : null });
+    // THE CATEGORY RIDES ALONG, because the inspector is a pane away in the
+    // shell and has no way to read this document. Without it the Category
+    // section could offer to relabel a block but could not show which label the
+    // block already carries, which is the one thing a person needs to see
+    // before they change it.
+    post({
+      type: 'foundry:block-selected',
+      id: selected ? selected.getAttribute(ID) : null,
+      cat: selected ? selected.getAttribute(CAT) : null,
+    });
+  }
+
+  /**
+   * How many blocks of each category this chapter holds, and how many of them
+   * are already struck.
+   *
+   * COUNTED IN THE FRAME rather than read off the file by main, for the reason
+   * everything else in here is: the frame is the only thing that can see the
+   * document. Counting it in main would be a second reading of the same chapter
+   * that could disagree with the one on screen — and the numbers are about what
+   * the user is looking at, which is exactly what this DOM is.
+   *
+   * Posted after every gesture that can change one of them, so the inspector's
+   * legend never says nine while the page shows eight.
+   */
+  function countCategories() {
+    if (!mode) return;
+    var all = document.querySelectorAll('[' + CAT + ']');
+    var counts = {};
+    var struck = {};
+    for (var i = 0; i < all.length; i += 1) {
+      var name = all[i].getAttribute(CAT) || '';
+      counts[name] = (counts[name] || 0) + 1;
+      if (all[i].hasAttribute(CUT)) struck[name] = (struck[name] || 0) + 1;
+    }
+    post({ type: 'foundry:category-counts', counts: counts, struck: struck });
+  }
+
+  /**
+   * Give the selected block a different category.
+   *
+   * IT CHANGES THE LABEL AND NOT THE SHAPE. A paragraph relabelled "footnote"
+   * is still a <p> in the prose, in the place the page printed it; it does not
+   * become an <aside> and it does not move into the footnotes section. That
+   * re-shaping is foundry epub-final's job and is not in this app at all —
+   * somebody reading this function will otherwise assume the two go together.
+   *
+   * The colour repaints itself: the stylesheet keys off the attribute, so
+   * setting it here IS the paint, and there is no second list to reconcile.
+   */
+  function relabel(category) {
+    var element = selected;
+    if (!element) {
+      refuse('Nothing is selected, so there is no block to relabel. Click one first.');
+      return;
+    }
+    var id = named(element);
+    if (id === null) return;
+    if (element.getAttribute(CAT) === category) return;
+    if (editing === element) commitEdit();
+    element.setAttribute(CAT, category);
+    post({ type: 'foundry:block-relabelled', id: id, cat: category });
+    // The selection has not moved but what it IS has, and the inspector marks
+    // the row the selected block already carries. Without this it would go on
+    // pointing at the category the block was before the click.
+    post({ type: 'foundry:block-selected', id: id, cat: category });
+    countCategories();
+  }
+
+  /**
+   * Strike every block of one category in this chapter — or bring them all back.
+   *
+   * ONE GESTURE, and it is written to behave like one: the ids are collected and
+   * checked BEFORE a single attribute moves, so a chapter holding one block
+   * without a name refuses the whole batch rather than striking half of it and
+   * reporting a number that is not what happened.
+   *
+   * It TOGGLES on what is there. If anything of that category is still standing
+   * the batch strikes; if all of them are already struck it brings them back —
+   * which is what makes it feel undoable with the tool that did it, and is the
+   * same rule Delete follows on one block.
+   */
+  function cutCategory(category) {
+    var all = document.querySelectorAll('[' + CAT + ']');
+    var mine = [];
+    for (var i = 0; i < all.length; i += 1) {
+      if (all[i].getAttribute(CAT) === category) mine.push(all[i]);
+    }
+    if (mine.length === 0) {
+      refuse('No block in this chapter carries data-bf-cat="' + category + '", so there is '
+        + 'nothing here to strike.');
+      return;
+    }
+    var ids = [];
+    var cut = false;
+    for (var j = 0; j < mine.length; j += 1) {
+      var id = mine[j].getAttribute(ID);
+      if (!id) {
+        refuse('One of the ' + mine.length + ' blocks carries no data-bf-id, so this chapter '
+          + 'cannot be struck by category without losing track of which block was which. '
+          + 'Close select mode and open it again to stamp this book.');
+        return;
+      }
+      ids.push(id);
+      if (!mine[j].hasAttribute(CUT)) cut = true;
+    }
+    if (editing) commitEdit();
+    for (var k = 0; k < mine.length; k += 1) {
+      if (cut) mine[k].setAttribute(CUT, '1');
+      else mine[k].removeAttribute(CUT);
+    }
+    post({ type: 'foundry:category-cut', cat: category, ids: ids, cut: cut });
+    countCategories();
   }
 
   function named(element) {
@@ -226,6 +373,7 @@ export const REPORTER_SOURCE = `(function () {
     if (cut) element.setAttribute(CUT, '1');
     else element.removeAttribute(CUT);
     post({ type: 'foundry:block-cut', id: id, cut: cut });
+    countCategories();
   }
 
   /**
@@ -316,7 +464,16 @@ export const REPORTER_SOURCE = `(function () {
     // must not mark the book edited, and must not queue a member write behind
     // whatever the user does next.
     if (id === null || html === editedFrom) return;
-    post({ type: 'foundry:block-edited', id: id, html: html });
+    /*
+     * "was" IS WHAT MAKES CANCEL POSSIBLE. Deleting a footnote's reference
+     * number is a legal edit, and the parent then has to ask whether the
+     * footnote itself should go — with a third answer, "put the number back",
+     * which is only answerable if somebody still holds the markup that had it.
+     * Main does not: it wrote the new text and the old text is gone. So the
+     * frame — which captured it at beginEdit to know whether anything changed
+     * at all — hands it over, and the parent writes it back if the user says so.
+     */
+    post({ type: 'foundry:block-edited', id: id, html: html, was: editedFrom });
   }
 
   function cancelEdit() {
@@ -338,7 +495,7 @@ export const REPORTER_SOURCE = `(function () {
   function setMode(on) {
     if (on === mode) return;
     mode = on;
-    if (on) { addStyles(); return; }
+    if (on) { addStyles(); countCategories(); return; }
     commitEdit();
     select(null);
     removeStyles();
@@ -351,9 +508,54 @@ export const REPORTER_SOURCE = `(function () {
     // identity either side has to check against.
     if (event.source !== window.parent) return;
     var data = event.data;
-    if (!data || data.type !== 'foundry:select-mode') return;
-    setMode(data.on === true);
+    if (!data) return;
+    if (data.type === 'foundry:select-mode') { setMode(data.on === true); return; }
+    /*
+     * EVERYTHING ELSE THE PARENT CAN ASK FOR NEEDS THE MODE ON. These are the
+     * inspector's gestures — relabel the selected block, strike a whole
+     * category — and with the mode off there is no selection, no stylesheet and
+     * no reason for the parent to be asking. A command that acted anyway would
+     * be select mode's power available to a book nobody put in select mode.
+     */
+    if (!mode) return;
+    if (data.type === 'foundry:relabel') {
+      if (typeof data.cat === 'string') relabel(data.cat);
+      return;
+    }
+    if (data.type === 'foundry:cut-category') {
+      if (typeof data.cat === 'string') cutCategory(data.cat);
+      return;
+    }
+    if (data.type === 'foundry:mark-note') {
+      if (typeof data.noteId === 'string') markNote(data.noteId, data.cut === true);
+      return;
+    }
+    if (data.type === 'foundry:recount') countCategories();
   });
+
+  /**
+   * Paint the strike on a footnote the parent has just marked in the file.
+   *
+   * THE ONLY MARK IN THIS MODE THAT IS PAINTED AFTER ITS WRITE, and it is the
+   * only one whose write was not started by a gesture in here: a dialog asked,
+   * the user answered, main wrote, and this catches the page up. The note is
+   * usually far below whatever the reader is looking at, so a frame reload to
+   * show it would move the page for something nobody can see.
+   *
+   * Found with an ATTRIBUTE SELECTOR rather than getElementById, because these
+   * documents are XHTML — XML, where "which attribute is the id" is a question
+   * with more history than it is worth when [id=…] simply answers it. The id
+   * came out of an href foundry itself wrote, so it needs escaping only against
+   * quotes, and a note whose id carries one is not a book this app produced.
+   */
+  function markNote(noteId, cut) {
+    if (noteId.indexOf('"') >= 0 || noteId.indexOf('\\\\') >= 0) return;
+    var note = document.querySelector('[id="' + noteId + '"]');
+    if (!note) return;
+    if (cut) note.setAttribute(CUT, '1');
+    else note.removeAttribute(CUT);
+    countCategories();
+  }
 
   document.addEventListener('click', function (event) {
     if (!mode) return;

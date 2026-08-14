@@ -28,6 +28,7 @@ const api: FoundryApi = {
     ipcRenderer.invoke('document:save-copy', absolutePath, suggestedName),
   reveal: (target) => ipcRenderer.invoke('shell:reveal', target),
   confirmClose: (warning) => ipcRenderer.invoke('document:confirm-close', warning),
+  confirmUnlinkedNote: (note) => ipcRenderer.invoke('document:confirm-unlinked-note', note),
 
   workspace: {
     plan: (inputPath, kind) => ipcRenderer.invoke('workspace:plan', inputPath, kind),
@@ -42,11 +43,25 @@ const api: FoundryApi = {
     writeMember: (id, href, text) => ipcRenderer.invoke('epub:write-member', id, href, text),
     renameHeading: (id, href, label) => ipcRenderer.invoke('epub:rename-heading', id, href, label),
     setCut: (id, href, blockId, cut) => ipcRenderer.invoke('epub:set-cut', id, href, blockId, cut),
+    setCuts: (id, href, blockIds, cut) =>
+      ipcRenderer.invoke('epub:set-cuts', id, href, blockIds, cut),
+    setNoteCut: (id, href, noteId, cut) =>
+      ipcRenderer.invoke('epub:set-note-cut', id, href, noteId, cut),
+    setCategory: (id, href, blockId, category) =>
+      ipcRenderer.invoke('epub:set-category', id, href, blockId, category),
     setBlockHtml: (id, href, blockId, html) =>
       ipcRenderer.invoke('epub:set-block-html', id, href, blockId, html),
+    restoreBlockHtml: (id, href, blockId, html) =>
+      ipcRenderer.invoke('epub:restore-block-html', id, href, blockId, html),
     mintIds: (id, members) => ipcRenderer.invoke('epub:mint-ids', id, members),
     chooseSavePath: (id, suggestedName) => ipcRenderer.invoke('epub:choose-save-path', id, suggestedName),
     save: (id, destination) => ipcRenderer.invoke('epub:save', id, destination),
+  },
+
+  prefs: {
+    unlinkedNoteAnswer: () => ipcRenderer.invoke('prefs:unlinked-note-answer'),
+    setUnlinkedNoteAnswer: (answer) =>
+      ipcRenderer.invoke('prefs:set-unlinked-note-answer', answer),
   },
 
   library: {

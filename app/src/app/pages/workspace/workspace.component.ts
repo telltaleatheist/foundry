@@ -159,10 +159,21 @@ import { TabsService, type Pane } from '../../core/tabs.service';
     }
     .divider:hover::after { background: var(--accent); }
 
-    /* Over everything in the pane, iframes included, and only while a row is in
-       the air. 30 puts it above the viewer's own content and below the rail
-       (40), the shelf (900) and the dialogs (1200) — the drag comes FROM the
-       panel beside the rail, so the shield must never be over it. */
+    /*
+      Over everything in the pane, iframes included, and only while a row is in
+      the air. 30 puts it above the viewer's own content and below the dock
+      (40), the shelf (900) and the dialogs (1200) — the drag comes FROM the
+      documents panel, so the shield must never be over it.
+
+      THE LADDER SURVIVED THE DOCK MOVING TO THE BOTTOM and the inspector
+      arriving on the right, because none of the four is in a stacking context
+      of its own: the shell, its row, .main and .pane set no z-index, no
+      transform and no filter, so 30 and 40 are still compared against each
+      other rather than against their parents. What the move DID change is
+      overlap — the dock and the shelf's pill are both along the bottom edge
+      now, and the shelf lifts itself by the dock's height token rather than
+      relying on 900 to win an argument it should not be having.
+    */
     .shield { position: absolute; inset: 0; z-index: 30; }
 
     /*
@@ -318,7 +329,11 @@ function carriesDocument(event: DragEvent): boolean {
 /**
  * How narrow a column may be dragged.
  *
- * A book's chapter list is 260 wide on its own, so anything under this is a
- * pane that can show its furniture and nothing else.
+ * It used to be measured against the chapter list a book carried inside every
+ * pane — 260 pixels of furniture before a word of the page. That list is in the
+ * shell's inspector now, so what a column has to fit is the reading toolbar: a
+ * title, Edit HTML, the mode line and Save, which run out of room well before
+ * this. The number is unchanged because the floor it sets is still the right
+ * one; only the reason for it moved.
  */
 const MIN_PANE_PX = 280;

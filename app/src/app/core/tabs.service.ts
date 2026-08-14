@@ -1,7 +1,8 @@
 import { Injectable, computed, effect, inject, signal } from '@angular/core';
 
 import type { FoundryApi } from '@shared/api';
-import type { EpubBook, JobKind } from '@shared/types';
+import { categoryLabel } from '@shared/categories';
+import type { EpubBook, JobKind, UnlinkedNote } from '@shared/types';
 
 import { QueueService } from './queue.service';
 import { api } from './foundry';
@@ -211,6 +212,34 @@ export interface SourceJump {
    * not change, and the editor's effect would never run.
    */
   seq: number;
+}
+
+/**
+ * The block one frame says is selected.
+ *
+ * IT IS NOT A FACT ABOUT THE BOOK. A selection lives in the frame's DOM and dies
+ * with the frame; nothing on disk records it, and a reload starts with nothing
+ * selected. It is held here only because the inspector — which is in the shell,
+ * not in the pane — has no other way to learn what the user clicked.
+ */
+export interface SelectedBlock {
+  blockId: string;
+  /** Its `data-bf-cat`, so the inspector can show which row it already is. */
+  category: string | null;
+}
+
+/** How many blocks of each category the rendered chapter holds, and how many are struck. */
+export interface CategoryCounts {
+  counts: Readonly<Record<string, number>>;
+  struck: Readonly<Record<string, number>>;
+}
+
+/** Something the shell wants said to one tab's frame. See `frameCommand`. */
+export interface FrameCommand {
+  tabId: string;
+  /** Bumped per command, so the same one twice in a row still fires. */
+  seq: number;
+  message: Record<string, unknown>;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -801,7 +830,13 @@ export class TabsService {
     if (current.book && api) void api.epub.close(current.book.id);
 
     this.all.set(tabs.filter((candidate) => !going.has(candidate.id)));
-    for (const gone of going) this.pendingFlush.delete(gone);
+    for (const gone of going) {
+      this.pendingFlush.delete(gone);
+      // The selection and the category tally are the frame's, and the frame is
+      // going with the tab. Left behind they would be the inspector's answer for
+      // whatever tab id gets reused next.
+      this.forgetFrameState(gone);
+    }
     this.dropFromPanes(going);
   }
 
@@ -987,6 +1022,10 @@ export class TabsService {
     if (!tab || tab.kind !== 'epub' || tab.book === null) return;
     if (tab.selectMode) {
       this.patch(id, { selectMode: false });
+      // The frame drops its selection and stops counting when the mode closes,
+      // so the inspector must stop showing last minute's numbers as this
+      // minute's truth.
+      this.forgetFrameState(id);
       return;
     }
     if (api) {
@@ -1029,35 +1068,292 @@ export class TabsService {
       bridge.epub.setCut(book, member, blockId, cut));
   }
 
-  /** The same shape for an edited block: optimistic, and repainted on a refusal. */
-  async setBlockHtml(id: string, blockId: string, html: string): Promise<void> {
-    await this.blockEdit(id, (bridge, book, member) =>
+  /**
+   * An edited block: optimistic and repainted on a refusal, like the cut — and
+   * then the ONE question this mode has to ask out loud.
+   *
+   * `was` is the block's markup as it stood before the edit, handed over by the
+   * frame. It is carried this far for exactly one purpose: the third answer to
+   * the footnote question is "put the number back", and nothing else in the app
+   * is holding the text that had it. Main wrote the new words over the old ones
+   * and the old ones are gone from disk.
+   *
+   * THE WRITE HAPPENS FIRST AND THE QUESTION SECOND, which is deliberate and is
+   * the whole feel of select mode: what you typed lands the instant you stop
+   * typing. A dialog that interrupted the edit to ask permission would put a
+   * modal between a person and their own sentence. Cancel undoes.
+   */
+  async setBlockHtml(id: string, blockId: string, html: string, was: string): Promise<void> {
+    const unlinked = await this.blockEdit(id, (bridge, book, member) =>
       bridge.epub.setBlockHtml(book, member, blockId, html));
+    if (!unlinked || unlinked.length === 0) return;
+    await this.askAboutUnlinkedNotes(id, blockId, was, unlinked);
   }
 
-  private async blockEdit(
+  /**
+   * "You deleted this footnote's last reference — should the footnote go too?"
+   *
+   * MAIN ASKS IT (a native box, modal to the window, like every other dialog in
+   * this app) and main also answers it without asking when the user has said
+   * "don't ask again": the standing answer is stored per ANSWER in
+   * app-settings.json, so "always strike it" and "always leave it" stay two
+   * different instructions.
+   *
+   * One edit can orphan more than one note — a paragraph carrying two reference
+   * numbers, both deleted in one pass — so this walks them. A CANCEL STOPS THE
+   * WALK: it restores the block to the markup that had every one of those
+   * numbers in it, so there is nothing left to ask about, and asking anyway
+   * would be asking about a note that is reachable again.
+   */
+  private async askAboutUnlinkedNotes(
     id: string,
-    write: (bridge: FoundryApi, bookId: string, member: string) => Promise<void>,
+    blockId: string,
+    was: string,
+    notes: readonly UnlinkedNote[],
   ): Promise<void> {
+    const bridge = api;
+    if (!bridge) return;
+    for (const note of notes) {
+      const answer = await bridge.confirmUnlinkedNote(note);
+      if (answer === 'cancel') {
+        await this.restoreBlockHtml(id, blockId, was);
+        return;
+      }
+      if (answer === 'keep') continue;
+      const done = await this.blockEdit(id, (b, book, member) =>
+        b.epub.setNoteCut(book, member, note.noteId, true));
+      // PAINTED AFTER THE WRITE, and only when the write landed — the opposite
+      // of every other mark in this mode. A cut the user pressed Delete for is
+      // painted first because the hand is already moving; this one was decided
+      // in a dialog that has just closed, there is no gesture to keep up with,
+      // and painting a strike over a footnote main then refused to mark would
+      // be a lie with nothing on screen to correct it.
+      if (done !== null) this.commandFrame(id, { type: 'foundry:mark-note', noteId: note.noteId, cut: true });
+    }
+  }
+
+  /**
+   * The "put the number back" answer: the block's previous markup, written back.
+   *
+   * A SEPARATE MAIN CALL, because the ordinary edit door forbids markup being
+   * gained and a restored reference number is a `<sup>` and an anchor
+   * reappearing — see `restoreBlockHtml` in electron/epub-reader.ts for the
+   * mirror check it makes instead.
+   *
+   * IT BUMPS THE REVISION, which no other select-mode write does. The frame is
+   * showing the sentence WITHOUT the number, because that is what the user
+   * typed; there is no attribute to flip that would put it back, so the honest
+   * repaint is to reload the chapter from the file that now has it. The cost is
+   * the reader landing at the top of the chapter, which is the price of an undo.
+   */
+  private async restoreBlockHtml(id: string, blockId: string, html: string): Promise<void> {
     const bridge = api;
     const tab = this.byId(id);
     if (!bridge || !tab || tab.book === null || tab.chapterHref === null) return;
+    /*
+     * NOTHING TO PUT BACK IS SAID, NEVER GUESSED AT. The previous markup comes
+     * from the frame and is dropped by the message check if it is missing or
+     * absurdly long — and an empty string here would be a request to blank the
+     * paragraph, which for a block whose words carried no other tags main would
+     * accept as a legal word edit. This is the one place that can tell the
+     * difference between "restore to nothing" and "we never had it".
+     */
+    if (html.length === 0) {
+      this.notice.set(
+        `The reference number cannot be put back into ${blockId}: this app is no longer holding `
+        + 'the words that had it. The footnote was left in the book — press Delete on it to strike '
+        + 'it, or type the number back into the sentence.',
+      );
+      return;
+    }
     const bookId = tab.book.id;
     const member = memberOf(tab.chapterHref);
     try {
-      await this.queueMemberWrite(bookId, member, () => write(bridge, bookId, member));
+      await this.queueMemberWrite(bookId, member, () =>
+        bridge.epub.restoreBlockHtml(bookId, member, blockId, html));
+      this.memberChanged(id, member);
+    } catch (err) {
+      this.notice.set(err instanceof Error ? err.message : String(err));
+    }
+    const current = this.byId(id);
+    if (current) this.patch(id, { modified: true, revision: current.revision + 1 });
+  }
+
+  /**
+   * Relabel one block — the inspector's Category rows, applied to the selection.
+   *
+   * IT CHANGES THE LABEL AND NOT THE SHAPE: a paragraph relabelled `footnote`
+   * stays a `<p>` in the prose and does not move into the footnotes section.
+   * That re-shaping is `foundry epub-final`'s and is not in this app.
+   *
+   * Same optimism as the cut — the frame set the attribute and repainted its own
+   * colour off it before this ran — so no revision bump on success, and a bump
+   * on a refusal to let the file repaint over the guess.
+   */
+  async setBlockCategory(id: string, blockId: string, category: string): Promise<void> {
+    await this.blockEdit(id, (bridge, book, member) =>
+      bridge.epub.setCategory(book, member, blockId, category));
+  }
+
+  /**
+   * Select-all-by-category: every block of one kind in this chapter, struck or
+   * brought back in ONE write, and SAID OUT LOUD.
+   *
+   * The number comes back from main rather than from the count the frame sent,
+   * because they can differ — a block already carrying the mark is not a change
+   * — and a gesture that reports what it asked for rather than what it did is a
+   * gesture nobody can trust with two hundred paragraphs.
+   */
+  async cutBlocksByCategory(
+    id: string,
+    category: string,
+    blockIds: readonly string[],
+    cut: boolean,
+  ): Promise<void> {
+    const changed = await this.blockEdit(id, (bridge, book, member) =>
+      bridge.epub.setCuts(book, member, [...blockIds], cut));
+    if (changed === null) return;
+    const kind = categoryLabel(category).toLowerCase();
+    const many = changed === 1 ? '' : 's';
+    this.notice.set(changed === 0
+      ? `Every ${kind} block in this chapter already ${cut ? 'was struck' : 'stood'} — nothing changed.`
+      : cut
+        ? `Struck ${changed} ${kind} block${many} in this chapter. Press Delete on one to bring it back.`
+        : `Brought back ${changed} ${kind} block${many} in this chapter.`);
+  }
+
+  /**
+   * Every select-mode write, and the one place their optimism is spelled out.
+   *
+   * Resolves with whatever main answered, or NULL when the write was refused or
+   * there was nothing to write to — which is what lets a caller tell "main did
+   * this" from "main would not", without a second try/catch at every call site.
+   */
+  private async blockEdit<T>(
+    id: string,
+    write: (bridge: FoundryApi, bookId: string, member: string) => Promise<T>,
+  ): Promise<T | null> {
+    const bridge = api;
+    const tab = this.byId(id);
+    if (!bridge || !tab || tab.book === null || tab.chapterHref === null) return null;
+    const bookId = tab.book.id;
+    const member = memberOf(tab.chapterHref);
+    try {
+      const answer = await this.queueMemberWrite(bookId, member, () => write(bridge, bookId, member));
       this.patch(id, { modified: true });
       this.memberChanged(id, member);
+      return answer;
     } catch (err) {
       this.notice.set(err instanceof Error ? err.message : String(err));
       const current = this.byId(id);
       if (current) this.patch(id, { revision: current.revision + 1 });
+      return null;
     }
   }
 
   /** Something the frame itself refused, said where the user can read it. */
   reportSelectRefusal(reason: string): void {
     this.notice.set(reason);
+  }
+
+  // ── The inspector, and the frame it cannot reach ─────────────────────────
+
+  /**
+   * What the frame in one pane says is selected, and what it says the chapter
+   * holds — kept PER TAB.
+   *
+   * A single pair of signals would have five panes writing over each other: two
+   * books can be in select mode at once, and the second one's frame announcing
+   * "nothing is selected" as it loads would blank the inspector for the first.
+   * The map is small (one entry per book in select mode) and it is dropped with
+   * the tab, because both facts die with the frame that reported them.
+   */
+  private readonly selections = signal<ReadonlyMap<string, SelectedBlock>>(new Map());
+  private readonly counts = signal<ReadonlyMap<string, CategoryCounts>>(new Map());
+
+  selectionFor(tabId: string | null): SelectedBlock | null {
+    return tabId === null ? null : this.selections().get(tabId) ?? null;
+  }
+
+  countsFor(tabId: string | null): CategoryCounts | null {
+    return tabId === null ? null : this.counts().get(tabId) ?? null;
+  }
+
+  reportSelection(tabId: string, blockId: string | null, category: string | null): void {
+    this.selections.update((map) => {
+      const next = new Map(map);
+      if (blockId === null) next.delete(tabId);
+      else next.set(tabId, { blockId, category });
+      return next;
+    });
+  }
+
+  reportCategoryCounts(tabId: string, counts: CategoryCounts): void {
+    this.counts.update((map) => new Map(map).set(tabId, counts));
+  }
+
+  private forgetFrameState(tabId: string): void {
+    this.selections.update((map) => {
+      const next = new Map(map);
+      next.delete(tabId);
+      return next;
+    });
+    this.counts.update((map) => {
+      const next = new Map(map);
+      next.delete(tabId);
+      return next;
+    });
+  }
+
+  /**
+   * PARENT → FRAME, for the panel that cannot see it.
+   *
+   * The inspector lives in the shell, one component tree away from the five
+   * viewers, and the frame is behind a sandboxed origin that only its own
+   * <iframe> element can post into. So a command is a SIGNAL naming the tab it
+   * is for, and whichever viewer is rendering that tab picks it up and posts it
+   * — the same shape `sourceJump` uses for a click going the other way, down to
+   * the sequence number, which is what makes the same command twice in a row do
+   * anything at all.
+   */
+  readonly frameCommand = signal<FrameCommand | null>(null);
+  private commandSeq = 0;
+
+  private commandFrame(tabId: string, message: Record<string, unknown>): void {
+    this.commandSeq += 1;
+    this.frameCommand.set({ tabId, seq: this.commandSeq, message });
+  }
+
+  /**
+   * The inspector's two gestures, refused BY NAME when the mode is off.
+   *
+   * The rows are a legend as well as a control — with nothing selected they say
+   * how many blocks of each kind this chapter holds — so they are clickable in
+   * states where they cannot act, and a click that quietly did nothing would be
+   * indistinguishable from a broken panel.
+   */
+  relabelSelected(category: string): void {
+    const tab = this.activeDocument();
+    if (!tab || tab.kind !== 'epub' || tab.book === null) return;
+    if (!tab.selectMode) {
+      this.notice.set('Relabelling a block needs select mode on — press Select, then click the block.');
+      return;
+    }
+    if (this.selectionFor(tab.id) === null) {
+      this.notice.set('Click a block in the page first; the category is applied to what is selected.');
+      return;
+    }
+    this.commandFrame(tab.id, { type: 'foundry:relabel', cat: category });
+  }
+
+  strikeCategory(category: string): void {
+    const tab = this.activeDocument();
+    if (!tab || tab.kind !== 'epub' || tab.book === null) return;
+    if (!tab.selectMode) {
+      this.notice.set('Striking a whole category needs select mode on — press Select first.');
+      return;
+    }
+    this.commandFrame(tab.id, { type: 'foundry:cut-category', cat: category });
   }
 
   /**

@@ -24,6 +24,12 @@ export class UiService {
    * whole window it has always had rather than opening beside 220 pixels of an
    * empty list.
    *
+   * OFF, IT IS A 30-PIXEL STUB rather than nothing, and the stub holds the
+   * button that brings it back — in the top-left corner of the window, which is
+   * where the button that put it away was. Three things press this: that button,
+   * Ctrl+B on the View menu, and the dock's Documents item. A panel with only a
+   * keyboard chord to bring it back is a panel people lose.
+   *
    * IN MEMORY ONLY, like the panes' widths: which panels are open is an
    * arrangement for the work in front of you, and restoring last week's is
    * furniture arriving in the wrong room.

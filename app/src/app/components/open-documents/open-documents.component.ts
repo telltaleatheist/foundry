@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { Router } from '@angular/router';
 
 import { TabsService, type Tab } from '../../core/tabs.service';
+import { UiService } from '../../core/ui.service';
 
 /**
  * The open documents, down the left — VS Code's explorer, and its gestures.
@@ -45,8 +46,21 @@ import { TabsService, type Tab } from '../../core/tabs.service';
   selector: 'app-open-documents',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
+    <!--
+      PUT AWAY, THE PANEL IS A STUB AND NOT NOTHING. The button that collapses it
+      has to be the button that brings it back, and it has to be in the same
+      place — the top-left corner of the window — or collapsing the list is a
+      gesture with no visible way out except a keyboard chord and a dock item
+      nobody knows are there. Thirty pixels is the price.
+    -->
+    @if (!ui.documentsShown()) {
+      <div class="stub">
+        <button class="collapse" title="Show the open documents (Ctrl+B)" (click)="ui.toggleDocuments()">»</button>
+      </div>
+    } @else {
     <div class="panel">
       <header class="head">
+        <button class="collapse" title="Hide the open documents (Ctrl+B)" (click)="ui.toggleDocuments()">«</button>
         <!-- "Open" alone read as a verb — a button you press — beside a book's
              own title in the chapter list next to it. It is a noun: these are
              the documents that are open. -->
@@ -107,6 +121,7 @@ import { TabsService, type Tab } from '../../core/tabs.service';
         }
       </div>
     </div>
+    }
   `,
   styles: [`
     :host {
@@ -115,6 +130,40 @@ import { TabsService, type Tab } from '../../core/tabs.service';
       min-width: 220px;
       height: 100%;
     }
+    /* Collapsed, the HOST narrows to the stub's width, because the shell's flex
+       row measures the host and not the panel inside it — a stub drawn inside a
+       220px host would be 30 pixels of button beside 190 of nothing. The class
+       is put on by the shell (see App's template) rather than by a host binding
+       here, so the element carrying it is invalidated by the same change
+       detection pass that reads the flag. */
+    :host(.shut) { width: 30px; min-width: 30px; }
+
+    .stub {
+      display: flex;
+      justify-content: center;
+      height: 100%;
+      padding-top: 8px;
+      background: var(--bg-elevated);
+      border-right: 1px solid var(--border-default);
+    }
+
+    /*
+      THE TOP-LEFT CORNER OF THE WINDOW, in both states: shown, it is the first
+      thing in the panel's own header; collapsed, it is the only thing in the
+      stub. A collapse button that moves when you press it is a button people
+      press once.
+    */
+    .collapse {
+      flex: 0 0 auto;
+      width: 20px; height: 20px;
+      padding: 0;
+      background: transparent; border: none; border-radius: var(--radius-sm);
+      color: var(--text-tertiary); font-size: 12px; line-height: 1;
+      cursor: pointer;
+      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  color 100ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .collapse:hover { background: var(--bg-hover); color: var(--text-primary); }
 
     /* The rail's own surface and border, so the two read as one left edge with a
        divider in it rather than as two panels of different materials. */
@@ -127,8 +176,8 @@ import { TabsService, type Tab } from '../../core/tabs.service';
     }
 
     .head {
-      display: flex; align-items: baseline; gap: 8px;
-      padding: 12px 12px 8px;
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px 8px 5px;
       border-bottom: 1px solid var(--border-subtle);
     }
     .label {
@@ -218,6 +267,8 @@ import { TabsService, type Tab } from '../../core/tabs.service';
 })
 export class OpenDocumentsComponent {
   protected readonly tabs = inject(TabsService);
+  /** Public to the template AND to the host binding above, which is a template too. */
+  protected readonly ui = inject(UiService);
   private readonly router = inject(Router);
 
   /** The row a drop would land in front of, and whether the end of the list is the target. */

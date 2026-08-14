@@ -19,6 +19,8 @@ import * as path from 'node:path';
 
 import { app } from 'electron';
 
+import type { UnlinkedNoteStanding } from '../shared/types';
+
 export interface AppSettings {
   /**
    * Minutes an app-started vLLM server stays up after the queue drains.
@@ -43,6 +45,23 @@ export interface AppSettings {
    * somebody's back.
    */
   libraryDir: string;
+  /**
+   * The standing answer to "you deleted this footnote's last reference — should
+   * the footnote go too?".
+   *
+   * REMEMBERED PER ANSWER, not merely as "stop asking". "Always strike it" and
+   * "always leave it" are two different standing instructions about somebody
+   * else's book, and collapsing them into one silenced-question flag would mean
+   * the app picking which of them the user meant. `ask` — the default — puts the
+   * dialog up every time.
+   *
+   * CANCEL IS NEVER STORED, whatever the checkbox says. "Always put the number
+   * back" is an instruction never to be able to delete a reference number again,
+   * with no dialog left to say so and nothing on screen explaining why the
+   * deletion keeps undoing itself. The checkbox is honoured for the two answers
+   * that are actual decisions and ignored for the one that is a retreat.
+   */
+  unlinkedNoteAnswer: UnlinkedNoteStanding;
 }
 
 export const KEEP_WARM_MAX_MINUTES = 240;
@@ -100,11 +119,25 @@ export function clampLibraryDir(value: unknown, fallback = defaultLibraryDir()):
   return path.normalize(trimmed);
 }
 
+/**
+ * One of the three words, or `ask`.
+ *
+ * A hand-edited nonsense value reads as `ask` rather than throwing, on this
+ * file's usual forgiveness rule — the worst it can cost is a question being
+ * asked that somebody had silenced, which is recoverable in one dialog. The
+ * opposite mistake is not: a garbled file that read as `cut` would strike
+ * footnotes without ever asking.
+ */
+export function clampUnlinkedNoteAnswer(value: unknown): UnlinkedNoteStanding {
+  return value === 'cut' || value === 'keep' ? value : 'ask';
+}
+
 export function readAppSettings(): AppSettings {
   const raw = readRaw();
   return {
     keepServerWarmMinutes: clampKeepWarm(raw?.['keepServerWarmMinutes']),
     libraryDir: clampLibraryDir(raw?.['libraryDir']),
+    unlinkedNoteAnswer: clampUnlinkedNoteAnswer(raw?.['unlinkedNoteAnswer']),
   };
 }
 
@@ -115,6 +148,9 @@ export function writeAppSettings(patch: Partial<AppSettings>): AppSettings {
   }
   if (patch.libraryDir !== undefined) {
     root['libraryDir'] = clampLibraryDir(patch.libraryDir);
+  }
+  if (patch.unlinkedNoteAnswer !== undefined) {
+    root['unlinkedNoteAnswer'] = clampUnlinkedNoteAnswer(patch.unlinkedNoteAnswer);
   }
   const file = settingsFile();
   fs.mkdirSync(path.dirname(file), { recursive: true });

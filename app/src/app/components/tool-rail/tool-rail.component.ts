@@ -5,13 +5,21 @@ import { TabsService } from '../../core/tabs.service';
 import { UiService } from '../../core/ui.service';
 
 /**
- * The left rail — Home, the tools, and the gear.
+ * The dock — Home, the tools, and the gear, along the BOTTOM of the window.
  *
- * Modelled on BookForge's nav-rail (icon over label, active state, a pinned
- * footer), minus its console-capture and service-toggle machinery, which belong
- * to that app's problems and not to this one.
+ * IT USED TO BE A COLUMN DOWN THE LEFT, 88 pixels wide for the whole session,
+ * beside a 220-pixel document list: 308 pixels of chrome before a page of a book
+ * began. Horizontal, it costs about 60 pixels of height and gives all of that
+ * width back to the pages, which is the thing this window exists to show. The
+ * model is an iPhone control bar or the Mac dock — the tools live along the
+ * bottom edge, in reach, out of the way of the document.
  *
- * HOME IS THE TOP ITEM and it is not a route: it is "no tab is active", so
+ * ICON OVER LABEL SURVIVED THE MOVE, deliberately. Icons alone are a rail you
+ * have to hover to read, and this app's tools are not the four everybody already
+ * knows: "Select" is a curation mode nobody has met before, and a glyph would
+ * teach nobody anything.
+ *
+ * HOME IS THE FIRST ITEM and it is not a route: it is "no tab is active", so
  * pressing it puts the documents down without closing them and pressing a tab
  * picks one back up. A Home that closed your tabs would be a Home nobody presses.
  */
@@ -122,32 +130,45 @@ import { UiService } from '../../core/ui.service';
     </nav>
   `,
   styles: [`
+    /*
+      A ROW ALONG THE BOTTOM. The height is a token (--rail-h, styles.scss)
+      rather than a number written here, because the queue shelf floats over the
+      window at z-index 900 and has to sit ABOVE this dock rather than on top of
+      its right-hand end — the shelf reads the same token to lift itself, and two
+      hand-kept numbers would drift into a pill covering the Settings button.
+    */
     .rail {
-      width: 88px;
-      min-width: 88px;
-      height: 100%;
+      flex: 0 0 auto;
+      width: 100%;
+      height: var(--rail-h);
       display: flex;
-      flex-direction: column;
+      align-items: center;
       background: var(--bg-elevated);
-      border-right: 1px solid var(--border-default);
-      padding: 8px 0;
+      border-top: 1px solid var(--border-default);
+      padding: 0 10px;
       z-index: 40;
     }
 
     .rail-brand {
-      text-align: center;
+      flex: 0 0 auto;
       font-size: 20px;
       color: var(--accent);
-      padding: 6px 0 12px;
+      padding: 0 12px 0 4px;
     }
 
+    /* The tools scroll sideways rather than shrinking: a narrow window must not
+       squeeze six labels into unreadable stubs, and the dock is the one place
+       every mode in this app is named. */
     .rail-tools {
-      display: flex; flex-direction: column; align-items: center;
-      gap: 4px; flex: 1;
+      display: flex; flex-direction: row; align-items: center;
+      gap: 4px; flex: 1; min-width: 0;
+      overflow-x: auto; overflow-y: hidden;
     }
     .rail-foot {
-      display: flex; flex-direction: column; align-items: center;
-      border-top: 1px solid var(--border-subtle); padding-top: 8px;
+      display: flex; flex-direction: row; align-items: center;
+      flex: 0 0 auto;
+      border-left: 1px solid var(--border-subtle);
+      padding-left: 8px; margin-left: 8px;
     }
 
     .rail-item {
@@ -156,8 +177,9 @@ import { UiService } from '../../core/ui.service';
       align-items: center;
       justify-content: center;
       gap: 2px;
+      flex: 0 0 auto;
       width: 76px;
-      padding: 8px 4px;
+      padding: 6px 4px;
       background: transparent;
       border: none;
       border-radius: var(--radius);

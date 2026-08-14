@@ -51,6 +51,13 @@
 
   --focus-ring: 0 0 0 2px rgba(34, 211, 238, 0.4);
 
+  /* How tall the dock along the bottom is. A TOKEN because two things read it:
+     the dock itself (app-tool-rail) and the queue shelf, which floats over the
+     window at z-index 900 and lifts itself by exactly this much so its pill sits
+     above the dock rather than over the Settings button at the dock's right-hand
+     end. Two hand-kept numbers would drift the first time the dock changed. */
+  --rail-h: 58px;
+
   --scrollbar-track: #2a2824;
   --scrollbar-thumb: #06b6d4;
   --scrollbar-thumb-hover: #22d3ee;
