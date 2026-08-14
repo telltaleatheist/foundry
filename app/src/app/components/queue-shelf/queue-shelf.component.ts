@@ -102,7 +102,7 @@ import { api } from '../../core/foundry';
                     </span>
                   }
                   @case ('cancelled') { <span class="sub">Cancelled</span> }
-                  @case ('failed') { <span class="sub bad" [title]="job.error ?? ''">{{ firstLine(job.error) }}</span> }
+                  @case ('failed') { <span class="sub bad" [title]="job.error ?? ''">{{ failureLine(job.error) }}</span> }
                 }
               </div>
             }
@@ -305,8 +305,33 @@ export class QueueShelfComponent {
     return baseName(filePath);
   }
 
-  protected firstLine(error: string | undefined): string {
-    return (error ?? 'Failed').split('\n')[0] ?? 'Failed';
+  /**
+   * What actually went wrong, out of the engine's whole stderr.
+   *
+   * THE FIRST LINE IS NEVER THE ANSWER, and showing it was a bug that hid every
+   * failure this app can have. `job.error` is the engine's ENTIRE stderr, and
+   * foundry's first line is always a configuration echo — which endpoint it is
+   * using and which file said so. Every failed conversion therefore reported
+   * the same harmless sentence, whatever had actually happened, and the real
+   * message sat at the far end of a string nobody could see.
+   *
+   * The engine's contract makes the right line findable: `src/cli.ts` prints a
+   * fatal as `foundry: <message>` and exits, so the LAST line beginning that
+   * way is the failure. A run that died without one — killed, or a crash in a
+   * child — has no such line, and then the last thing it managed to say is the
+   * most informative thing there is.
+   *
+   * The whole stderr stays in the row's `title`, because the sentence is the
+   * headline and the progress above it is often the context that explains it.
+   */
+  protected failureLine(error: string | undefined): string {
+    const lines = (error ?? '').split('\n').map((line) => line.trim()).filter((l) => l.length > 0);
+    if (lines.length === 0) return 'Failed';
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      const line = lines[i]!;
+      if (line.startsWith('foundry:')) return line.slice('foundry:'.length).trim() || line;
+    }
+    return lines[lines.length - 1]!;
   }
 
   protected reveal(job: Job): void {
