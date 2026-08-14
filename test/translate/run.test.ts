@@ -13,14 +13,20 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { readZipMap } from '../../src/translate/unzip.js';
-import { checkAnswer, systemPrompt, translateEpub, unfence, TranslateError } from '../../src/translate/run.js';
+import {
+  CHUNK_CHARS, checkAnswer, chunkAmbiguity, parseChunkAnswer, renderChunk, shapeRules,
+  systemPrompt, translateEpub, unfence, TranslateError,
+} from '../../src/translate/run.js';
 import { readLanguage } from '../../src/translate/languages.js';
-import { CHAPTER_PATH, NAV_PATH, OPF_PATH, PICTURE, fakeOllama, foundryEpub, plainEpub, shout } from './fixture.js';
+import {
+  CHAPTER_PATH, NAV_PATH, OPF_PATH, PICTURE,
+  chapterWith, fakeOllama, foundryEpub, foundryEpubWith, plainEpub, shout,
+} from './fixture.js';
 
-function scratch(): { epub: string; out: string; clean: () => void } {
+function scratch(book: Uint8Array = foundryEpub()): { epub: string; out: string; clean: () => void } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-translate-'));
   const epub = path.join(dir, 'Buch.epub');
-  fs.writeFileSync(epub, foundryEpub());
+  fs.writeFileSync(epub, book);
   return { epub, out: path.join(dir, 'Buch.en.epub'), clean: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 
@@ -36,15 +42,28 @@ test('a foundry book comes out translated, with its skips counted', async () => 
       epubPath: epub, outPath: out, to: 'en', from: 'de', transport: server, log: quiet,
     });
 
-    // Seven blocks: the chapter heading, the paragraph, the section header, the
-    // list item, the quote's inner <p>, the caption and the footnote. The <ul>
-    // and the <blockquote> are stamped too and are NOT blocks — the thing
-    // inside them is.
-    assert.equal(report.blocks, 7);
+    /*
+     * THIRTY BLOCKS IN SIXTEEN REQUESTS, and the gap between those two numbers
+     * is the whole of this change. A block is still what gets spliced — every
+     * `<li>`, every `<p>`, every `<td>` — and `report.blocks` still counts them,
+     * so the number still means what it meant about the book. A chunk is what
+     * gets SENT: the four-item list is one request, the three-paragraph quote is
+     * one request, the nine-cell table is one request.
+     *
+     * The `<ul>` and the `<blockquote>` are stamped too and are still not blocks
+     * themselves — the things inside them are.
+     */
+    assert.equal(report.blocks, 30);
+    assert.equal(report.chunks, 16);
+    assert.equal(server.asked.length, 16, 'one request per chunk, and no retries');
     assert.equal(report.documents, 1);
     assert.equal(report.retries, 0);
-    assert.deepEqual([...report.skipped].sort(), [['formula', 1], ['picture', 1], ['table', 1]]);
-    assert.equal(server.asked.length, 7);
+    // The empty `<td>` in the last row: no words, so nothing was asked for it,
+    // but it still occupied its cell in the payload.
+    assert.equal(report.wordless, 1);
+    // A table's WORDS are translated now. Only the two categories with no words
+    // in them are skipped. See the header of `blocks.ts` for why that reversed.
+    assert.deepEqual([...report.skipped].sort(), [['formula', 1], ['picture', 1]]);
 
     const written = readZipMap(new Uint8Array(fs.readFileSync(out)));
     const chapter = written.get(CHAPTER_PATH)!.text();
@@ -56,8 +75,16 @@ test('a foundry book comes out translated, with its skips counted', async () => 
     assert.match(chapter, /data-bf-page="9" data-bf-cat="caption">ABBILDUNG DES GROSSEN GEBAEUDES\./);
     assert.match(chapter, /<aside class="footnote" epub:type="footnote" role="doc-footnote" id="fn1"[^>]*><sup>1<\/sup> SIEHE DAZU DAS WERK VON GESTERN\./);
 
-    // The three skipped categories are byte-for-byte what they were.
-    assert.match(chapter, /<div class="tablewrap" data-bf-page="9" data-bf-cat="table"><table><tr><td>Jahr<\/td><td>Zahl<\/td><\/tr><\/table><\/div>/);
+    // THE TABLE. Every cell holds its own translation and nothing else about the
+    // grid moved: the `<th>`s are still `<th>`s, the empty cell is still empty,
+    // and not one pipe from the wire format reached the book.
+    assert.match(chapter, /<div class="tablewrap" data-bf-page="9" data-bf-cat="table"><table><tr><td>JAHR<\/td><td>ZAHL<\/td><\/tr><\/table><\/div>/);
+    assert.match(chapter, /<tr><th>JAHR<\/th><th>MITGLIEDER<\/th><th>BEMERKUNG<\/th><\/tr>/);
+    assert.match(chapter, /<tr><td>1931<\/td><td>1\.200<\/td><td>DER ERSTE BERICHT<\/td><\/tr>/);
+    assert.match(chapter, /<tr><td>1932<\/td><td>3\.400<\/td><td><\/td><\/tr>/);
+    assert.doesNotMatch(chapter, /\| MITGLIEDER/);
+
+    // The two skipped categories are byte-for-byte what they were.
     assert.match(chapter, /<p class="formula" data-bf-page="9" data-bf-cat="formula">a = b \+ c<\/p>/);
     assert.match(chapter, /<img src="\.\.\/images\/p0009-1\.png" alt="figure from page 9"\/>/);
 
@@ -135,13 +162,16 @@ test('the input EPUB is not written to', async () => {
 test('a rejected answer is asked again, and a good second answer is kept', async () => {
   const { epub, out, clean } = scratch();
   try {
-    // The first request for every block comes back empty; the retry works.
+    // The first request for every CHUNK comes back empty; the retry works. An
+    // empty answer fails a single block on its length and fails a group on its
+    // structure — nothing can be read back out of nothing — so every chunk pays
+    // exactly one retry, groups included.
     const server = fakeOllama((user, attempt) => (attempt === 1 ? '' : shout(user)));
     const report = await translateEpub({
       epubPath: epub, outPath: out, to: 'en', transport: server, log: quiet,
     });
-    assert.equal(report.retries, 7);
-    assert.equal(server.asked.length, 14);
+    assert.equal(report.retries, 16, 'one rejected answer per chunk, not per block');
+    assert.equal(server.asked.length, 32);
     assert.match(readZipMap(new Uint8Array(fs.readFileSync(out))).get(CHAPTER_PATH)!.text(), /DER STAAT/);
   } finally {
     clean();
@@ -170,34 +200,44 @@ test('three bad answers leave the block in the source language and finish the bo
     {
       const named = report.keptUntranslated.join('\n');
       /*
-         * FIVE of the seven, and the two that got through are the honest limit
-         * of a ratio test. "nope" is four characters against "Die Ordnung"'s
-         * eleven and "Der Staat"'s nine — over a quarter of each — so a
-         * two-word heading is short enough that a junk answer is not
-         * distinguishable from a terse translation by length alone. "Der
-         * Staat" used to be refused, and for a reason that was an ACCIDENT:
-         * its only marker was its leading pagebreak span, and the junk answer
-         * dropped it. The same accident refused three correct translations of
-         * "Kirchenwahlen 1932" on the first real run — a heading that is
-         * mostly token sheds the token — which is why edge atomics no longer
-         * travel to the model at all (`markers.ts`), and why length is one of
-         * five checks rather than the check: every block with an INTERIOR
-       * marker is still refused on the markers.
+       * THIRTEEN of the thirty, and the seventeen that got through are the
+       * honest limit of a ratio test. "nope" is four characters against "Die
+       * Ordnung"'s eleven and "Der Staat"'s nine — over a quarter of each — so
+       * a two-word heading is short enough that a junk answer is not
+       * distinguishable from a terse translation by length alone, and so is a
+       * table cell holding a year. "Der Staat" used to be refused, and for a
+       * reason that was an ACCIDENT: its only marker was its leading pagebreak
+       * span, and the junk answer dropped it. The same accident refused three
+       * correct translations of "Kirchenwahlen 1932" on the first real run — a
+       * heading that is mostly token sheds the token — which is why edge
+       * atomics no longer travel to the model at all (`markers.ts`).
        */
-      assert.equal(report.keptUntranslated.length, 5);
+      assert.equal(report.keptUntranslated.length, 13);
       // Named: the document, the block, its category, its page, its words.
       assert.match(named, /block 2 \(text, page 7\)[^\n]*under 25%/);
       assert.match(named, /block 5 \(quote, page 8\)[^\n]*under 25%/);
-      assert.match(named, /block 7 \(footnote, page 9\)/);
+      assert.match(named, /block 30 \(footnote, page 9\)/);
+      // A cell of a table is named exactly like any other block, page and all.
+      assert.match(named, /block 22 \(table, page 12\)[^\n]*"Der erste Bericht/);
       assert.doesNotMatch(named, /block 1 /);
       assert.doesNotMatch(named, /block 3 /);
     }
 
-    assert.equal(server.asked.length, 17, 'three attempts each, and two blocks that passed');
+    assert.equal(server.asked.length, 67);
     assert.ok(logged.some((l) => /block 2 LEFT IN THE SOURCE LANGUAGE after 3 attempts/.test(l)));
+    /*
+     * A GROUP WHOSE ANSWER WILL NOT COME APART FALLS BACK BY NAME. "nope" is one
+     * line where four were sent, so the list cannot be read back at all — and
+     * rather than guess which item it was, the chunk is asked again twice and
+     * then asked for one block at a time. Three of the thirteen refusals above
+     * are items of that list, which is what "one block at a time" then costs.
+     */
+    assert.ok(logged.some((l) => /chunk 9 \(list, 4 parts\) FELL BACK to one request per block/.test(l)));
+    assert.ok(logged.some((l) => /chunk 10 \(quote, 3 parts\) FELL BACK/.test(l)));
+    assert.ok(logged.some((l) => /chunk 11 \(table, 9 parts\) FELL BACK/.test(l)));
     // Said again at the end, as a list, where somebody returning to a finished
     // run will see it without scrolling back through the whole log.
-    assert.ok(logged.some((l) => /5 of 7 blocks stayed in the source language/.test(l)));
+    assert.ok(logged.some((l) => /13 of 30 blocks stayed in the source language/.test(l)));
 
     // THE BOOK EXISTS, and the five carry their original German — untouched,
     // because a block with no translation is a range the splice never visits.
@@ -220,8 +260,19 @@ test('a book where nothing at all passed verification is refused outright', asyn
    * one block; "translating" a book into its own source text and stamping the
    * package `en` is a lie about the file, and it would look exactly like a
    * success to anyone reading the completion line.
+   *
+   * Three paragraphs and nothing else, rather than the whole fixture. The
+   * fixture now holds thirty blocks, a dozen of which are one-word table cells
+   * and short headings that a one-character junk answer PASSES on length — so
+   * against it "nothing passed" is not a state a lazy model can reach, and the
+   * run would trip the twenty-five-refusal guard on the way instead. The rule
+   * being pinned here is about the floor, not about the fixture.
    */
-  const { epub, out, clean } = scratch();
+  const { epub, out, clean } = scratch(foundryEpubWith(chapterWith(
+    '<p data-bf-page="1" data-bf-cat="text">Der erste lange Absatz dieses Buches steht hier.</p>\n'
+    + '<p data-bf-page="1" data-bf-cat="text">Der zweite lange Absatz dieses Buches steht hier.</p>\n'
+    + '<p data-bf-page="2" data-bf-cat="text">Der dritte lange Absatz dieses Buches steht hier.</p>',
+  )));
   try {
     // Junk short enough to fail the ratio test on every block, markers dropped.
     const server = fakeOllama(() => 'x');
@@ -229,7 +280,7 @@ test('a book where nothing at all passed verification is refused outright', asyn
       translateEpub({ epubPath: epub, outPath: out, to: 'en', transport: server, log: quiet }),
       (error: Error) => {
         assert.ok(error instanceof TranslateError);
-        assert.match(error.message, /not one of 7 blocks came back as a translation/);
+        assert.match(error.message, /not one of 3 blocks came back as a translation/);
         assert.match(error.message, /NOTHING WAS WRITTEN/);
         return true;
       },
@@ -331,6 +382,462 @@ test('a book with no foundry stamps never reaches the model', async () => {
   } finally {
     clean();
   }
+});
+
+// ── chunks: what travels together, and what happens when it cannot ───────────
+
+/** Every payload the run sent, so a test can say which request carried what. */
+function askedFor(asked: readonly string[], needle: string): string | undefined {
+  return asked.find((a) => a.includes(needle));
+}
+
+test('a list that fits the budget is ONE request, spliced back per <li>', async () => {
+  /*
+   * The quality argument, mechanically. An item translated alone has lost the
+   * list: the parallel grammar that makes six items read as one sentence is a
+   * property of the six together, and a model shown one item at a time has no
+   * way to keep it. So the items go in one request as numbered lines — and the
+   * ANSWER still lands one item per `<li>`, because each part kept its own
+   * source range the whole way.
+   */
+  const { epub, out, clean } = scratch();
+  try {
+    const server = fakeOllama();
+    await translateEpub({ epubPath: epub, outPath: out, to: 'en', transport: server, log: quiet });
+
+    const payload = askedFor(server.asked, 'Aufhebung der Vertraege')!;
+    assert.equal(
+      payload,
+      '1. Erstens die Aufhebung der Vertraege.\n'
+      + '2. Zweitens die ⟦e1⟧Gleichschaltung⟦/e1⟧ der Laender.\n'
+      + '3. Drittens die Ordnung des Berufsstandes.\n'
+      + '4. Viertens die ⟦e2⟧Frage⟦/e2⟧ des Bodens.',
+    );
+    // All four items came in that one request and nowhere else.
+    assert.equal(server.asked.filter((a) => a.includes('Berufsstandes')).length, 1);
+    // NO MARKUP TRAVELLED: not the `<ul>`, not the `<li>`, not a stamp.
+    assert.doesNotMatch(payload, /<li|<ul|data-bf-/);
+
+    const chapter = readZipMap(new Uint8Array(fs.readFileSync(out))).get(CHAPTER_PATH)!.text();
+    // Each line back into its own element, in order, with the numbering gone.
+    assert.match(chapter, /<li data-bf-page="10" data-bf-cat="list-item">ERSTENS DIE AUFHEBUNG DER VERTRAEGE\.<\/li>/);
+    assert.match(chapter, /<li data-bf-page="10" data-bf-cat="list-item">DRITTENS DIE ORDNUNG DES BERUFSSTANDES\.<\/li>/);
+    assert.doesNotMatch(chapter, /<li[^>]*>\d+\. /);
+  } finally {
+    clean();
+  }
+});
+
+test('a quotation goes as its paragraphs and comes back as its paragraphs', async () => {
+  const { epub, out, clean } = scratch();
+  try {
+    const server = fakeOllama();
+    await translateEpub({ epubPath: epub, outPath: out, to: 'en', transport: server, log: quiet });
+
+    assert.equal(
+      askedFor(server.asked, 'Der erste Absatz'),
+      '1. Der erste Absatz des langen Zitates.\n'
+      + '2. Der zweite Absatz des langen Zitates.\n'
+      + '3. Der dritte Absatz des langen Zitates.',
+    );
+    const chapter = readZipMap(new Uint8Array(fs.readFileSync(out))).get(CHAPTER_PATH)!.text();
+    assert.match(
+      chapter,
+      /<blockquote data-bf-page="11" data-bf-cat="quote"><p data-bf-page="11" data-bf-cat="quote">DER ERSTE ABSATZ DES LANGEN ZITATES\.<\/p><p data-bf-page="11" data-bf-cat="quote">DER ZWEITE ABSATZ DES LANGEN ZITATES\.<\/p>/,
+    );
+  } finally {
+    clean();
+  }
+});
+
+test('inline markers inside list items are unique across the whole request', async () => {
+  /*
+   * The one thing grouping could have broken quietly. Two items that both said
+   * ⟦e1⟧ would be two different <em>s wearing one name, and an item that moved
+   * its marker into the neighbouring line would be restored with the
+   * neighbour's markup and no complaint from anything — the emphasis would land
+   * on the wrong word, in a book that renders perfectly.
+   */
+  const { epub, out, clean } = scratch();
+  try {
+    const server = fakeOllama();
+    const report = await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: server, log: quiet,
+    });
+    const payload = askedFor(server.asked, 'Gleichschaltung')!;
+    assert.match(payload, /⟦e1⟧Gleichschaltung⟦\/e1⟧/);
+    assert.match(payload, /⟦e2⟧Frage⟦\/e2⟧/, 'the second item keeps counting, it does not restart');
+    assert.equal(report.markerNotes, 0);
+
+    const chapter = readZipMap(new Uint8Array(fs.readFileSync(out))).get(CHAPTER_PATH)!.text();
+    assert.match(chapter, /ZWEITENS DIE <em>GLEICHSCHALTUNG<\/em> DER LAENDER\./);
+    assert.match(chapter, /VIERTENS DIE <em>FRAGE<\/em> DES BODENS\./);
+  } finally {
+    clean();
+  }
+});
+
+test('a list over the budget is cut into runs of consecutive items', async () => {
+  /*
+   * The budget cuts BETWEEN items and never inside one — a block is never
+   * split. What it buys is that a structural failure costs a page rather than a
+   * chapter; what it costs is that item 9 no longer sees item 10. Consecutive
+   * and in order, because the neighbours an item's grammar is parallel to are
+   * its neighbours.
+   */
+  const item = 'Ein ziemlich langer Satz, der als Punkt in einer sehr langen Liste steht und weitergeht';
+  const items = Array.from({ length: 60 }, (_, i) => `${item} — Nummer ${i + 1}.`);
+  const body = `<ul data-bf-page="4" data-bf-cat="list-item">\n`
+    + items.map((t) => `  <li data-bf-page="4" data-bf-cat="list-item">${t}</li>`).join('\n')
+    + '\n</ul>';
+  const { epub, out, clean } = scratch(foundryEpubWith(chapterWith(body)));
+  try {
+    const server = fakeOllama();
+    const report = await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: server, log: quiet,
+    });
+
+    assert.equal(report.blocks, 60);
+    assert.ok(report.chunks > 1 && report.chunks < 60, `cut into runs, not into 60: ${report.chunks}`);
+    assert.equal(server.asked.length, report.chunks);
+
+    // Every request is under the budget, numbered from 1, and holds a run of
+    // CONSECUTIVE items — the numbers in the source text prove the order.
+    let seen = 0;
+    for (const payload of server.asked) {
+      const lines = payload.split('\n');
+      assert.ok(payload.length <= CHUNK_CHARS + lines[0]!.length, 'a chunk stays near the budget');
+      for (const [i, line] of lines.entries()) {
+        assert.match(line, new RegExp(`^${i + 1}\\. `));
+        assert.match(line, new RegExp(`Nummer ${seen + i + 1}\\.$`));
+      }
+      seen += lines.length;
+    }
+    assert.equal(seen, 60, 'every item travelled exactly once');
+
+    // And all sixty are in the book, each in its own <li>.
+    const chapter = readZipMap(new Uint8Array(fs.readFileSync(out))).get(CHAPTER_PATH)!.text();
+    for (const n of [1, 17, 42, 60]) {
+      assert.match(chapter, new RegExp(`<li data-bf-page="4" data-bf-cat="list-item">EIN ZIEMLICH[^<]*NUMMER ${n}\\.</li>`));
+    }
+  } finally {
+    clean();
+  }
+});
+
+test('a table split by the budget carries its header row in the PROMPT, not the payload', async () => {
+  const cell = 'Eine ziemlich lange Bemerkung zu dieser Zeile der Tabelle, die weitergeht';
+  const rows = Array.from(
+    { length: 40 },
+    (_, i) => `<tr><td>19${String(i).padStart(2, '0')}</td><td>${cell} ${i + 1}</td></tr>`,
+  ).join('');
+  const body = '<div class="tablewrap" data-bf-page="5" data-bf-cat="table"><table>'
+    + '<tr><th>Jahr</th><th>Bemerkung</th></tr>' + rows + '</table></div>';
+  const { epub, out, clean } = scratch(foundryEpubWith(chapterWith(body)));
+  try {
+    const server = fakeOllama();
+    const report = await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: server, log: quiet,
+    });
+
+    assert.equal(report.blocks, 82, '41 rows of two cells');
+    assert.ok(report.chunks > 1, 'the table did not fit in one request');
+    // Every row is whole in exactly one request: the budget cuts between rows.
+    for (const payload of server.asked) {
+      for (const line of payload.split('\n')) {
+        assert.equal(line.split('|').length, 2, `a whole row: ${line}`);
+      }
+    }
+    const chapter = readZipMap(new Uint8Array(fs.readFileSync(out))).get(CHAPTER_PATH)!.text();
+    assert.match(chapter, /<tr><th>JAHR<\/th><th>BEMERKUNG<\/th><\/tr>/);
+    assert.match(chapter, /<tr><td>1939<\/td><td>EINE ZIEMLICH[^<]*40<\/td><\/tr>/);
+  } finally {
+    clean();
+  }
+});
+
+test('the header row reaches a later chunk as context and is told not to come back', () => {
+  const en = readLanguage('en', '--to');
+  const first = systemPrompt(null, en, undefined, { paired: false, atomic: false }, {
+    kind: 'table', rows: 3, header: null,
+  });
+  assert.match(first, /a table of 3 rows/);
+  assert.match(first, /cells are separated by \|/);
+  assert.doesNotMatch(first, /header row is/, 'the first chunk HAS the header — it is payload there');
+
+  const later = systemPrompt(null, en, undefined, { paired: false, atomic: false }, {
+    kind: 'table', rows: 2, header: 'Jahr | Mitglieder',
+  });
+  assert.match(later, /This table's header row is: Jahr \| Mitglieder/);
+  assert.match(later, /do not translate it and do not return it/);
+
+  // And the numbered-lines shape says which of the two things it is.
+  assert.match(shapeRules({ kind: 'lines', count: 6, of: 'list' }).join('\n'), /6 numbered lines, which are consecutive items of one list/);
+  assert.match(shapeRules({ kind: 'lines', count: 2, of: 'quote' }).join('\n'), /consecutive paragraphs of one quotation/);
+  // A lone block is told nothing about shape at all: the wire format for it is
+  // exactly what it always was.
+  assert.deepEqual(shapeRules({ kind: 'single' }), []);
+  assert.match(systemPrompt(null, en, undefined), /Keep the source's paragraph as one paragraph/);
+  assert.match(
+    systemPrompt(null, en, undefined, { paired: false, atomic: false }, { kind: 'lines', count: 2, of: 'list' }),
+    /Keep each line as one line/,
+  );
+});
+
+test('an answer with the wrong number of lines falls back to one request per block', async () => {
+  /*
+   * THE FAILURE THIS WHOLE DESIGN IS BUILT AROUND. Four items go out, three
+   * lines come back: there is no way to know which item lost its translation,
+   * and every guess — take the first three, match by length, drop the shortest
+   * — is a guess that sometimes puts item 4's sentence in item 3's `<li>`. That
+   * book renders perfectly and is wrong where nobody can see it. So nothing is
+   * guessed: the chunk is asked again, twice, and then every item is asked for
+   * on its own.
+   */
+  const { epub, out, clean } = scratch();
+  try {
+    const logged: string[] = [];
+    const server = fakeOllama((user) => {
+      const lines = user.split('\n');
+      // Only the four-item list is sabotaged, and only by losing a line.
+      if (lines.length !== 4 || !user.includes('Vertraege')) return shout(user);
+      return shout(lines.slice(0, 3).join('\n'));
+    });
+    const report = await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: server, log: (m) => logged.push(m),
+    });
+
+    assert.equal(report.retries, 3, 'the chunk was asked three times before it gave up on the shape');
+    assert.equal(report.chunks, 16, 'the plan is unchanged — the fallback is a fact about the run');
+    assert.equal(server.asked.length, 16 + 2 + 4, 'two extra chunk attempts, then one per item');
+    assert.equal(report.keptUntranslated.length, 0, 'and every item was still translated');
+
+    assert.ok(logged.some((l) => /chunk 9 \(list, 4 parts\) FELL BACK to one request per block after 3 attempts — the answer has 3 line\(s\) where the 4 items sent need 4/.test(l)));
+    // Asked one at a time, so the payloads are bare items with no numbering.
+    assert.ok(server.asked.includes('Drittens die Ordnung des Berufsstandes.'));
+
+    const chapter = readZipMap(new Uint8Array(fs.readFileSync(out))).get(CHAPTER_PATH)!.text();
+    assert.match(chapter, /<li data-bf-page="10" data-bf-cat="list-item">VIERTENS DIE <em>FRAGE<\/em> DES BODENS\.<\/li>/);
+  } finally {
+    clean();
+  }
+});
+
+test('a cell holding a "|" makes the whole table go one cell per request, by name', async () => {
+  /*
+   * The pipe is the cell boundary, and there is no escape for it that would not
+   * teach the model an escape it then uses somewhere else. So the table is not
+   * rendered as rows at all — it goes as it went before grouping existed, and
+   * the log says which table and why.
+   */
+  const { epub, out, clean } = scratch();
+  try {
+    const logged: string[] = [];
+    const server = fakeOllama();
+    await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: server, log: (m) => logged.push(m),
+    });
+
+    assert.ok(logged.some((l) => /the table at EPUB\/text\/c0001\.xhtml block 26 is sent one block per request rather than whole — cell 1 contains a "\|"/.test(l)));
+    // Each of its four cells was its own request, carrying only its own words.
+    assert.ok(server.asked.includes('Nord | Sued'));
+    assert.ok(server.asked.includes('Zahlen'));
+    assert.ok(server.asked.includes('Ost'));
+
+    const chapter = readZipMap(new Uint8Array(fs.readFileSync(out))).get(CHAPTER_PATH)!.text();
+    assert.match(chapter, /<tr><td>NORD \| SUED<\/td><td>ZAHLEN<\/td><\/tr><tr><td>OST<\/td><td>WEST<\/td><\/tr>/);
+  } finally {
+    clean();
+  }
+});
+
+test('one bad part of a group stays in the source language and the rest do not', async () => {
+  /*
+   * The per-part guard, which is the reason a group is not all-or-nothing on
+   * its WORDS. The answer parses — four lines for four items — so the shape is
+   * fine and three of the items are correct; item 3 came back as a stub. It is
+   * re-asked ON ITS OWN, three times, and then left exactly as the book wrote
+   * it. Re-asking the whole chunk would have re-translated three items that
+   * were already right, which is the cost `ollama.ts`'s header measured.
+   */
+  const { epub, out, clean } = scratch();
+  try {
+    const logged: string[] = [];
+    const server = fakeOllama((user) => {
+      if (user === 'Drittens die Ordnung des Berufsstandes.') return 'no';
+      const lines = user.split('\n');
+      if (lines.length !== 4 || !user.includes('Vertraege')) return shout(user);
+      return lines.map((line, i) => (i === 2 ? '3. no' : shout(line))).join('\n');
+    });
+    const report = await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: server, log: (m) => logged.push(m),
+    });
+
+    assert.equal(report.keptUntranslated.length, 1);
+    assert.match(report.keptUntranslated[0]!, /block 12 \(list-item, page 10\)[^\n]*Drittens die Ordnung/);
+    assert.equal(server.asked.length, 16 + 3, 'the chunk was right first time; only item 3 was re-asked');
+    assert.ok(logged.some((l) => /block 12 came back inside chunk 9 — .*under 25%.*; asking for it on its own/.test(l)));
+    assert.ok(logged.some((l) => /block 12 LEFT IN THE SOURCE LANGUAGE after 3 attempts/.test(l)));
+
+    const chapter = readZipMap(new Uint8Array(fs.readFileSync(out))).get(CHAPTER_PATH)!.text();
+    // The one that failed keeps its German; its neighbours are translated.
+    assert.match(chapter, /<li data-bf-page="10" data-bf-cat="list-item">Drittens die Ordnung des Berufsstandes\.<\/li>/);
+    assert.match(chapter, /<li data-bf-page="10" data-bf-cat="list-item">ZWEITENS DIE <em>GLEICHSCHALTUNG<\/em> DER LAENDER\.<\/li>/);
+    assert.match(chapter, /<li data-bf-page="10" data-bf-cat="list-item">VIERTENS DIE <em>FRAGE<\/em> DES BODENS\.<\/li>/);
+  } finally {
+    clean();
+  }
+});
+
+test('a table whose cells hold markup with no rule is left in German AND NAMED', async () => {
+  /*
+   * A `<td>` is the vision model's own HTML, not foundry's markup, and
+   * `markers.ts` refuses an element it has no rule for — correctly, since
+   * passing one through as atomic would silently leave the prose inside it
+   * untranslated. But a `<p>` in a cell must not cost somebody four hours of
+   * GPU and a whole book, which is the lesson of the accession number on the
+   * flyleaf (52e3625).
+   *
+   * So the table drops out of the plan. What makes that acceptable rather than
+   * a quiet degradation is that it is SAID: a log line naming the table and
+   * why, and an entry in `keptUntranslated`, which is what puts it on the
+   * completion line beside every other block that came out in the source
+   * language. A count with no name behind it would be exactly the undetectable
+   * outcome this command exists to refuse.
+   */
+  const body = '<p data-bf-page="1" data-bf-cat="text">Ein ganz gewoehnlicher Absatz steht hier.</p>\n'
+    + '<div class="tablewrap" data-bf-page="2" data-bf-cat="table"><table>'
+    + '<tr><td><p>Jahr</p></td><td>Zahl</td></tr></table></div>';
+  const { epub, out, clean } = scratch(foundryEpubWith(chapterWith(body)));
+  try {
+    const logged: string[] = [];
+    const server = fakeOllama();
+    const report = await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: server, log: (m) => logged.push(m),
+    });
+
+    assert.equal(report.blocks, 1, 'the table never became blocks at all');
+    assert.equal(server.asked.length, 1, 'and not one of its cells was sent anywhere');
+    assert.deepEqual([...report.skipped], [['table', 1]]);
+
+    // NAMED, twice: in the log at the moment it happens, and in the list that
+    // reaches the completion line.
+    assert.equal(report.keptUntranslated.length, 1);
+    assert.match(report.keptUntranslated[0]!, /table on page 2 \(2 cells\)/);
+    assert.match(report.keptUntranslated[0]!, /<p> is an element this stage has no rule for/);
+    assert.ok(logged.some((l) => /table on page 2 \(2 cells\) LEFT IN THE SOURCE LANGUAGE — its cells hold markup this stage has no rule for/.test(l)));
+
+    // The book exists, the paragraph is translated, the table is untouched.
+    const chapter = readZipMap(new Uint8Array(fs.readFileSync(out))).get(CHAPTER_PATH)!.text();
+    assert.match(chapter, /EIN GANZ GEWOEHNLICHER ABSATZ STEHT HIER\./);
+    assert.match(chapter, /<tr><td><p>Jahr<\/p><\/td><td>Zahl<\/td><\/tr>/);
+  } finally {
+    clean();
+  }
+});
+
+test('a list this stage cannot take apart is sent one item at a time, by name', async () => {
+  /*
+   * A nested list. The outer `<ul>`'s items are not leaves, and treating them
+   * as parts would send the inner list's text twice — once inside its item's
+   * line and once as its own block — and then splice two answers into
+   * overlapping ranges. Rather than model nesting, the group is not formed, and
+   * the run says so before it starts: this is a WORSE translation (the items
+   * lose each other) and it must not be a silent one.
+   */
+  const body = '<ul data-bf-page="3" data-bf-cat="list-item">\n'
+    + '  <li data-bf-page="3" data-bf-cat="list-item">Der aeussere Punkt steht hier oben.\n'
+    + '    <ul data-bf-page="3" data-bf-cat="list-item">\n'
+    + '      <li data-bf-page="3" data-bf-cat="list-item">Der innere Punkt steht hier unten.</li>\n'
+    + '    </ul>\n'
+    + '  </li>\n'
+    + '</ul>';
+  const { epub, out, clean } = scratch(foundryEpubWith(chapterWith(body)));
+  try {
+    const logged: string[] = [];
+    const server = fakeOllama();
+    const report = await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: server, log: (m) => logged.push(m),
+    });
+
+    // The innermost stamp still wins, exactly as it did before grouping: the
+    // inner item is a block, and so is the outer item's own text.
+    assert.equal(report.blocks, 1);
+    assert.equal(report.chunks, 1);
+    assert.ok(logged.some((l) => /the list on page 3 holds something other than plain items — its blocks are translated one at a time/.test(l)));
+    assert.deepEqual(server.asked, ['Der innere Punkt steht hier unten.']);
+  } finally {
+    clean();
+  }
+});
+
+// ── the wire format, one rule at a time ──────────────────────────────────────
+
+test('a chunk renders as numbered lines or as pipe rows, and a lone block as itself', () => {
+  assert.equal(renderChunk('single', ['Ein Satz.'], []), 'Ein Satz.');
+  assert.equal(renderChunk('lines', ['Eins.', 'Zwei.'], []), '1. Eins.\n2. Zwei.');
+  assert.equal(
+    renderChunk('table', ['Jahr', 'Zahl', '1931', '1.200'], [2, 2]),
+    'Jahr | Zahl\n1931 | 1.200',
+  );
+});
+
+test('a good answer comes apart into exactly the parts that were sent', () => {
+  assert.deepEqual(parseChunkAnswer('lines', 2, [], '1. One.\n2. Two.'), { parts: ['One.', 'Two.'] });
+  // Blank lines between the items are the model breathing, not a part.
+  assert.deepEqual(parseChunkAnswer('lines', 2, [], '1. One.\n\n2. Two.'), { parts: ['One.', 'Two.'] });
+  // `1)` and `1:` are the same claim as `1.`.
+  assert.deepEqual(parseChunkAnswer('lines', 2, [], '1) One.\n2: Two.'), { parts: ['One.', 'Two.'] });
+  assert.deepEqual(
+    parseChunkAnswer('table', 4, [2, 2], 'Year | Number\n1931 | 1,200'),
+    { parts: ['Year', 'Number', '1931', '1,200'] },
+  );
+  // The Markdown habit: outer pipes, which cannot mean anything else.
+  assert.deepEqual(
+    parseChunkAnswer('table', 2, [2], '| Year | Number |'),
+    { parts: ['Year', 'Number'] },
+  );
+  // An empty cell stays an empty cell rather than closing the gap.
+  assert.deepEqual(parseChunkAnswer('table', 3, [3], '1932 | 3,400 |'), { parts: ['1932', '3,400', ''] });
+});
+
+test('every way an answer can fail to line up is a complaint, never a guess', () => {
+  const short = parseChunkAnswer('lines', 3, [], '1. One.\n2. Two.');
+  assert.match((short as { complaint: string }).complaint, /2 line\(s\) where the 3 items sent need 3/);
+
+  const unnumbered = parseChunkAnswer('lines', 2, [], 'One.\nTwo.');
+  assert.match((unnumbered as { complaint: string }).complaint, /line 1 of the answer is not numbered/);
+
+  const renumbered = parseChunkAnswer('lines', 2, [], '1. One.\n3. Two.');
+  assert.match((renumbered as { complaint: string }).complaint, /numbered 3 — the numbers are how each/);
+
+  const rows = parseChunkAnswer('table', 4, [2, 2], 'Year | Number');
+  assert.match((rows as { complaint: string }).complaint, /1 row\(s\) where the table sent 2/);
+
+  const cells = parseChunkAnswer('table', 4, [2, 2], 'Year | Number | Note\n1931 | 1,200');
+  assert.match((cells as { complaint: string }).complaint, /row 1 of the answer has 3 cell\(s\) where that row has 2/);
+
+  // A preamble is an extra line, and an extra line is a complaint: there is no
+  // reading under which "Here is the translation:" is item 1.
+  const chatty = parseChunkAnswer('lines', 2, [], 'Here is the translation:\n1. One.\n2. Two.');
+  assert.ok('complaint' in chatty);
+});
+
+test('text that would break the rendering is refused before anything is sent', () => {
+  assert.equal(chunkAmbiguity('lines', ['Eins.', 'Zwei.'], []), null);
+  assert.match(chunkAmbiguity('lines', ['Eins.', '1. Zwei.'], [])!, /item 2 begins "1\. Zwei/);
+  assert.match(chunkAmbiguity('lines', ['Eins.\nnoch mehr'], [])!, /part 1 contains a line break/);
+  assert.match(chunkAmbiguity('table', ['a | b', 'c'], [2])!, /cell 1 contains a "\|"/);
+  /*
+   * A row that renders to NOTHING has no line to come back on: blank lines are
+   * dropped when the answer is read, so the row could not be counted even from
+   * a perfect answer. That is only a one-cell row, and only when the cell is
+   * empty — two empty cells still render as `|`, which is a line, and parses
+   * back into two empty cells exactly as it should.
+   */
+  assert.match(chunkAmbiguity('table', ['x', ''], [1, 1])!, /row 2 is entirely empty/);
+  assert.equal(chunkAmbiguity('table', ['x', 'y', '', ''], [2, 2]), null);
+  assert.deepEqual(parseChunkAnswer('table', 4, [2, 2], 'x | y\n|'), { parts: ['x', 'y', '', ''] });
 });
 
 // ── the verification rules, one at a time ────────────────────────────────────

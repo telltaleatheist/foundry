@@ -146,17 +146,37 @@ function escapeText(text: string): string {
 }
 
 /**
+ * Where the next marker's number comes from.
+ *
+ * A block masked on its own starts at `e1`/`m1` and always did. A block masked
+ * as one PART of a group — an item of a list, a cell of a table — shares a
+ * counter with every other part of that group, because all of them arrive in
+ * the model's answer as one string. Two parts that both said `⟦e1⟧` would be
+ * two different `<em>`s wearing the same name, and an item that moved its
+ * marker into the neighbouring line would be restored with the neighbour's
+ * markup and no complaint from anything. The ids are the only handle there is;
+ * they have to be unique across everything the model can see at once.
+ */
+export interface MarkerCounter {
+  paired: number;
+  atomic: number;
+}
+
+/**
  * Take a block's inner XHTML apart into prose and markers.
  *
  * `inner` is the source between a block element's tags, taken by offset out of
  * the document (`xml.ts` keeps every node's span), so the markup put back later
  * is the book's own bytes rather than anything this program serialised.
+ *
+ * `counter` is mutated: pass one shared object to mask every part of a group,
+ * and omit it for a block that travels alone.
  */
-export function maskBlock(inner: string): MaskedBlock {
+export function maskBlock(inner: string, counter?: MarkerCounter): MaskedBlock {
   const root = parseXml(inner, 'xhtml');
   const markers: Marker[] = [];
-  let paired = 0;
-  let atomic = 0;
+  const numbers = counter ?? { paired: 0, atomic: 0 };
+  let { paired, atomic } = numbers;
 
   const walk = (node: XmlElement): string => {
     let out = '';
@@ -211,6 +231,11 @@ export function maskBlock(inner: string): MaskedBlock {
   };
 
   let text = walk(root);
+  // Handed back before the edge peel, so the numbers a peeled marker used are
+  // spent rather than reissued to the next part. Two markers with one id would
+  // be indistinguishable in an answer even though only one of them travelled.
+  numbers.paired = paired;
+  numbers.atomic = atomic;
   const byId = new Map(markers.map((m) => [m.id, m] as const));
   const peeled = new Set<string>();
   let leading = '';

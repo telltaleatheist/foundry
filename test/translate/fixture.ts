@@ -6,8 +6,15 @@
  * cope with: a chapter opening with a page-break span inside the heading,
  * emphasis, a footnote reference anchored to a note at the end of the file, a
  * list whose `<ul>` and `<li>` are BOTH stamped, a quote whose `<blockquote>`
- * and inner `<p>` are both stamped, and one each of the three categories that
- * must come out untouched.
+ * and inner `<p>` are both stamped, and one each of the categories that must
+ * come out untouched.
+ *
+ * IT IS EXTENDED, NEVER REPLACED. Every element that was here when a test was
+ * written is still here, in the same order, so an assertion that pinned the
+ * one-item list or the single-cell table still means what its author meant. The
+ * shapes added for chunking sit AFTER them: a six-item list that is one request,
+ * a three-paragraph blockquote, a real table with a header row and an empty
+ * cell, and a table with a `|` in a cell that no pipe rendering can carry.
  *
  * The fake translator uppercases the words and leaves the markers alone. That
  * is enough to be a real translation as far as every mechanical check is
@@ -39,6 +46,16 @@ export const CHAPTER = `<?xml version="1.0" encoding="UTF-8"?>
 <p class="formula" data-bf-page="9" data-bf-cat="formula">a = b + c</p>
 <figure data-bf-page="9" data-bf-cat="picture"><img src="../images/p0009-1.png" alt="figure from page 9"/></figure>
 <p class="caption" data-bf-page="9" data-bf-cat="caption">Abbildung des grossen Gebaeudes.</p>
+<h2 id="sh2" data-bf-page="10" data-bf-cat="section-header">Die Punkte</h2>
+<ul data-bf-page="10" data-bf-cat="list-item">
+  <li data-bf-page="10" data-bf-cat="list-item">Erstens die Aufhebung der Vertraege.</li>
+  <li data-bf-page="10" data-bf-cat="list-item">Zweitens die <em>Gleichschaltung</em> der Laender.</li>
+  <li data-bf-page="10" data-bf-cat="list-item">Drittens die Ordnung des Berufsstandes.</li>
+  <li data-bf-page="10" data-bf-cat="list-item">Viertens die <em>Frage</em> des Bodens.</li>
+</ul>
+<blockquote data-bf-page="11" data-bf-cat="quote"><p data-bf-page="11" data-bf-cat="quote">Der erste Absatz des langen Zitates.</p><p data-bf-page="11" data-bf-cat="quote">Der zweite Absatz des langen Zitates.</p><p data-bf-page="11" data-bf-cat="quote">Der dritte Absatz des langen Zitates.</p></blockquote>
+<div class="tablewrap" data-bf-page="12" data-bf-cat="table"><table><tr><th>Jahr</th><th>Mitglieder</th><th>Bemerkung</th></tr><tr><td>1931</td><td>1.200</td><td>Der erste Bericht</td></tr><tr><td>1932</td><td>3.400</td><td></td></tr></table></div>
+<div class="tablewrap" data-bf-page="13" data-bf-cat="table"><table><tr><td>Nord | Sued</td><td>Zahlen</td></tr><tr><td>Ost</td><td>West</td></tr></table></div>
 <section class="footnotes" epub:type="footnotes">
 <hr/>
 <aside class="footnote" epub:type="footnote" role="doc-footnote" id="fn1" data-bf-page="9" data-bf-cat="footnote"><sup>1</sup> Siehe dazu das Werk von gestern.</aside>
@@ -91,6 +108,18 @@ const OPF = `<?xml version="1.0" encoding="UTF-8"?>
 export const PICTURE = new Uint8Array([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 250, 251]);
 
 export function foundryEpub(): Uint8Array {
+  return foundryEpubWith(CHAPTER);
+}
+
+/**
+ * The same book around a chapter of the caller's own.
+ *
+ * For the shapes that are about SIZE rather than about markup — a list long
+ * enough to be cut by `CHUNK_CHARS` is two thousand characters of German, which
+ * belongs in the test that measures it and not in a fixture every other test
+ * has to read past.
+ */
+export function foundryEpubWith(chapter: string): Uint8Array {
   return writeZip([
     zipText('mimetype', 'application/epub+zip'),
     zipText('META-INF/container.xml',
@@ -100,11 +129,23 @@ export function foundryEpub(): Uint8Array {
       + `    <rootfile full-path="${OPF_PATH}" media-type="application/oebps-package+xml"/>\n`
       + `  </rootfiles>\n</container>\n`),
     zipText('EPUB/style.css', 'body { margin: 0 5%; }\n'),
-    zipText(CHAPTER_PATH, CHAPTER),
+    zipText(CHAPTER_PATH, chapter),
     { path: 'EPUB/images/p0009-1.png', data: PICTURE },
     zipText(NAV_PATH, NAV),
     zipText(OPF_PATH, OPF),
   ]);
+}
+
+/** A chapter document wrapped round whatever body a test needs. */
+export function chapterWith(body: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="de" lang="de">
+<head><meta charset="utf-8"/><title>Der Staat</title></head>
+<body>
+${body}
+</body>
+</html>
+`;
 }
 
 /** An EPUB with no foundry stamps anywhere — a publisher's book. */

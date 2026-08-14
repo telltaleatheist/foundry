@@ -51,9 +51,27 @@ test('the default output puts the language tag before the extension', () => {
   assert.equal(defaultTranslationOut('/a.b/Buch', 'en'), '/a.b/Buch.en');
 });
 
-test('the help says what is skipped and that nothing is written on a refusal', () => {
-  assert.match(translate.detail, /table, formula and\npicture/);
-  assert.match(translate.detail, /THE JOB FAILS/);
+test('the help says what is skipped and what happens to a block that fails', () => {
+  // TWO, not three: a table's words are translated now. The help has to say so
+  // and say WHY it reversed, because "a table whose columns quietly swapped is
+  // worse than one nobody translated" was the published reason for the old
+  // behaviour and somebody who read it is owed the argument that replaced it.
+  assert.match(translate.detail, /TWO ARE SKIPPED AND COUNTED —\nformula and picture/);
+  assert.doesNotMatch(translate.detail, /table, formula and\npicture/);
+  assert.match(translate.detail, /A TABLE USED TO BE THE THIRD SKIP AND IS NOT ANY MORE/);
+  assert.match(translate.detail, /structure a model cannot see\nis structure a model cannot rearrange/i);
+  assert.match(translate.detail, /WHAT TRAVELS IN ONE REQUEST/);
+  /*
+   * The help described the behaviour that 52e3625 deleted for three commits —
+   * marker and echo rejections, and a job that fails on a refused block. Help
+   * that describes a version of the program that no longer exists is worse than
+   * no help: it is the one document a person consults instead of reading the
+   * source. These pin the behaviour that replaced it.
+   */
+  assert.match(translate.detail, /STAYS IN THE SOURCE LANGUAGE/);
+  assert.match(translate.detail, /TWO GUARDS/);
+  assert.doesNotMatch(translate.detail, /THE JOB FAILS/);
+  assert.doesNotMatch(translate.detail, /drops, doubles, invents or crosses a marker/);
   assert.match(translate.detail, /Used, never started|does not start it/);
 });
 

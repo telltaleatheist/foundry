@@ -17,12 +17,22 @@
  * foundry reaching outside its own process for no better reason than
  * convenience.
  *
- * ONE BLOCK PER REQUEST. Measured: at paragraph granularity a 14b model
- * translates German prose reliably, and batching several paragraphs into one
- * request multiplied the blast radius of every verification failure — a single
- * dropped marker anywhere in the batch refuses the whole batch, and a retry
- * re-translates paragraphs that were already correct. Ten seconds a paragraph
- * is the price of being able to name the paragraph.
+ * ONE BLOCK PER REQUEST, AND THE ONE EXCEPTION. Measured: at paragraph
+ * granularity a 14b model translates German prose reliably, and batching
+ * several UNRELATED paragraphs into one request multiplied the blast radius of
+ * every verification failure — a single dropped marker anywhere in the batch
+ * refuses the whole batch, and a retry re-translates paragraphs that were
+ * already correct. Ten seconds a paragraph is the price of being able to name
+ * the paragraph, and it is worth paying.
+ *
+ * What `run.ts` does send together is a list, a quotation or a table — parts of
+ * ONE thing, where sending them apart is itself a defect: an item translated
+ * without its list loses the grammar it was parallel to, and a table cell
+ * without its column header often cannot be translated at all. The blast radius
+ * is bounded the same way the measurement demanded: what a group retries is the
+ * STRUCTURE of the answer, and a part whose words fail verification is re-asked
+ * on its own rather than costing the chunk. So a bad answer still costs one
+ * block, which was the point.
  *
  * `think: false` FOR qwen3, AND NOT FOR qwen2.5. The qwen3 family are thinking
  * models: left alone they emit a reasoning pass before the answer, which on a
