@@ -226,6 +226,21 @@ test('the layer is drawn in rendering mode 3 and the pages survive it', async ()
   assert.equal(shownText(content).length, 3);
 });
 
+test('a searchable PDF gets no cover, because the file already IS the pages', async () => {
+  /*
+   * The cover is cut where a BOOK is assembled (`dots-book.ts`), and this
+   * format forks out of the run before that: what it produces is the input PDF
+   * with a layer over it, so page 1 of the file is already page 1 of the scan
+   * and a second copy of it pasted in front would be a page the document does
+   * not have. Nothing is added to the document but the layer.
+   */
+  const before = await scanOf(2);
+  const built = await buildSearchablePdf({ pdfBytes: before, dpi: 200, pages: READING });
+  assert.equal(Buffer.from(built.bytes).toString('latin1').includes('cover'), false);
+  const back = await PDFDocument.load(built.bytes, { updateMetadata: false });
+  assert.equal(back.getPageCount(), 2);
+});
+
 test('the blocks are shown in the order they were given, furniture included', async () => {
   const built = await buildSearchablePdf({
     pdfBytes: await scanOf(1),

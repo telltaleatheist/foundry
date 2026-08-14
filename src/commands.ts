@@ -655,10 +655,22 @@ async function runEpubFinal(args: ParsedArgs): Promise<void> {
     + `${report.unreferencedNotes} with nothing pointing at ${report.unreferencedNotes === 1 ? 'it' : 'them'}`,
   );
   if (!report.cover) {
-    // Stated rather than left to be noticed: a book with no cover is a grey
-    // rectangle on every shelf, and cover support does not exist in the engine
-    // yet — so this is an absence to report, not a defect in the book.
-    log('epub-final: this book declares NO COVER — nothing in foundry writes one yet');
+    /*
+     * Stated rather than left to be noticed: a book with no cover is a grey
+     * rectangle on every shelf. It is an absence to report and not a defect in
+     * this command — nothing here can invent one, because the cover is a crop
+     * out of the SCAN and this command has only the converted book.
+     *
+     * `vlm-convert --format epub` writes one now, so a book that reaches here
+     * without one is one of three things: cast before covers existed, cast from
+     * a run whose crop refused (that run said so by name), or a publisher's
+     * EPUB imported without one.
+     */
+    log(
+      'epub-final: this book declares NO COVER — it was cast before foundry wrote covers, or its '
+      + 'conversion could not cut one. Re-run vlm-convert to give it one; nothing here can, because '
+      + 'a cover comes off the scan',
+    );
   }
   if (report.pagesLost.length > 0) {
     // Last, and loud: a page that is no longer in the book's own pagination is
@@ -813,6 +825,18 @@ export const COMMANDS: readonly Command[] = [
       '--chapters writes the proposals out as data for a person to confirm; the',
       'list over-includes on purpose, because an extra costs a click and a missed',
       'chapter cannot be recovered.',
+      '',
+      'THE COVER IS THE FIRST PAGE THE BOOK CONTAINS, rendered whole — not',
+      'necessarily page 1. Under --skip-pages 1-6 those pages are never rasterised',
+      'at all, so the cover is page 7; and a page that survived the skip but',
+      'carried nothing is skipped over too, because a blank leaf makes a white',
+      'cover. It is declared three ways, since readers disagree about which they',
+      'honour: a cover-image manifest property, the old <meta name="cover">, and a',
+      'cover document first in the spine so the cover is VISIBLE when the book is',
+      'opened rather than only a thumbnail in a library grid. It gets no contents',
+      'entry: it is not a chapter. A run that cannot cut one writes the book',
+      'anyway and says which page it failed on. EPUB only — a text file has',
+      'nowhere to put an image and a searchable PDF already is the pages.',
       '',
       '--format txt writes readable plain text instead: chapter titles ruled with',
       '=, section headings with -, paragraphs separated by blank lines and never',
@@ -1090,7 +1114,8 @@ export const COMMANDS: readonly Command[] = [
       '<sup> because the emitter could not match one — that is deliberate, a',
       'marker is matched to a note by page and printed number and no link beats a',
       'wrong one; how many notes nothing points at; whether the book declares a',
-      'cover, which it will not, because nothing in foundry writes one yet.',
+      'cover — vlm-convert --format epub writes one, so a book with none was cast',
+      'before covers existed or its conversion could not cut one.',
       '',
       'THE FILE IS WRITTEN ANYWAY. None of those numbers stops the run: they are',
       'facts about the scan, and a book somebody cannot produce is worse than one',

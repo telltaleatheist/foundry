@@ -19,6 +19,11 @@
  * the first heading becomes a leading section, because front matter has to go
  * somewhere.
  *
+ * THE COVER is packaged here and CHOSEN elsewhere: which page of the scan it is
+ * cut from is a question about the book (`dots-book.ts`), and how a package
+ * declares one is a question about EPUB — see `COVER_IMAGE_ID` for why one
+ * cover is stated three times.
+ *
  * Provenance, the same promise `src/export/epub.ts` makes: every element carries
  * `data-bf-page`, the page of the PDF it was read from. The mapping from a page
  * to a paragraph is otherwise unrecoverable once the pages are joined, and it is
@@ -171,6 +176,91 @@ export interface VlmResource {
 }
 
 /**
+ * The book's cover image, already cut — see `buildDotsBook` for which page it
+ * is and why that page rather than page 1.
+ *
+ * Not a `VlmResource`, because a cover is not one of the things a resource is:
+ * a picture is referenced by the prose that mentions it and carries whatever id
+ * the emitter minted, while a cover is referenced by the PACKAGE, under ids
+ * three different declarations have to agree about. Those ids are this file's
+ * (`COVER_IMAGE_ID`, `COVER_DOC_ID`) and are never the caller's, so the caller
+ * hands over the bytes and nothing else.
+ */
+export interface VlmCover {
+  /** Href relative to `OPF_DIR`, e.g. `images/cover.png`. */
+  href: string;
+  mediaType: string;
+  data: Uint8Array;
+}
+
+/**
+ * THREE DECLARATIONS, BECAUSE READING SYSTEMS DISAGREE ABOUT WHICH ONE IS THE
+ * COVER, and a book that makes only one of them is a grey rectangle somewhere.
+ *
+ *  - `properties="cover-image"` on the manifest item is the EPUB 3 spelling and
+ *    the only one the spec has;
+ *  - `<meta name="cover" content="…"/>` is the EPUB 2 spelling, deprecated for
+ *    a decade and still what several shipping readers and library cataloguers
+ *    look for first;
+ *  - a COVER DOCUMENT, first in the spine, is what makes the cover VISIBLE when
+ *    the book is opened rather than only a thumbnail in a grid. The first two
+ *    are metadata; a reader that honours neither still opens the book at the
+ *    page the scan opens at, because that page is the first document.
+ *
+ * The document is NOT in the nav (see `packageVlmEpub`): it is not a chapter,
+ * and a contents list whose first line is "Cover" is a contents list describing
+ * the file rather than the book.
+ */
+const COVER_IMAGE_ID = 'cover-image';
+const COVER_DOC_ID = 'cover';
+
+/**
+ * At the top of `OPF_DIR` rather than beside the chapters in `text/`, which is
+ * what makes `cover.href` usable verbatim as the `<img src>`: the chapters sit
+ * one directory down and reach their pictures as `../images/…`, and a cover
+ * that lived among them would need the same rewriting for no gain. Nothing else
+ * in the container is at this level except the nav, which is also not a chapter.
+ */
+const COVER_DOC_HREF = 'cover.xhtml';
+
+/**
+ * The cover document: one image, sized to fit, and nothing else on the page.
+ *
+ * Styled INLINE and not from `style.css`, because this document is the one
+ * place in the book where the stylesheet would be actively wrong — `body`
+ * carries a 5% margin so that prose does not run into the spine, and a cover
+ * with a 5% white border is a cover somebody notices. Inline also means the
+ * page renders the same in a reader that drops the stylesheet.
+ *
+ * NO `<svg>` WRAPPER, which is the other way covers are traditionally fitted.
+ * It fits better — `preserveAspectRatio` fills the page exactly — and it costs
+ * a `properties="svg"` declaration on the manifest item that, if forgotten,
+ * makes the book invalid rather than ugly. `max-width`/`max-height` on a plain
+ * `<img>` cannot be wrong in that way.
+ *
+ * The alt text is the book's TITLE, because that is what the picture shows and
+ * what somebody listening to a screen reader needs to hear; "cover image" would
+ * be a description of the file.
+ *
+ * `epub:type="cover"` on the wrapper is DEPRECATED in the structural semantics
+ * vocabulary and is written anyway, on exactly the argument the EPUB 2 `<meta>`
+ * is written on: the readers that read it are the old ones, they are the ones
+ * that would otherwise show nothing, and the cost of carrying it is a warning
+ * in a validator rather than anything a person opening the book can see.
+ */
+function coverDocument(metadata: VlmEpubMetadata, cover: VlmCover): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>\n`
+    + `<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"`
+    + ` xml:lang="${esc(metadata.language)}" lang="${esc(metadata.language)}">\n`
+    + `<head>\n  <meta charset="utf-8"/>\n  <title>${esc(metadata.title)}</title>\n</head>\n`
+    + `<body style="margin:0;padding:0;text-align:center;">\n`
+    + `<div epub:type="cover">`
+    + `<img src="${esc(cover.href)}" alt="${esc(metadata.title)}"`
+    + ` style="max-width:100%;max-height:100%;"/>`
+    + `</div>\n</body>\n</html>\n`;
+}
+
+/**
  * Container, nav, package, zip — everything about an EPUB that is not the
  * book's own words.
  */
@@ -188,6 +278,16 @@ export function packageVlmEpub(
    * output to one that passes nothing.
    */
   nav?: readonly VlmNavItem[],
+  /**
+   * The cover, when the run could cut one — see `VlmCover`.
+   *
+   * OPTIONAL, AND ITS ABSENCE IS NOT AN ERROR HERE. A book whose first page
+   * could not be cropped is still a book, and the run that could not crop it
+   * says so by name (`buildDotsBook`); refusing to package it would trade a
+   * grey thumbnail for no book at all. A caller that passes nothing gets the
+   * same bytes it got before covers existed.
+   */
+  cover?: VlmCover,
 ): { bytes: Uint8Array; zipSeconds: number } {
   if (documents.length === 0) {
     throw new VlmEpubError('no text survived the pages — there is no book to write');
@@ -214,7 +314,18 @@ export function packageVlmEpub(
   for (const resource of resources) {
     entries.push({ path: `${OPF_DIR}/${resource.href}`, data: resource.data });
   }
+  if (cover !== undefined) {
+    entries.push({ path: `${OPF_DIR}/${cover.href}`, data: cover.data });
+    entries.push(zipText(`${OPF_DIR}/${COVER_DOC_HREF}`, coverDocument(metadata, cover)));
+  }
 
+  /*
+   * The nav is built from `documents` and the cover is not one of them, which
+   * is how the cover document gets no contents entry without a rule about it
+   * here. `documents[0]` is likewise still the landmark a reader lands on when
+   * it asks where the body of the book starts — which is the chapter, not the
+   * cover, whatever the spine opens with.
+   */
   const navItems = renderNav(nav ?? documents.map((d) => ({ href: d.href, label: d.label })), 6);
   entries.push(zipText(`${OPF_DIR}/nav.xhtml`,
     `<?xml version="1.0" encoding="UTF-8"?>\n`
@@ -229,12 +340,22 @@ export function packageVlmEpub(
   const manifest = [
     `    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>`,
     `    <item id="style" href="style.css" media-type="text/css"/>`,
+    ...(cover === undefined ? [] : [
+      `    <item id="${COVER_DOC_ID}" href="${COVER_DOC_HREF}" media-type="application/xhtml+xml"/>`,
+      `    <item id="${COVER_IMAGE_ID}" href="${esc(cover.href)}"`
+      + ` media-type="${esc(cover.mediaType)}" properties="cover-image"/>`,
+    ]),
     ...documents.map((d) =>
       `    <item id="${d.id}" href="${esc(d.href)}" media-type="application/xhtml+xml"/>`),
     ...resources.map((r) =>
       `    <item id="${r.id}" href="${esc(r.href)}" media-type="${esc(r.mediaType)}"/>`),
   ].join('\n');
-  const spine = documents.map((d) => `    <itemref idref="${d.id}"/>`).join('\n');
+  // FIRST IN THE SPINE, which is the whole difference between a cover a reader
+  // sees and a cover only a library grid does.
+  const spine = [
+    ...(cover === undefined ? [] : [`    <itemref idref="${COVER_DOC_ID}"/>`]),
+    ...documents.map((d) => `    <itemref idref="${d.id}"/>`),
+  ].join('\n');
 
   entries.push(zipText(`${OPF_DIR}/package.opf`,
     `<?xml version="1.0" encoding="UTF-8"?>\n`
@@ -246,6 +367,12 @@ export function packageVlmEpub(
     + `    <dc:language>${esc(metadata.language)}</dc:language>\n`
     + (metadata.author ? `    <dc:creator>${esc(metadata.author)}</dc:creator>\n` : '')
     + `    <meta property="dcterms:modified">${FIXED_MODIFIED}</meta>\n`
+    // The EPUB 2 spelling of the cover, kept alongside the EPUB 3 one for the
+    // readers that never learned the other — see `COVER_IMAGE_ID`. It is the
+    // one `<meta>` in this package written with `name`/`content` rather than
+    // `property`, because that IS the old form and a modernised spelling of it
+    // would be honoured by nothing at all.
+    + (cover === undefined ? '' : `    <meta name="cover" content="${COVER_IMAGE_ID}"/>\n`)
     + `  </metadata>\n  <manifest>\n${manifest}\n  </manifest>\n`
     + `  <spine>\n${spine}\n  </spine>\n</package>\n`));
 

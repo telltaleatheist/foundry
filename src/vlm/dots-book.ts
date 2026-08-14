@@ -38,6 +38,12 @@
  *    `<sup>`: no link beats a wrong one.
  *  - **A Picture is the actual picture**, cropped out of the page render by its
  *    box and carried into the container with its Caption.
+ *  - **The cover is the first page the book CONTAINS**, cropped whole by the
+ *    same machinery — not page 1, because `--skip-pages 1-6` is an ordinary way
+ *    to convert a book and those pages were never rendered. A run that cannot
+ *    cut one writes the book anyway and names the reason: a grey thumbnail is
+ *    worse than nothing on a shelf, and a book that was not produced is worse
+ *    than either.
  *  - **Chapters are PROPOSED, not decided.** The rule is deterministic and
  *    written out beside the book as data: a Title or Section-header, first on
  *    its page, in the top 45%, short, and either chapter-ish or centered. It
@@ -101,6 +107,7 @@ import {
   XHTML_HEAD,
   XHTML_TAIL,
   type VlmChapter,
+  type VlmCover,
   type VlmDocument,
   type VlmEpubMetadata,
   type VlmNavItem,
@@ -146,6 +153,33 @@ export interface DotsCropped {
   name: string;
   mediaType: string;
   data: Uint8Array;
+}
+
+// ── the cover ───────────────────────────────────────────────────────────────
+
+/**
+ * The file the whole first page is cut into. A bare name, like every other
+ * crop: `DotsCrop.name` carries no directory, and the container decides where
+ * the image lands (`images/`, beside the pictures).
+ */
+const COVER_CROP_NAME = 'cover.png';
+
+/**
+ * What became of the book's cover — the page it was cut from, or the reason
+ * there is none.
+ *
+ * A REPORT AND NOT A RESOURCE. The bytes go into the package and never come
+ * back out through here; what a run has to be able to say afterwards is which
+ * page of the scan the reader will see first, because "the cover is page 7" is
+ * only checkable if page 7 is written down. Exactly one of the two fields is
+ * ever set: a cover with no page and a refusal with no reason are both a run
+ * that cannot be argued with.
+ */
+export interface DotsCover {
+  /** The PDF page it was cut from, whole. Null when the book has no cover. */
+  page: number | null;
+  /** Why the book has none, named. Null when it has one. */
+  why: string | null;
 }
 
 /** A grayscale raster reader, shared by `renders.ts` and the tests. */
@@ -1680,6 +1714,15 @@ export interface DotsBookOptions {
 export interface DotsBookResult {
   bytes: Uint8Array;
   chapters: VlmChapter[];
+  /**
+   * The cover, or the reason there is none — see `DotsCover`.
+   *
+   * NULL MEANS THE FORMAT HAS NO COVER, which is a different fact from a cover
+   * that could not be cut and is why it is not folded into `why`. A plain-text
+   * book has nowhere to put an image and nothing was attempted; a run whose
+   * crop refused tried, failed, and owes somebody a sentence.
+   */
+  cover: DotsCover | null;
   proposals: DotsChapterProposal[];
   blocks: number;
   categories: Record<string, number>;
@@ -1878,16 +1921,89 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
     data: image.data,
   }));
 
+  /*
+   * THE COVER IS THE FIRST PAGE THE BOOK ACTUALLY CONTAINS, RENDERED WHOLE.
+   *
+   * NOT LITERALLY PAGE 1, and the difference is the whole rule. `--skip-pages
+   * 1-6` is an ordinary invocation — somebody opened the scan in a picker and
+   * struck out the library wrapper, the blank leaf and the scanner's colour
+   * card — and those pages are never rendered at all (`pages.ts`), so a cover
+   * that demanded page 1 would fail on exactly the books a person curated. The
+   * first page they KEPT is also the better picture: it is the title page, and
+   * a title page is what a cover should be.
+   *
+   * `blocks[0]` and not `opts.pages[0]`, which is a second, smaller version of
+   * the same argument. A page can survive the skip list and still carry
+   * nothing — a genuinely blank leaf parses to a page with no blocks — and
+   * cropping it would put a sheet of white paper on the shelf. The first page
+   * with a block on it is the first page the book contains, which is what this
+   * is. It also carries the only measurement available for the box: a block
+   * knows its page's render size and a page does not.
+   *
+   * MECHANICALLY IT IS ONE MORE CROP through machinery that already exists —
+   * the whole page as the box, cut out of the render that is already on disk.
+   * Nothing new is rendered, decoded or resized.
+   */
+  const wantsCover = opts.format !== 'txt';
+  let cover: DotsCover | null = null;
+  let coverImage: VlmCover | undefined;
+  if (wantsCover) {
+    const first = blocks[0];
+    /*
+     * A SEPARATE CROP CALL FROM THE PICTURES, and the second subprocess is
+     * bought deliberately. The two failures are not the same failure: a
+     * picture that did not come back is a broken image in a book that opened
+     * without an error, and the run above refuses over it; a cover that did
+     * not come back is a grey thumbnail. Sharing the call would mean either
+     * failing the book over the thumbnail or letting a missing figure through,
+     * and both are worse than one more spawn per run.
+     */
+    try {
+      const [image] = await opts.images.crop([{
+        page: first.page,
+        box: { x1: 0, y1: 0, x2: first.pageWidth, y2: first.pageHeight },
+        name: COVER_CROP_NAME,
+      }]);
+      if (image === undefined) {
+        cover = {
+          page: null,
+          why: `nothing came back from cropping the whole of page ${first.page}`,
+        };
+      } else {
+        coverImage = { href: `images/${image.name}`, mediaType: image.mediaType, data: image.data };
+        cover = { page: first.page, why: null };
+      }
+    } catch (err) {
+      /*
+       * CAUGHT, WHICH ALMOST NOTHING IN THIS PROGRAM DOES, and the exception
+       * is argued rather than assumed. ARCHITECTURE §8 refuses a fallback
+       * because a quietly degraded BOOK ships unnoticed; a missing cover is
+       * the one defect here that is neither quiet nor in the text — the reader
+       * sees a grey rectangle, the run says which page it failed on, and every
+       * word of the book is still there. A conversion is minutes of GPU, and
+       * losing all of it to a failed thumbnail is the worse trade.
+       */
+      cover = {
+        page: null,
+        why: `page ${first.page} could not be cut out of its render `
+          + `(${err instanceof Error ? err.message : String(err)})`,
+      };
+    }
+  }
+
   const categories: Record<string, number> = {};
   for (const block of blocks) categories[block.category] = (categories[block.category] ?? 0) + 1;
 
   const xhtmlSeconds = (Date.now() - started) / 1000;
   const packaged = opts.format === 'txt'
     ? packageVlmText(opts.metadata, documents)
-    : packageVlmEpub(opts.metadata, documents, resources, dotsStylesheet(typography), navTree(chapters));
+    : packageVlmEpub(
+      opts.metadata, documents, resources, dotsStylesheet(typography), navTree(chapters), coverImage,
+    );
   return {
     bytes: packaged.bytes,
     chapters,
+    cover,
     proposals,
     blocks: blocks.length,
     categories,
