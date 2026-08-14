@@ -1,18 +1,26 @@
 import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
 
-import type { UnlinkedNoteStanding } from '@shared/types';
+import type { EchoStanding, UnlinkedNoteStanding } from '@shared/types';
 
 import { api } from '../../core/foundry';
 
 /**
- * Curation — the one question select mode is allowed to stop asking.
+ * Curation — the questions select mode is allowed to stop asking.
  *
- * IT EXISTS BECAUSE OF THE CHECKBOX. Deleting a footnote's last reference number
- * puts up a dialog with "don't ask again" on it, and a preference that can be
- * set in half a second and unset nowhere is a trap: the next person to press
- * Enter on that box has silently changed what happens to every footnote in every
- * book they ever open, with nothing on screen that says so. This is where it
- * says so, and where it goes back.
+ * IT EXISTS BECAUSE OF THE CHECKBOXES. Each of these dialogs carries a "don't
+ * ask again" box, and a preference that can be set in half a second and unset
+ * nowhere is a trap: the next person to press Enter on one of those boxes has
+ * silently changed what happens to every footnote — or every chapter title — in
+ * every book they ever open, with nothing on screen that says so. This is where
+ * it says so, and where it goes back.
+ *
+ * THREE QUESTIONS AND THREE PREFERENCES, and the two rename ones are separate
+ * on purpose. Tidying a table of contents and correcting a word on a page are
+ * different gestures with different intents, and somebody who has told the app
+ * to stop asking about one has said nothing whatever about the other. Each is
+ * remembered PER ANSWER rather than as "stop asking", because "always do it"
+ * and "never do it" are two different standing instructions about somebody
+ * else's book.
  *
  * A card of its own rather than a field in the settings.json form, for the same
  * reason the library folder is: that file's schema belongs to the ENGINE and is
@@ -42,6 +50,32 @@ import { api } from '../../core/foundry';
         “don't ask again” box on that dialog makes.
       </p>
 
+      <label class="field">
+        <span class="label">When you rename a contents entry and the page still says the old name</span>
+        <select [value]="contentsEcho()" (change)="chooseContentsEcho($event)">
+          <option value="ask">Ask me each time</option>
+          <option value="update">Always change the heading too</option>
+          <option value="leave">Never change the page</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span class="label">When you edit a heading and the contents still says the old name</span>
+        <select [value]="headingEcho()" (change)="chooseHeadingEcho($event)">
+          <option value="ask">Ask me each time</option>
+          <option value="update">Always change the contents entry too</option>
+          <option value="leave">Never change the contents</option>
+        </select>
+      </label>
+
+      <p class="hint">
+        The words on the page and the entry in the contents are two different statements, and they
+        are allowed to differ — a chapter that prints “II” can be listed as “Part II — The Road to
+        War”, and that is right. So neither one follows the other, and changing one only offers to
+        change the other. The offer appears only when the other side still reads exactly what this
+        one used to.
+      </p>
+
       @if (problem(); as reason) { <p class="warn">{{ reason }}</p> }
     </div>
   `,
@@ -65,6 +99,8 @@ import { api } from '../../core/foundry';
 })
 export class CurationCardComponent {
   protected readonly answer = signal<UnlinkedNoteStanding>('ask');
+  protected readonly contentsEcho = signal<EchoStanding>('ask');
+  protected readonly headingEcho = signal<EchoStanding>('ask');
   protected readonly problem = signal<string | null>(null);
 
   constructor() {
@@ -74,7 +110,17 @@ export class CurationCardComponent {
   private async load(): Promise<void> {
     if (!api) return;
     try {
-      this.answer.set(await api.prefs.unlinkedNoteAnswer());
+      // Three independent reads, in flight together: none of them depends on
+      // another, and three round trips in series is three chances to show a
+      // card with a box still on its default.
+      const [note, contents, heading] = await Promise.all([
+        api.prefs.unlinkedNoteAnswer(),
+        api.prefs.contentsRenameEcho(),
+        api.prefs.headingEditEcho(),
+      ]);
+      this.answer.set(note);
+      this.contentsEcho.set(contents);
+      this.headingEcho.set(heading);
     } catch (err) {
       this.problem.set(err instanceof Error ? err.message : String(err));
     }
@@ -91,6 +137,30 @@ export class CurationCardComponent {
     this.problem.set(null);
     try {
       this.answer.set(await api.prefs.setUnlinkedNoteAnswer(wanted));
+    } catch (err) {
+      this.problem.set(err instanceof Error ? err.message : String(err));
+      void this.load();
+    }
+  }
+
+  protected async chooseContentsEcho(event: Event): Promise<void> {
+    if (!api) return;
+    const wanted = (event.target as HTMLSelectElement).value as EchoStanding;
+    this.problem.set(null);
+    try {
+      this.contentsEcho.set(await api.prefs.setContentsRenameEcho(wanted));
+    } catch (err) {
+      this.problem.set(err instanceof Error ? err.message : String(err));
+      void this.load();
+    }
+  }
+
+  protected async chooseHeadingEcho(event: Event): Promise<void> {
+    if (!api) return;
+    const wanted = (event.target as HTMLSelectElement).value as EchoStanding;
+    this.problem.set(null);
+    try {
+      this.headingEcho.set(await api.prefs.setHeadingEditEcho(wanted));
     } catch (err) {
       this.problem.set(err instanceof Error ? err.message : String(err));
       void this.load();

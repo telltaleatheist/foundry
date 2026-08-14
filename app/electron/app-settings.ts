@@ -19,7 +19,7 @@ import * as path from 'node:path';
 
 import { app } from 'electron';
 
-import type { UnlinkedNoteStanding } from '../shared/types';
+import type { EchoStanding, UnlinkedNoteStanding } from '../shared/types';
 
 export interface AppSettings {
   /**
@@ -62,6 +62,31 @@ export interface AppSettings {
    * that are actual decisions and ignored for the one that is a retreat.
    */
   unlinkedNoteAnswer: UnlinkedNoteStanding;
+  /**
+   * The standing answer to "you renamed this contents entry — should the page's
+   * heading, which still reads the old text, change too?".
+   *
+   * TWO KEYS AND NOT ONE, and that is the point of this pair. Renaming the
+   * contents and fixing a typo on the page are different gestures with
+   * different intents: somebody tidying a table of contents usually does not
+   * want the printed page rewritten, and somebody correcting a word on the page
+   * usually does want the contents to stop showing the typo. One shared
+   * preference would silence a question that was never answered.
+   *
+   * Remembered PER ANSWER, on `unlinkedNoteAnswer`'s reasoning: "always update
+   * the other" and "never update the other" are two standing instructions, not
+   * one silenced question. `ask` — the default — puts the dialog up every time.
+   */
+  contentsRenameEcho: EchoStanding;
+  /**
+   * The standing answer to "you edited this heading — should the contents
+   * entry, which still reads the old text, change too?".
+   *
+   * This direction DID NOT EXIST AT ALL before, which was a bug rather than a
+   * design choice: fixing a typo on the page left the typo in the contents
+   * forever, with nothing on screen to say so.
+   */
+  headingEditEcho: EchoStanding;
 }
 
 export const KEEP_WARM_MAX_MINUTES = 240;
@@ -132,12 +157,26 @@ export function clampUnlinkedNoteAnswer(value: unknown): UnlinkedNoteStanding {
   return value === 'cut' || value === 'keep' ? value : 'ask';
 }
 
+/**
+ * One of the two words, or `ask`.
+ *
+ * `clampUnlinkedNoteAnswer`'s forgiveness rule, for its reason: the worst a
+ * garbled value can cost here is a question being asked that somebody had
+ * silenced, which one dialog undoes. The opposite mistake would rewrite the
+ * words on somebody's page without ever asking.
+ */
+export function clampEcho(value: unknown): EchoStanding {
+  return value === 'update' || value === 'leave' ? value : 'ask';
+}
+
 export function readAppSettings(): AppSettings {
   const raw = readRaw();
   return {
     keepServerWarmMinutes: clampKeepWarm(raw?.['keepServerWarmMinutes']),
     libraryDir: clampLibraryDir(raw?.['libraryDir']),
     unlinkedNoteAnswer: clampUnlinkedNoteAnswer(raw?.['unlinkedNoteAnswer']),
+    contentsRenameEcho: clampEcho(raw?.['contentsRenameEcho']),
+    headingEditEcho: clampEcho(raw?.['headingEditEcho']),
   };
 }
 
@@ -151,6 +190,12 @@ export function writeAppSettings(patch: Partial<AppSettings>): AppSettings {
   }
   if (patch.unlinkedNoteAnswer !== undefined) {
     root['unlinkedNoteAnswer'] = clampUnlinkedNoteAnswer(patch.unlinkedNoteAnswer);
+  }
+  if (patch.contentsRenameEcho !== undefined) {
+    root['contentsRenameEcho'] = clampEcho(patch.contentsRenameEcho);
+  }
+  if (patch.headingEditEcho !== undefined) {
+    root['headingEditEcho'] = clampEcho(patch.headingEditEcho);
   }
   const file = settingsFile();
   fs.mkdirSync(path.dirname(file), { recursive: true });

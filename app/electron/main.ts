@@ -31,17 +31,26 @@ import {
 import { readAppSettings, writeAppSettings } from './app-settings';
 import { cancelSetup, setupWslEnv } from './backend-setup';
 import { injectReporter, REPORTER_ID, REPORTER_MEMBER, REPORTER_SOURCE, sanitizeChapter } from './click-reporter';
-import { engineInfo, runDoctor } from './engine';
+import {
+  engineInfo,
+  readEpubMetadata,
+  readPdfMetadata,
+  runDoctor,
+  writeEpubMetadata,
+  writePdfMetadata,
+} from './engine';
 import { catalogForThisMachine, onEnvInstallProgress } from './env-install';
 import { planProvisioning } from './env-provision';
 import {
   closeAllEpubs,
   closeEpub,
   exportWorkingCopy,
+  navEchoForBlock,
   openEpub,
   projectOf,
   readEpubMember,
   renameEpubHeading,
+  renameEpubPageHeading,
   repackEpub,
   resolveEpubMember,
   restoreBlockHtml,
@@ -51,6 +60,7 @@ import {
   setBlockHtml,
   setNoteCut,
   stampBook,
+  workingTreeOf,
   writeEpubMember,
 } from './epub-reader';
 import * as queue from './job-queue';
@@ -73,8 +83,12 @@ import type {
   BackendSettingsPatch,
   CloseWarning,
   ConversionKind,
+  EchoAnswer,
+  EchoStanding,
   EnvInstallRequest,
+  HeadingEcho,
   JobRequest,
+  NavEcho,
   RecentKind,
   SetupRequest,
   TranslateRequest,
@@ -824,6 +838,83 @@ function registerIpc(): void {
     return answer;
   });
 
+  /*
+   * ── The page and the contents are two statements ─────────────────────────
+   *
+   * THE TEXT SHOULD SAY WHAT THE BOOK SAYS, AND THE CONTENTS SHOULD SAY WHAT
+   * THE BOOK'S OWN APPARATUS SAYS. Those are usually the same sentence and
+   * sometimes deliberately are not: the caster composes a nav label the page
+   * never carried — "Part II — The Road to War" over a page that reads "II" —
+   * and that divergence is correct. So neither side is derived from the other,
+   * nothing is kept in sync, and renaming one OFFERS to update the other.
+   *
+   * TWO QUESTIONS AND TWO PREFERENCES, not one of each. Renaming a contents
+   * entry and fixing a typo on the page are different gestures with different
+   * intents, and a person who has told the app to stop asking about one has
+   * said nothing whatever about the other.
+   *
+   * Both follow the unlinked-footnote box exactly (`70cdc69`): a native
+   * message box modal to the window, answered from `app-settings.json` without
+   * asking when a standing answer is stored, remembered PER ANSWER so that
+   * "always update the other" and "never update the other" stay two different
+   * instructions, and un-set in Settings' Curation card — because a
+   * don't-ask-again checkbox with no way back is a trap.
+   *
+   * ASKED AFTER THE WRITE, both of them, on select mode's rule: what the user
+   * typed lands the instant they stop typing, and the question is about the
+   * OTHER side, which nothing has touched.
+   */
+  ipcMain.handle('document:confirm-heading-echo', async (_event, echo: HeadingEcho) => {
+    const standing = readAppSettings().contentsRenameEcho;
+    if (standing !== 'ask') return standing;
+    const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
+    const options = {
+      type: 'question' as const,
+      buttons: ['Change the heading too', 'Leave the page as it is'],
+      defaultId: 0,
+      cancelId: 1,
+      checkboxLabel: "Don't ask again — do this every time",
+      checkboxChecked: false,
+      title: 'The page still says the old name',
+      message: `The heading on the page reads “${echo.was}”.`,
+      detail: `The contents entry now reads “${echo.now}”. They are allowed to differ — the page `
+        + 'should say what the book says, and the contents should say what the book\'s apparatus '
+        + 'says — so nothing on the page has been changed. Changing it rewrites the heading (and '
+        + 'the document title) to match; leaving it keeps the words the page printed.',
+    };
+    const result = win
+      ? await dialog.showMessageBox(win, options)
+      : await dialog.showMessageBox(options);
+    const answer: EchoAnswer = result.response === 0 ? 'update' : 'leave';
+    if (result.checkboxChecked) writeAppSettings({ contentsRenameEcho: answer });
+    return answer;
+  });
+
+  ipcMain.handle('document:confirm-nav-echo', async (_event, echo: NavEcho) => {
+    const standing = readAppSettings().headingEditEcho;
+    if (standing !== 'ask') return standing;
+    const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
+    const options = {
+      type: 'question' as const,
+      buttons: ['Change the contents entry too', 'Leave the contents as it is'],
+      defaultId: 0,
+      cancelId: 1,
+      checkboxLabel: "Don't ask again — do this every time",
+      checkboxChecked: false,
+      title: 'The contents still says the old name',
+      message: `The contents entry reads “${echo.was}”.`,
+      detail: `The heading on the page now reads “${echo.now}”. Nothing in the contents has been `
+        + 'changed — the two are allowed to differ. Changing it relabels the entry to match; '
+        + 'leaving it keeps the name the table of contents gives this chapter.',
+    };
+    const result = win
+      ? await dialog.showMessageBox(win, options)
+      : await dialog.showMessageBox(options);
+    const answer: EchoAnswer = result.response === 0 ? 'update' : 'leave';
+    if (result.checkboxChecked) writeAppSettings({ headingEditEcho: answer });
+    return answer;
+  });
+
   // ── Projects ─────────────────────────────────────────────────────────────
   ipcMain.handle(
     'workspace:plan',
@@ -914,10 +1005,27 @@ function registerIpc(): void {
   // the renderer, ever.
   ipcMain.handle('epub:write-member', (_event, id: string, href: string, text: string) =>
     writeEpubMember(id, href, text));
-  // Renames a TOC entry — the nav label, and the heading when it carried the
-  // same text. Into the working tree, like an edit; nothing else is written.
+  // Renames a TOC entry — the nav label, ALWAYS, and an offer about the page's
+  // heading, which is written only through the door below and only when the
+  // user says so. Into the working tree, like an edit; nothing else is written.
   ipcMain.handle('epub:rename-heading', (_event, id: string, href: string, label: string) =>
     renameEpubHeading(id, href, label));
+  // The "yes, change the page too" answer. A door of its own, because the
+  // question is asked after the nav has already been written and the write it
+  // authorises is a different write to a different file.
+  ipcMain.handle(
+    'epub:rename-page-heading',
+    (_event, id: string, href: string, label: string, was: string) =>
+      renameEpubPageHeading(id, href, label, was),
+  );
+  // The mirror question, for the direction that runs the other way: an edited
+  // heading, and the contents entry that still reads what it used to say.
+  // A QUERY, not a write — nothing changes until the app asks and is answered.
+  ipcMain.handle(
+    'epub:nav-echo-for-block',
+    (_event, id: string, href: string, blockId: string, was: string) =>
+      navEchoForBlock(id, href, blockId, was),
+  );
 
   /*
    * ── Select mode's writes ─────────────────────────────────────────────────
@@ -1055,6 +1163,58 @@ function registerIpc(): void {
   ipcMain.handle('prefs:unlinked-note-answer', () => readAppSettings().unlinkedNoteAnswer);
   ipcMain.handle('prefs:set-unlinked-note-answer', (_event, answer: UnlinkedNoteStanding) =>
     writeAppSettings({ unlinkedNoteAnswer: answer }).unlinkedNoteAnswer);
+  // The two halves of "renaming one offers to update the other". Separate keys
+  // on purpose — see the two confirm handlers above.
+  ipcMain.handle('prefs:contents-rename-echo', () => readAppSettings().contentsRenameEcho);
+  ipcMain.handle('prefs:set-contents-rename-echo', (_event, answer: EchoStanding) =>
+    writeAppSettings({ contentsRenameEcho: answer }).contentsRenameEcho);
+  ipcMain.handle('prefs:heading-edit-echo', () => readAppSettings().headingEditEcho);
+  ipcMain.handle('prefs:set-heading-edit-echo', (_event, answer: EchoStanding) =>
+    writeAppSettings({ headingEditEcho: answer }).headingEditEcho);
+
+  /*
+   * ── A document's own record ──────────────────────────────────────────────
+   *
+   * `foundry epub-meta` and `foundry pdf-meta`, spawned exactly as `doctor` and
+   * `epub-stamp` are: the engine owns the file format and this app owns the
+   * question. Reading and writing are one pair of handlers rather than four,
+   * because the dialog does both against the same document and a patch with no
+   * fields in it IS a read.
+   *
+   * WHICH FILE IS MAIN'S DECISION. For an EPUB the renderer names the open book
+   * by its id and main resolves the working tree — the unpacked copy this app
+   * edits, which is what makes the change visible immediately and what Save
+   * later packs. For a PDF the renderer names the path it already has open,
+   * which is the WORKING PDF; it is resolved through the same allow-list every
+   * other read goes through, so a renderer cannot ask main to rewrite a file
+   * nobody opened.
+   */
+  ipcMain.handle('meta:read-epub', (_event, id: string) => readEpubMetadata(workingTreeOf(id)));
+  ipcMain.handle(
+    'meta:write-epub',
+    (_event, id: string, patch: Record<string, string | undefined>) =>
+      writeEpubMetadata(workingTreeOf(id), patch),
+  );
+  /*
+   * The PDF's path goes through `admitted` — the SAME allow-list the pdf.js
+   * viewer's bytes go through, and the same function, so this door can never
+   * drift from that one. A renderer that was talked into naming some other file
+   * is refused here rather than by a path check that has to stay right forever.
+   */
+  const admittedPdf = (candidate: string): string => {
+    const resolved = admitted(candidate);
+    if (resolved === null) {
+      throw new Error(`"${candidate}" is not a document this app has open, so its metadata is not ours to read.`);
+    }
+    return resolved;
+  };
+  ipcMain.handle('meta:read-pdf', (_event, filePath: string) =>
+    readPdfMetadata(admittedPdf(filePath)));
+  ipcMain.handle(
+    'meta:write-pdf',
+    (_event, filePath: string, patch: Record<string, string | undefined>) =>
+      writePdfMetadata(admittedPdf(filePath), patch),
+  );
 
   // ── The library folder ───────────────────────────────────────────────────
   ipcMain.handle('library:dir', () => readAppSettings().libraryDir);

@@ -12,14 +12,22 @@ import type {
   CloseWarning,
   ConversionKind,
   DoctorResult,
+  EchoAnswer,
+  EchoStanding,
   EngineInfo,
   EnvCatalogItem,
   EnvInstallProgress,
   EnvInstallRequest,
   EnvTooling,
   EpubBook,
+  EpubMetadataFields,
+  HeadingEcho,
+  HeadingRenameOutcome,
   Job,
   JobRequest,
+  MetadataOutcome,
+  NavEcho,
+  PdfMetadataFields,
   ProjectSummary,
   RecentDocument,
   ServerStatus,
@@ -102,6 +110,54 @@ export interface FoundryApi {
   confirmUnlinkedNote(note: UnlinkedNote): Promise<UnlinkedNoteAnswer>;
 
   /**
+   * "You renamed the contents entry — should the page's heading change too?"
+   *
+   * THE PAGE AND THE CONTENTS ARE TWO STATEMENTS and are allowed to differ, so
+   * neither is derived from the other and renaming one only OFFERS to update
+   * the other. Asked only when the other side still reads exactly what this one
+   * used to; where they already differ the difference is somebody's decision
+   * and there is no question.
+   *
+   * Main answers without a dialog when a standing answer is stored, per ANSWER,
+   * in `app-settings.json` — and this direction's preference is separate from
+   * the one below, because tidying a table of contents and correcting a word on
+   * a page are different gestures with different intents.
+   */
+  confirmHeadingEcho(echo: HeadingEcho): Promise<EchoAnswer>;
+  /**
+   * "You edited this heading — should the contents entry change too?"
+   *
+   * The mirror of the above, and the direction that did not exist at all: an
+   * in-place heading edit wrote the page and stopped, so a typo fixed on the
+   * page stayed in the contents forever with nothing on screen to say so.
+   */
+  confirmNavEcho(echo: NavEcho): Promise<EchoAnswer>;
+
+  /**
+   * A document's own record — the OPF's Dublin Core fields, or the PDF's Info
+   * dictionary — read and written through `foundry epub-meta` / `pdf-meta`.
+   *
+   * NEITHER OF THESE MOVES A FILE. `project.json` holds `title` and `stem` as
+   * two fields precisely so that a book's NAME and its FILENAMES are decoupled:
+   * correcting a title changes the metadata, and the paths stay exactly where
+   * they are, because they are in recents, in whatever else the user has
+   * pointed at them, and in a sync client's index.
+   *
+   * Reading and writing are one pair rather than four calls because the dialog
+   * does both against the same document, and because a patch with no fields in
+   * it is a read.
+   */
+  meta: {
+    /** The open book, by its id. Main resolves the working tree; the renderer names no path. */
+    readEpub(bookId: string): Promise<MetadataOutcome>;
+    /** Only the fields that changed. A field left out is a field the engine never touches. */
+    writeEpub(bookId: string, patch: Partial<EpubMetadataFields>): Promise<MetadataOutcome>;
+    /** The working PDF, by the path this app already has open. Refused for any other. */
+    readPdf(filePath: string): Promise<MetadataOutcome>;
+    writePdf(filePath: string, patch: Partial<PdfMetadataFields>): Promise<MetadataOutcome>;
+  };
+
+  /**
    * The managed workspace: where a conversion writes.
    *
    * A conversion never asks the user where to put anything — `plan` hands the
@@ -159,7 +215,24 @@ export interface FoundryApi {
      * nav label and, when its text matched, the heading itself; rejects when
      * nothing in the book carries the entry. Into the working tree, like an edit.
      */
-    renameHeading(id: string, href: string, label: string): Promise<void>;
+    renameHeading(id: string, href: string, label: string): Promise<HeadingRenameOutcome>;
+    /**
+     * The "yes, change the page too" answer to `confirmHeadingEcho`.
+     *
+     * A door of its own because the question is asked after the nav has already
+     * been written, and because `was` is CHECKED against the file rather than
+     * trusted: between the question and the answer the frame may have written
+     * that very heading, and a dialog's older idea of it must not overwrite
+     * somebody's newer words.
+     */
+    renamePageHeading(id: string, href: string, label: string, was: string): Promise<void>;
+    /**
+     * The mirror question's subject: the contents entry that still reads what
+     * this heading used to say, or null when there is nothing to offer — the
+     * block is not a heading, the book has no contents, or the two already
+     * differ. A QUERY; nothing is written.
+     */
+    navEchoForBlock(id: string, href: string, blockId: string, was: string): Promise<NavEcho | null>;
     /**
      * Select mode's cut mark: `data-bf-cut="1"` on the element named by
      * `blockId`, in the chapter member `href`, in the working tree.
@@ -268,6 +341,12 @@ export interface FoundryApi {
     unlinkedNoteAnswer(): Promise<UnlinkedNoteStanding>;
     /** Returns the value as stored, so a nonsense one comes back as `ask`. */
     setUnlinkedNoteAnswer(answer: UnlinkedNoteStanding): Promise<UnlinkedNoteStanding>;
+    /** "Renaming a contents entry also changes the page's heading." */
+    contentsRenameEcho(): Promise<EchoStanding>;
+    setContentsRenameEcho(answer: EchoStanding): Promise<EchoStanding>;
+    /** "Editing a heading on the page also changes the contents entry." */
+    headingEditEcho(): Promise<EchoStanding>;
+    setHeadingEditEcho(answer: EchoStanding): Promise<EchoStanding>;
   };
 
   /**

@@ -401,6 +401,140 @@ export function publisherEpub(
   ]);
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// Packages — the one thing `epub-meta` edits
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * A package document with everything a metadata edit has to survive.
+ *
+ * A SEPARATE PACKAGE, NOT AN EDITED `OPF`. Half the translate suite and most of
+ * `final.test.ts` read the one above, and adding a refinement or a second
+ * namespace to it would move counts those tests pin. This one carries, on
+ * purpose, every shape the metadata command has an opinion about:
+ *
+ *  - a `dc:identifier` whose `id` is what `<package unique-identifier>` names,
+ *    which is the link that must survive a rewrite of its text;
+ *  - a `dc:creator` with an id and TWO `<meta refines="#creator1">` elements
+ *    pointing at it, so orphaning can be asserted against something real —
+ *    `file-as`, which goes stale when the name is corrected, and `role`, which
+ *    does not;
+ *  - a refinement of the TITLE as well, so the stale report is proved to name
+ *    only the field that actually moved;
+ *  - NO `dc:publisher` and NO `dc:date`, which is what a cast book looks like
+ *    and is the whole of the insert-a-missing-element case;
+ *  - a comment and a second namespace declaration, neither of which any edit
+ *    may disturb — they are the cheapest possible proof that nothing was
+ *    re-serialised.
+ */
+export const METADATA_OPF = `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="de">
+  <!-- Cast by foundry. This comment is here to come out exactly where it went in. -->
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:identifier id="pub-id">urn:uuid:test-metadata</dc:identifier>
+    <dc:title id="t1">Der Staat</dc:title>
+    <dc:language>de</dc:language>
+    <dc:creator id="creator1">Ein Verfasser</dc:creator>
+    <meta refines="#creator1" property="file-as">Verfasser, Ein</meta>
+    <meta refines="#creator1" property="role" scheme="marc:relators">aut</meta>
+    <meta refines="#t1" property="title-type">main</meta>
+    <meta property="dcterms:modified">1980-01-01T00:00:00Z</meta>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="style" href="style.css" media-type="text/css"/>
+    <item id="c1" href="text/c0001.xhtml" media-type="application/xhtml+xml"/>
+    <item id="img1" href="images/p0009-1.png" media-type="image/png"/>
+  </manifest>
+  <spine>
+    <itemref idref="c1"/>
+  </spine>
+</package>
+`;
+
+/**
+ * The same package indented with TABS and binding Dublin Core to a prefix that
+ * is not `dc`.
+ *
+ * Both halves are real. An OPF written by a different toolchain indents with
+ * tabs, and the prefix is only a convention — `xmlns:dcterms` is bound to
+ * something else entirely, and a package is free to call the Dublin Core
+ * namespace whatever it likes. A command that assumed `dc:` and two spaces
+ * would write an element in an undeclared prefix at the wrong depth, and the
+ * first symptom would be a reader refusing the book.
+ */
+export const METADATA_OPF_ODD = [
+  '<?xml version="1.0" encoding="UTF-8"?>',
+  '<package xmlns="http://www.idpf.org/2007/opf" xmlns:d="http://purl.org/dc/elements/1.1/"'
+  + ' version="3.0" unique-identifier="uid">',
+  '\t<metadata>',
+  '\t\t<d:identifier id="uid">urn:isbn:9780000000000</d:identifier>',
+  '\t\t<d:title>Der Staat</d:title>',
+  '\t\t<d:language>de</d:language>',
+  '\t</metadata>',
+  '\t<manifest>',
+  '\t\t<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>',
+  '\t\t<item id="style" href="style.css" media-type="text/css"/>',
+  '\t\t<item id="c1" href="text/c0001.xhtml" media-type="application/xhtml+xml"/>',
+  '\t\t<item id="img1" href="images/p0009-1.png" media-type="image/png"/>',
+  '\t</manifest>',
+  '\t<spine>',
+  '\t\t<itemref idref="c1"/>',
+  '\t</spine>',
+  '</package>',
+  '',
+].join('\n');
+
+/** Two authors — the case `--creator` cannot mean anything about. */
+export const METADATA_OPF_TWO_CREATORS = METADATA_OPF.replace(
+  '    <dc:creator id="creator1">Ein Verfasser</dc:creator>\n',
+  '    <dc:creator id="creator1">Ein Verfasser</dc:creator>\n'
+  + '    <dc:creator id="creator2">Ein Zweiter</dc:creator>\n',
+);
+
+/** `unique-identifier` naming an id no `dc:identifier` carries: a link already broken. */
+export const METADATA_OPF_LOST_ID = METADATA_OPF.replace('unique-identifier="pub-id"', 'unique-identifier="nope"');
+
+/** A package with no `<metadata>` at all. Invalid EPUB, and refused by name. */
+export const METADATA_OPF_NO_METADATA = `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id">
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="style" href="style.css" media-type="text/css"/>
+    <item id="c1" href="text/c0001.xhtml" media-type="application/xhtml+xml"/>
+    <item id="img1" href="images/p0009-1.png" media-type="image/png"/>
+  </manifest>
+  <spine>
+    <itemref idref="c1"/>
+  </spine>
+</package>
+`;
+
+/**
+ * The book of `foundryEpub()` around a package of the caller's own.
+ *
+ * Everything but the package is the same bytes as every other fixture book
+ * here, which is what makes "no member but the OPF changed" an assertion worth
+ * making: the picture and the stylesheet come back byte-identical or the writer
+ * re-encoded something nobody asked it to.
+ */
+export function metadataEpub(opf: string = METADATA_OPF): Uint8Array {
+  return writeZip([
+    zipText('mimetype', 'application/epub+zip'),
+    zipText('META-INF/container.xml',
+      `<?xml version="1.0" encoding="UTF-8"?>\n`
+      + `<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">\n`
+      + `  <rootfiles>\n`
+      + `    <rootfile full-path="${OPF_PATH}" media-type="application/oebps-package+xml"/>\n`
+      + `  </rootfiles>\n</container>\n`),
+    zipText('EPUB/style.css', 'body { margin: 0 5%; }\n'),
+    zipText(CHAPTER_PATH, CHAPTER),
+    { path: 'EPUB/images/p0009-1.png', data: PICTURE },
+    zipText(NAV_PATH, NAV),
+    zipText(OPF_PATH, opf),
+  ]);
+}
+
 const TOKEN = /⟦\/?[em]\d+⟧/g;
 
 /** Uppercase everything that is not a marker. See this file's header. */

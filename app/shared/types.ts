@@ -688,6 +688,136 @@ export type UnlinkedNoteAnswer = 'cut' | 'keep' | 'cancel';
  */
 export type UnlinkedNoteStanding = 'ask' | 'cut' | 'keep';
 
+// ═════════════════════════════════════════════════════════════════════════════
+// The page and the contents are two statements
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * THE WORDS ON THE PAGE AND THE ENTRY IN THE CONTENTS ARE ALLOWED TO DIFFER,
+ * and that is the whole of the design these types serve.
+ *
+ * The text should say what the book says; the contents should say what the
+ * book's own apparatus says. Those are usually the same sentence and sometimes
+ * deliberately are not — the caster composes a nav label the page never carried
+ * ("Part II — The Road to War" over a page that reads "II"), and that divergence
+ * is correct. So neither side is derived from the other, nothing is kept in
+ * sync, and renaming one OFFERS to update the other.
+ *
+ * An "echo" is that offer: the other side, as it stands, when it still reads
+ * what the side just renamed used to read. Where the two already differ there
+ * is no echo and no question — the difference is a decision somebody has
+ * already made, and asking about it on every rename would train a person to
+ * dismiss the dialog without reading it.
+ */
+export type EchoAnswer = 'update' | 'leave';
+
+/**
+ * The stored form of that answer.
+ *
+ * PER ANSWER, exactly as `UnlinkedNoteStanding` is: "always update the other"
+ * and "never update the other" are two different standing instructions about
+ * somebody else's book, and collapsing them into one silenced-question flag
+ * would mean the app picking which of them was meant. `ask` is the default.
+ */
+export type EchoStanding = 'ask' | 'update' | 'leave';
+
+/** The page heading a contents rename could carry with it. */
+export interface HeadingEcho {
+  /** The document the heading lives in — a book-relative member href. */
+  member: string;
+  /** What the heading reads now, which is what the contents entry read before. */
+  was: string;
+  /** What the contents entry now reads, and what the heading would become. */
+  now: string;
+}
+
+/**
+ * What a contents rename did, and what it is offering to do next.
+ *
+ * The nav half has ALREADY HAPPENED when this arrives — the contents is the
+ * thing that was renamed, and renaming it is exactly what was asked. The echo
+ * is the question.
+ */
+export interface HeadingRenameOutcome {
+  /** True when a contents entry's label was rewritten. */
+  navChanged: boolean;
+  /** The page heading that still reads the old label, when there is one to offer. */
+  echo: HeadingEcho | null;
+}
+
+/** The contents entry an in-place heading edit could carry with it. */
+export interface NavEcho {
+  /** The contents entry's href, in the shape the sidebar and `renameHeading` use. */
+  href: string;
+  /** What the entry reads now, which is what the heading read before the edit. */
+  was: string;
+  /** What the heading now reads, and what the entry would become. */
+  now: string;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// A document's own record
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * The six Dublin Core fields `foundry epub-meta` reads and writes. `null` is
+ * "the package declares none", which is a legal answer for three of the six.
+ */
+export interface EpubMetadataFields {
+  title: string | null;
+  creator: string | null;
+  language: string | null;
+  publisher: string | null;
+  date: string | null;
+  identifier: string | null;
+}
+
+/** The four Info-dictionary fields `foundry pdf-meta` reads and writes. */
+export interface PdfMetadataFields {
+  title: string | null;
+  author: string | null;
+  subject: string | null;
+  keywords: string | null;
+}
+
+/**
+ * What a document says about itself, in the shape the engine answered with.
+ *
+ * A DISCRIMINATED UNION rather than one bag of optional fields, because an EPUB
+ * and a PDF do not have the same record and pretending they do is how a dialog
+ * ends up offering a `dc:language` box for a scan. The engine has two commands
+ * for the same reason.
+ */
+/**
+ * A document's record, or the sentence saying why it could not be read.
+ *
+ * NOT A REJECTION, because the engine's refusals are the useful half here: a
+ * package with two `dc:creator` elements is refused BY NAME, and that sentence
+ * belongs in the dialog beside the fields rather than in a console nobody has
+ * open.
+ */
+export type MetadataOutcome =
+  | { ok: true; metadata: DocumentMetadata }
+  | { ok: false; reason: string };
+
+export type DocumentMetadata =
+  | {
+    kind: 'epub';
+    fields: EpubMetadataFields;
+    /** What `<package unique-identifier>` names. Null means that link is broken. */
+    uniqueIdentifier: string | null;
+    /** How many elements each field has. More than one is legal, and unwritable. */
+    counts: Record<string, number>;
+  }
+  | {
+    kind: 'pdf';
+    fields: PdfMetadataFields;
+    pages: number;
+    /** Read, never written: the software chain that made the file. */
+    creator: string | null;
+    producer: string | null;
+  };
+
 /**
  * An open book. `id` is what closes it again — a tab that is closed, and every
  * tab on quit, hands its id back so main stops serving its members.

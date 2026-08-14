@@ -84,7 +84,14 @@ import {
   workingTreeName,
 } from './projects';
 import { CATEGORY_IDS } from '../shared/categories';
-import type { EpubBook, EpubChapter, UnlinkedNote } from '../shared/types';
+import type {
+  EpubBook,
+  EpubChapter,
+  HeadingEcho,
+  HeadingRenameOutcome,
+  NavEcho,
+  UnlinkedNote,
+} from '../shared/types';
 
 export class EpubError extends Error {
   constructor(message: string) {
@@ -1241,35 +1248,111 @@ export async function stampBook(
 }
 
 /**
- * Rename a TOC entry: the nav label, and the heading it stands for.
+ * Rename a TOC entry: THE NAV LABEL, and an OFFER about the heading it stands
+ * for.
  *
  * `entryHref` is a sidebar row's href — `text/c0003.xhtml` for a chapter,
- * `text/c0003.xhtml#sh2` for a section header inside one. What changes:
+ * `text/c0003.xhtml#sh2` for a section header inside one. The nav anchor ALWAYS
+ * changes: the nav is the table of contents' truth, and renaming the row is
+ * exactly what was asked.
  *
- *   FRAGMENT entry — precise by construction: the `<h_ id="sh2">` heading in
- *   that document gets the new inner text, and so does the nav anchor that
- *   points at `#sh2`.
+ * THE PAGE IS NOT TOUCHED HERE, and that is a deliberate change. It used to
+ * follow automatically and silently whenever its text matched the old label,
+ * which quietly made one of the two statements a copy of the other. They are
+ * two statements: the text should say what the book says, and the contents
+ * should say what the book's own apparatus says, and the caster composes labels
+ * the page never carried ("Part II — The Road to War" over a page that reads
+ * "II") precisely because that divergence is correct. So this function reports
+ * the heading as an ECHO — the other side, as it stands, when it still reads
+ * what the entry used to read — and the caller asks. `renameEpubPageHeading`
+ * below is what writes it if the answer is yes.
  *
- *   CHAPTER entry — the nav anchor ALWAYS changes: the nav is the TOC's truth
- *   and renaming the TOC row is exactly what was asked. The chapter document's
- *   own first heading and its `<title>` change ONLY when their text equals the
- *   old nav label exactly — when the classifier composed a label the heading
- *   never carried ("Part II — The Road to War" over a page that says "II"),
- *   the content is not touched: the user renamed the table of contents, not
- *   the words on the page.
+ * WHERE THE TWO ALREADY DIFFER THERE IS NO ECHO AND NO QUESTION. That is a
+ * decision somebody has already made about this book, and re-asking it on every
+ * contents rename would train a person to dismiss the dialog unread. It also
+ * means the fragment case no longer rewrites a mismatched heading by id, which
+ * it used to do unconditionally — the same silent copying, in the one place it
+ * was least visible.
  *
  * Attributes are never rewritten — data-bf-*, ids, classes and the pagebreak
  * span a heading opens with all survive; only inner TEXT changes, XML-escaped.
  * The writes land in the working tree, like every other edit, and repack
  * nothing: the user's own file is written only by an explicit Save to it.
  *
- * Throws when nothing in the book matches the entry — a rename that changed
- * nothing must not report success and mark the tab modified.
+ * Throws when nothing in the book matches the entry AT ALL — no nav row, no
+ * heading — because a rename that could change nothing must not report success
+ * and mark the tab modified.
  */
 export async function renameEpubHeading(
   id: string,
   entryHref: string,
   newLabel: string,
+): Promise<HeadingRenameOutcome> {
+  const book = unpacked.get(id);
+  if (!book) throw new EpubError('That book is not open in this app any more.');
+  const label = newLabel.trim();
+  if (label.length === 0) throw new EpubError('A heading cannot be renamed to nothing.');
+  const escaped = escapeXml(label);
+
+  const [file, fragment = null] = entryHref.split('#') as [string, string?];
+  const member = resolveEpubMember(id, file);
+  if (member === null) {
+    throw new EpubError(`"${file}" is not part of a book this app has open.`);
+  }
+
+  // ── The nav, first: it holds the OLD label the echo rule needs. ──────────
+  let navChanged = false;
+  let oldLabel: string | null = null;
+  const navFile = book.nav === null ? null : resolveEpubMember(id, book.nav);
+  if (navFile !== null && book.nav !== null) {
+    const navText = await fs.promises.readFile(navFile, 'utf8');
+    const renamed = renameNavAnchor(navText, book.nav, file, fragment, escaped);
+    oldLabel = renamed.oldLabel;
+    if (renamed.changed) {
+      await fs.promises.writeFile(navFile, renamed.text, 'utf8');
+      navChanged = true;
+    }
+  }
+
+  // ── The page, read and NOT written. ──────────────────────────────────────
+  const markup = await fs.promises.readFile(member, 'utf8');
+  // No nav (a foreign book): the sidebar label came from the document's own
+  // <title>, so that is the "old label" the equality rule compares against.
+  const previous = oldLabel ?? documentTitle(markup);
+  const current = fragment !== null ? headingTextById(markup, fragment) : firstHeadingText(markup);
+  const echo: HeadingEcho | null =
+    previous !== null && current !== null && current === previous && current !== label
+      ? { member: file, was: current, now: label }
+      : null;
+
+  if (!navChanged && echo === null) {
+    throw new EpubError(
+      'Nothing in the book carries that label — the nav names no such entry and no heading matched.',
+    );
+  }
+  return { navChanged, echo };
+}
+
+/**
+ * The other half: write the new label onto the page, once somebody has said so.
+ *
+ * A DOOR OF ITS OWN, on `restoreBlockHtml`'s reasoning — the question is asked
+ * after the nav has already been written, the answer arrives from a dialog, and
+ * the write it authorises is a different write to a different file. Folding it
+ * back into the function above as a boolean would mean that function could not
+ * return until a modal closed.
+ *
+ * `was` is the text the caller was shown and agreed to replace, and it is
+ * CHECKED against what is on disk rather than trusted. Between the question and
+ * the answer the frame may have written this very heading — select mode edits
+ * land as they are typed — and overwriting somebody's newer words with a
+ * dialog's older idea of them is the one failure this door could introduce.
+ */
+export async function renameEpubPageHeading(
+  id: string,
+  entryHref: string,
+  newLabel: string,
+  was: string,
 ): Promise<void> {
   const book = unpacked.get(id);
   if (!book) throw new EpubError('That book is not open in this app any more.');
@@ -1283,44 +1366,111 @@ export async function renameEpubHeading(
     throw new EpubError(`"${file}" is not part of a book this app has open.`);
   }
 
-  let changed = false;
-
-  // ── The nav, first: it holds the OLD label the content rule needs. ───────
-  let oldLabel: string | null = null;
-  const navFile = book.nav === null ? null : resolveEpubMember(id, book.nav);
-  if (navFile !== null && book.nav !== null) {
-    const navText = await fs.promises.readFile(navFile, 'utf8');
-    const renamed = renameNavAnchor(navText, book.nav, file, fragment, escaped);
-    oldLabel = renamed.oldLabel;
-    if (renamed.changed) {
-      await fs.promises.writeFile(navFile, renamed.text, 'utf8');
-      changed = true;
-    }
-  }
-
-  // ── The content. ─────────────────────────────────────────────────────────
   const markup = await fs.promises.readFile(member, 'utf8');
-  let edited = markup;
-  if (fragment !== null) {
-    edited = renameHeadingById(markup, fragment, escaped);
-  } else {
-    // No nav (a foreign book): the sidebar label came from the document's own
-    // <title>, so that is the "old label" the equality rule compares against.
-    const previous = oldLabel ?? documentTitle(markup);
-    if (previous !== null) {
-      edited = renameChapterHeading(markup, previous, escaped);
-    }
-  }
-  if (edited !== markup) {
-    await fs.promises.writeFile(member, edited, 'utf8');
-    changed = true;
-  }
-
-  if (!changed) {
+  const current = fragment !== null ? headingTextById(markup, fragment) : firstHeadingText(markup);
+  if (current !== was) {
     throw new EpubError(
-      'Nothing in the book carries that label — the nav names no such entry and no heading matched.',
+      `The heading in "${file}" no longer reads "${was}" — it now reads `
+      + `${current === null ? 'nothing this app can find' : `"${current}"`}. It was changed after `
+      + 'the question was asked, so nothing has been written over it. The contents entry keeps its '
+      + 'new name.',
     );
   }
+
+  const edited = fragment !== null
+    ? renameHeadingById(markup, fragment, escaped)
+    : renameChapterHeading(markup, was, escaped);
+  if (edited === markup) {
+    throw new EpubError(`The heading in "${file}" could not be rewritten, so nothing was changed.`);
+  }
+  await fs.promises.writeFile(member, edited, 'utf8');
+}
+
+/**
+ * The contents entry an in-place heading edit could carry with it, or null.
+ *
+ * THE DIRECTION THAT DID NOT EXIST. Editing a heading in select mode wrote the
+ * page and stopped there, so fixing a typo on the page left the typo in the
+ * contents forever with nothing on screen to say so. That was a bug, not a
+ * design choice — the divergence the design protects is a deliberate one, and
+ * a misspelling nobody chose is not it.
+ *
+ * `was` is the block's markup as it stood before the edit, handed over by the
+ * frame; its plain text is what the contents entry has to still read for there
+ * to be anything to offer. Four things must all hold, and each of them is a way
+ * this can legitimately answer null:
+ *
+ *  - the edited block is a HEADING. A paragraph's words are not a chapter's
+ *    name, and no contents entry ever claimed to be a copy of them.
+ *  - the book has a nav with a `toc` in it.
+ *  - some toc anchor points at this document — at the heading's own id when it
+ *    has one, or at the document itself.
+ *  - that anchor's label still reads exactly what the heading used to read.
+ *    Where it does not, the two already differ, and the difference is somebody
+ *    else's decision.
+ */
+export async function navEchoForBlock(
+  id: string,
+  memberPath: string,
+  blockId: string,
+  was: string,
+): Promise<NavEcho | null> {
+  const book = unpacked.get(id);
+  if (!book || book.nav === null) return null;
+  const member = resolveEpubMember(id, memberPath);
+  const navFile = resolveEpubMember(id, book.nav);
+  if (member === null || navFile === null) return null;
+
+  const markup = await fs.promises.readFile(member, 'utf8');
+  const block = locateBlock(markup, blockId, memberPath);
+  if (!/^h[1-6]$/.test(block.name)) return null;
+
+  const previous = plainText(was);
+  if (previous.length === 0) return null;
+  const closeAt = closeTagOffset(markup, block);
+  if (closeAt < 0) return null;
+  const now = plainText(markup.slice(block.end, closeAt));
+  if (now.length === 0 || now === previous) return null;
+
+  const ownId = attribute(block.text, 'id');
+  const navText = await fs.promises.readFile(navFile, 'utf8');
+  const entry = tocEntryReading(navText, book.nav, memberPath, ownId, previous);
+  return entry === null ? null : { href: entry, was: previous, now };
+}
+
+/**
+ * The href of the toc entry pointing at this document and reading exactly
+ * `label`, in the shape the sidebar and `renameEpubHeading` use.
+ *
+ * Scoped to `epub:type="toc"` for `renameNavAnchor`'s reason: the landmarks nav
+ * points at chapter files too, and its labels ("Beginning") are semantics
+ * rather than names.
+ *
+ * An entry whose fragment names some OTHER element in this document is not a
+ * candidate, even when its label matches — two section headers of a chapter can
+ * legitimately read the same words, and renaming the wrong one is a change
+ * nobody would notice until they went looking for the right one.
+ */
+function tocEntryReading(
+  navText: string,
+  navHref: string,
+  memberPath: string,
+  headingId: string | null,
+  label: string,
+): string | null {
+  const toc = /(<nav\b[^>]*epub:type\s*=\s*"toc"[^>]*>)([\s\S]*?)(<\/nav>)/i.exec(navText);
+  if (!toc) return null;
+  for (const match of (toc[2] ?? '').matchAll(/(<a\b[^>]*>)([\s\S]*?)(<\/a\s*>)/gi)) {
+    const href = attribute(match[1] ?? '', 'href');
+    if (href === null) continue;
+    const [filePart, fragmentPart] = href.split('#');
+    if (joinHref(navHref, filePart ?? href) !== memberPath) continue;
+    const fragment = fragmentPart && fragmentPart.length > 0 ? fragmentPart : null;
+    if (fragment !== null && fragment !== headingId) continue;
+    if (plainText(match[2] ?? '') !== label) continue;
+    return fragment === null ? memberPath : `${memberPath}#${fragment}`;
+  }
+  return null;
 }
 
 /**
@@ -1370,6 +1520,33 @@ function renameNavAnchor(
  * silently delete the page anchor.
  */
 const LEADING_SPANS = /^(?:\s*<span\b[^>]*>\s*<\/span>)*\s*/;
+
+/**
+ * What the heading carrying `id="<fragment>"` reads, or null when there is none.
+ *
+ * The leading pagebreak spans are stripped by `plainText` along with every
+ * other tag, which is exactly right here: the page marker is not part of what
+ * the heading SAYS, and a comparison that counted it would never match a
+ * contents label.
+ */
+function headingTextById(markup: string, fragment: string): string | null {
+  const pattern = new RegExp(
+    `<h([1-6])\\b[^>]*\\bid\\s*=\\s*"${escapeRegExp(fragment)}"[^>]*>([\\s\\S]*?)</h\\1\\s*>`,
+    'i',
+  );
+  const match = pattern.exec(markup);
+  if (match === null) return null;
+  const text = plainText(match[2] ?? '');
+  return text.length > 0 ? text : null;
+}
+
+/** What the document's FIRST heading reads, or null when it carries none. */
+function firstHeadingText(markup: string): string | null {
+  const match = /<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1\s*>/i.exec(markup);
+  if (match === null) return null;
+  const text = plainText(match[2] ?? '');
+  return text.length > 0 ? text : null;
+}
 
 /** Rewrite the inner text of the heading carrying `id="<fragment>"`. */
 function renameHeadingById(markup: string, fragment: string, escaped: string): string {
@@ -1445,6 +1622,21 @@ export async function exportWorkingCopy(filePath: string): Promise<string> {
     return destination;
   }
   return resolved;
+}
+
+/**
+ * The unpacked working tree of an open book — the directory the engine's
+ * directory-form commands take.
+ *
+ * Handed out rather than a path the renderer could name, on this file's usual
+ * rule: the renderer says WHICH BOOK by its id, and main says where that book's
+ * bytes are. `epub-meta --epub <tree>` edits it in place, which is the whole
+ * reason that form of the command exists.
+ */
+export function workingTreeOf(id: string): string {
+  const book = unpacked.get(id);
+  if (!book) throw new EpubError('That book is not open in this app any more.');
+  return book.root;
 }
 
 /** The project a currently open book belongs to — for the Save dialog's folder. */

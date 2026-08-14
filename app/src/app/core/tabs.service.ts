@@ -2,7 +2,7 @@ import { Injectable, computed, effect, inject, signal } from '@angular/core';
 
 import type { FoundryApi } from '@shared/api';
 import { categoryLabel } from '@shared/categories';
-import type { EpubBook, JobKind, UnlinkedNote } from '@shared/types';
+import type { EpubBook, HeadingEcho, JobKind, UnlinkedNote } from '@shared/types';
 
 import { QueueService } from './queue.service';
 import { api } from './foundry';
@@ -1093,8 +1093,69 @@ export class TabsService {
   async setBlockHtml(id: string, blockId: string, html: string, was: string): Promise<void> {
     const unlinked = await this.blockEdit(id, (bridge, book, member) =>
       bridge.epub.setBlockHtml(book, member, blockId, html));
-    if (!unlinked || unlinked.length === 0) return;
-    await this.askAboutUnlinkedNotes(id, blockId, was, unlinked);
+    // Null is a refusal, and a refusal wrote nothing — there is no new text for
+    // either question below to be about.
+    if (unlinked === null) return;
+    if (unlinked.length > 0 && await this.askAboutUnlinkedNotes(id, blockId, was, unlinked)) {
+      // Cancelled: the block is back to the markup it had, so the heading (if
+      // this was one) reads what it always read and there is nothing to offer
+      // the contents.
+      return;
+    }
+    await this.askAboutNavEcho(id, blockId, was);
+  }
+
+  /**
+   * "You edited this heading — should the contents entry change too?"
+   *
+   * THE DIRECTION THAT DID NOT EXIST. An in-place heading edit wrote the page
+   * and stopped there, so a typo fixed on the page stayed in the table of
+   * contents forever with nothing on screen to say so. That was a bug: the
+   * divergence this design protects is a DELIBERATE one — the caster composes
+   * labels the page never carried, and "Part II — The Road to War" over a page
+   * reading "II" is correct — and a misspelling nobody chose is not that.
+   *
+   * Main answers the four questions that decide whether there is anything to
+   * ask at all (`navEchoForBlock`), and it is null far more often than not: the
+   * block is a paragraph, the book has no contents, no entry points here, or
+   * the entry already says something else on purpose. Only the last case is
+   * interesting, and it is exactly the case where asking would be wrong.
+   *
+   * ASKED AFTER THE WRITE, like every other question in this mode. The page is
+   * already showing what was typed; the contents is what has not moved.
+   */
+  private async askAboutNavEcho(id: string, blockId: string, was: string): Promise<void> {
+    const bridge = api;
+    const tab = this.byId(id);
+    if (!bridge || !tab || tab.book === null || tab.chapterHref === null) return;
+    if (was.length === 0) return;
+    const bookId = tab.book.id;
+    const member = memberOf(tab.chapterHref);
+    try {
+      const echo = await bridge.epub.navEchoForBlock(bookId, member, blockId, was);
+      if (echo === null) return;
+      const answer = await bridge.confirmNavEcho(echo);
+      if (answer !== 'update') return;
+
+      /*
+       * The nav half, through the ordinary rename door. It cannot ask about
+       * the page in return — that door offers the heading only when the
+       * heading still reads the OLD label, and this heading is the thing that
+       * just changed — so the two directions cannot bounce a question between
+       * them.
+       */
+      await bridge.epub.renameHeading(bookId, echo.href, echo.now);
+      const current = this.byId(id);
+      if (!current || current.book === null) return;
+      const chapters = current.book.chapters.map((chapter) =>
+        (chapter.href === echo.href ? { ...chapter, label: echo.now } : chapter));
+      // NO REVISION BUMP: the rendered pane is showing the chapter, and the
+      // chapter did not move. Reloading it would cost the reader their place
+      // to repaint a sidebar row this line has already repainted.
+      this.patch(id, { book: { ...current.book, chapters }, modified: true });
+    } catch (err) {
+      this.notice.set(err instanceof Error ? err.message : String(err));
+    }
   }
 
   /**
@@ -1117,14 +1178,18 @@ export class TabsService {
     blockId: string,
     was: string,
     notes: readonly UnlinkedNote[],
-  ): Promise<void> {
+  ): Promise<boolean> {
     const bridge = api;
-    if (!bridge) return;
+    if (!bridge) return false;
     for (const note of notes) {
       const answer = await bridge.confirmUnlinkedNote(note);
       if (answer === 'cancel') {
         await this.restoreBlockHtml(id, blockId, was);
-        return;
+        // Said out loud rather than left for the caller to infer from the
+        // absence of anything: the edit has been UNDONE, and every later
+        // question about "the new text" would be a question about text that is
+        // no longer there.
+        return true;
       }
       if (answer === 'keep') continue;
       const done = await this.blockEdit(id, (b, book, member) =>
@@ -1137,6 +1202,7 @@ export class TabsService {
       // be a lie with nothing on screen to correct it.
       if (done !== null) this.commandFrame(id, { type: 'foundry:mark-note', noteId: note.noteId, cut: true });
     }
+    return false;
   }
 
   /**
@@ -1443,34 +1509,90 @@ export class TabsService {
   /**
    * Rename a TOC entry — a chapter, or a section header inside one.
    *
-   * Main does the writing (nav label + the heading when it matched, through
-   * the same workspace write-through as an edit); this side only mirrors the
-   * new label into the sidebar and marks the tab edited. The tab's TITLE does
-   * not change — that is the book's dc:title, not a chapter's name. Returns
-   * whether the rename happened, so the sidebar can keep its input open on a
-   * refusal.
+   * MAIN RENAMES THE CONTENTS AND STOPS. The nav is the table of contents'
+   * truth and renaming the row is exactly what was asked, so that half always
+   * happens; the page's heading is a SECOND statement and is only offered. It
+   * used to follow automatically and silently whenever its text matched, which
+   * quietly made one of the two a copy of the other — and they are allowed to
+   * differ, because the text should say what the book says and the contents
+   * should say what the book's apparatus says.
+   *
+   * The question is asked only when the heading still reads what this entry
+   * used to read. Where the two already differ that is a decision somebody has
+   * made about this book, and re-asking it on every rename would train a person
+   * to dismiss the dialog unread.
+   *
+   * The tab's TITLE does not change either — that is the book's dc:title, not a
+   * chapter's name, and it is the Metadata dialog's business. Returns whether
+   * the rename happened, so the sidebar can keep its input open on a refusal.
    */
   async renameHeading(id: string, href: string, newLabel: string): Promise<boolean> {
     const tab = this.all().find((candidate) => candidate.id === id);
     if (!api || !tab || tab.book === null) return false;
     const label = newLabel.trim();
     if (label.length === 0) return false;
+
+    let echo: HeadingEcho | null;
+    let navChanged: boolean;
     try {
-      await api.epub.renameHeading(tab.book.id, href, label);
+      ({ echo, navChanged } = await api.epub.renameHeading(tab.book.id, href, label));
     } catch (err) {
       this.notice.set(err instanceof Error ? err.message : String(err));
       return false;
     }
-    const chapters = tab.book.chapters.map((chapter) =>
+
+    let pageChanged = false;
+    if (echo !== null) {
+      const answer = await api.confirmHeadingEcho(echo);
+      if (answer === 'update') {
+        try {
+          await api.epub.renamePageHeading(tab.book.id, href, label, echo.was);
+          pageChanged = true;
+        } catch (err) {
+          // The contents HAS been renamed and the page has not. Said rather
+          // than swallowed, because the user answered "yes" and something
+          // else happened — main refuses this write when the heading moved
+          // underneath the question, which is a fact about their book.
+          this.notice.set(err instanceof Error ? err.message : String(err));
+        }
+      }
+    }
+
+    const current = this.byId(id);
+    if (!current || current.book === null) return true;
+    const chapters = current.book.chapters.map((chapter) =>
       (chapter.href === href ? { ...chapter, label } : chapter));
-    // The revision bump reloads the rendered pane: when the heading itself was
-    // rewritten, the page must show it.
+    /*
+     * THE REVISION IS BUMPED ONLY WHEN THE PAGE CHANGED. A bump reloads the
+     * rendered pane, which is showing the chapter and not the contents — so a
+     * rename that touched only the nav would cost the reader their scroll
+     * position to repaint a sidebar row this line has already repainted.
+     */
     this.patch(id, {
-      book: { ...tab.book, chapters },
-      modified: true,
-      revision: tab.revision + 1,
+      book: { ...current.book, chapters },
+      // A book with no nav at all, whose one offer was declined, has had NOTHING
+      // written to it — and a tab marked edited by a question somebody answered
+      // "no" to is a Save prompt with nothing behind it.
+      modified: current.modified || navChanged || pageChanged,
+      revision: pageChanged ? current.revision + 1 : current.revision,
     });
     return true;
+  }
+
+  /**
+   * Something outside this service edited the document on disk.
+   *
+   * Today that is the Metadata dialog, which writes the package (or the working
+   * PDF) through the engine rather than through any of the member writes above.
+   * The flag it sets is the one that matters: the working copy has moved ahead
+   * of whatever was last filed, so Save has work to do.
+   *
+   * NO REVISION BUMP, deliberately. Nothing in any chapter's markup moved, and
+   * reloading the rendered pane would cost the reader their place in order to
+   * repaint a page that looks identical.
+   */
+  noteDocumentEdited(id: string): void {
+    this.patch(id, { modified: true });
   }
 
   // ── Saving ───────────────────────────────────────────────────────────────

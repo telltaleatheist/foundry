@@ -82,6 +82,22 @@ import { UiService } from '../../core/ui.service';
           <span class="rail-label">Translate</span>
         </button>
 
+        <!-- Metadata. Enabled for a scan as well as a book, unlike everything
+             else here that needs a converted EPUB: a PDF has an Info dictionary
+             and correcting it is exactly as useful as correcting a package. It
+             does NOT rename any file — see the dialog for why that is a
+             decision rather than an omission. -->
+        <button
+          class="rail-item"
+          [class.active]="ui.metadataOpen()"
+          [disabled]="!canEditMetadata()"
+          title="The title, author and language this document claims for itself"
+          (click)="metadata()"
+        >
+          <span class="rail-icon">ⓘ</span>
+          <span class="rail-label">Metadata</span>
+        </button>
+
         <!-- Select mode. Disabled rather than hidden away from a book, like
              Translate and Edit HTML: the curation pass is the point of the
              whole app, and somebody looking at a scan should be able to see
@@ -137,11 +153,35 @@ import { UiService } from '../../core/ui.service';
       its right-hand end — the shelf reads the same token to lift itself, and two
       hand-kept numbers would drift into a pill covering the Settings button.
     */
+    /*
+      THE TOOLS ARE CENTRED ON THE WINDOW, not on the space left over beside
+      Settings — and that distinction is the whole reason this is a grid and no
+      longer a flex row with the tools packed left.
+
+      Centring inside the remaining space would put the group off-centre by half
+      the Settings slot's width, which is invisible on a narrow window and
+      obvious on a wide one against a centred page. A 1fr / tools / 1fr grid
+      gives the brand and the Settings foot columns that SHARE the leftover
+      equally, so whatever those two weigh the middle column's centre is the
+      window's centre.
+
+      The middle track is minmax(0, auto) rather than a bare auto: auto alone
+      cannot shrink below its content, so a window too narrow for the tools
+      would push the grid wider than the dock instead of letting the tools
+      scroll. With a floor of 0 the track shrinks, .rail-tools scrolls inside
+      it, and the group is start-aligned exactly when it no longer fits —
+      centring an overflowing row would scroll its FIRST item off the left edge,
+      which is worse than a row that begins at the left.
+
+      The side tracks keep grid's automatic minimum (their own content), so the
+      Settings item is never clipped by the balancing.
+    */
     .rail {
       flex: 0 0 auto;
       width: 100%;
       height: var(--rail-h);
-      display: flex;
+      display: grid;
+      grid-template-columns: 1fr minmax(0, auto) 1fr;
       align-items: center;
       background: var(--bg-elevated);
       border-top: 1px solid var(--border-default);
@@ -150,23 +190,25 @@ import { UiService } from '../../core/ui.service';
     }
 
     .rail-brand {
-      flex: 0 0 auto;
+      justify-self: start;
       font-size: 20px;
       color: var(--accent);
       padding: 0 12px 0 4px;
     }
 
     /* The tools scroll sideways rather than shrinking: a narrow window must not
-       squeeze six labels into unreadable stubs, and the dock is the one place
+       squeeze seven labels into unreadable stubs, and the dock is the one place
        every mode in this app is named. */
     .rail-tools {
       display: flex; flex-direction: row; align-items: center;
-      gap: 4px; flex: 1; min-width: 0;
+      gap: 4px; min-width: 0;
       overflow-x: auto; overflow-y: hidden;
     }
+    /* Settings stays parked at the right-hand end, divider and all. It is not
+       a tool — it is where you go when the tools are not the answer. */
     .rail-foot {
       display: flex; flex-direction: row; align-items: center;
-      flex: 0 0 auto;
+      justify-self: end;
       border-left: 1px solid var(--border-subtle);
       padding-left: 8px; margin-left: 8px;
     }
@@ -286,5 +328,21 @@ export class ToolRailComponent {
   protected translate(): void {
     void this.router.navigateByUrl('/');
     this.ui.openTranslate();
+  }
+
+  /**
+   * A document — either kind. Metadata is the one tool here that a SCAN has as
+   * much use for as a book: a PDF's Info dictionary is the same six facts under
+   * a different spelling, and a scan whose Title is the filename it was
+   * downloaded under is the ordinary case.
+   */
+  protected canEditMetadata(): boolean {
+    const tab = this.tabs.activeDocument();
+    return tab !== null && (tab.kind === 'pdf' || tab.kind === 'epub');
+  }
+
+  protected metadata(): void {
+    void this.router.navigateByUrl('/');
+    this.ui.openMetadata();
   }
 }

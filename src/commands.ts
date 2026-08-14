@@ -32,7 +32,9 @@ import {
 } from './args.js';
 import { buildReport, formatReport } from './backend/plan.js';
 import { epubFinal } from './epub/final.js';
+import { epubMeta, EPUB_META_FIELDS, type EpubMetaField } from './epub/meta.js';
 import { epubStamp } from './epub/stamp.js';
+import { pdfMeta, PDF_META_FIELDS, type PdfMetaField } from './pdf/meta.js';
 import { probeEndpoint, probeLocalPython, probeVllmLocal, probeWslVllm } from './backend/probe.js';
 import { loadSettings, settingsPath, type FoundrySettings } from './backend/settings.js';
 import { vlmConvert } from './vlm/convert.js';
@@ -285,6 +287,83 @@ const ES_OUT: OptionSpec = {
   type: 'string',
   placeholder: '<book.epub>',
   describe: 'Where the stamped book is written. Required for a file; refused for a directory.',
+};
+
+// ── epub-meta ────────────────────────────────────────────────────────────────
+
+const EM_EPUB_IN: OptionSpec = {
+  name: 'epub',
+  type: 'string',
+  placeholder: '<book.epub|dir>',
+  describe: "The book: an EPUB file, or an unpacked EPUB directory, which is edited in place.",
+};
+
+const EM_OUT: OptionSpec = {
+  name: 'out',
+  type: 'string',
+  placeholder: '<book.epub>',
+  describe: 'Where the edited book is written. Required for a file that is being changed.',
+};
+
+/**
+ * One flag per Dublin Core field, generated from the same list the engine
+ * writes from.
+ *
+ * Written as a loop rather than six literals so that the flag surface and the
+ * fields that exist cannot drift: a field added to `EPUB_META_FIELDS` gets a
+ * flag, a help line and a place in the report on the same commit, and one
+ * removed cannot leave a flag behind that silently does nothing.
+ */
+const EM_FIELD_HELP: Record<EpubMetaField, string> = {
+  title: "The book's name. Not translated, not derived from the filename, and it does not rename a file.",
+  creator: 'The author, as the book itself gives the name.',
+  language: 'dc:language, as a BCP-47 tag — en, de, pt-BR. Refused if it is not one.',
+  publisher: 'The publisher of this edition.',
+  date: 'The edition date. Written verbatim; EPUB wants ISO 8601 but does not enforce it.',
+  identifier: 'The text of the dc:identifier the package names in unique-identifier. Its id is never touched.',
+};
+
+const EM_FIELDS: readonly OptionSpec[] = EPUB_META_FIELDS.map((field): OptionSpec => ({
+  name: field,
+  type: 'string',
+  placeholder: '<text>',
+  describe: EM_FIELD_HELP[field],
+}));
+
+// ── pdf-meta ─────────────────────────────────────────────────────────────────
+
+const PM_PDF_IN: OptionSpec = {
+  name: 'pdf',
+  type: 'string',
+  placeholder: '<file.pdf>',
+  describe: 'The PDF to read. Never written to.',
+};
+
+const PM_OUT: OptionSpec = {
+  name: 'out',
+  type: 'string',
+  placeholder: '<file.pdf>',
+  describe: 'Where the edited PDF is written. Required when a field is being set.',
+};
+
+const PM_FIELD_HELP: Record<PdfMetaField, string> = {
+  title: 'The document title — what a viewer shows in Properties and in its window bar.',
+  author: 'The author.',
+  subject: "The document's subject line.",
+  keywords: 'The keywords, verbatim. PDF has never standardised a separator, so yours is kept as typed.',
+};
+
+const PM_FIELDS: readonly OptionSpec[] = PDF_META_FIELDS.map((field): OptionSpec => ({
+  name: field,
+  type: 'string',
+  placeholder: '<text>',
+  describe: PM_FIELD_HELP[field],
+}));
+
+const META_JSON: OptionSpec = {
+  name: 'json',
+  type: 'boolean',
+  describe: 'Print the metadata as versioned JSON on stdout — before and after any change.',
 };
 
 export interface Command {
@@ -774,6 +853,199 @@ async function runEpubStamp(args: ParsedArgs): Promise<void> {
   // The path is the RESULT, and for a directory the result is the directory
   // that was stamped where it stands.
   process.stdout.write(`${report.outPath}\n`);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// epub-meta
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * A field's value for a person to read, with absence spelled out.
+ *
+ * `(none)` rather than an empty column, because "this package declares no
+ * dc:publisher" and "this package declares an empty dc:publisher" are different
+ * facts about a book and only one of them is legal.
+ */
+function metaLine(name: string, value: string | null): string {
+  return `  ${name.padEnd(12)}  ${value === null ? '(none)' : value}`;
+}
+
+async function runEpubMeta(args: ParsedArgs): Promise<void> {
+  const epubPath = requireString(args, 'epub', 'the book whose metadata is being read or written');
+  const outPath = optionalString(args, 'out');
+
+  /*
+   * Refused here, before a byte is read, exactly as `translate`, `epub-final`
+   * and `epub-stamp` refuse it. The input is somebody's book and the output is
+   * the same book with six strings in it, so an `--out` equal to `--epub`
+   * destroys the only copy of what is being read the moment the write begins.
+   */
+  if (outPath !== undefined && path.resolve(outPath) === path.resolve(epubPath)) {
+    throw new UsageError(
+      `--out ${outPath} is the input itself. foundry reads the one and writes the other; a `
+      + 'directory working copy is edited in place and takes no --out at all.',
+    );
+  }
+
+  const set: Partial<Record<EpubMetaField, string>> = {};
+  for (const field of EPUB_META_FIELDS) {
+    const value = optionalString(args, field);
+    if (value !== undefined) set[field] = value;
+  }
+
+  const report = await epubMeta({
+    epubPath,
+    ...(outPath !== undefined ? { outPath } : {}),
+    set,
+    log,
+  });
+
+  // Field by field, old → new, on stderr with the rest of the progress. Created
+  // is said in a different sentence from updated: a field that was not there is
+  // a gap being filled, and a field that was is an answer being corrected.
+  for (const change of report.changes) {
+    log(
+      change.created
+        ? `epub-meta: <${change.element}> CREATED — "${change.to}"`
+        : `epub-meta: <${change.element}> "${change.from}" → "${change.to}"`,
+    );
+  }
+  if (report.unchanged.length > 0) {
+    log(
+      `epub-meta: ${report.unchanged.join(', ')} already said exactly that, so nothing was written `
+      + 'for them',
+    );
+  }
+  /*
+   * The refinements that now describe text that has moved. Named and NOT
+   * edited: `file-as` for "Ian Kershaw" is "Kershaw, Ian", and no rule derives
+   * one from the other for a name with a particle, a patronymic or one word in
+   * it. A library sort key this program guessed at would be wrong invisibly, in
+   * the one field whose whole job is to be read by a machine.
+   */
+  for (const stale of report.stale) {
+    log(
+      `epub-meta: dc:${stale.field} carries a <meta property="${stale.property}"> refinement `
+      + `reading "${stale.value}", which still describes the OLD text. foundry does not derive one `
+      + 'from the other and has left it exactly as it was.',
+    );
+  }
+  if (report.changes.length === 0 && Object.keys(set).length > 0) {
+    log('epub-meta: nothing changed — every field given already said what it was asked to say');
+  }
+
+  if (flag(args, 'json')) {
+    /*
+     * The RESULT, so it goes to stdout — the app spawns this command with
+     * --json to populate its dialog and reads stdout for it, exactly as it does
+     * for `doctor`. Machine-consumed: fields are added, never renamed, without
+     * a version bump.
+     */
+    process.stdout.write(`${JSON.stringify({
+      version: 1,
+      kind: 'epub',
+      path: report.outPath,
+      opf: report.opfPath,
+      uniqueIdentifier: report.uniqueIdentifier,
+      inPlace: report.inPlace,
+      written: report.written,
+      fields: report.metadata,
+      counts: report.counts,
+      changes: report.changes,
+      stale: report.stale,
+    }, null, 2)}\n`);
+    return;
+  }
+
+  if (report.written) {
+    // The path is the RESULT, and for a directory the result is the directory
+    // that was edited where it stands — `epub-stamp`'s rule.
+    process.stdout.write(`${report.outPath}\n`);
+    return;
+  }
+
+  // A read. The metadata IS the result, so it is what goes to stdout.
+  const lines = EPUB_META_FIELDS.map((field) => metaLine(`dc:${field}`, report.metadata[field]));
+  process.stdout.write(`${lines.join('\n')}\n`);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// pdf-meta
+// ═════════════════════════════════════════════════════════════════════════════
+
+async function runPdfMeta(args: ParsedArgs): Promise<void> {
+  const pdfPath = requireString(args, 'pdf', 'the PDF whose metadata is being read or written');
+  const outPath = optionalString(args, 'out');
+
+  /*
+   * Refused here, before a byte is read. It matters MORE for this command than
+   * for the EPUB ones: this one re-emits the whole document through pdf-lib
+   * rather than splicing it, so an `--out` equal to `--pdf` is a scan being
+   * overwritten by a rewrite of itself while it is still being parsed.
+   */
+  if (outPath !== undefined && path.resolve(outPath) === path.resolve(pdfPath)) {
+    throw new UsageError(
+      `--out ${outPath} is the input itself. foundry reads the one and writes the other, and this `
+      + 'command rewrites the whole file rather than patching it, so there would be nothing left '
+      + 'to read.',
+    );
+  }
+
+  const set: Partial<Record<PdfMetaField, string>> = {};
+  for (const field of PDF_META_FIELDS) {
+    const value = optionalString(args, field);
+    if (value !== undefined) set[field] = value;
+  }
+
+  const report = await pdfMeta({
+    pdfPath,
+    ...(outPath !== undefined ? { outPath } : {}),
+    set,
+    log,
+  });
+
+  // Named as the Info dictionary spells them — `/Title`, not `--title` — because
+  // that is what a person will see in a viewer's Properties panel and in every
+  // other tool that reads this file.
+  const infoKey = (field: PdfMetaField): string => `/${field[0]!.toUpperCase()}${field.slice(1)}`;
+  for (const change of report.changes) {
+    log(
+      change.created
+        ? `pdf-meta: ${infoKey(change.field)} CREATED — "${change.to}"`
+        : `pdf-meta: ${infoKey(change.field)} "${change.from}" → "${change.to}"`,
+    );
+  }
+  if (report.unchanged.length > 0) {
+    log(`pdf-meta: ${report.unchanged.join(', ')} already said exactly that, so nothing was written`);
+  }
+  if (report.changes.length === 0 && Object.keys(set).length > 0) {
+    log('pdf-meta: nothing changed — every field given already said what it was asked to say');
+  }
+
+  if (flag(args, 'json')) {
+    process.stdout.write(`${JSON.stringify({
+      version: 1,
+      kind: 'pdf',
+      path: report.outPath,
+      written: report.written,
+      fields: report.metadata,
+      changes: report.changes,
+    }, null, 2)}\n`);
+    return;
+  }
+
+  if (report.written) {
+    process.stdout.write(`${report.outPath}\n`);
+    return;
+  }
+
+  const lines = [
+    ...PDF_META_FIELDS.map((field) => metaLine(infoKey(field), report.metadata[field])),
+    metaLine('/Creator', report.metadata.creator),
+    metaLine('/Producer', report.metadata.producer),
+    metaLine('pages', String(report.metadata.pages)),
+  ];
+  process.stdout.write(`${lines.join('\n')}\n`);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1320,6 +1592,151 @@ export const COMMANDS: readonly Command[] = [
     ].join('\n'),
     options: [ES_EPUB_IN, ES_OUT],
     run: runEpubStamp,
+  },
+  {
+    name: 'epub-meta',
+    summary: "Read or correct a book's Dublin Core metadata: title, creator, language, publisher, date, identifier.",
+    usage: '--epub <book.epub|dir> [--out <book.epub>] [--json] [--title <text>] [--creator <text>]'
+      + ' [--language <bcp47>] [--publisher <text>] [--date <text>] [--identifier <text>]',
+    detail: [
+      "Six strings in the package document. A cast book's metadata is whatever",
+      'vlm-convert was told, which for a scan is usually the PDF\'s filename and',
+      'nothing else; an imported publisher\'s EPUB has real metadata and may still',
+      'have it wrong. This reads it, and writes the fields it is given.',
+      '',
+      'WITH NO SETTERS IT ONLY READS. --json prints the package\'s metadata as',
+      'versioned JSON on stdout — which is how the app populates its dialog — and',
+      'without --json the same facts are printed for a person. Nothing is written,',
+      'no --out is needed, and the file is not touched.',
+      '',
+      'ONLY WHAT IS GIVEN MOVES. A run passing --publisher changes exactly the',
+      'publisher: dc:title is not rewritten, not renormalised and not re-indented.',
+      'The run says field by field what became what, and says which fields were',
+      'CREATED rather than updated — a created field had no answer at all, and',
+      'that is a different event from one that had a wrong answer.',
+      '',
+      'THE PACKAGE IS EDITED BY SOURCE OFFSET, never re-serialised. Only the text',
+      'inside the elements named is replaced, so every other field, attribute,',
+      'comment, namespace declaration and byte in the file survives exactly as it',
+      'was. Rebuilding a package from parsed values would regenerate the manifest,',
+      'the spine and the rendition properties out of foundry\'s idea of them, and',
+      'everything the original carried that foundry has no field for would vanish',
+      '— silently, in a document nobody reads and every reading system trusts.',
+      'This is the same technique translate already uses to write dc:language, and',
+      'dc:language is written here through that very code, so the two commands',
+      'cannot drift into writing the same field two different ways.',
+      '',
+      'A FIELD THAT IS NOT THERE IS CREATED, and that is the hard half: plenty of',
+      'books carry no dc:publisher and no dc:date to overwrite. A new element goes',
+      'inside <metadata>, after the last Dublin Core element already there, in the',
+      'namespace prefix this file\'s own declaration binds, indented to match its',
+      'siblings — all three read off the file rather than assumed, because an OPF',
+      'from another toolchain indents with tabs or binds the Dublin Core namespace',
+      'to a prefix that is not "dc". A package that binds it nowhere is refused',
+      'rather than given an element in an undeclared prefix, which is not',
+      'well-formed XML and is a book some readers would then refuse entirely.',
+      '',
+      'dc:identifier IS NAMED BY THE PACKAGE, not found by position:',
+      '<package unique-identifier="pub-id"> points at <dc:identifier id="pub-id">.',
+      '--identifier rewrites the TEXT of the one the package names and never its',
+      'id, because splicing an element\'s content leaves its start tag alone by',
+      'construction. Where that link is broken already — no unique-identifier, or',
+      'one naming an id no dc:identifier carries — the run REFUSES and says which',
+      'half is missing, rather than rewriting whichever identifier comes first. A',
+      'missing dc:identifier is never created either: one written now would carry',
+      'no id and so would not be the book\'s identifier however it was spelled.',
+      '',
+      'EPUB 3 REFINEMENTS ARE NEVER ORPHANED. <meta refines="#id"> elements point',
+      'at metadata ids, and nothing here writes, removes or renumbers an id —',
+      'updates do not touch a start tag and insertions carry no id at all. What a',
+      'refinement CAN become is stale: correct a dc:creator and its file-as still',
+      'sorts the book under the old name. Those are NAMED IN THE RUN and left',
+      'alone, because "Kershaw, Ian" is not derivable from "Ian Kershaw" in the',
+      'general case and a sort key this program guessed at would be wrong',
+      'invisibly.',
+      '',
+      'A DIRECTORY IS EDITED IN PLACE and a FILE IS NOT — epub-stamp\'s rule, for',
+      'epub-stamp\'s reason. The directory form is the app\'s working tree, the copy',
+      'every edit already writes to. A file is somebody\'s .epub, so --out is',
+      'required WHEN THE RUN WRITES and an --out equal to --epub is refused;',
+      'passing --out with a directory is refused too, rather than ignored. Reading',
+      'needs no --out at all.',
+      '',
+      'FILENAMES DO NOT FOLLOW THE TITLE. Correcting dc:title changes the book\'s',
+      'metadata and moves no file: the paths are in somebody\'s recents, in',
+      'whatever else they have pointed at them, and in a sync client\'s index.',
+      'Renaming files to match a corrected title is a deliberate gesture and is',
+      'not this command.',
+      '',
+      'WHAT IS REFUSED, BY NAME: an input that cannot be read; a package with no',
+      '<metadata> element, or an empty one; a --language that is not a BCP-47 tag',
+      '(the same refusal translate --to gives, from the same table); an empty',
+      'value for any field, because blanking dc:title is not a correction; a field',
+      'the package declares MORE THAN ONCE, since --creator says nothing about',
+      'which of two authors is being corrected and the wrong one rewritten reads',
+      'exactly like the right one; a file input with no --out when a field is',
+      'being set; an --out equal to --epub; and --out on a directory input.',
+    ].join('\n'),
+    options: [EM_EPUB_IN, EM_OUT, META_JSON, ...EM_FIELDS],
+    run: runEpubMeta,
+  },
+  {
+    name: 'pdf-meta',
+    summary: "Read or correct a PDF's Info dictionary: title, author, subject, keywords.",
+    usage: '--pdf <file.pdf> [--out <file.pdf>] [--json] [--title <text>] [--author <text>]'
+      + ' [--subject <text>] [--keywords <text>]',
+    detail: [
+      'The four Info-dictionary fields a document has as a DOCUMENT rather than as',
+      'an artifact of the tool that made it. With no setters it only reads: --json',
+      'prints the dictionary as versioned JSON on stdout, which is how the app',
+      'populates its dialog, and without --json the same facts are printed for a',
+      'person along with the /Creator and /Producer it will not write.',
+      '',
+      'THIS COMMAND REWRITES THE WHOLE FILE, and that is said here rather than',
+      'left to be discovered. It is the opposite of what epub-meta does one',
+      'command over, and of what vlm-convert --format pdf does to this same',
+      'format: the document is parsed by pdf-lib, one dictionary is edited, and',
+      'pdf-lib writes a NEW file from its own object model — objects renumbered,',
+      'the cross-reference table rebuilt, streams re-emitted, and anything pdf-lib',
+      'does not model gone.',
+      '',
+      'That is acceptable HERE and nowhere else, for one reason: --out is the',
+      'WORKING PDF, and the project keeps the file that came in, byte for byte, in',
+      'archive/ forever. The working copy is derived and can be made again from',
+      'the original at any time. The alternative — an incremental update appending',
+      'an Info dict and a new trailer by hand, which is the technique the text',
+      'layer uses — is cross-reference stream parsing and a hand-built trailer a',
+      'strict reader rejects if one offset is wrong, and it would be a second,',
+      'subtler PDF writer to maintain beside the one that already exists.',
+      '',
+      'WHAT IS NOT WRITTEN, DELIBERATELY: /Producer, /Creator, /CreationDate and',
+      '/ModDate. Those are statements about the software chain, and rewriting them',
+      'would be foundry claiming to have produced somebody\'s scan. pdf-lib stamps',
+      'its own Producer and a fresh ModDate given half a chance, and it is stopped',
+      'from doing so — a command whose whole purpose is to write exactly the',
+      'fields it was given must not quietly write two it was not.',
+      '',
+      'XMP IS NOT TOUCHED. A PDF can carry the same facts twice, in the Info',
+      'dictionary and in an XMP packet, and readers disagree about which wins.',
+      'foundry writes the Info dictionary — what every viewer\'s Properties panel',
+      'shows and what every indexer reads first — and leaves an XMP packet it did',
+      'not write alone, because a half-updated pair is worse than a consistent old',
+      'one: the file would state two different titles and which one a program',
+      'believed would depend on the program.',
+      '',
+      '--keywords is written VERBATIM, as one string. PDF has never standardised a',
+      'separator, so commas, semicolons or spaces are the caller\'s business and',
+      'come out exactly as they went in.',
+      '',
+      'WHAT IS REFUSED, BY NAME: a --pdf that cannot be read; a document pdf-lib',
+      'cannot open, which for a scan usually means it is encrypted, and foundry',
+      'does not strip a password it was not given; an empty value for any field,',
+      'because a document titled nothing reads differently from one that never',
+      'said; a run that sets a field with no --out; and an --out equal to --pdf,',
+      'which here would destroy the document while it was being parsed.',
+    ].join('\n'),
+    options: [PM_PDF_IN, PM_OUT, META_JSON, ...PM_FIELDS],
+    run: runPdfMeta,
   },
   {
     name: 'doctor',

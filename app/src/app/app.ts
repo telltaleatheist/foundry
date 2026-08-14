@@ -6,6 +6,7 @@ import { Router, RouterOutlet } from '@angular/router';
 import { InspectorComponent } from './components/inspector/inspector.component';
 import { OcrDialogComponent } from './components/ocr-dialog/ocr-dialog.component';
 import { OpenDocumentsComponent } from './components/open-documents/open-documents.component';
+import { MetadataDialogComponent } from './components/metadata-dialog/metadata-dialog.component';
 import { TranslateDialogComponent } from './components/translate-dialog/translate-dialog.component';
 import { QueueShelfComponent } from './components/queue-shelf/queue-shelf.component';
 import { ToolRailComponent } from './components/tool-rail/tool-rail.component';
@@ -61,7 +62,7 @@ import { api } from './core/foundry';
   selector: 'app-root',
   imports: [
     RouterOutlet, ToolRailComponent, OpenDocumentsComponent, InspectorComponent,
-    QueueShelfComponent, OcrDialogComponent, TranslateDialogComponent,
+    QueueShelfComponent, OcrDialogComponent, TranslateDialogComponent, MetadataDialogComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
@@ -87,6 +88,10 @@ import { api } from './core/foundry';
 
       @if (ui.translateOpen()) {
         <app-translate-dialog />
+      }
+
+      @if (ui.metadataOpen()) {
+        <app-metadata-dialog />
       }
 
       @if (dropping()) {
@@ -217,6 +222,11 @@ export class App {
     if (event.key === 'Escape' && this.ui.translateOpen()) {
       event.preventDefault();
       this.ui.closeTranslate();
+      return;
+    }
+    if (event.key === 'Escape' && this.ui.metadataOpen()) {
+      event.preventDefault();
+      this.ui.closeMetadata();
       return;
     }
     // Ctrl+Tab. `event.key` is 'Tab' with ctrlKey, and preventDefault is what

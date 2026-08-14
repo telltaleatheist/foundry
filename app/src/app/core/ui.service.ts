@@ -14,6 +14,8 @@ export class UiService {
   readonly ocrOpen = signal(false);
   /** The Translate dialog. */
   readonly translateOpen = signal(false);
+  /** The Metadata dialog — the book's own record, not the app's idea of it. */
+  readonly metadataOpen = signal(false);
   readonly shelfExpanded = signal(false);
 
   /**
@@ -41,15 +43,26 @@ export class UiService {
   }
 
   /**
-   * ONE AT A TIME. Both dialogs are full-screen scrims at the same z-index, so
+   * ONE AT A TIME. Every dialog is a full-screen scrim at the same z-index, so
    * two open at once is two overlapping cards where the click-outside of the
-   * upper one dismisses nothing visible. Opening either closes the other rather
-   * than stacking — a modal is a question, and there is only ever one being
-   * asked.
+   * upper one dismisses nothing visible. Opening any of them closes the rest
+   * rather than stacking — a modal is a question, and there is only ever one
+   * being asked.
+   *
+   * The rule is kept by ONE list rather than by each opener naming its
+   * siblings. With two dialogs the hand-wired form was three lines; with a
+   * third it is the shape of a bug, because the failure is silent — a new
+   * dialog somebody forgot to clear in one of the other openers looks fine
+   * until two happen to be opened in that order.
    */
+  private readonly dialogs = [this.ocrOpen, this.translateOpen, this.metadataOpen] as const;
+
+  private only(which: typeof this.dialogs[number]): void {
+    for (const dialog of this.dialogs) dialog.set(dialog === which);
+  }
+
   openOcr(): void {
-    this.translateOpen.set(false);
-    this.ocrOpen.set(true);
+    this.only(this.ocrOpen);
   }
 
   closeOcr(): void {
@@ -57,11 +70,18 @@ export class UiService {
   }
 
   openTranslate(): void {
-    this.ocrOpen.set(false);
-    this.translateOpen.set(true);
+    this.only(this.translateOpen);
   }
 
   closeTranslate(): void {
     this.translateOpen.set(false);
+  }
+
+  openMetadata(): void {
+    this.only(this.metadataOpen);
+  }
+
+  closeMetadata(): void {
+    this.metadataOpen.set(false);
   }
 }

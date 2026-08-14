@@ -29,6 +29,15 @@ const api: FoundryApi = {
   reveal: (target) => ipcRenderer.invoke('shell:reveal', target),
   confirmClose: (warning) => ipcRenderer.invoke('document:confirm-close', warning),
   confirmUnlinkedNote: (note) => ipcRenderer.invoke('document:confirm-unlinked-note', note),
+  confirmHeadingEcho: (echo) => ipcRenderer.invoke('document:confirm-heading-echo', echo),
+  confirmNavEcho: (echo) => ipcRenderer.invoke('document:confirm-nav-echo', echo),
+
+  meta: {
+    readEpub: (bookId) => ipcRenderer.invoke('meta:read-epub', bookId),
+    writeEpub: (bookId, patch) => ipcRenderer.invoke('meta:write-epub', bookId, patch),
+    readPdf: (filePath) => ipcRenderer.invoke('meta:read-pdf', filePath),
+    writePdf: (filePath, patch) => ipcRenderer.invoke('meta:write-pdf', filePath, patch),
+  },
 
   workspace: {
     plan: (inputPath, kind) => ipcRenderer.invoke('workspace:plan', inputPath, kind),
@@ -42,6 +51,10 @@ const api: FoundryApi = {
     readMember: (id, href) => ipcRenderer.invoke('epub:read-member', id, href),
     writeMember: (id, href, text) => ipcRenderer.invoke('epub:write-member', id, href, text),
     renameHeading: (id, href, label) => ipcRenderer.invoke('epub:rename-heading', id, href, label),
+    renamePageHeading: (id, href, label, was) =>
+      ipcRenderer.invoke('epub:rename-page-heading', id, href, label, was),
+    navEchoForBlock: (id, href, blockId, was) =>
+      ipcRenderer.invoke('epub:nav-echo-for-block', id, href, blockId, was),
     setCut: (id, href, blockId, cut) => ipcRenderer.invoke('epub:set-cut', id, href, blockId, cut),
     setCuts: (id, href, blockIds, cut) =>
       ipcRenderer.invoke('epub:set-cuts', id, href, blockIds, cut),
@@ -62,6 +75,10 @@ const api: FoundryApi = {
     unlinkedNoteAnswer: () => ipcRenderer.invoke('prefs:unlinked-note-answer'),
     setUnlinkedNoteAnswer: (answer) =>
       ipcRenderer.invoke('prefs:set-unlinked-note-answer', answer),
+    contentsRenameEcho: () => ipcRenderer.invoke('prefs:contents-rename-echo'),
+    setContentsRenameEcho: (answer) => ipcRenderer.invoke('prefs:set-contents-rename-echo', answer),
+    headingEditEcho: () => ipcRenderer.invoke('prefs:heading-edit-echo'),
+    setHeadingEditEcho: (answer) => ipcRenderer.invoke('prefs:set-heading-edit-echo', answer),
   },
 
   library: {

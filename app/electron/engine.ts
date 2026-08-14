@@ -19,7 +19,13 @@ import * as path from 'node:path';
 
 import { app } from 'electron';
 
-import type { DoctorResult, EngineInfo, JobProgress } from '../shared/types';
+import type {
+  DocumentMetadata,
+  DoctorResult,
+  EngineInfo,
+  JobProgress,
+  MetadataOutcome,
+} from '../shared/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Which program
@@ -355,4 +361,192 @@ export async function runDoctor(endpointUrl?: string): Promise<DoctorResult> {
         + `First 200 characters: ${result.stdout.slice(0, 200)}`,
     };
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// epub-meta / pdf-meta
+// ─────────────────────────────────────────────────────────────────────────────
+
+/*
+ * NOTHING IN THIS SECTION THROWS, for `stampEpub`'s reason turned around: the
+ * metadata dialog is a thing somebody opened on a book they are already
+ * reading, and a package with two `dc:creator` elements in it — which the
+ * engine refuses to write and says so about, by name — must land as a sentence
+ * beside the fields rather than as an unhandled rejection somewhere behind the
+ * modal. `MetadataOutcome` (shared/types.ts) is that shape.
+ */
+
+/**
+ * The engine's `--json`, run and parsed.
+ *
+ * The only OTHER place this app parses the engine's stdout is `runDoctor`, and
+ * the shape is deliberately identical: stdout is the result, stderr is the
+ * progress, and a run that exits 0 with something that is not JSON on stdout is
+ * reported with the first 200 characters of whatever it did say. Guessing at a
+ * half-printed object would put invented metadata into a dialog whose Save
+ * button writes it straight back into somebody's book.
+ */
+async function runMetaCommand(
+  args: string[],
+): Promise<{ ok: true; json: unknown } | { ok: false; reason: string }> {
+  const run = runEngine(args);
+  // Reading a package is milliseconds and rewriting a PDF is seconds. Sixty is
+  // far past either, and a hang here would leave a modal with a spinner in it.
+  const timer = setTimeout(() => run.cancel(), 60_000);
+  const result = await run.done.finally(() => clearTimeout(timer));
+
+  if (result.code !== 0) {
+    const said = result.stderr.trim() || result.stdout.trim();
+    return {
+      ok: false,
+      reason: said.length > 0 ? said : `foundry ${args[0]} exited ${result.code} and said nothing.`,
+    };
+  }
+  try {
+    return { ok: true, json: JSON.parse(result.stdout) as unknown };
+  } catch (err) {
+    return {
+      ok: false,
+      reason:
+        `foundry ${args[0]} --json answered, but not with JSON (${(err as Error).message}). `
+        + `First 200 characters: ${result.stdout.slice(0, 200)}`,
+    };
+  }
+}
+
+/** A field the engine reported, as a string or null. Anything else reads as absent. */
+function metaField(fields: Record<string, unknown>, name: string): string | null {
+  const value = fields[name];
+  return typeof value === 'string' ? value : null;
+}
+
+function asEpubMetadata(json: unknown): DocumentMetadata {
+  const root = (json ?? {}) as Record<string, unknown>;
+  const fields = (root['fields'] ?? {}) as Record<string, unknown>;
+  return {
+    kind: 'epub',
+    fields: {
+      title: metaField(fields, 'title'),
+      creator: metaField(fields, 'creator'),
+      language: metaField(fields, 'language'),
+      publisher: metaField(fields, 'publisher'),
+      date: metaField(fields, 'date'),
+      identifier: metaField(fields, 'identifier'),
+    },
+    uniqueIdentifier: typeof root['uniqueIdentifier'] === 'string' ? root['uniqueIdentifier'] : null,
+    counts: (root['counts'] ?? {}) as Record<string, number>,
+  };
+}
+
+function asPdfMetadata(json: unknown): DocumentMetadata {
+  const root = (json ?? {}) as Record<string, unknown>;
+  const fields = (root['fields'] ?? {}) as Record<string, unknown>;
+  return {
+    kind: 'pdf',
+    fields: {
+      title: metaField(fields, 'title'),
+      author: metaField(fields, 'author'),
+      subject: metaField(fields, 'subject'),
+      keywords: metaField(fields, 'keywords'),
+    },
+    pages: typeof fields['pages'] === 'number' ? fields['pages'] : 0,
+    creator: metaField(fields, 'creator'),
+    producer: metaField(fields, 'producer'),
+  };
+}
+
+/**
+ * A patch turned into flags, dropping every field nobody typed into.
+ *
+ * ONLY WHAT CHANGED IS SENT. The engine touches only the fields it is given, so
+ * a dialog that posted all six back on every save would re-splice a `dc:title`
+ * nobody looked at, and would turn a `dc:publisher` the dialog showed as empty
+ * into a refusal about blank values. A field left alone is a field the command
+ * line never mentions.
+ */
+function metaFlags(patch: Record<string, string | undefined>): string[] {
+  const args: string[] = [];
+  for (const [field, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    args.push(`--${field}`, value);
+  }
+  return args;
+}
+
+/**
+ * Read a book's Dublin Core record: `foundry epub-meta --epub <tree> --json`.
+ *
+ * `treeRoot` is the WORKING TREE — the unpacked copy this app edits — so
+ * reading and writing go down the same path and the answer is what the book
+ * says right now, rather than what the file it was imported from said.
+ */
+export async function readEpubMetadata(treeRoot: string): Promise<MetadataOutcome> {
+  const result = await runMetaCommand(['epub-meta', '--epub', treeRoot, '--json']);
+  return result.ok ? { ok: true, metadata: asEpubMetadata(result.json) } : result;
+}
+
+/** Write the fields that changed, in place, and answer with what the package now says. */
+export async function writeEpubMetadata(
+  treeRoot: string,
+  patch: Record<string, string | undefined>,
+): Promise<MetadataOutcome> {
+  const flags = metaFlags(patch);
+  if (flags.length === 0) return readEpubMetadata(treeRoot);
+  const result = await runMetaCommand(['epub-meta', '--epub', treeRoot, '--json', ...flags]);
+  return result.ok ? { ok: true, metadata: asEpubMetadata(result.json) } : result;
+}
+
+/** Read a PDF's Info dictionary: `foundry pdf-meta --pdf <file> --json`. */
+export async function readPdfMetadata(pdfPath: string): Promise<MetadataOutcome> {
+  const result = await runMetaCommand(['pdf-meta', '--pdf', pdfPath, '--json']);
+  return result.ok ? { ok: true, metadata: asPdfMetadata(result.json) } : result;
+}
+
+/**
+ * Write a PDF's Info dictionary — THROUGH A SIDE FILE, then over the original.
+ *
+ * `pdf-meta` refuses an `--out` equal to its `--pdf`, and is right to: it
+ * re-emits the whole document through pdf-lib rather than patching it, so
+ * writing into the file it is parsing would destroy the document mid-read. The
+ * app wants the working PDF edited in place all the same, so the engine writes
+ * beside it and this renames the result over the top — one filesystem
+ * operation, so an interrupted save leaves either the old file or the new one
+ * and never half of either.
+ *
+ * Rewriting the working PDF at all is acceptable because `archive/` still holds
+ * the file that came in, byte for byte, and the working copy can be made again
+ * from it.
+ */
+export async function writePdfMetadata(
+  pdfPath: string,
+  patch: Record<string, string | undefined>,
+): Promise<MetadataOutcome> {
+  const flags = metaFlags(patch);
+  if (flags.length === 0) return readPdfMetadata(pdfPath);
+
+  const beside = path.join(path.dirname(pdfPath), `.${path.basename(pdfPath)}.meta-tmp`);
+  const result = await runMetaCommand(['pdf-meta', '--pdf', pdfPath, '--out', beside, '--json', ...flags]);
+  if (!result.ok) {
+    await fs.promises.rm(beside, { force: true });
+    return result;
+  }
+  // A run whose every field already said what it was asked to say writes no
+  // file at all — the engine reports that, and there is nothing to move.
+  const wrote = (result.json as Record<string, unknown>)['written'] === true;
+  if (!wrote) {
+    await fs.promises.rm(beside, { force: true });
+    return { ok: true, metadata: asPdfMetadata(result.json) };
+  }
+  try {
+    await fs.promises.rename(beside, pdfPath);
+  } catch (err) {
+    await fs.promises.rm(beside, { force: true });
+    return {
+      ok: false,
+      reason:
+        `The metadata was written, but the new PDF could not be put in place of ${pdfPath} `
+        + `(${(err as Error).message}). The document is unchanged.`,
+    };
+  }
+  return { ok: true, metadata: asPdfMetadata(result.json) };
 }
