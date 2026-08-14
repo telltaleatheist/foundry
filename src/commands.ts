@@ -32,6 +32,7 @@ import {
 } from './args.js';
 import { buildReport, formatReport } from './backend/plan.js';
 import { epubFinal } from './epub/final.js';
+import { epubStamp } from './epub/stamp.js';
 import { probeEndpoint, probeLocalPython, probeVllmLocal, probeWslVllm } from './backend/probe.js';
 import { loadSettings, settingsPath, type FoundrySettings } from './backend/settings.js';
 import { vlmConvert } from './vlm/convert.js';
@@ -268,6 +269,22 @@ const EF_OUT: OptionSpec = {
   type: 'string',
   placeholder: '<final.epub>',
   describe: 'Where the final EPUB is written. Required; foundry never invents a name.',
+};
+
+// ── epub-stamp ───────────────────────────────────────────────────────────────
+
+const ES_EPUB_IN: OptionSpec = {
+  name: 'epub',
+  type: 'string',
+  placeholder: '<book.epub|dir>',
+  describe: 'The book to stamp: an EPUB file, or an unpacked EPUB directory, which is stamped in place.',
+};
+
+const ES_OUT: OptionSpec = {
+  name: 'out',
+  type: 'string',
+  placeholder: '<book.epub>',
+  describe: 'Where the stamped book is written. Required for a file; refused for a directory.',
 };
 
 export interface Command {
@@ -681,6 +698,81 @@ async function runEpubFinal(args: ParsedArgs): Promise<void> {
       + report.pagesLost.join(', '),
     );
   }
+  process.stdout.write(`${report.outPath}\n`);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// epub-stamp
+// ═════════════════════════════════════════════════════════════════════════════
+
+async function runEpubStamp(args: ParsedArgs): Promise<void> {
+  const epubPath = requireString(args, 'epub', 'the book to stamp');
+  const outPath = optionalString(args, 'out');
+
+  /*
+   * Refused here, before a byte is read, exactly as `translate` and `epub-final`
+   * refuse it. It is the one mistake this command cannot recover from: the input
+   * is somebody's book and the output is the same book with attributes in it, so
+   * an `--out` equal to `--epub` destroys the only copy of what was being read
+   * the moment the write begins.
+   */
+  if (outPath !== undefined && path.resolve(outPath) === path.resolve(epubPath)) {
+    throw new UsageError(
+      `--out ${outPath} is the input itself. foundry reads the one and writes the other; a `
+      + 'directory working copy is stamped in place and takes no --out at all.',
+    );
+  }
+
+  const report = await epubStamp({ epubPath, ...(outPath !== undefined ? { outPath } : {}), log });
+
+  /*
+   * THE FIRST LINE IS THE MACHINE-READABLE ONE. The app spawns this command on
+   * import and again behind select mode's toggle, and reads these four numbers
+   * off it to decide whether to reload a rendered chapter (app/electron/engine.ts,
+   * `runEpubStamp`). The phrases "blocks stamped", "ids written" and "documents"
+   * are that contract; the prose around them is not.
+   */
+  const many = (n: number, one: string, more: string): string => `${n} ${n === 1 ? one : more}`;
+  const blocks = Object.values(report.stamped).reduce((sum, n) => sum + n, 0);
+  log(
+    `epub-stamp: ${many(report.documents, 'document', 'documents')}, ${blocks} blocks stamped, `
+    + `${report.idsWritten} ids written, ${report.alreadyStamped} already stamped, `
+    + `${report.pages} printed pages`,
+  );
+
+  const categories = Object.entries(report.stamped).sort((a, b) => b[1] - a[1]);
+  if (categories.length > 0) {
+    log(`epub-stamp: ${categories.map(([name, n]) => `${name} ${n}`).join(', ')}`);
+    // Which layer decided, because that is the whole design and the number a
+    // person checks when a category looks wrong: a book read almost entirely by
+    // the default rule is a book whose markup said nothing, and one read by
+    // declaration is one whose publisher did the work.
+    const layers = Object.entries(report.byLayer).filter(([, n]) => n > 0);
+    log(`epub-stamp: by ${layers.map(([name, n]) => `${name} ${n}`).join(', by ')}`);
+  }
+  if (report.titleOnlyDocuments.length > 0) {
+    log(
+      `epub-stamp: ${many(report.titleOnlyDocuments.length, 'document carries', 'documents carry')} `
+      + 'no prose at all, so the headings on them are titles rather than chapter openings — '
+      + report.titleOnlyDocuments.join(', '),
+    );
+  }
+  if (report.pages === 0) {
+    /*
+     * Stated rather than left to be noticed, and it is not a defect. A
+     * born-digital EPUB has no printed edition to be paginated against, and
+     * nothing here will invent one: a page number this program made up would be
+     * a claim about an edition nobody consulted and would look exactly like the
+     * true kind. The blocks are addressable either way — the ids fall back to
+     * the document's own name.
+     */
+    log(
+      'epub-stamp: this book declares NO PRINTED PAGES — it carries no pagebreak markers, so no '
+      + 'data-bf-page was written and the ids are named for their document instead',
+    );
+  }
+  // The path is the RESULT, and for a directory the result is the directory
+  // that was stamped where it stands.
   process.stdout.write(`${report.outPath}\n`);
 }
 
@@ -1131,6 +1223,103 @@ export const COMMANDS: readonly Command[] = [
     ].join('\n'),
     options: [EF_EPUB_IN, EF_OUT],
     run: runEpubFinal,
+  },
+  {
+    name: 'epub-stamp',
+    summary: "Read a publisher's EPUB and stamp foundry's categories, ids and pages into it.",
+    usage: '--epub <book.epub|dir> [--out <book.epub>]',
+    detail: [
+      'A born-digital EPUB from a publisher carries none of foundry\'s stamps, so',
+      'every command that reads a foundry book refuses it by name, select mode',
+      'outlines nothing, and the inspector shows no categories. This reads the',
+      'structure the file ALREADY STATES and writes it down as data-bf-cat,',
+      'data-bf-id and — where the book has them — data-bf-page.',
+      '',
+      'A PUBLISHER\'S EPUB IS NOT A DEGRADED SCAN; IT IS A BETTER SOURCE. The',
+      'vision route has to infer structure from ink, because a photograph of a',
+      'page is all it has. An EPUB\'s markup already states the structure, and',
+      'EPUB 3 semantics state it explicitly. Nothing here guesses at anything the',
+      'file says for itself.',
+      '',
+      'A DIRECTORY IS STAMPED IN PLACE and a FILE IS NOT. The directory form is',
+      'the app\'s working tree — foundry\'s own unpacked copy, the thing every edit',
+      'already writes to — and mutating it is the point. A file is somebody\'s',
+      '.epub, so --out is required and an --out equal to --epub is refused:',
+      'foundry never writes over an input. Passing --out with a directory is',
+      'refused too, rather than ignored.',
+      '',
+      'ONLY WHAT IS MISSING IS WRITTEN, attribute by attribute. A book already',
+      'carrying data-bf-cat keeps every one of them — a category corrected by',
+      'hand in the inspector is not something a later pass gets to overrule — and',
+      'a cast book that predates data-bf-id gets ids and nothing else. Running it',
+      'twice changes nothing the second time, which is what makes running it on',
+      'every import safe.',
+      '',
+      'THE CATEGORY IS INFERRED IN LAYERS, MOST CERTAIN FIRST, and where two',
+      'layers disagree the earlier one wins:',
+      '',
+      '  1. THE PUBLISHER\'S OWN SEMANTICS — epub:type and the DPUB-ARIA role.',
+      '     footnote/endnote/rearnote and doc-footnote/doc-endnote become',
+      '     footnote; epigraph and pullquote become quote; title, fulltitle,',
+      '     covertitle, halftitle and subtitle become title; bridgehead becomes',
+      '     section-header; credit becomes caption. This is a declaration, not an',
+      '     inference, and it beats the element\'s own tag. Tokens that name',
+      '     apparatus rather than a block — footnotes, endnotes, toc, landmarks,',
+      '     page-list, pagebreak, noteref, backlink — say "not a block" and are',
+      '     never stamped, while their CHILDREN are judged on their own: an',
+      '     <ol epub:type="endnotes"> is the note apparatus and its',
+      '     <li epub:type="endnote"> children are the notes.',
+      '  2. ELEMENT SHAPE — blockquote is a quote and so is the <p> inside it,',
+      '     matching how the emitter stamps both; li, dt and dd are list items and',
+      '     so are the ul, ol and dl over them; figure and a bare img are a',
+      '     picture; figcaption and a table\'s caption are a caption; a table, or',
+      '     the wrapper a table sits alone inside, is a table; h1-h6 is a heading',
+      '     whose kind layer 3 decides.',
+      '  3. POSITION — the FIRST heading in a spine document is the chapter',
+      '     opener (data-bf-cat="chapter", foundry\'s own value, the picker\'s',
+      '     "Chapter Openings"), and later headings are section-header. A document',
+      '     with NO PROSE ON IT AT ALL is not a chapter — a half-title, a part',
+      '     divider, a dedication leaf — so its headings become title instead, and',
+      '     the run names those documents.',
+      '  4. DEFAULT — a leaf p, div or pre carrying words is text.',
+      '',
+      'AN ELEMENT MATCHING NONE OF THESE IS NOT STAMPED. A <div> wrapping a',
+      'chapter is a container, not a block, and inventing a category for it would',
+      'put a box around the whole page in select mode; the leaf test is what',
+      'refuses it, because a container has structure under it. Nothing inside a',
+      '<nav> is stamped either, and the nav document is skipped whole: a contents',
+      'page is the book\'s apparatus, and stamping it would hand the translator',
+      'every chapter title a second time.',
+      '',
+      'IDS ARE ALWAYS WRITTEN WHERE THERE ARE NONE, counting ELEMENTS and not',
+      'blocks — a <ul> and its <li> are two elements and get two ids, or one id',
+      'would name two elements, which is invalid XHTML and unaddressable besides.',
+      'p<page>-<n> where the page is known, exactly as vlm-convert writes it;',
+      'c<document>-<n> where it is not, the token taken from the member\'s own name',
+      'so that moving a chapter renames nothing. Both are unique across the whole',
+      'book, and an id the book already contains is never minted a second time.',
+      '',
+      'PAGE PROVENANCE IS KEPT AND NEVER INVENTED. Many publisher EPUBs carry',
+      '<span epub:type="pagebreak"> for the printed edition\'s pagination, with the',
+      'number in title, aria-label, a pb-N id or the marker\'s own text; where they',
+      'exist the blocks after each one carry that data-bf-page, exactly as a cast',
+      'book does, and that is what makes a quotation citable. Where they do not',
+      'exist THE ATTRIBUTE IS SIMPLY ABSENT and the run says so. A page number',
+      'this program made up would be a claim about an edition nobody consulted,',
+      'and it would look exactly like the true kind.',
+      '',
+      'WHAT IS REFUSED: an input that cannot be read; a directory with no mimetype',
+      'and META-INF/container.xml in it, which is not an unpacked EPUB; an archive',
+      'that is a ZIP but not an EPUB; a book with an empty spine; a file input',
+      'with no --out; an --out equal to --epub; and --out on a directory input.',
+      '',
+      'What comes out of the file form is the input book: mimetype first and',
+      'stored, every member nobody stamped written back with the exact bytes,',
+      'method and checksum it arrived with. The directory form writes only the',
+      'documents that gained an attribute.',
+    ].join('\n'),
+    options: [ES_EPUB_IN, ES_OUT],
+    run: runEpubStamp,
   },
   {
     name: 'doctor',

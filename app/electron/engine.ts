@@ -233,6 +233,87 @@ export function parseProgressLine(line: string): JobProgress | null {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// epub-stamp
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** What `foundry epub-stamp` did, or the sentence saying why it would not. */
+export interface StampOutcome {
+  ok: boolean;
+  /** Blocks given a `data-bf-cat` by this run. Zero on a book already stamped. */
+  blocks: number;
+  /** `data-bf-id` written where there was none. */
+  ids: number;
+  /** Spine documents the engine read. */
+  documents: number;
+  /** The engine's own words, when it refused. Never paraphrased. */
+  reason: string | null;
+}
+
+/**
+ * The completion line's contract, and it IS a contract.
+ *
+ * `epub-stamp`'s first report line is written to be read from here — see the
+ * comment on `runEpubStamp` in src/commands.ts — the same way
+ * `parseProgressLine` above reads the conversion's page counts off stderr. The
+ * three phrases are the interface; the prose around them is free to change.
+ *
+ * A line that does not match is not an error: the run exited 0, so the book WAS
+ * stamped, and the only thing lost is the app's ability to say how much. The
+ * numbers are used to decide whether to reload a rendered chapter, and reloading
+ * one that did not need it costs a scroll position.
+ */
+function readStampLine(stderr: string): { blocks: number; ids: number; documents: number } {
+  const number = (pattern: RegExp): number => {
+    const match = pattern.exec(stderr);
+    return match === null ? 0 : Number(match[1]);
+  };
+  return {
+    blocks: number(/(\d+) blocks stamped/),
+    ids: number(/(\d+) ids written/),
+    documents: number(/epub-stamp: (\d+) documents?\b/),
+  };
+}
+
+/**
+ * Stamp a book: `foundry epub-stamp --epub <tree|file> [--out <file>]`.
+ *
+ * `target` is a working tree — a DIRECTORY, which the command stamps in place,
+ * because that copy is ours and mutating it is the point — or an `.epub` file,
+ * which requires `outPath` because foundry never writes over an input.
+ *
+ * NEVER THROWS. Both callers want a book either way: the import path opens a
+ * book that could not be stamped and says so in the notice strip, and select
+ * mode turns the refusal into its own sentence. A stamping failure is a fact
+ * about the book, not a reason to lose it.
+ */
+export async function stampEpub(target: string, outPath?: string): Promise<StampOutcome> {
+  const args = ['epub-stamp', '--epub', target];
+  if (outPath !== undefined) args.push('--out', outPath);
+
+  const run = runEngine(args);
+  // A whole book's markup, parsed and rewritten. Minutes is wrong; two of them
+  // is a hung process, and a hang here would hold an import open forever.
+  const timer = setTimeout(() => run.cancel(), 120_000);
+  const result = await run.done.finally(() => clearTimeout(timer));
+
+  if (result.code !== 0) {
+    const said = result.stderr.trim() || result.stdout.trim();
+    const unknown = result.code === 2 && /unknown command/i.test(said);
+    return {
+      ok: false,
+      blocks: 0,
+      ids: 0,
+      documents: 0,
+      reason: unknown
+        ? `epub-stamp is not in this engine build (${engineCommand().source}).`
+        : said || `The engine exited ${result.code} with nothing to say.`,
+    };
+  }
+
+  return { ok: true, ...readStampLine(result.stderr), reason: null };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // doctor
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -22,6 +22,11 @@
  * entirely in German. That is the worst possible outcome and it is the one a
  * missing check produces, so the check is up front and the refusal says what
  * the book would have needed.
+ *
+ * THE ONE COMMAND THAT MUST NOT BE HELD TO IT is `epub-stamp`, which exists to
+ * turn a publisher's EPUB into a book that carries those stamps — so it walks
+ * the container through `containerFromMembers` below, which is this same chain
+ * with the admission rule left off and every structural refusal still in place.
  */
 import { decodeEntities, findElement, findElements, parseXml, type XmlElement } from '../epub/xml.js';
 import { readZip, type ZipMember } from './unzip.js';
@@ -117,6 +122,29 @@ export function readFoundryBook(bytes: Uint8Array, needs: string = TRANSLATION_N
  * chain walk lives here and `readFoundryBook` is the zip-shaped door onto it.
  */
 export function bookFromMembers(members: ZipMember[], needs: string = TRANSLATION_NEEDS_STAMPS): FoundryBook {
+  const book = containerFromMembers(members);
+  if (!book.documents.some((d) => d.stamped)) {
+    throw new BookError(`not a foundry-converted book; ${needs}, and this book has none.`);
+  }
+  return book;
+}
+
+/**
+ * The container chain WITHOUT the admission rule — every EPUB, ours or not.
+ *
+ * Separated for exactly one caller, and the reason is the whole point of that
+ * caller: `foundry epub-stamp` is the command that MAKES a book a foundry book,
+ * so demanding foundry's stamps of its input would refuse every book it exists
+ * for. Everything else about the walk is identical, which is why it is this
+ * function and not a second copy of the chain.
+ *
+ * Every OTHER structural refusal still stands here — no `mimetype`, no
+ * container, a rootfile that points at nothing, a spine entry the manifest does
+ * not declare, an empty spine. Those say the archive is not an EPUB at all, and
+ * a command that stamps blocks into documents has to be able to find the
+ * documents.
+ */
+export function containerFromMembers(members: ZipMember[]): FoundryBook {
   const byPath = new Map(members.map((m) => [m.path, m] as const));
 
   const mimetype = byPath.get('mimetype');
@@ -171,9 +199,6 @@ export function bookFromMembers(members: ZipMember[], needs: string = TRANSLATIO
 
   if (documents.length === 0) {
     throw new BookError('this EPUB has an empty spine — there is no book in it');
-  }
-  if (!documents.some((d) => d.stamped)) {
-    throw new BookError(`not a foundry-converted book; ${needs}, and this book has none.`);
   }
 
   let navPath: string | null = null;

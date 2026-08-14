@@ -69,6 +69,8 @@ import * as zlib from 'node:zlib';
 // injects the frame script — so the check the frame makes before a word is
 // typed and the check main makes when the words come back cannot drift apart.
 import { INLINE_TAGS } from './click-reporter';
+// The only thing that stamps a book is the engine. See `stampBook`.
+import { stampEpub } from './engine';
 import { packEpub, writeAtomically } from './epub-writer';
 import {
   holdWorkingTree,
@@ -1149,9 +1151,22 @@ function escapeForRegExp(text: string): string {
 /** Every start tag of a document, for the two passes that walk them all. */
 const START_TAGS = /<[a-zA-Z][a-zA-Z0-9-]*\b[^>]*>/g;
 
-/** A stamped element — one the model read — carries the page it came off. */
+/**
+ * A stamped element carries a CATEGORY — what foundry says the block is.
+ *
+ * THE CATEGORY IS THE CONTRACT AND THE PAGE IS OPTIONAL PROVENANCE, and this
+ * test used to have that backwards: it asked for `data-bf-page`, which is right
+ * about a book cast from a scan and wrong about every other kind. A born-digital
+ * EPUB stamped by `foundry epub-stamp` has categories on every block and no
+ * pagination at all — the printed edition it would cite does not exist — so the
+ * old test found nothing stamped anywhere, concluded there was nothing to do,
+ * and opened select mode on a book where no block was addressable, with no error
+ * to explain it. Everything downstream keys on the category too: `blocks.ts`
+ * decides what to translate by it, `final.ts` builds the edition from it, and
+ * `book.ts` admits a book at all on it.
+ */
 function isStamped(tag: string): boolean {
-  return /\bdata-bf-page\s*=/.test(tag);
+  return /\bdata-bf-cat\s*=/.test(tag);
 }
 
 /** …and one that has already been named carries an id. */
@@ -1160,39 +1175,45 @@ function isNamed(tag: string): boolean {
 }
 
 /**
- * Stamp `data-bf-id` into a book that was cast before ids existed.
+ * Stamp this book — through the ENGINE, which is the only thing that stamps.
  *
- * WHY THIS EXISTS: `data-bf-id` is what a cut is recorded against, and every
- * other id in a cast book renumbers — `sh1` is chapter-local, `fn7` is
- * book-wide, `c0003` is a chapter ordinal, so removing one heading renames
- * everything after it. A book cast before the stamp landed therefore has
- * nothing select mode can address, and this is the one-time pass that gives it
- * one, through the ordinary member write like any other edit.
+ * WHY THIS EXISTS AT ALL: `data-bf-cat` is what select mode outlines and
+ * `data-bf-id` is what a cut is recorded against, and every other id in a book
+ * renumbers — `sh1` is chapter-local, `fn7` is book-wide, `c0003` is a chapter
+ * ordinal, so removing one heading renames everything after it. A book with
+ * neither attribute has nothing this mode can address, and pressing Select on
+ * one used to open a page where every gesture failed with no explanation.
  *
- * ALL OR NOTHING, measured the way the plan words it: if ANY stamped element in
- * the book already carries an id, the book is stamped and nothing is written.
- * A part-stamped book cannot arise from anything this app or the engine does,
- * and inventing ids alongside existing ones is how two elements end up sharing
- * a name.
+ * IT USED TO MINT THE IDS HERE, by string surgery, with its own idea of the
+ * scheme. That was one rule too many: the engine has to know the scheme anyway
+ * (`vlm-convert` writes it, `epub-stamp` writes it, `epub-final` strips it), and
+ * two implementations of one rule are one edit away from a book whose ids the
+ * engine and the app disagree about. So this spawns `foundry epub-stamp` on the
+ * working tree — a DIRECTORY, which that command stamps in place, which is
+ * exactly what the working copy is for — and the app's job is reduced to saying
+ * whether it is worth starting a process at all.
  *
- * THE SCHEME IS THE EMITTER'S, deliberately: `p<page>-<n>`, the ordinal
- * counting ELEMENTS rather than blocks — a `<ul>` and each of its `<li>` are
- * separate elements and get separate ids, or one id would be on two elements,
- * which is invalid XHTML and unaddressable besides. The counters are held
- * ACROSS documents, so a page whose blocks span a chapter boundary does not
- * start again at 1 and produce two `p47-1`s in one book.
+ * THE GUARD IS NOT A SECOND STAMPING RULE. It answers one question — is every
+ * stamped element in this book already named? — and its only power is to skip a
+ * spawn that would write nothing. It is deliberately conservative: a book with
+ * no categories anywhere fails it and the engine runs, which is the publisher's
+ * EPUB case and the whole point.
  *
- * `members` is the spine, in reading order, because that is the order the
- * engine wrote them in and the order that makes the numbering reproducible.
- * Every one of them is still resolved through the allow-list — the renderer
- * says which files, main says whether they are files of this book.
+ * `members` is the spine, in reading order, from the renderer, which is where
+ * the reading order is known. Every one is still resolved through the
+ * allow-list — the renderer says which files, main says whether they are files
+ * of this book.
  */
-export async function mintBlockIds(
+export async function stampBook(
   id: string,
   members: readonly string[],
 ): Promise<{ minted: number; documents: number }> {
+  const book = unpacked.get(id);
+  if (!book) throw new EpubError('That book is not open in this app any more.');
+
   const seen = new Set<string>();
-  const files: { href: string; file: string }[] = [];
+  let stamped = 0;
+  let named = 0;
   for (const href of members) {
     if (seen.has(href)) continue;
     seen.add(href);
@@ -1200,44 +1221,23 @@ export async function mintBlockIds(
     if (file === null) {
       throw new EpubError(`"${href}" is not part of a book this app has open.`);
     }
-    files.push({ href, file });
-  }
-
-  const documents: { href: string; file: string; markup: string }[] = [];
-  for (const entry of files) {
-    documents.push({ ...entry, markup: await fs.promises.readFile(entry.file, 'utf8') });
-  }
-
-  for (const document of documents) {
-    for (const match of document.markup.matchAll(START_TAGS)) {
-      if (isStamped(match[0]) && isNamed(match[0])) return { minted: 0, documents: 0 };
+    const markup = await fs.promises.readFile(file, 'utf8');
+    for (const match of markup.matchAll(START_TAGS)) {
+      if (!isStamped(match[0])) continue;
+      stamped += 1;
+      if (isNamed(match[0])) named += 1;
     }
   }
+  if (stamped > 0 && named === stamped) return { minted: 0, documents: 0 };
 
-  const counters = new Map<string, number>();
-  let minted = 0;
-  let touched = 0;
-  for (const document of documents) {
-    const stamped = document.markup.replace(START_TAGS, (tag) => {
-      if (!isStamped(tag)) return tag;
-      const page = attribute(tag, 'data-bf-page');
-      if (page === null || !/^\d+$/.test(page)) {
-        throw new EpubError(
-          `${document.href} has a block whose data-bf-page is "${page ?? ''}" rather than a page `
-          + 'number, so there is no name to give it. This book cannot be stamped.',
-        );
-      }
-      const n = counters.get(page) ?? 1;
-      counters.set(page, n + 1);
-      minted += 1;
-      const closeAt = tag.endsWith('/>') ? tag.length - 2 : tag.length - 1;
-      return `${tag.slice(0, closeAt).replace(/\s+$/, '')} ${ID_ATTRIBUTE}="p${page}-${n}"${tag.slice(closeAt)}`;
-    });
-    if (stamped === document.markup) continue;
-    await fs.promises.writeFile(document.file, stamped, 'utf8');
-    touched += 1;
+  const outcome = await stampEpub(book.root);
+  if (!outcome.ok) {
+    throw new EpubError(
+      `This book could not be stamped, so there is nothing select mode can address in it yet. `
+      + `${outcome.reason ?? 'The engine said nothing.'}`,
+    );
   }
-  return { minted, documents: touched };
+  return { minted: outcome.ids, documents: outcome.documents };
 }
 
 /**
@@ -1547,7 +1547,7 @@ export async function openEpub(filePath: string): Promise<EpubBook> {
   // origin this app works from, never moved and never written. `resolved` stays
   // what the user named, because main's save grant is about THAT file (main.ts,
   // `epub:open`) and their own file is the one Save may still update.
-  const { dir: projectDir, entry: archiveEntry } = await importDocument(resolved, 'epub');
+  const { dir: projectDir, entry: archiveEntry, notice } = await importDocument(resolved, 'epub');
   const { root, files } = await ensureWorkingTree(projectDir, archiveEntry, label);
 
   const text = async (name: string): Promise<string | null> => {
@@ -1680,6 +1680,9 @@ export async function openEpub(filePath: string): Promise<EpubBook> {
       : (await projectTitle(projectDir) ?? label),
     author: author !== null && author.length > 0 ? author : null,
     chapters,
+    // Carried out of the import rather than logged there: the import runs in
+    // main and the person is looking at a window.
+    notice,
   };
 }
 

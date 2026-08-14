@@ -16,6 +16,13 @@
  * a three-paragraph blockquote, a real table with a header row and an empty
  * cell, and a table with a `|` in a cell that no pipe rendering can carry.
  *
+ * AND ONE BOOK THAT IS NOT OURS AT ALL. `publisherEpub()` at the end of this
+ * file is a born-digital EPUB carrying not a single foundry attribute — the
+ * input `foundry epub-stamp` exists for, and the negative case for the
+ * admission rule in `book.ts`. `plainEpub()` above it is the same idea reduced
+ * to one paragraph, and it is deliberately left exactly as it was: several
+ * refusal tests are pinned to it.
+ *
  * The fake translator uppercases the words and leaves the markers alone. That
  * is enough to be a real translation as far as every mechanical check is
  * concerned — it is not empty, not the source, the same length, and carries
@@ -225,6 +232,172 @@ export function plainEpub(): Uint8Array {
       + `<head><title>Kapitel</title></head>\n<body><p>Ein Satz ohne jede Herkunft.</p></body></html>\n`),
     zipText(NAV_PATH, NAV),
     zipText(OPF_PATH, opf),
+  ]);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// A publisher's book — the one `epub-stamp` exists for
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Two documents of a born-digital EPUB, carrying NOT ONE foundry attribute.
+ *
+ * Everything a reader of these needs to know about them is that the structure is
+ * stated in the file's own vocabulary rather than in foundry's, and that one of
+ * every layer of the inference is present ON PURPOSE:
+ *
+ *  - DECLARED: `epub:type="epigraph"` on a `<div>` that is not a `<blockquote>`,
+ *    and `epub:type="endnote"` on an `<li>` inside an `<ol epub:type="endnotes">`
+ *    — which is the case that proves apparatus suppression, because the shape
+ *    layer would otherwise call that list a list of list-items;
+ *  - SHAPE: a `<blockquote>` over two `<p>`s, a `<ul>` over two `<li>`s, a
+ *    `<figure>` with an `<img>` and a `<figcaption>`, and a `<table>` inside the
+ *    wrapper `dots-book.ts` emits;
+ *  - POSITION: an `<h1>` opening the document and an `<h2>` after prose;
+ *  - DEFAULT: plain `<p>`s.
+ *
+ * And two things that must come out UNSTAMPED: the `<section epub:type="chapter">`
+ * wrapping the whole document, which is a container, and the `<div class="body">`
+ * inside it, which is one too.
+ *
+ * The page markers are the `<span epub:type="pagebreak">` shape publishers use,
+ * with the printed number in `title` on one and `aria-label` on the other,
+ * because both are in the wild. The FIRST one precedes every block, so nothing
+ * in this document is before the book's own pagination.
+ */
+export const PUBLISHER_ONE_PATH = 'EPUB/text/ch01.xhtml';
+export const PUBLISHER_TWO_PATH = 'EPUB/text/ch02.xhtml';
+
+export const PUBLISHER_ONE = `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="de" lang="de">
+<head><meta charset="utf-8"/><title>Der erste Teil</title></head>
+<body>
+<section epub:type="chapter">
+<div class="body">
+<span epub:type="pagebreak" role="doc-pagebreak" id="pb-12" title="12"></span>
+<h1>Der erste Teil</h1>
+<p>Ein Absatz auf Seite zwoelf.<a epub:type="noteref" role="doc-noteref" href="#fn1"><sup>1</sup></a></p>
+<div class="epi" epub:type="epigraph">Ein Sinnspruch am Anfang.</div>
+<blockquote><p>Ein langes Zitat.</p><p>Und noch ein Satz darin.</p></blockquote>
+<ul><li>Erstens die Ordnung.</li><li>Zweitens die Ruhe.</li></ul>
+<figure><img src="../images/plate.png" alt="Tafel"/><figcaption>Die Tafel von gestern.</figcaption></figure>
+<div class="tablewrap"><table><tr><td>Jahr</td><td>Zahl</td></tr></table></div>
+<span epub:type="pagebreak" role="doc-pagebreak" id="pb-13" aria-label="13"></span>
+<h2>Ein Abschnitt</h2>
+<p>Ein Absatz auf Seite dreizehn.</p>
+<section epub:type="footnotes">
+<ol epub:type="endnotes">
+<li epub:type="endnote" id="fn1">Die erste Note.</li>
+</ol>
+</section>
+</div>
+</section>
+</body>
+</html>
+`;
+
+/**
+ * The second document, and it is deliberately DIFFERENT in two ways.
+ *
+ * It carries no page markers of its own, so its blocks prove that the page is
+ * never carried across a document boundary; and its first document-level element
+ * is an `<h1>` with prose under it, so its own chapter opener is decided
+ * independently of the first document's. Its `<ul>` is what the uniqueness
+ * assertion across documents rests on.
+ */
+export const PUBLISHER_TWO = `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="de" lang="de">
+<head><meta charset="utf-8"/><title>Der zweite Teil</title></head>
+<body>
+<h1>Der zweite Teil</h1>
+<p>Ein Absatz ohne jede Seitenangabe.</p>
+<ul><li>Ein Punkt.</li><li>Noch ein Punkt.</li></ul>
+</body>
+</html>
+`;
+
+/** A leaf with nothing but headings on it — a half-title, in EPUB terms. */
+export const PUBLISHER_TITLE_PAGE = `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="de" lang="de">
+<head><meta charset="utf-8"/><title>Der Staat</title></head>
+<body>
+<h1>Der Staat</h1>
+<h2>Eine Untersuchung</h2>
+</body>
+</html>
+`;
+
+/** The same document with its printed pagination taken out. */
+export function withoutPagebreaks(chapter: string): string {
+  return chapter.replace(/<span epub:type="pagebreak"[^>]*><\/span>\n?/g, '');
+}
+
+const PUBLISHER_NAV = `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="de" lang="de">
+<head><meta charset="utf-8"/><title>Inhalt</title></head>
+<body>
+  <nav epub:type="toc" id="toc">
+    <h1>Inhalt</h1>
+    <ol>
+      <li><a href="text/ch01.xhtml">Der erste Teil</a></li>
+      <li><a href="text/ch02.xhtml">Der zweite Teil</a></li>
+    </ol>
+  </nav>
+</body>
+</html>
+`;
+
+const PUBLISHER_OPF = `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="de">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="pub-id">urn:uuid:publisher</dc:identifier>
+    <dc:title>Der Staat</dc:title>
+    <dc:language>de</dc:language>
+    <dc:creator>Ein Verlag</dc:creator>
+    <meta property="dcterms:modified">1980-01-01T00:00:00Z</meta>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="style" href="style.css" media-type="text/css"/>
+    <item id="c1" href="text/ch01.xhtml" media-type="application/xhtml+xml"/>
+    <item id="c2" href="text/ch02.xhtml" media-type="application/xhtml+xml"/>
+    <item id="img1" href="images/plate.png" media-type="image/png"/>
+  </manifest>
+  <spine>
+    <itemref idref="nav"/>
+    <itemref idref="c1"/>
+    <itemref idref="c2"/>
+  </spine>
+</package>
+`;
+
+/**
+ * A publisher's EPUB: two documents, a nav that is ALSO IN THE SPINE, and not
+ * one foundry attribute anywhere.
+ *
+ * The nav being in the spine is not padding. Real EPUBs put the contents page in
+ * the reading order so a reader can turn to it, and it is the case that proves
+ * the nav document is skipped whole — stamping a table of contents would outline
+ * every chapter title in select mode and hand the translator each of them a
+ * second time.
+ */
+export function publisherEpub(
+  one: string = PUBLISHER_ONE,
+  two: string = PUBLISHER_TWO,
+): Uint8Array {
+  return writeZip([
+    zipText('mimetype', 'application/epub+zip'),
+    zipText('META-INF/container.xml',
+      `<?xml version="1.0" encoding="UTF-8"?>\n`
+      + `<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">\n`
+      + `  <rootfiles><rootfile full-path="${OPF_PATH}" media-type="application/oebps-package+xml"/></rootfiles>\n`
+      + `</container>\n`),
+    zipText('EPUB/style.css', 'body { margin: 0 5%; }\n'),
+    zipText(PUBLISHER_ONE_PATH, one),
+    zipText(PUBLISHER_TWO_PATH, two),
+    { path: 'EPUB/images/plate.png', data: PICTURE },
+    zipText(NAV_PATH, PUBLISHER_NAV),
+    zipText(OPF_PATH, PUBLISHER_OPF),
   ]);
 }
 

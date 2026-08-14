@@ -38,7 +38,6 @@ import {
   closeAllEpubs,
   closeEpub,
   exportWorkingCopy,
-  mintBlockIds,
   openEpub,
   projectOf,
   readEpubMember,
@@ -51,6 +50,7 @@ import {
   setBlockCuts,
   setBlockHtml,
   setNoteCut,
+  stampBook,
   writeEpubMember,
 } from './epub-reader';
 import * as queue from './job-queue';
@@ -406,7 +406,12 @@ async function openDocument(candidate: string): Promise<string | null> {
    * document IS open and readable, and what has been lost is a folder to put its
    * conversions in — which the next conversion would make anyway.
    */
-  void importDocument(resolved, kind).catch((err: Error) => {
+  void importDocument(resolved, kind).then((imported) => {
+    // A stamping refusal is a NOTICE, not a failure, and this call is the
+    // background one — the tab's own `epub:open` import carries the same
+    // sentence to the notice strip, where somebody will read it.
+    if (imported.notice !== null) console.warn(`[projects] ${imported.notice}`);
+  }).catch((err: Error) => {
     console.error(`[projects] ${resolved} could not be imported into a project: ${err.message}`);
   });
   return resolved;
@@ -975,9 +980,10 @@ function registerIpc(): void {
   );
   // The spine, in reading order, from the renderer — which is where the reading
   // order is known. Every href is still resolved against the book's own
-  // allow-list inside, so naming a file is not the same as reaching one.
-  ipcMain.handle('epub:mint-ids', (_event, id: string, members: string[]) =>
-    mintBlockIds(id, members));
+  // allow-list inside, so naming a file is not the same as reaching one. The
+  // stamping itself is the ENGINE's, spawned on the working tree.
+  ipcMain.handle('epub:stamp', (_event, id: string, members: string[]) =>
+    stampBook(id, members));
 
   ipcMain.handle('epub:choose-save-path', async (_event, id: string, suggestedName: string) => {
     const win = mainWindow ?? BrowserWindow.getAllWindows()[0];

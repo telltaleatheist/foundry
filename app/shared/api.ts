@@ -234,13 +234,16 @@ export interface FoundryApi {
      */
     restoreBlockHtml(id: string, href: string, blockId: string, html: string): Promise<void>;
     /**
-     * Stamp `data-bf-id` into a book cast before ids existed, through the
-     * ordinary member write. `members` is the spine in reading order.
+     * Give this book the categories and ids select mode addresses, by spawning
+     * `foundry epub-stamp` on its working tree. `members` is the spine in
+     * reading order, and main uses it only to decide whether a spawn is worth
+     * making: a book whose every stamped element is already named needs none.
      *
-     * A no-op returning `{ minted: 0 }` when any stamped element in the book
-     * already carries one — the measurement is all-or-nothing on purpose.
+     * `minted` is how many ids the engine wrote. Zero means the book was
+     * already stamped, which is the ordinary case — an imported book is stamped
+     * as it is imported.
      */
-    mintIds(id: string, members: string[]): Promise<{ minted: number; documents: number }>;
+    stamp(id: string, members: string[]): Promise<{ minted: number; documents: number }>;
     /**
      * The save picker, opening on the library folder. Null when dismissed.
      * Takes the book's id because the answer is also a GRANT: main records it,

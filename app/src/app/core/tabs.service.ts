@@ -495,6 +495,11 @@ export class TabsService {
         ...(book.managed ? {} : { savedPath: filePath }),
         problem: book.chapters.length > 0 ? null : 'This book has no chapters in its spine.',
       });
+      // Not a `problem` — the book is open and readable. It is something the app
+      // could not do BESIDE opening it (today: stamp an imported EPUB), and the
+      // strip is where a shut door says so on the way in rather than by doing
+      // nothing when somebody presses Select.
+      if (book.notice !== null) this.notice.set(book.notice);
     } catch (err) {
       this.patch(id, { problem: err instanceof Error ? err.message : String(err) });
     }
@@ -1005,14 +1010,16 @@ export class TabsService {
   /**
    * The rail's Select toggle.
    *
-   * TURNING IT ON STAMPS A BOOK THAT WAS CAST BEFORE `data-bf-id` EXISTED. A
-   * cut is recorded against that attribute and every other id in a cast book
-   * renumbers, so a book without it has nothing select mode can address. Main
-   * measures whether the book needs it (all or nothing) and writes through the
-   * ordinary member write; this side only says so in the log and reloads the
-   * rendered pane — which is the ONE revision bump select mode makes, because
-   * the frame is showing markup that has just gained an attribute on every
-   * block and no gesture in the mode would work against it.
+   * TURNING IT ON STAMPS A BOOK THAT HAS NOT BEEN. Select mode outlines
+   * `data-bf-cat` and records a cut against `data-bf-id`, and a book carrying
+   * neither — one cast before ids existed, or a publisher's EPUB imported by a
+   * build that could not stamp it — has nothing this mode can address. Main
+   * decides whether a stamping run is worth making and then spawns
+   * `foundry epub-stamp` on the working tree, which is the ONE implementation
+   * of the scheme; this side only says so in the log and reloads the rendered
+   * pane — the single revision bump select mode makes, because the frame is
+   * showing markup that has just gained attributes on every block and no
+   * gesture in the mode would work against it.
    *
    * The mode is turned on AFTER the stamping lands, so the first click already
    * has a name to report.
@@ -1033,10 +1040,10 @@ export class TabsService {
       // heading inside a document that is already in the list.
       const members = [...new Set(tab.book.chapters.map((chapter) => memberOf(chapter.href)))];
       try {
-        const stamped = await api.epub.mintIds(tab.book.id, members);
+        const stamped = await api.epub.stamp(tab.book.id, members);
         if (stamped.minted > 0) {
           console.log(
-            `[select] ${tab.title} was cast before data-bf-id existed: stamped `
+            `[select] ${tab.title} carried no block ids: the engine stamped `
             + `${stamped.minted} elements across ${stamped.documents} documents.`,
           );
           const current = this.byId(id);

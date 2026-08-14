@@ -70,6 +70,8 @@ import * as path from 'node:path';
 import { app } from 'electron';
 
 import { readAppSettings } from './app-settings';
+// An imported EPUB is stamped on the way in, by the engine — see `stampImported`.
+import { stampEpub } from './engine';
 import { openedAtFor } from './recents';
 import type {
   ConversionKind,
@@ -531,6 +533,56 @@ export interface ImportedDocument {
   entry: string;
   key: string;
   stem: string;
+  /**
+   * What could not be done while importing, in words a person can read, or null.
+   *
+   * Today there is exactly one: an EPUB the engine would not stamp. It is a
+   * NOTICE and not a failure — the document is imported, it opens, it reads —
+   * and it reaches the notice strip through `EpubBook.notice` so that a book
+   * whose select mode will not work says why on the way in rather than by
+   * doing nothing when somebody presses the button.
+   */
+  notice: string | null;
+}
+
+/**
+ * Give a freshly imported EPUB foundry's stamps, once, at the moment of import.
+ *
+ * WHY HERE. This is the one door a book comes through, and everything past it
+ * assumes the stamps: `readFoundryBook` refuses a book without them BY NAME, so
+ * `translate` and `epub-final` refuse an imported publisher's EPUB outright;
+ * select mode outlines `data-bf-cat` and finds nothing; the inspector shows no
+ * categories. Stamping later — when a person presses Select, say — means every
+ * other door stays shut until they happen to press it.
+ *
+ * WHY WRITING `generated/` IS NOT A VIOLATION OF "generated/ IS NEVER WRITTEN".
+ * That rule is about EDITING an origin after the fact, because the origin is the
+ * record every curation decision downstream is measured against. This runs
+ * INSIDE the copy that makes the origin, before anything has read it, exactly
+ * once, and it adds attributes rather than changing a word — and `archive/`
+ * holds the user's file byte for byte whatever happens here. The book that
+ * lands in `generated/` is the book this app works from, and a book nothing can
+ * address is not one.
+ *
+ * The engine refuses to write over an input, so the stamped book is written
+ * beside the copy and renamed onto it: the file at the catalogued path is
+ * either the plain copy or the stamped one, never half of either.
+ */
+async function stampImported(file: string): Promise<string | null> {
+  const staged = `${file}.stamping`;
+  const failed = async (reason: string): Promise<string> => {
+    await fsp.rm(staged, { force: true }).catch(() => { /* best effort */ });
+    return `${path.basename(file)} could not be given Foundry's block stamps, so select mode and `
+      + `translation will not open it. ${reason}`;
+  };
+  try {
+    const outcome = await stampEpub(file, staged);
+    if (!outcome.ok) return await failed(outcome.reason ?? 'The engine said nothing.');
+    await fsp.rename(staged, file);
+    return null;
+  } catch (err) {
+    return await failed(err instanceof Error ? err.message : String(err));
+  }
 }
 
 /**
@@ -554,7 +606,9 @@ export interface ImportedDocument {
  *
  *   an EPUB is copied to `archive/` and again to `generated/` with the role
  *   `imported`, because an imported book plays exactly the part a cast one does
- *   — an origin that is never written, with a working tree unpacked from it.
+ *   — an origin that is never written, with a working tree unpacked from it —
+ *   and that second copy is STAMPED as it is made, so the origin every later
+ *   pass reads is one those passes will admit (`stampImported`);
  *
  * Copied and never moved, because it is the user's file and it stays where they
  * put it. Copied and never written, because from here on the working copy is
@@ -569,7 +623,9 @@ export async function importDocument(
   if (inside !== null) {
     const manifest = await readManifest(inside);
     const entry = path.relative(inside, resolved).split(path.sep).join('/');
-    return { dir: inside, entry, key: manifest.key, stem: manifest.stem };
+    // Nothing is imported and nothing is stamped: this document is already the
+    // app's own, and it was stamped when it became one.
+    return { dir: inside, entry, key: manifest.key, stem: manifest.stem, notice: null };
   }
 
   const name = path.basename(resolved);
@@ -594,19 +650,25 @@ export async function importDocument(
     const archived = path.join(dir, ARCHIVE, manifest.archive.file);
     await fsp.mkdir(path.join(dir, live), { recursive: true });
     const made = await copyNewOnly(archived, path.join(dir, live, liveFile));
+    let notice: string | null = null;
     if (made && kind === 'pdf') {
       manifest.working.files = [
         ...manifest.working.files.filter((row) => row.file !== liveFile),
         { file: liveFile, kind: 'pdf', from: `${ARCHIVE}/${manifest.archive.file}`, madeAt: Date.now() },
       ];
     } else if (made) {
+      // Stamped BEFORE the catalogue records it, so the file the manifest names
+      // is a book everything downstream can read. A refusal is a sentence and
+      // not a throw: the copy stands, the book opens, and the person is told
+      // which of its doors is shut.
+      notice = await stampImported(path.join(dir, live, liveFile));
       manifest.generated = [
         ...manifest.generated.filter((row) => row.file !== liveFile),
         { file: liveFile, kind: 'epub', role: 'imported', madeAt: Date.now() },
       ];
     }
     await writeManifest(dir, manifest);
-    return { dir, entry: `${live}/${liveFile}`, key, stem: manifest.stem };
+    return { dir, entry: `${live}/${liveFile}`, key, stem: manifest.stem, notice };
   });
 }
 

@@ -53,7 +53,7 @@ const api: FoundryApi = {
       ipcRenderer.invoke('epub:set-block-html', id, href, blockId, html),
     restoreBlockHtml: (id, href, blockId, html) =>
       ipcRenderer.invoke('epub:restore-block-html', id, href, blockId, html),
-    mintIds: (id, members) => ipcRenderer.invoke('epub:mint-ids', id, members),
+    stamp: (id, members) => ipcRenderer.invoke('epub:stamp', id, members),
     chooseSavePath: (id, suggestedName) => ipcRenderer.invoke('epub:choose-save-path', id, suggestedName),
     save: (id, destination) => ipcRenderer.invoke('epub:save', id, destination),
   },

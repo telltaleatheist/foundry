@@ -711,4 +711,15 @@ export interface EpubBook {
   title: string;
   author: string | null;
   chapters: EpubChapter[];
+  /**
+   * What could not be done while opening this book, or null.
+   *
+   * NOT a `problem`: the book opened, it renders, it is readable. This is for
+   * the case where something the app does BESIDE opening it did not work —
+   * today, an imported EPUB the engine would not stamp, which reads perfectly
+   * and whose select mode has nothing to address. It lands in the notice strip
+   * once, because a door that is shut has to say so on the way in rather than
+   * by doing nothing when somebody tries it.
+   */
+  notice: string | null;
 }
