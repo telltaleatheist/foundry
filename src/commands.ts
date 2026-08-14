@@ -31,6 +31,7 @@ import {
   type ParsedArgs,
 } from './args.js';
 import { buildReport, formatReport } from './backend/plan.js';
+import { epubFinal } from './epub/final.js';
 import { probeEndpoint, probeLocalPython, probeVllmLocal, probeWslVllm } from './backend/probe.js';
 import { loadSettings, settingsPath, type FoundrySettings } from './backend/settings.js';
 import { vlmConvert } from './vlm/convert.js';
@@ -229,6 +230,22 @@ const TR_INSTRUCTIONS: OptionSpec = {
   type: 'string',
   placeholder: '<text>',
   describe: 'Appended to the system prompt verbatim — terminology rules for THIS book.',
+};
+
+// ── epub-final ───────────────────────────────────────────────────────────────
+
+const EF_EPUB_IN: OptionSpec = {
+  name: 'epub',
+  type: 'string',
+  placeholder: '<book.epub|dir>',
+  describe: 'The working book: an EPUB file, or the directory one is unpacked into. Never written to.',
+};
+
+const EF_OUT: OptionSpec = {
+  name: 'out',
+  type: 'string',
+  placeholder: '<final.epub>',
+  describe: 'Where the final EPUB is written. Required; foundry never invents a name.',
 };
 
 export interface Command {
@@ -503,6 +520,100 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
       `translate: ${report.navRelabelled} contents entries relabelled, ${report.navUnmapped} LEFT IN `
       + `THE SOURCE LANGUAGE — ${report.navUnmapped === 1 ? 'it is not a copy' : 'they are not copies'} `
       + 'of a heading this run translated',
+    );
+  }
+  process.stdout.write(`${report.outPath}\n`);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// epub-final
+// ═════════════════════════════════════════════════════════════════════════════
+
+async function runEpubFinal(args: ParsedArgs): Promise<void> {
+  const epubPath = requireString(args, 'epub', 'the working book to finish');
+  const outPath = requireString(args, 'out', 'where the final EPUB is written');
+
+  /*
+   * Refused here, before a byte is read, exactly as `translate` refuses it. The
+   * input is the WORKING copy — the only record of every cut somebody made —
+   * and an output written over it destroys the thing the edition was made from,
+   * including the marks that would have let it be made again.
+   */
+  if (path.resolve(outPath) === path.resolve(epubPath)) {
+    throw new UsageError(
+      `--out ${outPath} is the input itself. foundry reads the working book and writes the `
+      + 'edition; the working copy is where every cut lives, and a run that overwrites it '
+      + 'cannot be run a second time.',
+    );
+  }
+
+  const report = await epubFinal({ epubPath, outPath, log });
+
+  // What was removed, on one line, because a person who cut four things wants
+  // to see four things and everything the four dragged with them.
+  const many = (n: number, one: string, more: string): string => `${n} ${n === 1 ? one : more}`;
+  const parts = [many(report.cuts, 'element cut', 'elements cut')];
+  if (report.notesDropped > 0) {
+    parts.push(`${many(report.notesDropped, 'note', 'notes')} dropped with the reference that was cut`);
+  }
+  if (report.noteSectionsDropped > 0) {
+    parts.push(`${many(report.noteSectionsDropped, 'empty footnote section', 'empty footnote sections')} removed`);
+  }
+  if (report.noterefsDemoted > 0) {
+    parts.push(
+      `${many(report.noterefsDemoted, 'reference number', 'reference numbers')} unlinked because `
+      + 'the note it pointed at was cut',
+    );
+  }
+  if (report.navRemoved > 0) {
+    parts.push(`${many(report.navRemoved, 'contents entry', 'contents entries')} removed`);
+  }
+  if (report.navDemoted > 0) {
+    parts.push(
+      `${many(report.navDemoted, 'contents entry', 'contents entries')} kept as a label so the `
+      + 'sub-entries under them survived',
+    );
+  }
+  if (report.imagesDropped.length > 0) {
+    parts.push(
+      `${many(report.imagesDropped.length, 'image', 'images')} dropped `
+      + `(${report.imagesDropped.join(', ')})`,
+    );
+  }
+  if (report.pagesRehomed.length > 0) {
+    parts.push(
+      `${many(report.pagesRehomed.length, 'page marker', 'page markers')} re-homed `
+      + `(${report.pagesRehomed.length === 1 ? 'page' : 'pages'} ${report.pagesRehomed.join(', ')})`,
+    );
+  }
+  log(`epub-final: ${parts.join(', ')}`);
+
+  /*
+   * The integrity report. It is printed on EVERY run, including one with
+   * nothing wrong, because "as exact as possible" is a claim and a claim
+   * nobody can check is a claim nobody should believe. None of these numbers
+   * stops the run — an unlinked marker is a fact about the scan, and a book
+   * somebody cannot produce is worse than one with a stated gap.
+   */
+  log(
+    `epub-final: ${many(report.noterefs, 'reference number', 'reference numbers')} `
+    + `${report.noterefs === 1 ? 'links' : 'link'} to a note, ${report.unlinkedMarkers} stayed a `
+    + `plain <sup> the emitter could not match; ${many(report.notes, 'note', 'notes')}, `
+    + `${report.unreferencedNotes} with nothing pointing at ${report.unreferencedNotes === 1 ? 'it' : 'them'}`,
+  );
+  if (!report.cover) {
+    // Stated rather than left to be noticed: a book with no cover is a grey
+    // rectangle on every shelf, and cover support does not exist in the engine
+    // yet — so this is an absence to report, not a defect in the book.
+    log('epub-final: this book declares NO COVER — nothing in foundry writes one yet');
+  }
+  if (report.pagesLost.length > 0) {
+    // Last, and loud: a page that is no longer in the book's own pagination is
+    // the one thing here that a later citation cannot recover.
+    log(
+      `epub-final: ${many(report.pagesLost.length, 'PAGE MARKER IS GONE', 'PAGE MARKERS ARE GONE')} `
+      + `— nothing survived on ${report.pagesLost.length === 1 ? 'page' : 'pages'} `
+      + report.pagesLost.join(', '),
     );
   }
   process.stdout.write(`${report.outPath}\n`);
@@ -818,6 +929,78 @@ export const COMMANDS: readonly Command[] = [
     ].join('\n'),
     options: [TR_EPUB_IN, TR_TO, TR_FROM, TR_OUT, TR_MODEL, TR_OLLAMA, TR_INSTRUCTIONS],
     run: runTranslate,
+  },
+  {
+    name: 'epub-final',
+    summary: 'Finish a curated book: cuts applied, what they orphaned tidied, the edition written.',
+    usage: '--epub <book.epub|dir> --out <final.epub>',
+    detail: [
+      'The terminal step. It takes the working copy of a book — the cast EPUB with',
+      'whatever a person marked for removal still marked — and writes the EDITION:',
+      'the file somebody would hand to a library. The input is never written to.',
+      '',
+      '--epub TAKES A DIRECTORY AS WELL AS A FILE. The app keeps the working copy',
+      'unpacked and never rezips it until this moment, because a cut writes one',
+      'chapter file of a few kilobytes where a repack of a 20 MB scan costs 20 MB',
+      'an edit. A directory with a mimetype and a META-INF/container.xml in it is',
+      'an unpacked EPUB; anything else is refused by name rather than read as one.',
+      '',
+      'EVERY ELEMENT CARRYING data-bf-cut IS REMOVED, and a cut container takes',
+      'its children with it. That is the whole of the instruction — a cut lives in',
+      'ONE place, an attribute on the element, so there is no second record of it',
+      'to disagree with.',
+      '',
+      'THEN WHAT THE CUT LEFT DANGLING IS TIDIED, none of which is validated',
+      'anywhere else in foundry:',
+      '',
+      '  - A footnote whose only reference was cut GOES WITH IT. The note',
+      '    annotates a sentence the book no longer contains; keeping it would',
+      '    leave a numbered remark at the end of a chapter pointing at nothing.',
+      '    A note that NEVER had a reference is left exactly alone and counted —',
+      '    it was there before this run and it is a fact about the scan.',
+      '  - A footnotes section holding nothing but its <hr/> is removed. A rule',
+      '    with white space under it is something a reader sees.',
+      '  - A contents entry whose target this run removed is removed. An entry',
+      '    that pointed nowhere BEFORE the run is left exactly as it was. An',
+      '    entry with surviving sub-entries keeps them: its link becomes a plain',
+      '    label instead of the entry disappearing with its children.',
+      '  - An image the book used to point at and no longer does is dropped from',
+      '    the package and from the OPF manifest. One nothing ever pointed at is',
+      '    left alone, because dropping it would be a decision nobody ordered.',
+      '  - A PAGE MARKER IS RE-HOMED RATHER THAN LOST. foundry emits a page\'s',
+      '    <span epub:type="pagebreak"> inside the FIRST block of that page, so',
+      '    cutting that block deletes the page from the book\'s own pagination and',
+      '    nothing else records where it began. The marker moves to the next',
+      '    surviving block on the same page. If nothing on the page survives the',
+      '    page really is gone, and the run says which page by number.',
+      '',
+      'TWO ATTRIBUTES ARE STRIPPED AND TWO ARE KEPT. data-bf-cut and data-bf-id',
+      'mean nothing outside this program and go. data-bf-page, data-bf-cat and the',
+      'pagebreak spans STAY: page provenance is what makes a scan citable, it is',
+      'invisible to a reader, and it is what every later pass reads.',
+      '',
+      'THE INTEGRITY REPORT IS PRINTED ON EVERY RUN, because "as exact as',
+      'possible" is a claim and a claim nobody can check is a claim nobody should',
+      'believe. How many reference numbers link to a note; how many stayed a plain',
+      '<sup> because the emitter could not match one — that is deliberate, a',
+      'marker is matched to a note by page and printed number and no link beats a',
+      'wrong one; how many notes nothing points at; whether the book declares a',
+      'cover, which it will not, because nothing in foundry writes one yet.',
+      '',
+      'THE FILE IS WRITTEN ANYWAY. None of those numbers stops the run: they are',
+      'facts about the scan, and a book somebody cannot produce is worse than one',
+      'with a stated gap. What IS refused: an input that is not a foundry book (a',
+      'publisher\'s EPUB has no marks in it and never will), an input that cannot',
+      'be read, and an --out equal to --epub — the working copy is where every cut',
+      'lives, and a run that overwrites it cannot be run a second time.',
+      '',
+      'What comes out is the input book: mimetype first and stored, every member',
+      'nobody edited written back with the exact bytes, method and checksum it',
+      'arrived with. The only entries that differ are the documents a cut touched,',
+      'the nav and the package.',
+    ].join('\n'),
+    options: [EF_EPUB_IN, EF_OUT],
+    run: runEpubFinal,
   },
   {
     name: 'doctor',

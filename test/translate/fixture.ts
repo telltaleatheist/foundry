@@ -64,6 +64,62 @@ export const CHAPTER = `<?xml version="1.0" encoding="UTF-8"?>
 </html>
 `;
 
+/**
+ * The same book after somebody has been through it with select mode.
+ *
+ * A SEPARATE CHAPTER, NOT AN EDITED `CHAPTER`. Every assertion in the translate
+ * suite is pinned to the shapes above — thirty blocks in sixteen requests, one
+ * one-item list, one single-cell table — and marking six of them cut would move
+ * every one of those numbers. This carries the same shapes plus the three
+ * things a cast book has that `CHAPTER` predates: `data-bf-id` on every element,
+ * a page marker at the top of EVERY page rather than only the first, and a
+ * second footnote that no marker in the prose ever claimed.
+ *
+ * The marks are chosen so that one of each dangling case is exercised:
+ *
+ *  - `p7-2` carries the ONLY reference to `fn1`, so the note is orphaned;
+ *  - `sh1` is what a contents entry points at, while `#nowhere` beside it is a
+ *    pre-existing dangling entry that must survive untouched;
+ *  - the `<ul>` is cut whole and takes its `<li>` with it;
+ *  - the `<figure>` is the only thing referencing the book's one image;
+ *  - `sh1`, `sh2` and `p11-1` each open their page and so each carry that
+ *    page's marker: page 8 and page 10 have other blocks to re-home to, and
+ *    page 11 has none at all, so its page really is gone.
+ *
+ * `fn2` and the plain `<sup>3</sup>` in `p7-3` are here to be LEFT ALONE — an
+ * unmatched marker and an unreferenced note are facts about the scan, not
+ * wreckage a cut made, and they are what the integrity report counts.
+ */
+export const CUT_CHAPTER = `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="de" lang="de">
+<head>
+  <meta charset="utf-8"/>
+  <title>Der Staat</title>
+</head>
+<body>
+<h1 data-bf-page="7" data-bf-cat="chapter" data-bf-id="p7-1"><span epub:type="pagebreak" role="doc-pagebreak" id="pb-7" data-bf-page="7" aria-label="7"></span>Der Staat</h1>
+<p data-bf-page="7" data-bf-cat="text" data-bf-id="p7-2" data-bf-cut="1">Ein <em>voelkischer</em> Staat war das Ziel<a id="ref-fn1" class="noteref" epub:type="noteref" role="doc-noteref" href="#fn1"><sup>1</sup></a> der ganzen Bewegung.</p>
+<p data-bf-page="7" data-bf-cat="text" data-bf-id="p7-3">Ein Absatz mit einer Ziffer<sup>3</sup>, zu der keine Note gefunden wurde.</p>
+<h2 id="sh1" data-bf-page="8" data-bf-cat="section-header" data-bf-id="p8-1" data-bf-cut="1"><span epub:type="pagebreak" role="doc-pagebreak" id="pb-8" data-bf-page="8" aria-label="8"></span>Die Ordnung</h2>
+<ul data-bf-page="8" data-bf-cat="list-item" data-bf-id="p8-2" data-bf-cut="1">
+  <li data-bf-page="8" data-bf-cat="list-item" data-bf-id="p8-3">Erstens kommt die Ordnung im Lande.</li>
+</ul>
+<blockquote data-bf-page="8" data-bf-cat="quote" data-bf-id="p8-4"><p data-bf-page="8" data-bf-cat="quote" data-bf-id="p8-5">Ein langes Zitat steht hier im Buch.</p></blockquote>
+<div class="tablewrap" data-bf-page="9" data-bf-cat="table" data-bf-id="p9-1"><span epub:type="pagebreak" role="doc-pagebreak" id="pb-9" data-bf-page="9" aria-label="9"></span><table><tr><td>Jahr</td><td>Zahl</td></tr></table></div>
+<figure data-bf-page="9" data-bf-cat="picture" data-bf-id="p9-2" data-bf-cut="1"><img src="../images/p0009-1.png" alt="figure from page 9"/></figure>
+<p class="caption" data-bf-page="9" data-bf-cat="caption" data-bf-id="p9-3">Abbildung des grossen Gebaeudes.</p>
+<h2 id="sh2" data-bf-page="10" data-bf-cat="section-header" data-bf-id="p10-1" data-bf-cut="1"><span epub:type="pagebreak" role="doc-pagebreak" id="pb-10" data-bf-page="10" aria-label="10"></span>Die Punkte</h2>
+<p data-bf-page="10" data-bf-cat="text" data-bf-id="p10-2">Ein Absatz auf derselben Seite, der bleibt.</p>
+<p data-bf-page="11" data-bf-cat="text" data-bf-id="p11-1" data-bf-cut="1"><span epub:type="pagebreak" role="doc-pagebreak" id="pb-11" data-bf-page="11" aria-label="11"></span>Die ganze Seite elf steht in einem Absatz.</p>
+<section class="footnotes" epub:type="footnotes">
+<hr/>
+<aside class="footnote" epub:type="footnote" role="doc-footnote" id="fn1" data-bf-page="9" data-bf-cat="footnote" data-bf-id="p9-4"><a class="fn-back" epub:type="backlink" role="doc-backlink" href="#ref-fn1"><sup>1</sup></a> Siehe dazu das Werk von gestern.</aside>
+<aside class="footnote" epub:type="footnote" role="doc-footnote" id="fn2" data-bf-page="9" data-bf-cat="footnote" data-bf-id="p9-5"><sup>2</sup> Eine Note, auf die nichts zeigt.</aside>
+</section>
+</body>
+</html>
+`;
+
 const NAV = `<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="de" lang="de">
 <head><meta charset="utf-8"/><title>Der Staat</title></head>
@@ -118,8 +174,14 @@ export function foundryEpub(): Uint8Array {
  * enough to be cut by `CHUNK_CHARS` is two thousand characters of German, which
  * belongs in the test that measures it and not in a fixture every other test
  * has to read past.
+ *
+ * The nav is a parameter for the same reason and defaults to this file's, so
+ * every caller written before it existed still builds exactly the book it
+ * built: a test about what happens to a contents entry with sub-entries under
+ * it needs a contents page that HAS one, and adding that shape to the default
+ * nav would move the label list `book.test.ts` pins.
  */
-export function foundryEpubWith(chapter: string): Uint8Array {
+export function foundryEpubWith(chapter: string, nav: string = NAV): Uint8Array {
   return writeZip([
     zipText('mimetype', 'application/epub+zip'),
     zipText('META-INF/container.xml',
@@ -131,7 +193,7 @@ export function foundryEpubWith(chapter: string): Uint8Array {
     zipText('EPUB/style.css', 'body { margin: 0 5%; }\n'),
     zipText(CHAPTER_PATH, chapter),
     { path: 'EPUB/images/p0009-1.png', data: PICTURE },
-    zipText(NAV_PATH, NAV),
+    zipText(NAV_PATH, nav),
     zipText(OPF_PATH, OPF),
   ]);
 }
