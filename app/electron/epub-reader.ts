@@ -582,6 +582,53 @@ export async function setBlockCut(
 }
 
 /**
+ * Mark the footnote itself, after its last reference was deleted by hand.
+ *
+ * Addressed by the note's OWN id (`fn25`) rather than by `data-bf-id`, because
+ * that is the name the reference used and the only one the app knows at this
+ * point — it read it out of the `href` it just removed.
+ *
+ * It is a CUT and not a deletion: the `<aside>` gains `data-bf-cut` like
+ * anything else struck in select mode, so it is drawn struck through, it can be
+ * un-struck by pressing Delete on it again, and it does not actually leave the
+ * book until `foundry epub-final` builds the edition. A footnote is evidence,
+ * and evidence removed by a dialog answered in half a second should be
+ * recoverable by the same gesture as everything else.
+ */
+export async function setNoteCut(
+  id: string,
+  memberPath: string,
+  noteId: string,
+  cut: boolean,
+): Promise<void> {
+  const member = resolveEpubMember(id, memberPath);
+  if (member === null) {
+    throw new EpubError(`"${memberPath}" is not part of a book this app has open.`);
+  }
+  const markup = await fs.promises.readFile(member, 'utf8');
+  const found = [...markup.matchAll(START_TAGS)].filter((match) =>
+    new RegExp(`\\bid\\s*=\\s*["']${escapeForRegExp(noteId)}["']`, 'i').test(match[0]));
+  if (found.length === 0) {
+    throw new EpubError(`No footnote with id="${noteId}" is in ${memberPath}.`);
+  }
+  if (found.length > 1) {
+    throw new EpubError(
+      `${found.length} elements in ${memberPath} carry id="${noteId}". An id names one element, `
+      + 'and striking the wrong footnote is worse than striking none.',
+    );
+  }
+  const tag = found[0]!;
+  const start = tag.index!;
+  const replacement = cut ? withCutMark(tag[0]) : withoutCutMark(tag[0]);
+  if (replacement === tag[0]) return;
+  await fs.promises.writeFile(
+    member,
+    markup.slice(0, start) + replacement + markup.slice(start + tag[0].length),
+    'utf8',
+  );
+}
+
+/**
  * Where the element opened by `block` closes — the offset of its `</…>`.
  *
  * Depth-counted over its OWN tag name only, which is all that is needed for
@@ -685,6 +732,25 @@ function tagSignature(tag: ScannedTag): string {
   return `<${tag.name}${attributes.length > 0 ? ` ${attributes.join(' ')}` : ''}>`;
 }
 
+/**
+ * The two things an editor may delete from a block by hand.
+ *
+ * A `noteref` anchor is the reference number's link and a `<sup>` is the number
+ * itself — the emitter writes the anchor around the sup when it could match a
+ * note, and a bare sup when it could not (`dots-book.ts` refuses to guess a
+ * link). Both are marks a person reads and may want gone from a sentence, which
+ * is why the engine has `--strip-note-markers` to remove all of them at once.
+ * This is the same act, one at a time.
+ *
+ * Matched on the signature's CLASS rather than its tag alone, so an `<a>` that
+ * is not note apparatus — there are none in a cast book, but an imported EPUB is
+ * somebody else's markup — cannot be deleted by this door.
+ */
+function isRemovableMarker(signature: string): boolean {
+  if (signature.startsWith('<sup')) return true;
+  return signature.startsWith('<a ') && signature.includes('class=noteref');
+}
+
 function countSignatures(tags: readonly ScannedTag[]): Map<string, number> {
   const counts = new Map<string, number>();
   for (const tag of tags) {
@@ -749,6 +815,22 @@ function refuseUnlessWordEdit(before: string, after: string, blockId: string, la
   const added: string[] = [];
   for (const [signature, count] of was) {
     const left = now.get(signature) ?? 0;
+    /*
+     * A REFERENCE NUMBER IS A WORD ON THE PAGE, and deleting one by hand is a
+     * thing an editor does. It is the same act `--strip-note-markers` performs
+     * across a whole book; refusing it here would mean the only way to remove
+     * one marker is to remove all of them.
+     *
+     * So a noteref anchor and a `<sup>` may DISAPPEAR. Nothing else may, and
+     * nothing at all may be gained: an href that changed, a pagebreak span that
+     * went missing, an <em> that evaporated and any invented tag all still
+     * refuse, because none of those is something a person meant to type.
+     *
+     * The unlinked note is not this function's problem — `setBlockHtml` reports
+     * which notes lost their last reference and the app asks what to do about
+     * them. A footnote nobody can reach is a decision, not a validation error.
+     */
+    if (left < count && isRemovableMarker(signature)) continue;
     if (left < count) dropped.push(`${signature}${count - left > 1 ? ` ×${count - left}` : ''}`);
   }
   for (const [signature, count] of now) {
@@ -762,7 +844,7 @@ function refuseUnlessWordEdit(before: string, after: string, blockId: string, la
     throw new EpubError(
       `That edit to ${where} changes the markup inside the block and not only its words: `
       + `${parts.join(' and ')}. The tags and their attributes have to come back exactly as `
-      + 'they went in — a footnote reference or a page marker is not a word.',
+      + 'they went in — a page marker is not a word.',
     );
   }
 
@@ -787,7 +869,7 @@ export async function setBlockHtml(
   memberPath: string,
   blockId: string,
   html: string,
-): Promise<void> {
+): Promise<UnlinkedNote[]> {
   const member = resolveEpubMember(id, memberPath);
   if (member === null) {
     throw new EpubError(`"${memberPath}" is not part of a book this app has open.`);
@@ -808,13 +890,60 @@ export async function setBlockHtml(
     );
   }
   const before = markup.slice(block.end, closeAt);
-  if (before === html) return;
+  if (before === html) return [];
   refuseUnlessWordEdit(before, html, blockId, memberPath);
-  await fs.promises.writeFile(
-    member,
-    markup.slice(0, block.end) + html + markup.slice(closeAt),
-    'utf8',
-  );
+  const written = markup.slice(0, block.end) + html + markup.slice(closeAt);
+  await fs.promises.writeFile(member, written, 'utf8');
+  return notesLeftUnreachable(before, html, written);
+}
+
+/** A footnote nothing points at any more, and the number that used to. */
+export interface UnlinkedNote {
+  /** The `<aside>`'s own id — `fn25`. */
+  noteId: string;
+  /** What the reference read on the page, for the sentence that asks about it. */
+  printed: string;
+}
+
+/**
+ * Which notes this edit just cut loose, asked of the WHOLE document.
+ *
+ * A reference deleted from one paragraph does not orphan its note if another
+ * paragraph still points at it — the emitter links every marker with the same
+ * printed number to one note, and only the first carries the backlink's target.
+ * So the question is not "what did this block lose" but "what does the finished
+ * chapter no longer reach", and it is asked against the bytes just written.
+ *
+ * The note itself is left exactly alone. Whether an unreachable footnote should
+ * go is an editorial decision with an obvious wrong answer if guessed — a note
+ * silently deleted is evidence gone — so this only reports, and the app asks.
+ */
+function notesLeftUnreachable(before: string, after: string, document: string): UnlinkedNote[] {
+  const linked = (markup: string): Map<string, string> => {
+    const found = new Map<string, string>();
+    for (const match of markup.matchAll(
+      /<a\b[^>]*\bclass\s*=\s*["']noteref["'][^>]*\bhref\s*=\s*["']#([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi,
+    )) {
+      found.set(match[1]!, match[2]!.replace(/<[^>]*>/g, '').trim());
+    }
+    return found;
+  };
+  const lost = linked(before);
+  for (const id of linked(after).keys()) lost.delete(id);
+  const out: UnlinkedNote[] = [];
+  for (const [noteId, printed] of lost) {
+    // Still reached from somewhere else in this chapter: not an orphan at all.
+    if (new RegExp(`class\\s*=\\s*["']noteref["'][^>]*href\\s*=\\s*["']#${escapeForRegExp(noteId)}["']`, 'i')
+      .test(document)) continue;
+    // And there has to BE a note with that id, or there is nothing to ask about.
+    if (!new RegExp(`\\bid\\s*=\\s*["']${escapeForRegExp(noteId)}["']`, 'i').test(document)) continue;
+    out.push({ noteId, printed });
+  }
+  return out;
+}
+
+function escapeForRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /** Every start tag of a document, for the two passes that walk them all. */
