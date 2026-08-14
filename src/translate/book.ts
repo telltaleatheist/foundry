@@ -92,8 +92,31 @@ function attr(el: XmlElement, name: string): string | undefined {
   return el.attrs.get(name);
 }
 
-export function readFoundryBook(bytes: Uint8Array): FoundryBook {
-  const members = readZip(bytes);
+/**
+ * What the stamps are needed FOR, as the refusal says it.
+ *
+ * The admission rule is shared and the SENTENCE is not: `translate` needs the
+ * stamps because it replaces the text inside them, and `epub-final` needs them
+ * because a cut is marked on one. A refusal that names the wrong reason sends a
+ * person to look at the wrong part of their book, so the caller supplies its
+ * own half of the sentence and the default is the one translate has always
+ * printed.
+ */
+const TRANSLATION_NEEDS_STAMPS = 'translation replaces text inside the categories foundry stamps';
+
+export function readFoundryBook(bytes: Uint8Array, needs: string = TRANSLATION_NEEDS_STAMPS): FoundryBook {
+  return bookFromMembers(readZip(bytes), needs);
+}
+
+/**
+ * The same walk, over members somebody already has.
+ *
+ * `epub-final` reads a WORKING TREE — an EPUB the app keeps unpacked so that a
+ * cut costs one chapter file rather than a 20 MB rezip — and there is no
+ * archive to hand this function. Everything past the unzip is identical, so the
+ * chain walk lives here and `readFoundryBook` is the zip-shaped door onto it.
+ */
+export function bookFromMembers(members: ZipMember[], needs: string = TRANSLATION_NEEDS_STAMPS): FoundryBook {
   const byPath = new Map(members.map((m) => [m.path, m] as const));
 
   const mimetype = byPath.get('mimetype');
@@ -147,13 +170,10 @@ export function readFoundryBook(bytes: Uint8Array): FoundryBook {
   }
 
   if (documents.length === 0) {
-    throw new BookError('this EPUB has an empty spine — there is no book in it to translate');
+    throw new BookError('this EPUB has an empty spine — there is no book in it');
   }
   if (!documents.some((d) => d.stamped)) {
-    throw new BookError(
-      'not a foundry-converted book; translation replaces text inside the categories foundry '
-      + 'stamps, and this book has none.',
-    );
+    throw new BookError(`not a foundry-converted book; ${needs}, and this book has none.`);
   }
 
   let navPath: string | null = null;

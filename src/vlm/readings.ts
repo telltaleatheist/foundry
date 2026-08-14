@@ -151,9 +151,28 @@ export interface VlmCompletion {
   foundryVersion: string;
 }
 
-/** `completed.json`, beside the readings file. The readings file's directory IS the run directory. */
+/**
+ * The marker for THIS bank: `<bank>.completed.json`, beside it and named for it.
+ *
+ * IT USED TO BE `completed.json` IN THE BANK'S DIRECTORY, on the reading that a
+ * readings file's directory is the run's directory. That holds when a run owns
+ * its folder and is false the moment two books share one — which is exactly what
+ * the app did, banking every book into a single `readings/` directory. Measured
+ * on a real install: one marker, stamped by whichever conversion finished last,
+ * sitting beside two banks. Asked about the OTHER book, `readCompletionMarker`
+ * answered with the first book's marker and the run archived a complete bank and
+ * read a hundred pages again — the exact GPU-hours loss the bank exists to stop.
+ * Nothing compared the marker's `outPath` to the run's; nothing had to, because
+ * the path was assumed to name it.
+ *
+ * Naming the marker after the bank makes the pairing structural. A pre-existing
+ * `completed.json` is now simply not found, which degrades safely in the one way
+ * that matters: no marker plus a full bank is a RESUME, and a resume with
+ * nothing missing reads no pages and costs no GPU.
+ */
 export function completionMarkerPath(readingsPath: string): string {
-  return path.join(path.dirname(path.resolve(readingsPath)), 'completed.json');
+  const resolved = path.resolve(readingsPath);
+  return `${resolved.replace(/\.jsonl$/i, '')}.completed.json`;
 }
 
 /**

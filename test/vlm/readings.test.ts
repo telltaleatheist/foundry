@@ -55,9 +55,20 @@ const AT = new Date('2026-08-08T09:30:00.000Z');
 // The marker
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('the marker is completed.json in the readings file\'s own directory', () => {
+test('the marker is named for the bank it belongs to, not for its directory', () => {
+  /*
+   * MEASURED, on a real install: the app banked every book into one
+   * `readings/` directory, so the old `<dir>/completed.json` was a single
+   * marker for two books, stamped by whichever conversion finished last. Asked
+   * about the other book it answered anyway — nothing compares the marker's
+   * `outPath` to the run's — and that run archived a complete bank and read a
+   * hundred pages again.
+   */
   const readingsPath = runDir([1]);
-  assert.equal(completionMarkerPath(readingsPath), path.join(path.dirname(readingsPath), 'completed.json'));
+  assert.equal(completionMarkerPath(readingsPath), `${readingsPath.replace(/\.jsonl$/, '')}.completed.json`);
+  // Two banks in one directory are two markers, and neither answers for the other.
+  const neighbour = path.join(path.dirname(readingsPath), 'another-book.jsonl');
+  assert.notEqual(completionMarkerPath(neighbour), completionMarkerPath(readingsPath));
   assert.equal(readCompletionMarker(readingsPath), null);
   markComplete(readingsPath, 12);
   const marker = readCompletionMarker(readingsPath);
@@ -106,7 +117,9 @@ test('archiving moves the bank and its marker aside and leaves the live path emp
   // And the hours it cost are still on disk, under a name a person can find.
   assert.equal(path.basename(archiveDir), 'archived-2026-08-08T09-30-00-000Z');
   assert.equal(VlmReadings.open(path.join(archiveDir, 'readings.jsonl')).size, 3);
-  assert.equal(fs.existsSync(path.join(archiveDir, 'completed.json')), true);
+  // The marker keeps the name it had, which is its bank's — so an archive
+  // directory holding two runs' leavings still says which marker is whose.
+  assert.equal(fs.existsSync(path.join(archiveDir, 'readings.completed.json')), true);
   // A colon is not a legal Windows filename character, and this program runs there.
   assert.equal(archiveDir.slice(3).includes(':'), false);
 });
