@@ -124,14 +124,32 @@ export async function planConversion(
 export async function planTranslation(
   inputPath: string,
   targetLanguage: string,
-): Promise<{ key: string; outputPath: string }> {
+): Promise<{ key: string; outputPath: string; bankPath: string }> {
   const { dir, key, stem } = await importDocument(inputPath, 'epub');
   const file = translationFileFor(stem, targetLanguage);
   const outputPath = path.join(dir, 'generated', file);
   refuseSelfOverwrite(inputPath, outputPath, file);
   await rotateGenerated(dir, file);
   await fsp.mkdir(path.join(dir, 'generated'), { recursive: true });
-  return { key, outputPath };
+  await fsp.mkdir(path.join(dir, 'readings'), { recursive: true });
+  /*
+   * THE TRANSLATION BANK, beside the readings bank and for the same reason:
+   * both are hours of GPU held as answers, and both belong to this book.
+   *
+   * PER LANGUAGE, because the language is part of what was asked — a German
+   * book's English and French editions are two sets of answers and one file
+   * holding both would be a file whose keys never collide but whose size is
+   * twice what anybody needs. The engine keys every entry by the whole question
+   * anyway (model, languages, instructions, the block's text), so this split is
+   * for the person who opens the folder, not for correctness.
+   *
+   * Passed on EVERY translation, never a checkbox. There is no version of "spend
+   * four more hours re-translating the four hundred blocks that already
+   * succeeded" that anybody wants, and the run that made this necessary is on
+   * record: 152 blocks, killed, nothing kept.
+   */
+  const tag = targetLanguage.trim().replace(/[^A-Za-z0-9-]+/g, '') || 'translated';
+  return { key, outputPath, bankPath: path.join(dir, 'readings', `${key}.${tag}.bank.jsonl`) };
 }
 
 /**

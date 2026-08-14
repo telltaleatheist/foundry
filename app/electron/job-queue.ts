@@ -233,11 +233,18 @@ function argsFor(request: EngineRequest): string[] {
   if (request.kind === 'translate') {
     /*
      * A translation shares nothing with a conversion's command line but the
-     * program name. No `--readings` (nothing is banked), no `--format` (the
-     * output is an EPUB by definition), and `--ollama` IS passed — unlike the
-     * reading backend, which the settings screen owns and which the engine
-     * reads for itself. Ollama has no settings screen here because it is not a
-     * server this app manages.
+     * program name. No `--format` (the output is an EPUB by definition), and
+     * `--ollama` IS passed — unlike the reading backend, which the settings
+     * screen owns and which the engine reads for itself. Ollama has no settings
+     * screen here because it is not a server this app manages.
+     *
+     * `--bank` IS PASSED ON EVERY RUN, and is the exact counterpart of
+     * `--readings` on a conversion: both are hours of GPU held as answers. It
+     * stopped being optional the day a 456-block book was killed at block 152
+     * and had written nothing at all — the engine used to hold every answer in
+     * memory and write the EPUB at the end. There is no version of "translate
+     * the four hundred blocks that already succeeded again" that anybody wants,
+     * so there is no checkbox for it either.
      */
     const args = [
       'translate',
@@ -246,6 +253,7 @@ function argsFor(request: EngineRequest): string[] {
       '--to', request.to,
       '--model', request.model,
       '--ollama', request.ollama,
+      '--bank', request.bankPath,
     ];
     if (request.from && request.from.trim().length > 0) args.push('--from', request.from.trim());
     if (request.instructions && request.instructions.trim().length > 0) {

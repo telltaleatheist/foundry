@@ -121,6 +121,16 @@ export interface TranslateRequest {
   ollama: string;
   /** `--instructions`: appended to the system prompt verbatim, per book. */
   instructions?: string;
+  /**
+   * `--bank`: where each accepted block is written the moment it is accepted.
+   *
+   * From `planTranslation`, and passed on every translation — a translation is
+   * hours of GPU and a run that dies at block 400 of 456 used to have written
+   * nothing at all. The engine keys every entry by the whole QUESTION (model,
+   * languages, instructions, the block's own text), so a resumed run asks only
+   * for what it still owes, and editing one paragraph re-asks that paragraph.
+   */
+  bankPath: string;
 }
 
 export interface Job {

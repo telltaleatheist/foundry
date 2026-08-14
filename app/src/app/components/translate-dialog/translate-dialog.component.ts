@@ -306,6 +306,10 @@ export class TranslateDialogComponent {
         to,
         model: this.model().trim() || DEFAULT_MODEL,
         ollama: this.ollama().trim() || DEFAULT_OLLAMA,
+        // Where each accepted block lands the moment it is accepted, so a run
+        // that is interrupted asks only for what it still owes. Never a choice
+        // in this dialog: see the note on `argsFor`.
+        bankPath: plan.bankPath,
       };
       const from = this.from().trim();
       if (from.length > 0) request.from = from;

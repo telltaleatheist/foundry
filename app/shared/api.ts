@@ -113,7 +113,7 @@ export interface FoundryApi {
     planTranslation(
       inputPath: string,
       targetLanguage: string,
-    ): Promise<{ key: string; outputPath: string; inputPath: string }>;
+    ): Promise<{ key: string; outputPath: string; inputPath: string; bankPath: string }>;
   };
 
   /**
