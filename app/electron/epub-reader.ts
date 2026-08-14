@@ -653,7 +653,33 @@ function scanTags(fragment: string): ScannedTag[] {
 function tagSignature(tag: ScannedTag): string {
   const attributes: string[] = [];
   for (const match of tag.attributes.matchAll(/([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*("([^"]*)"|'([^']*)')/g)) {
-    attributes.push(`${match[1]}=${decodeEntities(match[3] ?? match[4] ?? '')}`);
+    const name = match[1]!;
+    /*
+     * NAMESPACE DECLARATIONS ARE THE SERIALIZER'S, NOT THE USER'S.
+     *
+     * A chapter is XHTML, so the frame's `innerHTML` runs through the XML
+     * serializer — and serializing a FRAGMENT means every element whose
+     * namespace is not declared inside that fragment gets the declaration
+     * written onto it. A footnote reference that sat in the file as
+     * `<a class="noteref" epub:type="noteref" href="#fn25">` comes back as the
+     * same anchor wearing `xmlns="http://www.w3.org/1999/xhtml"` and
+     * `xmlns:epub="http://www.idpf.org/2007/ops"`.
+     *
+     * MEASURED, on the first real edit: a block with three noterefs in it was
+     * refused for "losing" and "gaining" the same anchors, differing by nothing
+     * but those two attributes. Left in the signature, every block that carries
+     * any inline markup at all is uneditable — which is most of the prose in a
+     * book with footnotes, and the exact blocks somebody wants to fix.
+     *
+     * They are dropped rather than compared because they are not content: they
+     * declare the namespace the element is already in, they are re-derived by
+     * whatever writes the document next, and no reader, parser or later pass
+     * can observe their absence. Every OTHER attribute is still compared
+     * exactly, so an `href` that changed or an `epub:type` that went missing
+     * still refuses.
+     */
+    if (name === 'xmlns' || name.startsWith('xmlns:')) continue;
+    attributes.push(`${name}=${decodeEntities(match[3] ?? match[4] ?? '')}`);
   }
   attributes.sort();
   return `<${tag.name}${attributes.length > 0 ? ` ${attributes.join(' ')}` : ''}>`;
