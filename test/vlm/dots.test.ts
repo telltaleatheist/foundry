@@ -1041,6 +1041,9 @@ function chapterOptions() {
     stripNoteMarkers: false,
     firstNote: 1,
     firstPicture: 0,
+    // Fresh per call, so each test's ids start at 1 and read as the ids of a
+    // book that begins where the test's blocks begin.
+    elementNumbers: new Map<number, number>(),
     openers: new Set<number>(),
   };
 }
@@ -1051,14 +1054,70 @@ test('every element carries the page it came from and the model\'s own category'
     block({ page: 7, category: 'Text', text: 'A paragraph.' }),
     block({ page: 7, category: 'Footnote', text: '¹ A note.' }),
   ], chapterOptions());
-  assert.match(body.xhtml, /<h1 data-bf-page="7" data-bf-cat="title">/);
-  assert.match(body.xhtml, /<p data-bf-page="7" data-bf-cat="text">/);
+  assert.match(body.xhtml, /<h1 data-bf-page="7" data-bf-cat="title" data-bf-id="p7-1">/);
+  assert.match(body.xhtml, /<p data-bf-page="7" data-bf-cat="text" data-bf-id="p7-2">/);
   assert.match(
     body.xhtml,
     /class="footnote" epub:type="footnote" role="doc-footnote" id="fn1" data-bf-page="7" data-bf-cat="footnote"/,
   );
   // The print-source page marker, once per page, at the first element from it.
   assert.equal(body.xhtml.match(/epub:type="pagebreak"/g)?.length, 1);
+});
+
+test('every stamped element gets an id of its own, and no two are the same', () => {
+  /*
+   * THE ONE PROPERTY THAT MATTERS: unique. Every other id a cast book carries
+   * renumbers when the book is edited — `sh1` is a chapter-local ordinal,
+   * `fn7` is book-wide, `c0003` is a chapter ordinal — so `data-bf-id` is the
+   * only handle a person's "cut this block" can be recorded against.
+   *
+   * The list is the case that breaks a per-BLOCK scheme: one block writes both
+   * a `<ul>` and an `<li>`, and both are stamped. The quote does the same with
+   * `<blockquote>` and its `<p>`. Numbering elements rather than blocks is
+   * what keeps those four apart.
+   */
+  const body = buildChapterBody([
+    block({ page: 3, category: 'Title', text: 'A Heading' }),
+    block({ page: 3, category: 'List-item', text: 'An item.' }),
+    block({ page: 3, category: 'Quote', text: 'A quotation.' }),
+    block({ page: 4, category: 'Text', text: 'A paragraph on the next page.' }),
+  ], chapterOptions());
+
+  const ids = [...body.xhtml.matchAll(/data-bf-id="([^"]+)"/g)].map((m) => m[1]!);
+  assert.deepEqual(ids, ['p3-1', 'p3-2', 'p3-3', 'p3-4', 'p3-5', 'p4-1']);
+  assert.equal(new Set(ids).size, ids.length, 'no id is used twice');
+
+  // The container and the thing inside it are two elements and two ids.
+  assert.match(body.xhtml, /<ul data-bf-page="3" data-bf-cat="list-item" data-bf-id="p3-2">/);
+  assert.match(body.xhtml, /<li data-bf-page="3" data-bf-cat="list-item" data-bf-id="p3-3">/);
+  assert.match(body.xhtml, /<blockquote data-bf-page="3" data-bf-cat="quote" data-bf-id="p3-4">/);
+  assert.match(body.xhtml, /<p data-bf-page="3" data-bf-cat="quote" data-bf-id="p3-5">/);
+
+  // The ordinal is within the page, so a new page starts again at 1.
+  assert.match(body.xhtml, /data-bf-page="4"[^>]*data-bf-id="p4-1"/);
+});
+
+test('a page split across two chapters does not issue the same id twice', () => {
+  /*
+   * The reason `elementNumbers` is passed in rather than started fresh. A
+   * chapter opens at a heading and a heading can sit halfway down a page, so
+   * one page's blocks routinely land in two documents. A count that restarted
+   * per chapter would write `p9-1` in both of them — two elements wearing one
+   * name, in the attribute whose entire job is to be unique.
+   */
+  const shared = chapterOptions();
+  const first = buildChapterBody([
+    block({ page: 9, category: 'Text', text: 'The end of the chapter before.' }),
+  ], shared);
+  const second = buildChapterBody([
+    block({ page: 9, category: 'Title', text: 'The next chapter' }),
+    block({ page: 9, category: 'Text', text: 'Its opening paragraph.' }),
+  ], shared);
+
+  assert.match(first.xhtml, /data-bf-id="p9-1"/);
+  assert.match(second.xhtml, /data-bf-id="p9-2"/);
+  assert.match(second.xhtml, /data-bf-id="p9-3"/);
+  assert.doesNotMatch(second.xhtml, /data-bf-id="p9-1"/);
 });
 
 test('footnotes leave the prose and land at the end of the chapter', () => {
@@ -1251,9 +1310,9 @@ test('inside a chapter, a later h2 is anchored and reported; the title heading i
     block({ page: 25, category: 'Section-header', text: 'The purge' }),
   ], chapterOptions());
   assert.deepEqual(body.headings, [{ id: 'sh1', label: 'The purge' }]);
-  assert.match(body.xhtml, /<h2 id="sh1" data-bf-page="25" data-bf-cat="section-header">The purge<\/h2>/);
+  assert.match(body.xhtml, /<h2 id="sh1" data-bf-page="25" data-bf-cat="section-header"[^>]*>The purge<\/h2>/);
   // The first heading is the chapter's own title — no anchor, no entry.
-  assert.match(body.xhtml, /<h2 data-bf-page="25" data-bf-cat="section-header">.*PRELUDE<\/h2>/);
+  assert.match(body.xhtml, /<h2 data-bf-page="25" data-bf-cat="section-header"[^>]*>.*PRELUDE<\/h2>/);
 });
 
 test('an opening heading never becomes a section entry, even when it is not the label', () => {
@@ -1281,10 +1340,10 @@ test('a chapter opener is stamped for the picker, both halves of it', () => {
   assert.deepEqual([...openers], [0, 1]);
   const body = buildChapterBody(span, { ...chapterOptions(), openers });
   assert.equal(body.xhtml.match(/data-bf-cat="chapter"/g)?.length, 2);
-  assert.match(body.xhtml, /<h2[^>]*data-bf-cat="chapter">.*CHAPTER I<\/h2>/);
+  assert.match(body.xhtml, /<h2[^>]*data-bf-cat="chapter"[^>]*>.*CHAPTER I<\/h2>/);
   // The tag still comes from the true category, and the heading inside the
   // chapter still carries the model's own word for what it is.
-  assert.match(body.xhtml, /<h2[^>]*data-bf-cat="section-header">.*2<\/h2>/);
+  assert.match(body.xhtml, /<h2[^>]*data-bf-cat="section-header"[^>]*>.*2<\/h2>/);
 });
 
 test('a part divider\'s announcement is a split point too', () => {
@@ -1338,7 +1397,7 @@ test('a named section is stamped for the picker, and a chapter opener with it', 
   // which is what puts it in the picker's Chapter Openings palette.
   const chapter = entries.get('EPUB/text/c0004.xhtml')!.text();
   assert.equal(chapter.includes('data-bf-kind'), false);
-  assert.match(chapter, /<h1[^>]*data-bf-cat="chapter">.*The Lost Empire<\/h1>/);
+  assert.match(chapter, /<h1[^>]*data-bf-cat="chapter"[^>]*>.*The Lost Empire<\/h1>/);
 
   // A part divider is stamped on both blocks of its announcement, and keeps its
   // `data-bf-kind` wrapper: the two say different things and both are true.
@@ -1349,7 +1408,7 @@ test('a named section is stamped for the picker, and a chapter opener with it', 
   // is still a section header, which is all anything here knows about it.
   assert.match(
     entries.get('EPUB/text/c0006.xhtml')!.text(),
-    /<h2[^>]*data-bf-cat="section-header">/,
+    /<h2[^>]*data-bf-cat="section-header"[^>]*>/,
   );
 
   // A copyright page carries no heading, so the nav needs a word for it, and

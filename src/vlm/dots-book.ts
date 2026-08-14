@@ -63,6 +63,12 @@
  * ("every footnote", "everything on page 3"), so they are a contract rather
  * than a debugging aid. The category is the MODEL's vocabulary and is never
  * re-derived from the tag that was chosen for it.
+ *
+ * AND `data-bf-id` NAMES THE ELEMENT, which the other two do not: a page holds
+ * many blocks and a category holds many more. It is what an editing pass
+ * addresses when a person says "cut this one" — see `stampId` for why every
+ * other id in a cast book is unfit for that, and why the number counts elements
+ * rather than blocks.
  */
 import { readFileSync } from 'node:fs';
 
@@ -905,12 +911,29 @@ const CATEGORY_ATTRIBUTE: Record<string, string> = {
  */
 const CHAPTER_ATTRIBUTE = 'chapter';
 
-/** `data-bf-page` and `data-bf-cat` — see this file's header. */
-function stamp(
-  block: DotsBlock,
-  attribute: string = CATEGORY_ATTRIBUTE[block.category],
-): string {
-  return ` data-bf-page="${block.page}" data-bf-cat="${attribute}"`;
+/**
+ * `data-bf-id` — a name for one element that nothing later can shift.
+ *
+ * EVERY OTHER ID IN A CAST BOOK RENUMBERS. `sh1` is a chapter-local running
+ * ordinal, `fn7` is book-wide, `c0003` is a chapter ordinal: remove one heading
+ * and every later heading, note and chapter file in the book is renamed. That is
+ * fine while nothing addresses them, and it is exactly wrong the moment a person
+ * can say "cut this block" and expect the instruction to still mean the same
+ * block after they cut another one.
+ *
+ * PER ELEMENT, NOT PER BLOCK, and that is the whole reason this is a counter
+ * rather than something derived. A list block writes `<ul>` AND `<li>`, a quote
+ * writes `<blockquote>` AND its `<p>`, and both elements are stamped — one id
+ * per block would put the same id on two elements, which is invalid XHTML and
+ * unaddressable besides. So the number counts elements written, and the
+ * container and its child get their own.
+ *
+ * `p<page>-<n>`. The page is in it because it is intrinsic to the block and
+ * makes an id readable in a log; the ordinal is within that page, so re-casting
+ * the same PDF produces the same ids and a person's cuts survive a re-read.
+ */
+function stampId(page: number, n: number): string {
+  return ` data-bf-id="p${page}-${n}"`;
 }
 
 /**
@@ -989,6 +1012,18 @@ export interface DotsChapterOptions {
   firstNote: number;
   /** Running picture number, for the same reason. */
   firstPicture: number;
+  /**
+   * How many stamped elements each page has already had written, MUTATED here
+   * as they are written. The one thing in these options that is not read-only.
+   *
+   * It cannot be a per-chapter count, and that is the whole reason it is passed
+   * in rather than started fresh: a chapter opens at a heading, a heading can
+   * sit halfway down a page, and so one page's blocks routinely land in two
+   * chapters. A count that restarted with each chapter would issue `p47-1`
+   * twice on such a page — two elements wearing one name, in the one attribute
+   * whose entire job is to be unique.
+   */
+  elementNumbers: Map<number, number>;
   /**
    * The headings that OPEN this section, indexed into `blocks` as it is passed
    * — this span's own numbering, not the book's.
@@ -1139,6 +1174,16 @@ export function buildChapterBody(
   const sized = (block: DotsBlock): string => {
     const em = opts.sizes?.get(block);
     return em === undefined ? '' : ` style="font-size:${em}"`;
+  };
+
+  /** `data-bf-page`, `data-bf-cat` and `data-bf-id` — see this file's header. */
+  const stamp = (
+    block: DotsBlock,
+    attribute: string = CATEGORY_ATTRIBUTE[block.category],
+  ): string => {
+    const n = opts.elementNumbers.get(block.page) ?? 1;
+    opts.elementNumbers.set(block.page, n + 1);
+    return ` data-bf-page="${block.page}" data-bf-cat="${attribute}"${stampId(block.page, n)}`;
   };
 
   /** The page marker owed to this block, if it opens a page. Consumed once. */
@@ -1746,6 +1791,11 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
   const crops: DotsCrop[] = [];
   const joinedPages: number[] = [];
   let notes = 1;
+  /**
+   * One counter for the whole book, because a page's blocks can land in two
+   * chapters — see `DotsChapterOptions.elementNumbers`.
+   */
+  const elementNumbers = new Map<number, number>();
 
   for (const [index, [from, to]] of spans.entries()) {
     const span = blocks.slice(from, to);
@@ -1757,6 +1807,7 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
       stripNoteMarkers: opts.stripNoteMarkers,
       firstNote: notes,
       firstPicture: crops.length,
+      elementNumbers,
       openers: openingHeadings(span, kind),
       ...(typography !== null ? { sizes: typography.sizes } : {}),
     });

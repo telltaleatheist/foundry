@@ -67,6 +67,7 @@ function chapterOptions(stripNoteMarkers = false) {
     stripNoteMarkers,
     firstNote: 1,
     firstPicture: 0,
+    elementNumbers: new Map<number, number>(),
     openers: new Set<number>(),
   };
 }
