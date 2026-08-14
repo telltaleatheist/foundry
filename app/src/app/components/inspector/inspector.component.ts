@@ -122,10 +122,15 @@ import { TabsService } from '../../core/tabs.service';
               <p class="hint">
                 @if (!current.selectMode) {
                   Turn on Select to colour the blocks and relabel them.
-                } @else if (selected(); as block) {
-                  {{ block.blockId }} is selected — click a row to relabel it.
+                } @else if (selected(); as picked) {
+                  @if (picked.blockIds.length === 1) {
+                    {{ picked.blockIds[0] }} is selected — click a row to relabel it.
+                  } @else {
+                    {{ picked.blockIds.length }} blocks are selected — click a row to relabel all of them.
+                  }
                 } @else {
-                  Click a block in the page to relabel it. These are the colours it draws in.
+                  Click a block in the page, or drag a rectangle over several, to relabel them.
+                  These are the colours they draw in.
                 }
               </p>
 

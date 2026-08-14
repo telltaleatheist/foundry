@@ -30,6 +30,7 @@ import type {
   PdfMetadataFields,
   ProjectSummary,
   RecentDocument,
+  RelabelledBlock,
   ServerStatus,
   SettingsView,
   SetupLogEvent,
@@ -49,8 +50,20 @@ import type {
  * The accelerators live on the MENU rather than on a renderer keydown handler:
  * a menu item with `CmdOrCtrl+S` on it and a `keydown` listener for the same
  * chord both fire, and the menu is the half a user can discover.
+ *
+ * `undo` and `redo` are the reason the Edit menu stopped being the platform's
+ * role menu: its Undo is the focused text field's and cannot reach a document
+ * history that lives in a service. The renderer decides which of the three
+ * undos a chord meant — a text box's, the rendered frame's, or the book's.
  */
-export type MenuAction = 'save' | 'save-as' | 'close-tab' | 'split-right' | 'toggle-documents';
+export type MenuAction =
+  | 'save'
+  | 'save-as'
+  | 'close-tab'
+  | 'split-right'
+  | 'toggle-documents'
+  | 'undo'
+  | 'redo';
 
 export interface FoundryApi {
   /** process.platform, for the one or two places the UI says "on Windows". */
@@ -234,8 +247,9 @@ export interface FoundryApi {
      */
     navEchoForBlock(id: string, href: string, blockId: string, was: string): Promise<NavEcho | null>;
     /**
-     * Select mode's cut mark: `data-bf-cut="1"` on the element named by
-     * `blockId`, in the chapter member `href`, in the working tree.
+     * Select mode's cut mark: `data-bf-cut="1"` on every element named in
+     * `blockIds`, in the chapter member `href`, in the working tree — in ONE
+     * read and ONE write.
      *
      * THE CUT LIVES HERE AND NOWHERE ELSE — not in a Set in a service, not in a
      * sidecar, not in the manifest. One store means the mark survives the
@@ -243,21 +257,21 @@ export interface FoundryApi {
      * `foundry epub-final` read the same fact, and there is no identity problem
      * because the mark is ON the element.
      *
-     * Rejects by name when nothing in that member carries the id, or when more
-     * than one element does. Bumps no revision: the frame painted it already.
-     */
-    setCut(id: string, href: string, blockId: string, cut: boolean): Promise<void>;
-    /**
-     * The same mark on a whole list of blocks — select-all-by-category — in ONE
-     * read and ONE write of the chapter.
+     * THE ONLY CUT DOOR THERE IS, and one block goes through it as a list of
+     * one. Every id is located before a byte moves, so a batch lands whole or
+     * refuses whole: a hundred separate calls could fail in the middle and
+     * leave a chapter half struck with a count on screen describing neither
+     * half. Rejects by name when nothing in that member carries an id, or when
+     * more than one element does. Bumps no revision: the frame painted it
+     * already.
      *
-     * Every id is located before a byte moves, so the batch lands whole or
-     * refuses whole: a hundred separate calls could fail in the middle and leave
-     * a chapter half struck with a count on screen describing neither half.
-     * Resolves with how many tags actually changed, which is not always how many
-     * were named — a block already carrying the mark is not a change.
+     * RESOLVES WITH THE IDS THAT ACTUALLY MOVED, which is not always the ids
+     * that were named — a block already carrying the mark is not a change. The
+     * count is what the app says out loud; the list is what its undo ledger
+     * records, because main is the only side that read the file and so the only
+     * side that can say which blocks were standing beforehand.
      */
-    setCuts(id: string, href: string, blockIds: string[], cut: boolean): Promise<number>;
+    setCuts(id: string, href: string, blockIds: string[], cut: boolean): Promise<string[]>;
     /**
      * The same cut mark on a FOOTNOTE, addressed by its own id (`fn25`) rather
      * than by `data-bf-id` — that is the name its reference used, and the only
@@ -266,10 +280,15 @@ export interface FoundryApi {
      * A cut and not a deletion: the `<aside>` is drawn struck through, Delete on
      * it brings it back, and it leaves the book only when `epub-final` builds
      * the edition. A footnote is evidence.
+     *
+     * False means the note already said this, so nothing was written and the
+     * undo ledger records no row — an entry promising to bring back a footnote
+     * that was struck before this ran would undo somebody else's decision.
      */
-    setNoteCut(id: string, href: string, noteId: string, cut: boolean): Promise<void>;
+    setNoteCut(id: string, href: string, noteId: string, cut: boolean): Promise<boolean>;
     /**
-     * Relabel one block: a different `data-bf-cat`, the same shape.
+     * Relabel the whole selection: a different `data-bf-cat`, the same shape,
+     * in ONE read and ONE write.
      *
      * A paragraph relabelled `footnote` STAYS A `<p>` in the prose — it does not
      * become an `<aside>` and it does not move into the footnotes section. That
@@ -277,9 +296,21 @@ export interface FoundryApi {
      * the label does is tell the engine and the translator what the block is.
      *
      * Rejects by name for a category the emitter never writes, for an id that is
-     * absent or duplicated, and for a block carrying no `data-bf-cat` at all.
+     * absent or duplicated, and for a block carrying no `data-bf-cat` at all —
+     * and rejects before anything is written, so a selection of thirty is
+     * relabelled whole or not at all.
+     *
+     * Resolves with the blocks that moved AND THE LABEL EACH ONE CARRIED, which
+     * is what the undo ledger needs: thirty blocks relabelled in one gesture
+     * were not all the same thing beforehand, and each has to go back to its
+     * own.
      */
-    setCategory(id: string, href: string, blockId: string, category: string): Promise<void>;
+    setCategories(
+      id: string,
+      href: string,
+      blockIds: string[],
+      category: string,
+    ): Promise<RelabelledBlock[]>;
     /**
      * The words of one block, edited in place. `html` is the block's new inner
      * markup as the frame serialized it.

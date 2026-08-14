@@ -17,6 +17,16 @@
  * places, is a named defect of the picker this replaces.) Key events are the
  * same story from the other end: a Delete pressed inside a sandboxed frame is
  * never delivered to the parent window, so the key handler has to be here too.
+ * THE MARQUEE is the sharpest case of all: a drag rectangle hit-tested against
+ * three hundred paragraphs is nothing but coordinates, and every one of them is
+ * behind that origin.
+ *
+ * THE SELECTION IS A SET. Click one block, shift or ctrl/cmd-click to extend,
+ * or drag a rectangle over empty space and take everything it touches. Delete
+ * strikes the whole set and the inspector relabels the whole set, each as ONE
+ * batch with one read and one write behind it — so thirty cuts made in one
+ * gesture are ONE action in the parent's undo ledger rather than thirty, and
+ * one Ctrl+Z reverses all thirty.
  *
  * WHAT THE FRAME DOES NOT OWN IS THE TRUTH. A cut is `data-bf-cut="1"` on the
  * element in the working copy and nowhere else — not a Set in a service, not a
@@ -130,18 +140,75 @@ const SELECT_CSS = [
   `[data-bf-cat]{--bf-ink:${categoryRgb(UNKNOWN_CATEGORY_COLOUR)};`
   + 'outline:1px dashed rgba(var(--bf-ink),.75);outline-offset:2px;cursor:pointer}',
   ...BLOCK_CATEGORIES.map((one) => `[data-bf-cat="${one.id}"]{--bf-ink:${categoryRgb(one.colour)}}`),
+  /*
+   * `background-color` AND NEVER THE `background` SHORTHAND, in this rule and
+   * in the two below it. The shorthand resets every background property it does
+   * not mention, and `[data-bf-cut]` draws its X as a pair of `background-image`
+   * gradients — so a tint written as `background` on a rule with more
+   * specificity (and hover, selection and editing all have more) silently
+   * erased the cross out of a struck block the moment the pointer touched it.
+   * Naming the one property leaves the X standing under the tint, which is what
+   * a block that is both struck and selected has to look like.
+   */
   '[data-bf-cat]:hover{outline-style:solid;outline-width:2px;'
-  + 'outline-color:rgb(var(--bf-ink));background:rgba(var(--bf-ink),.10)}',
+  + 'outline-color:rgb(var(--bf-ink));background-color:rgba(var(--bf-ink),.10)}',
   /*
    * SELECTION BEATS HOVER, which needs the doubled attribute to say: `:hover`
    * is specificity 0-2-0 and a bare `[data-bf-sel]` is 0-1-0, so the pointer
-   * resting on the selected block would otherwise repaint it as merely hovered
-   * and the one block the keyboard acts on would stop looking different from
-   * the ten around it. The orange is deliberately NOT in the category table —
-   * selection is a state, not a kind, and it must not be mistaken for one.
+   * resting on a selected block would otherwise repaint it as merely hovered
+   * and the blocks the keyboard acts on would stop looking different from the
+   * ten around them.
+   *
+   * THE COLOUR IS BOOKFORGE'S, TO THE BYTE, because Owen asked for the one he
+   * already knows: `#06b6d4` is that app's `--accent` (cyan-500), and the fill
+   * is its own `rgba(6, 182, 212, 0.18)` — both read out of
+   * `src/app/features/pdf-picker/components/epub-viewer/quire-frame-scripts.ts`,
+   * where the same job is done in the same place, an injected stylesheet over a
+   * rendered book. It is deliberately NOT in the category table: selection is a
+   * STATE, not a kind, and a curator must never read it as one more label.
+   *
+   * AND IT IS FILLED, not merely outlined — 18% of one colour, which is the
+   * whole of what "fill it in a little bit when its highlighted" can mean for a
+   * book. Anything heavier and the words underneath stop being words; an
+   * outline alone leaves a marquee's worth of selection reading as a grid of
+   * empty boxes rather than as thirty blocks that are about to be struck.
+   *
+   * SINGLE AND MULTIPLE LOOK THE SAME, which is also BookForge's answer: there
+   * is one `.bf-selected` there and there is one rule here. A second colour for
+   * "one of many" would be a distinction the user cannot act on — every gesture
+   * in this mode applies to the whole set.
    */
-  '[data-bf-cat][data-bf-sel]{outline:2px solid #c86923;outline-offset:2px;'
-  + 'background:rgba(200,105,35,.10)}',
+  '[data-bf-cat][data-bf-sel]{outline:2px solid #06b6d4;outline-offset:2px;'
+  + 'background-color:rgba(6,182,212,.18)}',
+  /*
+   * THE MARQUEE, drawn in the document's own coordinates.
+   *
+   * `pointer-events:none` so the rectangle the user is dragging can never
+   * become the thing under the pointer, and a z-index at the top of the stack
+   * because a book is free to raise its own figures. Its colours are
+   * BookForge's marquee again — `--accent-subtle`, `rgba(6,182,212,0.12)`, over
+   * a 2px `#06b6d4` border — so the box and what it catches are visibly one
+   * gesture.
+   */
+  '[data-bf-marquee]{position:absolute;z-index:2147483647;pointer-events:none;'
+  + 'background:rgba(6,182,212,.12);border:2px solid #06b6d4;box-sizing:border-box}',
+  /*
+   * NATIVE TEXT SELECTION IS OFF WHILE THE MODE IS ON, and that is what stops
+   * the marquee fighting the browser. A drag across a page is otherwise TWO
+   * gestures at once: ours, and Chromium's own sweep of blue over the prose —
+   * which also drags the caret through the book and leaves the page looking
+   * broken after the rectangle has gone. `preventDefault` on mousedown handles
+   * the drag that starts on empty space; this handles the one that starts
+   * inside a paragraph, where the press is a click and preventing it would
+   * break the click.
+   *
+   * A BLOCK BEING EDITED IS EXEMPT, and has to be: `contenteditable` without a
+   * selection is a box you cannot put a caret in. 0-1-0 beats `body`'s 0-0-1,
+   * so the exemption wins wherever it applies without an `!important` anywhere
+   * near somebody's book.
+   */
+  'body,[data-bf-cat]{-webkit-user-select:none;user-select:none}',
+  '[data-bf-edit]{-webkit-user-select:text;user-select:text}',
   '[data-bf-cut]{opacity:.42;text-decoration:line-through;'
   + 'background-image:'
   + 'linear-gradient(to top right,transparent 49.5%,rgba(178,54,38,.8) 49.5%,'
@@ -152,7 +219,7 @@ const SELECT_CSS = [
   // block being typed into is also selected and also under the pointer, and it
   // has to keep saying "your caret is here" over both of them.
   '[data-bf-cat][data-bf-edit]{outline:2px solid #2f7d4f;outline-offset:2px;'
-  + 'background:rgba(47,125,79,.09);cursor:text}',
+  + 'background-color:rgba(47,125,79,.09);cursor:text}',
 ].join('\n');
 
 export const REPORTER_SOURCE = `(function () {
@@ -200,9 +267,45 @@ export const REPORTER_SOURCE = `(function () {
   // document is XML, and looking an element up by id in one is a question with
   // more history than it is worth when the node is right here.
   var sheet = null;
-  var selected = null;
+  /*
+   * THE SELECTION IS A SET — an array of elements, in the order they joined it.
+   *
+   * It was one element until the marquee existed, and every gesture in this
+   * file now reads this list instead: Delete strikes all of them, the
+   * inspector's relabel relabels all of them, and both leave as ONE batch with
+   * one write behind it. An array rather than a Set object because this script
+   * is written in the dialect a book's own document can parse without
+   * surprises, and because order is worth keeping — the block that was clicked
+   * first is the one an editing gesture means.
+   */
+  var picked = [];
   var editing = null;
   var editedFrom = '';
+  /*
+   * The marquee in flight: where it started, in DOCUMENT coordinates, and every
+   * block's box measured ONCE at that moment.
+   *
+   * PAGE COORDINATES AND NOT VIEWPORT ONES, so a wheel scroll in the middle of a
+   * drag does not shear the rectangle away from what it is over. And measured
+   * once, because getBoundingClientRect on three hundred blocks is three
+   * hundred forced layouts, and a mousemove handler that does that sixty times a
+   * second is a drag that stutters — nothing in the document moves while a
+   * rectangle is being dragged over it, so the measurement cannot go stale.
+   */
+  var marquee = null;
+  var box = null;
+  /*
+   * A finished marquee eats the click that follows it.
+   *
+   * A mouseup on empty space is followed by a click on whatever ancestor both
+   * ends share, and select mode's click handler reads a click outside every
+   * block as "put the selection down" — so without this, every marquee would
+   * select thirty blocks and then immediately deselect them. BookForge guards
+   * the same collision with a 100 ms timestamp; a flag is the same idea without
+   * a clock in it, and it is cleared on the next mousedown so a click that never
+   * arrives cannot eat a later one.
+   */
+  var dropClick = false;
 
   function post(message) { window.parent.postMessage(message, '*'); }
 
@@ -226,24 +329,266 @@ export const REPORTER_SOURCE = `(function () {
     sheet = null;
   }
 
-  // The selection is the one piece of state the frame owns, because it is the
-  // only one that is not a fact about the book: it dies with the frame and
-  // nothing on disk records it.
-  function select(element) {
-    if (selected === element) return;
-    if (selected) selected.removeAttribute(SEL);
-    selected = element;
-    if (selected) selected.setAttribute(SEL, '1');
-    // THE CATEGORY RIDES ALONG, because the inspector is a pane away in the
-    // shell and has no way to read this document. Without it the Category
-    // section could offer to relabel a block but could not show which label the
-    // block already carries, which is the one thing a person needs to see
-    // before they change it.
-    post({
-      type: 'foundry:block-selected',
-      id: selected ? selected.getAttribute(ID) : null,
-      cat: selected ? selected.getAttribute(CAT) : null,
-    });
+  /**
+   * Make this list the selection — paint it, and say so.
+   *
+   * The selection is the one piece of state the frame owns, because it is the
+   * only one that is not a fact about the book: it dies with the frame, nothing
+   * on disk records it, and — unlike everything else in this mode — it is NOT
+   * in the parent's undo ledger. BookForge put its selection in its history and
+   * has to special-case it in three places for the privilege.
+   *
+   * A NO-OP IS SILENT, and that is what makes the live marquee affordable: the
+   * rectangle is redrawn on every mousemove, but the set it catches changes
+   * only when it crosses a block's edge, so the message below is posted a
+   * handful of times per drag rather than sixty times a second.
+   */
+  function applySelection(next) {
+    if (sameSelection(picked, next)) return;
+    for (var i = 0; i < picked.length; i += 1) {
+      if (next.indexOf(picked[i]) < 0) picked[i].removeAttribute(SEL);
+    }
+    for (var j = 0; j < next.length; j += 1) next[j].setAttribute(SEL, '1');
+    picked = next;
+    announce();
+  }
+
+  function sameSelection(a, b) {
+    if (a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  /**
+   * What is selected, on its way to the inspector.
+   *
+   * THE CATEGORY RIDES ALONG, because the inspector is a pane away in the shell
+   * and has no way to read this document. Without it the Category section could
+   * offer to relabel the selection but could not show which label it already
+   * carries — the one thing a person needs to see before they change it. With
+   * more than one block selected it is the category they SHARE, and null the
+   * moment two of them disagree: a marked row over a mixed selection would be
+   * the panel asserting something about blocks it is wrong about.
+   *
+   * A BLOCK WITH NO data-bf-id IS PAINTED BUT NOT NAMED. It is selectable —
+   * refusing to outline it would leave a curator clicking a paragraph that
+   * never lights up, with nothing on screen saying why — and every gesture that
+   * would WRITE it refuses by name (see named). A stamped book, which is what
+   * turning the mode on guarantees, has none of these.
+   */
+  function announce() {
+    var ids = [];
+    var cat = null;
+    var mixed = false;
+    for (var i = 0; i < picked.length; i += 1) {
+      var id = picked[i].getAttribute(ID);
+      if (id) ids.push(id);
+      var mine = picked[i].getAttribute(CAT);
+      if (i === 0) cat = mine;
+      else if (mine !== cat) mixed = true;
+    }
+    post({ type: 'foundry:block-selected', ids: ids, cat: mixed ? null : cat });
+  }
+
+  /**
+   * A click on a block, with or without a modifier held.
+   *
+   * SHIFT OR CTRL/CMD EXTENDS, a plain click REPLACES — the rule every list in
+   * every application has, and the one Owen is already using in BookForge's
+   * picker. Extending TOGGLES, so the same modified click takes a block back out
+   * of the selection; there is otherwise no way to correct a marquee that caught
+   * one paragraph too many except starting the whole drag again.
+   *
+   * A plain click on the block that is ALREADY the whole selection puts it down.
+   * That is the gesture that makes a selection feel like a toggle rather than a
+   * trap, and it is kept from before the selection was a set — but only for a
+   * selection of one, because clicking one block out of thirty means "just this
+   * one now", not "none of them".
+   */
+  function clickSelect(target, extend) {
+    var at = picked.indexOf(target);
+    if (extend) {
+      var next = picked.slice();
+      if (at >= 0) next.splice(at, 1);
+      else next.push(target);
+      applySelection(next);
+      return;
+    }
+    applySelection(picked.length === 1 && at === 0 ? [] : [target]);
+  }
+
+  // ── The marquee ────────────────────────────────────────────────────────────
+  //
+  // Drag a rectangle over empty space and everything it touches is selected. It
+  // is the gesture the whole of multi-select exists for: striking the four
+  // flyleaf stamps at the top of a scan is one sweep rather than four clicks and
+  // four writes.
+  //
+  // IT CANNOT START ON A BLOCK — a press inside a paragraph is a click, and a
+  // marquee that began there would make every click a zero-sized drag with a
+  // suppression rule to unpick afterwards. BookForge's block marquee does start
+  // on blocks and pays for it with a 5-pixel threshold AND a 100 ms clock to eat
+  // the click that follows; starting only on the gaps costs a closest() and
+  // removes both.
+
+  /** As far as the pointer may move before a press stops being a click. */
+  var MARQUEE_SLOP = 4;
+
+  function scrollLeft() {
+    return window.pageXOffset || document.documentElement.scrollLeft || 0;
+  }
+
+  function scrollTop() {
+    return window.pageYOffset || document.documentElement.scrollTop || 0;
+  }
+
+  /**
+   * Every block's box, in document coordinates, as it stands right now.
+   *
+   * Zero-sized boxes are dropped: a block inside display:none front matter has
+   * no area, and a rectangle dragged anywhere on the page would "intersect" a
+   * point at the origin.
+   */
+  function measureBlocks() {
+    var all = document.querySelectorAll('[' + CAT + ']');
+    var ox = scrollLeft();
+    var oy = scrollTop();
+    var out = [];
+    for (var i = 0; i < all.length; i += 1) {
+      var r = all[i].getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) continue;
+      out.push({
+        el: all[i],
+        left: r.left + ox,
+        top: r.top + oy,
+        right: r.right + ox,
+        bottom: r.bottom + oy,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * The feedback rectangle, and the one measurement that makes it land where the
+   * pointer is.
+   *
+   * position:absolute resolves against the nearest POSITIONED ancestor, and a
+   * book whose own stylesheet says body{position:relative} — or which sets a
+   * transform on it — would otherwise draw the box a page margin away from the
+   * hand dragging it. So the element's own origin is MEASURED once, by asking
+   * where it lands at 0,0, rather than assumed to be the document's.
+   */
+  function openBox() {
+    if (!box) {
+      box = document.createElement('div');
+      box.setAttribute('data-bf-marquee', '1');
+      (document.body || document.documentElement).appendChild(box);
+    }
+    box.style.left = '0px';
+    box.style.top = '0px';
+    box.style.width = '0px';
+    box.style.height = '0px';
+    var origin = box.getBoundingClientRect();
+    marquee.originX = origin.left + scrollLeft();
+    marquee.originY = origin.top + scrollTop();
+  }
+
+  function closeBox() {
+    if (box && box.parentNode) box.parentNode.removeChild(box);
+    box = null;
+  }
+
+  function marqueeDown(event) {
+    if (!mode || editing) return;
+    // Left button only. A right-click is the context menu's and a middle click
+    // is the platform's scroll gesture; hijacking either would be this script
+    // taking something the browser already owns.
+    if (event.button !== 0) return;
+    dropClick = false;
+    var start = event.target instanceof Element ? event.target : null;
+    if (!start) return;
+    if (start.closest('[' + CAT + ']')) return;
+    var x = event.clientX + scrollLeft();
+    var y = event.clientY + scrollTop();
+    marquee = {
+      x: x,
+      y: y,
+      moved: false,
+      originX: 0,
+      originY: 0,
+      // What the selection was when the drag began. A modified drag ADDS to it;
+      // an unmodified one replaces it — and either way the base has to be
+      // remembered, because the live repaint recomputes the whole set on every
+      // move rather than accumulating one.
+      base: (event.shiftKey || event.ctrlKey || event.metaKey) ? picked.slice() : [],
+      boxes: measureBlocks(),
+    };
+    openBox();
+    // This is what stops Chromium starting its own text sweep under ours. The
+    // stylesheet's user-select:none covers a drag that begins inside a
+    // paragraph, where preventing the default would break the click.
+    event.preventDefault();
+  }
+
+  function marqueeMove(event) {
+    if (!marquee) return;
+    /*
+     * THE BUTTON CAME BACK UP SOMEWHERE THIS FRAME CANNOT HEAR.
+     *
+     * The book fills its pane, so a drag that ends over the toolbar, the
+     * inspector or another column releases outside this document and the
+     * mouseup is delivered to the shell instead. Without this the rectangle
+     * would stay stuck to the pointer, still selecting, until the next click.
+     * event.buttons is the live state rather than the event's own button, so the
+     * first move back inside finishes the drag that already ended.
+     */
+    if (event.buttons === 0) { marqueeUp(); return; }
+    var x = event.clientX + scrollLeft();
+    var y = event.clientY + scrollTop();
+    var left = Math.min(marquee.x, x);
+    var top = Math.min(marquee.y, y);
+    var width = Math.abs(x - marquee.x);
+    var height = Math.abs(y - marquee.y);
+    if (!marquee.moved && (width > MARQUEE_SLOP || height > MARQUEE_SLOP)) marquee.moved = true;
+    if (!marquee.moved) return;
+    if (box) {
+      box.style.left = (left - marquee.originX) + 'px';
+      box.style.top = (top - marquee.originY) + 'px';
+      box.style.width = width + 'px';
+      box.style.height = height + 'px';
+    }
+    applySelection(caught(left, top, left + width, top + height, marquee.base, marquee.boxes));
+  }
+
+  /**
+   * Which blocks a rectangle has caught.
+   *
+   * ANY OVERLAP, never containment, and the difference is the whole usability of
+   * the gesture: a paragraph is routinely taller than the drag somebody makes
+   * over it, so a containment test would mean sweeping a column of prose and
+   * catching nothing. It is the test BookForge's picker uses too — two boxes
+   * overlap when they overlap on BOTH axes — with strict comparisons, so a
+   * rectangle that merely touches an edge does not count.
+   */
+  function caught(left, top, right, bottom, base, boxes) {
+    var next = base.slice();
+    for (var i = 0; i < boxes.length; i += 1) {
+      var b = boxes[i];
+      if (b.left >= right || b.right <= left) continue;
+      if (b.top >= bottom || b.bottom <= top) continue;
+      if (next.indexOf(b.el) < 0) next.push(b.el);
+    }
+    return next;
+  }
+
+  function marqueeUp() {
+    if (!marquee) return;
+    var moved = marquee.moved;
+    marquee = null;
+    closeBox();
+    // Only a real drag eats the click. A press and release that never moved IS a
+    // click on empty space, and clearing the selection is exactly what it means.
+    if (moved) dropClick = true;
   }
 
   /**
@@ -273,7 +618,11 @@ export const REPORTER_SOURCE = `(function () {
   }
 
   /**
-   * Give the selected block a different category.
+   * Give EVERY selected block a different category.
+   *
+   * THE WHOLE SELECTION, because that is what a selection is for: thirty
+   * paragraphs the model called body text and a curator can see are footnotes
+   * are one marquee and one click on a row, not thirty of each.
    *
    * IT CHANGES THE LABEL AND NOT THE SHAPE. A paragraph relabelled "footnote"
    * is still a <p> in the prose, in the place the page printed it; it does not
@@ -281,25 +630,32 @@ export const REPORTER_SOURCE = `(function () {
    * re-shaping is foundry epub-final's job and is not in this app at all —
    * somebody reading this function will otherwise assume the two go together.
    *
+   * NAMED FIRST, WRITTEN SECOND, like every batch in this file: one block
+   * without a data-bf-id refuses the whole gesture rather than relabelling
+   * the others and reporting a number that describes neither half.
+   *
    * The colour repaints itself: the stylesheet keys off the attribute, so
    * setting it here IS the paint, and there is no second list to reconcile.
    */
   function relabel(category) {
-    var element = selected;
-    if (!element) {
-      refuse('Nothing is selected, so there is no block to relabel. Click one first.');
+    if (picked.length === 0) {
+      refuse('Nothing is selected, so there is no block to relabel. Click one first, or drag a '
+        + 'rectangle over several.');
       return;
     }
-    var id = named(element);
-    if (id === null) return;
-    if (element.getAttribute(CAT) === category) return;
-    if (editing === element) commitEdit();
-    element.setAttribute(CAT, category);
-    post({ type: 'foundry:block-relabelled', id: id, cat: category });
+    var ids = [];
+    for (var i = 0; i < picked.length; i += 1) {
+      var id = named(picked[i]);
+      if (id === null) return;
+      ids.push(id);
+    }
+    if (editing) commitEdit();
+    for (var j = 0; j < picked.length; j += 1) picked[j].setAttribute(CAT, category);
+    post({ type: 'foundry:blocks-relabelled', ids: ids, cat: category });
     // The selection has not moved but what it IS has, and the inspector marks
-    // the row the selected block already carries. Without this it would go on
-    // pointing at the category the block was before the click.
-    post({ type: 'foundry:block-selected', id: id, cat: category });
+    // the row the selection already carries. Without this it would go on
+    // pointing at the category those blocks were before the click.
+    announce();
     countCategories();
   }
 
@@ -345,7 +701,40 @@ export const REPORTER_SOURCE = `(function () {
       if (cut) mine[k].setAttribute(CUT, '1');
       else mine[k].removeAttribute(CUT);
     }
-    post({ type: 'foundry:category-cut', cat: category, ids: ids, cut: cut });
+    // THE SAME MESSAGE A SELECTION'S DELETE SENDS, carrying the category only so
+    // the parent can name it in the notice. One message means one write door
+    // and one undo entry shape for every strike this mode can make.
+    post({ type: 'foundry:blocks-cut', ids: ids, cut: cut, cat: category });
+    countCategories();
+  }
+
+  /**
+   * Strike — or bring back — everything that is selected.
+   *
+   * IT TOGGLES ON WHAT IS THERE, the same rule select-all-by-category follows:
+   * if anything in the selection is still standing the whole set is struck, and
+   * only when every one of them is already struck does the gesture bring them
+   * back. Delete on a mixed selection that un-struck half of it and struck the
+   * other half would be a keypress nobody could predict.
+   */
+  function cutSelection() {
+    if (picked.length === 0) return;
+    var ids = [];
+    for (var i = 0; i < picked.length; i += 1) {
+      var id = named(picked[i]);
+      if (id === null) return;
+      ids.push(id);
+    }
+    var cut = false;
+    for (var j = 0; j < picked.length; j += 1) {
+      if (!picked[j].hasAttribute(CUT)) { cut = true; break; }
+    }
+    if (editing) commitEdit();
+    for (var k = 0; k < picked.length; k += 1) {
+      if (cut) picked[k].setAttribute(CUT, '1');
+      else picked[k].removeAttribute(CUT);
+    }
+    post({ type: 'foundry:blocks-cut', ids: ids, cut: cut, cat: null });
     countCategories();
   }
 
@@ -357,24 +746,15 @@ export const REPORTER_SOURCE = `(function () {
     return null;
   }
 
-  /**
-   * Mark or unmark, IN THE FRAME FIRST.
-   *
-   * The write is posted behind the paint on purpose: at a cut a second the user
-   * is holding Delete down a row of blocks, and a mode that waited for a disk
-   * round trip before each one would feel broken. If main refuses, the parent
-   * reloads this frame and the file repaints the truth over the guess.
+  /*
+   * EVERY MARK IN THIS MODE IS PAINTED IN THE FRAME FIRST and the write is
+   * posted behind it, which is the whole feel of select mode: at a cut a second
+   * the user is holding Delete down a row of blocks, and a mode that waited for
+   * a disk round trip before each one would feel broken. If main refuses, the
+   * parent reloads this frame and the file repaints the truth over the guess —
+   * which works because the cut lives in the document rather than in anything
+   * this script remembers.
    */
-  function toggleCut(element) {
-    var id = named(element);
-    if (id === null) return;
-    if (editing === element) commitEdit();
-    var cut = !element.hasAttribute(CUT);
-    if (cut) element.setAttribute(CUT, '1');
-    else element.removeAttribute(CUT);
-    post({ type: 'foundry:block-cut', id: id, cut: cut });
-    countCategories();
-  }
 
   /**
    * Make a block's words editable in place.
@@ -414,8 +794,15 @@ export const REPORTER_SOURCE = `(function () {
       return;
     }
     if (named(element) === null) return;
-    select(element);
+    // An edit is about ONE block, so it narrows the selection to that block —
+    // otherwise the next Delete would strike the thirty a marquee had caught
+    // while the caret sat in one of them.
+    applySelection([element]);
     editing = element;
+    // The parent needs to know a caret is in the page: Ctrl+Z means "undo my
+    // typing" while this is true and "undo the last thing I did to the book"
+    // the rest of the time, and there is no way to tell from out there.
+    post({ type: 'foundry:block-editing', on: true });
     editedFrom = element.innerHTML;
     element.setAttribute('contenteditable', 'true');
     element.setAttribute(EDIT, '1');
@@ -432,6 +819,7 @@ export const REPORTER_SOURCE = `(function () {
   function endEdit(element) {
     element.removeAttribute('contenteditable');
     element.removeAttribute(EDIT);
+    post({ type: 'foundry:block-editing', on: false });
   }
 
   /**
@@ -497,7 +885,11 @@ export const REPORTER_SOURCE = `(function () {
     mode = on;
     if (on) { addStyles(); countCategories(); return; }
     commitEdit();
-    select(null);
+    applySelection([]);
+    // A drag in flight when the mode is switched off would leave its rectangle
+    // on the page with nothing left to listen for the mouseup that removes it.
+    marquee = null;
+    closeBox();
     removeStyles();
   }
 
@@ -530,6 +922,44 @@ export const REPORTER_SOURCE = `(function () {
       if (typeof data.noteId === 'string') markNote(data.noteId, data.cut === true);
       return;
     }
+    /*
+     * AN UNDO REPAINTING ITSELF.
+     *
+     * The parent's ledger replays the ORIGINAL setter with the old value, so
+     * what lands on disk is one attribute on one start tag — exactly what a cut
+     * or a relabel writes. The page therefore repaints the way a cut does: the
+     * attribute is flipped here and the CSS follows it, with no reload and no
+     * reader thrown back to the top of the chapter. (A word edit is the
+     * exception and does reload, because there is no attribute that would put
+     * the sentence back.)
+     *
+     * A ROW FOR A CHAPTER THIS FRAME IS NOT SHOWING IS SILENTLY SKIPPED, and
+     * that is right rather than lax: the write landed in the file either way,
+     * and when the user navigates there the document repaints from the truth.
+     */
+    if (data.type === 'foundry:mark-blocks') {
+      if (Array.isArray(data.ids)) markBlocks(data.ids, data.cut === true);
+      return;
+    }
+    if (data.type === 'foundry:mark-labels') {
+      if (Array.isArray(data.ids) && typeof data.cat === 'string') {
+        markLabels(data.ids, data.cat);
+      }
+      return;
+    }
+    /*
+     * CTRL+Z WHILE A CARET IS IN THE PAGE MEANS THE TYPING, not the book.
+     *
+     * The chord is a menu accelerator, so main swallows the keypress and the
+     * frame never sees it — the parent has to hand it back. It only ever sends
+     * this while the frame has told it a block is being edited, and what it
+     * asks for is the browser's own undo of a contenteditable, which is the
+     * only thing in this frame that has a text history at all.
+     */
+    if (data.type === 'foundry:undo-typing') {
+      if (editing) document.execCommand(data.redo === true ? 'redo' : 'undo');
+      return;
+    }
     if (data.type === 'foundry:recount') countCategories();
   });
 
@@ -548,6 +978,44 @@ export const REPORTER_SOURCE = `(function () {
    * came out of an href foundry itself wrote, so it needs escaping only against
    * quotes, and a note whose id carries one is not a book this app produced.
    */
+  /**
+   * The element carrying one data-bf-id, or null.
+   *
+   * An ATTRIBUTE SELECTOR for the reason markNote uses one: these documents are
+   * XHTML, where "which attribute is the id" has more history than it is worth,
+   * and data-bf-id is not the XML id anyway. The value is checked for quoting
+   * before it is put in a selector — it arrives from the parent, which got it
+   * from this frame, but a name that could close the selector is not a name
+   * foundry ever wrote.
+   */
+  function byBlockId(blockId) {
+    if (typeof blockId !== 'string') return null;
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/.test(blockId)) return null;
+    return document.querySelector('[' + ID + '="' + blockId + '"]');
+  }
+
+  function markBlocks(ids, cut) {
+    for (var i = 0; i < ids.length; i += 1) {
+      var element = byBlockId(ids[i]);
+      if (!element) continue;
+      if (cut) element.setAttribute(CUT, '1');
+      else element.removeAttribute(CUT);
+    }
+    countCategories();
+  }
+
+  function markLabels(ids, category) {
+    if (!/^[a-z][a-z0-9-]{0,39}$/.test(category)) return;
+    for (var i = 0; i < ids.length; i += 1) {
+      var element = byBlockId(ids[i]);
+      if (element) element.setAttribute(CAT, category);
+    }
+    // The selection has not moved but what it IS may have, and the inspector
+    // marks the row the selection carries.
+    announce();
+    countCategories();
+  }
+
   function markNote(noteId, cut) {
     if (noteId.indexOf('"') >= 0 || noteId.indexOf('\\\\') >= 0) return;
     var note = document.querySelector('[id="' + noteId + '"]');
@@ -557,18 +1025,27 @@ export const REPORTER_SOURCE = `(function () {
     countCategories();
   }
 
+  // The marquee's three, on the DOCUMENT rather than on any element: the drag
+  // has to keep tracking after the pointer has left whatever it started over,
+  // and a book's own markup is not a place to hang a listener.
+  document.addEventListener('mousedown', marqueeDown, true);
+  document.addEventListener('mousemove', marqueeMove, true);
+  document.addEventListener('mouseup', marqueeUp, true);
+
   document.addEventListener('click', function (event) {
     if (!mode) return;
+    // The click that follows a real marquee drag. Eaten here and nowhere else,
+    // because the reporter's own click-to-source listener below is allowed to
+    // see it — a drag over a paragraph is still a place in the source.
+    if (dropClick) { dropClick = false; return; }
     var start = event.target instanceof Element ? event.target : null;
     if (!start) return;
     // A click INSIDE the block being edited is a caret being placed. Anything
     // else here would fight the thing the user is doing.
     if (editing && editing.contains(start)) return;
     var target = start.closest('[' + CAT + ']');
-    if (!target) { select(null); return; }
-    // Pressing the selected block again puts it down — the gesture that makes
-    // a selection feel like a toggle rather than a trap.
-    select(selected === target ? null : target);
+    if (!target) { applySelection([]); return; }
+    clickSelect(target, event.shiftKey || event.ctrlKey || event.metaKey);
     // NO preventDefault and NO stopPropagation, deliberately: the reporter's
     // original listener is registered first and still has to see every click,
     // because click-to-source keeps working while the mode is on.
@@ -595,16 +1072,25 @@ export const REPORTER_SOURCE = `(function () {
       else if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); commitEdit(); }
       return;
     }
-    if (!selected) return;
+    if (picked.length === 0) return;
     if (event.key === 'Delete' || event.key === 'Backspace') {
       event.preventDefault();
-      toggleCut(selected);
+      cutSelection();
     } else if (event.key === 'Enter') {
       event.preventDefault();
-      beginEdit(selected, true);
+      // EDITING IS A ONE-BLOCK GESTURE and says so rather than picking one of
+      // thirty. A contenteditable can only hold one caret, and guessing which
+      // of a marquee's blocks was meant is exactly the kind of quiet choice
+      // this app does not make (ARCHITECTURE section 8).
+      if (picked.length > 1) {
+        refuse(picked.length + ' blocks are selected, and words are edited one block at a time. '
+          + 'Click the one you mean, then press Enter.');
+        return;
+      }
+      beginEdit(picked[0], true);
     } else if (event.key === 'Escape') {
       event.preventDefault();
-      select(null);
+      applySelection([]);
     }
   }, true);
 

@@ -215,16 +215,27 @@ export interface SourceJump {
 }
 
 /**
- * The block one frame says is selected.
+ * The blocks one frame says are selected.
  *
- * IT IS NOT A FACT ABOUT THE BOOK. A selection lives in the frame's DOM and dies
- * with the frame; nothing on disk records it, and a reload starts with nothing
- * selected. It is held here only because the inspector — which is in the shell,
- * not in the pane — has no other way to learn what the user clicked.
+ * A SET, since the marquee: a drag over empty space takes everything it
+ * touches, shift and ctrl/cmd extend a click, and every gesture in the mode —
+ * Delete, the inspector's relabel — acts on all of them as one batch.
+ *
+ * IT IS NOT A FACT ABOUT THE BOOK, and it is NOT IN THE UNDO STACK. A selection
+ * lives in the frame's DOM and dies with the frame; nothing on disk records it,
+ * and a reload starts with nothing selected. It is held here only because the
+ * inspector — which is in the shell, not in the pane — has no other way to
+ * learn what the user clicked. (BookForge puts its selection in the history and
+ * pays for it with a special case in three separate places.)
  */
-export interface SelectedBlock {
-  blockId: string;
-  /** Its `data-bf-cat`, so the inspector can show which row it already is. */
+export interface FrameSelection {
+  blockIds: readonly string[];
+  /**
+   * The `data-bf-cat` they all share, so the inspector can mark the row the
+   * selection already is — and null the moment two of them disagree, because a
+   * marked row over a mixed selection is the panel asserting something untrue
+   * about most of what is highlighted.
+   */
   category: string | null;
 }
 
@@ -232,6 +243,63 @@ export interface SelectedBlock {
 export interface CategoryCounts {
   counts: Readonly<Record<string, number>>;
   struck: Readonly<Record<string, number>>;
+}
+
+/**
+ * Which setter puts one ledger row back.
+ *
+ * THE FIELD IS THE ROUTE, and there are five because there are five things this
+ * app can do to a document. Each names a call that already exists in main, with
+ * its own validator, keyed by the same id the original edit used.
+ */
+export type LedgerField = 'cut' | 'category' | 'html' | 'note-cut' | 'nav-label' | 'page-heading';
+
+/**
+ * One element, one field, and what it said on each side of an action.
+ *
+ * `target` is a `data-bf-id` for the three block fields, a footnote's own id
+ * (`fn25`) for `note-cut`, and a contents entry's href for the two rename
+ * fields — in every case, the name the ORIGINAL setter was called with, so the
+ * replay is that call again with the other value.
+ */
+export interface LedgerRow {
+  /** The member the setter writes. Not always the chapter on screen. */
+  member: string;
+  target: string;
+  field: LedgerField;
+  before: string;
+  after: string;
+}
+
+/**
+ * One action — Owen's action number — and every row it moved.
+ *
+ * A batch is ONE action with many rows: a marquee's worth of cuts, an
+ * all-of-this-category strike, sixteen blocks relabelled at once. That is the
+ * whole of what "ctrl+z will reverse all action number 12 items" needs, and it
+ * falls out of the design rather than being arranged: the gesture is one call
+ * to main, main answers with everything it moved, and that answer IS the rows.
+ */
+export interface LedgerAction {
+  seq: number;
+  /** Past tense: "struck 14 blocks" → "Undid: struck 14 blocks." */
+  label: string;
+  rows: readonly LedgerRow[];
+}
+
+/** One document's ledger. Made on its first edit, dropped when it closes. */
+interface Ledger {
+  done: LedgerAction[];
+  undone: LedgerAction[];
+}
+
+/** The list under one key, made on first use. Grouping rows for one repaint call. */
+function bucket<K>(map: Map<K, string[]>, key: K): string[] {
+  const found = map.get(key);
+  if (found) return found;
+  const made: string[] = [];
+  map.set(key, made);
+  return made;
 }
 
 /** Something the shell wants said to one tab's frame. See `frameCommand`. */
@@ -841,6 +909,15 @@ export class TabsService {
       // going with the tab. Left behind they would be the inspector's answer for
       // whatever tab id gets reused next.
       this.forgetFrameState(gone);
+      /*
+       * AND THE LEDGER GOES WITH THE DOCUMENT, which is the whole difference
+       * from the singleton this replaces: there is no shared stack to clear
+       * field by field, and no way for one book's undo to reach into another's.
+       * It is in memory only — closing the book ends what Ctrl+Z can reach, and
+       * the working copy on disk is what survives.
+       */
+      this.ledgers.delete(gone);
+      this.editing.delete(gone);
     }
     this.dropFromPanes(going);
   }
@@ -1058,24 +1135,6 @@ export class TabsService {
   }
 
   /**
-   * Mark or unmark a block, by the name the frame reported.
-   *
-   * NO REVISION BUMP on success, and that is the point of the whole shape: the
-   * frame painted the mark before this was called, and reloading the iframe
-   * would throw the reader back to the top of the chapter to show them
-   * something already on screen.
-   *
-   * ON A REFUSAL IT BUMPS. The frame is then showing a mark the file does not
-   * carry, and the only honest fix is to reload it and let the book repaint
-   * itself — which works because the cut lives in the document rather than in
-   * anything the frame remembers.
-   */
-  async setBlockCut(id: string, blockId: string, cut: boolean): Promise<void> {
-    await this.blockEdit(id, (bridge, book, member) =>
-      bridge.epub.setCut(book, member, blockId, cut));
-  }
-
-  /**
    * An edited block: optimistic and repainted on a refusal, like the cut — and
    * then the ONE question this mode has to ask out loud.
    *
@@ -1091,8 +1150,28 @@ export class TabsService {
    * modal between a person and their own sentence. Cancel undoes.
    */
   async setBlockHtml(id: string, blockId: string, html: string, was: string): Promise<void> {
-    const unlinked = await this.blockEdit(id, (bridge, book, member) =>
-      bridge.epub.setBlockHtml(book, member, blockId, html));
+    const unlinked = await this.blockEdit(
+      id,
+      (bridge, book, member) => bridge.epub.setBlockHtml(book, member, blockId, html),
+      (_notes, member) => ({
+        label: `edited the words of ${blockId}`,
+        /*
+         * NO `was`, NO ROW. The frame hands over the block's previous markup
+         * and it is the only copy of it anywhere — main wrote the new words
+         * over the old ones. A row with an empty `before` would be a Ctrl+Z
+         * that blanks the paragraph, so an edit that arrives without it is
+         * applied and simply is not undoable. It cannot happen for an edit this
+         * app's own frame made; it is the shape of the message that allows it.
+         */
+        rows: was.length === 0 ? [] : [{
+          member,
+          target: blockId,
+          field: 'html' as const,
+          before: was,
+          after: html,
+        }],
+      }),
+    );
     // Null is a refusal, and a refusal wrote nothing — there is no new text for
     // either question below to be about.
     if (unlinked === null) return;
@@ -1143,8 +1222,22 @@ export class TabsService {
        * heading still reads the OLD label, and this heading is the thing that
        * just changed — so the two directions cannot bounce a question between
        * them.
+       *
+       * ITS OWN LEDGER ACTION, and not part of the edit that prompted it. They
+       * are two answers a person gave separately — the words, then "yes, change
+       * the contents as well" — and one Ctrl+Z that took back both would undo a
+       * question the user answered on purpose.
        */
       await bridge.epub.renameHeading(bookId, echo.href, echo.now);
+      const navMember = tab.book.navMember;
+      this.record(id, `carried the heading through to the contents as "${echo.now}"`,
+        navMember === null ? [] : [{
+          member: navMember,
+          target: echo.href,
+          field: 'nav-label',
+          before: echo.was,
+          after: echo.now,
+        }]);
       const current = this.byId(id);
       if (!current || current.book === null) return;
       const chapters = current.book.chapters.map((chapter) =>
@@ -1192,8 +1285,23 @@ export class TabsService {
         return true;
       }
       if (answer === 'keep') continue;
-      const done = await this.blockEdit(id, (b, book, member) =>
-        b.epub.setNoteCut(book, member, note.noteId, true));
+      const done = await this.blockEdit(
+        id,
+        (b, book, member) => b.epub.setNoteCut(book, member, note.noteId, true),
+        (moved, member) => ({
+          label: `struck the footnote ${note.noteId}`,
+          // False means the note already carried the mark, so this gesture
+          // changed nothing and must not leave a row promising to bring back a
+          // footnote somebody else struck.
+          rows: moved === true ? [{
+            member,
+            target: note.noteId,
+            field: 'note-cut' as const,
+            before: '',
+            after: '1',
+          }] : [],
+        }),
+      );
       // PAINTED AFTER THE WRITE, and only when the write landed — the opposite
       // of every other mark in this mode. A cut the user pressed Delete for is
       // painted first because the hand is already moving; this one was decided
@@ -1244,6 +1352,18 @@ export class TabsService {
     try {
       await this.queueMemberWrite(bookId, member, () =>
         bridge.epub.restoreBlockHtml(bookId, member, blockId, html));
+      /*
+       * THE CANCELLED EDIT LEAVES THE LEDGER RATHER THAN GAINING A SECOND ROW.
+       *
+       * This IS an undo, performed by a dialog: the block now says exactly what
+       * it said before the user typed. Recording the restore as an action of
+       * its own would leave two entries whose net effect is nothing, and the
+       * next Ctrl+Z would REDO the edit the user just cancelled — pressing undo
+       * to bring back a footnote reference they had chosen to keep. Dropping
+       * the edit's own action instead leaves the ledger describing the book as
+       * it actually stands.
+       */
+      this.dropLastAction(id, blockId);
       this.memberChanged(id, member);
     } catch (err) {
       this.notice.set(err instanceof Error ? err.message : String(err));
@@ -1253,46 +1373,104 @@ export class TabsService {
   }
 
   /**
-   * Relabel one block — the inspector's Category rows, applied to the selection.
+   * Relabel THE WHOLE SELECTION — the inspector's Category rows, applied to
+   * every block the frame says is highlighted, in one read and one write.
    *
    * IT CHANGES THE LABEL AND NOT THE SHAPE: a paragraph relabelled `footnote`
    * stays a `<p>` in the prose and does not move into the footnotes section.
    * That re-shaping is `foundry epub-final`'s and is not in this app.
    *
-   * Same optimism as the cut — the frame set the attribute and repainted its own
-   * colour off it before this ran — so no revision bump on success, and a bump
-   * on a refusal to let the file repaint over the guess.
+   * Same optimism as the cut — the frame set the attributes and repainted its
+   * own colours off them before this ran — so no revision bump on success, and a
+   * bump on a refusal to let the file repaint over the guess. And SAID OUT LOUD
+   * once it is more than one block: relabelling thirty paragraphs from a panel
+   * on the far side of the window is a gesture whose effect is off screen.
    */
-  async setBlockCategory(id: string, blockId: string, category: string): Promise<void> {
-    await this.blockEdit(id, (bridge, book, member) =>
-      bridge.epub.setCategory(book, member, blockId, category));
+  async setBlockCategories(
+    id: string,
+    blockIds: readonly string[],
+    category: string,
+  ): Promise<void> {
+    const kind = categoryLabel(category).toLowerCase();
+    const changed = await this.blockEdit(
+      id,
+      (bridge, book, member) => bridge.epub.setCategories(book, member, [...blockIds], category),
+      (moved, member) => ({
+        label: `relabelled ${moved.length} block${moved.length === 1 ? '' : 's'} as ${kind}`,
+        // ONE ROW PER BLOCK, each carrying the label THAT block used to have.
+        // A marquee over a page catches paragraphs and captions together, so an
+        // undo that put them all back to one category would be inventing a past
+        // the book never had — which is why main answers with `was` rather than
+        // with a count.
+        rows: moved.map((one) => ({
+          member,
+          target: one.id,
+          field: 'category' as const,
+          before: one.was,
+          after: category,
+        })),
+      }),
+    );
+    if (changed === null || blockIds.length < 2) return;
+    this.notice.set(changed.length === 0
+      ? `All ${blockIds.length} of those blocks were already ${kind} — nothing changed.`
+      : `Relabelled ${changed.length} block${changed.length === 1 ? '' : 's'} as ${kind}.`);
   }
 
   /**
-   * Select-all-by-category: every block of one kind in this chapter, struck or
-   * brought back in ONE write, and SAID OUT LOUD.
+   * Strike — or bring back — a list of blocks in ONE write, and SAY IT.
+   *
+   * THE ONE CUT PATH. Delete on a single block, Delete on a marquee's worth of
+   * them, and the inspector's select-all-by-category all arrive here; `category`
+   * is the only thing that differs, and it only changes the sentence. One path
+   * means one undo entry shape and one place the count is read.
    *
    * The number comes back from main rather than from the count the frame sent,
    * because they can differ — a block already carrying the mark is not a change
    * — and a gesture that reports what it asked for rather than what it did is a
    * gesture nobody can trust with two hundred paragraphs.
    */
-  async cutBlocksByCategory(
+  async cutBlocks(
     id: string,
-    category: string,
     blockIds: readonly string[],
     cut: boolean,
+    category: string | null,
   ): Promise<void> {
-    const changed = await this.blockEdit(id, (bridge, book, member) =>
-      bridge.epub.setCuts(book, member, [...blockIds], cut));
+    const kind = category === null ? '' : `${categoryLabel(category).toLowerCase()} `;
+    const changed = await this.blockEdit(
+      id,
+      (bridge, book, member) => bridge.epub.setCuts(book, member, [...blockIds], cut),
+      (moved, member) => ({
+        label: `${cut ? 'struck' : 'brought back'} ${moved.length} ${kind}`
+          + `block${moved.length === 1 ? '' : 's'}`,
+        // ONE ACTION, MANY ROWS — Owen's action number. Sixteen blocks struck by
+        // one marquee are sixteen rows here, and one Ctrl+Z reverses all
+        // sixteen. Only the ids MAIN says moved get a row: a block that was
+        // already struck was not changed by this gesture and must not be
+        // brought back by undoing it.
+        rows: moved.map((target) => ({
+          member,
+          target,
+          field: 'cut' as const,
+          before: cut ? '' : '1',
+          after: cut ? '1' : '',
+        })),
+      }),
+    );
     if (changed === null) return;
-    const kind = categoryLabel(category).toLowerCase();
-    const many = changed === 1 ? '' : 's';
-    this.notice.set(changed === 0
-      ? `Every ${kind} block in this chapter already ${cut ? 'was struck' : 'stood'} — nothing changed.`
+    /*
+     * ONE BLOCK SAYS NOTHING, and that is deliberate. Pressing Delete on a
+     * paragraph paints a line through it under the pointer; a notice strip
+     * repeating what the user is already looking at would train them to stop
+     * reading the strip, which is where every refusal in this mode lands.
+     */
+    if (changed.length === 1 && blockIds.length === 1) return;
+    const many = changed.length === 1 ? '' : 's';
+    this.notice.set(changed.length === 0
+      ? `Every one of those ${kind}blocks already ${cut ? 'was struck' : 'stood'} — nothing changed.`
       : cut
-        ? `Struck ${changed} ${kind} block${many} in this chapter. Press Delete on one to bring it back.`
-        : `Brought back ${changed} ${kind} block${many} in this chapter.`);
+        ? `Struck ${changed.length} ${kind}block${many}. Press Delete on them to bring them back.`
+        : `Brought back ${changed.length} ${kind}block${many}.`);
   }
 
   /**
@@ -1301,10 +1479,21 @@ export class TabsService {
    * Resolves with whatever main answered, or NULL when the write was refused or
    * there was nothing to write to — which is what lets a caller tell "main did
    * this" from "main would not", without a second try/catch at every call site.
+   *
+   * IT IS ALSO WHERE THE ACTION IS WRITTEN INTO THE LEDGER. `entry` is asked
+   * for the label and the rows AFTER main has answered, because both need what
+   * main said MOVED rather than what the frame asked for — "struck 14 blocks"
+   * when fourteen tags actually changed, whatever the marquee caught, and a row
+   * for each of those fourteen and no others.
    */
   private async blockEdit<T>(
     id: string,
+    // THE WRITE COMES FIRST so TypeScript can infer `T` from it before it has
+    // to type the callback below — with the two the other way round, `answer`
+    // infers as `{}` and every call site has to restate main's return type by
+    // hand, which is two declarations of one thing waiting to disagree.
     write: (bridge: FoundryApi, bookId: string, member: string) => Promise<T>,
+    entry: (answer: T, member: string) => { label: string; rows: readonly LedgerRow[] },
   ): Promise<T | null> {
     const bridge = api;
     const tab = this.byId(id);
@@ -1313,6 +1502,8 @@ export class TabsService {
     const member = memberOf(tab.chapterHref);
     try {
       const answer = await this.queueMemberWrite(bookId, member, () => write(bridge, bookId, member));
+      const { label, rows } = entry(answer, member);
+      this.record(id, label, rows);
       this.patch(id, { modified: true });
       this.memberChanged(id, member);
       return answer;
@@ -1329,6 +1520,355 @@ export class TabsService {
     this.notice.set(reason);
   }
 
+  // ── Undo / redo: the ledger ──────────────────────────────────────────────
+  //
+  // A LEDGER OF ACTIONS, not a stack of chapter snapshots. Owen's shape, and it
+  // is right for a reason particular to this app: every document action ALREADY
+  // has a targeted, validated setter in main, keyed by `data-bf-id` —
+  // `setCuts`, `setCategories`, `setBlockHtml`, `setNoteCut`, `renameHeading`.
+  // So an undo is not a new way of writing a book. IT IS THE SAME CALL WITH THE
+  // OLD VALUE, through the same validators, which means undo cannot corrupt a
+  // book in any way an ordinary edit could not. A snapshot undo would have been
+  // a second route into somebody's chapters that no validator ever saw — the
+  // one thing this codebase spends its refusals avoiding.
+  //
+  // It is also the difference between a few dozen bytes per action and fifty
+  // kilobytes of it, and — the part that matters more — A SNAPSHOT CANNOT SAY
+  // WHAT IT IS. From a row the notice strip can say "Undid: relabelled 16
+  // blocks as footnote". From a pair of chapter texts it can only say "Undid".
+  //
+  // AN ACTION HAS A NUMBER AND MANY ROWS. Sixteen blocks struck by one marquee
+  // are sixteen rows of one action, and Ctrl+Z reverses all sixteen — which is
+  // exactly what Owen asked for, and it falls out rather than being arranged:
+  // the gesture is ONE call to main, main answers with everything it moved, and
+  // that answer IS the rows.
+  //
+  // THE FIVE ACTIONS ARE THE WHOLE OF IT: cut/un-cut, relabel, edit words,
+  // strike a footnote, rename a heading. Nothing else in this app writes a
+  // document, and a sixth would have to add a `LedgerField` to exist.
+  //
+  // PER DOCUMENT, created on its first edit and dropped with the tab (`close`),
+  // never a singleton cleared field by field. Keyed by tab id in a plain Map
+  // rather than stored on the `Tab` itself, because `Tab` is replaced wholesale
+  // by `patch()` on every edit and a growing array riding along in it would be
+  // copied on each one. IN MEMORY ONLY: closing the book ends what Ctrl+Z can
+  // reach, and that is stated rather than implied by the absence of a file.
+  //
+  // AND THE SELECTION IS NOT IN IT. It is not a fact about the book, it dies
+  // with the frame anyway, and BookForge — which does put it in the stack —
+  // special-cases it in three separate places for the privilege.
+
+  private readonly ledgers = new Map<string, Ledger>();
+  private actionSeq = 0;
+
+  /**
+   * How many actions one document's ledger holds.
+   *
+   * A COUNT IS SAFE HERE and would not have been for a snapshot stack. The plan
+   * warns against action-count caps because BookForge's entries embed whole
+   * blocks and one of them reached 15.57 MB, so 200 actions is either a few
+   * megabytes or several gigabytes depending on the book. A row here is a
+   * member path, an id, a field name and two short values — the one unbounded
+   * field is a word edit's markup, which is one block of prose. Five hundred of
+   * them is a few megabytes at the outside, and it is more curation than
+   * anybody does to one chapter in a sitting.
+   */
+  private static readonly LEDGER_ACTIONS = 500;
+
+  /**
+   * File one action away, however many rows it moved.
+   *
+   * `label` is a sentence fragment in the past tense — "struck 14 blocks" — so
+   * that undoing it reads as "Undid: struck 14 blocks." It is written by the
+   * caller AFTER main has answered, because the number in it has to be what
+   * moved rather than what was asked for.
+   */
+  private record(tabId: string, label: string, rows: readonly LedgerRow[]): void {
+    // An action that moved nothing is not an action. Relabelling thirty blocks
+    // that were already that category writes no bytes, and a Ctrl+Z that
+    // appears to do nothing is worse than no entry at all.
+    if (rows.length === 0) return;
+    this.actionSeq += 1;
+    const ledger = this.ledgers.get(tabId) ?? { done: [], undone: [] };
+    ledger.done.push({ seq: this.actionSeq, label, rows });
+    /*
+     * A NEW ACTION ENDS THE FUTURE. Undo three cuts, then cut something else,
+     * and the three are gone — the standard rule, and the only one that does
+     * not require deciding what a branching history looks like on screen.
+     */
+    ledger.undone = [];
+    // Oldest first. The user is at the new end, so what is dropped is the work
+    // furthest from what they are doing.
+    while (ledger.done.length > TabsService.LEDGER_ACTIONS) ledger.done.shift();
+    this.ledgers.set(tabId, ledger);
+  }
+
+  /**
+   * Take the newest action back off the ledger without replaying anything.
+   *
+   * FOR ONE CALLER ONLY: the footnote dialog's "put the number back", which
+   * writes the block's previous markup itself and so has already reversed the
+   * action it is cancelling. See `restoreBlockHtml`. It is deliberately not a
+   * general facility — anything else that wanted to erase history would be
+   * hiding a write from the person who made it.
+   *
+   * IT NAMES THE ACTION IT EXPECTS TO FIND, and drops nothing otherwise. An
+   * edit that arrived without the frame's `was` records NO rows and so no
+   * action at all, and a blind pop would then throw away whatever the user did
+   * before it — a cut of some other paragraph, silently ungettable back.
+   */
+  private dropLastAction(tabId: string, blockId: string): void {
+    const done = this.ledgers.get(tabId)?.done;
+    const last = done?.[done.length - 1];
+    if (!done || !last) return;
+    if (last.rows.length !== 1) return;
+    const row = last.rows[0]!;
+    if (row.field !== 'html' || row.target !== blockId) return;
+    done.pop();
+  }
+
+  /** Ctrl/Cmd+Z, from the Edit menu. The focused document's, never a global one. */
+  async undo(): Promise<void> {
+    await this.replay('undo');
+  }
+
+  /** Ctrl/Cmd+Shift+Z. */
+  async redo(): Promise<void> {
+    await this.replay('redo');
+  }
+
+  /**
+   * Put one action back, row by row, through the setters that made it.
+   *
+   * A CARET IN THE PAGE MEANS THE TYPING FIRST. While a block is being edited in
+   * place, Ctrl+Z is about the sentence being typed and not about the book — so
+   * it is handed back to the frame, which is the only thing that can reach a
+   * contenteditable's own history. Main swallowed the keypress on its way past
+   * (it is a menu accelerator), which is why the frame has to be told rather
+   * than left to see it.
+   *
+   * ROWS ARE REPLAYED IN REVERSE ORDER, which matters for the one action that
+   * writes two files: a rename put the contents entry first and the page
+   * heading second, so undoing takes the heading back before the entry, and
+   * `renamePageHeading`'s check that the heading still reads what the dialog
+   * saw is made against a book nothing else has moved in between.
+   *
+   * EVERY REFUSAL IS A SENTENCE, including "there is nothing to undo": the menu
+   * item cannot grey itself out against renderer state, so a chord that quietly
+   * did nothing would be indistinguishable from a chord that is broken.
+   */
+  private async replay(direction: 'undo' | 'redo'): Promise<void> {
+    const tab = this.activeDocument();
+    if (!api || !tab) {
+      this.notice.set('There is no document in front of you to undo anything in.');
+      return;
+    }
+    if (this.editing.has(tab.id)) {
+      this.commandFrame(tab.id, { type: 'foundry:undo-typing', redo: direction === 'redo' });
+      return;
+    }
+    if (tab.book === null) {
+      this.notice.set(`${tab.title} is still opening.`);
+      return;
+    }
+    const ledger = this.ledgers.get(tab.id);
+    const from = direction === 'undo' ? ledger?.done : ledger?.undone;
+    const action = from === undefined ? undefined : from[from.length - 1];
+    if (ledger === undefined || from === undefined || action === undefined) {
+      this.notice.set(direction === 'undo'
+        ? `There is nothing to undo in ${tab.title}. A document's history is kept while it is open `
+          + 'and ends when it closes.'
+        : `There is nothing to redo in ${tab.title}.`);
+      return;
+    }
+
+    const bookId = tab.book.id;
+    /*
+     * REPAINTED WITHOUT A RELOAD WHERE THE ROW IS AN ATTRIBUTE, and with one
+     * where it is words. Because the replay goes through the same setters, a
+     * cut or a relabel put back is one attribute on one start tag — exactly
+     * what the original gesture wrote — so the frame can flip it in place the
+     * way it does for a Delete, and the reader keeps their place in the
+     * chapter. A word edit and a renamed heading change text the frame is
+     * showing, and there is no attribute that would put a sentence back, so
+     * those bump `Tab.revision` and the chapter repaints from the file. That is
+     * the same rule the rest of select mode follows, applied per row rather
+     * than as a blanket reload — a needless bump costs the reader their place
+     * in the chapter, which is the cost `cutBlocks` exists to avoid paying on
+     * every keystroke.
+     */
+    const cutIds = new Map<boolean, string[]>();
+    const labelled = new Map<string, string[]>();
+    // A contents entry put back is a row in the sidebar, which is drawn from
+    // `book.chapters` and not from the file — so undoing the write without this
+    // would leave the panel showing a label the navigation document no longer
+    // carries. It is the same line the rename itself runs.
+    const renamed = new Map<string, string>();
+    let reload = false;
+
+    for (let at = action.rows.length - 1; at >= 0; at -= 1) {
+      const row = action.rows[at]!;
+      const value = direction === 'undo' ? row.before : row.after;
+      try {
+        await this.replayRow(bookId, row, value, direction);
+      } catch (err) {
+        /*
+         * THE ACTION STAYS WHERE IT IS. The write is what the undo IS, so a
+         * refused write means the undo did not happen — and an action quietly
+         * popped off the ledger would be a Ctrl+Z that reported nothing and
+         * threw away the only record of how to reverse the edit. Pressing it
+         * again after fixing whatever main named will try the same rows.
+         *
+         * AND THE FRAME IS RELOADED, which is the replay rule's second half:
+         * some rows of this action may have landed and the page is now showing
+         * a state the book does not back. Repainting from the file is the only
+         * honest fix.
+         */
+        this.notice.set(
+          `${direction === 'undo' ? 'Undo' : 'Redo'} stopped at ${row.target}: `
+          + `${err instanceof Error ? err.message : String(err)}`,
+        );
+        const stalled = this.byId(tab.id);
+        if (stalled) this.patch(tab.id, { modified: true, revision: stalled.revision + 1 });
+        return;
+      }
+      this.memberChanged(tab.id, row.member);
+      if (row.field === 'cut' || row.field === 'note-cut') bucket(cutIds, value === '1').push(row.target);
+      else if (row.field === 'category') bucket(labelled, value).push(row.target);
+      else if (row.field === 'nav-label') renamed.set(row.target, value);
+      // `html` and `page-heading` are the two that change WORDS the frame is
+      // showing. There is no attribute to flip that would put a sentence back,
+      // so these — and only these — reload the chapter.
+      else reload = true;
+    }
+
+    for (const [cut, ids] of cutIds) {
+      this.commandFrame(tab.id, { type: 'foundry:mark-blocks', ids, cut });
+    }
+    for (const [category, ids] of labelled) {
+      this.commandFrame(tab.id, { type: 'foundry:mark-labels', ids, cat: category });
+    }
+
+    from.pop();
+    (direction === 'undo' ? ledger.undone : ledger.done).push(action);
+
+    const current = this.byId(tab.id);
+    const revision = current?.revision ?? tab.revision;
+    this.patch(tab.id, {
+      modified: true,
+      revision: reload ? revision + 1 : revision,
+      ...(renamed.size > 0 && current?.book
+        ? {
+          book: {
+            ...current.book,
+            chapters: current.book.chapters.map((chapter) => {
+              const label = renamed.get(chapter.href);
+              return label === undefined ? chapter : { ...chapter, label };
+            }),
+          },
+        }
+        : {}),
+    });
+    // BY NAME, always. "Undid" on its own leaves a person checking three panes
+    // to find out what moved; the label was written when the action was
+    // recorded precisely so this sentence could exist.
+    this.notice.set(`${direction === 'undo' ? 'Undid' : 'Redid'}: ${action.label}.`);
+  }
+
+  /**
+   * One row, through the setter its field names.
+   *
+   * THE VALIDATORS ARE THE POINT. Each of these is the call the original
+   * gesture made, with the other value — so an undo is refused by exactly the
+   * checks an edit is refused by, and a ledger row cannot put a book into a
+   * shape a person could not have typed.
+   */
+  private async replayRow(
+    bookId: string,
+    row: LedgerRow,
+    value: string,
+    direction: 'undo' | 'redo',
+  ): Promise<void> {
+    const bridge = api;
+    if (!bridge) return;
+    if (row.field === 'cut') {
+      await this.queueMemberWrite(bookId, row.member, () =>
+        bridge.epub.setCuts(bookId, row.member, [row.target], value === '1'));
+      return;
+    }
+    if (row.field === 'note-cut') {
+      await this.queueMemberWrite(bookId, row.member, () =>
+        bridge.epub.setNoteCut(bookId, row.member, row.target, value === '1'));
+      return;
+    }
+    if (row.field === 'category') {
+      await this.queueMemberWrite(bookId, row.member, () =>
+        bridge.epub.setCategories(bookId, row.member, [row.target], value));
+      return;
+    }
+    if (row.field === 'html') {
+      /*
+       * UNDOING WORDS GOES THROUGH `restoreBlockHtml`, NEVER `setBlockHtml`,
+       * and getting this backwards is the one way this design could lose a
+       * footnote. An edit is allowed to DELETE a reference number — a `<sup>`
+       * and its anchor may disappear — and `setBlockHtml` forbids markup being
+       * GAINED, so undoing that edit through it would be refused every single
+       * time. `restoreBlockHtml` exists for exactly this shape (it was built
+       * for the footnote dialog's "put the number back") and makes the mirror
+       * check instead: what is on disk NOW must be a legal word-edit OF the
+       * text being restored, so it still refuses to overwrite a change made
+       * underneath it.
+       *
+       * REDO GOES THE OTHER WAY, through `setBlockHtml`, because redoing is
+       * replaying the original edit and the original edit was legal by
+       * definition — while the mirror check would refuse it, a reference number
+       * being removed not being a legal word-edit in reverse. The notes it
+       * answers with are DROPPED here: the question "should the footnote go
+       * too?" was asked and answered when the edit was first made, and asking
+       * it again on a Ctrl+Shift+Z would be re-litigating a decision the user
+       * has already recorded as its own ledger action.
+       */
+      if (direction === 'undo') {
+        await this.queueMemberWrite(bookId, row.member, () =>
+          bridge.epub.restoreBlockHtml(bookId, row.member, row.target, value));
+      } else {
+        await this.queueMemberWrite(bookId, row.member, () =>
+          bridge.epub.setBlockHtml(bookId, row.member, row.target, value));
+      }
+      return;
+    }
+    if (row.field === 'nav-label') {
+      // The echo it answers with is dropped: "should the page's heading change
+      // too?" is a question about a rename somebody is making, not about one
+      // being taken back.
+      await this.queueMemberWrite(bookId, row.member, () =>
+        bridge.epub.renameHeading(bookId, row.target, value));
+      return;
+    }
+    // `page-heading`. `was` is the OTHER side of the row, which is what the
+    // page reads right now — main checks it against the file and refuses if
+    // the heading moved underneath, exactly as it does for the dialog.
+    const was = direction === 'undo' ? row.after : row.before;
+    await this.queueMemberWrite(bookId, row.member, () =>
+      bridge.epub.renamePageHeading(bookId, row.target, value, was));
+  }
+
+  /**
+   * Which tabs have a caret sitting in a block right now.
+   *
+   * Reported by the frame, because nothing out here can see into it: the parent
+   * holds an <iframe> element whose document is behind an opaque origin, and
+   * `document.activeElement` in the shell says only "the iframe". It exists for
+   * exactly one decision — what Ctrl+Z means — and a plain Set is enough,
+   * because nothing on screen is drawn from it.
+   */
+  private readonly editing = new Set<string>();
+
+  reportEditing(tabId: string, on: boolean): void {
+    if (on) this.editing.add(tabId);
+    else this.editing.delete(tabId);
+  }
+
   // ── The inspector, and the frame it cannot reach ─────────────────────────
 
   /**
@@ -1341,10 +1881,10 @@ export class TabsService {
    * The map is small (one entry per book in select mode) and it is dropped with
    * the tab, because both facts die with the frame that reported them.
    */
-  private readonly selections = signal<ReadonlyMap<string, SelectedBlock>>(new Map());
+  private readonly selections = signal<ReadonlyMap<string, FrameSelection>>(new Map());
   private readonly counts = signal<ReadonlyMap<string, CategoryCounts>>(new Map());
 
-  selectionFor(tabId: string | null): SelectedBlock | null {
+  selectionFor(tabId: string | null): FrameSelection | null {
     return tabId === null ? null : this.selections().get(tabId) ?? null;
   }
 
@@ -1352,11 +1892,12 @@ export class TabsService {
     return tabId === null ? null : this.counts().get(tabId) ?? null;
   }
 
-  reportSelection(tabId: string, blockId: string | null, category: string | null): void {
+  /** An empty list is "nothing is selected", and drops the entry rather than storing one. */
+  reportSelection(tabId: string, blockIds: readonly string[], category: string | null): void {
     this.selections.update((map) => {
       const next = new Map(map);
-      if (blockId === null) next.delete(tabId);
-      else next.set(tabId, { blockId, category });
+      if (blockIds.length === 0) next.delete(tabId);
+      else next.set(tabId, { blockIds, category });
       return next;
     });
   }
@@ -1413,7 +1954,8 @@ export class TabsService {
       return;
     }
     if (this.selectionFor(tab.id) === null) {
-      this.notice.set('Click a block in the page first; the category is applied to what is selected.');
+      this.notice.set('Click a block in the page first, or drag a rectangle over several; the '
+        + 'category is applied to everything that is selected.');
       return;
     }
     this.commandFrame(tab.id, { type: 'foundry:relabel', cat: category });
@@ -1495,6 +2037,17 @@ export class TabsService {
         member,
         () => bridge.epub.writeMember(bookId, member, text),
       );
+      /*
+       * NOT IN THE LEDGER, and that is a decision rather than an omission. The
+       * ledger's five actions each name an ELEMENT and a FIELD, and replaying
+       * one goes back through the validator that accepted it. A whole chapter
+       * flushed out of a textarea names nothing and has no validator — it is
+       * the one write in this app that is allowed to be anything at all — so
+       * the only way to record it would be the chapter's whole text, which is
+       * the snapshot design this one deliberately is not. The editor is a text
+       * editor: its Ctrl+Z is the textarea's own, which is what the Edit menu
+       * hands it (see `app.ts`), and that is the undo that belongs to typing.
+       */
       // Re-read rather than +1 on the tab captured before the queue: a refused
       // cut repaints by bumping the revision too, so the number this write
       // lands on may not be the one it started from.
@@ -1532,13 +2085,37 @@ export class TabsService {
     const label = newLabel.trim();
     if (label.length === 0) return false;
 
+    /*
+     * THE ONE ACTION THAT WRITES TWO FILES, and the reason a ledger action is a
+     * LIST of rows rather than a single one. The contents entry lives in the
+     * navigation document and the heading lives in the chapter; a rename that
+     * changed both has to be taken back as one gesture, or an undo would put
+     * the page's heading back and leave the table of contents saying something
+     * else — which is worse than either state on its own.
+     *
+     * `navMember` is on the book because the renderer can name every other
+     * member it edits from a chapter href it is already holding, and this is
+     * the exception. A book with no navigation document has none, and the
+     * rename's nav half writes nothing anyway.
+     */
+    const bookId = tab.book.id;
+    const rows: LedgerRow[] = [];
+    const navMember = tab.book.navMember;
+    // What the row is being renamed FROM. Read off the sidebar rather than out
+    // of the file, because it is what this app has been showing the user and so
+    // what an undo owes them.
+    const wasLabel = tab.book.chapters.find((chapter) => chapter.href === href)?.label ?? '';
+
     let echo: HeadingEcho | null;
     let navChanged: boolean;
     try {
-      ({ echo, navChanged } = await api.epub.renameHeading(tab.book.id, href, label));
+      ({ echo, navChanged } = await api.epub.renameHeading(bookId, href, label));
     } catch (err) {
       this.notice.set(err instanceof Error ? err.message : String(err));
       return false;
+    }
+    if (navChanged && navMember !== null && wasLabel.length > 0) {
+      rows.push({ member: navMember, target: href, field: 'nav-label', before: wasLabel, after: label });
     }
 
     let pageChanged = false;
@@ -1546,8 +2123,15 @@ export class TabsService {
       const answer = await api.confirmHeadingEcho(echo);
       if (answer === 'update') {
         try {
-          await api.epub.renamePageHeading(tab.book.id, href, label, echo.was);
+          await api.epub.renamePageHeading(bookId, href, label, echo.was);
           pageChanged = true;
+          rows.push({
+            member: echo.member,
+            target: href,
+            field: 'page-heading',
+            before: echo.was,
+            after: label,
+          });
         } catch (err) {
           // The contents HAS been renamed and the page has not. Said rather
           // than swallowed, because the user answered "yes" and something
@@ -1557,6 +2141,11 @@ export class TabsService {
         }
       }
     }
+
+    // BOTH HALVES, ONE ACTION. Whichever of the two files actually moved has a
+    // row; undoing replays each rename in reverse, so a change that touched the
+    // contents and the page is taken back as the one thing it was.
+    this.record(id, `renamed a contents entry to "${label}"`, rows);
 
     const current = this.byId(id);
     if (!current || current.book === null) return true;

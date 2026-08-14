@@ -54,8 +54,7 @@ import {
   repackEpub,
   resolveEpubMember,
   restoreBlockHtml,
-  setBlockCategory,
-  setBlockCut,
+  setBlockCategories,
   setBlockCuts,
   setBlockHtml,
   setNoteCut,
@@ -613,7 +612,51 @@ function buildMenu(): void {
         isMac ? { role: 'close' } : { role: 'quit' },
       ],
     },
-    { role: 'editMenu' },
+    {
+      /**
+       * THE EDIT MENU IS OURS NOW, and only because of Undo.
+       *
+       * It was `{ role: 'editMenu' }` — the platform's own, whose Undo is
+       * `webContents.undo()`, which means the focused text field's undo and
+       * nothing else. There is a DOCUMENT history now (TabsService), and
+       * Ctrl/Cmd+Z has to be able to reach it, so the two items are ours and
+       * the renderer decides which of the two things the chord meant: a caret
+       * in a text box gets the box's own undo, a caret in a block gets the
+       * frame's, and anything else gets the book's.
+       *
+       * ON THE MENU RATHER THAN AS A RENDERER `keydown`, for the reason every
+       * other chord in this file is: a menu item with the accelerator on it and
+       * a keydown listener for the same chord BOTH fire, and only the menu is
+       * discoverable by somebody who has never used this app. The label is also
+       * the only place "undo" is promised, which matters more here than for
+       * Save — an editor whose undo does nothing is worse than one with none.
+       *
+       * The clipboard roles below are kept verbatim from the role menu, because
+       * they are the platform's and there is no reason for this app to have an
+       * opinion about Copy.
+       */
+      label: 'Edit',
+      submenu: [
+        {
+          label: 'Undo',
+          accelerator: 'CmdOrCtrl+Z',
+          click: () => sendMenuAction('undo'),
+        },
+        {
+          label: 'Redo',
+          // Ctrl+Shift+Z on both, rather than the Ctrl+Y some Windows apps use:
+          // one chord, said one way, and it is the one the editors this app
+          // sits beside all take.
+          accelerator: 'CmdOrCtrl+Shift+Z',
+          click: () => sendMenuAction('redo'),
+        },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+      ],
+    },
     {
       label: 'View',
       // No zoom roles, on purpose: they scale the APPLICATION — every button
@@ -1044,14 +1087,12 @@ function registerIpc(): void {
    * it a cut. What crosses this boundary is a block's NAME and either a boolean,
    * a category, or the words inside it; the document is main's the entire time.
    */
-  ipcMain.handle(
-    'epub:set-cut',
-    (_event, id: string, href: string, blockId: string, cut: boolean) =>
-      setBlockCut(id, href, blockId, cut === true),
-  );
-  // Select-all-by-category: one read, one write, and every id located before a
-  // byte moves, so the batch either lands whole or refuses whole. Resolves with
-  // how many tags actually changed — which is what the app then says out loud.
+  // EVERY CUT, whether the user pressed Delete on one block, dragged a marquee
+  // over thirty, or struck a whole category: one read, one write, and every id
+  // located before a byte moves, so the batch either lands whole or refuses
+  // whole. Resolves with how many tags actually changed — which is what the app
+  // then says out loud, because a gesture that reports what it asked for rather
+  // than what it did is a gesture nobody can trust with two hundred paragraphs.
   ipcMain.handle(
     'epub:set-cuts',
     (_event, id: string, href: string, blockIds: string[], cut: boolean) =>
@@ -1079,12 +1120,13 @@ function registerIpc(): void {
     (_event, id: string, href: string, noteId: string, cut: boolean) =>
       setNoteCut(id, href, noteId, cut === true),
   );
-  // The inspector's relabel. It changes the LABEL and not the shape — a
-  // paragraph relabelled `footnote` stays a <p> in the prose.
+  // The inspector's relabel, applied to the whole selection in one read and one
+  // write. It changes the LABEL and not the shape — a paragraph relabelled
+  // `footnote` stays a <p> in the prose, where the page printed it.
   ipcMain.handle(
-    'epub:set-category',
-    (_event, id: string, href: string, blockId: string, category: string) =>
-      setBlockCategory(id, href, blockId, category),
+    'epub:set-categories',
+    (_event, id: string, href: string, blockIds: string[], category: string) =>
+      setBlockCategories(id, href, blockIds, category),
   );
   // The spine, in reading order, from the renderer — which is where the reading
   // order is known. Every href is still resolved against the book's own

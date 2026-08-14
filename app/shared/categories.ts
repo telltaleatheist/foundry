@@ -123,7 +123,7 @@ export const BLOCK_CATEGORIES: readonly BlockCategory[] = [
 
 /**
  * Every legal `data-bf-cat`, for the one place it has to be checked before it is
- * written into somebody's book (`setBlockCategory` in electron/epub-reader.ts).
+ * written into somebody's book (`setBlockCategories` in electron/epub-reader.ts).
  * A relabel to a category the emitter never writes would put a book in a shape
  * `src/translate/blocks.ts` refuses by name on the next run.
  */

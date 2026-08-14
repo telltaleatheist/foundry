@@ -173,6 +173,8 @@ export class App {
       else if (action === 'save-as') void this.tabs.saveActiveAs();
       else if (action === 'split-right') this.tabs.newEmptyPane();
       else if (action === 'toggle-documents') this.toggleDocuments();
+      else if (action === 'undo') this.undo(false);
+      else if (action === 'redo') this.undo(true);
       else void this.tabs.closeActive();
     });
 
@@ -210,6 +212,37 @@ export class App {
       return;
     }
     this.ui.toggleDocuments();
+  }
+
+  /**
+   * Ctrl/Cmd+Z, and the one decision that has to be made out here.
+   *
+   * THERE ARE THREE UNDOS IN THIS WINDOW and the chord means whichever one the
+   * caret is in. A text box — the HTML editor's textarea, the rename input in
+   * the contents, a settings field — has the browser's own history and expects
+   * to keep it; that is what `role: 'undo'` used to give it, and taking it away
+   * so the book could have the chord would have made typing worse to make
+   * curating better. So a text field gets `execCommand`, which is exactly what
+   * the role menu did, and everything else goes to the document's ledger. (The
+   * third is a block being edited inside the rendered frame: this window cannot
+   * see that a caret is there — the frame's origin is opaque and
+   * `activeElement` says only "the iframe" — so the frame REPORTS it and
+   * TabsService routes that case back into the frame.)
+   *
+   * `execCommand` is deprecated and there is no replacement for programmatic
+   * undo of a text field. It is what the platform still implements, and the
+   * alternative is a chord that does nothing in a textarea.
+   */
+  private undo(redo: boolean): void {
+    const focused = document.activeElement;
+    const editable = focused instanceof HTMLInputElement
+      || focused instanceof HTMLTextAreaElement
+      || (focused instanceof HTMLElement && focused.isContentEditable);
+    if (editable) {
+      document.execCommand(redo ? 'redo' : 'undo');
+      return;
+    }
+    void (redo ? this.tabs.redo() : this.tabs.undo());
   }
 
   @HostListener('window:keydown', ['$event'])

@@ -97,9 +97,11 @@ import { TabsService, type Tab } from '../../core/tabs.service';
             <span class="state">
               @if (tab().selectMode) {
                 <span class="mode">Select</span>
-                @if (selectedId(); as block) {
-                  {{ block }} — Delete cuts it, Enter edits its words
-                } @else { Click a block to select it }
+                @if (selectedIds().length === 1) {
+                  {{ selectedIds()[0] }} — Delete cuts it, Enter edits its words
+                } @else if (selectedIds().length > 1) {
+                  {{ selectedIds().length }} blocks — Delete cuts them all
+                } @else { Click a block, or drag a rectangle over several }
               }
               @else if (writing()) { Writing… }
               @else if (tab().modified) { Edits are in the workspace copy }
@@ -225,7 +227,7 @@ export class EpubViewComponent implements OnDestroy {
   private readonly frame = viewChild<ElementRef<HTMLIFrameElement>>('frame');
 
   /**
-   * The block the frame says is selected, for the toolbar line.
+   * The blocks the frame says are selected, for the toolbar line.
    *
    * NOT A FACT ABOUT THE BOOK — a selection lives in the frame's DOM and dies
    * with the frame; everything that IS a fact about the book (the cut, the
@@ -234,8 +236,8 @@ export class EpubViewComponent implements OnDestroy {
    * inspector is in the shell and cannot see five viewers' private signals. The
    * service keys it by tab, so five panes cannot blank each other's.
    */
-  protected readonly selectedId = computed(() =>
-    this.tabs.selectionFor(this.tab().id)?.blockId ?? null);
+  protected readonly selectedIds = computed<readonly string[]>(() =>
+    this.tabs.selectionFor(this.tab().id)?.blockIds ?? []);
 
   /**
    * The click reporter's messages. Bound once so add/removeEventListener see
@@ -282,23 +284,23 @@ export class EpubViewComponent implements OnDestroy {
       // selection lives in a DOM that no longer exists. Saying so keeps the
       // inspector from offering to relabel a block that is not on screen — and
       // after a chapter change, is not even in this file.
-      this.tabs.reportSelection(this.tab().id, null, null);
+      this.tabs.reportSelection(this.tab().id, [], null);
+      this.tabs.reportEditing(this.tab().id, false);
       this.pushSelectMode();
       return;
     }
     if (data.type === 'foundry:block-selected') {
-      if (data.id !== null && !isBlockId(data.id)) return;
+      const ids = blockIds(data.ids);
+      if (ids === null) return;
       const category = isCategoryName(data.cat) ? data.cat : null;
-      this.tabs.reportSelection(
-        this.tab().id,
-        typeof data.id === 'string' ? data.id : null,
-        category,
-      );
+      this.tabs.reportSelection(this.tab().id, ids, category);
       return;
     }
-    if (data.type === 'foundry:block-cut') {
-      if (!isBlockId(data.id) || typeof data.cut !== 'boolean') return;
-      void this.tabs.setBlockCut(this.tab().id, data.id, data.cut);
+    if (data.type === 'foundry:block-editing') {
+      // Not a fact about the book and never written anywhere: it exists so that
+      // Ctrl+Z can tell "undo my typing" from "undo what I did to the book".
+      if (typeof data.on !== 'boolean') return;
+      this.tabs.reportEditing(this.tab().id, data.on);
       return;
     }
     if (data.type === 'foundry:block-edited') {
@@ -316,20 +318,22 @@ export class EpubViewComponent implements OnDestroy {
       void this.tabs.setBlockHtml(this.tab().id, data.id, data.html, was);
       return;
     }
-    if (data.type === 'foundry:block-relabelled') {
-      if (!isBlockId(data.id) || !isCategoryName(data.cat)) return;
-      void this.tabs.setBlockCategory(this.tab().id, data.id, data.cat);
+    if (data.type === 'foundry:blocks-relabelled') {
+      if (!isCategoryName(data.cat)) return;
+      const ids = blockIds(data.ids);
+      if (ids === null || ids.length === 0) return;
+      void this.tabs.setBlockCategories(this.tab().id, ids, data.cat);
       return;
     }
-    if (data.type === 'foundry:category-cut') {
-      if (!isCategoryName(data.cat) || typeof data.cut !== 'boolean') return;
-      // Every id checked, and the batch dropped whole if any of them is not a
-      // name this app writes — a partial list would strike some other blocks.
-      // The cap is the number of stamped elements a chapter can plausibly hold;
-      // past it, something is wrong with the message rather than with the book.
-      if (!Array.isArray(data.ids) || data.ids.length === 0 || data.ids.length > MAX_BATCH) return;
-      if (!data.ids.every((one): one is string => isBlockId(one))) return;
-      void this.tabs.cutBlocksByCategory(this.tab().id, data.cat, data.ids, data.cut);
+    if (data.type === 'foundry:blocks-cut') {
+      if (typeof data.cut !== 'boolean') return;
+      const ids = blockIds(data.ids);
+      if (ids === null || ids.length === 0) return;
+      // The category is carried only so the notice can name it, and only
+      // select-all-by-category sends one — a marquee's worth of blocks is
+      // whatever kinds the user dragged over and has no single name.
+      const category = isCategoryName(data.cat) ? data.cat : null;
+      void this.tabs.cutBlocks(this.tab().id, ids, data.cut, category);
       return;
     }
     if (data.type === 'foundry:category-counts') {
@@ -433,6 +437,7 @@ interface FrameMessage {
   cat?: unknown;
   html?: unknown;
   was?: unknown;
+  on?: unknown;
   counts?: unknown;
   struck?: unknown;
   reason?: unknown;
@@ -449,6 +454,21 @@ interface FrameMessage {
  */
 function isBlockId(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/.test(value);
+}
+
+/**
+ * A LIST of block ids out of the frame, or null if it is not one.
+ *
+ * THE BATCH IS DROPPED WHOLE if any member of it is not a name this app writes.
+ * A partial list would strike, relabel or select some other blocks, and there
+ * is no reading of a malformed message that makes half of it trustworthy. The
+ * cap is the number of stamped elements a chapter can plausibly hold; past it,
+ * something is wrong with the message rather than with the book.
+ */
+function blockIds(value: unknown): readonly string[] | null {
+  if (!Array.isArray(value) || value.length > MAX_BATCH) return null;
+  if (!value.every((one): one is string => isBlockId(one))) return null;
+  return value;
 }
 
 /**

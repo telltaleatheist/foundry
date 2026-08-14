@@ -55,13 +55,12 @@ const api: FoundryApi = {
       ipcRenderer.invoke('epub:rename-page-heading', id, href, label, was),
     navEchoForBlock: (id, href, blockId, was) =>
       ipcRenderer.invoke('epub:nav-echo-for-block', id, href, blockId, was),
-    setCut: (id, href, blockId, cut) => ipcRenderer.invoke('epub:set-cut', id, href, blockId, cut),
     setCuts: (id, href, blockIds, cut) =>
       ipcRenderer.invoke('epub:set-cuts', id, href, blockIds, cut),
     setNoteCut: (id, href, noteId, cut) =>
       ipcRenderer.invoke('epub:set-note-cut', id, href, noteId, cut),
-    setCategory: (id, href, blockId, category) =>
-      ipcRenderer.invoke('epub:set-category', id, href, blockId, category),
+    setCategories: (id, href, blockIds, category) =>
+      ipcRenderer.invoke('epub:set-categories', id, href, blockIds, category),
     setBlockHtml: (id, href, blockId, html) =>
       ipcRenderer.invoke('epub:set-block-html', id, href, blockId, html),
     restoreBlockHtml: (id, href, blockId, html) =>

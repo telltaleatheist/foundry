@@ -745,6 +745,24 @@ export interface HeadingRenameOutcome {
   echo: HeadingEcho | null;
 }
 
+/**
+ * One block whose `data-bf-cat` a relabel actually moved, and what it said
+ * before.
+ *
+ * MAIN ANSWERS WITH THIS because main is the only thing that read the file. A
+ * marquee over a page catches paragraphs and captions together, so "relabel
+ * these thirty as footnote" is thirty different previous labels — and the undo
+ * ledger has to put each one back to its own. A renderer that assumed they were
+ * all the category the inspector happened to be showing would quietly rewrite
+ * the ones that were not.
+ */
+export interface RelabelledBlock {
+  /** Its `data-bf-id`. */
+  id: string;
+  /** The `data-bf-cat` it carried until this call. */
+  was: string;
+}
+
 /** The contents entry an in-place heading edit could carry with it. */
 export interface NavEcho {
   /** The contents entry's href, in the shape the sidebar and `renameHeading` use. */
@@ -841,6 +859,16 @@ export interface EpubBook {
   title: string;
   author: string | null;
   chapters: EpubChapter[];
+  /**
+   * The navigation document's member path, or null for a book that has none.
+   *
+   * The renderer knows every OTHER member it edits, because every other edit is
+   * addressed by a chapter href it is already holding. The nav is the exception:
+   * renaming a contents entry writes a file nothing in the renderer can name,
+   * and the undo stack records `{ member, before, after }` — so without this,
+   * the one action that writes two members could record neither.
+   */
+  navMember: string | null;
   /**
    * What could not be done while opening this book, or null.
    *

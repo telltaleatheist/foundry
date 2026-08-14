@@ -90,6 +90,7 @@ import type {
   HeadingEcho,
   HeadingRenameOutcome,
   NavEcho,
+  RelabelledBlock,
   UnlinkedNote,
 } from '../shared/types';
 
@@ -562,34 +563,14 @@ function withoutCutMark(tag: string): string {
   return tag.replace(new RegExp(`\\s+${CUT_ATTRIBUTE}\\s*=\\s*("[^"]*"|'[^']*')`, 'g'), '');
 }
 
-/**
- * Set or clear `data-bf-cut` on one block of one member.
- *
- * REPACKS NOTHING and does not touch any other member: the chapter file is the
- * commit, exactly as it is for an editor keystroke. The caller does not bump
- * the tab's revision either — the frame painted the mark before this was called
- * and a reload would only throw the reader back to the top of the chapter.
+/*
+ * THERE IS NO `setBlockCut` FOR ONE BLOCK ANY MORE, and its absence is the
+ * point. Select mode's selection is a SET — one block is a set of one — so
+ * every cut in the app now arrives at `setBlockCuts` below, which is the door
+ * that locates every id before a byte moves. A separate single-block door would
+ * be a second implementation of the same surgery, one edit away from the two
+ * disagreeing about what an already-struck block means.
  */
-export async function setBlockCut(
-  id: string,
-  memberPath: string,
-  blockId: string,
-  cut: boolean,
-): Promise<void> {
-  const member = resolveEpubMember(id, memberPath);
-  if (member === null) {
-    throw new EpubError(`"${memberPath}" is not part of a book this app has open.`);
-  }
-  const markup = await fs.promises.readFile(member, 'utf8');
-  const block = locateBlock(markup, blockId, memberPath);
-  const replacement = cut ? withCutMark(block.text) : withoutCutMark(block.text);
-  if (replacement === block.text) return;
-  await fs.promises.writeFile(
-    member,
-    markup.slice(0, block.start) + replacement + markup.slice(block.end),
-    'utf8',
-  );
-}
 
 /**
  * Mark the footnote itself, after its last reference was deleted by hand.
@@ -610,7 +591,7 @@ export async function setNoteCut(
   memberPath: string,
   noteId: string,
   cut: boolean,
-): Promise<void> {
+): Promise<boolean> {
   const member = resolveEpubMember(id, memberPath);
   if (member === null) {
     throw new EpubError(`"${memberPath}" is not part of a book this app has open.`);
@@ -630,12 +611,16 @@ export async function setNoteCut(
   const tag = found[0]!;
   const start = tag.index!;
   const replacement = cut ? withCutMark(tag[0]) : withoutCutMark(tag[0]);
-  if (replacement === tag[0]) return;
+  // FALSE MEANS IT ALREADY SAID THIS. Reported rather than swallowed, so the
+  // undo ledger does not record a row promising to bring back a footnote that
+  // was struck before this was called.
+  if (replacement === tag[0]) return false;
   await fs.promises.writeFile(
     member,
     markup.slice(0, start) + replacement + markup.slice(start + tag[0].length),
     'utf8',
   );
+  return true;
 }
 
 /**
@@ -979,7 +964,15 @@ function noteOpening(document: string, noteId: string): string {
 
 /**
  * Put a block's words back exactly as they were before the last edit — the
- * "cancel" answer to the unlinked-footnote question.
+ * "cancel" answer to the unlinked-footnote question, AND the door every undo of
+ * a word edit goes through.
+ *
+ * THE UNDO LEDGER USES THIS AND NEVER `setBlockHtml`, which is the one thing to
+ * get right about undoing an edit in this app. An edit is ALLOWED to delete a
+ * footnote's reference number; undoing it puts that number back; and putting
+ * markup back is exactly what the ordinary door forbids. Redo goes the other
+ * way, through `setBlockHtml`, because redoing replays the original edit and
+ * the original edit was legal by definition.
  *
  * IT CANNOT GO THROUGH `setBlockHtml`, and the reason is the rule that function
  * enforces: nothing may be GAINED. Restoring a deleted reference number is a
@@ -1020,8 +1013,8 @@ export async function restoreBlockHtml(
     refuseUnlessWordEdit(html, current, blockId, memberPath);
   } catch (err) {
     throw new EpubError(
-      `The reference number cannot be put back into ${blockId} in ${memberPath}: what is in that `
-      + 'block now is not what the edit being cancelled produced, so restoring it would throw away '
+      `The earlier words cannot be put back into ${blockId} in ${memberPath}: what is in that `
+      + 'block now is not what the edit being taken back produced, so restoring it would throw away '
       + `somebody else's change. (${err instanceof Error ? err.message : String(err)})`,
     );
   }
@@ -1033,94 +1026,32 @@ export async function restoreBlockHtml(
 }
 
 /**
- * Give one block a different `data-bf-cat` — the inspector's relabel.
- *
- * THE SAME SHAPE AS `setBlockCut`, deliberately: locate the one element carrying
- * `data-bf-id`, change the smallest part of its start tag, leave every other
- * byte of the document alone, refuse by name when there is not exactly one. No
- * revision bump either — the frame repaints its own colour off the attribute it
- * just set, and reloading the iframe would throw the reader to the top of the
- * chapter to show them something already on screen.
- *
- * ── IT CHANGES THE LABEL, NOT THE SHAPE ──────────────────────────────────────
- *
- * A paragraph relabelled `footnote` is still a `<p>`, still in the prose, still
- * exactly where the page printed it. It does NOT become an `<aside>`, it does
- * not gain an id, it does not move into the `<section class="footnotes">` and
- * nothing starts pointing at it. Anybody reading this will assume the two go
- * together; they do not, and the re-shaping is `foundry epub-final`'s work, in
- * the engine, not in this app. What this attribute does is tell the engine and
- * the translator what the block IS — `src/translate/blocks.ts` reads it to
- * decide what to send the model, and `src/epub/final.ts` reads it to build the
- * edition — which is why it is worth correcting on its own.
- *
- * The category is checked against the emitter's own list before it is written:
- * a value nothing writes would make `blocks.ts` refuse the whole book by name on
- * the next translation, and the place to catch that is the keystroke that
- * invented it.
- */
-export async function setBlockCategory(
-  id: string,
-  memberPath: string,
-  blockId: string,
-  category: string,
-): Promise<void> {
-  if (!CATEGORY_IDS.has(category)) {
-    throw new EpubError(
-      `"${category}" is not a category foundry writes, so nothing is being relabelled. The ones `
-      + `that exist are ${[...CATEGORY_IDS].join(', ')}.`,
-    );
-  }
-  const member = resolveEpubMember(id, memberPath);
-  if (member === null) {
-    throw new EpubError(`"${memberPath}" is not part of a book this app has open.`);
-  }
-  const markup = await fs.promises.readFile(member, 'utf8');
-  const block = locateBlock(markup, blockId, memberPath);
-  const replacement = block.text.replace(
-    /(\bdata-bf-cat\s*=\s*)("[^"]*"|'[^']*')/i,
-    (_whole, lead: string) => `${lead}"${category}"`,
-  );
-  if (replacement === block.text) {
-    // Either it already says this, or it never carried a category at all — and
-    // those are two different facts, so they are told apart rather than both
-    // passing as "nothing to do".
-    if (new RegExp(`\\bdata-bf-cat\\s*=\\s*("${category}"|'${category}')`, 'i').test(block.text)) {
-      return;
-    }
-    throw new EpubError(
-      `The <${block.name}> carrying ${ID_ATTRIBUTE}="${blockId}" in ${memberPath} has no `
-      + 'data-bf-cat at all, so there is no label on it to change. Relabelling corrects what the '
-      + 'model called a block; it does not category a block the model never read.',
-    );
-  }
-  await fs.promises.writeFile(
-    member,
-    markup.slice(0, block.start) + replacement + markup.slice(block.end),
-    'utf8',
-  );
-}
-
-/**
  * Strike — or bring back — every block in a list, in ONE read and ONE write.
  *
- * Select-all-by-category is one gesture and has to land as one: `setBlockCut`
- * called two hundred times is two hundred read-modify-writes of the same file,
- * and a failure in the middle of them leaves a chapter half struck with a count
- * on screen that describes neither state. So every id is located FIRST — which
- * is where the refusals happen, by name, exactly as they do for one block — and
- * only then is a single new text written.
+ * THE ONLY DOOR A CUT COMES THROUGH, whether the user pressed Delete on one
+ * block, dragged a marquee over thirty, or struck a whole category. A gesture
+ * has to land as ONE write: a per-block call two hundred times is two hundred
+ * read-modify-writes of the same file, and a failure in the middle of them
+ * leaves a chapter half struck with a count on screen that describes neither
+ * state. So every id is located FIRST — which is where the refusals happen, by
+ * name — and only then is a single new text written. One block is a list of one
+ * and takes the same path, which is what stops a second implementation of this
+ * surgery existing to disagree with it.
  *
- * Returns how many tags actually moved, which is not always how many ids came
- * in: a block already carrying the mark it is being given is not a change, and
- * the caller says what happened rather than what was asked for.
+ * RETURNS THE IDS THAT ACTUALLY MOVED, which is not always the ids that came in:
+ * a block already carrying the mark it is being given is not a change. The
+ * count is what the app says out loud, and the LIST is what its undo ledger
+ * records — this function is the only thing that read the file, so it is the
+ * only thing that can say which of thirty blocks were standing beforehand.
+ * Guessing that in the renderer would put a row in the ledger claiming to
+ * restore a mark that was never there.
  */
 export async function setBlockCuts(
   id: string,
   memberPath: string,
   blockIds: readonly string[],
   cut: boolean,
-): Promise<number> {
+): Promise<string[]> {
   const member = resolveEpubMember(id, memberPath);
   if (member === null) {
     throw new EpubError(`"${memberPath}" is not part of a book this app has open.`);
@@ -1136,17 +1067,115 @@ export async function setBlockCuts(
   // Located before anything is written, and sorted so the splices below run
   // back to front — an edit at offset 900 must not move the offsets of the one
   // at 1400 that has not happened yet.
-  const found = wanted.map((blockId) => locateBlock(markup, blockId, memberPath));
-  found.sort((a, b) => b.start - a.start);
-  let changed = 0;
+  const found = wanted.map((blockId) => ({
+    blockId,
+    tag: locateBlock(markup, blockId, memberPath),
+  }));
+  found.sort((a, b) => b.tag.start - a.tag.start);
+  const changed: string[] = [];
   let text = markup;
-  for (const block of found) {
-    const replacement = cut ? withCutMark(block.text) : withoutCutMark(block.text);
-    if (replacement === block.text) continue;
-    text = text.slice(0, block.start) + replacement + text.slice(block.end);
-    changed += 1;
+  for (const { blockId, tag } of found) {
+    const replacement = cut ? withCutMark(tag.text) : withoutCutMark(tag.text);
+    if (replacement === tag.text) continue;
+    text = text.slice(0, tag.start) + replacement + text.slice(tag.end);
+    changed.push(blockId);
   }
-  if (changed === 0) return 0;
+  if (changed.length === 0) return [];
+  await fs.promises.writeFile(member, text, 'utf8');
+  return changed;
+}
+
+/**
+ * Relabel a whole list of blocks, in ONE read and ONE write — the inspector's
+ * Category row applied to a marquee's worth of selection.
+ *
+ * THE SAME SHAPE AS `setBlockCuts`, and for the same reason: a hundred calls to
+ * a per-block door are a hundred read-modify-writes of one file, and a
+ * failure in the middle of them leaves half a marquee relabelled with nothing
+ * on screen saying which half. Every id is located first — which is where the
+ * refusals happen, by name — and only then is a single new text written.
+ *
+ * ── IT CHANGES THE LABEL, NOT THE SHAPE ──────────────────────────────────────
+ *
+ * A paragraph relabelled `footnote` is still a `<p>`, still in the prose, still
+ * exactly where the page printed it. It does NOT become an `<aside>`, it does
+ * not gain an id, it does not move into the `<section class="footnotes">` and
+ * nothing starts pointing at it. Anybody reading this will assume the two go
+ * together; they do not, and the re-shaping is `foundry epub-final`'s work, in
+ * the engine, not in this app. What this attribute does is tell the engine and
+ * the translator what the block IS — `src/translate/blocks.ts` reads it to
+ * decide what to send the model, and `src/epub/final.ts` reads it to build the
+ * edition — which is why it is worth correcting on its own.
+ *
+ * The category is checked against the emitter's own list before a byte moves: a
+ * value nothing writes would make `blocks.ts` refuse the whole book by name on
+ * the next translation, and the place to catch that is the click that invented
+ * it. No revision bump either — the frame repaints its own colours off the
+ * attributes it just set, and reloading the iframe would throw the reader to
+ * the top of the chapter to show them something already on screen.
+ *
+ * A block that is ALREADY this category is not a change and is not counted; a
+ * block carrying no `data-bf-cat` at all is a refusal, because relabelling
+ * corrects what the model called a block and cannot invent a call it never
+ * made. Both are decided before the write, so the batch lands whole.
+ */
+export async function setBlockCategories(
+  id: string,
+  memberPath: string,
+  blockIds: readonly string[],
+  category: string,
+): Promise<RelabelledBlock[]> {
+  if (!CATEGORY_IDS.has(category)) {
+    throw new EpubError(
+      `"${category}" is not a category foundry writes, so nothing is being relabelled. The ones `
+      + `that exist are ${[...CATEGORY_IDS].join(', ')}.`,
+    );
+  }
+  const member = resolveEpubMember(id, memberPath);
+  if (member === null) {
+    throw new EpubError(`"${memberPath}" is not part of a book this app has open.`);
+  }
+  // Deduplicated for the reason the cut batch is: the same id twice is the same
+  // offset spliced twice, and the second splice lands inside the bytes the
+  // first one wrote.
+  const wanted = [...new Set(blockIds)];
+  if (wanted.length === 0) {
+    throw new EpubError('No blocks were named, so there is nothing to relabel.');
+  }
+  const markup = await fs.promises.readFile(member, 'utf8');
+  const found = wanted.map((blockId) => ({
+    blockId,
+    tag: locateBlock(markup, blockId, memberPath),
+  }));
+  // Back to front, so an edit at offset 900 cannot move the offsets of the one
+  // at 1400 that has not happened yet.
+  found.sort((a, b) => b.tag.start - a.tag.start);
+  const changed: RelabelledBlock[] = [];
+  let text = markup;
+  for (const { blockId, tag } of found) {
+    const was = /\bdata-bf-cat\s*=\s*("([^"]*)"|'([^']*)')/i.exec(tag.text);
+    const replacement = tag.text.replace(
+      /(\bdata-bf-cat\s*=\s*)("[^"]*"|'[^']*')/i,
+      (_whole, lead: string) => `${lead}"${category}"`,
+    );
+    if (replacement === tag.text) {
+      if (new RegExp(`\\bdata-bf-cat\\s*=\\s*("${category}"|'${category}')`, 'i').test(tag.text)) {
+        continue;
+      }
+      throw new EpubError(
+        `The <${tag.name}> carrying ${ID_ATTRIBUTE}="${blockId}" in ${memberPath} has no `
+        + 'data-bf-cat at all, so there is no label on it to change. Nothing in this selection has '
+        + 'been relabelled.',
+      );
+    }
+    text = text.slice(0, tag.start) + replacement + text.slice(tag.end);
+    // WHAT IT WAS, not just that it moved. Thirty blocks relabelled in one
+    // gesture were not all the same thing beforehand — a marquee over a page
+    // catches paragraphs and captions together — so an undo has to put each one
+    // back to its own label, and this is the only place that label still exists.
+    changed.push({ id: blockId, was: was?.[2] ?? was?.[3] ?? '' });
+  }
+  if (changed.length === 0) return [];
   await fs.promises.writeFile(member, text, 'utf8');
   return changed;
 }
@@ -1872,6 +1901,12 @@ export async function openEpub(filePath: string): Promise<EpubBook> {
       : (await projectTitle(projectDir) ?? label),
     author: author !== null && author.length > 0 ? author : null,
     chapters,
+    // The navigation document, named so the renderer's undo stack can snapshot
+    // it. A contents rename writes a member the renderer otherwise has no name
+    // for — every other edit in the app is addressed by a chapter href it
+    // already holds — and an undo entry that cannot name the file it changed is
+    // an undo entry that cannot put it back.
+    navMember: navItem?.href ?? null,
     // Carried out of the import rather than logged there: the import runs in
     // main and the person is looking at a window.
     notice,
