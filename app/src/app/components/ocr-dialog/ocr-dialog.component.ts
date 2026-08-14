@@ -51,9 +51,24 @@ import { api } from '../../core/foundry';
 
       @if (source(); as input) {
         <div class="body">
+          <!--
+            A PICKER RATHER THAN A READONLY BOX, and that is what makes a batch
+            possible at all. It used to name the focused tab and nothing else, so
+            the only conversion this dialog could queue was the one document in
+            front of you. With every open PDF in the list, four books open is
+            four jobs without closing this once.
+          -->
           <label class="field">
             <span class="label">Source</span>
-            <input type="text" [value]="input" readonly [title]="input">
+            @if (sources().length > 1) {
+              <select [ngModel]="input" (ngModelChange)="pick($event)" name="source" [title]="input">
+                @for (candidate of sources(); track candidate) {
+                  <option [value]="candidate">{{ baseName(candidate) }}</option>
+                }
+              </select>
+            } @else {
+              <input type="text" [value]="input" readonly [title]="input">
+            }
           </label>
 
           <label class="field">
@@ -61,7 +76,7 @@ import { api } from '../../core/foundry';
             <select [ngModel]="kind()" (ngModelChange)="kind.set($event)" name="kind">
               <option value="epub">EPUB</option>
               <option value="txt">Plain text</option>
-              <option value="pdf">Searchable PDF</option>
+              <option value="pdf">PDF, as real text</option>
             </select>
           </label>
 
@@ -81,19 +96,22 @@ import { api } from '../../core/foundry';
           }
 
           <!--
-            Said here because a searchable PDF is not a book and looks like one
-            that failed. It comes out looking EXACTLY like what went in — that is
-            the point — so somebody who expected a converted book needs to know
-            before they order it that the change is invisible and lives in the
-            search box.
+            Said here because this one CHANGES HOW THE BOOK LOOKS and the other
+            two do not hide that. The pages keep their layout, so at a glance it
+            reads as the same book — and then the paper is clean, the type is
+            crisp, and the scanner's grey is gone. Somebody expecting their scan
+            back needs to know before they order it that the photograph is not
+            what comes out.
           -->
           @if (kind() === 'pdf') {
             <p class="note">
-              A searchable PDF is your scan, unchanged — same pages, same images — with the
-              recognised text laid over it invisibly, so search, select and copy start working.
-              Nothing is rebuilt into chapters, and the running heads and page numbers are kept,
-              because they are on the page. Run it again and the layer is replaced, never doubled;
-              a PDF that already has text of its own is refused rather than written over.
+              Your book reprinted as real text, page for page: same page size, same layout,
+              every line set where it was printed — but as type rather than as a photograph.
+              It stays crisp at any zoom, copies as words, and is a fraction of the size.
+              Pictures are cut out of the scan and kept. Nothing is rebuilt into chapters, and
+              the running heads and page numbers stay, because they are on the page. A page the
+              model could not read keeps its photograph so nothing is lost. Your original scan
+              is never touched.
             </p>
           }
 
@@ -119,14 +137,16 @@ import { api } from '../../core/foundry';
             </p>
           } @else if (kind() === 'pdf') {
             <!--
-              Opens automatically like a finished book does — the viewer's text
-              layer pane is the only way to SEE that an invisible layer worked,
-              so looking at it is the next thing anybody does here too.
+              Opens automatically like a finished book does. It used to be that
+              looking at it was the only way to tell an invisible layer had
+              worked; now the reprint is the visible thing, and looking at it
+              beside the scan is how somebody judges whether the model read the
+              page. Both stay in the project, side by side.
             -->
             <p class="note">
               The PDF is written into Foundry's workspace and opens here when it is done —
-              use the Text layer button to see what was embedded, and Save a copy to put
-              the file somewhere of your own.
+              your scan stays in the project beside it, so you can compare the two, and
+              Save a copy puts the file somewhere of your own.
             </p>
           } @else {
             <p class="note">
@@ -138,8 +158,30 @@ import { api } from '../../core/foundry';
           @if (problem(); as reason) {
             <p class="problem">{{ reason }}</p>
           }
+          <!--
+            The only thing left for this line to say is that NOTHING happened —
+            the job was already queued. A success closes the card, so there is
+            nothing for it to report and nowhere to report it.
+          -->
+          @if (added(); as note) {
+            <p class="added" role="status">{{ note }}</p>
+          }
         </div>
 
+        <!--
+          IT CLOSES ON ADD, and hands focus to the shelf.
+
+          For a while it stayed open so a batch could be built without reopening
+          it, with a confirmation line under the form. The card was the thing in
+          the way: what a person has just done is put a job in the queue, the
+          queue is somewhere else on the screen, and leaving a form in front of
+          it makes them dismiss a dialog to see the result of using it. Adding
+          another book is one press of the rail's button; looking at what you
+          just queued should not be.
+
+          A refusal — the same job already queued — keeps the card, because
+          nothing happened and moving on would be performing a result.
+        -->
         <footer class="foot">
           <button class="ghost" (click)="ui.closeOcr()">Cancel</button>
           <button class="primary" [disabled]="busy()" (click)="add()">
@@ -222,6 +264,12 @@ import { api } from '../../core/foundry';
 
     .note { margin: 0; font-size: 11px; color: var(--text-tertiary); line-height: 1.5; }
     .problem { margin: 0; font-size: 12px; color: var(--warn); }
+    /* The confirmation the dialog owes you now that it no longer closes. Green
+       rather than the warn colour, and role=status on the element so a screen
+       reader hears it without the focus moving. */
+    /* It only ever says "already queued" now, which is a mild refusal rather
+       than a success — the warn colour, like the problem line beside it. */
+    .added { margin: 0; font-size: 12px; color: var(--warn); }
 
     .foot {
       display: flex; justify-content: flex-end; gap: 8px;
@@ -270,16 +318,54 @@ export class OcrDialogComponent {
    * An EPUB tab is not a source — it is already the output — so the dialog says
    * "open a PDF first" over a book rather than offering to convert it.
    */
+  /**
+   * Which PDF this dialog is about — the user's pick, or the focused tab.
+   *
+   * THE OBSTACLE TO QUEUEING A BATCH WAS RIGHT HERE. This used to BE
+   * `activeDocument()`, so the dialog could only ever convert the one document
+   * in front of the user; queueing a second book meant closing the dialog,
+   * focusing another tab and opening it again, and since `add()` also closed on
+   * success there was no path through the UI that put two conversions in the
+   * queue at once. Nothing in main ever refused a second job — the queue would
+   * have taken them all along.
+   *
+   * So the pick is now a signal that DEFAULTS to the focused tab and can be
+   * pointed at any other open PDF. The default is kept because it is almost
+   * always right and because the empty state's promise — "a conversion is a
+   * thing you do to a document you have in front of you" — is still how people
+   * arrive here; what changed is that it is a default rather than the only
+   * possibility.
+   */
+  private readonly picked = signal<string | null>(null);
+
+  /** Every PDF open in the app, which is the set this dialog can queue from. */
+  protected readonly sources = computed(
+    () => [...new Set(this.tabs.tabs().filter((tab) => tab.kind === 'pdf').map((tab) => tab.path))]);
+
   protected readonly source = computed(() => {
+    const chosen = this.picked();
+    // A pick survives only while its document is still open: closing the tab a
+    // held job was configured from should not leave the dialog pointing at it.
+    if (chosen !== null && this.sources().includes(chosen)) return chosen;
     const tab = this.tabs.activeDocument();
     return tab !== null && tab.kind === 'pdf' ? tab.path : null;
   });
+
+  protected pick(filePath: string): void {
+    this.picked.set(filePath);
+  }
+
+  protected baseName(filePath: string): string {
+    return filePath.split(/[\\/]/).pop() ?? filePath;
+  }
 
   /** EPUB unless asked otherwise — it is the format this app can also read. */
   protected readonly kind = signal<ConversionKind>('epub');
   protected readonly skipPages = signal('');
   protected readonly language = signal('en');
   protected readonly problem = signal<string | null>(null);
+  /** Why nothing was queued. Cleared whenever the form's answers change. */
+  protected readonly added = signal<string | null>(null);
   /** The workspace plan is a hash of the whole PDF; a 400 MB scan is not instant. */
   protected readonly busy = signal(false);
 
@@ -290,6 +376,9 @@ export class OcrDialogComponent {
     effect(() => {
       this.source();
       this.problem.set(null);
+      // And the confirmation with it: "Added Kershaw.pdf" over a form that now
+      // names a different book is a sentence about something else.
+      this.added.set(null);
     });
   }
 
@@ -321,8 +410,41 @@ export class OcrDialogComponent {
       const language = this.language().trim();
       if (language.length > 0) request.language = language;
 
-      await this.queue.enqueue(request);
+      const outcome = await this.queue.enqueue(request);
+      /*
+       * A REFUSAL IS NOT A SUCCESS, so it does not get the success behaviour.
+       * Main dedupes on the output path, and a second Add of the same book and
+       * format changes nothing — closing the dialog and moving focus away would
+       * be this app performing a result it did not produce. It stays put and
+       * says so, in the form the dialog already uses for a problem.
+       */
+      if (outcome === 'already') {
+        this.added.set(`${this.baseName(input)} · ${kind} is already in the queue — nothing was added.`);
+        return;
+      }
       this.ui.shelfExpanded.set(true);
+      /*
+       * THE DIALOG GOES AND THE ATTENTION FOLLOWS THE JOB.
+       *
+       * This card used to stay open with a confirmation line under the form, so
+       * a batch could be built without reopening it. The modal was the thing the
+       * user wanted gone: what they have just done is put a job in the queue,
+       * and the queue is somewhere else on the screen — leaving a form in front
+       * of it makes them dismiss a card to look at the result of using it.
+       *
+       * So the shelf is unrolled, the dialog closes, and real DOM focus moves to
+       * the shelf's Start button, which is what they press next. Focus is the
+       * part that matters for somebody not using a mouse: a dialog that closed
+       * and dropped focus back to the document would leave them tabbing across
+       * the whole window to reach the thing they just created.
+       *
+       * `announce` carries what the confirmation line used to say, into the
+       * shelf's live region — a sentence that is read out rather than one that
+       * is silently replaced by a closing card.
+       */
+      this.ui.announce(
+        `Added ${this.baseName(input)} · ${kind}. Press Start on the queue to run it.`);
+      this.ui.focusShelf();
       this.ui.closeOcr();
     } catch (err) {
       // Never swallowed and never a console line: the two things that can fail

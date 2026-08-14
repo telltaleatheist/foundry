@@ -11,6 +11,8 @@ import type {
   BackendSettingsPatch,
   CloseWarning,
   ConversionKind,
+  DeletionPrompt,
+  DocumentDeletion,
   DoctorResult,
   EchoAnswer,
   EchoStanding,
@@ -437,21 +439,64 @@ export interface FoundryApi {
   projects: {
     list(): Promise<ProjectSummary[]>;
     /**
+     * What deleting this project would destroy, in sentences worth reading.
+     *
+     * THE QUESTION MOVED TO THE RENDERER AND THE FACTS DID NOT. Main used to ask
+     * in a native message box; the app asks in its own modal now, and this is
+     * what it asks WITH — the size on disk, the readings bank's page count, the
+     * filed copy, the flat statement that nothing comes back. Main is the only
+     * side that can know any of it.
+     *
+     * It also PROVES the delete is currently allowed, so the app never puts a
+     * warning on screen for something it would refuse a click later. A refusal —
+     * a book from the project open in a tab, a job queued to write into it —
+     * rejects with the reason.
+     */
+    describe(dir: string): Promise<DeletionPrompt>;
+    /**
      * Erase one project's whole directory — archive, generated, working, final,
      * readings, history — from the disk. It really deletes; nothing is rotated
      * aside and there is no copy anywhere else.
      *
-     * MAIN ASKS FIRST, in its own native dialog, naming the book and saying what
-     * is in the folder. The renderer never gets to skip that question: it names
-     * a directory and main decides, the same way it does for everything else it
-     * is handed a path for.
+     * ASKING IS THE CALLER'S JOB NOW; PROVING IS STILL MAIN'S. This runs the
+     * same refusals `describe` ran, because a renderer that skipped the question
+     * must meet the same answer — the checks live in the call that erases rather
+     * than in the one that asks. It names a directory and main decides, the same
+     * way it does for everything else it is handed a path for.
      *
-     * Resolves to the sentence for the notice strip once the folder is gone, or
-     * NULL when the user answered Keep it. A refusal — a path that is not a
-     * project, a book from it open in a tab — REJECTS with the reason, so the
-     * caller's ordinary catch says it and a cancel is never mistaken for one.
+     * Resolves to the sentence for the notice strip once the folder is gone. A
+     * refusal REJECTS with the reason.
      */
-    delete(dir: string): Promise<string | null>;
+    delete(dir: string): Promise<string>;
+  };
+
+  /**
+   * One document inside a project — the file, and its row in the catalogue.
+   *
+   * A NARROWER DOOR THAN `projects`, deliberately. Main refuses any path that is
+   * not strictly inside `<library>/projects/<project>/`, so a renderer cannot
+   * name an arbitrary file and have it unlinked; and it refuses the project's
+   * ORIGINAL outright, because deleting that is deleting the project and there
+   * is a separate call for that with a separate warning.
+   */
+  documents: {
+    /**
+     * What deleting this document would do — and whether it is the original.
+     *
+     * `original: true` means the prompt describes the PROJECT: every other
+     * document in the folder was made from this file, so there is no version of
+     * removing it that leaves a project behind. The caller is expected to run
+     * `projects.delete` on `projectDir` instead.
+     */
+    describe(filePath: string): Promise<DocumentDeletion>;
+    /**
+     * Remove the file and its catalogue row. Resolves to the notice sentence.
+     *
+     * A file that is already MISSING is still removable: its row is the only
+     * thing left of it, and refusing on the grounds that the bytes are gone
+     * would leave a listing nobody can clean.
+     */
+    delete(filePath: string): Promise<string>;
   };
 
   /**
@@ -473,6 +518,23 @@ export interface FoundryApi {
     enqueue(request: JobRequest): Promise<Job>;
     /** The same serial queue, a different command. See `TranslateRequest`. */
     enqueueTranslate(request: TranslateRequest): Promise<Job>;
+    /**
+     * Release everything currently HELD, in order. Answers with how many.
+     *
+     * Both engine enqueues above return a job that is held and idle, so this is
+     * the call that makes anything happen. A job added after this returns is
+     * held again and waits for the next press (electron/job-queue.ts).
+     */
+    start(): Promise<number>;
+    /**
+     * Take a held or queued row out of the list entirely.
+     *
+     * Not `cancel`: a job that never started has nothing to stop and leaves no
+     * record worth keeping, and a `cancelled` row for it is residue in a shelf
+     * somebody is using to assemble a batch. Refused on a running job, which is
+     * what `cancel` is for.
+     */
+    remove(id: string): Promise<void>;
     cancel(id: string): Promise<void>;
     clearFinished(): Promise<void>;
     /** Every change, whole list. Returns its own unsubscribe. */

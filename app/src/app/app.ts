@@ -4,6 +4,7 @@ import {
 import { Router, RouterOutlet } from '@angular/router';
 
 import { InspectorComponent } from './components/inspector/inspector.component';
+import { ConfirmDialogComponent } from './components/confirm-dialog/confirm-dialog.component';
 import { OcrDialogComponent } from './components/ocr-dialog/ocr-dialog.component';
 import { OpenDocumentsComponent } from './components/open-documents/open-documents.component';
 import { MetadataDialogComponent } from './components/metadata-dialog/metadata-dialog.component';
@@ -63,6 +64,7 @@ import { api } from './core/foundry';
   imports: [
     RouterOutlet, ToolRailComponent, OpenDocumentsComponent, InspectorComponent,
     QueueShelfComponent, OcrDialogComponent, TranslateDialogComponent, MetadataDialogComponent,
+    ConfirmDialogComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
@@ -93,6 +95,11 @@ import { api } from './core/foundry';
       @if (ui.metadataOpen()) {
         <app-metadata-dialog />
       }
+
+      <!-- Always mounted, unlike the three above: it owns its own visibility
+           because the service that settles its promise has to be able to close
+           it from anywhere, including from another dialog opening. -->
+      <app-confirm-dialog />
 
       @if (dropping()) {
         <div class="drop-veil"><span>Drop a PDF to open it</span></div>

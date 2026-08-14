@@ -12,8 +12,9 @@
  *   <libraryDir>/projects/<slug>-<contentkey>/
  *     project.json            the catalogue — see ProjectManifest
  *     archive/                the imported originals. NEVER written.
- *     generated/              the model's cast EPUB, or the imported EPUB, or a
- *                             searchable PDF. NEVER written.
+ *     generated/              the model's cast EPUB, or the imported EPUB, or
+ *                             the book reprinted as a real-text PDF. NEVER
+ *                             written.
  *     working/                what the user edits: the unpacked EPUB tree, and
  *                             the live PDF.
  *     final/                  what Save and Export produce, named for the book.
@@ -820,10 +821,17 @@ export async function rotateGenerated(dir: string, file: string): Promise<void> 
  * an intention: a run that fails at page 200 would otherwise leave a row in the
  * catalogue for a file that does not exist, and Home would offer it.
  *
- * A SEARCHABLE PDF ALSO BECOMES THE LIVE PDF. That is the whole reason the user
- * never sees two PDF rows: the scan they opened and the scan with a text layer
- * over it are ONE document, and what a searchable conversion does is give that
- * document its text layer. The copy it replaces is rotated aside, not deleted.
+ * A REAL-TEXT PDF IS A SECOND DOCUMENT, AND IT USED TO BE TREATED AS THE SAME
+ * ONE. When this conversion laid an invisible layer over the scan, the file it
+ * produced WAS the scan — same pages, same images, same bytes — so it replaced
+ * the live PDF and the user rightly saw one row: one document that had been
+ * improved. That is no longer what comes back. The conversion now reprints the
+ * book as type on fresh paper and throws the scan's pixels away, so promoting it
+ * would file the user's scan into `working/archived-<stamp>/` and hand them a
+ * text reprint under the name of the photograph they imported — a substitution
+ * they never asked for, of the one artefact the project exists to hold. So the
+ * scan stays the live PDF and the reprint is a row of its own, beside the cast
+ * EPUB and the plain text, which is what it now is.
  *
  * A failure here is LOGGED and not thrown. This runs at the end of a run that
  * may have taken three hours, and losing a row in a catalogue is not a reason to
@@ -857,16 +865,17 @@ export async function recordGenerated(
         ...manifest.generated.filter((entry) => entry.file !== file),
         { file, kind, role, madeAt: Date.now() },
       ];
-      // WRITTEN BEFORE the live copy is refreshed, and that ordering is the
-      // whole reason these are two writes. Refreshing can refuse — an archive
-      // folder from this same second already exists — and a refusal that took
-      // the origin's own catalogue row down with it would leave the engine's
-      // output on disk, uncatalogued, invisible to Home.
       await writeManifest(dir, manifest);
-      if (role !== 'searchable') return null;
-      const live = await refreshLivePdf(dir, manifest, file);
-      await writeManifest(dir, manifest);
-      return live;
+      /*
+       * NULL FOR EVERY ROLE NOW, and the return type stays because the caller's
+       * question is still worth asking. `job-queue.ts` uses the answer to decide
+       * which path the finished row points at — the engine's output, or a live
+       * copy made from it — and there is exactly one role that ever made a live
+       * copy. Nothing does today (see this function's own note), so nothing is
+       * promoted; leaving the seam here means the day something is, the queue
+       * already knows how to point at it.
+       */
+      return null;
     });
   } catch (err) {
     console.error(`[projects] ${path.join(dir, MANIFEST)} could not record ${file}: ${(err as Error).message}`);
@@ -875,7 +884,14 @@ export async function recordGenerated(
 }
 
 /**
- * Replace the live PDF with the one that now has a text layer.
+ * Install a `generated/` PDF as the project's live one.
+ *
+ * ONLY ONE CALLER IS LEFT AND IT IS THE LEGACY ONE. A conversion run today
+ * produces a document of its own and never replaces the scan (`recordGenerated`
+ * says why). What still needs this is `adoptLegacyLayout`: the PDFs it finds
+ * were written when `--format pdf` laid an invisible layer over the pages it was
+ * given, so each of them IS that project's scan, and a project adopted without
+ * this would list a book and no scan at all.
  *
  * The old live copy is rotated into `working/archived-<stamp>/` rather than
  * overwritten, because it is the only thing that can answer "what did this look
@@ -1111,11 +1127,13 @@ export async function noteProjectTitle(dir: string, title: string): Promise<void
 /**
  * Every project, newest-opened first, each with the documents inside it.
  *
- * ONE ROW PER DOCUMENT, not one per file. A PDF that was imported and then made
- * searchable is one row — the live copy in `working/` — because it is one
- * document that has been improved, and a person who saw two would reasonably ask
- * which of them was theirs. The archive and the generated origin behind it are
- * this app's bookkeeping and are reachable through Reveal.
+ * ONE ROW PER DOCUMENT, not one per file. The scan the user imported is one row
+ * — the live copy in `working/` — and the archive behind it is this app's
+ * bookkeeping, reachable through Reveal. What has been MADE from that scan is a
+ * row each: the cast EPUB, a translation, the plain text, and the book reprinted
+ * as real text in a PDF. That last one used to be folded into the scan's row,
+ * back when it WAS the scan with a layer over it; it is a different document
+ * now, and a document a person cannot see is a document they cannot open.
  *
  * THE BOOK ITSELF IS ONE OF THE DOCUMENTS. What a project has been used to make
  * is the interesting question, but it is not the only one, and a project that
@@ -1176,15 +1194,23 @@ async function summarise(dir: string, name: string): Promise<ProjectSummary> {
       missing: !await exists(file),
       // The user's own scan, in their own folder, is where this came from: a
       // dot saying "saved nowhere" would warn about a loss that cannot happen.
-      // Once it carries a text layer Foundry made, it can.
+      // Only a project adopted from the old flat layout has a live PDF this app
+      // made, and that one can be lost.
       managed: live.from.startsWith(`${GENERATED}/`),
     });
   }
 
-  // The books. `imported` and `cast` are the same document to a reader — the
-  // one EPUB this project is about — and only one of the two can exist.
+  /*
+   * The books. `imported` and `cast` are the same document to a reader — the
+   * one EPUB this project is about — and only one of the two can exist.
+   *
+   * `searchable` IS LISTED HERE NOW. It used to be skipped, because the file it
+   * named had been copied over the live PDF above and a second row would have
+   * been the same document twice. It is not the same document any more: it is
+   * the book reprinted as type with the scan's pixels gone, so the scan keeps
+   * its row and this gets one (`recordGenerated`).
+   */
   for (const origin of manifest.generated) {
-    if (origin.role === 'searchable') continue; // it is the PDF above, not a row of its own
     const file = path.join(dir, GENERATED, origin.file);
     documents.push({
       path: file,
@@ -1329,8 +1355,8 @@ export interface ProjectInventory {
    *
    * Counted the way `summarise` counts them, ONE PER DOCUMENT and not one per
    * file, because this number reaches a dialog and has to agree with the rows
-   * the user just expanded on Home. A searchable PDF is the live PDF, not a
-   * second document, which is exactly why it is skipped here too.
+   * the user just expanded on Home — so every generated origin counts, the
+   * real-text PDF included, for the reason `listProjects` gives.
    */
   documents: number;
   /** True once anything has been filed into `final/`. That copy is in here too. */
@@ -1368,8 +1394,7 @@ export async function inspectProject(dir: string): Promise<ProjectInventory> {
     readings: await countBankPages(path.join(resolved, 'readings')),
     documents: manifest === null
       ? 0
-      : manifest.working.files.length
-        + manifest.generated.filter((row) => row.role !== 'searchable').length,
+      : manifest.working.files.length + manifest.generated.length,
     filed: (manifest?.final.length ?? 0) > 0,
     bytes: await measure(resolved),
   };
@@ -1407,6 +1432,90 @@ export async function deleteProject(dir: string): Promise<void> {
   // project chained after this promise would be waiting on a delete for no
   // reason anybody could find later.
   if (edits.get(key) === next) edits.delete(key);
+}
+
+/**
+ * The project a FILE belongs to, proven rather than assumed.
+ *
+ * `deletableProjectDir`'s gate, one level out: what may be deleted here is a file
+ * strictly INSIDE one of Home's projects, so the test is that `path.relative`
+ * from `projectsDir()` yields two segments or more and the first of them is a
+ * project. That rejects the root, anything above it, anything on another volume,
+ * a project directory itself (which is `deleteProject`'s business and not this
+ * one's), and every arbitrary path a renderer might name.
+ *
+ * THE SAME REASONING AS `deletableProjectDir`, AND FOR THE SAME REASON. This is
+ * the whole of the gate on a call that unlinks a file whose path came across IPC
+ * from a page that runs a book's own markup in an iframe. A renderer's word is
+ * not an authorization here either.
+ */
+function deletableDocumentPath(filePath: string): { dir: string; resolved: string } {
+  const root = projectsDir();
+  const resolved = path.resolve(filePath);
+  const inside = path.relative(root, resolved);
+  const parts = inside.split(path.sep);
+  if (inside.length === 0 || inside.startsWith('..') || path.isAbsolute(inside) || parts.length < 2) {
+    throw new ProjectError(
+      `${resolved} is not a document inside one of Foundry's projects — those live under `
+      + `${root}, and nothing else may be deleted. Refusing to erase it.`,
+    );
+  }
+  return { dir: path.join(root, parts[0]!), resolved };
+}
+
+/** What became of a document that was asked to be deleted. */
+export interface DocumentRemoval {
+  /** The project's own title, for the sentence the notice strip shows. */
+  title: string;
+  /** The file's name, as the catalogue spelled it. */
+  label: string;
+  /** True when the bytes were already gone and only the row was cleared. */
+  wasMissing: boolean;
+}
+
+/**
+ * Erase one document out of a project: the file, and its row in the catalogue.
+ *
+ * BOTH, OR THE PROJECT LIES ABOUT ITSELF. A file removed without its row leaves
+ * Home and the side nav listing a document that is not there — which is exactly
+ * the "not there any more" state, and it is the right state for a file somebody
+ * moved behind the app's back, but it is a silly thing to CREATE on purpose. A
+ * row removed without the file leaves bytes in the folder nothing can reach.
+ *
+ * A FILE THAT IS ALREADY MISSING IS STILL REMOVABLE, and that is the decision
+ * worth recording. Its row is the only thing left of it, the row is what the
+ * user is looking at and asking to be rid of, and refusing on the grounds that
+ * the file is already gone would leave them with a listing they cannot clean and
+ * no way to understand why. `force: true` on the unlink makes the two cases one
+ * code path; `wasMissing` is carried back so the sentence can say which happened.
+ *
+ * THROUGH THE EDIT CHAIN, like every other manifest write: a job recording its
+ * output can be mid-write, and a manifest read here that lands between another
+ * writer's read and its write would be lost with it.
+ */
+export async function deleteDocument(filePath: string): Promise<DocumentRemoval> {
+  const { dir, resolved } = deletableDocumentPath(filePath);
+  const wasMissing = !await exists(resolved);
+
+  const label = path.basename(resolved);
+  let title = path.basename(dir);
+  await withManifest(dir, async (manifest) => {
+    title = manifest.title ?? title;
+    const gone = (file: string): boolean =>
+      path.resolve(dir, GENERATED, file).toLowerCase() === resolved.toLowerCase()
+      || path.resolve(dir, WORKING, file).toLowerCase() === resolved.toLowerCase()
+      || path.resolve(dir, FINAL, file).toLowerCase() === resolved.toLowerCase();
+    manifest.generated = manifest.generated.filter((row) => !gone(row.file));
+    manifest.working.files = manifest.working.files.filter((row) => !gone(row.file));
+    manifest.final = manifest.final.filter((row) => !gone(row.file));
+    await writeManifest(dir, manifest);
+  });
+
+  // After the catalogue, not before: a manifest that still lists a file this is
+  // about to remove is a recoverable inconsistency, and bytes with no row are a
+  // folder nothing can account for.
+  await fsp.rm(resolved, { force: true });
+  return { title, label, wasMissing };
 }
 
 /** Every byte under `dir`, counted by walking it. Missing is zero, never a throw. */
@@ -1527,7 +1636,7 @@ const LEGACY_BANK = /^(?<stem>.+)-(?<hex>[0-9a-f]{8})\.jsonl$/i;
  *
  * WHAT IT MOVES IS AN ORIGIN. Everything the old flat workspace held was written
  * by the engine, so it all belongs in `generated/` — a cast EPUB, a translation,
- * a searchable PDF, a text export — and the layers above it are built from there
+ * a converted PDF, a text export — and the layers above it are built from there
  * the first time each is opened. There is no `archive/` for these: the PDF they
  * were read from was never copied anywhere, and inventing one would be a guess.
  *
@@ -1619,8 +1728,14 @@ async function adoptLegacyGenerated(said: string[]): Promise<void> {
         // must not take the record of it down too.
         await writeManifest(dir, manifest);
         said.push(`${entry.name} -> ${destination}`);
-        // A searchable PDF adopted from the flat layout still has to become the
-        // live PDF, or the project would list a book and no scan at all.
+        /*
+         * A searchable PDF adopted from the flat layout still has to become the
+         * live PDF, or the project would list a book and no scan at all — and
+         * unlike a conversion run today, this one really IS the scan. Every file
+         * this path can find was written by the engine back when `--format pdf`
+         * laid an invisible layer over the pages it was given, so promoting it
+         * installs a scan rather than replacing one. Nothing new lands here.
+         */
         if (role === 'searchable') {
           await refreshLivePdf(dir, manifest, file);
           await writeManifest(dir, manifest);

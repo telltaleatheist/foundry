@@ -395,8 +395,9 @@ export class TabsService {
      * window. The only fact that matters is that a row reached `done`.
      *
      * EPUB and PDF both, because both have a tab to open into and looking at
-     * the result is the next thing anybody does — for a searchable PDF it is
-     * the ONLY way to see that anything happened at all. txt stays shelf-only:
+     * the result is the next thing anybody does — a reprinted PDF is a claim
+     * about every page of a book, and the claim is checked by eye. txt stays
+     * shelf-only:
      * there is no text tab, and the OS opens it from reveal.
      *
      * A TRANSLATION IS THE THIRD, and it is the one this matters most for: it
@@ -848,8 +849,18 @@ export class TabsService {
    * CLOSING A BOOK CLOSES ITS EDITOR. They are one document with two faces, and
    * an editor pane left holding a book that is no longer open is a pane with
    * nothing it can do.
+   *
+   * `ask: false` FOR A CLOSE THAT IS PART OF A DELETE, and it is the difference
+   * between one question and two. This warning's whole subject is a copy the
+   * user might want to keep track of — "nothing is lost, the working copy is in
+   * the project" — and a document being deleted is one where that sentence is
+   * false and the offer to save it is an offer to write bytes into a file about
+   * to be unlinked. The delete's own confirmation asked the only question there
+   * is; a second box on top of it, in the OS's own chrome, asking about saving
+   * the thing they just told the app to destroy, is the app arguing with an
+   * answer it already has.
    */
-  async close(id: string): Promise<void> {
+  async close(id: string, ask = true): Promise<void> {
     const doomed = this.all().find((candidate) => candidate.id === id);
     if (!doomed) return;
 
@@ -860,7 +871,7 @@ export class TabsService {
     // question is asked after it rather than before.
     const current = this.all().find((candidate) => candidate.id === id);
     if (!current) return;
-    if ((current.unsaved || current.modified) && api) {
+    if (ask && (current.unsaved || current.modified) && api) {
       const go = await api.confirmClose({
         title: current.title,
         unsaved: current.unsaved,
@@ -2316,8 +2327,8 @@ export class TabsService {
    *
    * A PDF saves as a COPY of the finished file: a conversion's output lives in
    * the workspace until this puts it somewhere the user chose, and that is the
-   * whole difference between "foundry made me a searchable PDF" and "there is a
-   * searchable PDF in a folder I know about". An EPUB repacks from its working
+   * whole difference between "foundry made me a PDF I can read" and "there is a
+   * PDF I can read in a folder I know about". An EPUB repacks from its working
    * copy instead (electron/epub-reader.ts), because its edits live there.
    */
   async saveAs(id: string): Promise<void> {

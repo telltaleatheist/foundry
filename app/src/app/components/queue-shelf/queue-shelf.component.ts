@@ -1,4 +1,6 @@
-import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import {
+  ChangeDetectionStrategy, Component, ElementRef, computed, effect, inject, viewChild,
+} from '@angular/core';
 
 import type { Job } from '@shared/types';
 
@@ -16,11 +18,40 @@ import { api } from '../../core/foundry';
  *
  * It shows what MAIN says. Nothing here is optimistic: a cancel is a request,
  * and the row changes when the process actually stopped.
+ *
+ * ── It is also where a batch is committed ───────────────────────────────────
+ *
+ * Engine jobs arrive HELD (electron/job-queue.ts): configured, ordered, visible
+ * and idle. So this shelf is no longer only a report — it is the one place the
+ * user says "run these", and three things follow from that.
+ *
+ * A HELD ROW MUST NOT LOOK LIKE A QUEUED ONE. They are both "not running yet"
+ * and the difference between them is who is being waited on: the machine, or
+ * the person looking at the shelf. A held row is accented, ruled down its left
+ * edge so a run of them reads as one batch, and says "Waiting for Start" in
+ * words — colour alone would be a state that only some people can see.
+ *
+ * THE ✕ MEANS TWO DIFFERENT THINGS AND SAYS SO. On a running job it cancels; on
+ * a held or queued one it REMOVES, leaving nothing behind, because a job that
+ * never ran has nothing to record and a "Cancelled" row for it is clutter in
+ * exactly the list somebody is using to see what they have assembled.
+ *
+ * START CARRIES THE COUNT. The number is what is being committed to, and a
+ * disabled-but-present button keeps the footer from changing shape as rows come
+ * and go.
  */
 @Component({
   selector: 'app-queue-shelf',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
+    <!--
+      WHAT JUST HAPPENED, said out loud. The OCR dialog closes on Add now and
+      moves focus here, so the confirmation it used to leave on screen has to
+      arrive some other way for anybody not watching the shelf. Polite rather
+      than assertive: a job being queued is news, not an interruption.
+    -->
+    <p class="sr-only" role="status" aria-live="polite">{{ ui.shelfSaid() }}</p>
+
     @if (queue.jobs().length > 0) {
       <div class="shelf" [class.expanded]="ui.shelfExpanded()">
         <button class="shelf-head" (click)="ui.shelfExpanded.set(!ui.shelfExpanded())">
@@ -47,8 +78,24 @@ import { api } from '../../core/foundry';
               <div class="row" [attr.data-state]="job.state">
                 <div class="row-top">
                   <span class="name" [title]="job.inputPath">{{ label(job) }}</span>
-                  @if (job.state === 'queued' || job.state === 'running') {
-                    <button class="x" (click)="queue.cancel(job.id)" title="Cancel">✕</button>
+                  <!--
+                    TWO GESTURES THAT LOOK THE SAME AND ARE NOT. A running job is
+                    CANCELLED — a child is holding a GPU, stopping it is a real
+                    event, and the row that records it afterwards is worth having.
+                    A held or queued job is REMOVED: it never ran, so there is
+                    nothing to stop, and a "Cancelled" row for a batch item
+                    somebody simply changed their mind about is residue in the
+                    one list they are using to see what they have assembled.
+                    Same ✕, different verb, and the titles say which.
+                  -->
+                  @if (job.state === 'held' || job.state === 'queued') {
+                    <button class="x" (click)="queue.remove(job.id)"
+                            title="Remove from the queue"
+                            [attr.aria-label]="'Remove ' + label(job) + ' from the queue'">✕</button>
+                  } @else if (job.state === 'running') {
+                    <button class="x" (click)="queue.cancel(job.id)"
+                            title="Cancel"
+                            [attr.aria-label]="'Cancel ' + label(job)">✕</button>
                   } @else if (job.state === 'done' && job.kind !== 'env-install') {
                     <!--
                       Open comes FIRST because it is what a finished conversion is
@@ -65,10 +112,11 @@ import { api } from '../../core/foundry';
                       file every OS already opens. Reveal is one button and points
                       at the thing that was actually made.
 
-                      A SEARCHABLE PDF OPENS, and needs nothing new to do it: the
+                      A REAL-TEXT PDF OPENS, and needs nothing new to do it: the
                       tab kinds are epub and pdf, and what this job made is a PDF.
-                      That is also the only way to see that it worked — the file
-                      looks exactly like the scan until somebody searches it.
+                      Opening it is also how anybody judges it — the pages keep
+                      the scan's layout and lose the scan's grey, and whether the
+                      model read them right is a thing you look at.
 
                       A TRANSLATION OPENS for the same reason as a conversion:
                       what it made is an EPUB, and the tab that reads one already
@@ -95,6 +143,15 @@ import { api } from '../../core/foundry';
                     </div>
                     <span class="sub">{{ progressText(job) }}</span>
                   }
+                  <!--
+                    "Waiting for Start" and not "Queued", because the two are
+                    different facts and the user is the difference. A queued job
+                    is behind a machine that is busy and will reach it; a held
+                    one is behind a button nobody has pressed, and a shelf that
+                    called both "Queued" would leave somebody watching a still
+                    list wondering whether the app had hung.
+                  -->
+                  @case ('held') { <span class="sub hold">Waiting for Start</span> }
                   @case ('queued') { <span class="sub">{{ job.message ?? 'Queued' }}</span> }
                   @case ('done') {
                     <span class="sub ok" [title]="job.message ?? ''">
@@ -107,9 +164,29 @@ import { api } from '../../core/foundry';
               </div>
             }
 
+            <!--
+              START IS THE PRIMARY ACTION AND SITS WHERE A PRIMARY ACTION SITS —
+              last in the footer, on the right, the way every dialog in this app
+              puts its commit button. It carries the COUNT because the number is
+              the thing being committed to: "Start 4" is a person confirming the
+              batch they just assembled, where a bare "Start" would be a button
+              they press to find out what happens.
+
+              Disabled with nothing held rather than hidden, so the shelf does
+              not change shape as rows are added and released — a control that
+              appears and disappears under the cursor is one people learn to
+              distrust. The aria-label spells the count out, because "Start 4"
+              read aloud is not obviously four jobs.
+            -->
             <div class="shelf-foot">
               <button class="ghost" [disabled]="queue.finished().length === 0"
                       (click)="queue.clearFinished()">Clear finished</button>
+              <button #start class="primary" [disabled]="queue.held().length === 0"
+                      [attr.aria-label]="startLabel()"
+                      [title]="startLabel()"
+                      (click)="queue.start()">
+                Start@if (queue.held().length > 0) { <span>&nbsp;{{ queue.held().length }}</span> }
+              </button>
             </div>
           </div>
         }
@@ -117,6 +194,20 @@ import { api } from '../../core/foundry';
     }
   `,
   styles: [`
+    /* Read, never seen. Clipped rather than display:none or visibility:hidden,
+       because both of those take the element out of the accessibility tree and
+       a live region nothing can reach announces nothing. */
+    .sr-only {
+      position: absolute;
+      width: 1px; height: 1px;
+      margin: -1px; padding: 0;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      clip-path: inset(50%);
+      white-space: nowrap;
+      border: 0;
+    }
+
     .shelf {
       position: fixed;
       right: 16px;
@@ -205,6 +296,20 @@ import { api } from '../../core/foundry';
     .sub { font-size: 11px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .sub.ok { color: var(--ok); }
     .sub.bad { color: var(--error); white-space: normal; }
+    /*
+      A held row reads as WAITING FOR SOMEBODY rather than as inert. The accent
+      is the same one the Start button carries, so the row and the control that
+      releases it are visibly the same subject; the left rule is what makes a
+      run of them legible as a BATCH at a glance, which is the thing being
+      assembled. Colour is not the only carrier — the row also says "Waiting for
+      Start" in words, because a state told only in hue is a state somebody who
+      cannot see the hue does not have.
+    */
+    .row[data-state='held'] {
+      background: var(--accent-soft);
+      box-shadow: inset 2px 0 0 var(--accent);
+    }
+    .sub.hold { color: var(--accent); }
 
     .x {
       background: transparent; border: none; cursor: pointer;
@@ -231,15 +336,49 @@ import { api } from '../../core/foundry';
       background: var(--bg-hover); border-color: var(--border-strong);
     }
 
-    .shelf-foot { display: flex; justify-content: flex-end; padding: 8px 12px; }
+    .shelf-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 8px 12px; }
     .ghost { height: 26px; padding: 0 10px; font-size: 12px; }
     .ghost:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* The dialogs' primary button, at the shelf's smaller scale — same tokens,
+       same states, so Start reads as the same kind of commit as "Add to queue". */
+    .primary {
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 26px; padding: 0 12px;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-size: 12px; font-weight: 600; line-height: 1;
+      cursor: pointer;
+      background: var(--accent); color: var(--text-inverse);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    }
+    .primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .primary:active:not(:disabled) { background: var(--accent-active); transform: scale(0.98); }
+    .primary:disabled { opacity: 0.5; cursor: not-allowed; }
   `],
 })
 export class QueueShelfComponent {
   protected readonly queue = inject(QueueService);
   protected readonly ui = inject(UiService);
   private readonly tabs = inject(TabsService);
+
+  private readonly start = viewChild<ElementRef<HTMLButtonElement>>('start');
+
+  constructor() {
+    /*
+     * FOCUS ARRIVES FROM THE OCR DIALOG, one press at a time.
+     *
+     * The counter is read and the button is focused in a microtask, because the
+     * shelf may have been collapsed a moment ago: `focusShelf` unrolls it in the
+     * same tick, and the button does not exist in the DOM until that render has
+     * happened. Focusing a button that is not there yet silently does nothing,
+     * which is the failure this ordering exists to avoid.
+     */
+    effect(() => {
+      if (this.ui.focusShelfAt() === 0) return;
+      queueMicrotask(() => this.start()?.nativeElement.focus());
+    });
+  }
 
   /**
    * The pill's one line: what is running, and how many are waiting behind it.
@@ -248,13 +387,33 @@ export class QueueShelfComponent {
   protected readonly headline = computed(() => {
     const active = this.queue.running();
     const waiting = this.queue.queued().length;
+    const held = this.queue.held().length;
     if (active) {
       const name = label(active);
-      return waiting > 0 ? `${name} · ${waiting} queued` : name;
+      const behind = [
+        waiting > 0 ? `${waiting} queued` : null,
+        held > 0 ? `${held} held` : null,
+      ].filter((part) => part !== null);
+      return behind.length > 0 ? `${name} · ${behind.join(', ')}` : name;
     }
+    /*
+     * A HELD BATCH IS THE HEADLINE WHEN NOTHING IS RUNNING, and it outranks the
+     * finished count deliberately: the pill is collapsed most of the time, and a
+     * shelf reading "3 finished" over three jobs that are sitting there waiting
+     * to be started is the one state where the summary would actively mislead —
+     * it says the work is done when none of it has begun.
+     */
+    if (held > 0) return `${held} waiting for Start`;
     const failed = this.queue.failed().length;
     if (failed > 0) return `${failed} failed`;
     return `${this.queue.finished().length} finished`;
+  });
+
+  /** What the Start button says to a screen reader, and on hover. */
+  protected readonly startLabel = computed(() => {
+    const held = this.queue.held().length;
+    if (held === 0) return 'Nothing is waiting to start';
+    return held === 1 ? 'Start the 1 job waiting' : `Start the ${held} jobs waiting`;
   });
 
   /** True when the bar has a real fraction behind it. See the template's note. */

@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import { Router } from '@angular/router';
 
-import type { ProjectDocument, ProjectSummary } from '@shared/types';
+import type { ProjectSummary } from '@shared/types';
 
 import { api } from '../../core/foundry';
 import { ProjectsService } from '../../core/projects.service';
@@ -19,11 +19,22 @@ import { UiService } from '../../core/ui.service';
  *
  * ── The list is PROJECTS, not files ──────────────────────────────────────────
  *
- * A row is a BOOK — one folder holding the scan, the cast EPUB, a translation, a
- * searchable PDF — and the tags on it are the answer to "what has been made from
- * this?", which a flat list of filenames could not give. Expanding a row is how
- * any one of those is opened, because the interesting question ("open the
- * English one") is a question about the book first and the file second.
+ * A row is a BOOK — one folder holding the scan, the cast EPUB, a translation,
+ * the real-text PDF — and the tags on it are the answer to "what has been made
+ * from this?", which a flat list of filenames could not give.
+ *
+ * CLICKING A ROW OPENS THE BOOK, and it used to open a drop-down instead. The
+ * expansion was a list of every document in the project and a second click to
+ * choose from it — which is the right question asked at the wrong moment: nine
+ * times out of ten the answer is "the scan", the user knew that before they
+ * clicked, and the menu was a step between them and the thing they came for.
+ * `originalOf` picks it (ProjectsService) and the row opens it directly.
+ *
+ * THE OTHER DOCUMENTS ARE NOT GONE, THEY MOVED. They are in the open-documents
+ * nav now, grouped under the project, where flipping between a scan and the book
+ * cast from it is one click and stays available while you read — which is when
+ * that question is actually asked. It was never a question for a screen you are
+ * about to leave.
  *
  * A row leaves this list ONE WAY, and it takes the book with it. There is no
  * Clear and no "forget this", deliberately: the old recents list was a cache of
@@ -32,10 +43,16 @@ import { UiService } from '../../core/ui.service';
  * leaving the folder on disk would be a delete button wearing a nicer word.
  *
  * So the button beside Reveal is the honest version of that: it DELETES — the
- * project directory and everything in it, off the disk, for real. Main asks
- * first, in its own dialog, naming the book and what is in the folder (see
- * `projects:delete` in electron/main.ts); this side's job is to refuse early
- * when a document from the project is open, and to say what happened.
+ * project directory and everything in it, off the disk, for real. The question
+ * is asked in the app's OWN confirmation now (ConfirmService) rather than in a
+ * native message box, but every word in it is still main's: the size on disk,
+ * the readings bank, the filed copy (`projects:describe` in electron/main.ts).
+ * This side's job is to refuse early when a document from the project is open,
+ * to ask, and to say what happened.
+ *
+ * IT IS THE SAME CARD THE SIDE NAV USES to delete one document. There is exactly
+ * one confirmation in this app, and it looks the same wherever the thing being
+ * ended is — which is what stops a second, softer one being invented later.
  *
  * IT IS ALSO WHAT AN EMPTY COLUMN SHOWS. Ctrl+\ makes a column with nothing in
  * it, and the useful thing to put in a column with nothing in it is the library
@@ -82,11 +99,11 @@ import { UiService } from '../../core/ui.service';
               <li>
                 <button
                   class="row"
-                  [title]="project.dir"
-                  [attr.aria-expanded]="projects.expanded().has(project.key)"
-                  (click)="projects.toggle(project.key)"
+                  [title]="rowTitle(project)"
+                  [disabled]="project.problem === null && projects.originalOf(project) === null"
+                  (click)="openProject(project)"
                 >
-                  <span class="kind">{{ projects.expanded().has(project.key) ? '▾' : '▸' }}</span>
+                  <span class="kind">{{ glyph(project) }}</span>
                   <span class="name">{{ project.title }}</span>
                   @if (project.problem !== null) {
                     <span class="tag gone" [title]="project.problem">catalogue unreadable</span>
@@ -96,6 +113,17 @@ import { UiService } from '../../core/ui.service';
                     }
                     @if (project.filed) {
                       <span class="tag" title="A copy has been filed in this project's own folder">filed</span>
+                    }
+                    <!--
+                      A project whose catalogue parses and whose files are all
+                      gone. It used to be discoverable only by expanding the row
+                      into a list of "not there any more" — now the row itself
+                      has to carry it, because there is nothing left to expand
+                      and a click that did nothing would be indistinguishable
+                      from a dead app.
+                    -->
+                    @if (projects.originalOf(project) === null) {
+                      <span class="tag gone" title="Every document this project listed is missing from the disk">nothing to open</span>
                     }
                   }
                   <span class="when">{{ project.openedAt > 0 ? when(project.openedAt) : '' }}</span>
@@ -108,40 +136,16 @@ import { UiService } from '../../core/ui.service';
                 >⌦</button>
               </li>
 
-              @if (projects.expanded().has(project.key)) {
-                @if (project.problem !== null) {
-                  <li class="detail">
-                    <p class="none">{{ project.problem }}</p>
-                  </li>
-                } @else {
-                  @for (document of project.documents; track document.path) {
-                    <li class="detail" [class.missing]="document.missing">
-                      <button
-                        class="row"
-                        [title]="document.label"
-                        [disabled]="document.missing || document.kind === 'txt'"
-                        (click)="open(document)"
-                      >
-                        <span class="kind">{{ document.kind === 'epub' ? '▤' : document.kind === 'pdf' ? '▦' : '≡' }}</span>
-                        <span class="name">{{ document.label }}</span>
-                        @if (document.missing) {
-                          <span class="tag gone">not there any more</span>
-                        }
-                        <span class="when">{{ document.at > 0 ? when(document.at) : '' }}</span>
-                      </button>
-                    </li>
-                  }
-                  @if (project.documents.length === 0) {
-                    <li class="detail">
-                      <!-- Only when there is genuinely nothing to open: the
-                           listing offers the book's own document as well as
-                           anything made from it, so an empty expansion means an
-                           empty folder — a project left behind by something
-                           that did not finish. -->
-                      <p class="none">There is nothing in this project to open.</p>
-                    </li>
-                  }
-                }
+              <!--
+                A CATALOGUE THAT WILL NOT PARSE STILL SAYS SO IN FULL. This is
+                the one row that keeps a second line: the reason is a sentence,
+                it is the only thing this screen can offer about that project,
+                and it has nowhere else to go now that rows do not expand.
+              -->
+              @if (project.problem !== null) {
+                <li class="detail">
+                  <p class="none">{{ project.problem }}</p>
+                </li>
               }
             }
           </ul>
@@ -331,9 +335,13 @@ export class HomeComponent {
   /**
    * What has been made from this book, as short tags on its row.
    *
-   * WHAT IT IS, never where it lives: `cast`, `searchable`, `translation`. The
+   * WHAT IT IS, never where it lives: `cast`, `real text`, `translation`. The
    * folders those documents actually sit in are this app's bookkeeping and the
-   * user never has to learn them. Deduplicated, because a book with three
+   * user never has to learn them. The catalogue still spells the real-text PDF's
+   * role `searchable`, because that token is written into every project on every
+   * disk and renaming it would orphan those rows — so the tag is translated here,
+   * where a person reads it, rather than there, where a file remembers it.
+   * Deduplicated, because a book with three
    * translations says "translation" once and expands to name them — the row
    * answers "has this been cast yet?" at a glance, and three language tags in a
    * row answers something else.
@@ -345,27 +353,55 @@ export class HomeComponent {
     const seen = new Set<string>();
     for (const document of project.documents) {
       if (document.role === 'archive' || document.role === 'imported') continue;
-      seen.add(document.role === 'text' ? 'plain text' : document.role);
+      if (document.role === 'text') seen.add('plain text');
+      else if (document.role === 'searchable') seen.add('real text');
+      else seen.add(document.role);
     }
     return [...seen];
   }
 
   /**
-   * Open one document out of a project.
+   * Open the book this project is about — one click, no menu.
    *
    * `managed` decides whether the tab wears the unsaved dot, and the answer
    * differs inside one project: a cast book exists only because Foundry made it,
    * so nothing the user chose holds a copy — but an IMPORTED document is their
    * own, sitting in a folder of their own, and a dot on it would be a warning
-   * about a loss that cannot happen.
+   * about a loss that cannot happen. It rides on the document (`ProjectDocument`)
+   * rather than being worked out here, because main is what knows where a file
+   * came from.
    *
-   * A `.txt` is listed and never opened: there is no text tab in this app, and a
-   * row that opened an empty viewer would be worse than a row that is plainly
-   * inert. Reveal is on the project.
+   * A project with nothing openable left is refused by the disabled row above,
+   * and a catalogue that will not parse never gets here — `originalOf` returns
+   * null for both, and the row says which it is.
    */
-  protected open(document: ProjectDocument): void {
-    if (document.missing || document.kind === 'txt') return;
-    void this.tabs.openFile(document.path, document.managed);
+  protected openProject(project: ProjectSummary): void {
+    const original = this.projects.originalOf(project);
+    if (original === null) return;
+    void this.tabs.openFile(original.path, original.managed);
+  }
+
+  /**
+   * The glyph is the ORIGINAL'S kind, which is a fact about the book rather
+   * than about the row's state — a project of a scan shows a page, a project
+   * started from an EPUB shows a book. It replaced the expander's chevron, and
+   * it earns its place for the same reason the chevron did not: a triangle said
+   * "there is more of this row", which is no longer true, and this says what
+   * pressing the row will open.
+   */
+  protected glyph(project: ProjectSummary): string {
+    if (project.problem !== null) return '⚠';
+    const original = this.projects.originalOf(project);
+    if (original === null) return '⌸';
+    return original.kind === 'epub' ? '▤' : '▦';
+  }
+
+  /** What the row says on hover: the file it opens, over the folder it is in. */
+  protected rowTitle(project: ProjectSummary): string {
+    if (project.problem !== null) return project.problem;
+    const original = this.projects.originalOf(project);
+    if (original === null) return `${project.dir}\nNothing in this project is still on the disk.`;
+    return `Open ${original.label}\n${project.dir}`;
   }
 
   /** The folder itself, in Explorer/Finder. The one way out of this app. */

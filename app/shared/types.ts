@@ -39,14 +39,34 @@ export type JobKind = ConversionKind | 'env-install' | 'translate';
  * drifting apart would mean the app naming a file `.epub` and the engine
  * writing text into it — which the engine refuses outright (src/vlm/text-out.ts).
  *
- * `pdf` is not a third way of writing the book. It is the SOURCE document with
- * an invisible text layer over its pages — the scan, made searchable — so it
- * comes out looking like what went in and the app can open it in the same PDF
- * tab it opens any other (src/vlm/pdf-layer.ts).
+ * `pdf` IS a third way of writing the book, and it used not to be. It once
+ * produced the source document with an invisible layer over its pages — the
+ * scan, made searchable. It now reprints the book as real, visible type on fresh
+ * pages the shape of the scan's, at the positions the model measured, and throws
+ * the scan's pixels away (src/vlm/pdf-text.ts). What comes out is a
+ * born-digital PDF the app opens in the same PDF tab it opens any other, and it
+ * is a SECOND document rather than an improvement of the first — which is why
+ * the project catalogue gives it a row of its own (`ProjectGeneratedRole`).
  */
 export type ConversionKind = 'epub' | 'txt' | 'pdf';
 
-export type JobState = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+/**
+ * Where a job is, and `held` is the one that needed adding.
+ *
+ * NOTHING AN ENGINE RUNS STARTS BY BEING ENQUEUED. A conversion is hours of GPU
+ * against a file the user picked in a dialog they may well have picked wrong, and
+ * the old queue began the first one the instant the dialog closed — so the moment
+ * of commitment was the moment of configuring, and building a BATCH was
+ * impossible: by the time the second book was chosen the first was already
+ * reading. `held` is a job that is configured, ordered, visible and doing
+ * nothing, and `queued` now means what it always said it meant: waiting for the
+ * machine rather than waiting for the person.
+ *
+ * `held` is deliberately NOT a terminal state and never becomes one. A held job
+ * that is no longer wanted is REMOVED — it never ran, so there is nothing to
+ * cancel and nothing to leave a row about (see `queue.remove`).
+ */
+export type JobState = 'held' | 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 
 export interface JobProgress {
   /** Pages finished. */
@@ -445,8 +465,16 @@ export interface WorkspacePlan {
  * What one file in `generated/` IS, as opposed to what format it is written in.
  *
  * The pair is not redundant: `cast`, `imported` and `translation` are all
- * `.epub`, and `searchable` is a `.pdf` that is the archived scan with a text
- * layer over it rather than a second way of writing the book.
+ * `.epub`, and `searchable` is a `.pdf` — the book reprinted as real text at the
+ * positions it was printed at, rather than the EPUB's reflowed chapters.
+ *
+ * THE NAME IS OLDER THAN WHAT IT NAMES. `searchable` was written when this
+ * conversion laid an invisible layer over the scan and the only thing it changed
+ * was whether the file answered to a search. It now produces a different
+ * document entirely, and the token is kept anyway: it is written into every
+ * `project.json` on every user's disk, renaming it would orphan those rows, and
+ * what it still says about the file — that this is the PDF you can search — is
+ * true and more true than it was.
  */
 export type ProjectGeneratedRole = 'cast' | 'imported' | 'translation' | 'searchable' | 'text';
 
@@ -524,10 +552,12 @@ export interface ProjectWorkingTree {
 /**
  * The live PDF — the one the user sees, and the one metadata edits will land in.
  *
- * A copy is made at import so the layer EXISTS from the start; writing to it is
+ * A copy is made at import so the file EXISTS from the start; writing to it is
  * not implemented yet, and this is the file that will be written when it is.
- * Remade from `generated/` when a searchable conversion lands, so "the PDF"
- * quietly becomes the one with a text layer without ever being a second row.
+ * It is the SCAN and stays the scan: a conversion produces a document of its
+ * own and never replaces this one (`recordGenerated`). The one exception is a
+ * project adopted from the old flat layout, whose `generated/` PDF really was
+ * the scan with a layer over it.
  */
 export interface ProjectWorkingFile {
   /** The name inside `working/`. */
@@ -597,6 +627,46 @@ export interface ProjectDocument {
    * have it in a folder they chose, so it carries no "saved nowhere" dot.
    */
   managed: boolean;
+}
+
+/**
+ * What the in-app confirmation says before something is erased.
+ *
+ * COMPOSED IN MAIN, DRAWN IN THE RENDERER, and the split is the point. Main is
+ * the only side that knows the size on disk, how many pages the readings bank
+ * holds and whether a copy was filed — and those sentences are what make the
+ * warning worth reading rather than an "Are you sure?" people learn to click
+ * through. The renderer owns the card it is drawn in and nothing about the words.
+ *
+ * `detail` is paragraphs rather than one string so the card can space them; the
+ * readings-bank sentence in particular has to be able to stand on its own.
+ */
+export interface DeletionPrompt {
+  /** The headline: what is about to happen, naming the thing. */
+  message: string;
+  /** The paragraphs under it, in order. Each is a sentence worth reading. */
+  detail: string[];
+  /** The label on the destructive button — never "OK". */
+  confirm: string;
+}
+
+/** What main will do about a request to delete one document, before it does it. */
+export interface DocumentDeletion {
+  prompt: DeletionPrompt;
+  /**
+   * True when this file is the document the project exists to hold.
+   *
+   * Deleting it takes the project with it (`shared/original.ts`), so the prompt
+   * above describes the PROJECT, and the caller must run the project delete
+   * rather than the document one. Main refuses the document delete outright for
+   * this path, so a renderer that ignored the flag would get a sentence rather
+   * than a half-erased folder.
+   */
+  original: boolean;
+  /** The project the file belongs to — what to delete when `original` is true. */
+  projectDir: string;
+  /** The file is already gone; only its row in the catalogue is left to clear. */
+  missing: boolean;
 }
 
 /** A project row on Home, with the documents it expands to. */

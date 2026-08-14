@@ -24,11 +24,12 @@ import type { Tab } from '../../core/tabs.service';
  *   or turned off from outside the plugin — there is no API and no setting. The
  *   strip in app-pdf-view runs along the bottom and starts hidden.
  *
- *   THE TEXT LAYER. What foundry adds to a PDF is text in rendering mode 3, and
- *   the one thing Chromium's viewer is built never to do is draw it. So a
- *   conversion that put the layer half a page off looks exactly like one that
- *   got it right, and the only way to tell was to search and guess at what a
- *   miss meant. app-pdf-view can show the layer beside the page.
+ *   THE TEXT LAYER. What a PDF DRAWS and what it would give a search are two
+ *   different things, and Chromium's viewer only ever shows the first. A
+ *   conversion whose words are right and whose reading order is wrong looks
+ *   perfect on the page and copies out as nonsense, and the only way to tell was
+ *   to search and guess at what a miss meant. app-pdf-view can show the text
+ *   beside the page.
  *
  * An EPUB gets app-epub-view, which is ours, because Chromium has no reader and
  * a book foundry cast is a book foundry knows the shape of. The third kind is

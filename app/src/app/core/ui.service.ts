@@ -16,6 +16,14 @@ export class UiService {
   readonly translateOpen = signal(false);
   /** The Metadata dialog — the book's own record, not the app's idea of it. */
   readonly metadataOpen = signal(false);
+  /**
+   * The one confirmation, asked before anything is erased (ConfirmService).
+   *
+   * In the list below with the rest, which is what stops a delete question from
+   * opening under an OCR card nobody can see past — and what lets the service
+   * turn "somebody closed it" into "they said no".
+   */
+  readonly confirmOpen = signal(false);
   readonly shelfExpanded = signal(false);
 
   /**
@@ -43,6 +51,36 @@ export class UiService {
   }
 
   /**
+   * What the queue shelf should say out loud, and a nudge to take focus.
+   *
+   * TWO SIGNALS RATHER THAN A METHOD CALL ON THE COMPONENT, because the shelf is
+   * mounted by the shell and the OCR dialog has no handle on it — and should
+   * not: a dialog reaching into another component to move its focus is exactly
+   * the wiring that stops working the first time either of them moves.
+   *
+   * `shelfSaid` is a live region's text: it is read by whatever is listening
+   * when it changes, and it exists because the confirmation line the OCR dialog
+   * used to leave on screen went away with the dialog. A change that is only
+   * visible is a change a screen reader user was simply not told about.
+   *
+   * `focusShelfAt` is a counter and not a boolean. Two conversions queued in a
+   * row have to move focus twice, and a flag that was already true the second
+   * time would move it once — the classic shape of "it works, except when you
+   * do it twice".
+   */
+  readonly shelfSaid = signal('');
+  readonly focusShelfAt = signal(0);
+
+  announce(said: string): void {
+    this.shelfSaid.set(said);
+  }
+
+  focusShelf(): void {
+    this.shelfExpanded.set(true);
+    this.focusShelfAt.update((count) => count + 1);
+  }
+
+  /**
    * ONE AT A TIME. Every dialog is a full-screen scrim at the same z-index, so
    * two open at once is two overlapping cards where the click-outside of the
    * upper one dismisses nothing visible. Opening any of them closes the rest
@@ -55,7 +93,12 @@ export class UiService {
    * dialog somebody forgot to clear in one of the other openers looks fine
    * until two happen to be opened in that order.
    */
-  private readonly dialogs = [this.ocrOpen, this.translateOpen, this.metadataOpen] as const;
+  private readonly dialogs = [
+    this.ocrOpen,
+    this.translateOpen,
+    this.metadataOpen,
+    this.confirmOpen,
+  ] as const;
 
   private only(which: typeof this.dialogs[number]): void {
     for (const dialog of this.dialogs) dialog.set(dialog === which);
@@ -83,5 +126,13 @@ export class UiService {
 
   closeMetadata(): void {
     this.metadataOpen.set(false);
+  }
+
+  openConfirm(): void {
+    this.only(this.confirmOpen);
+  }
+
+  closeConfirm(): void {
+    this.confirmOpen.set(false);
   }
 }

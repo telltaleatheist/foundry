@@ -155,9 +155,9 @@ export async function planTranslation(
 /**
  * A job whose output IS its input, refused by name before anything moves.
  *
- * Reachable in one gesture: open a project's own searchable PDF and ask for a
- * searchable PDF, or open its English translation and ask to translate it into
- * English. Both name a file inside a project, so the plan finds that project and
+ * Reachable in one gesture: open a project's own converted PDF and ask to
+ * convert it to a PDF, or open its English translation and ask to translate it
+ * into English. Both name a file inside a project, so the plan finds that project and
  * lands on the file that is open in front of the user — and the rotation that
  * runs next would move the engine's own input aside a moment before it tried to
  * read it, which arrives as a missing-file error from a subprocess about a path

@@ -16,13 +16,38 @@
  * happens beside it: the shelf says "Starting the reading server…", and a
  * server that will not start fails THAT job with the guest's own log tail.
  *
- * ── Environment installs share this queue ────────────────────────────────────
+ * ── Nothing an engine runs starts until the user says so ─────────────────────
+ *
+ * An engine job is enqueued HELD. It sits in the list, in order, visible, and
+ * does nothing until `start()` releases it. `pump()` only ever claims a `queued`
+ * job, so the gate is the state itself rather than a flag anything has to
+ * remember to check.
+ *
+ * THE POINT IS THE BATCH. Enqueueing used to pump immediately, which made the
+ * moment of configuring the moment of commitment: the first conversion was
+ * already reading pages before the second book could be chosen, so "queue these
+ * four and let them run overnight" was not a thing this app could do. `start()`
+ * releases everything held AT THAT MOMENT and nothing else — a job added after
+ * the press is held again, because Start means "run what is here" and a button
+ * that silently also armed the future would make the next enqueue a surprise.
+ *
+ * ── Environment installs share this queue, and are NOT held ──────────────────
  *
  * An `env-install` row is not a conversion, but it belongs here rather than
  * beside here. It is long, it is cancellable, and — the reason that decides it —
  * a conversion that needs the environment must wait BEHIND it. One serial queue
  * gives that ordering for free, where a downloader running alongside would let a
  * run start against the Python it is halfway through replacing.
+ *
+ * IT STARTS ON ITS OWN, WHICH IS THE ONE EXCEPTION TO THE RULE ABOVE, and the
+ * reason is that it ALREADY HAD ITS START GESTURE. An install arrives from a
+ * user pressing Install in Settings, or from the startup provisioner deciding
+ * the app cannot work without it — both are explicit, and neither leaves a
+ * person wondering what they are waiting for. Holding one would put a second
+ * button between somebody and a download they just asked for, and would let the
+ * startup provisioner queue five gigabytes that then sat there until a shelf the
+ * user has never opened was expanded and pressed. The batch this file exists to
+ * make possible is a batch of BOOKS; an install is plumbing.
  */
 import { randomUUID } from 'node:crypto';
 import * as path from 'node:path';
@@ -72,21 +97,51 @@ function changed(): void {
   notify(listJobs());
 }
 
+/**
+ * Put a conversion in the queue, HELD.
+ *
+ * Returns the EXISTING row when one is already waiting or running to write the
+ * same file, which is `enqueueEnvInstall`'s rule applied to the thing it
+ * actually protects: two rows writing one output is the worst outcome
+ * available — the second run overwrites the first while the first is still
+ * reading, and the file on disk ends up neither. The OUTPUT is the identity
+ * because that is what collides; the same book converted to an EPUB and to a
+ * PDF is two different files and therefore two honest rows.
+ */
 export function enqueue(request: JobRequest): Job {
+  const already = pendingFor(request.outputPath);
+  if (already) return already;
+
   const job: Job = {
     id: randomUUID(),
     inputPath: request.inputPath,
     outputPath: request.outputPath,
     kind: request.kind,
-    state: 'queued',
+    state: 'held',
     progress: null,
     createdAt: Date.now(),
   };
   jobs.push(job);
   requests.set(job.id, request);
   changed();
-  void pump();
+  // No pump: a held job is not for the machine to find. `start()` releases it.
   return job;
+}
+
+/**
+ * A job already waiting or running to write this file, if there is one.
+ *
+ * `done`, `failed` and `cancelled` rows are deliberately NOT matched: those are
+ * a record of something that already happened, and refusing to re-run a
+ * conversion because it failed an hour ago would make the shelf's own history
+ * the reason the retry is impossible.
+ */
+function pendingFor(outputPath: string): Job | undefined {
+  const key = path.resolve(outputPath).toLowerCase();
+  return jobs.find(
+    (job) => (job.state === 'held' || job.state === 'queued' || job.state === 'running')
+      && path.resolve(job.outputPath).toLowerCase() === key,
+  );
 }
 
 /** The full request, kept beside the job — the job itself is the PUBLIC shape. */
@@ -102,20 +157,82 @@ const envRequests = new Map<string, EnvInstallRequest>();
  * hardware this is built for is an out-of-memory failure four hours in.
  */
 export function enqueueTranslate(request: TranslateRequest): Job {
+  const already = pendingFor(request.outputPath);
+  if (already) return already;
+
   const job: Job = {
     id: randomUUID(),
     inputPath: request.inputPath,
     outputPath: request.outputPath,
     kind: 'translate',
-    state: 'queued',
+    state: 'held',
     progress: null,
     createdAt: Date.now(),
   };
   jobs.push(job);
   requests.set(job.id, request);
   changed();
-  void pump();
+  // Held, like every other engine job. See this file's header.
   return job;
+}
+
+/**
+ * Release everything held, in the order it was added, and let the queue drain.
+ *
+ * EVERYTHING HELD AT THIS MOMENT, and nothing after it. A job enqueued while
+ * these are running is held again and waits for the next press — Start is a
+ * commitment to a batch somebody has just looked over, and a button that also
+ * armed whatever arrived later would make the NEXT enqueue start a run nobody
+ * pressed anything for.
+ *
+ * Returns how many it let go, so the caller can say so. Ordering is the array's,
+ * which is insertion order, which is what the shelf shows: releasing is a state
+ * change and never a reshuffle.
+ */
+export function start(): number {
+  let released = 0;
+  for (const job of jobs) {
+    if (job.state !== 'held') continue;
+    job.state = 'queued';
+    released += 1;
+  }
+  if (released === 0) return 0;
+  changed();
+  void pump();
+  return released;
+}
+
+/**
+ * Take a row out of the list entirely. Held and queued only.
+ *
+ * NOT A CANCEL, AND THE DIFFERENCE IS THE WHOLE REASON THIS EXISTS. `cancel`
+ * settles a job as `cancelled`, which is the right record of a run that was
+ * stopped — somebody spent GPU on it and then took it back. A job that never
+ * started spent nothing and produced nothing, and a `cancelled` row for it is
+ * residue: it sits in the shelf, it counts towards "finished", and it has to be
+ * cleared by hand to make the list readable again. Removing an unwanted batch
+ * item should leave the shelf looking like it was never added, because it was
+ * never anything.
+ *
+ * A RUNNING job is refused here. There is a child holding a GPU, and the gesture
+ * for that is `cancel` — which stops it and then, correctly, files it.
+ */
+export function remove(id: string): void {
+  const index = jobs.findIndex((job) => job.id === id);
+  if (index < 0) return;
+  const job = jobs[index]!;
+  if (job.state !== 'held' && job.state !== 'queued') return;
+  jobs.splice(index, 1);
+  requests.delete(id);
+  envRequests.delete(id);
+  changed();
+  /*
+   * Removing can be the thing that empties the queue, and the drain signal lives
+   * in pump()'s nothing-to-do branch — which nothing else would visit. Same
+   * reasoning as `cancel`'s trailing pump, and the same consequence if it is
+   * left out: the reading server stays up with nothing to read for it.
+   */
+  void pump();
 }
 
 /**
@@ -130,7 +247,7 @@ export function enqueueEnvInstall(request: EnvInstallRequest, reason?: string): 
   const pending = jobs.find(
     (job) => job.kind === 'env-install'
       && envRequests.get(job.id)?.target === request.target
-      && (job.state === 'queued' || job.state === 'running'),
+      && (job.state === 'held' || job.state === 'queued' || job.state === 'running'),
   );
   if (pending) return pending;
 
@@ -143,6 +260,8 @@ export function enqueueEnvInstall(request: EnvInstallRequest, reason?: string): 
     outputPath: destFor(request),
     kind: 'env-install',
     title: spec.label,
+    // `queued`, not `held`: an install already had its start gesture. The
+    // header says why this is the one exception.
     state: 'queued',
     progress: null,
     envProgress: null,
@@ -159,6 +278,12 @@ export function enqueueEnvInstall(request: EnvInstallRequest, reason?: string): 
 /**
  * Cancel: kill the child if it is this job's, drop it from the queue if it is
  * not. Both end as `cancelled`, because from the shelf they are one gesture.
+ *
+ * A HELD JOB IS NOT CANCELLABLE AND FALLS THROUGH HERE DOING NOTHING, which is
+ * deliberate rather than an oversight. Nothing was started, so there is nothing
+ * to stop and no record worth keeping; the gesture for a batch item somebody has
+ * changed their mind about is `remove`, which leaves no row behind. The shelf
+ * routes accordingly and this stays the operation for a run that is under way.
  */
 export function cancel(id: string): void {
   const job = jobs.find((j) => j.id === id);
@@ -197,11 +322,20 @@ export function cancelEnvInstalls(): void {
   }
 }
 
-/** Clear everything that has stopped. The running job and the queue survive. */
+/**
+ * Clear everything that has stopped. The running job, the queue and the HELD
+ * batch all survive.
+ *
+ * `held` joins `queued` and `running` on the survivor list for the obvious
+ * reason and one less obvious one: a held job has not stopped, so it is not
+ * "finished" by any reading — and it is also the only state a user can be
+ * accumulating deliberately. A Clear that swept away the batch somebody was
+ * halfway through assembling would be the most expensive button in the app.
+ */
 export function clearFinished(): void {
   for (let i = jobs.length - 1; i >= 0; i -= 1) {
     const job = jobs[i];
-    if (job && job.state !== 'queued' && job.state !== 'running') {
+    if (job && job.state !== 'held' && job.state !== 'queued' && job.state !== 'running') {
       requests.delete(job.id);
       envRequests.delete(job.id);
       jobs.splice(i, 1);
@@ -308,6 +442,9 @@ let starting = false;
 
 async function pump(): Promise<void> {
   if (running !== null || starting) return;
+  // `queued` only, which is the whole of the hold: a `held` job is invisible
+  // here until `start()` changes its state, so the gate is the data rather than
+  // a flag every path through this function would have to remember to consult.
   const next = jobs.find((job) => job.state === 'queued');
   if (!next) {
     // The queue just drained: nothing running, nothing starting, nothing
@@ -428,8 +565,7 @@ async function pump(): Promise<void> {
      * would leave `project.json` listing a book Home would then offer and
      * nothing could open. `recordGenerated` never throws — a row it could not
      * write is a named console line, because losing a catalogue entry is not a
-     * reason to report three hours of GPU as a failure. It is also what makes a
-     * searchable PDF become the project's live PDF rather than a second one.
+     * reason to report three hours of GPU as a failure.
      *
      * The REQUEST's kind, not the job row's: `JobKind` also admits `env-install`,
      * which never reaches this branch but which the compiler cannot know that
@@ -441,12 +577,15 @@ async function pump(): Promise<void> {
       request.kind === 'translate' ? 'translation' : generatedRoleFor(request.kind),
     );
     /*
-     * A searchable PDF is not a second document — it is the project's PDF, now
-     * with a text layer — so the row points at the LIVE copy rather than at the
-     * origin the engine wrote. Everything downstream reads `outputPath`: the tab
-     * that opens itself when the run lands, and the shelf's Reveal. Left pointing
-     * at `generated/` they would put a second identical scan on screen beside
-     * the one the user already had open, both called the same thing.
+     * WHERE THE FINISHED ROW POINTS, when the catalogue made a live copy of what
+     * the engine wrote. Everything downstream reads `outputPath`: the tab that
+     * opens itself when the run lands, and the shelf's Reveal — and both of them
+     * want the file the user is meant to have, not the bookkeeping original.
+     *
+     * Nothing promotes a conversion to the live PDF today (`recordGenerated`),
+     * so this is inert and kept rather than deleted: the branch costs a
+     * comparison, and the alternative is a queue that silently points at the
+     * wrong file the first time something is promoted again.
      */
     if (live !== null) next.outputPath = live;
     // Said after the row settles on its final path, so the line names the file

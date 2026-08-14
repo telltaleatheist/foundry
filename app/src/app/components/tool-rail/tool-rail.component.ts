@@ -128,8 +128,10 @@ import { UiService } from '../../core/ui.service';
           <span class="rail-icon">&lt;/&gt;</span>
           <span class="rail-label">Edit HTML</span>
         </button>
-        <!-- TODO: "Searchable PDF" lands here as a second tool once the engine
-             casts one; today it is a disabled option inside the dialog. -->
+        <!-- The PDF conversion is an output format inside the OCR dialog rather
+             than a rail button of its own: the rail names TOOLS, and picking
+             between an EPUB, plain text and a real-text PDF is one decision
+             about one run, made where the rest of that run is described. -->
       </div>
 
       <div class="rail-foot">

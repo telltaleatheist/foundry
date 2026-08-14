@@ -93,7 +93,13 @@ const api: FoundryApi = {
 
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
+    describe: (dir) => ipcRenderer.invoke('projects:describe', dir),
     delete: (dir) => ipcRenderer.invoke('projects:delete', dir),
+  },
+
+  documents: {
+    describe: (filePath) => ipcRenderer.invoke('documents:describe', filePath),
+    delete: (filePath) => ipcRenderer.invoke('documents:delete', filePath),
   },
 
   recents: {
@@ -106,6 +112,8 @@ const api: FoundryApi = {
     list: () => ipcRenderer.invoke('queue:list'),
     enqueue: (request) => ipcRenderer.invoke('queue:enqueue', request),
     enqueueTranslate: (request) => ipcRenderer.invoke('queue:enqueue-translate', request),
+    start: () => ipcRenderer.invoke('queue:start'),
+    remove: (id) => ipcRenderer.invoke('queue:remove', id),
     cancel: (id) => ipcRenderer.invoke('queue:cancel', id),
     clearFinished: () => ipcRenderer.invoke('queue:clear-finished'),
     onChanged: (listener) => subscribe<Job[]>('queue:changed', listener),

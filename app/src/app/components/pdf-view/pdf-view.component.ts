@@ -41,12 +41,15 @@ import { api } from '../../core/foundry';
  * WHY THIS EXISTS AT ALL is two complaints the <iframe> could not answer. Its
  * thumbnail rail is nailed to the left edge, cannot be moved, restyled or
  * turned off from outside the plugin, and eats a column of a window whose whole
- * job is showing a page. And there is no way to SEE the invisible text layer:
- * the one thing foundry adds to a PDF is the one thing Chromium's viewer is
- * built never to draw, so a conversion that laid the layer half a page off
- * looks exactly like one that got it right. The strip here is along the BOTTOM,
- * on by default and one click to dismiss; the layer view (below) is the other
- * half.
+ * job is showing a page. And there is no way to SEE WHAT A PAGE'S TEXT ACTUALLY
+ * IS: a viewer draws glyphs, and the question this app is usually asking of a
+ * converted book is what a copy-and-paste or a search would find in it, which
+ * is not the same question. That mattered most when foundry's PDF conversion
+ * wrote text in rendering mode 3 and Chromium drew nothing at all; it still
+ * matters now that the text is visible, because a reprint whose words are right
+ * and whose ORDER is wrong looks perfect and copies as nonsense. The strip here
+ * is along the BOTTOM, on by default and one click to dismiss; the layer view
+ * (below) is the other half.
  *
  * ── The worker ───────────────────────────────────────────────────────────────
  *
@@ -97,14 +100,14 @@ import { api } from '../../core/foundry';
  * aligned line for line. A fraction would only agree at the two ends and drift
  * everywhere a fraction of a differing height is not a fraction of the other.
  *
- * WHAT IS NOT DONE HERE: the layer view does NOT read `/FoundryTextLayer` to
- * tell foundry's text from anybody else's. It was considered — the mark is in
- * every stream pdf-layer.ts writes — and it is out, twice over. The renderer
- * would need the raw page objects pdf.js does not expose, and the question is
- * the wrong one: this pane shows THE text layer of the document in front of
- * you, whatever put it there, and for a file foundry wrote that is foundry's
- * layer by construction. A view that hid somebody else's text would be lying
- * about the document by the same trick the invisible layer already plays.
+ * WHAT IS NOT DONE HERE: the layer view does NOT try to tell foundry's text
+ * from anybody else's. It was considered back when every stream the conversion
+ * wrote carried a `/FoundryTextLayer` mark, and it was out then for two reasons
+ * — the renderer would need raw page objects pdf.js does not expose, and the
+ * question is the wrong one. This pane shows THE text of the document in front
+ * of you, whatever put it there. The mark is gone now (the conversion builds a
+ * whole document rather than marking streams inside somebody else's), which
+ * settles it: there is nothing left to filter on and nothing that should be.
  *
  * PRINTING IS DELIBERATELY NOT HERE. Chromium's viewer had it for free and this
  * does not, because a print pipeline is a second renderer at a second scale
@@ -329,8 +332,9 @@ import { api } from '../../core/foundry';
     }
 
     /*
-      The text layer. Invisible over the scan (that is the format's whole
-      promise) and inked in the layer pane — one geometry, two paints.
+      The text layer. Transparent over the page — pdf.js paints the glyphs and
+      this is the selectable copy of them — and inked in the layer pane, so the
+      same geometry reads twice: once as the page, once as what a search finds.
       \`user-select: text\` on both, because copying out of either is the point.
 
       EVERY span RULE GOES THROUGH ::ng-deep, and it is load-bearing: the spans

@@ -317,6 +317,17 @@ export class TranslateDialogComponent {
       if (instructions.length > 0) request.instructions = instructions;
 
       await this.queue.enqueueTranslate(request);
+      /*
+       * The shelf, opened — and it matters more than it used to. The job is
+       * HELD (electron/job-queue.ts), so nothing happens until Start is pressed,
+       * and the shelf is where that button is. Closing this dialog onto a
+       * collapsed shelf would leave a translation configured, idle, and out of
+       * sight.
+       *
+       * This one still closes on add, unlike the OCR dialog: a translation is
+       * about the book already open in front of you, so there is no second one
+       * to queue without going and opening it.
+       */
       this.ui.shelfExpanded.set(true);
       this.ui.closeTranslate();
     } catch (err) {

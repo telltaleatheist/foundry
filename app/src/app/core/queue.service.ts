@@ -19,10 +19,19 @@ export class QueueService {
 
   readonly running = computed(() => this.all().find((job) => job.state === 'running') ?? null);
   readonly queued = computed(() => this.all().filter((job) => job.state === 'queued'));
-  readonly active = computed(() =>
-    this.all().filter((job) => job.state === 'running' || job.state === 'queued'));
-  readonly finished = computed(() =>
-    this.all().filter((job) => job.state !== 'running' && job.state !== 'queued'));
+  /**
+   * Waiting for the USER, not for the machine — what Start releases.
+   *
+   * The distinction the shelf is built around: `queued` is a job behind a
+   * running one and `held` is a job behind a decision, and a person looking at
+   * a still queue needs to know which of the two they are looking at before
+   * they can tell a batch they have not committed from an app that has hung.
+   */
+  readonly held = computed(() => this.all().filter((job) => job.state === 'held'));
+  readonly active = computed(() => this.all().filter(
+    (job) => job.state === 'running' || job.state === 'queued' || job.state === 'held'));
+  readonly finished = computed(() => this.all().filter(
+    (job) => job.state !== 'running' && job.state !== 'queued' && job.state !== 'held'));
   readonly failed = computed(() => this.all().filter((job) => job.state === 'failed'));
 
   constructor() {
@@ -31,12 +40,35 @@ export class QueueService {
     void api.queue.list().then((jobs) => this.all.set(jobs));
   }
 
-  async enqueue(request: JobRequest): Promise<void> {
-    await api?.queue.enqueue(request);
+  /**
+   * Put a conversion in the queue, held — and say whether it is a NEW row.
+   *
+   * Main dedupes on the output path and answers with the existing job when one
+   * is already waiting to write that file, which is silent from here: the same
+   * shape comes back either way. So the id is checked against the mirror as it
+   * stood BEFORE the call. A user who presses Add twice deserves to be told the
+   * second press changed nothing, rather than shown a confirmation and a shelf
+   * that did not grow.
+   */
+  async enqueue(request: JobRequest): Promise<'added' | 'already'> {
+    const before = new Set(this.all().map((job) => job.id));
+    const job = await api?.queue.enqueue(request);
+    if (!job) return 'added';
+    return before.has(job.id) ? 'already' : 'added';
   }
 
   async enqueueTranslate(request: TranslateRequest): Promise<void> {
     await api?.queue.enqueueTranslate(request);
+  }
+
+  /** Release the held batch. Main answers with how many; nothing here guesses. */
+  async start(): Promise<void> {
+    await api?.queue.start();
+  }
+
+  /** A held or queued row the user no longer wants. Leaves no row behind. */
+  async remove(id: string): Promise<void> {
+    await api?.queue.remove(id);
   }
 
   async cancel(id: string): Promise<void> {

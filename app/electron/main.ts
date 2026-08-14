@@ -67,10 +67,12 @@ import { loadLedger, saveLedger } from './history';
 import * as queue from './job-queue';
 import {
   adoptLegacyLayout,
+  deleteDocument,
   deleteProject,
   finalDir,
   importDocument,
   inspectProject,
+  type ProjectInventory,
   isManaged,
   listProjects,
   projectsDir,
@@ -87,11 +89,14 @@ import { readSettings, writeSettings } from './settings';
 import * as vllm from './vllm-server';
 import { planConversion, planTranslation } from './workspace';
 import { detectEnvTooling, listDistros } from './wsl';
+import { fold, isOriginal } from '../shared/original';
 import type { MenuAction } from '../shared/api';
 import type {
   BackendSettingsPatch,
   CloseWarning,
   ConversionKind,
+  DeletionPrompt,
+  DocumentDeletion,
   EchoAnswer,
   EchoStanding,
   EnvInstallRequest,
@@ -99,6 +104,8 @@ import type {
   JobRequest,
   LedgerStacks,
   NavEcho,
+  ProjectDocument,
+  ProjectSummary,
   RecentKind,
   SetupRequest,
   TranslateRequest,
@@ -1088,9 +1095,31 @@ function registerIpc(): void {
    * A refusal THROWS, so it reaches the same strip through the renderer's
    * ordinary catch and is never mistaken for a cancel.
    */
-  ipcMain.handle('projects:delete', async (_event, dir: string) => {
-    const project = await inspectProject(dir);
-
+  /*
+   * DESCRIBE, THEN DELETE — two calls where there used to be one.
+   *
+   * The question moved to the renderer, and the split is what makes that safe.
+   * `projects:describe` composes the warning and PROVES the delete is currently
+   * allowed; `projects:delete` proves it again and does the work. Nothing about
+   * the second call trusts the first: a renderer that skipped straight to the
+   * delete meets exactly the same refusals, because the checks live in the
+   * function that erases rather than in the one that asks.
+   *
+   * The sentences stay HERE, whole. Main is the only side that knows the size on
+   * disk, the readings bank's page count and whether a copy was filed, and those
+   * are what make the warning worth reading — a renderer composing its own would
+   * arrive at "Are you sure?" within a month.
+   */
+  /**
+   * The two refusals, in one place because both callers owe both of them.
+   *
+   * NEITHER IS ADVISORY. `describe` runs them so the app does not put a warning
+   * on screen for something it is going to refuse a click later; `delete` runs
+   * them because that is where the authorization has to be. A renderer's word
+   * about what is open or what is queued is not a fact main may act on when the
+   * action is a recursive delete.
+   */
+  function refuseProjectDelete(project: { dir: string; title: string }): void {
     const open = openBookIn(project.dir);
     if (open !== null) {
       throw new Error(
@@ -1100,7 +1129,21 @@ function registerIpc(): void {
         + 'first, then delete it.',
       );
     }
+    refuseBusyJob(project);
+  }
 
+  /**
+   * The narrower refusal: a job writing into this folder, and nothing else.
+   *
+   * IT IS SPLIT OUT BECAUSE A DOCUMENT DELETE OWES ONLY THIS HALF. Deleting the
+   * whole project while any book from it is open is a working tree pulled out
+   * from under a reader; deleting ONE generated file while a DIFFERENT document
+   * of the same project is open is the ordinary case — read the scan, throw away
+   * the EPUB you did not like — and refusing it because something else in the
+   * folder happened to be open would make the button useless exactly when it is
+   * wanted. The renderer closes the file's own tab before asking (open-documents).
+   */
+  function refuseBusyJob(project: { dir: string; title: string }): void {
     /*
      * A JOB WRITING INTO IT IS THE SAME HAZARD AS AN OPEN BOOK, and worse in
      * one way: the engine is a separate process holding a file open in
@@ -1108,11 +1151,17 @@ function registerIpc(): void {
      * leaves a project half erased — while the run carries on writing into a
      * directory the catalogue no longer describes.
      *
-     * Every state but `running` and `queued` is finished with the folder: a
-     * done, failed or cancelled row names a path nothing is holding.
+     * Every state but `held`, `queued` and `running` is finished with the
+     * folder: a done, failed or cancelled row names a path nothing is holding.
+     *
+     * `held` counts even though nothing is writing yet. It is a job CONFIGURED
+     * to write here — the output path is already chosen and the readings bank
+     * already named — so deleting the folder under it would leave a row in the
+     * shelf that fails the moment somebody presses Start, for a reason nothing
+     * in the error would connect to a project they erased ten minutes earlier.
      */
     const busy = queue.listJobs().find((job) =>
-      (job.state === 'running' || job.state === 'queued')
+      (job.state === 'running' || job.state === 'queued' || job.state === 'held')
       && within(project.dir, job.outputPath));
     if (busy !== undefined) {
       throw new Error(
@@ -1122,7 +1171,17 @@ function registerIpc(): void {
         + 'disk and a run writing into nothing. Cancel it in the shelf first, then delete.',
       );
     }
+  }
 
+  /**
+   * The warning, composed where the facts are.
+   *
+   * Every sentence the native box used to carry, kept verbatim — the size on
+   * disk, the readings bank, the filed copy, and the flat statement that this is
+   * a real delete. The only thing that changed is that it comes back as data
+   * instead of being drawn by the OS.
+   */
+  function describeProject(project: ProjectInventory): DeletionPrompt {
     const bank = project.readings > 0
       ? `It holds a readings bank of ${project.readings.toLocaleString()} pages the model has `
         + 'already read. That is hours of GPU, it is the one thing in here that cannot be made '
@@ -1137,27 +1196,29 @@ function registerIpc(): void {
       : project.documents === 1
         ? 'the one document Foundry has made from it'
         : `the ${project.documents} documents Foundry has made from it`;
-
-    const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
-    const options = {
-      type: 'warning' as const,
-      buttons: ['Delete this project', 'Keep it'],
-      // Cancel is the default and the destructive answer is not — this is the
-      // one dialog in the app where a reflexive Enter would destroy something.
-      defaultId: 1,
-      cancelId: 1,
-      title: 'Delete this project?',
+    return {
       message: `“${project.title}” will be deleted from this computer.`,
-      detail: `${project.dir} and everything under it goes: the original you imported, ${made}, `
+      detail: [
+        `${project.dir} and everything under it goes: the original you imported, ${made}, `
         + 'every working copy and every edit in them, and the undo history. '
-        + `${sizeOnDisk(project.bytes)} in all.${filed}\n\n${bank}\n\n`
-        + 'This is a real delete. The folder is removed from the disk — it is not moved aside, '
+        + `${sizeOnDisk(project.bytes)} in all.${filed}`,
+        bank,
+        'This is a real delete. The folder is removed from the disk — it is not moved aside, '
         + 'Foundry keeps no copy of it anywhere else, and there is nothing that will bring it back.',
+      ],
+      confirm: 'Delete this project',
     };
-    const answer = win
-      ? await dialog.showMessageBox(win, options)
-      : await dialog.showMessageBox(options);
-    if (answer.response !== 0) return null;
+  }
+
+  ipcMain.handle('projects:describe', async (_event, dir: string) => {
+    const project = await inspectProject(dir);
+    refuseProjectDelete(project);
+    return describeProject(project);
+  });
+
+  ipcMain.handle('projects:delete', async (_event, dir: string) => {
+    const project = await inspectProject(dir);
+    refuseProjectDelete(project);
 
     await deleteProject(project.dir);
     // The recents list is keyed by file and a project is a folder of them, so
@@ -1166,6 +1227,108 @@ function registerIpc(): void {
     // book whose bytes it destroyed a moment ago.
     forgetRecentsUnder(project.dir);
     return `Deleted “${project.title}”. ${project.dir} and everything in it is gone from this computer.`;
+  });
+
+  /**
+   * One document out of a project: what would happen, and then doing it.
+   *
+   * THE ORIGINAL IS NOT DELETABLE ON ITS OWN, and that is the whole reason this
+   * pair describes before it acts. Every other document in a project was made
+   * FROM the original; erasing it leaves a folder of outputs with no source,
+   * which is not a project any more. So `describe` reports `original: true` and
+   * hands back the PROJECT's warning, and `delete` refuses that path outright —
+   * the renderer is expected to run the project delete instead, and a renderer
+   * that ignored the flag gets a sentence rather than a half-emptied folder.
+   *
+   * `shared/original.ts` decides which document that is, and both sides import
+   * it: the flag main sets and the row the nav draws come from one rule.
+   *
+   * The listing comes from `listProjects`, which is the one function that says
+   * what a project contains — the same answer Home and the side nav are drawn
+   * from, so a row the user can see is a row this can find.
+   */
+  async function findDocument(filePath: string): Promise<{
+    project: ProjectSummary;
+    document: ProjectDocument;
+  }> {
+    const target = fold(filePath);
+    for (const project of await listProjects()) {
+      const document = project.documents.find((row) => fold(row.path) === target);
+      if (document !== undefined) return { project, document };
+    }
+    throw new Error(
+      `${filePath} is not a document in any of Foundry's projects, so there is nothing here to `
+      + 'delete. Files outside the library are the file manager\'s business, not this app\'s.',
+    );
+  }
+
+  ipcMain.handle('documents:describe', async (_event, filePath: string): Promise<DocumentDeletion> => {
+    const { project, document } = await findDocument(filePath);
+    const inventory = await inspectProject(project.dir);
+
+    if (isOriginal(project.documents, document.path)) {
+      // The original's delete IS the project's, so it owes the project's
+      // refusals — including the open-book one this file's own delete does not.
+      refuseProjectDelete(inventory);
+      const prompt = describeProject(inventory);
+      return {
+        prompt: {
+          ...prompt,
+          message: `“${document.label}” is the original this project is built on.`,
+          detail: [
+            'Deleting it deletes the whole project — every document in this folder was made from '
+            + 'it, and what would be left is a set of outputs with nothing they came from.',
+            ...prompt.detail,
+          ],
+        },
+        original: true,
+        projectDir: project.dir,
+        missing: document.missing,
+      };
+    }
+
+    refuseBusyJob(inventory);
+    const gone = document.missing
+      ? 'That file is already gone from the disk; what is left is its row in this project\'s '
+        + 'catalogue, and this clears it.'
+      : `${document.path} is removed from the disk. It is not moved aside and Foundry keeps no `
+        + 'copy of it anywhere else.';
+    return {
+      prompt: {
+        message: `“${document.label}” will be deleted from “${project.title}”.`,
+        detail: [
+          gone,
+          'The project and everything else in it stays, including the original and the readings '
+          + 'bank — so this document can be made again by converting the book a second time.',
+        ],
+        confirm: document.missing ? 'Remove this row' : 'Delete this document',
+      },
+      original: false,
+      projectDir: project.dir,
+      missing: document.missing,
+    };
+  });
+
+  ipcMain.handle('documents:delete', async (_event, filePath: string) => {
+    const { project, document } = await findDocument(filePath);
+    const inventory = await inspectProject(project.dir);
+    // Proven again, not trusted from the describe: a job can be queued between
+    // the question and the answer, and this is the call that unlinks something.
+    refuseBusyJob(inventory);
+
+    if (isOriginal(project.documents, document.path)) {
+      throw new Error(
+        `“${document.label}” is the original “${project.title}” is built on, so it cannot be `
+        + 'deleted by itself — every other document in the folder was made from it. Delete the '
+        + 'project instead.',
+      );
+    }
+
+    const removed = await deleteDocument(document.path);
+    forgetRecentsUnder(document.path);
+    return removed.wasMissing
+      ? `Removed “${removed.label}” from “${removed.title}” — the file was already gone.`
+      : `Deleted “${removed.label}” from “${removed.title}”.`;
   });
 
   // ── Books ────────────────────────────────────────────────────────────────
@@ -1485,6 +1648,8 @@ function registerIpc(): void {
     }
     return queue.enqueueTranslate(request);
   });
+  ipcMain.handle('queue:start', () => queue.start());
+  ipcMain.handle('queue:remove', (_event, id: string) => { queue.remove(id); });
   ipcMain.handle('queue:cancel', (_event, id: string) => { queue.cancel(id); });
   ipcMain.handle('queue:clear-finished', () => { queue.clearFinished(); });
 

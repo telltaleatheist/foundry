@@ -1,6 +1,9 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 
+import { api } from '../../core/foundry';
+import { ProjectsService } from '../../core/projects.service';
 import { TabsService, type Tab } from '../../core/tabs.service';
 import { UiService } from '../../core/ui.service';
 
@@ -29,6 +32,63 @@ import { UiService } from '../../core/ui.service';
  * stays flat (one identity per tab, see TabsService); the nesting is worked out
  * here, where it is a matter of drawing.
  *
+ * ── The groups ───────────────────────────────────────────────────────────────
+ *
+ * A DOCUMENT OPENED OUT OF A PROJECT BRINGS ITS PROJECT WITH IT. The group
+ * header names the book, and under it are ALL of that project's documents — the
+ * scan, the cast EPUB, the real-text PDF, a translation — whether or not they
+ * are open. So flipping from the scan to the book made from it is one click,
+ * where it used to mean going back to Home and expanding a row that is no longer
+ * there. That listing is `listProjects`' own (electron/projects.ts), which is
+ * why it moved here rather than being rebuilt: one function decides what a
+ * project contains, and this is now its reader.
+ *
+ * AN AVAILABLE DOCUMENT IS A ROW THAT IS NOT OPEN YET, and the difference from
+ * an open one is deliberately quiet — the same list, the same shape, dimmed and
+ * without the accent bar that means "on screen". Making it loud would turn a
+ * convenience into a second inventory competing with the tabs; making it
+ * invisible would be the drop-down again.
+ *
+ * A FILE OPENED FROM ANYWHERE ELSE stays a plain row at the bottom, ungrouped.
+ * Not everything a person opens is in the library, and inventing a group for a
+ * one-off PDF would be this list having an opinion about where files should
+ * live.
+ *
+ * ── The two ✕ do not mean what they used to ─────────────────────────────────
+ *
+ * PEOPLE CLOSE PROJECTS, NOT DOCUMENTS. That is the model, and it reverses an
+ * earlier call recorded here — that a group header should offer no close-all,
+ * because the nav's idiom was one row, one ✕, naming exactly one thing. The
+ * reasoning was sound about a list of documents and wrong about what a person is
+ * actually doing: they finish with a BOOK. Closing its scan and leaving its
+ * cast EPUB and its real-text PDF open is not a state anybody wants, and doing
+ * it three times by hand is not a gesture, it is bookkeeping.
+ *
+ * So the header's ✕ closes the project — every open tab belonging to it. The
+ * objection that a close-all hides its own blast radius does not survive the
+ * layout: the group lists its open rows directly under the button, so the count
+ * is not a number to be trusted, it is a thing to be looked at. And it destroys
+ * nothing — the documents are on disk and one click from coming back, which is
+ * why it asks nothing first.
+ *
+ * THE ROW'S ✕ DELETES THAT DOCUMENT, behind the app's one confirmation. That is
+ * what makes the header's job coherent: if both closed things, one of them would
+ * be redundant. Every document row has it, open or merely available — the
+ * earlier "nothing to close about a row that is not open" is gone, because there
+ * is always something to delete. Deleting the ORIGINAL is a different question
+ * and the modal asks it as one: it takes the project with it (shared/original).
+ *
+ * EXCEPT ON AN UNGROUPED ROW, where the ✕ still closes. A file opened from
+ * outside the library is not main's to erase — `documents:delete` refuses any
+ * path that is not inside a project, and it is right to. The tooltip says so
+ * rather than leaving a button that behaves differently for no visible reason.
+ *
+ * MIDDLE-CLICK STAYS CLOSE, on every row. It is the tab-strip gesture people
+ * bring with them from every other application, and every one of those closes.
+ * A middle-click that deleted a file would be the most expensive muscle memory
+ * in the app — and the ✕ moving jobs is exactly the reason to leave the gesture
+ * that cannot destroy anything where it was.
+ *
  * ── Dragging ─────────────────────────────────────────────────────────────────
  *
  * A row dragged WITHIN this list reorders it — the only place a document's order
@@ -44,6 +104,7 @@ import { UiService } from '../../core/ui.service';
  */
 @Component({
   selector: 'app-open-documents',
+  imports: [NgTemplateOutlet],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <!--
@@ -79,47 +140,143 @@ import { UiService } from '../../core/ui.service';
         (dragleave)="onLeave()"
         (drop)="onDrop($event, null)"
       >
-        @for (row of rows(); track row.tab.id) {
-          <div
-            class="row"
-            [class.child]="row.indent"
-            [class.on]="row.column !== null"
-            [class.focused]="row.focused"
-            [class.before]="before() === row.tab.id"
-            [title]="tooltip(row.tab)"
-            draggable="true"
-            (click)="pick(row.tab)"
-            (auxclick)="onAux($event, row.tab)"
-            (dragstart)="onDragStart($event, row.tab)"
-            (dragend)="onDragEnd()"
-            (dragover)="onRowOver($event, row.tab)"
-            (drop)="onDrop($event, row.tab)"
-          >
-            <span class="kind">{{ glyph(row.tab) }}</span>
-            <span class="name">{{ row.tab.title }}</span>
-            <!--
-              TWO marks, because they are two different things to fix. The dot is
-              "this book is not in a folder of yours"; the pencil is "the copy
-              that is in one is older than this". A row can wear both.
-            -->
-            @if (row.tab.unsaved) {
-              <span class="dot" title="Not saved anywhere you chose">●</span>
+        @for (group of groups(); track group.key) {
+          <!--
+            role=group with the book's name on it, so the documents inside
+            are announced as belonging to something rather than as a run of
+            unrelated rows. The header itself is not focusable: it opens nothing
+            and closes nothing, and a tab stop that does neither is a tab stop
+            people learn to skip.
+          -->
+          <div class="group" role="group" [attr.aria-label]="'Project: ' + group.title">
+            <div class="group-head" [title]="group.dir">
+              <span class="group-name">{{ group.title }}</span>
+              <!--
+                Closes the BOOK — every tab open from this project. Nothing on
+                disk, so no confirmation: the rows it closes are listed directly
+                underneath, which is a better account of what will happen than
+                any count in a warning. Hidden until the group is hovered, like
+                every other ✕ in this list.
+              -->
+              @if (group.open > 0) {
+                <button
+                  class="x"
+                  (click)="closeProject(group)"
+                  [title]="'Close ' + group.title + ' — ' + group.open + ' open document(s)'"
+                  [attr.aria-label]="'Close all ' + group.open + ' open documents in ' + group.title"
+                >✕</button>
+              }
+            </div>
+            @for (row of group.rows; track row.key) {
+              <ng-container [ngTemplateOutlet]="line" [ngTemplateOutletContext]="{ $implicit: row }" />
             }
-            @if (row.tab.modified) {
-              <span class="pencil" title="Edited since it was last saved">✎</span>
-            }
-            <!--
-              WHICH column it is in, and only once there are two. With one column
-              open the number is the only number it could be, and a badge that
-              always says 1 is a badge that teaches people to stop reading it.
-            -->
-            @if (row.column !== null && multi()) {
-              <span class="column" [title]="'Showing in column ' + row.column">{{ row.column }}</span>
-            }
-            <button class="x" (click)="close($event, row.tab)" title="Close this document">✕</button>
           </div>
         }
+
+        @for (row of loose(); track row.key) {
+          <ng-container [ngTemplateOutlet]="line" [ngTemplateOutletContext]="{ $implicit: row }" />
+        }
       </div>
+
+      <!--
+        ONE ROW TEMPLATE FOR BOTH, because a grouped document and a loose one are
+        the same thing in two places, and two copies of this markup would drift
+        the first time a mark was added to one of them.
+      -->
+      <ng-template #line let-row>
+        <div
+          class="row"
+          [class.child]="row.indent"
+          [class.grouped]="row.grouped"
+          [class.on]="row.column !== null"
+          [class.focused]="row.focused"
+          [class.available]="row.tab === null"
+          [class.before]="before() === row.key"
+          [title]="row.tooltip"
+          [attr.draggable]="row.tab !== null"
+          (click)="pickRow(row)"
+          (auxclick)="onAux($event, row.tab)"
+          (contextmenu)="onMenu($event, row)"
+          (dragstart)="onDragStart($event, row.tab)"
+          (dragend)="onDragEnd()"
+          (dragover)="onRowOver($event, row)"
+          (drop)="onDrop($event, row)"
+        >
+          <span class="kind">{{ row.glyph }}</span>
+          <span class="name">{{ row.title }}</span>
+          <!--
+            TWO marks, because they are two different things to fix. The dot is
+            "this book is not in a folder of yours"; the pencil is "the copy
+            that is in one is older than this". A row can wear both.
+          -->
+          @if (row.tab?.unsaved) {
+            <span class="dot" title="Not saved anywhere you chose">●</span>
+          }
+          @if (row.tab?.modified) {
+            <span class="pencil" title="Edited since it was last saved">✎</span>
+          }
+          <!--
+            WHICH column it is in, and only once there are two. With one column
+            open the number is the only number it could be, and a badge that
+            always says 1 is a badge that teaches people to stop reading it.
+          -->
+          @if (row.column !== null && multi()) {
+            <span class="column" [title]="'Showing in column ' + row.column">{{ row.column }}</span>
+          }
+          <!--
+            DELETES, inside a project — CLOSES, outside one. The header above
+            took over closing, so this became the destructive one; but a file
+            opened from outside the library is not this app's to erase, and the
+            tooltip says which of the two the button is about to do rather than
+            leaving it to be discovered.
+          -->
+          @if (row.grouped) {
+            <button
+              class="x danger"
+              (click)="remove($event, row)"
+              [title]="'Delete ' + row.title + ' — permanently, from this project'"
+              [attr.aria-label]="'Delete ' + row.title"
+            >✕</button>
+          } @else if (row.tab !== null) {
+            <button
+              class="x"
+              (click)="close($event, row.tab)"
+              title="Close this document — it was opened from outside Foundry's library, so this app does not delete it"
+              [attr.aria-label]="'Close ' + row.title"
+            >✕</button>
+          }
+        </div>
+      </ng-template>
+
+      <!--
+        THE MENU IS OURS, not Electron's. There is no context-menu idiom in this
+        app to follow, and the native one would be the same mistake the native
+        confirmation was: the OS's rectangle over a window whose every other
+        surface is drawn here. It is also the only kind that can be built without
+        a second IPC round trip per row.
+
+        A full-window scrim under it, so the next click anywhere dismisses it
+        exactly once and cannot also land on whatever was underneath.
+      -->
+      @if (menu(); as open) {
+        <div class="menu-scrim" (click)="menu.set(null)" (contextmenu)="menu.set(null)"></div>
+        <div
+          class="menu"
+          role="menu"
+          [attr.aria-label]="'Actions for ' + open.row.title"
+          [style.left.px]="open.x"
+          [style.top.px]="open.y"
+          (keydown.escape)="menu.set(null)"
+        >
+          <button role="menuitem" (click)="fromMenu(open.row, 'reveal')">Show in file manager</button>
+          @if (open.row.tab !== null) {
+            <button role="menuitem" (click)="fromMenu(open.row, 'close')">Close</button>
+          }
+          @if (open.row.grouped) {
+            <button class="danger" role="menuitem" (click)="fromMenu(open.row, 'delete')">Delete…</button>
+          }
+        </div>
+      }
     </div>
     }
   `,
@@ -215,6 +372,37 @@ import { UiService } from '../../core/ui.service';
     .row.child .name { font-style: italic; }
 
     /*
+      THE GROUP. A hairline down the left edge is the whole of the container —
+      the rows inside keep their own shape, and the rule is what says where the
+      project begins and ends. Heavier chrome (a box, a fill) would make the
+      panel read as two lists rather than as one list with a heading in it.
+    */
+    .group { margin-bottom: 2px; }
+    .group-head {
+      display: flex; align-items: center; gap: 6px;
+      padding: 8px 8px 3px 10px;
+      color: var(--text-tertiary);
+      font-size: 10px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      user-select: none;
+    }
+    .group-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* Indented as a run, so the group's documents sit visibly inside it. The
+       editor's own indent stacks on top of this, which is the nesting it means. */
+    .row.grouped { padding-left: 20px; box-shadow: inset 1px 0 0 0 var(--border-subtle); }
+    .row.grouped.child { padding-left: 36px; }
+
+    /*
+      AVAILABLE, NOT OPEN — dimmed and nothing else. The list's existing language
+      for "on screen" is the accent bar (.on / .focused), so the honest opposite
+      is simply not having it: an available row is a row without the mark rather
+      than a row with a mark of its own. Loud styling here would turn a
+      convenience into a second inventory competing with the tabs.
+    */
+    .row.available { color: var(--text-tertiary); }
+    .row.available:hover { color: var(--text-primary); }
+
+    /*
       ON SCREEN SOMEWHERE, and in the FOCUSED column, are two different facts
       and get two different strengths: the rail, the menu and Ctrl+S all act on
       the focused one, so which it is has to be visible without being loud.
@@ -262,18 +450,68 @@ import { UiService } from '../../core/ui.service';
       transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1);
     }
     .row:hover .x, .x:focus-visible { visibility: visible; }
+    .group-head .x { visibility: hidden; }
+    .group:hover .group-head .x, .group-head .x:focus-visible { visibility: visible; }
     .x:hover { background: var(--bg-hover); color: var(--text-primary); }
+    /* The button that ends something wears the error colour on hover, and only
+       on hover — the same rule Home's delete follows. A permanently red control
+       on every row of a document list reads as a warning about the documents. */
+    .x.danger:hover { background: var(--error-soft); color: var(--error); }
+
+    /* Above the panel and below the dialogs; the scrim is what makes the next
+       click dismiss it exactly once. */
+    .menu-scrim { position: fixed; inset: 0; z-index: 1000; }
+    .menu {
+      position: fixed;
+      z-index: 1001;
+      min-width: 180px;
+      padding: 4px;
+      display: flex; flex-direction: column;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      box-shadow: 0 10px 20px -6px rgba(0, 0, 0, 0.35);
+    }
+    .menu button {
+      display: block; width: 100%;
+      padding: 6px 10px;
+      background: transparent; border: none; border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      font-size: 12px; text-align: left; cursor: pointer;
+    }
+    .menu button:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .menu button.danger:hover { background: var(--error-soft); color: var(--error); }
   `],
 })
 export class OpenDocumentsComponent {
   protected readonly tabs = inject(TabsService);
+  protected readonly projects = inject(ProjectsService);
   /** Public to the template AND to the host binding above, which is a template too. */
   protected readonly ui = inject(UiService);
   private readonly router = inject(Router);
 
+  constructor() {
+    /*
+     * RE-READ THE LIBRARY WHEN THE OPEN SET CHANGES, and only then.
+     *
+     * The two things that put a document into a project are opening one (which
+     * imports it) and a conversion landing (which the queue announces by opening
+     * the result). Both end as a change to the paths in this list, so watching
+     * the paths catches both without this component knowing anything about
+     * either. Nothing here reads `projects.items()`, so refreshing cannot
+     * re-trigger the effect that asked for it.
+     */
+    effect(() => {
+      this.tabs.tabs().map((tab) => tab.path).join(' ');
+      void this.projects.refresh();
+    });
+  }
+
   /** The row a drop would land in front of, and whether the end of the list is the target. */
   protected readonly before = signal<string | null>(null);
   protected readonly landing = signal(false);
+  /** The open context menu: which row it is about, and where it was asked for. */
+  protected readonly menu = signal<{ row: Row; x: number; y: number } | null>(null);
 
   protected readonly multi = computed(() => this.tabs.panes().length > 1);
 
@@ -292,8 +530,14 @@ export class OpenDocumentsComponent {
     const emit = (tab: Tab, indent: boolean): void => {
       const at = panes.findIndex((pane) => pane.tabId === tab.id);
       out.push({
+        key: tab.id,
         tab,
+        path: tab.path,
+        title: tab.title,
+        glyph: glyphFor(tab),
+        tooltip: this.tooltip(tab),
         indent,
+        grouped: false,
         column: at < 0 ? null : at + 1,
         focused: at >= 0 && panes[at]!.id === focusedPaneId,
       });
@@ -311,10 +555,104 @@ export class OpenDocumentsComponent {
     return out;
   });
 
-  protected glyph(tab: Tab): string {
-    if (tab.kind === 'editor') return '</>';
-    return tab.kind === 'epub' ? '▤' : '▦';
-  }
+  /**
+   * The open documents, gathered under the projects they came out of.
+   *
+   * A PROJECT IS "OPEN" WHEN ONE OF ITS DOCUMENTS IS, which is the only
+   * definition that does not need a second piece of state: the group appears
+   * because you opened something out of it and goes when you close the last of
+   * them. Nothing here decides what a project CONTAINS — `listProjects` does
+   * (electron/projects.ts), and this reads its answer, so the scan, the cast
+   * book and the translation are listed by the same code that lists them
+   * anywhere else.
+   *
+   * The order inside a group is the CATALOGUE'S, not the tabs': the live
+   * document first and then what has been made from it, which is stable while
+   * you open and close things. Ordering by tab would make the list reshuffle
+   * itself under the pointer every time a row was clicked.
+   */
+  protected readonly groups = computed<Group[]>(() => {
+    const open = this.rows();
+    const out: Group[] = [];
+
+    for (const project of this.projects.items()) {
+      if (project.problem !== null) continue;
+      const mine = open.filter((row) => fold(row.path).startsWith(`${fold(project.dir)}/`));
+      if (mine.length === 0) continue;
+
+      const rows: Row[] = [];
+      const claimed = new Set<string>();
+      for (const document of project.documents) {
+        const already = mine.find((row) => fold(row.path) === fold(document.path));
+        if (already !== undefined) {
+          rows.push({ ...already, grouped: true });
+          claimed.add(already.key);
+          // An editor open on this book belongs directly under it, inside the
+          // group — the same nesting the flat list gives, one level further in.
+          for (const row of mine) {
+            if (row.indent && row.tab?.sourceTabId === already.tab?.id) {
+              rows.push({ ...row, grouped: true });
+              claimed.add(row.key);
+            }
+          }
+          continue;
+        }
+        /*
+         * NOT OPEN, AND STILL LISTED. This is the whole point of the group: the
+         * book cast from the scan you are reading is one click away, and until
+         * now the only way to reach it was a screen you had to leave this one to
+         * see. A missing file is listed too, plainly marked and inert — it is a
+         * fact about the project, and hiding it would make a document that
+         * vanished off the disk indistinguishable from one that never existed.
+         */
+        rows.push({
+          key: `${project.key}:${document.path}`,
+          tab: null,
+          path: document.path,
+          title: document.label,
+          glyph: document.kind === 'epub' ? '▤' : document.kind === 'pdf' ? '▦' : '≡',
+          tooltip: document.missing
+            ? `${document.path}\nNot there any more.`
+            : document.kind === 'txt'
+              ? `${document.path}\nPlain text — Foundry has no tab that reads one.`
+              : `Open ${document.label}\n${document.path}`,
+          indent: false,
+          grouped: true,
+          missing: document.missing,
+          openable: !document.missing && document.kind !== 'txt',
+          // Main is what knows where a file came from, so the dot rides on the
+          // document rather than being worked out from the path here.
+          managed: document.managed,
+          column: null,
+          focused: false,
+        });
+      }
+
+      // A document open from inside the project folder that the catalogue does
+      // not list — an archived copy, something a user reached by hand. It is in
+      // the group because that is where it is on disk, and dropping it would be
+      // a row nobody could close.
+      for (const row of mine) {
+        if (!claimed.has(row.key)) rows.push({ ...row, grouped: true });
+      }
+
+      out.push({
+        key: project.key,
+        title: project.title,
+        dir: project.dir,
+        rows,
+        // What the header's ✕ would close, and what its label counts.
+        open: rows.filter((row) => row.tab !== null).length,
+      });
+    }
+    return out;
+  });
+
+  /** Everything open that no group claimed — a file opened from anywhere else. */
+  protected readonly loose = computed<Row[]>(() => {
+    const grouped = new Set(this.groups().flatMap((group) => group.rows.map((row) => row.key)));
+    return this.rows().filter((row) => !grouped.has(row.key));
+  });
 
   /**
    * A document is not a route. The router still owns Settings, so clicking a row
@@ -327,7 +665,91 @@ export class OpenDocumentsComponent {
     this.tabs.reveal(tab.id);
   }
 
-  protected close(event: MouseEvent, tab: Tab): void {
+  /**
+   * A click on either kind of row: reveal what is open, open what is not.
+   *
+   * The gestures are deliberately the same one. From the user's side both rows
+   * say "put this document in front of me", and whether that costs a tab or
+   * merely a focus change is this app's bookkeeping, not their question.
+   */
+  protected pickRow(row: Row): void {
+    if (row.tab !== null) {
+      this.pick(row.tab);
+      return;
+    }
+    if (row.openable !== true) return;
+    void this.router.navigateByUrl('/');
+    void this.tabs.openFile(row.path, row.managed === true);
+  }
+
+  /**
+   * Close every tab this project has open. Nothing on disk.
+   *
+   * A COPY OF THE LIST FIRST, because closing mutates the very rows this is
+   * iterating: `groups()` is a computed over the tabs, so reading it inside the
+   * loop would be reading a list that is being emptied underneath.
+   */
+  protected closeProject(group: Group): void {
+    const ids = group.rows.map((row) => row.tab?.id).filter((id): id is string => id !== undefined);
+    for (const id of ids) void this.tabs.close(id);
+  }
+
+  /**
+   * Delete the document this row names — the file, its catalogue row, and its
+   * project if it turns out to be the original.
+   *
+   * Every branch of that is main's to decide and the modal's to ask; this hands
+   * over a path and says whatever comes back.
+   */
+  protected async remove(event: MouseEvent, row: Row): Promise<void> {
+    // Without this the click also lands on the row and opens the document that
+    // is about to be deleted.
+    event.stopPropagation();
+    try {
+      const said = await this.projects.removeDocument(row.path, () => {
+        /*
+         * CLOSED AFTER THE QUESTION AND BEFORE THE DELETE, which is why it is a
+         * callback rather than two lines around the call. Closing first would
+         * shut a document the user is about to decline to delete; closing after
+         * would mean unlinking a file this window still has open — on Windows
+         * the working copy is locked and the delete fails halfway. Main cannot
+         * do it: tabs are the renderer's, and main's own reader is only told
+         * about EPUBs.
+         */
+        // Without asking: see `TabsService.close`. The delete's own card is the
+        // question, and it has already been answered yes. RETURNED rather than
+        // voided, so the delete waits for this window to let go of the file.
+        if (row.tab === null) return undefined;
+        return this.tabs.close(row.tab.id, false);
+      });
+      if (said !== null) this.tabs.notice.set(said);
+    } catch (err) {
+      this.tabs.notice.set(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /** Right-click: the same three actions the row's own controls offer. */
+  protected onMenu(event: MouseEvent, row: Row): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.menu.set({ row, x: event.clientX, y: event.clientY });
+  }
+
+  protected fromMenu(row: Row, action: 'reveal' | 'close' | 'delete'): void {
+    this.menu.set(null);
+    if (action === 'reveal') {
+      void api?.reveal(row.path);
+      return;
+    }
+    if (action === 'close') {
+      if (row.tab !== null) void this.tabs.close(row.tab.id);
+      return;
+    }
+    void this.remove(new MouseEvent('click'), row);
+  }
+
+  protected close(event: MouseEvent, tab: Tab | null): void {
+    if (tab === null) return;
     // Without this the click also lands on the row and reveals what is about to
     // be closed, which flashes the document on screen for one frame.
     event.stopPropagation();
@@ -335,15 +757,21 @@ export class OpenDocumentsComponent {
   }
 
   /** Middle-click. `auxclick` and not `mousedown`, so a middle-drag scroll is not a close. */
-  protected onAux(event: MouseEvent, tab: Tab): void {
-    if (event.button !== 1) return;
+  protected onAux(event: MouseEvent, tab: Tab | null): void {
+    if (tab === null || event.button !== 1) return;
     event.preventDefault();
     void this.tabs.close(tab.id);
   }
 
   // ── Dragging a row ───────────────────────────────────────────────────────
 
-  protected onDragStart(event: DragEvent, tab: Tab): void {
+  protected onDragStart(event: DragEvent, tab: Tab | null): void {
+    // An available document has no tab to carry, and the workspace's drop
+    // handler is written against a tab id. Nothing to drag until it is opened.
+    if (tab === null) {
+      event.preventDefault();
+      return;
+    }
     // The id travels in a type of our own. Nothing else in the app reads it,
     // and the window-wide file drop looks for `Files` — so the two kinds of
     // drag over this window can never be confused for one another.
@@ -369,12 +797,24 @@ export class OpenDocumentsComponent {
    * is in — the rule every list of this shape uses, and the only one that lets a
    * row be put at the very end of a list that fills the panel.
    */
-  protected onRowOver(event: DragEvent, tab: Tab): void {
+  protected onRowOver(event: DragEvent, row: Row): void {
     if (!this.carriesDocument(event)) return;
     event.preventDefault();
     event.stopPropagation();
+    /*
+     * A GROUPED ROW IS NOT AN INSERTION POINT. Its order is the catalogue's, so
+     * a line drawn above it would promise a move the redraw undoes a frame
+     * later. `none` rather than `move` says so with the cursor, before the drop
+     * — the refusal in `onDrop` is the sentence for somebody who tried anyway.
+     */
+    if (row.grouped) {
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'none';
+      this.before.set(null);
+      this.landing.set(false);
+      return;
+    }
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-    const target = this.landingFor(event, tab);
+    const target = this.landingFor(event, row);
     this.before.set(target);
     this.landing.set(target === null);
   }
@@ -399,13 +839,22 @@ export class OpenDocumentsComponent {
    * its row is drawn under the book it belongs to whatever the flat list says, so
    * moving it would change a number nobody can see and leave the row exactly
    * where it was — a gesture that appears to work and does not.
+   *
+   * A DOCUMENT IN A PROJECT CANNOT EITHER, and for the same reason one step out.
+   * Its position is the catalogue's — the live document first, then what has
+   * been made from it — and that order is redrawn from the project on every
+   * change, so a reorder would be undone before the pointer was lifted. The
+   * gesture that IS available to a grouped row is the one that goes somewhere
+   * else: dragging it onto the workspace still puts it in a column, because the
+   * workspace reads the same drag and nothing here refuses that half.
    */
-  protected onDrop(event: DragEvent, row: Tab | null): void {
+  protected onDrop(event: DragEvent, row: Row | null): void {
     const id = event.dataTransfer?.getData(DOCUMENT_MIME);
     // Where it lands was worked out on the way in, and is READ BEFORE the drag
     // state is cleared — clearing first would drop every row at the end of the
     // list and quietly undo the insertion point the user was just shown.
-    const target = this.before() ?? (row === null ? null : this.landingFor(event, row));
+    const target = this.before() ?? (row === null || row.grouped ? null : this.landingFor(event, row));
+    const onto = row;
     this.onDragEnd();
     if (!id) return;
     event.preventDefault();
@@ -416,9 +865,21 @@ export class OpenDocumentsComponent {
       this.tabs.notice.set('An HTML editor sits with the book it belongs to — drag the book instead.');
       return;
     }
+    if (onto?.grouped === true || this.groupedTab(moving.id)) {
+      this.tabs.notice.set(
+        'Documents in a project are listed in the order the project holds them, so they cannot be '
+        + 'reordered here. Drag one onto a column to open it there.',
+      );
+      return;
+    }
     // No navigation: a reorder is bookkeeping about the list, not a request to
     // look at something, so it leaves a person on Settings where they were.
     this.tabs.reorder(id, this.anchor(target));
+  }
+
+  /** Is this open tab drawn inside a project group rather than in the loose list? */
+  private groupedTab(id: string): boolean {
+    return this.groups().some((group) => group.rows.some((row) => row.tab?.id === id));
   }
 
   /**
@@ -435,12 +896,20 @@ export class OpenDocumentsComponent {
     return tab.kind === 'editor' ? tab.sourceTabId : tab.id;
   }
 
-  private landingFor(event: DragEvent, tab: Tab): string | null {
+  /**
+   * Which row a drop over this one lands in front of — by the half the pointer
+   * is in, over the UNGROUPED list.
+   *
+   * The loose rows are the only ones a reorder can touch (see `onDrop`), so they
+   * are the only ones this has to index into: a drop over a grouped row is
+   * refused before it gets here.
+   */
+  private landingFor(event: DragEvent, row: Row): string | null {
     const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    if (event.clientY <= box.top + box.height / 2) return tab.id;
-    const list = this.rows();
-    const at = list.findIndex((row) => row.tab.id === tab.id);
-    return list[at + 1]?.tab.id ?? null;
+    if (event.clientY <= box.top + box.height / 2) return row.key;
+    const list = this.loose();
+    const at = list.findIndex((other) => other.key === row.key);
+    return list[at + 1]?.key ?? null;
   }
 
   /**
@@ -470,15 +939,57 @@ export class OpenDocumentsComponent {
   }
 }
 
-/** One drawn line of the list: the document, its indent, and where it is showing. */
+/**
+ * One drawn line of the list — a document that is open, or one that could be.
+ *
+ * `tab` is what separates them, and everything else is drawn the same. An open
+ * row carries its tab and can be revealed, closed, dragged and reordered; an
+ * available one carries only what the catalogue knows and can be opened. The two
+ * share a shape so the template can share a row.
+ */
 interface Row {
-  tab: Tab;
+  /** Unique in the list: the tab's id, or the project's key and the path. */
+  key: string;
+  /** The open tab, or null for a document the project lists and nobody opened. */
+  tab: Tab | null;
+  path: string;
+  title: string;
+  glyph: string;
+  tooltip: string;
   /** True for an editor drawn under its book. */
   indent: boolean;
+  /** True when the row is inside a project group, which indents the whole run. */
+  grouped: boolean;
+  /** Available rows only: the file the catalogue lists is not on the disk. */
+  missing?: boolean;
+  /** Available rows only: false for a missing file and for `.txt`. */
+  openable?: boolean;
+  /** Available rows only: whether the tab it opens wears the unsaved dot. */
+  managed?: boolean;
   /** 1…5 while it is on screen, counted left to right. Null when it is not. */
   column: number | null;
   /** True when that column is the focused one. */
   focused: boolean;
+}
+
+/** A project, and every document in it — open or merely available. */
+interface Group {
+  key: string;
+  title: string;
+  dir: string;
+  rows: Row[];
+  /** How many of those rows are actually open — what the header's ✕ closes. */
+  open: number;
+}
+
+function glyphFor(tab: Tab): string {
+  if (tab.kind === 'editor') return '</>';
+  return tab.kind === 'epub' ? '▤' : '▦';
+}
+
+/** One spelling for a path, so Windows' three become one. */
+function fold(target: string): string {
+  return target.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '');
 }
 
 /**
