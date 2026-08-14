@@ -1,0 +1,1241 @@
+/**
+ * projects — one folder per book, in four layers.
+ *
+ * A conversion used to write `<libraryDir>/workspace/<slug>-<key>.epub`, the
+ * readings bank lived a continent away in `<userData>/readings/<key>.jsonl`, and
+ * nothing on disk tied a translation to the book it came from. You could not ask
+ * "what has been made from this PDF?" because the answer was spread across two
+ * directories and encoded only in a filename prefix.
+ *
+ * A PROJECT is the answer, and it is one directory:
+ *
+ *   <libraryDir>/projects/<slug>-<contentkey>/
+ *     project.json            the catalogue — see ProjectManifest
+ *     archive/                the imported originals. NEVER written.
+ *     generated/              the model's cast EPUB, or the imported EPUB, or a
+ *                             searchable PDF. NEVER written.
+ *     working/                what the user edits: the unpacked EPUB tree, and
+ *                             the live PDF.
+ *     final/                  what Save and Export produce, named for the book.
+ *     readings/<key>.jsonl    the bank of the model's per-page answers
+ *
+ * ── The rule the layout exists for ───────────────────────────────────────────
+ *
+ * EVERY DOCUMENT HAS TWO LAYERS: an origin that is never written, and a live
+ * copy that is what the user means by "the PDF" or "the EPUB". Saving writes the
+ * live copy. The origin is what makes stepping back, or starting over, possible
+ * at all — and for a scanned book the imported file may be the only copy of that
+ * scan that will ever exist.
+ *
+ * `generated/` is the second origin and it is sacrosanct on its own argument: it
+ * is the single record of what the model ACTUALLY READ, every curation decision
+ * downstream is measured against it, and "start over" means throwing the working
+ * tree away and unpacking it again from there.
+ *
+ * ── And the user never sees any of this ──────────────────────────────────────
+ *
+ * ONE DOCUMENT PER KIND. `Working Towards The Fuhrer. Kershaw, Ian. (1993).pdf`
+ * and the matching `.epub`, as one unit. No `.generated`, no `.archive`, no
+ * suffixes, no layer names anywhere a person can read them: every file in a
+ * project is named from `manifest.stem`, which is the imported document's own
+ * name with its extension taken off. The SLUG is for the directory and nothing
+ * else, and `final/` is named for the book like everything else.
+ *
+ * ── The key ──────────────────────────────────────────────────────────────────
+ *
+ * `<slug>-<8 hex of the import's sha256>`, unchanged from the flat workspace it
+ * replaces, and the reason it is unchanged is worth the paragraph:
+ *
+ *   - the hash is of the document's CONTENT, not of its path, so the same book
+ *     lands in the same project no matter where the user dragged it from — a
+ *     second run REPLACES the first rather than accumulating `book (1).epub`;
+ *   - the READINGS bank keeps that key, so an interrupted run of a book that has
+ *     since been moved or renamed still resumes. That bank is GPU-hours; a key
+ *     a rename could break would silently cost them;
+ *   - and the flat files this migrates FROM already carry it, which is what
+ *     makes adoption a regrouping rather than a re-hash of everything on disk.
+ *
+ * ── Nothing is deleted ───────────────────────────────────────────────────────
+ *
+ * Re-running a conversion does not clobber the origin it replaces — it rotates
+ * it into `generated/archived-<timestamp>/`, the way the engine's
+ * `archiveReadingsBank` (src/vlm/readings.ts) rotates a bank, and the working
+ * tree unpacked from it goes into the same folder so the next open unpacks the
+ * NEW book rather than reopening the old one's edits.
+ */
+import { createHash } from 'node:crypto';
+import { constants as fsconst, createReadStream, promises as fsp, type Dirent } from 'node:fs';
+import * as path from 'node:path';
+
+import { app } from 'electron';
+
+import { readAppSettings } from './app-settings';
+import { openedAtFor } from './recents';
+import type {
+  ConversionKind,
+  ProjectDocument,
+  ProjectDocumentKind,
+  ProjectGenerated,
+  ProjectGeneratedRole,
+  ProjectManifest,
+  ProjectSummary,
+  ProjectWorkingTree,
+} from '../shared/types';
+
+/** Refusals from this module, named so a caller can tell them from an fs error. */
+export class ProjectError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProjectError';
+  }
+}
+
+/** The manifest schema this app writes and the only one it reads. */
+const MANIFEST_VERSION = 1;
+
+const MANIFEST = 'project.json';
+
+/** The four layers, spelled once. */
+const ARCHIVE = 'archive';
+const GENERATED = 'generated';
+const WORKING = 'working';
+const FINAL = 'final';
+
+/**
+ * `<libraryDir>/projects` — under the user's library, not under userData.
+ *
+ * A finished book is the user's property. userData is where an app keeps its own
+ * bookkeeping and is not a folder anybody backs up on purpose; the library is
+ * `~/Documents/Foundry` by default and is exactly the kind of folder a person
+ * syncs. The readings bank moved in here WITH the book for the same reason it
+ * once stayed out: it is only bookkeeping in the abstract — in practice it is
+ * hours of GPU that belong to the book it was read from.
+ *
+ * Read on EVERY call rather than cached: the setting is editable while the app
+ * is running, and a cached answer would keep writing into the folder the user
+ * just moved away from.
+ */
+export function projectsDir(): string {
+  return path.join(readAppSettings().libraryDir, 'projects');
+}
+
+/**
+ * The project directory a path lives in, or null when it lives outside them all.
+ *
+ * ONE segment deep, deliberately: `…/projects/<key>/generated/book.epub` and
+ * `…/projects/<key>/working/<tree>/EPUB/c0003.xhtml` both answer `<key>`,
+ * because everything under a project belongs to it however deep it sits.
+ */
+export function projectDirOf(filePath: string): string | null {
+  const root = projectsDir();
+  const inside = path.relative(root, path.resolve(filePath));
+  if (inside.length === 0 || inside.startsWith('..') || path.isAbsolute(inside)) return null;
+  const first = inside.split(path.sep)[0];
+  if (first === undefined || first.length === 0) return null;
+  return path.join(root, first);
+}
+
+/**
+ * True while `filePath` lives inside a project — inside anything this app owns.
+ *
+ * The one test both main (the recents flag, the unsaved dot, whether Save may
+ * write straight through) and the epub reader apply, so it lives beside the
+ * directory it measures against. It answers TRUE for `archive/` and `generated/`
+ * too, and that is the point: those layers are never written, so Save must go
+ * through the dialog rather than silently rewriting one of them.
+ */
+export function isManaged(filePath: string): boolean {
+  return projectDirOf(filePath) !== null;
+}
+
+/**
+ * A DIRECTORY name a filesystem, a URL and a person can all live with.
+ *
+ * The real test document is `Working Towards The Fuhrer. Kershaw, Ian. (1993).pdf`
+ * — spaces, a comma, parentheses and two dots. Everything outside
+ * `[A-Za-z0-9._-]` becomes a hyphen, runs collapse, and the result is capped at
+ * 64 characters because Windows' 260-character path limit is measured against a
+ * project path that already carries `working/<tree>/EPUB/<chapter>.xhtml`.
+ *
+ * FOR THE DIRECTORY ONLY. The files inside a project keep the document's real
+ * name (`manifest.stem`) — a person opening the folder should find their book,
+ * not a slug.
+ */
+export function slugify(name: string): string {
+  const slug = name
+    .replace(/\.[^.]*$/, '')
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[-.]+|[-.]+$/g, '');
+  const capped = slug.slice(0, 64);
+  // A name made entirely of punctuation would slug to nothing, and a folder
+  // called `-a1b2c3d4` is a folder nobody can identify. The hash still follows.
+  return capped.length > 0 ? capped : 'document';
+}
+
+/**
+ * The document's own name, without its extension, fit to be a filename again.
+ *
+ * This is what every file in the project is called, so it is the one string that
+ * reaches a person. Only the characters Windows refuses outright are removed —
+ * a colon is common in a book's name and would fail on write — and everything
+ * else, including the spaces, commas and parentheses that make a real title
+ * readable, is kept exactly as the user's own file spelled it.
+ */
+export function stemOf(fileName: string): string {
+  return sanitiseStem(fileName.replace(/\.[^.]*$/, ''));
+}
+
+/**
+ * The same cleaning, for a string that is ALREADY extensionless.
+ *
+ * Split out because `stemOf` would maul one. A slug carries dots — `slugify`
+ * keeps them — so `Working-Towards-The-Fuhrer.-Kershaw-Ian.-1993` run through
+ * an extension stripper comes out as `…-Kershaw-Ian`, which is a book named
+ * after two thirds of itself. Adoption takes this route; an imported file takes
+ * the other.
+ *
+ * Capped at 80 because the name reaches a path: `<library>/projects/<key up to
+ * 73>/generated/<stem> (pt-BR).epub` has to stay inside Windows' 260.
+ */
+function sanitiseStem(text: string): string {
+  const stem = text
+    .replace(/[\\/:*?"<>|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80)
+    // A trailing dot or space is legal in the string and illegal in a Windows
+    // filename, and the failure arrives from the OS rather than from us.
+    .replace(/[. ]+$/, '');
+  return stem.length > 0 ? stem : 'document';
+}
+
+/**
+ * The first 8 hex characters of the file's sha256.
+ *
+ * STREAMED, so a 400 MB scan costs one sequential pass and no resident memory.
+ * Eight characters is 4 bytes of collision space — plenty against the tens of
+ * books one person converts, and short enough that the folder still reads as the
+ * book's name with a suffix rather than as a hash.
+ */
+export function contentKey(filePath: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const hash = createHash('sha256');
+    const stream = createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('error', (err: Error) => reject(
+      new Error(`${filePath} could not be read to key its project: ${err.message}`),
+    ));
+    stream.on('end', () => resolve(hash.digest('hex').slice(0, 8)));
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The manifest
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Read `project.json`, or say by name why it could not be read.
+ *
+ * NEVER falls back to an empty manifest. A project whose catalogue does not
+ * parse has a member order this app cannot know, and packing a book from a
+ * guessed order is how `mimetype` ends up in the middle of an archive that some
+ * readers open and others silently reject (ARCHITECTURE §8).
+ */
+export async function readManifest(dir: string): Promise<ProjectManifest> {
+  const file = path.join(dir, MANIFEST);
+  let text: string;
+  try {
+    text = await fsp.readFile(file, 'utf8');
+  } catch (err) {
+    throw new ProjectError(`${file} could not be read: ${(err as Error).message}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    throw new ProjectError(`${file} is not JSON (${(err as Error).message}).`);
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new ProjectError(`${file} is not an object, so it is not a project catalogue.`);
+  }
+  const row = parsed as Record<string, unknown>;
+  if (row['version'] !== MANIFEST_VERSION) {
+    throw new ProjectError(
+      `${file} is version ${String(row['version'])} and this app writes version ${MANIFEST_VERSION}. `
+      + 'Refusing to read a catalogue whose shape it does not know.',
+    );
+  }
+  const key = row['key'];
+  if (typeof key !== 'string' || key.length === 0) {
+    throw new ProjectError(`${file} names no key, so nothing says which book this folder is.`);
+  }
+  const working = typeof row['working'] === 'object' && row['working'] !== null
+    ? row['working'] as Record<string, unknown>
+    : {};
+  return {
+    version: MANIFEST_VERSION,
+    key,
+    title: typeof row['title'] === 'string' && row['title'].length > 0 ? row['title'] : key,
+    stem: typeof row['stem'] === 'string' && row['stem'].length > 0 ? row['stem'] : key,
+    createdAt: typeof row['createdAt'] === 'number' ? row['createdAt'] : 0,
+    archive: readArchive(row['archive']),
+    generated: readGenerated(row['generated']),
+    working: {
+      trees: readTrees(working['trees']),
+      files: readWorkingFiles(working['files']),
+    },
+    final: readFinal(row['final']),
+  };
+}
+
+function readArchive(value: unknown): ProjectManifest['archive'] {
+  if (typeof value !== 'object' || value === null) return null;
+  const row = value as Record<string, unknown>;
+  const file = row['file'];
+  const kind = row['kind'];
+  if (typeof file !== 'string' || (kind !== 'pdf' && kind !== 'epub')) return null;
+  return {
+    file,
+    kind,
+    contentKey: typeof row['contentKey'] === 'string' ? row['contentKey'] : '',
+    originPath: typeof row['originPath'] === 'string' ? row['originPath'] : null,
+  };
+}
+
+function readGenerated(value: unknown): ProjectGenerated[] {
+  if (!Array.isArray(value)) return [];
+  const rows: ProjectGenerated[] = [];
+  for (const entry of value) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const row = entry as Record<string, unknown>;
+    const file = row['file'];
+    const kind = row['kind'];
+    const role = row['role'];
+    if (typeof file !== 'string') continue;
+    if (kind !== 'epub' && kind !== 'pdf' && kind !== 'txt') continue;
+    if (!isGeneratedRole(role)) continue;
+    rows.push({ file, kind, role, madeAt: typeof row['madeAt'] === 'number' ? row['madeAt'] : 0 });
+  }
+  return rows;
+}
+
+function isGeneratedRole(value: unknown): value is ProjectGeneratedRole {
+  return value === 'cast' || value === 'imported' || value === 'translation'
+    || value === 'searchable' || value === 'text';
+}
+
+function readTrees(value: unknown): ProjectWorkingTree[] {
+  if (!Array.isArray(value)) return [];
+  const trees: ProjectWorkingTree[] = [];
+  for (const entry of value) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const row = entry as Record<string, unknown>;
+    const from = row['from'];
+    const dir = row['dir'];
+    const members = row['members'];
+    if (typeof from !== 'string' || typeof dir !== 'string' || !Array.isArray(members)) continue;
+    if (!members.every((name): name is string => typeof name === 'string')) continue;
+    trees.push({
+      from,
+      dir,
+      members,
+      unpackedAt: typeof row['unpackedAt'] === 'number' ? row['unpackedAt'] : 0,
+    });
+  }
+  return trees;
+}
+
+function readWorkingFiles(value: unknown): ProjectManifest['working']['files'] {
+  if (!Array.isArray(value)) return [];
+  const files: ProjectManifest['working']['files'] = [];
+  for (const entry of value) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const row = entry as Record<string, unknown>;
+    const file = row['file'];
+    const from = row['from'];
+    if (typeof file !== 'string' || typeof from !== 'string' || row['kind'] !== 'pdf') continue;
+    files.push({ file, kind: 'pdf', from, madeAt: typeof row['madeAt'] === 'number' ? row['madeAt'] : 0 });
+  }
+  return files;
+}
+
+function readFinal(value: unknown): ProjectManifest['final'] {
+  if (!Array.isArray(value)) return [];
+  const files: ProjectManifest['final'] = [];
+  for (const entry of value) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const row = entry as Record<string, unknown>;
+    const file = row['file'];
+    const kind = row['kind'];
+    if (typeof file !== 'string') continue;
+    if (kind !== 'epub' && kind !== 'pdf' && kind !== 'txt') continue;
+    files.push({ file, kind, madeAt: typeof row['madeAt'] === 'number' ? row['madeAt'] : 0 });
+  }
+  return files;
+}
+
+/** Write the catalogue. Whole-file, small, and the only writer of this shape. */
+async function writeManifest(dir: string, manifest: ProjectManifest): Promise<void> {
+  await fsp.mkdir(dir, { recursive: true });
+  await fsp.writeFile(path.join(dir, MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+}
+
+/**
+ * Every read-modify-write of one project's catalogue, one at a time.
+ *
+ * `project.json` is rewritten whole, so two edits in flight for the same project
+ * — a conversion recording its output while a book records the tree it just
+ * unpacked — would have the second overwrite the first's field with the value it
+ * read before the first landed. A promise chain per directory is the smallest
+ * thing that makes that impossible, and projects are edited perhaps twice a
+ * minute, so serialising them costs nothing measurable.
+ */
+const edits = new Map<string, Promise<unknown>>();
+
+function withManifest<T>(dir: string, work: (manifest: ProjectManifest) => Promise<T>): Promise<T> {
+  const key = path.resolve(dir).toLowerCase();
+  const previous = edits.get(key) ?? Promise.resolve();
+  const next = previous
+    .catch(() => { /* a failed edit must not poison the ones queued behind it */ })
+    .then(async () => work(await readManifest(dir)));
+  edits.set(key, next);
+  return next;
+}
+
+/**
+ * Make the project if it is not there, then run one edit against its catalogue.
+ *
+ * The create and the edit are in ONE serialised step because two documents
+ * adopted at the same instant — main's background adoption of a dropped file and
+ * the `epub:open` that follows it — would otherwise both find no `project.json`
+ * and both write a fresh one, and the second would erase whatever the first had
+ * just recorded.
+ */
+function withCreatedProject<T>(
+  dir: string,
+  key: string,
+  stem: string,
+  work: (manifest: ProjectManifest) => Promise<T>,
+): Promise<T> {
+  const mapKey = path.resolve(dir).toLowerCase();
+  const previous = edits.get(mapKey) ?? Promise.resolve();
+  const next = previous
+    .catch(() => { /* see withManifest */ })
+    .then(async () => {
+      let manifest: ProjectManifest;
+      try {
+        manifest = await readManifest(dir);
+      } catch (err) {
+        // Absent is the ordinary case — this is where a project is born. A
+        // catalogue that EXISTS and will not parse is not: overwriting it would
+        // throw away a member order that a book on disk still depends on.
+        if (await exists(path.join(dir, MANIFEST))) throw err;
+        manifest = {
+          version: MANIFEST_VERSION,
+          key,
+          // The display title starts as the document's own name. It becomes the
+          // book's `dc:title` the first time anything reads one — see
+          // `noteProjectTitle` — and the stem never changes after this, because
+          // renaming files under somebody is not a thing a catalogue does.
+          title: stem,
+          stem,
+          createdAt: Date.now(),
+          archive: null,
+          generated: [],
+          working: { trees: [], files: [] },
+          final: [],
+        };
+        await writeManifest(dir, manifest);
+      }
+      return work(manifest);
+    });
+  edits.set(mapKey, next);
+  return next;
+}
+
+/**
+ * Copy, and refuse rather than overwrite.
+ *
+ * `COPYFILE_EXCL` makes "is it already there?" and "put it there" one operation
+ * the filesystem decides, which is what keeps adoption idempotent under two app
+ * instances started together. An existing destination is not an error here: it
+ * means this document was adopted already, which is the answer we wanted.
+ */
+async function copyNewOnly(from: string, to: string): Promise<boolean> {
+  try {
+    await fsp.copyFile(from, to, fsconst.COPYFILE_EXCL);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw err;
+  }
+}
+
+async function exists(target: string): Promise<boolean> {
+  try {
+    await fsp.access(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Importing a document
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The extension a conversion's origin carries. See `ProjectGeneratedRole`. */
+const GENERATED_EXTENSIONS: Readonly<Record<ConversionKind, string>> = {
+  epub: '.epub',
+  pdf: '.pdf',
+  txt: '.txt',
+};
+
+const GENERATED_ROLES: Readonly<Record<ConversionKind, ProjectGeneratedRole>> = {
+  epub: 'cast',
+  pdf: 'searchable',
+  txt: 'text',
+};
+
+/** `Working Towards The Fuhrer. Kershaw, Ian. (1993).epub` — the book's own name. */
+export function generatedFileFor(stem: string, kind: ConversionKind): string {
+  return `${stem}${GENERATED_EXTENSIONS[kind]}`;
+}
+
+export function generatedRoleFor(kind: ConversionKind): ProjectGeneratedRole {
+  return GENERATED_ROLES[kind];
+}
+
+/**
+ * A translation's name: the book's, with the language in parentheses.
+ *
+ * `Working Towards The Fuhrer. Kershaw, Ian. (1993) (en).epub`. Parentheses and
+ * not a `.en.` infix, because an infix reads as a technical suffix on a filename
+ * and the whole point of naming these from the book is that a person opening the
+ * folder recognises what they are looking at.
+ */
+export function translationFileFor(stem: string, languageTag: string): string {
+  // The tag reaches a filename, so it is reduced to the same character set
+  // everything else here is. `pt-BR` survives that unchanged; the engine has
+  // already refused anything that is not a language tag.
+  const tag = languageTag.trim().replace(/[^A-Za-z0-9-]+/g, '') || 'translated';
+  return `${stem} (${tag}).epub`;
+}
+
+/** Where an imported document ended up, and the project it now belongs to. */
+export interface ImportedDocument {
+  /** The project directory. */
+  dir: string;
+  /** The document's path RELATIVE to it — `generated/x.epub`, `working/x.pdf`. */
+  entry: string;
+  key: string;
+  stem: string;
+}
+
+/**
+ * Find or make the project this document belongs to, and return where it sits.
+ *
+ * ALREADY INSIDE ONE — a conversion's origin, a document opened again from Home
+ * — and the project is simply named: nothing is copied, nothing is re-hashed,
+ * and a translation planned from the cast EPUB lands in the same folder as the
+ * book it was made from. That last one is the whole reason this function exists
+ * rather than a bare `contentKey` call at each site: keying the translation off
+ * the CAST EPUB's bytes would file it under a project of its own, and the book
+ * and its translation would be two unrelated folders.
+ *
+ * OUTSIDE — a file the user dropped, opened or named on the command line — and
+ * it is IMPORTED, into both layers that matter for its kind:
+ *
+ *   a PDF is copied to `archive/` (the untouched original, possibly the only
+ *   copy of that scan there will ever be) and again to `working/`, which is the
+ *   live PDF: the one the user sees, and the one metadata edits will land in
+ *   when they are implemented;
+ *
+ *   an EPUB is copied to `archive/` and again to `generated/` with the role
+ *   `imported`, because an imported book plays exactly the part a cast one does
+ *   — an origin that is never written, with a working tree unpacked from it.
+ *
+ * Copied and never moved, because it is the user's file and it stays where they
+ * put it. Copied and never written, because from here on the working copy is
+ * what this app edits.
+ */
+export async function importDocument(
+  filePath: string,
+  kind: 'pdf' | 'epub',
+): Promise<ImportedDocument> {
+  const resolved = path.resolve(filePath);
+  const inside = projectDirOf(resolved);
+  if (inside !== null) {
+    const manifest = await readManifest(inside);
+    const entry = path.relative(inside, resolved).split(path.sep).join('/');
+    return { dir: inside, entry, key: manifest.key, stem: manifest.stem };
+  }
+
+  const name = path.basename(resolved);
+  const key = `${slugify(name)}-${await contentKey(resolved)}`;
+  const dir = path.join(projectsDir(), key);
+  const live = kind === 'pdf' ? WORKING : GENERATED;
+
+  return withCreatedProject(dir, key, stemOf(name), async (manifest) => {
+    // `manifest.stem` and NOT the name this call computed. A project adopted
+    // from the flat workspace was named after a slug, and every file already in
+    // it carries that name; a second name arriving with a later import would put
+    // two spellings of one book in one folder and two rows for it on Home.
+    const liveFile = kind === 'pdf' ? `${manifest.stem}.pdf` : `${manifest.stem}.epub`;
+    if (manifest.archive === null) {
+      await fsp.mkdir(path.join(dir, ARCHIVE), { recursive: true });
+      await copyNewOnly(resolved, path.join(dir, ARCHIVE, name));
+      manifest.archive = { file: name, kind, contentKey: key.slice(-8), originPath: resolved };
+    }
+    // The live layer, made from the archive copy rather than from the user's
+    // file: the archive is now the origin of record, and reading the original
+    // twice would make two copies that could differ if it changed underneath.
+    const archived = path.join(dir, ARCHIVE, manifest.archive.file);
+    await fsp.mkdir(path.join(dir, live), { recursive: true });
+    const made = await copyNewOnly(archived, path.join(dir, live, liveFile));
+    if (made && kind === 'pdf') {
+      manifest.working.files = [
+        ...manifest.working.files.filter((row) => row.file !== liveFile),
+        { file: liveFile, kind: 'pdf', from: `${ARCHIVE}/${manifest.archive.file}`, madeAt: Date.now() },
+      ];
+    } else if (made) {
+      manifest.generated = [
+        ...manifest.generated.filter((row) => row.file !== liveFile),
+        { file: liveFile, kind: 'epub', role: 'imported', madeAt: Date.now() },
+      ];
+    }
+    await writeManifest(dir, manifest);
+    return { dir, entry: `${live}/${liveFile}`, key, stem: manifest.stem };
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The generated layer
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Working trees an open book is reading and writing right now.
+ *
+ * A rotation MOVES a working tree (see `rotateGenerated`), and moving the
+ * directory an open tab is serving its chapters from would leave that tab
+ * reading paths that no longer exist — every image a 404, every save a failure,
+ * and nothing on screen saying why. So a re-run of a conversion whose previous
+ * book is open is refused by name instead. Held by the epub reader from open to
+ * close.
+ *
+ * COUNTED, not a set. One tree can be open twice — the same book reached both as
+ * the file the user dropped and as the copy Home lists in its project — and a
+ * set would let the first tab to close unlock a tree the second is still
+ * reading. The count only ever goes to zero when the last reader has gone.
+ */
+const heldTrees = new Map<string, number>();
+
+export function holdWorkingTree(root: string): void {
+  const key = path.resolve(root).toLowerCase();
+  heldTrees.set(key, (heldTrees.get(key) ?? 0) + 1);
+}
+
+export function releaseWorkingTree(root: string): void {
+  const key = path.resolve(root).toLowerCase();
+  const held = (heldTrees.get(key) ?? 0) - 1;
+  if (held > 0) heldTrees.set(key, held);
+  else heldTrees.delete(key);
+}
+
+function workingTreeHeld(root: string): boolean {
+  return heldTrees.has(path.resolve(root).toLowerCase());
+}
+
+/** `archived-2026-08-14T00-31-02-114Z` — the engine's shape, colons removed. */
+function stampedArchive(parent: string): string {
+  return path.join(parent, `archived-${new Date().toISOString().replace(/[:.]/g, '-')}`);
+}
+
+/**
+ * Move an origin — and the working tree unpacked from it — aside, if it is there.
+ *
+ * Called before a conversion writes, so a second run of the same book replaces
+ * the first WITHOUT destroying it. `generated/` is never overwritten, ever: it
+ * is the record of what the model read, and the previous read is still a record
+ * of something.
+ *
+ * THE WORKING TREE GOES WITH IT, and that is not tidiness. The tree is keyed by
+ * the origin it came from, so a new cast EPUB beside a tree unpacked from the
+ * old one would open the OLD book's edits and never show the new conversion at
+ * all — the failure would look like the run having done nothing.
+ */
+export async function rotateGenerated(dir: string, file: string): Promise<void> {
+  const target = path.join(dir, GENERATED, file);
+  if (!await exists(target)) return;
+
+  await withManifest(dir, async (manifest) => {
+    const from = `${GENERATED}/${file}`;
+    const tree = manifest.working.trees.find((entry) => entry.from === from) ?? null;
+    const treeRoot = tree === null ? null : path.join(dir, WORKING, tree.dir);
+    if (treeRoot !== null && workingTreeHeld(treeRoot)) {
+      throw new ProjectError(
+        `${file} is open in Foundry right now. Running this again would move the working copy `
+        + 'you are reading out from under that tab — close the book first.',
+      );
+    }
+
+    const archive = stampedArchive(path.join(dir, GENERATED));
+    if (await exists(archive)) {
+      // The engine's rule, for the engine's reason: two runs' outputs under one
+      // folder name is two books' worth of work filed as one.
+      throw new ProjectError(
+        `${archive} already exists, so the previous ${file} cannot be moved aside without mixing `
+        + "two runs' work into one folder. Move it away and run again.",
+      );
+    }
+    await fsp.mkdir(archive, { recursive: true });
+    await fsp.rename(target, path.join(archive, file));
+    if (tree !== null && treeRoot !== null && await exists(treeRoot)) {
+      await fsp.rename(treeRoot, path.join(archive, `working-${tree.dir}`));
+    }
+
+    manifest.generated = manifest.generated.filter((entry) => entry.file !== file);
+    manifest.working.trees = manifest.working.trees.filter((entry) => entry.from !== from);
+    await writeManifest(dir, manifest);
+  });
+}
+
+/**
+ * Put a finished origin in the catalogue, and refresh the live copy it feeds.
+ *
+ * Called when the JOB SUCCEEDS rather than when it is planned, because a plan is
+ * an intention: a run that fails at page 200 would otherwise leave a row in the
+ * catalogue for a file that does not exist, and Home would offer it.
+ *
+ * A SEARCHABLE PDF ALSO BECOMES THE LIVE PDF. That is the whole reason the user
+ * never sees two PDF rows: the scan they opened and the scan with a text layer
+ * over it are ONE document, and what a searchable conversion does is give that
+ * document its text layer. The copy it replaces is rotated aside, not deleted.
+ *
+ * A failure here is LOGGED and not thrown. This runs at the end of a run that
+ * may have taken three hours, and losing a row in a catalogue is not a reason to
+ * report the conversion itself as failed — but it is named, in full, so the line
+ * says which file went unrecorded and why.
+ */
+export async function recordGenerated(
+  outputPath: string,
+  role: ProjectGeneratedRole,
+): Promise<string | null> {
+  const resolved = path.resolve(outputPath);
+  const dir = projectDirOf(resolved);
+  if (dir === null) {
+    console.error(`[projects] ${resolved} finished outside any project, so nothing catalogued it.`);
+    return null;
+  }
+  const inside = path.relative(dir, resolved).split(path.sep);
+  const file = inside.length === 2 && inside[0] === GENERATED ? inside[1] : undefined;
+  if (file === undefined) {
+    console.error(`[projects] ${resolved} is not directly in a project's ${GENERATED}/, so nothing catalogued it.`);
+    return null;
+  }
+  const kind = kindOf(file);
+  if (kind === null) {
+    console.error(`[projects] ${resolved} has an extension no project catalogue describes.`);
+    return null;
+  }
+  try {
+    return await withManifest(dir, async (manifest) => {
+      manifest.generated = [
+        ...manifest.generated.filter((entry) => entry.file !== file),
+        { file, kind, role, madeAt: Date.now() },
+      ];
+      // WRITTEN BEFORE the live copy is refreshed, and that ordering is the
+      // whole reason these are two writes. Refreshing can refuse — an archive
+      // folder from this same second already exists — and a refusal that took
+      // the origin's own catalogue row down with it would leave the engine's
+      // output on disk, uncatalogued, invisible to Home.
+      await writeManifest(dir, manifest);
+      if (role !== 'searchable') return null;
+      const live = await refreshLivePdf(dir, manifest, file);
+      await writeManifest(dir, manifest);
+      return live;
+    });
+  } catch (err) {
+    console.error(`[projects] ${path.join(dir, MANIFEST)} could not record ${file}: ${(err as Error).message}`);
+    return null;
+  }
+}
+
+/**
+ * Replace the live PDF with the one that now has a text layer.
+ *
+ * The old live copy is rotated into `working/archived-<stamp>/` rather than
+ * overwritten, because it is the only thing that can answer "what did this look
+ * like before?" — and because a metadata edit made against it (once those exist)
+ * would otherwise vanish without a trace.
+ */
+async function refreshLivePdf(
+  dir: string,
+  manifest: ProjectManifest,
+  generatedFile: string,
+): Promise<string> {
+  const liveFile = `${manifest.stem}.pdf`;
+  const live = path.join(dir, WORKING, liveFile);
+  await fsp.mkdir(path.join(dir, WORKING), { recursive: true });
+  if (await exists(live)) {
+    const archive = stampedArchive(path.join(dir, WORKING));
+    if (await exists(archive)) {
+      throw new ProjectError(
+        `${archive} already exists, so the previous ${liveFile} cannot be moved aside. Move it away.`,
+      );
+    }
+    await fsp.mkdir(archive, { recursive: true });
+    await fsp.rename(live, path.join(archive, liveFile));
+  }
+  await fsp.copyFile(path.join(dir, GENERATED, generatedFile), live);
+  manifest.working.files = [
+    ...manifest.working.files.filter((row) => row.file !== liveFile),
+    { file: liveFile, kind: 'pdf', from: `${GENERATED}/${generatedFile}`, madeAt: Date.now() },
+  ];
+  return live;
+}
+
+/**
+ * Note that the user filed a copy into the project's own `final/`.
+ *
+ * Only when it landed THERE. Save As to a USB stick or to somebody's Desktop is
+ * the user's business and is already in recents; the catalogue records the
+ * project's own filing tray so Home can say a book has been filed at all.
+ * Silent about anything else, and never fatal — a save that happened must not
+ * report a failure because a catalogue line did not.
+ */
+export async function recordFinal(destination: string): Promise<void> {
+  const resolved = path.resolve(destination);
+  const dir = projectDirOf(resolved);
+  if (dir === null) return;
+  const inside = path.relative(dir, resolved).split(path.sep);
+  const file = inside.length === 2 && inside[0] === FINAL ? inside[1] : undefined;
+  if (file === undefined) return;
+  const kind = kindOf(file);
+  if (kind === null) return;
+  try {
+    await withManifest(dir, async (manifest) => {
+      manifest.final = [
+        ...manifest.final.filter((entry) => entry.file !== file),
+        { file, kind, madeAt: Date.now() },
+      ];
+      await writeManifest(dir, manifest);
+    });
+  } catch (err) {
+    console.error(`[projects] ${path.join(dir, MANIFEST)} could not record ${file}: ${(err as Error).message}`);
+  }
+}
+
+/** Where Save opens for a book in this project. Created so the dialog lands in it. */
+export async function finalDir(dir: string): Promise<string> {
+  const target = path.join(dir, FINAL);
+  await fsp.mkdir(target, { recursive: true });
+  return target;
+}
+
+function kindOf(file: string): ProjectDocumentKind | null {
+  const extension = path.extname(file).toLowerCase();
+  if (extension === '.epub') return 'epub';
+  if (extension === '.pdf') return 'pdf';
+  if (extension === '.txt') return 'txt';
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Working trees
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The directory under `working/` that holds the tree unpacked from `entry`.
+ *
+ * A readable prefix plus six hex of the entry's own hash. The prefix alone would
+ * not do: it is capped for Windows' path limit, and two translations of a book
+ * with a long name would cap to the same string — one book served out of
+ * another book's working copy, which is the worst outcome available because it
+ * looks like it worked. The hash makes the name unique from the thing it names.
+ *
+ * Nobody ever reads this: it is an internal directory, and the documents the
+ * user sees are named from `manifest.stem`.
+ */
+export function workingTreeName(entry: string): string {
+  const readable = slugify(entry.replace(/\//g, '-')).slice(0, 32);
+  return `${readable}-${createHash('sha256').update(entry).digest('hex').slice(0, 6)}`;
+}
+
+export interface WorkingTreeRecord {
+  root: string;
+  members: string[];
+}
+
+/** The recorded tree for this archive, or null when there is none yet. */
+export async function workingTreeFor(dir: string, entry: string): Promise<WorkingTreeRecord | null> {
+  const manifest = await readManifest(dir);
+  const tree = manifest.working.trees.find((candidate) => candidate.from === entry);
+  if (tree === undefined) return null;
+  return { root: path.join(dir, WORKING, tree.dir), members: tree.members };
+}
+
+/** Record a tree that is about to be written. See `openEpub` for the ordering. */
+export async function recordWorkingTree(
+  dir: string,
+  entry: string,
+  members: readonly string[],
+): Promise<string> {
+  const name = workingTreeName(entry);
+  await withManifest(dir, async (manifest) => {
+    manifest.working.trees = [
+      ...manifest.working.trees.filter((tree) => tree.from !== entry),
+      { from: entry, dir: name, members: [...members], unpackedAt: Date.now() },
+    ];
+    await writeManifest(dir, manifest);
+  });
+  return path.join(dir, WORKING, name);
+}
+
+/**
+ * Give the project the book's own title, once something can read one.
+ *
+ * A project is born named after a filename, because that is all a scan offers
+ * before it has been read. The cast EPUB carries a `dc:title`, and a library
+ * whose rows read "Working Towards The Fuhrer. Kershaw, Ian. (1993)" is worse
+ * than one whose rows read "Working Towards the Führer". Written only when it
+ * CHANGES, so opening a book is not a manifest write.
+ *
+ * THE STEM DOES NOT MOVE WITH IT. Files keep the names they were written under —
+ * a catalogue that renamed a book's files behind the user is a catalogue that
+ * breaks every path anything else is holding.
+ */
+export async function noteProjectTitle(dir: string, title: string): Promise<void> {
+  const trimmed = title.trim();
+  if (trimmed.length === 0) return;
+  try {
+    await withManifest(dir, async (manifest) => {
+      if (manifest.title === trimmed) return;
+      manifest.title = trimmed;
+      await writeManifest(dir, manifest);
+    });
+  } catch (err) {
+    // A display name is not worth failing an open over; it is still named.
+    console.error(`[projects] ${dir} could not record its title: ${(err as Error).message}`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// What Home lists
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Every project, newest-opened first, each with the documents inside it.
+ *
+ * ONE ROW PER DOCUMENT, not one per file. A PDF that was imported and then made
+ * searchable is one row — the live copy in `working/` — because it is one
+ * document that has been improved, and a person who saw two would reasonably ask
+ * which of them was theirs. The archive and the generated origin behind it are
+ * this app's bookkeeping and are reachable through Reveal.
+ *
+ * A project whose catalogue will not parse is STILL LISTED, carrying the reason
+ * — Home is the only door back to a book, and a row that silently disappears
+ * leaves a person hunting for something that "was there yesterday". It offers no
+ * documents, because enumerating them would mean guessing at roles the catalogue
+ * was the only record of.
+ */
+export async function listProjects(): Promise<ProjectSummary[]> {
+  const root = projectsDir();
+  let entries: string[];
+  try {
+    entries = (await fsp.readdir(root, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    // No projects directory yet is the ordinary state of a fresh install.
+    return [];
+  }
+
+  const summaries = await Promise.all(entries.map((name) => summarise(path.join(root, name), name)));
+  return summaries.sort((a, b) => b.openedAt - a.openedAt);
+}
+
+async function summarise(dir: string, name: string): Promise<ProjectSummary> {
+  let manifest: ProjectManifest;
+  try {
+    manifest = await readManifest(dir);
+  } catch (err) {
+    return {
+      key: name,
+      dir,
+      title: name,
+      createdAt: 0,
+      openedAt: 0,
+      documents: [],
+      filed: false,
+      problem: (err as Error).message,
+    };
+  }
+
+  const documents: ProjectDocument[] = [];
+
+  // The PDF: the live copy, whichever origin it was last made from. There is
+  // never a second PDF row — see this function's own note.
+  for (const live of manifest.working.files) {
+    const file = path.join(dir, WORKING, live.file);
+    documents.push({
+      path: file,
+      kind: 'pdf',
+      role: live.from.startsWith(`${GENERATED}/`) ? 'searchable' : 'archive',
+      label: live.file,
+      at: live.madeAt,
+      missing: !await exists(file),
+      // The user's own scan, in their own folder, is where this came from: a
+      // dot saying "saved nowhere" would warn about a loss that cannot happen.
+      // Once it carries a text layer Foundry made, it can.
+      managed: live.from.startsWith(`${GENERATED}/`),
+    });
+  }
+
+  // The books. `imported` and `cast` are the same document to a reader — the
+  // one EPUB this project is about — and only one of the two can exist.
+  for (const origin of manifest.generated) {
+    if (origin.role === 'searchable') continue; // it is the PDF above, not a row of its own
+    const file = path.join(dir, GENERATED, origin.file);
+    documents.push({
+      path: file,
+      kind: origin.kind,
+      role: origin.role,
+      label: origin.file,
+      at: origin.madeAt,
+      missing: !await exists(file),
+      managed: origin.role !== 'imported',
+    });
+  }
+
+  const openedAt = documents.reduce(
+    (newest, row) => Math.max(newest, openedAtFor(row.path) ?? 0),
+    0,
+  );
+
+  return {
+    key: manifest.key,
+    dir,
+    title: manifest.title,
+    createdAt: manifest.createdAt,
+    openedAt: openedAt > 0 ? openedAt : manifest.createdAt,
+    documents,
+    filed: manifest.final.length > 0,
+    problem: null,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Adopting what was already on disk
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Where conversions landed before projects existed. */
+function legacyWorkspaceDir(): string {
+  return path.join(readAppSettings().libraryDir, 'workspace');
+}
+
+/** Where the readings banks lived before they moved in with their books. */
+function legacyReadingsDir(): string {
+  return path.join(app.getPath('userData'), 'readings');
+}
+
+/**
+ * `Buch-a1b2c3d4.epub`, `Buch-a1b2c3d4.en.epub`, `Buch-a1b2c3d4.pdf`.
+ *
+ * The stem is greedy, so the LAST `-<8 hex>` group in the name is the key — which
+ * is the right one, because the key is appended last by construction and a book
+ * whose own title ends in something that looks like a hash would otherwise be
+ * filed under half its name.
+ */
+const LEGACY_OUTPUT = /^(?<stem>.+)-(?<hex>[0-9a-f]{8})(?:\.(?<tag>[A-Za-z0-9-]+))?\.(?<ext>epub|pdf|txt)$/i;
+
+/** `Buch-a1b2c3d4.jsonl`. */
+const LEGACY_BANK = /^(?<stem>.+)-(?<hex>[0-9a-f]{8})\.jsonl$/i;
+
+/**
+ * Regroup a flat workspace and a flat readings directory into projects.
+ *
+ * Runs on every launch and is IDEMPOTENT by construction rather than by a marker
+ * file: once a file has moved it is no longer in the directory being scanned,
+ * and every write refuses an existing destination outright, so a second pass
+ * finds nothing to do and says nothing.
+ *
+ * WHAT IT MOVES IS AN ORIGIN. Everything the old flat workspace held was written
+ * by the engine, so it all belongs in `generated/` — a cast EPUB, a translation,
+ * a searchable PDF, a text export — and the layers above it are built from there
+ * the first time each is opened. There is no `archive/` for these: the PDF they
+ * were read from was never copied anywhere, and inventing one would be a guess.
+ *
+ * THE OUTPUTS ARE MOVED and the READINGS ARE COPIED, and the asymmetry is
+ * deliberate. An output is a file this app wrote and can write again; a bank is
+ * GPU-hours, and Owen has real ones on this machine — leaving the originals
+ * where the old layout expects them costs a few megabytes and means a mistake
+ * here cannot destroy them.
+ *
+ * A FILE WHOSE KEY CANNOT BE READ IS LEFT WHERE IT IS and named in a log line.
+ * Never moved on a guess: a book filed under the wrong project is a book the
+ * user will look for in the wrong folder forever, and the flat directory is a
+ * perfectly good place for a file nobody can identify to keep sitting.
+ */
+export async function adoptLegacyLayout(): Promise<void> {
+  const said: string[] = [];
+  await adoptLegacyGenerated(said);
+  await adoptLegacyBanks(said);
+  for (const line of said) console.log(`[projects] ${line}`);
+}
+
+async function adoptLegacyGenerated(said: string[]): Promise<void> {
+  const from = legacyWorkspaceDir();
+  let entries: Dirent[];
+  try {
+    entries = await fsp.readdir(from, { withFileTypes: true });
+  } catch {
+    return; // No flat workspace: nothing was ever written the old way.
+  }
+
+  for (const entry of entries) {
+    const source = path.join(from, entry.name);
+    if (!entry.isFile()) {
+      said.push(`${source} is not a file, so it was left alone.`);
+      continue;
+    }
+    const match = LEGACY_OUTPUT.exec(entry.name);
+    const slug = match?.groups?.['stem'];
+    const hex = match?.groups?.['hex'];
+    const ext = match?.groups?.['ext']?.toLowerCase();
+    if (slug === undefined || hex === undefined || ext === undefined) {
+      said.push(
+        `${source} carries no <name>-<8 hex> key, so there is no project it certainly belongs to. `
+        + 'Left where it is.',
+      );
+      continue;
+    }
+
+    const tag = match?.groups?.['tag'];
+    const key = `${slug}-${hex.toLowerCase()}`;
+    // The flat name IS the only name this book ever had, so it becomes the stem.
+    // It is a slug, and it will read as one — but renaming somebody's book on a
+    // guess about what the slug used to spell is worse than a plain name.
+    const stem = sanitiseStem(slug);
+    const file = ext === 'pdf'
+      ? `${stem}.pdf`
+      : ext === 'txt'
+        ? `${stem}.txt`
+        : (tag === undefined ? `${stem}.epub` : translationFileFor(stem, tag));
+    const role: ProjectGeneratedRole = ext === 'pdf'
+      ? 'searchable'
+      : ext === 'txt' ? 'text' : (tag === undefined ? 'cast' : 'translation');
+    const kind = kindOf(file);
+    if (kind === null) continue; // unreachable: the regex admits three extensions
+
+    const dir = path.join(projectsDir(), key);
+    const destination = path.join(dir, GENERATED, file);
+    try {
+      await withCreatedProject(dir, key, stem, async (manifest) => {
+        await fsp.mkdir(path.join(dir, GENERATED), { recursive: true });
+        if (!await claim(destination)) {
+          said.push(`${destination} already exists, so ${source} was left where it is.`);
+          return;
+        }
+        try {
+          await fsp.rename(source, destination);
+        } catch (err) {
+          // The claim is an empty file. It must not survive a failed move, or
+          // the next launch would find a zero-byte book with the right name.
+          await fsp.rm(destination, { force: true });
+          throw err;
+        }
+        manifest.generated = [
+          ...manifest.generated.filter((existing) => existing.file !== file),
+          { file, kind, role, madeAt: Date.now() },
+        ];
+        // Written before the refresh below, for the reason `recordGenerated`
+        // gives: the move has already happened, and a refusal from the refresh
+        // must not take the record of it down too.
+        await writeManifest(dir, manifest);
+        said.push(`${entry.name} -> ${destination}`);
+        // A searchable PDF adopted from the flat layout still has to become the
+        // live PDF, or the project would list a book and no scan at all.
+        if (role === 'searchable') {
+          await refreshLivePdf(dir, manifest, file);
+          await writeManifest(dir, manifest);
+        }
+      });
+    } catch (err) {
+      said.push(`${source} could not be adopted (${(err as Error).message}). Left where it is.`);
+    }
+  }
+}
+
+async function adoptLegacyBanks(said: string[]): Promise<void> {
+  const from = legacyReadingsDir();
+  let entries: Dirent[];
+  try {
+    entries = await fsp.readdir(from, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    const source = path.join(from, entry.name);
+    if (!entry.isFile()) continue; // `archived-<stamp>/` directories stay put.
+    const match = LEGACY_BANK.exec(entry.name);
+    const slug = match?.groups?.['stem'];
+    const hex = match?.groups?.['hex'];
+    if (slug === undefined || hex === undefined) {
+      /*
+       * `completed.json` is the one that has to be named rather than skipped.
+       * The engine writes it BESIDE the bank (src/vlm/readings.ts's
+       * `completionMarkerPath` joins it onto the bank's own directory), so in a
+       * flat readings folder shared by every book on this machine there is
+       * exactly one, and it belongs to whichever run finished last. Copying it
+       * into a project would tell the engine that THAT book's bank is a finished
+       * read — and a half-read book would then be replayed out of a cache
+       * instead of being read. Left where it is, deliberately.
+       *
+       * From here on the problem cannot recur: a project's bank has a readings
+       * directory to itself, so its marker names it and nothing else.
+       */
+      said.push(`${source} names no book's bank, so it was left where it is.`);
+      continue;
+    }
+
+    const key = `${slug}-${hex.toLowerCase()}`;
+    const dir = path.join(projectsDir(), key);
+    // Named `<key>.jsonl` rather than carried across verbatim, because that is
+    // the exact path `planConversion` will hand the engine as `--readings`. A
+    // bank that landed under a name differing by so much as the case of a hex
+    // digit would be a bank the resume never finds — and the whole point of
+    // copying these in is that the next run does not read those pages again.
+    const destination = path.join(dir, 'readings', `${key}.jsonl`);
+    try {
+      await withCreatedProject(dir, key, sanitiseStem(slug), async () => {
+        await fsp.mkdir(path.join(dir, 'readings'), { recursive: true });
+        // A COPY, and the original stays: see `adoptLegacyLayout`.
+        if (await copyNewOnly(source, destination)) said.push(`${entry.name} -> ${destination} (copied)`);
+      });
+    } catch (err) {
+      said.push(`${source} could not be adopted (${(err as Error).message}). Left where it is.`);
+    }
+  }
+}
+
+/**
+ * Claim a destination, atomically, without writing anything into it.
+ *
+ * `wx` fails when the file exists, so two app instances started together cannot
+ * both decide they are the one adopting a book — and unlike a `stat` followed by
+ * a `rename`, there is no window between the question and the answer. False
+ * means somebody else has it; the caller leaves the original alone and says so.
+ */
+async function claim(destination: string): Promise<boolean> {
+  try {
+    const handle = await fsp.open(destination, 'wx');
+    await handle.close();
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw err;
+  }
+}

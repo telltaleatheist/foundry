@@ -31,6 +31,7 @@ import { readAppSettings } from './app-settings';
 import { parseProgressLine, runEngine } from './engine';
 import { ENV_SPECS } from './env-catalog';
 import { destFor, installEnv } from './env-install';
+import { generatedRoleFor, recordGenerated } from './projects';
 import { readSettings } from './settings';
 import { ensureServer, isLocalVllmEndpoint, noteQueueBusy, noteQueueIdle } from './vllm-server';
 import type { EnvInstallRequest, Job, JobRequest, TranslateRequest } from '../shared/types';
@@ -394,6 +395,36 @@ async function pump(): Promise<void> {
 
   if (result.code === 0) {
     next.state = 'done';
+    /*
+     * The catalogue learns about the origin HERE, when it exists.
+     *
+     * Not at plan time, which is only an intention: a run that dies at page 200
+     * would leave `project.json` listing a book Home would then offer and
+     * nothing could open. `recordGenerated` never throws — a row it could not
+     * write is a named console line, because losing a catalogue entry is not a
+     * reason to report three hours of GPU as a failure. It is also what makes a
+     * searchable PDF become the project's live PDF rather than a second one.
+     *
+     * The REQUEST's kind, not the job row's: `JobKind` also admits `env-install`,
+     * which never reaches this branch but which the compiler cannot know that
+     * about, and a cast here would be a promise made to the type system rather
+     * than a fact. The request is the narrower shape and it is the same decision.
+     */
+    const live = await recordGenerated(
+      next.outputPath,
+      request.kind === 'translate' ? 'translation' : generatedRoleFor(request.kind),
+    );
+    /*
+     * A searchable PDF is not a second document — it is the project's PDF, now
+     * with a text layer — so the row points at the LIVE copy rather than at the
+     * origin the engine wrote. Everything downstream reads `outputPath`: the tab
+     * that opens itself when the run lands, and the shelf's Reveal. Left pointing
+     * at `generated/` they would put a second identical scan on screen beside
+     * the one the user already had open, both called the same thing.
+     */
+    if (live !== null) next.outputPath = live;
+    // Said after the row settles on its final path, so the line names the file
+    // the Reveal button will actually show.
     next.message = `Wrote ${path.basename(next.outputPath)}`;
   } else if (result.code === -1) {
     next.state = 'cancelled';

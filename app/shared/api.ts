@@ -20,6 +20,7 @@ import type {
   EpubBook,
   Job,
   JobRequest,
+  ProjectSummary,
   RecentDocument,
   ServerStatus,
   SettingsView,
@@ -86,47 +87,59 @@ export interface FoundryApi {
    * The managed workspace: where a conversion writes.
    *
    * A conversion never asks the user where to put anything — `plan` hands the
-   * dialog the two paths a job needs, and the book lands in
-   * `<libraryDir>/workspace`. Getting it OUT of there is `epub.save` below,
-   * which repacks the working copy rather than copying a file, because by then
-   * the book may have been edited.
+   * dialog the two paths a job needs, and both land inside the PROJECT for the
+   * document being converted (`<libraryDir>/projects/<key>/`). Getting a book
+   * out of there is `epub.save` below, which repacks the working tree rather
+   * than copying a file, because by then the book may have been edited.
    */
   workspace: {
     /** The kind decides the output's EXTENSION, not just its `--format`. */
     plan(inputPath: string, kind: ConversionKind): Promise<WorkspacePlan>;
     /**
-     * Where a translation of this book goes: `<key>.<lang>.epub`.
+     * Where a translation of this book goes: `<the book's name> (<lang>).epub`,
+     * in the same project as the book it was made from.
      *
      * Separate from `plan` because it answers a smaller question — there is no
      * readings bank to name, and the language rather than a format decides the
      * name.
+     *
+     * It also answers back with the input the job must READ. Main exports the
+     * book's working copy first, because an edit no longer repacks and the
+     * engine is a separate process handed a path — so the file to translate is
+     * the export, not the file the tab happens to be pointed at. Use
+     * `inputPath` verbatim; a request that named the tab's own path would be
+     * translating the book as it was before the curation.
      */
-    planTranslation(inputPath: string, targetLanguage: string): Promise<{ key: string; outputPath: string }>;
+    planTranslation(
+      inputPath: string,
+      targetLanguage: string,
+    ): Promise<{ key: string; outputPath: string; inputPath: string }>;
   };
 
   /**
-   * A book: unpacked in main, served to a sandboxed <iframe>, edited as text,
-   * and packed back up.
+   * A book: unpacked once into its project's `working/` tree, served to a
+   * sandboxed <iframe>, edited as text, and packed back up only on a Save.
    *
-   * `close` is not optional housekeeping: it deletes the temp directory the
-   * chapters are served from, and a tab that closed without calling it leaves a
-   * book on disk and a live protocol route to it.
+   * `close` deletes NOTHING now — the tree is the book's durable working copy —
+   * but it is still not optional: it is what stops main serving that book's
+   * members, and a tab that closed without calling it leaves a live protocol
+   * route to a document nobody is looking at.
    */
   epub: {
     open(filePath: string): Promise<EpubBook>;
     close(id: string): Promise<void>;
-    /** One chapter's XHTML source, off the working copy. */
+    /** One chapter's XHTML source, off the working tree. */
     readMember(id: string, href: string): Promise<string>;
     /**
-     * Replace one chapter's source AND repack the workspace copy, so an edit is
-     * never only in a temp directory. Resolves with the book's new size.
+     * Replace one chapter's source, in the working tree, and REPACK NOTHING —
+     * the write itself is the durable commit. Resolves with the bytes written.
      */
     writeMember(id: string, href: string, text: string): Promise<number>;
     /**
      * Rename a TOC entry: `href` is a sidebar row's — a chapter document, or
      * `document#fragment` for a section header inside one. Main rewrites the
      * nav label and, when its text matched, the heading itself; rejects when
-     * nothing in the book carries the entry. Same write-through as an edit.
+     * nothing in the book carries the entry. Into the working tree, like an edit.
      */
     renameHeading(id: string, href: string, label: string): Promise<void>;
     /**
@@ -153,7 +166,25 @@ export interface FoundryApi {
     set(dir: string): Promise<string>;
   };
 
-  /** Home's list. Persisted in the APP's userData, never in the engine's settings. */
+  /**
+   * Home's primary listing: one row per BOOK, expanding to the documents in it.
+   *
+   * Read off the library's `projects/` directory every time rather than mirrored
+   * — a project gains an output when a three-hour conversion lands, and a cached
+   * list would be a list from before the thing the user is waiting for.
+   */
+  projects: {
+    list(): Promise<ProjectSummary[]>;
+  };
+
+  /**
+   * The individual documents that have been opened, newest first.
+   *
+   * Still the app's own userData, never the engine's settings. Home lists
+   * PROJECTS now and reads this only through main, which uses it to answer "when
+   * was anything in this project last opened" — a fact a folder on disk does not
+   * carry.
+   */
   recents: {
     list(): Promise<RecentDocument[]>;
     forget(filePath: string): Promise<RecentDocument[]>;

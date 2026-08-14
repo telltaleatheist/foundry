@@ -107,6 +107,20 @@ export function rememberRecent(
   return cache;
 }
 
+/**
+ * When this exact file was last opened, or null if it never was.
+ *
+ * For the PROJECT list, which sorts by "last touched" and has no clock of its
+ * own: a project's folder mtime moves for reasons nobody did on purpose (an
+ * output rotated, a manifest rewritten), and `createdAt` never moves at all.
+ * SYNCHRONOUS and off the in-memory cache — this is called once per document in
+ * a listing that Home awaits, and a stat per row would be a stat per row.
+ */
+export function openedAtFor(filePath: string): number | null {
+  const resolved = path.resolve(filePath);
+  return load().find((item) => samePath(item.path, resolved))?.openedAt ?? null;
+}
+
 export function forgetRecent(filePath: string): RecentDocument[] {
   const resolved = path.resolve(filePath);
   cache = load().filter((item) => !samePath(item.path, resolved));

@@ -293,11 +293,15 @@ export class TranslateDialogComponent {
     try {
       const to = this.to().trim();
       // Main names the output — the language is part of the name, so it has to
-      // travel with the plan rather than only with the command line.
+      // travel with the plan rather than only with the command line — and it
+      // names the INPUT too. A book edited since it was cast lives in its
+      // working tree, which is not a file any engine can read, so main exports
+      // it and the job reads the export. Using `input` here instead would
+      // translate the version from before every cut the user just made.
       const plan = await api.workspace.planTranslation(input, to);
       const request: TranslateRequest = {
         kind: 'translate',
-        inputPath: input,
+        inputPath: plan.inputPath,
         outputPath: plan.outputPath,
         to,
         model: this.model().trim() || DEFAULT_MODEL,

@@ -1,24 +1,35 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import { Router } from '@angular/router';
 
-import type { RecentDocument } from '@shared/types';
+import type { ProjectDocument, ProjectSummary } from '@shared/types';
 
-import { RecentsService } from '../../core/recents.service';
+import { api } from '../../core/foundry';
+import { ProjectsService } from '../../core/projects.service';
 import { TabsService } from '../../core/tabs.service';
 import { UiService } from '../../core/ui.service';
 
 /**
  * Home — what the app is when nothing is open.
  *
- * Three things, in the order a person needs them: the documents they had before,
+ * Three things, in the order a person needs them: the books they have worked on,
  * a target big enough to drop a book on without aiming, and the two actions
  * worth a button. The drop target is decorative in the strict sense — the WHOLE
  * WINDOW accepts a drop (see App) — but a rectangle that says "drop here" is how
  * anybody knows that.
  *
- * A row for a book still in the workspace says so. "Open" means something
- * different for the two: one is a file you can hand to a reader, and one exists
- * only because this app has not been asked to throw it away.
+ * ── The list is PROJECTS, not files ──────────────────────────────────────────
+ *
+ * A row is a BOOK — one folder holding the scan, the cast EPUB, a translation, a
+ * searchable PDF — and the tags on it are the answer to "what has been made from
+ * this?", which a flat list of filenames could not give. Expanding a row is how
+ * any one of those is opened, because the interesting question ("open the
+ * English one") is a question about the book first and the file second.
+ *
+ * A row is never REMOVED from here. There is no Clear and no ✕, deliberately:
+ * the old list was a cache of names and forgetting one cost nothing, but this
+ * one is the library itself, and a button that made a book disappear from the
+ * only screen that lists it would be a delete button wearing a nicer word.
+ * Reveal is the escape hatch — the folder is right there, and it is the user's.
  *
  * IT IS ALSO WHAT AN EMPTY COLUMN SHOWS. Ctrl+\ makes a column with nothing in
  * it, and the useful thing to put in a column with nothing in it is the library
@@ -54,31 +65,68 @@ import { UiService } from '../../core/ui.service';
 
       <section class="recents">
         <header>
-          <h2>Recent</h2>
-          @if (recents.items().length > 0) {
-            <button class="link" (click)="recents.clear()">Clear</button>
-          }
+          <h2>Your books</h2>
         </header>
 
-        @if (recents.items().length === 0) {
-          <p class="none">Nothing yet. What you open shows up here.</p>
+        @if (projects.items().length === 0) {
+          <p class="none">Nothing yet. A book you open or convert becomes a project here.</p>
         } @else {
           <ul>
-            @for (item of recents.items(); track item.path) {
-              <li [class.missing]="item.missing === true">
-                <button class="row" [title]="item.path" [disabled]="item.missing === true" (click)="open(item)">
-                  <span class="kind">{{ item.kind === 'epub' ? '▤' : '▦' }}</span>
-                  <span class="name">{{ item.title }}</span>
-                  @if (item.managed) {
-                    <span class="tag" title="Cast by Foundry and not yet saved anywhere you chose">workspace</span>
+            @for (project of projects.items(); track project.key) {
+              <li>
+                <button
+                  class="row"
+                  [title]="project.dir"
+                  [attr.aria-expanded]="projects.expanded().has(project.key)"
+                  (click)="projects.toggle(project.key)"
+                >
+                  <span class="kind">{{ projects.expanded().has(project.key) ? '▾' : '▸' }}</span>
+                  <span class="name">{{ project.title }}</span>
+                  @if (project.problem !== null) {
+                    <span class="tag gone" [title]="project.problem">catalogue unreadable</span>
+                  } @else {
+                    @for (made of tags(project); track made) {
+                      <span class="tag">{{ made }}</span>
+                    }
+                    @if (project.filed) {
+                      <span class="tag" title="A copy has been filed in this project's own folder">filed</span>
+                    }
                   }
-                  @if (item.missing) {
-                    <span class="tag gone">not there any more</span>
-                  }
-                  <span class="when">{{ when(item.openedAt) }}</span>
+                  <span class="when">{{ project.openedAt > 0 ? when(project.openedAt) : '' }}</span>
                 </button>
-                <button class="x" (click)="recents.forget(item.path)" title="Forget this one">✕</button>
+                <button class="x" (click)="reveal(project)" title="Show this project's folder">⌕</button>
               </li>
+
+              @if (projects.expanded().has(project.key)) {
+                @if (project.problem !== null) {
+                  <li class="detail">
+                    <p class="none">{{ project.problem }}</p>
+                  </li>
+                } @else {
+                  @for (document of project.documents; track document.path) {
+                    <li class="detail" [class.missing]="document.missing">
+                      <button
+                        class="row"
+                        [title]="document.label"
+                        [disabled]="document.missing || document.kind === 'txt'"
+                        (click)="open(document)"
+                      >
+                        <span class="kind">{{ document.kind === 'epub' ? '▤' : document.kind === 'pdf' ? '▦' : '≡' }}</span>
+                        <span class="name">{{ document.label }}</span>
+                        @if (document.missing) {
+                          <span class="tag gone">not there any more</span>
+                        }
+                        <span class="when">{{ document.at > 0 ? when(document.at) : '' }}</span>
+                      </button>
+                    </li>
+                  }
+                  @if (project.documents.length === 0) {
+                    <li class="detail">
+                      <p class="none">Nothing has been made from this book yet.</p>
+                    </li>
+                  }
+                }
+              }
             }
           </ul>
         }
@@ -147,6 +195,13 @@ import { UiService } from '../../core/ui.service';
     ul { list-style: none; margin: 0; padding: 0; }
     li { display: flex; align-items: center; border-bottom: 1px solid var(--border-subtle); }
     li:last-child { border-bottom: none; }
+
+    /* A document inside a project: indented, hairlined off, and quieter than
+       the book it belongs to — the row above is the thing being chosen between,
+       and these are what that choice contains. */
+    li.detail { border-bottom: none; padding-left: 22px; }
+    li.detail .row { padding-top: 6px; padding-bottom: 6px; font-size: 12px; }
+    li.detail .none { padding: 6px 8px; font-size: 12px; }
 
     .row {
       flex: 1; min-width: 0;
@@ -224,7 +279,7 @@ export class HomeComponent {
    */
   readonly pane = input<string | null>(null);
 
-  protected readonly recents = inject(RecentsService);
+  protected readonly projects = inject(ProjectsService);
   protected readonly tabs = inject(TabsService);
   protected readonly ui = inject(UiService);
   private readonly router = inject(Router);
@@ -245,14 +300,55 @@ export class HomeComponent {
 
   constructor() {
     // Re-read every time Home is constructed, which is every time it comes back
-    // on screen. There is no push channel for recents and there should not be:
-    // this is the only screen that reads the list.
-    void this.recents.refresh();
+    // on screen. There is no push channel for the project list and there should
+    // not be: the things that change it are conversions, which the queue already
+    // broadcasts, and this is the only screen that reads it.
+    void this.projects.refresh();
   }
 
-  protected open(item: RecentDocument): void {
-    if (item.missing === true) return;
-    void this.tabs.openFile(item.path, item.managed);
+  /**
+   * What has been made from this book, as short tags on its row.
+   *
+   * WHAT IT IS, never where it lives: `cast`, `searchable`, `translation`. The
+   * folders those documents actually sit in are this app's bookkeeping and the
+   * user never has to learn them. Deduplicated, because a book with three
+   * translations says "translation" once and expands to name them — the row
+   * answers "has this been cast yet?" at a glance, and three language tags in a
+   * row answers something else.
+   *
+   * An imported document contributes no tag: "you gave me this book" is not an
+   * answer to what has been made from it.
+   */
+  protected tags(project: ProjectSummary): string[] {
+    const seen = new Set<string>();
+    for (const document of project.documents) {
+      if (document.role === 'archive' || document.role === 'imported') continue;
+      seen.add(document.role === 'text' ? 'plain text' : document.role);
+    }
+    return [...seen];
+  }
+
+  /**
+   * Open one document out of a project.
+   *
+   * `managed` decides whether the tab wears the unsaved dot, and the answer
+   * differs inside one project: a cast book exists only because Foundry made it,
+   * so nothing the user chose holds a copy — but an IMPORTED document is their
+   * own, sitting in a folder of their own, and a dot on it would be a warning
+   * about a loss that cannot happen.
+   *
+   * A `.txt` is listed and never opened: there is no text tab in this app, and a
+   * row that opened an empty viewer would be worse than a row that is plainly
+   * inert. Reveal is on the project.
+   */
+  protected open(document: ProjectDocument): void {
+    if (document.missing || document.kind === 'txt') return;
+    void this.tabs.openFile(document.path, document.managed);
+  }
+
+  /** The folder itself, in Explorer/Finder. The one way out of this app. */
+  protected reveal(project: ProjectSummary): void {
+    void api?.reveal(project.dir);
   }
 
   protected settings(): void {

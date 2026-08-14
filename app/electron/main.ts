@@ -37,7 +37,9 @@ import { planProvisioning } from './env-provision';
 import {
   closeAllEpubs,
   closeEpub,
+  exportWorkingCopy,
   openEpub,
+  projectOf,
   readEpubMember,
   renameEpubHeading,
   repackEpub,
@@ -45,10 +47,19 @@ import {
   writeEpubMember,
 } from './epub-reader';
 import * as queue from './job-queue';
+import {
+  adoptLegacyLayout,
+  finalDir,
+  importDocument,
+  isManaged,
+  listProjects,
+  projectsDir,
+  recordFinal,
+} from './projects';
 import { clearRecents, forgetRecent, listRecents, rememberRecent } from './recents';
 import { readSettings, writeSettings } from './settings';
 import * as vllm from './vllm-server';
-import { isManaged, planConversion, planTranslation, workspaceDir } from './workspace';
+import { planConversion, planTranslation } from './workspace';
 import { detectEnvTooling, listDistros } from './wsl';
 import type { MenuAction } from '../shared/api';
 import type {
@@ -361,13 +372,33 @@ async function openDocument(candidate: string): Promise<string | null> {
   }
   openable.add(resolved);
   // Recorded here and only here, for the same reason the allow-list is: this is
-  // the one function every open passes through. A book still in the workspace is
-  // remembered too, and flagged, because a tab closed by accident has to be
-  // findable again from Home.
+  // the one function every open passes through. A document already inside a
+  // project is remembered too, and flagged, because a tab closed by accident has
+  // to be findable again from Home.
   rememberRecent(resolved, kind, path.basename(resolved), isManaged(resolved));
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send('document:opened', resolved);
   }
+  /*
+   * A file from outside the library becomes a PROJECT — hashed, given a folder,
+   * copied into `archive/` as the untouched original and again into the layer
+   * the user actually works with. Never moved and never written: their file
+   * stays exactly where they put it.
+   *
+   * AFTER the tab has been told to open, and not awaited, deliberately. Keying a
+   * project is a full sha256 of the document and importing it is two copies; on
+   * a 400 MB scan that is seconds, and a window that sat still for seconds after
+   * a drop would read as an app that had missed the file. Nothing downstream
+   * waits on this — `epub:open` imports for itself, and the two calls land on
+   * the same project because the work is serialised per folder (projects.ts).
+   *
+   * A failure is a console line naming the file rather than a dialog: the
+   * document IS open and readable, and what has been lost is a folder to put its
+   * conversions in — which the next conversion would make anyway.
+   */
+  void importDocument(resolved, kind).catch((err: Error) => {
+    console.error(`[projects] ${resolved} could not be imported into a project: ${err.message}`);
+  });
   return resolved;
 }
 
@@ -681,16 +712,17 @@ function registerIpc(): void {
    * The warning before a tab with something to lose closes.
    *
    * Worded around what is ACTUALLY at risk, which is never the book itself:
-   * every edit is written through to the workspace copy the moment it is made
-   * (electron/epub-reader.ts), so closing a tab loses track of a book and never
-   * loses one. Telling a user their work is about to be destroyed when it is not
-   * would teach them to distrust the next warning that matters.
+   * every edit lands in the project's own working copy as it is made
+   * (electron/epub-reader.ts) and closing a tab deletes nothing at all, so this
+   * loses track of a book and never loses one. Telling a user their work is
+   * about to be destroyed when it is not would teach them to distrust the next
+   * warning that matters.
    */
   ipcMain.handle('document:confirm-close', async (_event, warning: CloseWarning) => {
     const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
     const shared =
-      'Every edit was written straight into Foundry\'s workspace copy as you made it, '
-      + `so nothing is lost — the book is in ${workspaceDir()} and Home will still list it.`;
+      'Every edit went straight into Foundry\'s working copy of the book as you made it, '
+      + `so nothing is lost — the project is in ${projectsDir()} and Home will still list it.`;
     const options = {
       type: 'question' as const,
       buttons: ['Close tab', 'Keep it open'],
@@ -712,7 +744,7 @@ function registerIpc(): void {
     return result.response === 0;
   });
 
-  // ── The managed workspace ────────────────────────────────────────────────
+  // ── Projects ─────────────────────────────────────────────────────────────
   ipcMain.handle(
     'workspace:plan',
     (_event, inputPath: string, kind: ConversionKind) => planConversion(inputPath, kind),
@@ -722,12 +754,30 @@ function registerIpc(): void {
    * checked against the SAME allow-list every other read is. Without it this
    * handler would hash — and then hand the engine — any path a compromised
    * renderer named.
+   *
+   * `exportWorkingCopy` FIRST, and it is the one thing that keeps translation
+   * honest now that an edit no longer repacks: the engine is a separate process
+   * handed a path, so a book edited since it was cast would be translated as it
+   * was before the edits, silently. The export writes a zip of the working tree
+   * into `working/` — never into `generated/`, which is the record of what the
+   * model read — and the job reads THAT. It is one of the two places this app
+   * zips at all (electron/epub-reader.ts).
+   *
+   * The exported path is what the job is given, so it is admitted here too: the
+   * queue re-checks `inputPath` against the same allow-list, and a path that
+   * only main knows about would be refused by main's own gate a moment later.
    */
-  ipcMain.handle('workspace:plan-translation', (_event, inputPath: string, targetLanguage: string) => {
+  ipcMain.handle('workspace:plan-translation', async (_event, inputPath: string, targetLanguage: string) => {
     const source = admitted(inputPath);
     if (source === null) throw new Error(`${inputPath} was never opened in this app.`);
-    return planTranslation(source, targetLanguage);
+    const readable = await exportWorkingCopy(source);
+    openable.add(path.resolve(readable));
+    const plan = await planTranslation(readable, targetLanguage);
+    return { ...plan, inputPath: readable };
   });
+
+  /** Home's primary listing: one row per book, expanding to what is in it. */
+  ipcMain.handle('projects:list', () => listProjects());
 
   // ── Books ────────────────────────────────────────────────────────────────
 
@@ -751,7 +801,22 @@ function registerIpc(): void {
   };
 
   ipcMain.handle('epub:open', async (_event, filePath: string) => {
-    const book = await openEpub(filePath);
+    /*
+     * THE ALLOW-LIST, and it belongs here more than anywhere else in this file.
+     *
+     * Every path the renderer can legitimately pass came back to it from
+     * `document:opened`, which main sent only after admitting the file itself —
+     * so gating costs nothing a real caller would notice. What it stops is this
+     * handler being the one door that opens ANY path on disk: it now creates a
+     * project directory around whatever it is handed and copies that file into
+     * it, and it hands back a save grant for an unmanaged one. An ungated
+     * `epub:open` was a write grant to any path a renderer could name.
+     */
+    const admittedPath = admitted(filePath);
+    if (admittedPath === null) {
+      throw new Error(`${filePath} is not a document this app was asked to open.`);
+    }
+    const book = await openEpub(admittedPath);
     // A book from the user's own disk: that file IS a copy somewhere they
     // chose, so plain Save may update it. A managed book grants nothing —
     // its first save goes through the dialog below.
@@ -760,28 +825,39 @@ function registerIpc(): void {
   });
   ipcMain.handle('epub:close', (_event, id: string) => {
     saveGrants.delete(id);
-    return closeEpub(id);
+    closeEpub(id);
   });
   ipcMain.handle('epub:read-member', (_event, id: string, href: string) =>
     readEpubMember(id, href));
-  // Writes through to the workspace copy — see epub-reader.ts. The renderer
-  // holds the text; main holds the file. No Node in the renderer, ever.
+  // Writes ONE member of the project's working tree and repacks nothing — see
+  // epub-reader.ts. The renderer holds the text; main holds the file. No Node in
+  // the renderer, ever.
   ipcMain.handle('epub:write-member', (_event, id: string, href: string, text: string) =>
     writeEpubMember(id, href, text));
   // Renames a TOC entry — the nav label, and the heading when it carried the
-  // same text. Same write-through as an edit; the user's own file is untouched.
+  // same text. Into the working tree, like an edit; nothing else is written.
   ipcMain.handle('epub:rename-heading', (_event, id: string, href: string, label: string) =>
     renameEpubHeading(id, href, label));
 
   ipcMain.handle('epub:choose-save-path', async (_event, id: string, suggestedName: string) => {
     const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
-    // The LIBRARY, not Documents: the pickers open where the books live, which
-    // is the folder the user pointed this app at.
-    const library = readAppSettings().libraryDir;
-    await fsp.mkdir(library, { recursive: true });
+    /*
+     * The project's own `final/`, which is what that layer is for: the tray a
+     * finished book is filed into, named for the book rather than for the slug
+     * the directory carries. The picker still opens — Save As is a question and
+     * this only answers where it starts — and the user can put the file
+     * anywhere, which is the whole point of Save As.
+     *
+     * The LIBRARY is the fallback, for a book that belongs to no project: the
+     * pickers open where the books live, which is the folder the user pointed
+     * this app at, never Documents.
+     */
+    const project = projectOf(id);
+    const folder = project === null ? readAppSettings().libraryDir : await finalDir(project);
+    await fsp.mkdir(folder, { recursive: true });
     const options = {
       title: 'Save this book',
-      defaultPath: path.join(library, suggestedName),
+      defaultPath: path.join(folder, suggestedName),
       filters: [{ name: 'EPUB', extensions: ['epub'] }],
     };
     const result = win
@@ -795,12 +871,13 @@ function registerIpc(): void {
   });
 
   /**
-   * Repack the working copy to where the user said.
+   * Repack the working tree to where the user said.
    *
-   * A REPACK and not a copy of the workspace file, because the two can differ
-   * for one instant: an edit writes the member and then repacks, and a save that
-   * raced that would write a book missing the last keystroke. Packing from the
-   * unpacked directory is packing from the thing the editor actually wrote to.
+   * A REPACK and not a copy of the project's archive, and that is no longer a
+   * question of a one-instant race: an edit does not repack at all now, so the
+   * tree is ahead of every zip for as long as the book has been edited. Packing
+   * from the tree is packing from the thing the editor actually wrote to, and it
+   * is one of only two places in this app that writes a zip.
    *
    * A failure REJECTS across IPC rather than resolving quietly: a save that did
    * not happen must not clear the dot.
@@ -815,6 +892,10 @@ function registerIpc(): void {
     await repackEpub(id, destination);
     openable.add(path.resolve(destination));
     rememberRecent(destination, 'epub', path.basename(destination), isManaged(destination));
+    // Noted only when it landed in the project's own `final/`. A save to a USB
+    // stick is the user's business and is already in recents; this is what lets
+    // a project row say the book has been filed at all.
+    await recordFinal(destination);
   });
 
   // ── The library folder ───────────────────────────────────────────────────
@@ -985,11 +1066,30 @@ async function provision(): Promise<void> {
  */
 app.commandLine.appendSwitch('enable-smooth-scrolling');
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   applyContentSecurityPolicy();
   registerFileProtocol();
   registerIpc();
   buildMenu();
+  /*
+   * Regroup a flat workspace and a flat readings directory into projects — see
+   * electron/projects.ts, which owns every rule about what it will and will not
+   * move.
+   *
+   * AWAITED, and before the window. Home's first `projects:list` fires as soon
+   * as the renderer paints, and a listing taken halfway through the regrouping
+   * is a library with half the user's books missing from it — which reads as
+   * data loss even though nothing has been lost. It is a directory scan and a
+   * handful of same-volume renames on a machine that has been used, and nothing
+   * at all on a fresh one.
+   *
+   * A failure here still opens the window. Every refusal inside is already a
+   * named log line, and an app that will not start because it could not tidy a
+   * folder is worse than one that started with the folder untidy.
+   */
+  await adoptLegacyLayout().catch((err: Error) => {
+    console.error(`[projects] the existing library could not be regrouped: ${err.message}`);
+  });
   createWindow();
 
   app.on('activate', () => {
@@ -1020,9 +1120,9 @@ app.on('window-all-closed', () => {
 let quitting = false;
 app.on('before-quit', (event) => {
   queue.shutdown();
-  // Every book still unpacked in %TEMP%. Tabs delete their own on close; this is
-  // for the tabs that were never closed, which is most of them — an app is
-  // usually quit with its documents open.
+  // The open-book registry, emptied. Nothing on disk goes with it — a working
+  // tree lives in its project and is the newest version of that book, which is
+  // exactly what makes reopening it free.
   closeAllEpubs();
   if (quitting || !vllm.ownsServer()) return;
   event.preventDefault();

@@ -1,9 +1,11 @@
 /**
  * epub-writer — put an unpacked book back into a .epub.
  *
- * The other half of epub-reader.ts. A book is unpacked to a temp directory so
- * its chapters can be served to an <iframe> and edited as text; this packs that
- * directory back into a container an e-reader will open.
+ * The other half of epub-reader.ts. A book is unpacked into its project's
+ * `working/` tree so its chapters can be served to an <iframe> and edited as
+ * text; this packs that directory back into a container an e-reader will open.
+ * It runs on a Save and on an export, and on nothing else — an edit writes one
+ * member and comes nowhere near here.
  *
  * ── The one rule that is not negotiable ──────────────────────────────────────
  *

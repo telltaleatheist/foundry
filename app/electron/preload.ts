@@ -51,6 +51,10 @@ const api: FoundryApi = {
     set: (dir) => ipcRenderer.invoke('library:set', dir),
   },
 
+  projects: {
+    list: () => ipcRenderer.invoke('projects:list'),
+  },
+
   recents: {
     list: () => ipcRenderer.invoke('recents:list'),
     forget: (filePath) => ipcRenderer.invoke('recents:forget', filePath),

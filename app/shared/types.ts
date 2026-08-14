@@ -363,23 +363,214 @@ export interface EngineInfo {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The managed workspace — electron/workspace.ts owns the naming
+// The managed workspace — electron/projects.ts owns the naming
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Where one conversion writes, decided by main and never typed by a user.
  *
- * Both paths share one key derived from the PDF's CONTENT, so the same book
- * always lands on the same workspace file and resumes against the same bank of
- * answers however it was named or wherever it was dragged from.
+ * Both paths land inside ONE PROJECT — `<libraryDir>/projects/<key>/` — whose
+ * key is derived from the source document's CONTENT, so the same book always
+ * lands in the same folder and resumes against the same bank of answers however
+ * it was named or wherever it was dragged from.
  */
 export interface WorkspacePlan {
-  /** `<basename>-<8 hex>` — the shared stem of both files below. */
+  /** `<basename>-<8 hex>` — the project's directory name and the bank's stem. */
   key: string;
-  /** `<userData>/workspace/<key>.epub`. */
+  /**
+   * `<libraryDir>/projects/<key>/generated/<the book's name>.<ext>`.
+   *
+   * The GENERATED layer, because what the engine writes is an origin: it is the
+   * record of what the model read, it is never written again, and the copy the
+   * user edits is unpacked from it.
+   */
   outputPath: string;
-  /** `<userData>/readings/<key>.jsonl`. Passed as `--readings` on every job. */
+  /** `<libraryDir>/projects/<key>/readings/<key>.jsonl`. Passed on every job. */
   readingsPath: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Projects — one folder per book, in FOUR LAYERS. electron/projects.ts owns it
+// ─────────────────────────────────────────────────────────────────────────────
+
+/*
+ * Every document in a project exists twice: an ORIGIN that is never written, and
+ * a LIVE COPY that is what the user means when they say "the PDF" or "the EPUB".
+ * The origin is what makes stepping back — or starting over — possible at all.
+ *
+ *   archive/    the imported originals. Some of these are very old documents and
+ *               the imported file may be the only copy of that scan that will
+ *               ever exist. Never written.
+ *   generated/  the model's cast EPUB, or the EPUB the user imported. Sacrosanct
+ *               on its own argument: it is the single record of what the model
+ *               actually read, every curation decision is measured against it,
+ *               and "start over" means rebuilding `working/` from it.
+ *   working/    what the user edits — the unpacked EPUB tree, and the live PDF.
+ *   final/      what Save and Export produce, named for the project.
+ *
+ * NONE OF THESE NAMES EVER REACHES A PERSON. The user sees one document per
+ * kind — `Working Towards The Fuhrer. Kershaw, Ian. (1993).pdf` and the matching
+ * `.epub` — as a single unit, and the layer a given row happens to resolve to is
+ * this app's bookkeeping.
+ */
+
+/**
+ * What one file in `generated/` IS, as opposed to what format it is written in.
+ *
+ * The pair is not redundant: `cast`, `imported` and `translation` are all
+ * `.epub`, and `searchable` is a `.pdf` that is the archived scan with a text
+ * layer over it rather than a second way of writing the book.
+ */
+export type ProjectGeneratedRole = 'cast' | 'imported' | 'translation' | 'searchable' | 'text';
+
+/** The three extensions a project holds. `txt` is listed but never opened here. */
+export type ProjectDocumentKind = 'pdf' | 'epub' | 'txt';
+
+/**
+ * The import, copied into `archive/` and never written again.
+ *
+ * NULLABLE, because a project adopted from a flat workspace directory has files
+ * the engine made and no import at all — the conversion that made them ran
+ * before projects existed, and inventing an original would be a guess.
+ */
+export interface ProjectArchive {
+  /** The name inside `archive/`. A NAME, never a path: the folder is implied. */
+  file: string;
+  kind: 'pdf' | 'epub';
+  /** The 8 hex characters the project key ends in — the content hash. */
+  contentKey: string;
+  /**
+   * Where it was copied FROM, recorded and never read back to find the file.
+   * A user's folder of scans moves; the copy in `archive/` does not.
+   */
+  originPath: string | null;
+}
+
+/** One origin the engine produced, or the EPUB the user imported. */
+export interface ProjectGenerated {
+  /** The name inside `generated/`. */
+  file: string;
+  kind: ProjectDocumentKind;
+  role: ProjectGeneratedRole;
+  madeAt: number;
+}
+
+/**
+ * One unpacked book under `working/`, and the ORDER its members go back in.
+ *
+ * The order is the whole reason this is written down. A repack that lost it
+ * produces an EPUB with `mimetype` somewhere in the middle, which some readers
+ * open and others silently reject — and the order used to survive only in
+ * memory, from the unzip that created the tree. A tree that outlives the process
+ * has to carry it on disk.
+ */
+export interface ProjectWorkingTree {
+  /** The archive it was unpacked from, project-relative: `generated/x.epub`. */
+  from: string;
+  /** The directory under `working/` holding it. */
+  dir: string;
+  /** Every member, in archive order, `mimetype` first. */
+  members: string[];
+  unpackedAt: number;
+}
+
+/**
+ * The live PDF — the one the user sees, and the one metadata edits will land in.
+ *
+ * A copy is made at import so the layer EXISTS from the start; writing to it is
+ * not implemented yet, and this is the file that will be written when it is.
+ * Remade from `generated/` when a searchable conversion lands, so "the PDF"
+ * quietly becomes the one with a text layer without ever being a second row.
+ */
+export interface ProjectWorkingFile {
+  /** The name inside `working/`. */
+  file: string;
+  kind: 'pdf';
+  /** Where it was copied from: `archive/x.pdf` or `generated/x.pdf`. */
+  from: string;
+  madeAt: number;
+}
+
+/** One file the user filed, inside the project's own `final/`. */
+export interface ProjectFinal {
+  file: string;
+  kind: ProjectDocumentKind;
+  madeAt: number;
+}
+
+/**
+ * `project.json` — a CATALOGUE, not a store.
+ *
+ * BookForge put editor state in its manifest and measured 146.6 MB of 148 MB of
+ * manifest content being re-parsed on every library load. Nothing that grows
+ * without bound goes in here: no per-block state, no history, no page text. The
+ * member list is the one long field and it is bounded by the book's own file
+ * count (a few hundred), not by how much anybody edits.
+ */
+export interface ProjectManifest {
+  /** 1. Bumped only when a reader of an older file would get it wrong. */
+  version: number;
+  /** `<slug>-<8 hex>`, and the directory's own name. */
+  key: string;
+  /** The display name — the book's `dc:title` once anything has read one. */
+  title: string;
+  /**
+   * The base filename every document in this project shares.
+   *
+   * `Working Towards The Fuhrer. Kershaw, Ian. (1993)` — taken from the import,
+   * unslugged, so the PDF and the EPUB read as one document with two extensions.
+   * The SLUG is for the directory and nothing else.
+   */
+  stem: string;
+  createdAt: number;
+  archive: ProjectArchive | null;
+  generated: ProjectGenerated[];
+  working: {
+    trees: ProjectWorkingTree[];
+    files: ProjectWorkingFile[];
+  };
+  final: ProjectFinal[];
+}
+
+/** One openable (or merely listable) document inside a project, as Home sees it. */
+export interface ProjectDocument {
+  path: string;
+  kind: ProjectDocumentKind;
+  /** This app's own reasoning about the row. Never rendered. */
+  role: ProjectGeneratedRole | 'archive';
+  /**
+   * The file's own name — `Working Towards The Fuhrer. Kershaw, Ian. (1993).epub`.
+   * Never a layer name, never a path, never a slug.
+   */
+  label: string;
+  at: number;
+  missing: boolean;
+  /**
+   * True for anything Foundry MADE. False for a document the user imported: they
+   * have it in a folder they chose, so it carries no "saved nowhere" dot.
+   */
+  managed: boolean;
+}
+
+/** A project row on Home, with the documents it expands to. */
+export interface ProjectSummary {
+  key: string;
+  /** The project directory itself, for Reveal. */
+  dir: string;
+  title: string;
+  createdAt: number;
+  /** The newest open of anything inside it, or `createdAt` if never opened. */
+  openedAt: number;
+  documents: ProjectDocument[];
+  /** True once anything has been filed into `final/`. */
+  filed: boolean;
+  /**
+   * Set when `project.json` could not be read. The row is still listed — Home
+   * is the only door back to a book — but it offers Reveal and nothing else,
+   * because guessing at the contents of a catalogue that will not parse is how
+   * a project gets opened as the wrong book.
+   */
+  problem: string | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -395,7 +586,7 @@ export interface RecentDocument {
   /** The EPUB's `dc:title` where there is one, the file's basename otherwise. */
   title: string;
   openedAt: number;
-  /** True while the file still lives in the managed workspace and nowhere else. */
+  /** True while the file lives inside a Foundry project and nowhere else. */
   managed: boolean;
   /**
    * Measured on every read, never stored: a book on a drive that is not plugged
@@ -433,20 +624,23 @@ export interface CloseWarning {
 }
 
 /**
- * An unpacked book. `id` is what closes it again — a tab that is closed, and
- * every tab on quit, hands its id back so the temp directory goes with it.
+ * An open book. `id` is what closes it again — a tab that is closed, and every
+ * tab on quit, hands its id back so main stops serving its members.
+ *
+ * CLOSING DELETES NOTHING NOW. The chapters are served out of the project's own
+ * `working/` tree, which is the book's durable working copy and outlives both
+ * the tab and the process; only the registry entry goes.
  */
 export interface EpubBook {
   id: string;
-  /** The .epub on disk this was unpacked from. */
+  /** The .epub the user named. Not necessarily the archive the tree came from. */
   filePath: string;
   /**
-   * True when `filePath` lives in the app's own workspace. Measured by MAIN,
-   * because it decides where edits land: a managed book's write-through targets
-   * the file itself, an unmanaged one gets a workspace copy on first edit and
-   * the user's original is only written by an explicit Save. The renderer uses
-   * it to seed `savedPath` — an unmanaged book already IS a copy somewhere the
-   * user chose.
+   * True when `filePath` lives inside a Foundry project. Measured by MAIN,
+   * because it decides what Save may write: a book opened from the user's own
+   * disk grants plain Save to that file (it already IS a copy they chose), and
+   * a project's own file grants nothing until the save dialog says so. The
+   * renderer uses it to seed `savedPath` for the same reason.
    */
   managed: boolean;
   title: string;
