@@ -379,7 +379,18 @@ async function pump(): Promise<void> {
     }
   }
 
-  const handle = runEngine(argsFor(request), (line) => {
+  const args = argsFor(request);
+  /*
+   * The command, once, before it runs.
+   *
+   * A failure that names a flag is only useful beside the flags it was given —
+   * "--out and --format contradict each other" means nothing without the pair,
+   * and the paths this app composes are exactly the ones nobody typed and
+   * therefore nobody can check. One line, at the start, in the terminal that is
+   * already open.
+   */
+  console.log(`[job] ${next.kind} ${args.join(' ')}`);
+  const handle = runEngine(args, (line) => {
     next.message = line;
     const progress = parseProgressLine(line);
     /*
@@ -450,6 +461,25 @@ async function pump(): Promise<void> {
     // Python, the model it could not load, the page it choked on. Never
     // paraphrased, and never replaced with an exit code.
     next.error = result.stderr.trim() || `The engine exited ${result.code} with nothing to say.`;
+    /*
+     * AND IT GOES TO THE CONSOLE, WHOLE.
+     *
+     * Until now a failure existed in exactly one place a person could reach: a
+     * tooltip on one row of the shelf. So a job that failed while the window
+     * was reloading, or whose row was cleared, took its only account of itself
+     * with it — which is precisely what happened twice tonight, and the second
+     * time there was nothing left to read at all.
+     *
+     * The terminal running the app is where somebody is already looking when
+     * something goes wrong, it survives every reload of the window, and it can
+     * be scrolled back and copied. The full stderr rather than a summary: the
+     * lines above the failure are usually the context that explains it, and
+     * this is a diagnostic rather than a notification.
+     */
+    console.error(
+      `\n[job] ${next.kind} FAILED — exit ${result.code} — ${path.basename(next.inputPath)}\n`
+      + `${next.error}\n`,
+    );
   }
   changed();
   void pump();
