@@ -175,7 +175,7 @@ export interface DotsBlock {
    *
    * Kept because `blocks` and `furniture` are two lists and the model wrote
    * one. Every book route drops the furniture and never has to put the two back
-   * together; `pdf-layer.ts` keeps it, and a running head that arrives after
+   * together; `pdf-text.ts` keeps it, and a running head that arrives after
    * the page's last paragraph is a running head somebody's copy-and-paste finds
    * at the bottom of a page it was printed at the top of. Sub-blocks a markdown
    * split produced share their parent's number — they were one answer element —

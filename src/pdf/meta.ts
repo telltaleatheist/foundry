@@ -3,9 +3,8 @@
  *
  * THIS COMMAND REWRITES THE WHOLE FILE, and that is stated here rather than
  * left to be discovered. It is the exact opposite of what `epub/meta.ts` does
- * one directory over, and of what `src/vlm/pdf-layer.ts` does to this same
- * format — both of those go to great lengths to leave every byte they were not
- * asked about exactly where it was. Here the document is parsed by pdf-lib, one
+ * one directory over, which goes to great lengths to leave every byte it was
+ * not asked about exactly where it was. Here the document is parsed by pdf-lib, one
  * dictionary is edited, and pdf-lib writes a NEW file from its own object model:
  * the objects are renumbered, the cross-reference table is rebuilt, streams are
  * re-emitted, and anything in the original that pdf-lib does not model does not
@@ -16,13 +15,13 @@
  * forever. The working copy is a derived artifact and can be made again from the
  * original at any time ("Start over" in the project model does exactly that).
  * The alternative — a PDF incremental update appending an Info dict and a new
- * trailer by hand — is the technique the text layer uses and it is real work:
- * cross-reference stream parsing, `/Prev` chaining, and a hand-built trailer
+ * trailer by hand — is real work: cross-reference stream parsing, `/Prev`
+ * chaining, and a hand-built trailer
  * that a strict reader will reject if one offset is wrong. It buys byte fidelity
  * that this program does not need at this point in the pipeline, and it would be
  * a second, subtler PDF writer to maintain beside the one that already exists.
  *
- * `updateMetadata: false` on the load, for `pdf-layer.ts`'s reason, and it
+ * `updateMetadata: false` on the load, for `pdf-text.ts`'s reason, and it
  * matters MORE here than there: pdf-lib otherwise stamps its own `Producer` and
  * a fresh `ModDate` over the document's — so a command whose entire purpose is
  * to write exactly the metadata it was given would silently write two fields it

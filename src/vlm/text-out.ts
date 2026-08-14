@@ -51,11 +51,12 @@ export class VlmTextError extends Error {
  *
  * Two of the three are the same book written down differently and are built by
  * this file and `epub.ts` from one assembly. `pdf` is not one of them: it is
- * the ORIGINAL document with an invisible text layer over its pages, it forks
- * out of the pipeline before a book is assembled at all, and `pdf-layer.ts`
- * owns it end to end. It lives in this type because `--format` is one choice
- * about one file, and the rules below — the extension, the contradiction — are
- * about the file rather than about how it was made.
+ * the book set back onto fresh pages the shape of the scan's, at the positions
+ * the model measured, with none of the scan's pixels in it. It forks out of the
+ * pipeline before a book is assembled at all, and `pdf-text.ts` owns it end to
+ * end. It lives in this type because `--format` is one choice about one file,
+ * and the rules below — the extension, the contradiction — are about the file
+ * rather than about how it was made.
  */
 export type VlmOutputFormat = 'epub' | 'txt' | 'pdf';
 

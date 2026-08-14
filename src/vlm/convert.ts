@@ -49,7 +49,7 @@ import {
 import { DEFAULT_VLM_CONCURRENCY, readPagesFromEndpoint } from './endpoint.js';
 import { buildVlmEpub, type VlmChapter, type VlmEpubMetadata, type VlmPageBlocks } from './epub.js';
 import { requireVlmModel, type VlmModelDef } from './models.js';
-import { buildSearchablePdf } from './pdf-layer.js';
+import { buildTextPdf } from './pdf-text.js';
 import { openReadingsBank, writeCompletionMarker } from './readings.js';
 import { formatConflict, type VlmOutputFormat } from './text-out.js';
 
@@ -176,9 +176,10 @@ export interface VlmConvertReport {
    * Which page of the scan became the cover, or why nothing did.
    *
    * NULL WHERE THE FORMAT HAS NO COVER TO HAVE — a text file has nowhere to put
-   * an image, and a searchable PDF already IS the pages, so there is no absence
-   * to explain on either route. A non-null value always answers the question one
-   * way or the other (`DotsCover`).
+   * an image, and a PDF opens on its own first page, so a cover pasted in front
+   * of it would be a leaf the book does not have. There is no absence to explain
+   * on either route. A non-null value always answers the question one way or the
+   * other (`DotsCover`).
    */
   cover: DotsCover | null;
   timings: {
@@ -229,7 +230,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
   }
 
   /*
-   * A searchable PDF NEEDS BOXES, and only one dialect has them.
+   * REPRINTING A PAGE NEEDS BOXES, and only one dialect has them.
    *
    * Every other format is built out of what the model said; this one is built
    * out of where it said it, and a dialect that answers with prose has no
@@ -240,10 +241,11 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
    */
   if (format === 'pdf' && !geometric) {
     throw new Error(
-      `--format pdf places the recognised text at the position it was printed, and ${model.id} `
-      + `answers in the ${model.dialect} dialect, which is prose: it reports what a page says and `
-      + 'never where on the page it says it. There is nothing to place. Use a dialect that answers '
-      + 'with geometry — dots-ocr does, and it is the default — or pick another --format.',
+      `--format pdf sets the recognised text back onto the page at the position it was printed, `
+      + `and ${model.id} answers in the ${model.dialect} dialect, which is prose: it reports what a `
+      + 'page says and never where on the page it says it. There is nothing to place. Use a dialect '
+      + 'that answers with geometry — dots-ocr does, and it is the default — or pick another '
+      + '--format.',
     );
   }
 
@@ -444,9 +446,9 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
           render: { width: page.width, height: page.height },
           maxPixels: maxPixels!,
         });
-        // Not dropped on the PDF route, so not counted as dropped. The layer
-        // keeps the folio and the running head — they are what the page
-        // printed, and this format's claim is about the page (`pdf-layer.ts`).
+        // Not dropped on the PDF route, so not counted as dropped. That route
+        // reprints the folio and the running head — they are what the page
+        // printed, and its claim is about the page (`pdf-text.ts`).
         if (format !== 'pdf') droppedFurniture += parsed.furniture.length;
         geometryPages.push(parsed);
       } catch (err) {
@@ -500,7 +502,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     let mergedHeadings: DotsHeadingMerge[] = [];
     let cover: DotsCover | null = null;
     /** Set on the PDF route only, and what its phase line is made of. */
-    let layer: { pages: number; lines: number } | null = null;
+    let typeset: { pages: number; lines: number } | null = null;
 
     if (format === 'pdf') {
       /*
@@ -510,9 +512,9 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
        * words get dehyphenated against the book's own lexicon, note markers get
        * linked and running heads get suppressed — every rule that turns pages
        * into a BOOK. None of them runs here, because none of them is about the
-       * page, and this format's whole claim is that the layer says what the
-       * page printed. The blocks go down where the model put them, in the order
-       * it answered in, furniture and all.
+       * page, and this format's whole claim is that it reprints what the page
+       * printed. The blocks go down where the model put them, in the order it
+       * answered in, furniture and all.
        */
       const renders = new Map(run.pages.map((page) => [page.number, page]));
       blocks = geometryPages.reduce((sum, p) => sum + p.blocks.length + p.furniture.length, 0);
@@ -520,12 +522,13 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       categories = countCategories(geometryPages);
       opts.log(
         `vlm-convert: ${blocks} blocks over ${geometryPages.length} pages in `
-        + `${parseSeconds.toFixed(2)}s, ${furniture} header/footer block(s) KEPT — a searchable PDF `
-        + 'is a record of the page, and the folio is on the page',
+        + `${parseSeconds.toFixed(2)}s, ${furniture} header/footer block(s) KEPT — this route `
+        + 'reprints the page, and the folio was printed on the page',
       );
-      const built = await buildSearchablePdf({
+      const built = await buildTextPdf({
         pdfBytes: fs.readFileSync(pdfPath),
         dpi: VLM_DPI,
+        crop: (requests) => cropRenders(requests, pdfPath, rendersDir, opts.python),
         pages: geometryPages.map((page) => {
           const render = renders.get(page.page)!;
           return {
@@ -536,7 +539,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
             // as the one list it answered with (`dots.ts`).
             blocks: [...page.blocks, ...page.furniture]
               .sort((a, b) => a.order - b.order)
-              .map((block) => ({ box: block.box, text: block.text })),
+              .map((block) => ({ box: block.box, category: block.category, text: block.text })),
           };
         }),
       });
@@ -546,31 +549,84 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       // printed for a phase that did not happen is worse than no number.
       xhtmlSeconds = 0;
       zipSeconds = built.zipSeconds;
-      layer = { pages: built.overlaidPages, lines: built.lines };
+      typeset = { pages: built.textPages, lines: built.lines };
+      pictures = built.pictures;
       /*
-       * A layer that was already there and has been taken back out, SAID.
+       * The pages that came out as a photograph instead of as type, BY NUMBER.
        *
-       * This is the one thing in the run that deletes something, and the reason
-       * it is allowed to is that foundry wrote it: a second layer over the
-       * first would double every search hit in the book while looking identical
-       * in a viewer. A deletion nobody can read is a deletion nobody can check,
-       * so it is a line in the log with the version and the date the old layer
-       * recorded about itself.
+       * A page nobody could read has no text to set, and this route will not
+       * emit a blank leaf in its place — that is a silent claim that the page
+       * was empty, and it is indistinguishable in the file from a leaf that
+       * really is. So the scan of it survives into the output, and the numbers
+       * are printed because the numbers are the useful part: "page 4 is still a
+       * picture" is something a person can act on, and "1 page" is not.
        */
-      if (built.replaced !== null) {
-        const { pages, by, at } = built.replaced;
+      if (built.facsimilePages.length > 0) {
         opts.log(
-          `vlm-convert: replaced the existing foundry text layer on ${pages} page(s)`
-          + `${by !== null ? `, written by foundry ${by}` : ''}${at !== null ? ` on ${at}` : ''}`
-          + ' — a layer is replaced and never stacked, because two of them double every search hit',
+          `vlm-convert: ${built.facsimilePages.length} page(s) had no reading and kept the scan `
+          + `instead of being set as text — page(s) ${built.facsimilePages.join(', ')}. Those pages `
+          + 'are images in the output: still there, still printable, and not searchable',
         );
       }
       /*
-       * Every character the font could not write, SAID. The substitution is
-       * invisible twice over — an invisible layer, and a � where a glyph was —
-       * so this line is the only place it exists. Each one is a word that will
-       * not match a search, and usually a model hallucination worth a look at
-       * the page (the first one found in the wild was 帮 for "hel" in
+       * THE SIZE THE BOOK IS SET AT, said once and by class.
+       *
+       * The single number that explains how every page looks. Body type measured
+       * at 6 pt on a book whose scan is plainly 10 pt means the boxes are wrong,
+       * and that is a conclusion nobody can reach from looking at one page of
+       * output — it needs the number the whole document was set from.
+       */
+      const named = Object.entries(built.classSizes);
+      if (named.length > 0) {
+        opts.log(
+          `vlm-convert: set at ${named.map(([cls, pt]) => `${cls} ${pt.toFixed(1)} pt`).join(', ')}`
+          + ' — one size per class, measured off the book\'s own leading and column rather than off'
+          + ' what the font can fit, so the type comes out the size the page was printed at',
+        );
+      }
+      /*
+       * HOW MUCH OF THE BOOK IS THE PRINTER'S OWN SETTING, said because it is
+       * the single most useful number about a facsimile. Where the model kept
+       * the page's line breaks they are reproduced exactly — hyphens and all —
+       * and where it reflowed a paragraph the lines are this program's. A run
+       * that reports a hundred line-for-line blocks is a much closer copy of the
+       * page than one that reports none, and nothing else in the output says so.
+       */
+      opts.log(
+        `vlm-convert: ${built.lineForLine.blocks} block(s) set line for line off the page's own `
+        + `breaks (${built.lineForLine.lines} lines), ${built.lineForLine.wrapped} block(s) the `
+        + 'model had reflowed and this rewrapped',
+      );
+      if (built.emphasis > 0 || built.superscripts > 0) {
+        opts.log(
+          `vlm-convert: ${built.emphasis} emphasis span(s) set in a real italic or bold face, `
+          + `${built.superscripts} footnote reference mark(s) raised — a mark is only raised where `
+          + 'a body block on the same page cites it, so a year or a page number cannot be caught',
+        );
+      }
+      /*
+       * The blocks that would not take their class's size, SAID. A block's box
+       * is the model's, and a box drawn too small for the words the model put
+       * inside it makes this file choose between clipping the words, shrinking
+       * that block alone, or resizing the whole book around the worst box on the
+       * page. It shrinks the block — nothing is ever lost — and says so, because
+       * a paragraph a point smaller than its neighbours is invisible until
+       * somebody is told which page to look at.
+       */
+      if (built.cramped !== null) {
+        opts.log(
+          `vlm-convert: ${built.cramped.count} block(s) could not be squeezed into their measure and `
+          + `gave up their line count or their size — ${built.cramped.illegible} of them ended below `
+          + `4 pt, the smallest at ${built.cramped.smallest.toFixed(2)} pt, on page(s) `
+          + `${built.cramped.pages.join(', ')}. Every word is still there; the box the model drew `
+          + 'round them was too small for the text it put inside, which is usually a box round the '
+          + 'wrong part of the page',
+        );
+      }
+      /*
+       * Every character the font could not write, SAID. Each one is a word that
+       * will not match a search, and usually a model hallucination worth a look
+       * at the page (the first one found in the wild was 帮 for "hel" in
        * "helpers": the model wrote the Chinese word for help).
        */
       if (built.substituted !== null) {
@@ -579,7 +635,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
             .padStart(4, '0')}) ×${entry.count} on page(s) ${entry.pages.join(', ')}`)
           .join('; ');
         opts.log(
-          `vlm-convert: ${built.substituted.count} character(s) the layer's font cannot write `
+          `vlm-convert: ${built.substituted.count} character(s) the book's font cannot write `
           + `became U+FFFD (�): ${named} — the words they sit in will not match a search, and a `
           + 'character this far outside the book\'s script is usually the model misreading the page',
         );
@@ -798,17 +854,17 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
      * The middle phase is named for what it actually did.
      *
      * All three formats turn what was read into bytes; one of them zips, one
-     * renders text and one draws a layer over a document it did not make, and a
-     * run that wrote a PDF overlay under the word "zip" would be a phase
-     * breakdown nobody could use to work out where the seconds went. The PDF
-     * line counts pages and lines rather than chapters, because it has no
-     * chapters — it never looked for any.
+     * renders text and one typesets a new document, and a run that reported the
+     * typesetting under the word "zip" would be a phase breakdown nobody could
+     * use to work out where the seconds went. The PDF line counts pages and
+     * lines rather than chapters, because it has no chapters — it never looked
+     * for any.
      */
     opts.log(
-      layer !== null
-        ? `vlm-convert: ${layer.pages} page(s) overlaid, ${layer.lines} line(s) of invisible text, `
-          + `${bytes.length} bytes — ${zipSeconds.toFixed(2)}s overlay, `
-          + `${writeSeconds.toFixed(2)}s write`
+      typeset !== null
+        ? `vlm-convert: ${typeset.pages} page(s) set as text, ${typeset.lines} line(s), `
+          + `${pictures} picture(s) kept, ${bytes.length} bytes — `
+          + `${zipSeconds.toFixed(2)}s typesetting, ${writeSeconds.toFixed(2)}s write`
         : `vlm-convert: ${chapters.length} chapters, ${bytes.length} bytes — `
           + `${xhtmlSeconds.toFixed(2)}s XHTML, ${zipSeconds.toFixed(2)}s `
           + `${format === 'txt' ? 'text' : 'zip'}, ${writeSeconds.toFixed(2)}s write`,
