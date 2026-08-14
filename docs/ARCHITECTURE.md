@@ -186,6 +186,8 @@ src/
     pages.ts        page-list parsing (--skip-pages)
 
   epub/xml.ts     small XML parser (dialects parse markup with it)
+  epub/final.ts   the curated book becomes the edition: cuts applied, wreckage tidied
+  epub/stamp.ts   a publisher's EPUB gains foundry's stamps, read from its own markup
   export/zip.ts   deterministic zip writer (EPUB is a zip)
   scan/pgm.ts     PGM raster reader (ink measurements on page renders)
 

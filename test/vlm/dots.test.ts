@@ -46,7 +46,10 @@ import {
   carriesOver,
   foldDuplicateSections,
   furnitureKey,
+  headingLabel,
   inkExtentIn,
+  joinsHeading,
+  mergeAdjacentHeadings,
   navTree,
   openingHeadings,
   proposeChapters,
@@ -1405,10 +1408,25 @@ test('a named section is stamped for the picker, and a chapter opener with it', 
   assert.equal(chapter.includes('data-bf-kind'), false);
   assert.match(chapter, /<h1[^>]*data-bf-cat="chapter"[^>]*>.*The Lost Empire<\/h1>/);
 
-  // A part divider is stamped on both blocks of its announcement, and keeps its
-  // `data-bf-kind` wrapper: the two say different things and both are true.
+  /*
+   * A part divider's announcement is ONE stamped heading, and it used to be
+   * two.
+   *
+   * `III` and `RESISTANCE AND GUILT` are two boxes on page 8 and one heading in
+   * the book, and `mergeAdjacentHeadings` joins them before anything downstream
+   * counts them — so the picker offers one Chapter Opening rather than two, and
+   * the failure `openingHeadings` was written to avoid (delete one half, keep
+   * an orphan line) is no longer expressible. The `data-bf-kind` wrapper stays:
+   * the two attributes say different things and both are still true.
+   */
   const part = entries.get('EPUB/text/c0005.xhtml')!.text();
-  assert.equal(part.match(/data-bf-cat="chapter"/g)?.length, 2);
+  assert.equal(part.match(/data-bf-cat="chapter"/g)?.length, 1);
+  // One `<h2>`, with the break the page had inside it.
+  assert.equal(part.match(/<h2/g)?.length, 1);
+  assert.ok(part.includes('III<br/>\nRESISTANCE AND GUILT</h2>'), part);
+  // And the classifier's label is what it always was: it read the numeral off
+  // the merged block's first line and the name off the rest of it.
+  assert.equal(built.chapters[4].label, 'III RESISTANCE AND GUILT');
 
   // The section nothing named and nothing proposed is untouched — its heading
   // is still a section header, which is all anything here knows about it.
@@ -1544,6 +1562,238 @@ test('a nameless section folds nothing and is folded into nothing', () => {
   const opens = [null, null];
   assert.deepEqual(foldDuplicateSections(blocks, starts, opens), []);
   assert.deepEqual(starts, [0, 1]);
+});
+
+// ── the heading the page printed on two lines ───────────────────────────────
+
+/**
+ * A chapter opening as a real book sets one: the numeral over the title,
+ * centered on a 1300 px page, a line of air between them.
+ *
+ * The boxes are the whole of these tests. Every guard is arithmetic on them,
+ * and a merge that fires on the wrong pair writes a heading into `generated/`
+ * that the book never printed — so each test below moves ONE number and asserts
+ * the refusal that follows from it.
+ */
+const NUMERAL = { x1: 610, y1: 300, x2: 690, y2: 380 };
+const TITLE = { x1: 400, y1: 420, x2: 900, y2: 500 };
+
+/** Enough words that `classifyPage` calls the page a chapter and not a divider. */
+const opening = (text: string): DotsBlock => block({ text: `${text} ${'word '.repeat(30)}` });
+
+test('a number over a title is one heading, one nav entry, and it is reported', async () => {
+  const built = await buildDotsBook({
+    metadata: { title: 'A Book', language: 'en', identifier: 'urn:x:1' },
+    pages: [page(5, [
+      block({ category: 'Title', text: 'II', box: NUMERAL }),
+      block({ category: 'Title', text: 'The Price of Judgment', box: TITLE }),
+      opening('IN THE SPRING of 1946 the tribunal sat.'),
+    ])],
+    images: blindImages,
+    stripNoteMarkers: false,
+  });
+
+  // ONE heading element, with the break the page had inside it. That is what
+  // the page shows and it is the faithful rendering of it.
+  const chapter = unzipMap(built.bytes).get('EPUB/text/c0001.xhtml')!.text();
+  assert.equal(chapter.match(/<h1/g)?.length, 1);
+  assert.ok(chapter.includes('II<br/>\nThe Price of Judgment</h1>'), chapter);
+
+  // ONE nav entry, and it reads as a contents entry rather than as a numeral:
+  // the separator is an invention, and this is the only place it appears.
+  assert.deepEqual(built.chapters.map((c) => c.label), ['II: The Price of Judgment']);
+  const nav = unzipMap(built.bytes).get('EPUB/nav.xhtml')!.text();
+  assert.ok(nav.includes('II: The Price of Judgment'), nav);
+  assert.equal(nav.includes('<br/>'), false);
+
+  // And the run says so: this pass WRITES copy, so it is never silent.
+  assert.deepEqual(built.mergedHeadings, [{
+    page: 5,
+    lines: ['II', 'The Price of Judgment'],
+    label: 'II: The Price of Judgment',
+  }]);
+});
+
+test('the chapter proposal made downstream reads the whole heading', () => {
+  /*
+   * WHY THE PASS RUNS WHERE IT RUNS. The proposal is what the picker curates
+   * and what names the section, and before the merge it is made off the first
+   * block on the page — which is the numeral, on its own, saying nothing about
+   * what the chapter is called. Merging first is what makes every downstream
+   * answer right without any of them being told about it.
+   */
+  const pages = () => [page(5, [
+    block({ category: 'Title', text: 'II', box: NUMERAL }),
+    block({ category: 'Title', text: 'The Price of Judgment', box: TITLE }),
+    opening('IN THE SPRING of 1946 the tribunal sat.'),
+  ])];
+
+  const unmerged = proposeSections(pages());
+  assert.deepEqual(unmerged.map((s) => s.text), ['II']);
+
+  const merged = pages();
+  assert.equal(mergeAdjacentHeadings(merged).length, 1);
+  const after = proposeSections(merged);
+  assert.deepEqual(after.map((s) => [s.index, s.text]), [[0, 'II\nThe Price of Judgment']]);
+});
+
+test('the merged box measures as TWO lines of type, not one enormous one', () => {
+  // The newline is not decoration. `typeSize` divides a block's box by the
+  // breaks the model kept, so a merged heading that lost its break would
+  // measure 200 px of type — twice the size the page actually set — and the
+  // stylesheet's Title ratio is a median over exactly these numbers.
+  const pages = [page(5, [
+    block({ category: 'Title', text: 'II', box: NUMERAL }),
+    block({ category: 'Title', text: 'The Price of Judgment', box: TITLE }),
+  ])];
+  mergeAdjacentHeadings(pages);
+  const merged = pages[0].blocks[0];
+  assert.deepEqual(merged.box, { x1: 400, y1: 300, x2: 900, y2: 500 });
+  assert.equal(typeSize(merged), 100);
+});
+
+test('a Title that absorbs a Section-header is still a Title', () => {
+  // The louder of the two. The printer set the announcement big and the name of
+  // it smaller; the announcement is the heading, and a book whose chapter
+  // opening dropped to an `<h2>` because its second line was set smaller has a
+  // hierarchy the page does not.
+  const pages = [page(5, [
+    block({ category: 'Section-header', text: 'II', box: NUMERAL }),
+    block({ category: 'Title', text: 'The Price of Judgment', box: TITLE }),
+  ])];
+  mergeAdjacentHeadings(pages);
+  assert.equal(pages[0].blocks[0].category, 'Title');
+
+  const other = [page(5, [
+    block({ category: 'Title', text: 'II', box: NUMERAL }),
+    block({ category: 'Section-header', text: 'The Price of Judgment', box: TITLE }),
+  ])];
+  mergeAdjacentHeadings(other);
+  assert.equal(other[0].blocks[0].category, 'Title');
+});
+
+test('a heading is never merged across a page turn', () => {
+  // The boxes are in each page's own pixels, so two blocks on two pages that
+  // look a line apart are two blocks that were never near each other.
+  const pages = [
+    page(5, [block({ category: 'Title', text: 'II', box: NUMERAL })]),
+    page(6, [block({ category: 'Title', text: 'The Price of Judgment', box: TITLE })]),
+  ];
+  assert.deepEqual(mergeAdjacentHeadings(pages), []);
+  assert.deepEqual(pages.map((p) => p.blocks.length), [1, 1]);
+  assert.equal(
+    joinsHeading(
+      block({ page: 5, category: 'Title', text: 'II', box: NUMERAL }),
+      block({ page: 6, category: 'Title', text: 'The Price of Judgment', box: TITLE }),
+    ),
+    false,
+  );
+});
+
+test('two headings side by side in two columns are two headings', () => {
+  // The horizontal guard, and the failure it exists for: a two-up page puts two
+  // headings at the same height in two columns, adjacent in reading order and a
+  // line apart by any vertical measure. They share no column and no meaning.
+  const pages = [page(5, [
+    block({ category: 'Section-header', text: 'II', box: { x1: 150, y1: 300, x2: 230, y2: 380 } }),
+    block({ category: 'Section-header', text: 'The Price of Judgment', box: { x1: 700, y1: 320, x2: 1200, y2: 400 } }),
+  ])];
+  assert.deepEqual(mergeAdjacentHeadings(pages), []);
+  assert.equal(pages[0].blocks.length, 2);
+});
+
+test('a heading several line-heights below another is another heading', () => {
+  // The vertical guard. 80 px of type and 400 px of clear air between the two
+  // boxes: five lines of white space is a printer separating two things, not
+  // the leading inside one heading.
+  const pages = [page(5, [
+    block({ category: 'Title', text: 'II', box: NUMERAL }),
+    block({ category: 'Title', text: 'The Price of Judgment', box: { x1: 400, y1: 780, x2: 900, y2: 860 } }),
+  ])];
+  assert.deepEqual(mergeAdjacentHeadings(pages), []);
+  assert.equal(pages[0].blocks.length, 2);
+});
+
+test('two long headings in one column stay two headings', () => {
+  /*
+   * The word guard, and the only one of the three that is about MEANING rather
+   * than about ink. Two lines of one heading are a label and a name — a
+   * numeral, a `CHAPTER IV`, a `PART ONE` — and the label is never a statement
+   * on its own. Two headings that are each a whole statement are two headings
+   * whatever their boxes say, and this is where that is refused.
+   */
+  const pages = [page(5, [
+    block({ category: 'Section-header', text: 'The Weimar Years Ended Badly', box: NUMERAL }),
+    block({ category: 'Section-header', text: 'A Reconsideration of the Evidence', box: TITLE }),
+  ])];
+  assert.deepEqual(mergeAdjacentHeadings(pages), []);
+  assert.equal(pages[0].blocks.length, 2);
+});
+
+test('the contents separator is a colon, and a space where the line is punctuated', () => {
+  // The one liberty this feature takes, and its whole extent. `II` and the
+  // title were two lines of display type with white space between them; a nav
+  // entry is one line by construction and `IIThe Price of Judgment` is worse
+  // than a colon. Where the printer already set the punctuation, it stands —
+  // `II.: The Price of Judgment` is two separators for one join.
+  assert.equal(headingLabel('II\nThe Price of Judgment'), 'II: The Price of Judgment');
+  assert.equal(headingLabel('II.\nThe Price of Judgment'), 'II. The Price of Judgment');
+  assert.equal(headingLabel('II —\nThe Price of Judgment'), 'II — The Price of Judgment');
+  assert.equal(headingLabel('The Price of Judgment'), 'The Price of Judgment');
+  // Three lines take the same rule at each seam, and the page's own trailing
+  // space is not a line.
+  assert.equal(headingLabel('II\nThe Price\n\nOf Judgment '), 'II: The Price: Of Judgment');
+});
+
+test('three printed lines chain, and every one of them is judged against the merge', () => {
+  /*
+   * A number, a title and a subtitle is an ordinary opening, and stopping at
+   * two would leave exactly the split this pass exists to remove. Chaining is
+   * not a weaker test: the third line is judged against the MERGED block —
+   * union box, both lines of text — so its gap is measured from the bottom of
+   * the second line and the accumulated side is now five words, past
+   * `MERGE_SHORT_WORDS`. That is the boundary, and it is asserted both ways.
+   */
+  const subtitle = { x1: 450, y1: 540, x2: 850, y2: 600 };
+  const chained = [page(5, [
+    block({ category: 'Title', text: 'II', box: NUMERAL }),
+    block({ category: 'Title', text: 'The Price of Judgment', box: TITLE }),
+    block({ category: 'Section-header', text: 'A Reckoning', box: subtitle }),
+  ])];
+  assert.deepEqual(mergeAdjacentHeadings(chained), [{
+    page: 5,
+    lines: ['II', 'The Price of Judgment', 'A Reckoning'],
+    label: 'II: The Price of Judgment: A Reckoning',
+  }]);
+  assert.equal(chained[0].blocks.length, 1);
+  assert.equal(chained[0].blocks[0].text, 'II\nThe Price of Judgment\nA Reckoning');
+  // Three lines in the box, so the type measures a third of it.
+  assert.equal(typeSize(chained[0].blocks[0]), 100);
+
+  // The same three boxes, with a third line that is a statement of its own.
+  // Neither side is short now — the merge so far is five words — so the chain
+  // stops and the book keeps two headings.
+  const stopped = [page(5, [
+    block({ category: 'Title', text: 'II', box: NUMERAL }),
+    block({ category: 'Title', text: 'The Price of Judgment', box: TITLE }),
+    block({ category: 'Section-header', text: 'A Reckoning With the Evidence', box: subtitle }),
+  ])];
+  assert.deepEqual(mergeAdjacentHeadings(stopped).map((m) => m.lines), [['II', 'The Price of Judgment']]);
+  assert.equal(stopped[0].blocks.length, 2);
+});
+
+test('nothing but a Title or a Section-header is ever merged', () => {
+  // A caption under a heading, and a paragraph under one, in the same column
+  // and a line below. Neither is a line of the heading, and the categories are
+  // the only thing that says so.
+  for (const category of ['Caption', 'Text', 'Quote', 'List-item'] as const) {
+    const pages = [page(5, [
+      block({ category: 'Title', text: 'II', box: NUMERAL }),
+      block({ category, text: 'The Price of Judgment', box: TITLE }),
+    ])];
+    assert.deepEqual(mergeAdjacentHeadings(pages), []);
+    assert.equal(pages[0].blocks.length, 2);
+  }
 });
 
 test('the container is an EPUB and every document parses', async () => {

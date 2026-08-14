@@ -44,6 +44,14 @@
  *    cut one writes the book anyway and names the reason: a grey thumbnail is
  *    worse than nothing on a shelf, and a book that was not produced is worse
  *    than either.
+ *  - **A HEADING THE PAGE PRINTED ON TWO LINES IS ONE HEADING.** `II` on one
+ *    line and `The Price of Judgment` on the next are two boxes because they
+ *    ARE two boxes, and the book means one thing; anything handed both of them
+ *    says it twice — two `<h1>`s, two anchors, two nav entries, and a contents
+ *    that reads `II` for a chapter that has a name. `mergeAdjacentHeadings`
+ *    joins them before any of that happens, on three guards that are pure
+ *    arithmetic on the boxes, and reports every join: it is the only pass here
+ *    that WRITES copy rather than moving or dropping it.
  *  - **Chapters are PROPOSED, not decided.** The rule is deterministic and
  *    written out beside the book as data: a Title or Section-header, first on
  *    its page, in the top 45%, short, and either chapter-ish or centered. It
@@ -734,7 +742,12 @@ function sectionName(span: readonly DotsBlock[], opens: DotsChapterProposal | nu
   const label = opens?.label;
   if (label !== null && label !== undefined && label.length > 0) return label;
   const heading = span.find((b) => b.category === 'Title' || b.category === 'Section-header');
-  return heading?.text ?? '';
+  // Through `headingLabel` for the reason in this comment's first paragraph: a
+  // heading printed on two lines reaches the nav as one line, so that is the
+  // string this comparison has to be about. It changes no verdict — the keys
+  // are `furnitureKey`'d, and the separator is punctuation, which that strips —
+  // and it makes the text a fold REPORTS read the way the nav entry read.
+  return heading === undefined ? '' : headingLabel(heading.text);
 }
 
 /**
@@ -803,6 +816,226 @@ export function foldDuplicateSections(
     // turns three copies of a title into one document rather than two.
   }
   return folded;
+}
+
+// ── the heading the page printed on two lines ───────────────────────────────
+
+/**
+ * Two heading blocks that were one heading, joined back into one.
+ *
+ * Reported for the same reason a fold is: this pass WRITES A HEADING, and the
+ * words it writes are a sentence the printer never set on one line. If it is
+ * wrong it is wrong in `generated/`, which every later pass treats as truth, so
+ * every merge is named with its page and both of its halves and select mode can
+ * take it apart by hand.
+ */
+export interface DotsHeadingMerge {
+  page: number;
+  /** The printed lines, in order — what the page shows and what `<br/>` keeps. */
+  lines: string[];
+  /** The one line the contents gets, separator and all — see `headingLabel`. */
+  label: string;
+}
+
+/**
+ * How much of the narrower box has to sit inside the wider one.
+ *
+ * Two lines of one heading share a COLUMN — a centered numeral over a centered
+ * title, a flush-left number over a flush-left name — so the narrow one is
+ * mostly or entirely inside the wide one's span. What this number is really
+ * refusing is the side-by-side pair: a heading in the left column of a two-up
+ * page and a heading in the right one are adjacent in reading order, sit at the
+ * same height, and are two headings of two different things. Half of the
+ * narrower box is well past any overlap two columns can produce (they do not
+ * overlap at all) and well under what one heading's two lines produce.
+ */
+const MERGE_OVERLAP = 0.5;
+
+/**
+ * How far apart, in line heights, two lines of one heading can be.
+ *
+ * The gap measured is white space — the bottom edge of one box to the top edge
+ * of the next — so consecutive lines of one heading measure near zero, and
+ * often below it, because the model draws boxes that touch or overlap slightly.
+ * A line and a half of clear air is more space than any leading puts between
+ * two lines of the same heading and less than a printer puts between a heading
+ * and the next thing that is not part of it.
+ *
+ * `typeSize` and not `lineHeight`, for `typography.ts`'s reason: `lineHeight`
+ * maximises over a one-line-per-40-pixels estimate and reports a 120 px display
+ * line as three body lines, which would shrink this window to a third of the
+ * type it is supposed to be measured in. Against the LARGER of the two lines,
+ * because the leading between a small numeral and a big title is set by the
+ * title — measuring against the numeral would refuse precisely the case this
+ * whole pass exists for.
+ */
+const MERGE_GAP_LINES = 1.5;
+
+/**
+ * How short one side has to be, in words.
+ *
+ * THE ONE GUARD THAT IS ABOUT MEANING RATHER THAN ABOUT INK, and the reason it
+ * is needed is that the two before it cannot tell a heading from a heading. A
+ * heading printed across two lines is a LABEL and a NAME — `II`, `CHAPTER IV`,
+ * `PART ONE` over what the chapter is called — and the label is never a
+ * statement on its own. Four words is the widest that stays true of: `The Price
+ * of Judgment` is a name at four, and nothing that needs five words to say
+ * itself is a label for the line under it.
+ *
+ * WHAT IT DOES NOT DO, said plainly because the plan's own counter-example
+ * invites the misreading: this does not refuse `Section One` over `A
+ * Reconsideration of the Evidence`. `Section One` is two words, so the pair has
+ * a short side like any other. What refuses that pair is the two guards ABOVE —
+ * two headings that are two headings have the page's own space between them, or
+ * prose, and prose ends the run outright. Where a book really does print those
+ * two lines in one column a line apart, they are one heading and joining them
+ * is right. What this guard refuses on its own is the pair where BOTH sides are
+ * a whole statement, and that pair is two headings whatever its boxes say.
+ */
+const MERGE_SHORT_WORDS = 4;
+
+/** A heading is a Title or a Section-header. Nothing else may ever merge. */
+function isHeadingBlock(block: DotsBlock): boolean {
+  return block.category === 'Title' || block.category === 'Section-header';
+}
+
+function wordCount(text: string): number {
+  return text.trim().split(/\s+/).filter((word) => word.length > 0).length;
+}
+
+/**
+ * May `next` be the next printed line of `head`? All three guards, in order.
+ *
+ * Exported because it is the whole of the risk and it is pure arithmetic: every
+ * false merge this feature can commit is a `true` from here.
+ */
+export function joinsHeading(head: DotsBlock, next: DotsBlock): boolean {
+  // One page. A heading cannot be printed across a page turn, and two headings
+  // on two pages are two headings however alike their boxes look — the boxes
+  // are in each page's own pixels and comparing them across pages is comparing
+  // nothing.
+  if (next.page !== head.page) return false;
+
+  const overlap = Math.min(head.box.x2, next.box.x2) - Math.max(head.box.x1, next.box.x1);
+  const narrower = Math.min(head.box.x2 - head.box.x1, next.box.x2 - next.box.x1);
+  if (narrower <= 0 || overlap < MERGE_OVERLAP * narrower) return false;
+
+  // Below, and close. Below first: reading order puts the second block after
+  // the first, and on a page of columns "after" can mean to the RIGHT and
+  // higher up, where the gap arithmetic below would be a subtraction of two
+  // unrelated edges and would happily come out negative.
+  if (next.box.y1 < head.box.y1) return false;
+  const line = Math.max(typeSize(head), typeSize(next));
+  if (next.box.y1 - head.box.y2 > MERGE_GAP_LINES * line) return false;
+
+  return wordCount(head.text) <= MERGE_SHORT_WORDS || wordCount(next.text) <= MERGE_SHORT_WORDS;
+}
+
+/**
+ * The one line a heading gives the CONTENTS, from the lines the page printed.
+ *
+ * THE SEPARATOR IS AN INVENTION AND IT LIVES ONLY HERE. `II` and `The Price of
+ * Judgment` were two lines of display type with white space between them, and
+ * the book never printed a colon; the page keeps the break (`<br/>`) and this
+ * is the only place a character the printer did not set is added. It is added
+ * because a nav entry is one line by construction — there is nowhere in a TOC
+ * for a line break to go — and `IIThe Price of Judgment` is worse than a colon,
+ * and `II` alone is worse still, because it names the chapter by its number and
+ * throws away what it is called. NOTHING MAY CARRY THIS INTO THE PAGE.
+ *
+ * A space rather than a colon when the line already ends in punctuation: the
+ * printer set `II.` or `II —` precisely so the next line could follow it, and
+ * `II.: The Price of Judgment` is two separators for one join.
+ */
+const ALREADY_PUNCTUATED = /[.,:;!?…—–-]$/;
+
+export function headingLabel(text: string): string {
+  const lines = text.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+  if (lines.length === 0) return text.trim();
+  return lines.reduce((joined, line) =>
+    `${joined}${ALREADY_PUNCTUATED.test(joined) ? ' ' : ': '}${line}`);
+}
+
+/**
+ * Join a heading the page printed on two lines back into one block.
+ *
+ * A chapter opening is routinely two boxes — the number on one line, the title
+ * on the next — because that is what the page IS, and dots reports boxes. The
+ * book means one heading, and everything downstream that is handed two of them
+ * says so twice: two `<h1>`s, two anchors, two nav entries, and a contents that
+ * reads `II` for a chapter that has a name.
+ *
+ * WHERE THIS RUNS IN `buildDotsBook` IS HALF OF WHAT IT DOES, and the position
+ * is load-bearing rather than tidy. It runs after `suppressRunningHeads`, whose
+ * deletions must not be merged into anything, and BEFORE the pages are
+ * flattened — which puts it before `proposeChapters`, before the type is
+ * measured and before a single character is rewritten. That ordering is what
+ * makes every consequence follow by itself: the chapter proposal reads the
+ * whole heading rather than a bare numeral (and so survives the `BARE_NUMBER`
+ * refusal that a book of numbered sections applies), one `<h1>` is emitted, one
+ * anchor exists, one nav entry is composed, and `typeSize` measures the merged
+ * box over the newline that is now in it — two lines, at their real size,
+ * instead of one line at twice it. Merging AFTER any of those would mean fixing
+ * each of them separately and getting the arithmetic of the last one wrong.
+ *
+ * THREE LINES MAY CHAIN — a number, a title and a subtitle is an ordinary
+ * opening, and refusing the third would leave the split this pass exists to
+ * remove. It is safe because chaining is not a weaker test: every incoming
+ * block is judged against the MERGED BLOCK, whose box is the union so far and
+ * whose text is every line so far. So the vertical gap is measured from the
+ * bottom of the last line actually taken, and the word count of the accumulated
+ * side is the count of everything in it — which after two lines is normally
+ * past `MERGE_SHORT_WORDS`, so a third line has to be short in its OWN right.
+ *
+ * Mutates the pages, the way `suppressRunningHeads` and the dehyphenation pass
+ * above already do, and keeps the FIRST block's object — its page and its order
+ * are the heading's, and its identity is what `measureTypeSizes` keys on.
+ * Returns what it joined so the run can name it.
+ */
+export function mergeAdjacentHeadings(pages: readonly DotsParsedPage[]): DotsHeadingMerge[] {
+  const merges: DotsHeadingMerge[] = [];
+  /** The heading `kept` ended on, when it is one and can still take a line. */
+  type OpenHeading = { block: DotsBlock; lines: string[] };
+  // Taken as an argument rather than closed over, so that one block that
+  // happened to be a heading and took no second line reports nothing.
+  const record = (open: OpenHeading | null): void => {
+    if (open === null || open.lines.length < 2) return;
+    merges.push({ page: open.block.page, lines: open.lines, label: headingLabel(open.block.text) });
+  };
+
+  for (const page of pages) {
+    const kept: DotsBlock[] = [];
+    let open: OpenHeading | null = null;
+    for (const block of page.blocks) {
+      if (open !== null && isHeadingBlock(block) && joinsHeading(open.block, block)) {
+        const head = open.block;
+        // The newline is the whole point. It is what `dotsInline` turns into
+        // the `<br/>` the page shows, and what `typeSize` counts the merged
+        // box's lines from — take it out and a two-line heading measures as one
+        // line of twice the type, which is a claim about the printer.
+        head.text = `${head.text.trimEnd()}\n${block.text.trimStart()}`;
+        head.box = {
+          x1: Math.min(head.box.x1, block.box.x1),
+          y1: Math.min(head.box.y1, block.box.y1),
+          x2: Math.max(head.box.x2, block.box.x2),
+          y2: Math.max(head.box.y2, block.box.y2),
+        };
+        // The more significant of the two. A Title that absorbs a Section-header
+        // is still the book's loudest heading — the printer set the announcement
+        // big and the name of it smaller, and the announcement is the heading.
+        if (block.category === 'Title') head.category = 'Title';
+        open.lines.push(block.text.trim());
+        continue;
+      }
+      record(open);
+      open = null;
+      kept.push(block);
+      if (isHeadingBlock(block)) open = { block, lines: [block.text.trim()] };
+    }
+    record(open);
+    page.blocks = kept;
+  }
+  return merges;
 }
 
 // ── the nav ─────────────────────────────────────────────────────────────────
@@ -1264,14 +1497,22 @@ export function buildChapterBody(
           if (text.length > 0) {
             const id = `sh${headings.length + 1}`;
             anchor = ` id="${id}"`;
-            headings.push({ id, label: text });
+            // `headingLabel`, because a nav entry is one line and this heading
+            // may be two — either because the printer set it that way in one
+            // box or because `mergeAdjacentHeadings` joined two. The separator
+            // it adds is confined to this label and never reaches the `<h2>`
+            // above, which keeps the break the page had.
+            headings.push({ id, label: headingLabel(text) });
           }
         }
         out.push(
           `<${tag}${anchor}${classOf(align)}${sized(block)}${stamp(block, cat)}>`
           + `${marker(block)}${xhtml}</${tag}>`,
         );
-        label ??= plainText(xhtml);
+        // The section's own name, flattened for the contents the same way an
+        // inner heading's is: the document's `<h1>` keeps the printed break and
+        // the nav gets one line of it.
+        label ??= headingLabel(plainText(xhtml));
         lastParagraph = null;
         break;
       }
@@ -1745,6 +1986,12 @@ export interface DotsBookResult {
    */
   foldedSections: DotsFold[];
   /**
+   * The headings the page printed on two lines and this run joined into one,
+   * by `mergeAdjacentHeadings`. The same promise again, and the sharpest case
+   * of it: this pass does not remove a heading, it WRITES one.
+   */
+  mergedHeadings: DotsHeadingMerge[];
+  /**
    * What this book's own type measures — `typography.ts`, and null for a book
    * with no body prose in it to measure against.
    *
@@ -1768,6 +2015,20 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
   // pass after this — the lexicon, the chapter proposals, the body column —
   // would otherwise be reading them as if they were.
   const suppressed = suppressRunningHeads(opts.pages);
+
+  /*
+   * SECOND, AND STILL ON THE PAGES: a heading the page printed on two lines is
+   * one heading, and from here on it is one block.
+   *
+   * The position is the pass — see `mergeAdjacentHeadings`. After the
+   * suppression, because a running head on its way out of the book must not be
+   * joined onto anything on its way; and before the flatten, which is before
+   * the type is measured, before the chapter proposals are made and before a
+   * character of the text is rewritten. Everything downstream then sees one
+   * heading without being told about it: one proposal, one `<h1>`, one anchor,
+   * one nav entry, and one box measured over the newline that is now in it.
+   */
+  const mergedHeadings = mergeAdjacentHeadings(opts.pages);
 
   const blocks = opts.pages.flatMap((p) => p.blocks);
   if (blocks.length === 0) {
@@ -2015,6 +2276,7 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
     joinedPages,
     suppressedHeads: suppressed.map((b) => ({ page: b.page, text: b.text, why: b.why })),
     foldedSections: folded,
+    mergedHeadings,
     // The working map of per-block sizes stays out of the report: it is keyed
     // by block identity, which means nothing once the blocks are gone, and
     // everything a reader of the report wants about it is in `outliers`.

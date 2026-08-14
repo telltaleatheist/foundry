@@ -702,6 +702,11 @@ function unemphasise(text: string): string {
   return text.replace(/[*_]/g, ' ').trim();
 }
 
+/** The first PRINTED line of a block — the one a merged heading opens with. */
+function firstLine(text: string): string {
+  return text.split('\n')[0];
+}
+
 /** The block's text on one line, for a label. */
 function oneLine(text: string): string {
   return unemphasise(text).replace(/\s+/g, ' ').trim();
@@ -899,17 +904,32 @@ function partVerdict(
     return { kind: 'part', why: ['part-heading', 'near-empty-page'], label: oneLine(named.text) };
   }
 
-  const numeral = display.find((b) => ROMAN_NUMERAL.test(unemphasise(b.text)));
+  /*
+   * THE NUMERAL'S OWN LINE, not the whole of its block, because the block may
+   * now hold both halves of the announcement.
+   *
+   * `mergeAdjacentHeadings` (in `dots-book.ts`) joins a heading the page
+   * printed across two lines into ONE block with the printed break kept in it,
+   * and a part divider — a numeral over a name, a line apart, in one column —
+   * is precisely its shape. Both spellings reach here and both are read: the
+   * merge only fires on two heading boxes adjacent in reading order, so a
+   * divider with a rule, an ornament or a picture between its halves still
+   * arrives as two blocks and takes the second branch below.
+   */
+  const numeral = display.find((b) => ROMAN_NUMERAL.test(unemphasise(firstLine(b.text))));
   if (numeral === undefined) return null;
-  const titled = blocks.find(
-    (b) => b !== numeral && b.category !== 'Picture'
-      && wordCount(b.text) > 0 && wordCount(b.text) <= PART_TITLE_WORDS,
-  );
+  const joined = numeral.text.split('\n').slice(1).join(' ');
+  const titled = wordCount(joined) > 0 && wordCount(joined) <= PART_TITLE_WORDS
+    ? joined
+    : blocks.find(
+      (b) => b !== numeral && b.category !== 'Picture'
+        && wordCount(b.text) > 0 && wordCount(b.text) <= PART_TITLE_WORDS,
+    )?.text;
   if (titled === undefined) return null;
   return {
     kind: 'part',
     why: ['roman-numeral', 'short-title', 'near-empty-page'],
-    label: `${oneLine(numeral.text)} ${oneLine(titled.text)}`,
+    label: `${oneLine(firstLine(numeral.text))} ${oneLine(titled)}`,
   };
 }
 

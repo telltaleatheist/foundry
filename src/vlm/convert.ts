@@ -43,6 +43,7 @@ import {
   type DotsCrop,
   type DotsCropped,
   type DotsFold,
+  type DotsHeadingMerge,
   type FurnitureEvidence,
 } from './dots-book.js';
 import { DEFAULT_VLM_CONCURRENCY, readPagesFromEndpoint } from './endpoint.js';
@@ -166,6 +167,11 @@ export interface VlmConvertReport {
    * them. Documents that stopped existing, so they are named too.
    */
   foldedSections: DotsFold[];
+  /**
+   * Headings the page printed on two lines and the cast joined into one. Copy
+   * this run WROTE, so they are named the loudest of the three.
+   */
+  mergedHeadings: DotsHeadingMerge[];
   /**
    * Which page of the scan became the cover, or why nothing did.
    *
@@ -491,6 +497,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     let joinedPages: number[] = [];
     let suppressedHeads: { page: number; text: string; why: FurnitureEvidence }[] = [];
     let foldedSections: DotsFold[] = [];
+    let mergedHeadings: DotsHeadingMerge[] = [];
     let cover: DotsCover | null = null;
     /** Set on the PDF route only, and what its phase line is made of. */
     let layer: { pages: number; lines: number } | null = null;
@@ -626,6 +633,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
         `vlm-convert: ${built.lexiconWords} words in the book's own lexicon, `
         + `${joinedPages.length} paragraph(s) joined across a page turn, `
         + `${built.reflowedBlocks} paragraph(s) reflowed out of print lines, `
+        + `${built.mergedHeadings.length} heading(s) merged out of two boxes, `
         + `${footnotes} footnote(s), ${pictures} picture(s)`,
       );
       /*
@@ -667,6 +675,25 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
           `vlm-convert: ${foldedSections.length} duplicated section opening(s) folded into the `
           + 'section above — '
           + foldedSections.map((f) => `${JSON.stringify(f.text)} p${f.page}`).join(', '),
+        );
+      }
+      /*
+       * The headings the page printed on two lines, joined into one.
+       *
+       * The loudest of the three lines, because it is the only one that ADDS
+       * copy: the two others delete a block or drop a document, and this one
+       * writes a heading the printer never set on a single line — and puts a
+       * separator into the contents entry that is in no book anywhere. Each
+       * merge is printed with both of its halves and its page, so the one that
+       * is wrong is the one somebody can see is wrong and undo in select mode.
+       */
+      mergedHeadings = built.mergedHeadings;
+      if (mergedHeadings.length > 0) {
+        opts.log(
+          `vlm-convert: ${mergedHeadings.length} heading(s) printed on two lines merged into one — `
+          + mergedHeadings
+            .map((m) => `${m.lines.map((line) => JSON.stringify(line)).join(' + ')} p${m.page}`)
+            .join(', '),
         );
       }
       /*
@@ -809,6 +836,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       joinedPages,
       suppressedHeads,
       foldedSections,
+      mergedHeadings,
       cover,
       timings: {
         loadSeconds: run.loadSeconds,
