@@ -1674,6 +1674,22 @@ export function projectOf(id: string): string | null {
 }
 
 /**
+ * The two facts that name an open book's DOCUMENT rather than its session: the
+ * project it lives in, and the origin its working tree was unpacked from.
+ *
+ * The undo history on disk is keyed by these and never by `id`, which is a uuid
+ * minted per open and would file every launch's ledger under a new name — a
+ * history nothing could ever find again, which is the same thing as no history.
+ * Handed out rather than a path the renderer could name, on this file's usual
+ * rule: the renderer says WHICH BOOK, main says where its bytes are.
+ */
+export function documentOf(id: string): { projectDir: string; entry: string } {
+  const book = unpacked.get(id);
+  if (!book) throw new EpubError('That book is not open in this app any more.');
+  return { projectDir: book.projectDir, entry: book.entry };
+}
+
+/**
  * Ensure this book has a working tree, and say where it is and what is in it.
  *
  * THE TREE IS NOT REBUILT WHEN IT IS ALREADY THERE. That is requirement one of

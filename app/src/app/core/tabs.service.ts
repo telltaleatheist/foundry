@@ -2,7 +2,16 @@ import { Injectable, computed, effect, inject, signal } from '@angular/core';
 
 import type { FoundryApi } from '@shared/api';
 import { categoryLabel } from '@shared/categories';
-import type { EpubBook, HeadingEcho, JobKind, UnlinkedNote } from '@shared/types';
+import type {
+  EpubBook,
+  HeadingEcho,
+  JobKind,
+  LedgerAction,
+  LedgerLoad,
+  LedgerRow,
+  LedgerStacks,
+  UnlinkedNote,
+} from '@shared/types';
 
 import { QueueService } from './queue.service';
 import { api } from './foundry';
@@ -245,53 +254,14 @@ export interface CategoryCounts {
   struck: Readonly<Record<string, number>>;
 }
 
-/**
- * Which setter puts one ledger row back.
- *
- * THE FIELD IS THE ROUTE, and there are five because there are five things this
- * app can do to a document. Each names a call that already exists in main, with
- * its own validator, keyed by the same id the original edit used.
+/*
+ * `LedgerField`, `LedgerRow`, `LedgerAction` and `LedgerStacks` MOVED TO
+ * shared/types.ts, because the ledger is written to disk now and main is what
+ * writes it. Main still never replays a row — that is entirely this file's,
+ * through the setters — but it does have to recognise the shape, so that a
+ * history file carrying a field no setter answers to is refused as the wrong
+ * shape rather than handed to a Ctrl+Z that would fall through every branch.
  */
-export type LedgerField = 'cut' | 'category' | 'html' | 'note-cut' | 'nav-label' | 'page-heading';
-
-/**
- * One element, one field, and what it said on each side of an action.
- *
- * `target` is a `data-bf-id` for the three block fields, a footnote's own id
- * (`fn25`) for `note-cut`, and a contents entry's href for the two rename
- * fields — in every case, the name the ORIGINAL setter was called with, so the
- * replay is that call again with the other value.
- */
-export interface LedgerRow {
-  /** The member the setter writes. Not always the chapter on screen. */
-  member: string;
-  target: string;
-  field: LedgerField;
-  before: string;
-  after: string;
-}
-
-/**
- * One action — Owen's action number — and every row it moved.
- *
- * A batch is ONE action with many rows: a marquee's worth of cuts, an
- * all-of-this-category strike, sixteen blocks relabelled at once. That is the
- * whole of what "ctrl+z will reverse all action number 12 items" needs, and it
- * falls out of the design rather than being arranged: the gesture is one call
- * to main, main answers with everything it moved, and that answer IS the rows.
- */
-export interface LedgerAction {
-  seq: number;
-  /** Past tense: "struck 14 blocks" → "Undid: struck 14 blocks." */
-  label: string;
-  rows: readonly LedgerRow[];
-}
-
-/** One document's ledger. Made on its first edit, dropped when it closes. */
-interface Ledger {
-  done: LedgerAction[];
-  undone: LedgerAction[];
-}
 
 /** The list under one key, made on first use. Grouping rows for one repaint call. */
 function bucket<K>(map: Map<K, string[]>, key: K): string[] {
@@ -568,6 +538,16 @@ export class TabsService {
       // strip is where a shut door says so on the way in rather than by doing
       // nothing when somebody presses Select.
       if (book.notice !== null) this.notice.set(book.notice);
+      /*
+       * AND THE UNDO HISTORY THIS DOCUMENT WAS LEFT WITH, from the project it
+       * lives in. Awaited inside this same call so that Ctrl+Z reaches the last
+       * session's work from the moment the book is on screen rather than from
+       * whenever a background read happened to finish — and after the notice
+       * above, so that a book which had something to say about opening still
+       * says it, with whatever the history has to say landing on top as the
+       * newer sentence.
+       */
+      await this.restoreLedger(id, book.id);
     } catch (err) {
       this.patch(id, { problem: err instanceof Error ? err.message : String(err) });
     }
@@ -913,8 +893,13 @@ export class TabsService {
        * AND THE LEDGER GOES WITH THE DOCUMENT, which is the whole difference
        * from the singleton this replaces: there is no shared stack to clear
        * field by field, and no way for one book's undo to reach into another's.
-       * It is in memory only — closing the book ends what Ctrl+Z can reach, and
-       * the working copy on disk is what survives.
+       *
+       * THE MAP ENTRY GOES; THE FILE STAYS. Every mutation was flushed as it
+       * happened, so there is nothing to write on the way out — and reopening
+       * the book reads `<project>/history/<tree>.json` back, which is what makes
+       * closing a tab no longer the end of what Ctrl+Z can reach. Deleting a
+       * history here would be deleting somebody's work on the strength of them
+       * having shut a window.
        */
       this.ledgers.delete(gone);
       this.editing.delete(gone);
@@ -1551,14 +1536,31 @@ export class TabsService {
   // never a singleton cleared field by field. Keyed by tab id in a plain Map
   // rather than stored on the `Tab` itself, because `Tab` is replaced wholesale
   // by `patch()` on every edit and a growing array riding along in it would be
-  // copied on each one. IN MEMORY ONLY: closing the book ends what Ctrl+Z can
-  // reach, and that is stated rather than implied by the absence of a file.
+  // copied on each one.
+  //
+  // ── AND IT IS ON DISK ────────────────────────────────────────────────────
+  //
+  // The stacks used to die with the tab. Owen: "lets flush those to disk every
+  // time a change is made. i want the user to be able to open a project and edit
+  // a file, and if foundry dies randomly, i want the stack to still be
+  // available." So every mutation of either stack — `record`, `undo`, `redo`,
+  // and the footnote dialog's `unrecord` — is followed by `flush`, which hands
+  // both stacks to main to write whole and atomically into the book's own
+  // project (`electron/history.ts`).
+  //
+  // WHAT IS STILL IN MEMORY ONLY IS THIS MAP. Closing a book drops its entry, as
+  // it always did; THE FILE STAYS, and reopening the book reads it back, so
+  // Ctrl+Z reaches yesterday's actions the moment the book is on screen. The tab
+  // id never reaches disk — it is minted fresh every launch, and a history filed
+  // under one would be a history nothing could find. Main keys the file by the
+  // WORKING TREE and binds it to that tree's generation; this side names a book
+  // and nothing else.
   //
   // AND THE SELECTION IS NOT IN IT. It is not a fact about the book, it dies
   // with the frame anyway, and BookForge — which does put it in the stack —
   // special-cases it in three separate places for the privilege.
 
-  private readonly ledgers = new Map<string, Ledger>();
+  private readonly ledgers = new Map<string, LedgerStacks>();
   private actionSeq = 0;
 
   /**
@@ -1601,6 +1603,7 @@ export class TabsService {
     // furthest from what they are doing.
     while (ledger.done.length > TabsService.LEDGER_ACTIONS) ledger.done.shift();
     this.ledgers.set(tabId, ledger);
+    this.flush(tabId);
   }
 
   /**
@@ -1625,6 +1628,94 @@ export class TabsService {
     const row = last.rows[0]!;
     if (row.field !== 'html' || row.target !== blockId) return;
     done.pop();
+    // The file has to lose it too. The dialog has already written the block's
+    // old markup back, so a history still carrying that action would offer a
+    // Ctrl+Z that puts an edit the user cancelled back into the book — and
+    // after a crash it would be the ONLY record of it, with nothing on screen
+    // to explain where it came from.
+    this.flush(tabId);
+  }
+
+  /**
+   * Write both stacks out, after every mutation of either.
+   *
+   * NOT AWAITED BY ITS CALLERS, deliberately. The write is a few kilobytes of
+   * JSON and the gesture that triggered it has already landed in the book — the
+   * member write is the commit — so blocking the next keystroke on a rename in
+   * the project folder would be paying latency for a file nothing on screen is
+   * reading. What it must not do is fail quietly: a history that has stopped
+   * being written is a Ctrl+Z that will silently have nothing to reach after the
+   * next crash, so a refusal goes to the strip BY NAME (ARCHITECTURE §8).
+   *
+   * A tab whose book is still opening has nothing to flush and no book id to
+   * flush it against; it cannot have recorded an action either, since every
+   * gesture that records one needs a book.
+   */
+  private flush(tabId: string): void {
+    const bookId = this.byId(tabId)?.book?.id;
+    const ledger = this.ledgers.get(tabId);
+    if (!api || bookId === undefined || ledger === undefined) return;
+    void api.history.save(bookId, { done: ledger.done, undone: ledger.undone })
+      .catch((err: unknown) => {
+        this.notice.set(
+          `This document's undo history could not be written to disk, so it will not survive a `
+          + `crash or a restart: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+  }
+
+  /**
+   * Read back the ledger this document was left with, as it opens.
+   *
+   * THE GENERATION CHECK IS MAIN'S, and it is the reason a restored stack is
+   * safe to press Ctrl+Z on. A row names `data-bf-id="p47-3"` in a member, and
+   * that name means one thing in ONE working copy: "start over" rebuilds
+   * `working/` from `generated/`, a re-cast reassigns ids, and a row from a
+   * previous life would then put a paragraph into a block that is not the one it
+   * came from. So the file carries the generation of the working copy it was
+   * recorded against, main compares it with `project.json`'s, and a history that
+   * does not match is archived aside rather than handed back here. Same for one
+   * that will not parse. Either way this side receives EMPTY STACKS AND A
+   * SENTENCE, and the sentence names the file.
+   *
+   * RESTORED INTO A LEDGER THAT MAY ALREADY EXIST? It cannot: this runs once,
+   * from the open, before the tab can have been edited. It is still written as a
+   * set rather than a merge, because a merge would be inventing an order between
+   * two sessions' actions that no LIFO stack can honour.
+   */
+  private async restoreLedger(tabId: string, bookId: string): Promise<void> {
+    if (!api) return;
+    let loaded: LedgerLoad;
+    try {
+      loaded = await api.history.load(bookId);
+    } catch (err) {
+      // Not a `problem` on the tab: the book is open and every edit still
+      // works. What is gone is the undo history, and that is a sentence.
+      this.notice.set(
+        `This document's undo history could not be read, so it starts empty: `
+        + `${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+    // Closed while the read was in flight — a book opened and dismissed inside
+    // one IPC round trip. `close()` has already dropped this tab's entry, and
+    // putting one back would leave a ledger nothing will ever flush or free.
+    if (this.byId(tabId) === null) return;
+    const { done, undone } = loaded.actions;
+    if (done.length > 0 || undone.length > 0) {
+      this.ledgers.set(tabId, { done, undone });
+      /*
+       * THE ACTION NUMBERS CONTINUE from the highest one restored. They are one
+       * counter across every open document, and starting again from where this
+       * process happens to be would file this session's first action under a
+       * number the book's own history already used — two different actions
+       * called 12, in one stack, in one file.
+       */
+      for (const action of [...done, ...undone] as LedgerAction[]) {
+        this.actionSeq = Math.max(this.actionSeq, action.seq);
+      }
+    }
+    if (loaded.notice !== null) this.notice.set(loaded.notice);
   }
 
   /** Ctrl/Cmd+Z, from the Edit menu. The focused document's, never a global one. */
@@ -1676,8 +1767,8 @@ export class TabsService {
     const action = from === undefined ? undefined : from[from.length - 1];
     if (ledger === undefined || from === undefined || action === undefined) {
       this.notice.set(direction === 'undo'
-        ? `There is nothing to undo in ${tab.title}. A document's history is kept while it is open `
-          + 'and ends when it closes.'
+        ? `There is nothing to undo in ${tab.title}. A document's history is kept in its project `
+          + 'and survives closing the book, so this one has had nothing done to it yet.'
         : `There is nothing to redo in ${tab.title}.`);
       return;
     }
@@ -1751,6 +1842,11 @@ export class TabsService {
 
     from.pop();
     (direction === 'undo' ? ledger.undone : ledger.done).push(action);
+    // The action has moved from one stack to the other, which is a mutation of
+    // both — and the reason it is flushed HERE rather than at the top is that a
+    // replay which refused halfway returned above without moving anything, so
+    // the file still describes the book as it stands.
+    this.flush(tab.id);
 
     const current = this.byId(tab.id);
     const revision = current?.revision ?? tab.revision;

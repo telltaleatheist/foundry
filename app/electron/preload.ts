@@ -70,6 +70,11 @@ const api: FoundryApi = {
     save: (id, destination) => ipcRenderer.invoke('epub:save', id, destination),
   },
 
+  history: {
+    load: (bookId) => ipcRenderer.invoke('history:load', bookId),
+    save: (bookId, stacks) => ipcRenderer.invoke('history:save', bookId, stacks),
+  },
+
   prefs: {
     unlinkedNoteAnswer: () => ipcRenderer.invoke('prefs:unlinked-note-answer'),
     setUnlinkedNoteAnswer: (answer) =>

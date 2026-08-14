@@ -18,6 +18,8 @@
  *                             the live PDF.
  *     final/                  what Save and Export produce, named for the book.
  *     readings/<key>.jsonl    the bank of the model's per-page answers
+ *     history/<tree>.json     the undo ledger of the working copy of that name,
+ *                             bound to the generation that made it
  *
  * ── The rule the layout exists for ───────────────────────────────────────────
  *
@@ -63,7 +65,7 @@
  * tree unpacked from it goes into the same folder so the next open unpacks the
  * NEW book rather than reopening the old one's edits.
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { constants as fsconst, createReadStream, promises as fsp, type Dirent } from 'node:fs';
 import * as path from 'node:path';
 
@@ -102,6 +104,8 @@ const ARCHIVE = 'archive';
 const GENERATED = 'generated';
 const WORKING = 'working';
 const FINAL = 'final';
+/** The fifth folder: the undo ledgers, one per document. See `historyDir`. */
+const HISTORY = 'history';
 
 /**
  * `<libraryDir>/projects` — under the user's library, not under userData.
@@ -343,6 +347,10 @@ function readTrees(value: unknown): ProjectWorkingTree[] {
       dir,
       members,
       unpackedAt: typeof row['unpackedAt'] === 'number' ? row['unpackedAt'] : 0,
+      // Empty for a tree recorded before generations existed. NOT minted here:
+      // a read that writes is a read that can fail, and `treeGeneration` does it
+      // once, deliberately, at the moment something needs the value.
+      generation: typeof row['generation'] === 'string' ? row['generation'] : '',
     });
   }
   return trees;
@@ -938,7 +946,18 @@ export async function workingTreeFor(dir: string, entry: string): Promise<Workin
   return { root: path.join(dir, WORKING, tree.dir), members: tree.members };
 }
 
-/** Record a tree that is about to be written. See `openEpub` for the ordering. */
+/**
+ * Record a tree that is about to be written. See `openEpub` for the ordering.
+ *
+ * A FRESH GENERATION EVERY TIME, and this is the only place one is minted for a
+ * tree that is being made. The call happens exactly when a working copy comes
+ * into existence: the first unpack, and again after `rotateGenerated` has moved
+ * the previous origin AND its tree aside, which is what a re-cast and what
+ * "start over" both come down to. So the uuid changes precisely when the block
+ * ids in the tree may have been reassigned, and a ledger recorded against the
+ * old one stops being replayable at the same instant — which is the entire
+ * point (see `ProjectWorkingTree.generation`).
+ */
 export async function recordWorkingTree(
   dir: string,
   entry: string,
@@ -948,11 +967,71 @@ export async function recordWorkingTree(
   await withManifest(dir, async (manifest) => {
     manifest.working.trees = [
       ...manifest.working.trees.filter((tree) => tree.from !== entry),
-      { from: entry, dir: name, members: [...members], unpackedAt: Date.now() },
+      {
+        from: entry,
+        dir: name,
+        members: [...members],
+        unpackedAt: Date.now(),
+        generation: randomUUID(),
+      },
     ];
     await writeManifest(dir, manifest);
   });
   return path.join(dir, WORKING, name);
+}
+
+/**
+ * The generation of the tree unpacked from `entry`, minting one if it has none.
+ *
+ * BACKFILLING IS SAFE, and it is the only reason this can write. A tree recorded
+ * before this field existed has no history file that could name a generation —
+ * there was nothing writing one — so the first id it is given cannot possibly
+ * disagree with a ledger already on disk. From then on the ordinary rule holds:
+ * the id changes only when `recordWorkingTree` makes a new working copy.
+ *
+ * Refuses by name for an entry no tree was recorded for. That is not a state a
+ * caller reaches by accident — the book it is asking about is open, which means
+ * `ensureWorkingTree` recorded one — so it means the catalogue lost the tree
+ * somebody is editing, and guessing an id would file this session's undo history
+ * against a working copy nothing describes.
+ */
+export async function treeGeneration(dir: string, entry: string): Promise<string> {
+  return withManifest(dir, async (manifest) => {
+    const tree = manifest.working.trees.find((candidate) => candidate.from === entry);
+    if (tree === undefined) {
+      throw new ProjectError(
+        `${path.join(dir, MANIFEST)} lists no working copy unpacked from ${entry}, so there is `
+        + 'nothing for an undo history to be bound to.',
+      );
+    }
+    if (tree.generation.length > 0) return tree.generation;
+    const minted = randomUUID();
+    manifest.working.trees = manifest.working.trees.map(
+      (candidate) => (candidate.from === entry ? { ...candidate, generation: minted } : candidate),
+    );
+    await writeManifest(dir, manifest);
+    return minted;
+  });
+}
+
+/**
+ * `<project>/history/` — where the undo ledgers live, one file per document.
+ *
+ * A SIBLING OF THE FOUR LAYERS, on `readings/`'s precedent and for its reason: it
+ * is neither an origin nor something the user asked for, but it belongs to THIS
+ * BOOK and travels with it. Deliberately NOT inside `working/<tree>/`, which is
+ * an unpacked EPUB — a stray file in there is a file that has to be explained to
+ * every pass that walks the book — and not in userData, which nobody backs up
+ * and which would sever a history from the book it describes the moment the
+ * library folder moved.
+ */
+export function historyDir(dir: string): string {
+  return path.join(dir, HISTORY);
+}
+
+/** Where a history that is not this working copy's goes. Nothing is deleted. */
+export function historyArchiveDir(dir: string): string {
+  return stampedArchive(historyDir(dir));
 }
 
 /**

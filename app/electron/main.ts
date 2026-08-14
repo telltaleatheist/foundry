@@ -62,6 +62,7 @@ import {
   workingTreeOf,
   writeEpubMember,
 } from './epub-reader';
+import { loadLedger, saveLedger } from './history';
 import * as queue from './job-queue';
 import {
   adoptLegacyLayout,
@@ -87,6 +88,7 @@ import type {
   EnvInstallRequest,
   HeadingEcho,
   JobRequest,
+  LedgerStacks,
   NavEcho,
   RecentKind,
   SetupRequest,
@@ -1193,6 +1195,25 @@ function registerIpc(): void {
     // a project row say the book has been filed at all.
     await recordFinal(destination);
   });
+
+  /*
+   * ── The undo ledger, on disk ─────────────────────────────────────────────
+   *
+   * TWO CALLS, because the renderer has no filesystem and the stacks it holds
+   * are now a file in the book's own project. It names the BOOK and nothing
+   * else: main resolves which project, which working tree and which generation
+   * of that tree, so the renderer cannot name a path, cannot claim a generation,
+   * and therefore cannot talk one book's history into another book's folder.
+   *
+   * Load answers with a NOTICE as well as the stacks, and a load that found a
+   * history it could not use is not an error — it is one of three ordinary
+   * outcomes, all of which are said out loud. See electron/history.ts.
+   */
+  ipcMain.handle('history:load', (_event, bookId: string) => loadLedger(bookId));
+  // Called after EVERY mutation of either stack. Whole file, atomically, because
+  // a crash mid-write is exactly the case this feature exists for.
+  ipcMain.handle('history:save', (_event, bookId: string, stacks: LedgerStacks) =>
+    saveLedger(bookId, stacks));
 
   /*
    * ── The app's own preferences ────────────────────────────────────────────

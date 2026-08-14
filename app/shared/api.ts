@@ -25,6 +25,8 @@ import type {
   HeadingRenameOutcome,
   Job,
   JobRequest,
+  LedgerLoad,
+  LedgerStacks,
   MetadataOutcome,
   NavEcho,
   PdfMetadataFields,
@@ -357,6 +359,38 @@ export interface FoundryApi {
     chooseSavePath(id: string, suggestedName: string): Promise<string | null>;
     /** Repack the working copy to a granted path. Rejects for any other. */
     save(id: string, destination: string): Promise<void>;
+  };
+
+  /**
+   * A document's undo ledger, kept in its project so it survives the process.
+   *
+   * IT USED TO END WITH THE TAB. Owen asked for the other thing: open a project,
+   * edit a file, have Foundry die randomly, and still have the stack. So the
+   * ledger is flushed to `<project>/history/<working tree>.json` after every
+   * mutation of either stack — whole file, atomically — and read back the next
+   * time the book opens.
+   *
+   * THE RENDERER NAMES A BOOK AND NOTHING ELSE. Where the file is, and which
+   * GENERATION of the working copy it belongs to, are main's own records: a row
+   * names `data-bf-id="p47-3"`, that name means one thing in one working copy,
+   * and a history from before a re-cast or a start-over would put a paragraph in
+   * the wrong block. Main compares the file's generation with the catalogue's
+   * and archives a history that does not match rather than replaying it — see
+   * electron/history.ts for the three outcomes.
+   */
+  history: {
+    /**
+     * The stacks this document was left with, and one sentence about how that
+     * went. Empty stacks with a notice means a history was found and could not
+     * be used; empty stacks with no notice means there has never been one.
+     */
+    load(bookId: string): Promise<LedgerLoad>;
+    /**
+     * Flush both stacks. Rejects by name when the file on disk is one this
+     * session could not read or move aside — "could not preserve your history"
+     * and "have therefore overwritten it" must not be the same event.
+     */
+    save(bookId: string, stacks: LedgerStacks): Promise<void>;
   };
 
   /**

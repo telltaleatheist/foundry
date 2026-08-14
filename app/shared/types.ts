@@ -499,6 +499,26 @@ export interface ProjectWorkingTree {
   /** Every member, in archive order, `mimetype` first. */
   members: string[];
   unpackedAt: number;
+  /**
+   * WHICH LIFE OF THIS WORKING COPY THIS IS — a fresh uuid every time the tree
+   * is unpacked, and the one field in this catalogue that exists for a file the
+   * catalogue does not otherwise mention.
+   *
+   * The undo ledger on disk (electron/history.ts) records rows that name
+   * `data-bf-id="p47-3"` in a member. THAT NAME IS ONLY MEANINGFUL FOR THE
+   * WORKING COPY IT WAS RECORDED AGAINST. Start over rebuilds `working/` from
+   * `generated/`, a re-cast reassigns ids, and a row from a previous life would
+   * then put a paragraph into a block that is not the one it came from — the
+   * one failure mode worse than having no undo at all, because it looks like it
+   * worked. So the history file carries the generation it was written under, and
+   * a history whose generation is not this one is archived aside rather than
+   * replayed.
+   *
+   * Empty for a tree recorded before this field existed; `treeGeneration` mints
+   * one on first use, which is safe precisely because no history file can name a
+   * generation that was never written.
+   */
+  generation: string;
 }
 
 /**
@@ -879,5 +899,107 @@ export interface EpubBook {
    * once, because a door that is shut has to say so on the way in rather than
    * by doing nothing when somebody tries it.
    */
+  notice: string | null;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// The undo ledger, and the file it survives in
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Which setter puts one ledger row back.
+ *
+ * THE FIELD IS THE ROUTE, and there are five because there are five things this
+ * app can do to a document. Each names a call that already exists in main, with
+ * its own validator, keyed by the same id the original edit used.
+ *
+ * IN SHARED TYPES rather than in the service that uses them, because the ledger
+ * is written to disk now and main is what writes it. Main never REPLAYS a row —
+ * that is still entirely the renderer's, through the setters — but it does have
+ * to recognise one, so that a history file carrying a field this app cannot
+ * route is refused as the wrong shape instead of being handed back to a Ctrl+Z
+ * that would fall through every branch and do nothing.
+ */
+export type LedgerField = 'cut' | 'category' | 'html' | 'note-cut' | 'nav-label' | 'page-heading';
+
+/**
+ * One element, one field, and what it said on each side of an action.
+ *
+ * `target` is a `data-bf-id` for the three block fields, a footnote's own id
+ * (`fn25`) for `note-cut`, and a contents entry's href for the two rename
+ * fields — in every case, the name the ORIGINAL setter was called with, so the
+ * replay is that call again with the other value.
+ *
+ * AND THAT IS WHY THE FILE IS BOUND TO A GENERATION. Every one of those names is
+ * a name in ONE working copy: `p47-3` is the third stamped element on page 47 of
+ * the tree it was recorded against, and a re-cast is free to call something else
+ * that. See `ProjectWorkingTree.generation`.
+ */
+export interface LedgerRow {
+  /** The member the setter writes. Not always the chapter on screen. */
+  member: string;
+  target: string;
+  field: LedgerField;
+  before: string;
+  after: string;
+}
+
+/**
+ * One action — Owen's action number — and every row it moved.
+ *
+ * A batch is ONE action with many rows: a marquee's worth of cuts, an
+ * all-of-this-category strike, sixteen blocks relabelled at once. Ctrl+Z
+ * reverses all of them, and it falls out rather than being arranged: the gesture
+ * is one call to main, main answers with everything it moved, and that answer IS
+ * the rows.
+ */
+export interface LedgerAction {
+  seq: number;
+  /** Past tense: "struck 14 blocks" → "Undid: struck 14 blocks." */
+  label: string;
+  rows: readonly LedgerRow[];
+}
+
+/** Both stacks of one document, as they cross IPC and as they sit on disk. */
+export interface LedgerStacks {
+  done: LedgerAction[];
+  undone: LedgerAction[];
+}
+
+/**
+ * `history/<working tree>.json` — one document's undo ledger, on disk.
+ *
+ * WRITTEN AFTER EVERY MUTATION OF EITHER STACK, whole, atomically, because
+ * "flush on every change" plus a crash mid-write is exactly the case this
+ * feature exists for and a half-written history must never be what survives.
+ * See electron/history.ts for the write and for what happens to a file whose
+ * `generation` is not the working copy's.
+ */
+export interface DocumentHistory {
+  /** 1. Bumped only when a reader of an older file would get it wrong. */
+  version: number;
+  /** The `ProjectWorkingTree.generation` these rows name blocks in. */
+  generation: string;
+  /** The origin the tree was unpacked from — `generated/x.epub`. For a human. */
+  document: string;
+  savedAt: number;
+  done: LedgerAction[];
+  undone: LedgerAction[];
+}
+
+/**
+ * What `history:load` answers with: the stacks, and what had to be said about
+ * getting them.
+ *
+ * THE NOTICE IS NOT AN ERROR CHANNEL. Every one of the three outcomes is
+ * normal — a history restored, a history that belongs to a book that no longer
+ * exists, a history that will not parse — and the last two both END WITH EMPTY
+ * STACKS AND A SENTENCE naming the file and where it went. Never silently
+ * empty: a Ctrl+Z that does nothing because a file was quietly discarded is
+ * indistinguishable from one that is broken (ARCHITECTURE §8).
+ */
+export interface LedgerLoad {
+  actions: LedgerStacks;
+  /** One sentence for the strip, or null when there was nothing to say. */
   notice: string | null;
 }
