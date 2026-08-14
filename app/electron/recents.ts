@@ -128,6 +128,32 @@ export function forgetRecent(filePath: string): RecentDocument[] {
   return cache;
 }
 
+/**
+ * Forget every row that points anywhere inside `dir`.
+ *
+ * The one caller is a project being DELETED (electron/main.ts, `projects:delete`),
+ * and it exists because this list is keyed by FILE and a project is a folder full
+ * of them: the scan in `working/`, the cast book in `generated/`, whatever was
+ * filed into `final/`. Forgetting them one at a time would mean main enumerating
+ * a directory it has just erased.
+ *
+ * Leaving them would not merely be untidy. `openedAtFor` reads this list to date
+ * the project rows Home sorts by, and the app would go on offering — and would
+ * keep a last-opened time for — a book whose bytes it destroyed a second ago. A
+ * missing row here costs nothing: this was never a store, and the file it named
+ * is gone for a reason the user chose.
+ *
+ * PREFIX MATCH on the folded path, with the separator appended, so
+ * `…/projects/Kershaw-a1b2c3d4` cannot swallow `…/projects/Kershaw-a1b2c3d4-notes`
+ * — a sibling project whose key happens to start with this one's.
+ */
+export function forgetRecentsUnder(dir: string): RecentDocument[] {
+  const root = `${fold(path.resolve(dir))}/`;
+  cache = load().filter((item) => !fold(item.path).startsWith(root));
+  persist(cache);
+  return cache;
+}
+
 export function clearRecents(): RecentDocument[] {
   cache = [];
   persist(cache);
@@ -143,5 +169,10 @@ export function clearRecents(): RecentDocument[] {
  * second pair.
  */
 function samePath(a: string, b: string): boolean {
-  return a.replace(/\\/g, '/').toLowerCase() === b.replace(/\\/g, '/').toLowerCase();
+  return fold(a) === fold(b);
+}
+
+/** One spelling of a path, for comparing two of them. See `samePath`. */
+function fold(filePath: string): string {
+  return filePath.replace(/\\/g, '/').toLowerCase();
 }

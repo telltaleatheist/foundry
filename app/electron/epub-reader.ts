@@ -1674,6 +1674,33 @@ export function projectOf(id: string): string | null {
 }
 
 /**
+ * The name of a book from this project that is open RIGHT NOW, or null.
+ *
+ * MAIN'S OWN ANSWER to "is anything in here in use", for `projects:delete`. The
+ * renderer asks the same question of its tab list before it asks the user, and
+ * that check is the one that gives a good sentence; this is the one that is an
+ * AUTHORIZATION. A renderer that was talked into calling delete with an empty
+ * tab list would otherwise have main erase the working tree its own protocol
+ * handler is serving chapters out of — every image a 404, every save a failure —
+ * and on Windows the delete would stop halfway on the first locked file and
+ * leave a project that is neither there nor gone.
+ *
+ * `entry` is the origin under `generated/` the tree was unpacked from, so its
+ * basename is the book's own filename: the thing the user recognises.
+ *
+ * Answers for the OPEN BOOKS only, which is what `unpacked` holds — a PDF tab is
+ * bytes the renderer was handed once and holds in memory, with no directory of
+ * this app's open underneath it.
+ */
+export function openBookIn(projectDir: string): string | null {
+  const wanted = path.resolve(projectDir).toLowerCase();
+  for (const book of unpacked.values()) {
+    if (path.resolve(book.projectDir).toLowerCase() === wanted) return path.basename(book.entry);
+  }
+  return null;
+}
+
+/**
  * The two facts that name an open book's DOCUMENT rather than its session: the
  * project it lives in, and the origin its working tree was unpacked from.
  *

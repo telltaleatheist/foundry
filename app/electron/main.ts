@@ -46,6 +46,7 @@ import {
   closeEpub,
   exportWorkingCopy,
   navEchoForBlock,
+  openBookIn,
   openEpub,
   projectOf,
   readEpubMember,
@@ -66,14 +67,22 @@ import { loadLedger, saveLedger } from './history';
 import * as queue from './job-queue';
 import {
   adoptLegacyLayout,
+  deleteProject,
   finalDir,
   importDocument,
+  inspectProject,
   isManaged,
   listProjects,
   projectsDir,
   recordFinal,
 } from './projects';
-import { clearRecents, forgetRecent, listRecents, rememberRecent } from './recents';
+import {
+  clearRecents,
+  forgetRecent,
+  forgetRecentsUnder,
+  listRecents,
+  rememberRecent,
+} from './recents';
 import { readSettings, writeSettings } from './settings';
 import * as vllm from './vllm-server';
 import { planConversion, planTranslation } from './workspace';
@@ -137,6 +146,24 @@ const openable = new Set<string>();
  * is a second authorization path, and the day one copy learns a new rule is the
  * day the other one is a hole. Null means no.
  */
+/**
+ * Whether a path sits inside a directory, on Windows' terms.
+ *
+ * Case-insensitively and separator-blind, because one folder is spelled three
+ * ways here, and with the separator APPENDED to the folder first — so a project
+ * called `Kershaw-a1b2c3d4` cannot claim a job writing into
+ * `Kershaw-a1b2c3d4-notes` beside it and block a delete that has nothing to do
+ * with it.
+ *
+ * Note what this is NOT: it is not the check that decides what may be erased.
+ * That is `deletableProjectDir`, which proves a path is a direct child of the
+ * projects directory. This one only answers "is that run writing in here".
+ */
+function within(dir: string, filePath: string): boolean {
+  const fold = (target: string): string => path.resolve(target).replace(/\\/g, '/').toLowerCase();
+  return fold(filePath).startsWith(`${fold(dir).replace(/\/+$/, '')}/`);
+}
+
 function admitted(candidate: string): string | null {
   const resolved = path.resolve(candidate);
   return openable.has(resolved) ? resolved : null;
@@ -711,6 +738,25 @@ function buildMenu(): void {
 // IPC
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * A byte count as a person reads it — for the delete dialog, which has to say
+ * how much of the disk is about to be handed back.
+ *
+ * Binary units, one decimal, and no `Intl` unit formatting: this goes into a
+ * sentence that already reads plainly, and "1.4 GB" is the whole of what is
+ * being communicated.
+ */
+function sizeOnDisk(bytes: number): string {
+  const units = ['bytes', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return unit === 0 ? `${bytes} bytes` : `${value.toFixed(1)} ${units[unit]}`;
+}
+
 function registerIpc(): void {
   ipcMain.handle('dialog:open-document', () => promptForDocument());
 
@@ -994,6 +1040,133 @@ function registerIpc(): void {
 
   /** Home's primary listing: one row per book, expanding to what is in it. */
   ipcMain.handle('projects:list', () => listProjects());
+
+  /**
+   * Delete a project — the whole folder, off the disk, for real.
+   *
+   * THE ONE PLACE IN THIS APP WHERE SOMETHING IS REALLY DESTROYED. Everywhere
+   * else "nothing is ever deleted" holds (electron/projects.ts), because
+   * everywhere else it is FOUNDRY deciding that a person is finished with
+   * something it made. Here it is the person, about their own folder, having
+   * been told in words what is in it. A Delete button that quietly rotated the
+   * project into `archived-<stamp>/` would be a lie twice over: the library
+   * would go on filling up, and the folder the user pressed a button to be rid
+   * of would still be there for them to find and remove by hand.
+   *
+   * THREE THINGS ARE REFUSED BEFORE THE QUESTION IS EVEN ASKED, all of them BY
+   * NAME (ARCHITECTURE §8):
+   *
+   *   1. a path that is not a project directory — `inspectProject` proves it is
+   *      a DIRECT CHILD of `projectsDir()` before it reads a byte, and
+   *      `deleteProject` proves it again at the `rm`. That check is the whole
+   *      security boundary here and its reasoning is written down where it
+   *      lives; this handler must never be the thing that decides a path is
+   *      safe;
+   *
+   *   2. a book from this project open in a tab. The renderer checks its own tab
+   *      list first, because it is the side that knows the tab's title and can
+   *      say a sentence worth reading — but a renderer's word is not an
+   *      authorization (the `admitted` precedent, above), so main asks its OWN
+   *      record of what is unpacked. Deleting a working tree out from under a
+   *      live book leaves the protocol handler serving chapters that are gone,
+   *      and on Windows the delete stops halfway on the first locked file and
+   *      leaves a project that is neither there nor erased — worse than either;
+   *
+   *   3. the user themself, at the dialog, which defaults to Cancel.
+   *
+   * MAIN'S NATIVE BOX, like `confirmClose` and like every other question this
+   * app asks: modal to the window, so the next gesture cannot race it, and not a
+   * rectangle drawn over a page that can scroll out from under it.
+   *
+   * The sentence names the book, names the directory, and says what is inside —
+   * above all the READINGS BANK, because that is the only thing in a project
+   * that cost GPU-hours and cannot be rebuilt from anything else on disk. A
+   * scan re-imports, a working tree re-unpacks, an edition rebuilds; a page the
+   * model read is read again or not at all.
+   *
+   * Returns the sentence for the notice strip, or null when the user said no.
+   * A refusal THROWS, so it reaches the same strip through the renderer's
+   * ordinary catch and is never mistaken for a cancel.
+   */
+  ipcMain.handle('projects:delete', async (_event, dir: string) => {
+    const project = await inspectProject(dir);
+
+    const open = openBookIn(project.dir);
+    if (open !== null) {
+      throw new Error(
+        `${open} is open in Foundry right now, so “${project.title}” cannot be deleted — erasing `
+        + 'the working copy out from under a book that is being read would leave that tab showing '
+        + 'files that no longer exist, and would leave half a project on disk. Close the book '
+        + 'first, then delete it.',
+      );
+    }
+
+    /*
+     * A JOB WRITING INTO IT IS THE SAME HAZARD AS AN OPEN BOOK, and worse in
+     * one way: the engine is a separate process holding a file open in
+     * `generated/`, so the recursive remove fails PART WAY on Windows and
+     * leaves a project half erased — while the run carries on writing into a
+     * directory the catalogue no longer describes.
+     *
+     * Every state but `running` and `queued` is finished with the folder: a
+     * done, failed or cancelled row names a path nothing is holding.
+     */
+    const busy = queue.listJobs().find((job) =>
+      (job.state === 'running' || job.state === 'queued')
+      && within(project.dir, job.outputPath));
+    if (busy !== undefined) {
+      throw new Error(
+        `A ${busy.kind} job is ${busy.state === 'running' ? 'running' : 'waiting to run'} into `
+        + `“${project.title}” right now, so it cannot be deleted — the engine is writing into that `
+        + 'folder from another process, and erasing it underneath would leave half a project on '
+        + 'disk and a run writing into nothing. Cancel it in the shelf first, then delete.',
+      );
+    }
+
+    const bank = project.readings > 0
+      ? `It holds a readings bank of ${project.readings.toLocaleString()} pages the model has `
+        + 'already read. That is hours of GPU, it is the one thing in here that cannot be made '
+        + 'again from anything else on this disk, and once it is gone a future conversion of this '
+        + 'book pays for every page from scratch.'
+      : 'There is no readings bank in it, so nothing in here costs GPU-hours to make again.';
+    const filed = project.filed
+      ? ' The copy you filed into this project\'s own folder is inside it and goes with it.'
+      : '';
+    const made = project.documents === 0
+      ? 'nothing has been made from it yet'
+      : project.documents === 1
+        ? 'the one document Foundry has made from it'
+        : `the ${project.documents} documents Foundry has made from it`;
+
+    const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
+    const options = {
+      type: 'warning' as const,
+      buttons: ['Delete this project', 'Keep it'],
+      // Cancel is the default and the destructive answer is not — this is the
+      // one dialog in the app where a reflexive Enter would destroy something.
+      defaultId: 1,
+      cancelId: 1,
+      title: 'Delete this project?',
+      message: `“${project.title}” will be deleted from this computer.`,
+      detail: `${project.dir} and everything under it goes: the original you imported, ${made}, `
+        + 'every working copy and every edit in them, and the undo history. '
+        + `${sizeOnDisk(project.bytes)} in all.${filed}\n\n${bank}\n\n`
+        + 'This is a real delete. The folder is removed from the disk — it is not moved aside, '
+        + 'Foundry keeps no copy of it anywhere else, and there is nothing that will bring it back.',
+    };
+    const answer = win
+      ? await dialog.showMessageBox(win, options)
+      : await dialog.showMessageBox(options);
+    if (answer.response !== 0) return null;
+
+    await deleteProject(project.dir);
+    // The recents list is keyed by file and a project is a folder of them, so
+    // every row pointing inside goes with it. Otherwise the app would keep a
+    // last-opened time for — and `listProjects` would keep dating a row by — a
+    // book whose bytes it destroyed a moment ago.
+    forgetRecentsUnder(project.dir);
+    return `Deleted “${project.title}”. ${project.dir} and everything in it is gone from this computer.`;
+  });
 
   // ── Books ────────────────────────────────────────────────────────────────
 

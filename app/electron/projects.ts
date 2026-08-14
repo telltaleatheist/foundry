@@ -64,6 +64,17 @@
  * `archiveReadingsBank` (src/vlm/readings.ts) rotates a bank, and the working
  * tree unpacked from it goes into the same folder so the next open unpacks the
  * NEW book rather than reopening the old one's edits.
+ *
+ * ── Except when the user says so ─────────────────────────────────────────────
+ *
+ * `deleteProject` is the single exception and the rule survives it intact, because
+ * the rule was never "these bytes are sacred" — it is that THIS APP does not get
+ * to decide a person's work is finished with. Every rotation above is Foundry
+ * choosing, on its own, what to do with something it was not asked about; a
+ * delete from Home is the user choosing, about their own folder, having been told
+ * in words what is in it. Archiving instead would leave a directory they would
+ * then have to go and delete by hand, which is not a kindness, it is a lie about
+ * what the button did.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { constants as fsconst, createReadStream, promises as fsp, type Dirent } from 'node:fs';
@@ -659,20 +670,51 @@ export async function importDocument(
     await fsp.mkdir(path.join(dir, live), { recursive: true });
     const made = await copyNewOnly(archived, path.join(dir, live, liveFile));
     let notice: string | null = null;
-    if (made && kind === 'pdf') {
+    /*
+     * CATALOGUED WHETHER OR NOT THIS CALL MADE THE COPY, and the two used to be
+     * one condition. `copyNewOnly` answers false when the file is already there,
+     * which is the ordinary outcome of importing the same book twice and the
+     * inevitable outcome of a crash between the copy and the manifest write —
+     * and skipping the catalogue on false left the live document ON DISK and
+     * UNLISTED. Home reads the catalogue, so the project drew as a book nothing
+     * had been made from, with the user's own scan sitting in `working/` a
+     * folder away and no row anywhere that would open it. The copy existing is
+     * exactly the condition under which the row has to be there.
+     *
+     * The STAMP is still gated on `made`, and that gate is the real one: it runs
+     * inside the copy that makes an origin, once, before anything has read it
+     * (see `stampImported`), and re-stamping a book somebody has been editing
+     * would be this app rewriting an origin after the fact.
+     */
+    if (kind === 'pdf') {
+      const already = manifest.working.files.find((row) => row.file === liveFile);
       manifest.working.files = [
         ...manifest.working.files.filter((row) => row.file !== liveFile),
-        { file: liveFile, kind: 'pdf', from: `${ARCHIVE}/${manifest.archive.file}`, madeAt: Date.now() },
+        {
+          file: liveFile,
+          kind: 'pdf',
+          from: `${ARCHIVE}/${manifest.archive.file}`,
+          // The copy's own age, not this import's. A row written now for a file
+          // copied last week would date the document by when it was noticed.
+          madeAt: already?.madeAt ?? Date.now(),
+        },
       ];
-    } else if (made) {
-      // Stamped BEFORE the catalogue records it, so the file the manifest names
-      // is a book everything downstream can read. A refusal is a sentence and
-      // not a throw: the copy stands, the book opens, and the person is told
-      // which of its doors is shut.
-      notice = await stampImported(path.join(dir, live, liveFile));
+    } else {
+      // A refusal from the stamp is a sentence and not a throw: the copy stands,
+      // the book opens, and the person is told which of its doors is shut.
+      if (made) notice = await stampImported(path.join(dir, live, liveFile));
+      const already = manifest.generated.find((row) => row.file === liveFile);
       manifest.generated = [
         ...manifest.generated.filter((row) => row.file !== liveFile),
-        { file: liveFile, kind: 'epub', role: 'imported', madeAt: Date.now() },
+        {
+          file: liveFile,
+          kind: 'epub',
+          // An existing row KEEPS ITS ROLE. `<stem>.epub` is also the name a
+          // cast writes, and relabelling a cast book `imported` would tell every
+          // later pass that this project's origin came from the user.
+          role: already?.role ?? 'imported',
+          madeAt: already?.madeAt ?? Date.now(),
+        },
       ];
     }
     await writeManifest(dir, manifest);
@@ -1075,6 +1117,11 @@ export async function noteProjectTitle(dir: string, title: string): Promise<void
  * which of them was theirs. The archive and the generated origin behind it are
  * this app's bookkeeping and are reachable through Reveal.
  *
+ * THE BOOK ITSELF IS ONE OF THE DOCUMENTS. What a project has been used to make
+ * is the interesting question, but it is not the only one, and a project that
+ * has only ever been imported still has something to open. See the fallback at
+ * the end of `summarise`.
+ *
  * A project whose catalogue will not parse is STILL LISTED, carrying the reason
  * — Home is the only door back to a book, and a row that silently disappears
  * leaves a person hunting for something that "was there yesterday". It offers no
@@ -1150,6 +1197,51 @@ async function summarise(dir: string, name: string): Promise<ProjectSummary> {
     });
   }
 
+  /*
+   * ── THE SOURCE IS A DOCUMENT TOO ──────────────────────────────────────────
+   *
+   * The two loops above list what has been MADE from a book. That is the right
+   * emphasis and it was the whole answer for exactly as long as every project
+   * had a catalogued live copy — and then Owen clicked a book on Home and was
+   * told "nothing has been made from this book yet" about a project whose PDF
+   * was sitting in it. A row that offers nothing to open is a row that has
+   * nothing to say: the one thing a person wants from a book they imported is
+   * to open it.
+   *
+   * ONLY WHEN NOTHING ELSE REPRESENTS IT. A properly catalogued project already
+   * lists its live PDF (from `working.files`) and its imported EPUB (from
+   * `generated`, role `imported`), and a second row for the same book is the
+   * confusion this file's "ONE ROW PER DOCUMENT" note exists to prevent.
+   *
+   * THE LIVE COPY IF THERE IS ONE, the archived original otherwise. The live
+   * copy is what the user means by "the PDF" and is the layer this app edits;
+   * the archive is never written, and offering it is a last resort — but a book
+   * you can only open read-only is still infinitely more use than a row that
+   * says the project is empty. Either way the label is a filename and the layer
+   * it came out of is never named on screen.
+   *
+   * `managed` is false: this document is the user's own file, and it is in
+   * `archive/` precisely because they still have it.
+   */
+  if (documents.length === 0 && manifest.archive !== null) {
+    const liveFile = `${manifest.stem}${manifest.archive.kind === 'pdf' ? '.pdf' : '.epub'}`;
+    const liveLayer = manifest.archive.kind === 'pdf' ? WORKING : GENERATED;
+    const live = path.join(dir, liveLayer, liveFile);
+    const origin = path.join(dir, ARCHIVE, manifest.archive.file);
+    const onDisk = await exists(live);
+    documents.push({
+      path: onDisk ? live : origin,
+      kind: manifest.archive.kind,
+      role: 'archive',
+      label: onDisk ? liveFile : manifest.archive.file,
+      // The project's own age. Nothing recorded when this file arrived, because
+      // until now nothing listed it.
+      at: manifest.createdAt,
+      missing: !onDisk && !await exists(origin),
+      managed: false,
+    });
+  }
+
   const openedAt = documents.reduce(
     (newest, row) => Math.max(newest, openedAtFor(row.path) ?? 0),
     0,
@@ -1168,6 +1260,227 @@ async function summarise(dir: string, name: string): Promise<ProjectSummary> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Deleting one — the only place in this app where something really goes
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Prove `dir` is a project directory, and hand it back resolved. Or refuse.
+ *
+ * THIS IS A SECURITY BOUNDARY, not a tidiness check, and it is worth being blunt
+ * about why. `deleteProject` calls `fsp.rm(dir, { recursive: true })`. The `dir`
+ * it is given came across IPC from the renderer — a page that runs a book's own
+ * markup in an iframe and an OpenAI-compatible endpoint's answers through a
+ * parser. Every other door in this app that touches a path the renderer named
+ * asks main's own allow-list first (`admitted`, in main.ts) precisely because a
+ * renderer's word is not an authorization. This function is the whole of that
+ * gate for the one call that erases directories, so if it is wrong, an argument
+ * of `C:\Users\tellt` is a recursive delete of a home folder.
+ *
+ * A DIRECT CHILD, not a descendant. `projectDirOf` above answers "which project
+ * is this path in", which is the right question for reading and the wrong one
+ * here: it maps `…/projects/<key>/working/<tree>/EPUB` to the project, and a
+ * containment test built on it would happily accept a path that is not a project
+ * at all. What may be deleted is exactly the thing Home lists — one segment
+ * under `projectsDir()` — so the test is that `path.relative` from the root
+ * yields exactly ONE segment. That rejects the root itself (empty), anything
+ * above it (`..`), anything on another drive (`path.relative` returns an absolute
+ * path across Windows volumes), and every path deeper than a project.
+ *
+ * `path.resolve` first, so `.` and `..` inside the argument are spent before the
+ * comparison rather than after it — a string test against an unresolved path is
+ * the classic way this check gets defeated.
+ *
+ * NO EXCEPTIONS and no second caller. If something ever needs to erase a
+ * directory that is not a project, it does not get to reach it through here.
+ */
+function deletableProjectDir(dir: string): string {
+  const root = projectsDir();
+  const resolved = path.resolve(dir);
+  const inside = path.relative(root, resolved);
+  if (inside.length === 0 || inside.startsWith('..') || path.isAbsolute(inside)
+    || inside.split(path.sep).length !== 1) {
+    throw new ProjectError(
+      `${resolved} is not one of Foundry's projects — those are the directories directly inside `
+      + `${root}, and nothing else may be deleted. Refusing to erase it.`,
+    );
+  }
+  return resolved;
+}
+
+/** What is in a project, for the sentence that asks whether to erase it. */
+export interface ProjectInventory {
+  /** The directory, resolved and PROVEN to be one this app may delete. */
+  dir: string;
+  /** The book's own title where anything has read one, the key otherwise. */
+  title: string;
+  /**
+   * Pages the model has already read and answered for, across every bank in
+   * `readings/` — including the ones a re-cast rotated into `archived-<stamp>/`.
+   *
+   * THE ONE NUMBER THE DIALOG EXISTS TO SAY. Everything else in a project can be
+   * made again from something: the archive is a copy of a file the user still
+   * has, the working tree unpacks from the origin, the final edition rebuilds
+   * from the working tree. A bank is GPU-hours and there is no second source for
+   * it anywhere on disk, so a person deleting one should be told how many.
+   */
+  readings: number;
+  /**
+   * How many documents the catalogue lists — the scan, the book, translations.
+   *
+   * Counted the way `summarise` counts them, ONE PER DOCUMENT and not one per
+   * file, because this number reaches a dialog and has to agree with the rows
+   * the user just expanded on Home. A searchable PDF is the live PDF, not a
+   * second document, which is exactly why it is skipped here too.
+   */
+  documents: number;
+  /** True once anything has been filed into `final/`. That copy is in here too. */
+  filed: boolean;
+  /** Everything under the directory, in bytes. A scan is most of it. */
+  bytes: number;
+}
+
+/**
+ * Read a project for the delete confirmation, without touching a thing.
+ *
+ * Checks the path FIRST, before it reads a byte, so a caller that named
+ * something that is not a project is refused by the same sentence whether it got
+ * as far as the dialog or not.
+ *
+ * A CATALOGUE THAT WILL NOT PARSE IS NOT FATAL HERE, and that is the one place
+ * in this file where that is true. Everywhere else a bad `project.json` stops
+ * the operation because the operation depends on knowing what is in the folder;
+ * delete depends on nothing but the folder existing, and a project whose
+ * catalogue is broken is exactly the project a person most wants to be rid of.
+ * The row on Home already carries the reason, and the title falls back to the
+ * directory's own key.
+ */
+export async function inspectProject(dir: string): Promise<ProjectInventory> {
+  const resolved = deletableProjectDir(dir);
+  let manifest: ProjectManifest | null = null;
+  try {
+    manifest = await readManifest(resolved);
+  } catch {
+    manifest = null;
+  }
+  return {
+    dir: resolved,
+    title: manifest?.title ?? path.basename(resolved),
+    readings: await countBankPages(path.join(resolved, 'readings')),
+    documents: manifest === null
+      ? 0
+      : manifest.working.files.length
+        + manifest.generated.filter((row) => row.role !== 'searchable').length,
+    filed: (manifest?.final.length ?? 0) > 0,
+    bytes: await measure(resolved),
+  };
+}
+
+/**
+ * Erase the whole project directory. There is no undo and nothing is kept.
+ *
+ * THROUGH THE EDIT CHAIN (`edits`), not around it. A background
+ * `noteProjectTitle` or a job recording its output can be mid-write when this
+ * runs, and a manifest write that lands after the `rm` would recreate the
+ * directory with a lone `project.json` in it — a ghost project on Home naming a
+ * book with no files. Queuing behind whatever is in flight costs nothing;
+ * projects are edited perhaps twice a minute.
+ *
+ * It reads no manifest to get there, deliberately: `withManifest` would refuse a
+ * project whose catalogue does not parse, and those are deletable too.
+ *
+ * `force: true` so a directory that is already half gone — an earlier delete
+ * that hit a locked file — finishes rather than refusing. The path check has
+ * already run and runs again here; being generous about a missing file is not
+ * being generous about which directory this is.
+ */
+export async function deleteProject(dir: string): Promise<void> {
+  const resolved = deletableProjectDir(dir);
+  const key = resolved.toLowerCase();
+  const previous = edits.get(key) ?? Promise.resolve();
+  const next = previous
+    .catch(() => { /* see withManifest — a failed edit must not block this */ })
+    .then(() => fsp.rm(resolved, { recursive: true, force: true }));
+  edits.set(key, next);
+  await next;
+  // Nothing may queue behind a directory that is gone: the same book imported
+  // again lands on this exact path (the key is of its content), and a fresh
+  // project chained after this promise would be waiting on a delete for no
+  // reason anybody could find later.
+  if (edits.get(key) === next) edits.delete(key);
+}
+
+/** Every byte under `dir`, counted by walking it. Missing is zero, never a throw. */
+async function measure(dir: string): Promise<number> {
+  let entries: Dirent[];
+  try {
+    entries = await fsp.readdir(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  let bytes = 0;
+  for (const entry of entries) {
+    const here = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      bytes += await measure(here);
+    } else if (entry.isFile()) {
+      // A file that vanished between the readdir and the stat is a file whose
+      // size is no longer part of the answer, not a reason to fail a dialog.
+      try {
+        bytes += (await fsp.stat(here)).size;
+      } catch { /* it went away */ }
+    }
+  }
+  return bytes;
+}
+
+/**
+ * Pages in every readings bank under `dir`, by counting the lines in them.
+ *
+ * A bank is one JSON object per line, one line per page (src/vlm/readings.ts), so
+ * the newline count IS the page count. Counted by STREAMING and looking for
+ * `\n` bytes rather than by parsing: a bank for a long book is megabytes, this
+ * runs to put a number in a dialog, and nothing here cares what the answers say.
+ *
+ * Recursive, because `archived-<stamp>/` banks are hours of GPU too — a person
+ * who re-cast a book twice has paid for those pages twice and is about to lose
+ * both.
+ */
+async function countBankPages(dir: string): Promise<number> {
+  let entries: Dirent[];
+  try {
+    entries = await fsp.readdir(dir, { withFileTypes: true });
+  } catch {
+    return 0; // No bank: this book has never been read by the model.
+  }
+  let pages = 0;
+  for (const entry of entries) {
+    const here = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      pages += await countBankPages(here);
+    } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.jsonl')) {
+      pages += await countLines(here);
+    }
+  }
+  return pages;
+}
+
+function countLines(file: string): Promise<number> {
+  return new Promise<number>((resolve) => {
+    let lines = 0;
+    const stream = createReadStream(file);
+    stream.on('data', (chunk: string | Buffer) => {
+      const bytes = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+      for (const byte of bytes) if (byte === 0x0a) lines += 1;
+    });
+    // An unreadable bank is reported as no pages rather than as a failure. The
+    // number is there to inform a question, and a dialog that will not open
+    // because a count failed is a delete button that does nothing.
+    stream.on('error', () => resolve(lines));
+    stream.on('end', () => resolve(lines));
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Adopting what was already on disk
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1180,6 +1493,16 @@ function legacyWorkspaceDir(): string {
 function legacyReadingsDir(): string {
   return path.join(app.getPath('userData'), 'readings');
 }
+
+/**
+ * `<userData>/readings/adopted/` — where a bank goes once its copy is in place.
+ *
+ * A SUBFOLDER, so the scan (which skips directories) stops seeing it, and the
+ * bytes are still exactly where somebody who goes looking would look. See
+ * `adoptLegacyBanks` for why a bank that stayed in the scanned directory was a
+ * bug and not a nicety.
+ */
+const ADOPTED = 'adopted';
 
 /**
  * `Buch-a1b2c3d4.epub`, `Buch-a1b2c3d4.en.epub`, `Buch-a1b2c3d4.pdf`.
@@ -1210,9 +1533,9 @@ const LEGACY_BANK = /^(?<stem>.+)-(?<hex>[0-9a-f]{8})\.jsonl$/i;
  *
  * THE OUTPUTS ARE MOVED and the READINGS ARE COPIED, and the asymmetry is
  * deliberate. An output is a file this app wrote and can write again; a bank is
- * GPU-hours, and Owen has real ones on this machine — leaving the originals
- * where the old layout expects them costs a few megabytes and means a mistake
- * here cannot destroy them.
+ * GPU-hours, and Owen has real ones on this machine — copying means a mistake
+ * here cannot destroy one. The copy is then SET ASIDE rather than left in place:
+ * see `adoptLegacyBanks`, where leaving it was a bug with teeth.
  *
  * A FILE WHOSE KEY CANNOT BE READ IS LEFT WHERE IT IS and named in a log line.
  * Never moved on a guess: a book filed under the wrong project is a book the
@@ -1309,6 +1632,41 @@ async function adoptLegacyGenerated(said: string[]): Promise<void> {
   }
 }
 
+/**
+ * Copy each flat bank into its project, then SET THE ORIGINAL ASIDE.
+ *
+ * ── The bug the set-aside fixes, because it had teeth ────────────────────────
+ *
+ * This used to copy and leave the original exactly where it was, and call itself
+ * idempotent on the strength of `copyNewOnly` refusing an existing destination.
+ * It was idempotent about the COPY and about nothing else: the file stayed in
+ * the directory this scans, so every launch found it again, and finding it again
+ * means `withCreatedProject` — which MAKES the project directory if it is not
+ * there. Nothing further was copied and nothing was said, so the loop was
+ * invisible.
+ *
+ * Then Home got a delete button, and the loop stopped being invisible: a project
+ * the user deleted came back on the next launch as an empty shell — a
+ * `project.json` naming a book, a `readings/` folder, and no documents at all.
+ * Measured on Owen's machine, an hour after a delete. A delete that undoes
+ * itself at the next launch is not a delete, and the user has no way to tell
+ * which of the two things they are looking at.
+ *
+ * So the original MOVES into `adopted/` once its copy is in place. The bytes are
+ * still there — this function still refuses to be the thing that destroys a
+ * bank — but the scan no longer sees them, and adoption becomes idempotent IN
+ * FACT rather than in intention. `adoptLegacyGenerated` never had this problem
+ * because it moves what it adopts.
+ *
+ * IF THE SET-ASIDE CANNOT HAPPEN, SAY SO BY NAME. A bank that could not be moved
+ * is one this will find again next launch, so the sentence in the log is the
+ * only warning that the shell is going to come back — and it names the file, the
+ * place it was going, and why. A destination in `adopted/` that already exists
+ * stops this BEFORE the project is created, which is the one case that can be
+ * headed off entirely: two flat files of one name cannot both be set aside, and
+ * creating a directory for the second would recreate the very shell this is
+ * meant to stop.
+ */
 async function adoptLegacyBanks(said: string[]): Promise<void> {
   const from = legacyReadingsDir();
   let entries: Dirent[];
@@ -1350,12 +1708,30 @@ async function adoptLegacyBanks(said: string[]): Promise<void> {
     // digit would be a bank the resume never finds — and the whole point of
     // copying these in is that the next run does not read those pages again.
     const destination = path.join(dir, 'readings', `${key}.jsonl`);
+    const aside = path.join(from, ADOPTED, entry.name);
+    // Asked BEFORE anything is created, because this is the failure that would
+    // otherwise recreate a deleted project on every launch forever.
+    if (await exists(aside)) {
+      said.push(
+        `${aside} already holds a bank of that name, so ${source} cannot be set aside and was `
+        + 'left where it is. Nothing was adopted from it — move one of the two away by hand.',
+      );
+      continue;
+    }
     try {
       await withCreatedProject(dir, key, sanitiseStem(slug), async () => {
         await fsp.mkdir(path.join(dir, 'readings'), { recursive: true });
-        // A COPY, and the original stays: see `adoptLegacyLayout`.
+        // A COPY, never a move: see `adoptLegacyLayout`. False means the copy is
+        // already there from an earlier launch — which still has to be set aside
+        // below, and on Owen's machine those are the ones that matter.
         if (await copyNewOnly(source, destination)) said.push(`${entry.name} -> ${destination} (copied)`);
       });
+      // Only ever after the copy exists. A set-aside that ran first would, on a
+      // failure between the two, leave the bank in a folder nothing reads and no
+      // project holding it — the one outcome worse than adopting it twice.
+      await fsp.mkdir(path.join(from, ADOPTED), { recursive: true });
+      await fsp.rename(source, aside);
+      said.push(`${entry.name} -> ${aside} (set aside; the copy in the project is the live one)`);
     } catch (err) {
       said.push(`${source} could not be adopted (${(err as Error).message}). Left where it is.`);
     }

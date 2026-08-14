@@ -49,4 +49,35 @@ export class ProjectsService {
       return next;
     });
   }
+
+  /**
+   * Ask main to erase a project, and re-read the list if it did.
+   *
+   * NOT AN EXCEPTION to "this class never edits a row", which is the point of
+   * the round trip: the row does not disappear because this asked for it to, it
+   * disappears because the folder it described is no longer in `projects/` when
+   * `refresh()` reads that directory again. Main asks the user first, in its own
+   * dialog, and may refuse outright — so a renderer that patched its own list on
+   * the way out would show a book as deleted that is still sitting on the disk.
+   *
+   * The expansion is dropped with it, and that is not housekeeping: a project is
+   * keyed by its content hash, so re-importing the same book lands on the same
+   * key, and a stale key left in this set would make the new project's row
+   * arrive already open for a reason nobody could account for.
+   *
+   * Returns what to say in the notice strip, or null when the user cancelled —
+   * a cancel is silence. A refusal throws, and the caller says it.
+   */
+  async remove(project: ProjectSummary): Promise<string | null> {
+    if (!api) return null;
+    const said = await api.projects.delete(project.dir);
+    if (said === null) return null;
+    this.open.update((keys) => {
+      const next = new Set(keys);
+      next.delete(project.key);
+      return next;
+    });
+    await this.refresh();
+    return said;
+  }
 }

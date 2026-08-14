@@ -25,11 +25,17 @@ import { UiService } from '../../core/ui.service';
  * any one of those is opened, because the interesting question ("open the
  * English one") is a question about the book first and the file second.
  *
- * A row is never REMOVED from here. There is no Clear and no ✕, deliberately:
- * the old list was a cache of names and forgetting one cost nothing, but this
- * one is the library itself, and a button that made a book disappear from the
- * only screen that lists it would be a delete button wearing a nicer word.
- * Reveal is the escape hatch — the folder is right there, and it is the user's.
+ * A row leaves this list ONE WAY, and it takes the book with it. There is no
+ * Clear and no "forget this", deliberately: the old recents list was a cache of
+ * names and dropping one cost nothing, but this one is the library itself, and a
+ * button that made a book vanish from the only screen that lists it while
+ * leaving the folder on disk would be a delete button wearing a nicer word.
+ *
+ * So the button beside Reveal is the honest version of that: it DELETES — the
+ * project directory and everything in it, off the disk, for real. Main asks
+ * first, in its own dialog, naming the book and what is in the folder (see
+ * `projects:delete` in electron/main.ts); this side's job is to refuse early
+ * when a document from the project is open, and to say what happened.
  *
  * IT IS ALSO WHAT AN EMPTY COLUMN SHOWS. Ctrl+\ makes a column with nothing in
  * it, and the useful thing to put in a column with nothing in it is the library
@@ -95,6 +101,11 @@ import { UiService } from '../../core/ui.service';
                   <span class="when">{{ project.openedAt > 0 ? when(project.openedAt) : '' }}</span>
                 </button>
                 <button class="x" (click)="reveal(project)" title="Show this project's folder">⌕</button>
+                <button
+                  class="x danger"
+                  (click)="remove(project)"
+                  [title]="'Delete this project — ' + project.dir + ' and everything in it'"
+                >⌦</button>
               </li>
 
               @if (projects.expanded().has(project.key)) {
@@ -122,7 +133,12 @@ import { UiService } from '../../core/ui.service';
                   }
                   @if (project.documents.length === 0) {
                     <li class="detail">
-                      <p class="none">Nothing has been made from this book yet.</p>
+                      <!-- Only when there is genuinely nothing to open: the
+                           listing offers the book's own document as well as
+                           anything made from it, so an empty expansion means an
+                           empty folder — a project left behind by something
+                           that did not finish. -->
+                      <p class="none">There is nothing in this project to open.</p>
                     </li>
                   }
                 }
@@ -267,6 +283,12 @@ import { UiService } from '../../core/ui.service';
       padding: 6px; border-radius: var(--radius-sm);
     }
     .x:hover { background: var(--bg-hover); color: var(--text-primary); }
+    /* The one control in this app that destroys something wears the error
+       colour on hover — the same red the "not there any more" tag uses. Quiet
+       until the pointer is on it: it sits beside Reveal on every row, and a
+       permanently red button on a list of books reads as a warning about the
+       books rather than as an action. */
+    .x.danger:hover { background: var(--error-soft); color: var(--error); }
   `],
 })
 export class HomeComponent {
@@ -351,6 +373,46 @@ export class HomeComponent {
     void api?.reveal(project.dir);
   }
 
+  /**
+   * Delete the project — the folder and everything in it, off the disk.
+   *
+   * THE TAB CHECK IS HERE AND ALSO IN MAIN, and the two are not redundant. This
+   * one is the one that can say a sentence worth reading: this side holds the
+   * tabs, so it knows the document's TITLE — the words on the tab the user is
+   * looking at — and can name it and say that closing it makes this possible.
+   * Main's is the one that is an authorization: it asks its own record of what
+   * is unpacked, because a renderer's word about its own state is not a fact
+   * main may act on when the action is a recursive delete. Deleting a working
+   * tree out from under an open book leaves the viewer serving files that are
+   * gone, and on Windows the delete stops on the first locked file and leaves
+   * half a project.
+   *
+   * EVERY TAB, not just the focused one, and matched on the PATH rather than on
+   * anything the row supplies: an editor tab points at its book's path too, and
+   * a book can be open in more than one column.
+   *
+   * A cancel is silence. Anything else — the sentence main returns when the
+   * folder is gone, or a refusal from either side — goes to the notice strip,
+   * which is where this app says what it just did.
+   */
+  protected async remove(project: ProjectSummary): Promise<void> {
+    const open = this.tabs.tabs().find((tab) => within(project.dir, tab.path));
+    if (open !== undefined) {
+      this.tabs.notice.set(
+        `“${open.title}” is open from this project, so it cannot be deleted while you are `
+        + 'reading it — the delete would leave this tab showing files that no longer exist. '
+        + 'Close it, then try again.',
+      );
+      return;
+    }
+    try {
+      const said = await this.projects.remove(project);
+      if (said !== null) this.tabs.notice.set(said);
+    } catch (err) {
+      this.tabs.notice.set(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   protected settings(): void {
     void this.router.navigateByUrl('/settings');
   }
@@ -363,4 +425,20 @@ export class HomeComponent {
     if (days < 30) return `${days} days ago`;
     return new Date(at).toLocaleDateString();
   }
+}
+
+/**
+ * Is `filePath` inside `dir`? Folded, because on Windows one file arrives
+ * spelled three ways — the same reason recents compares paths this way.
+ *
+ * The separator is appended to the folder before the prefix test, so a project
+ * called `Kershaw-a1b2c3d4` does not claim the tabs of `Kershaw-a1b2c3d4-notes`
+ * sitting beside it and block a delete that has nothing to do with it. This is
+ * a check that produces a MESSAGE, not one that grants anything: main proves for
+ * itself what may be erased.
+ */
+function within(dir: string, filePath: string): boolean {
+  const fold = (target: string): string => target.replace(/\\/g, '/').toLowerCase();
+  const root = fold(dir).replace(/\/+$/, '');
+  return fold(filePath).startsWith(`${root}/`);
 }

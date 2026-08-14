@@ -93,6 +93,7 @@ const api: FoundryApi = {
 
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
+    delete: (dir) => ipcRenderer.invoke('projects:delete', dir),
   },
 
   recents: {

@@ -436,6 +436,22 @@ export interface FoundryApi {
    */
   projects: {
     list(): Promise<ProjectSummary[]>;
+    /**
+     * Erase one project's whole directory — archive, generated, working, final,
+     * readings, history — from the disk. It really deletes; nothing is rotated
+     * aside and there is no copy anywhere else.
+     *
+     * MAIN ASKS FIRST, in its own native dialog, naming the book and saying what
+     * is in the folder. The renderer never gets to skip that question: it names
+     * a directory and main decides, the same way it does for everything else it
+     * is handed a path for.
+     *
+     * Resolves to the sentence for the notice strip once the folder is gone, or
+     * NULL when the user answered Keep it. A refusal — a path that is not a
+     * project, a book from it open in a tab — REJECTS with the reason, so the
+     * caller's ordinary catch says it and a cancel is never mistaken for one.
+     */
+    delete(dir: string): Promise<string | null>;
   };
 
   /**
