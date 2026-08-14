@@ -2,6 +2,9 @@ import { NgTemplateOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 
+import { qualify } from '@shared/documents';
+import type { ProjectDocument } from '@shared/types';
+
 import { api } from '../../core/foundry';
 import { ProjectsService } from '../../core/projects.service';
 import { TabsService, type Tab } from '../../core/tabs.service';
@@ -35,9 +38,12 @@ import { UiService } from '../../core/ui.service';
  * ── The groups ───────────────────────────────────────────────────────────────
  *
  * A DOCUMENT OPENED OUT OF A PROJECT BRINGS ITS PROJECT WITH IT. The group
- * header names the book, and under it are ALL of that project's documents — the
- * scan, the cast EPUB, the real-text PDF, a translation — whether or not they
- * are open. So flipping from the scan to the book made from it is one click,
+ * header names the book, and under it are that project's ARTEFACTS — the PDF,
+ * the EPUB — whether or not they are open. One row per thing the user asked to
+ * exist, never one per file: a converted project holds the archived original,
+ * the live PDF, the origin it was promoted from and several rotated
+ * predecessors, and the person who asked for a searchable book is owed "the
+ * PDF", once. So flipping from the PDF to the book made from it is one click,
  * where it used to mean going back to Home and expanding a row that is no longer
  * there. That listing is `listProjects`' own (electron/projects.ts), which is
  * why it moved here rather than being rebuilt: one function decides what a
@@ -61,7 +67,7 @@ import { UiService } from '../../core/ui.service';
  * because the nav's idiom was one row, one ✕, naming exactly one thing. The
  * reasoning was sound about a list of documents and wrong about what a person is
  * actually doing: they finish with a BOOK. Closing its scan and leaving its
- * cast EPUB and its real-text PDF open is not a state anybody wants, and doing
+ * cast EPUB and its plain text open is not a state anybody wants, and doing
  * it three times by hand is not a gesture, it is bookkeeping.
  *
  * So the header's ✕ closes the project — every open tab belonging to it. The
@@ -580,12 +586,39 @@ export class OpenDocumentsComponent {
       const mine = open.filter((row) => fold(row.path).startsWith(`${fold(project.dir)}/`));
       if (mine.length === 0) continue;
 
+      /*
+       * QUALIFIED ONLY WHERE THE NAME IS AMBIGUOUS, which is the judgement this
+       * list makes differently from the OCR picker. There, somebody is CHOOSING
+       * between documents and every option is qualified so the entries can be
+       * learned; here they are reading a list of what is in a book's folder, and
+       * most projects hold one of each. Adding "· cast EPUB" to every row of
+       * every project would be noise on the rows that were never confusing.
+       *
+       * The collision this was written for — a project's scan and the reprint
+       * made from it carrying one filename — cannot happen any more: they are
+       * one artefact and one row (`recordGenerated`). It stays because a project
+       * can still hold two documents named alike for other reasons, and because
+       * a list that tells them apart when it must costs nothing when it need
+       * not. Where two documents in one group share a label, BOTH say what they
+       * are — a qualifier on one of a pair reads as a remark about that one
+       * rather than as the thing that tells them apart.
+       */
+      const seen = new Map<string, number>();
+      for (const document of project.documents) {
+        const key = document.label.toLowerCase();
+        seen.set(key, (seen.get(key) ?? 0) + 1);
+      }
+      const nameOf = (document: ProjectDocument): string =>
+        (seen.get(document.label.toLowerCase()) ?? 0) > 1
+          ? qualify(document.label, document.kind, '')
+          : document.label;
+
       const rows: Row[] = [];
       const claimed = new Set<string>();
       for (const document of project.documents) {
         const already = mine.find((row) => fold(row.path) === fold(document.path));
         if (already !== undefined) {
-          rows.push({ ...already, grouped: true });
+          rows.push({ ...already, grouped: true, title: nameOf(document) });
           claimed.add(already.key);
           // An editor open on this book belongs directly under it, inside the
           // group — the same nesting the flat list gives, one level further in.
@@ -609,7 +642,7 @@ export class OpenDocumentsComponent {
           key: `${project.key}:${document.path}`,
           tab: null,
           path: document.path,
-          title: document.label,
+          title: nameOf(document),
           glyph: document.kind === 'epub' ? '▤' : document.kind === 'pdf' ? '▦' : '≡',
           tooltip: document.missing
             ? `${document.path}\nNot there any more.`

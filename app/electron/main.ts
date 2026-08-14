@@ -69,6 +69,7 @@ import {
   adoptLegacyLayout,
   deleteDocument,
   deleteProject,
+  documentAssets,
   finalDir,
   importDocument,
   inspectProject,
@@ -76,6 +77,7 @@ import {
   isManaged,
   listProjects,
   projectsDir,
+  promoteStrandedReprints,
   recordFinal,
 } from './projects';
 import {
@@ -89,7 +91,7 @@ import { readSettings, writeSettings } from './settings';
 import * as vllm from './vllm-server';
 import { planConversion, planTranslation } from './workspace';
 import { detectEnvTooling, listDistros } from './wsl';
-import { fold, isOriginal } from '../shared/original';
+import { fold, isBook } from '../shared/original';
 import type { MenuAction } from '../shared/api';
 import type {
   BackendSettingsPatch,
@@ -1042,7 +1044,12 @@ function registerIpc(): void {
     const readable = await exportWorkingCopy(source);
     openable.add(path.resolve(readable));
     const plan = await planTranslation(readable, targetLanguage);
-    return { ...plan, inputPath: readable };
+    // A re-translation reads the copy the run is about to replace, which the
+    // rotation has just moved aside (`planTranslation`). That path was never
+    // "opened" by anybody, so the queue's own admission check would refuse the
+    // job main itself composed — admit it here, where it is known to be ours.
+    openable.add(path.resolve(plan.sourcePath));
+    return { ...plan, inputPath: plan.sourcePath };
   });
 
   /** Home's primary listing: one row per book, expanding to what is in it. */
@@ -1182,6 +1189,12 @@ function registerIpc(): void {
    * instead of being drawn by the OS.
    */
   function describeProject(project: ProjectInventory): DeletionPrompt {
+    /*
+     * THE BANK IS THE COST RULE IN ITS PUREST FORM (`ProjectStep.costly`). It is
+     * the stored result of the expensive pass — which is exactly why a rerun is
+     * free, and exactly why nothing in this app ever sweeps it. Erasing it is
+     * the one loss in a project delete that no amount of time gets back.
+     */
     const bank = project.readings > 0
       ? `It holds a readings bank of ${project.readings.toLocaleString()} pages the model has `
         + 'already read. That is hours of GPU, it is the one thing in here that cannot be made '
@@ -1199,9 +1212,17 @@ function registerIpc(): void {
     return {
       message: `“${project.title}” will be deleted from this computer.`,
       detail: [
-        `${project.dir} and everything under it goes: the original you imported, ${made}, `
-        + 'every working copy and every edit in them, and the undo history. '
-        + `${sizeOnDisk(project.bytes)} in all.${filed}`,
+        /*
+         * THE IMPORT LEADS, because it is the most expensive thing in the folder
+         * and the only one that is IRREPLACEABLE rather than merely costly
+         * (`ProjectStep.costly`). A model pass can be run again for money and
+         * hours; the file the user handed over came from somewhere only they
+         * know, and Foundry treats it as the only copy in the world.
+         */
+        'The file you imported goes with it. Foundry keeps no other copy of it and cannot '
+        + 'fetch it again — wherever you got it from is the only place it still exists.',
+        `${project.dir} and everything under it goes: ${made}, every working copy and every `
+        + `edit in them, and the undo history. ${sizeOnDisk(project.bytes)} in all.${filed}`,
         bank,
         'This is a real delete. The folder is removed from the disk — it is not moved aside, '
         + 'Foundry keeps no copy of it anywhere else, and there is nothing that will bring it back.',
@@ -1266,7 +1287,7 @@ function registerIpc(): void {
     const { project, document } = await findDocument(filePath);
     const inventory = await inspectProject(project.dir);
 
-    if (isOriginal(project.documents, document.path)) {
+    if (isBook(project.documents, document.path)) {
       // The original's delete IS the project's, so it owes the project's
       // refusals — including the open-book one this file's own delete does not.
       refuseProjectDelete(inventory);
@@ -1293,13 +1314,37 @@ function registerIpc(): void {
         + 'catalogue, and this clears it.'
       : `${document.path} is removed from the disk. It is not moved aside and Foundry keeps no `
         + 'copy of it anywhere else.';
+
+    /*
+     * WHAT ELSE GOES, NAMED. A delete that quietly takes more than the thing it
+     * was pointed at is the exact surprise these cards exist to prevent — and
+     * "5 earlier versions" is not a detail, it is most of what is about to be
+     * removed by weight. Where nothing extra goes, nothing extra is said: a
+     * sentence listing zero of three things reads as boilerplate and teaches
+     * people to skip the paragraph that matters.
+     */
+    const extras = await documentAssets(document.path);
+    const also: string[] = [];
+    if (extras.archivedVersions > 0) {
+      also.push(extras.archivedVersions === 1
+        ? 'the one earlier version of it a rerun set aside'
+        : `the ${extras.archivedVersions} earlier versions of it that reruns set aside`);
+    }
+    if (extras.workingTree) also.push('the unpacked working copy it is read from');
+    if (extras.histories > 0) also.push('its edit history');
+
     return {
       prompt: {
         message: `“${document.label}” will be deleted from “${project.title}”.`,
         detail: [
           gone,
+          ...(also.length > 0
+            ? [`${sentenceList(also)} ${also.length === 1 ? 'goes' : 'go'} with it — everything in `
+              + 'this project that belongs to this document and to nothing else.']
+            : []),
           'The project and everything else in it stays, including the original and the readings '
-          + 'bank — so this document can be made again by converting the book a second time.',
+          + 'bank — the hours of GPU that let this document be made again by converting the book a '
+          + 'second time.',
         ],
         confirm: document.missing ? 'Remove this row' : 'Delete this document',
       },
@@ -1309,6 +1354,12 @@ function registerIpc(): void {
     };
   });
 
+  /** `a`, `a and b`, `a, b and c` — the app writes sentences, not bullet lists. */
+  function sentenceList(parts: readonly string[]): string {
+    if (parts.length <= 1) return parts[0] ?? '';
+    return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  }
+
   ipcMain.handle('documents:delete', async (_event, filePath: string) => {
     const { project, document } = await findDocument(filePath);
     const inventory = await inspectProject(project.dir);
@@ -1316,7 +1367,7 @@ function registerIpc(): void {
     // the question and the answer, and this is the call that unlinks something.
     refuseBusyJob(inventory);
 
-    if (isOriginal(project.documents, document.path)) {
+    if (isBook(project.documents, document.path)) {
       throw new Error(
         `“${document.label}” is the original “${project.title}” is built on, so it cannot be `
         + 'deleted by itself — every other document in the folder was made from it. Delete the '
@@ -1808,6 +1859,12 @@ void app.whenReady().then(async () => {
    */
   await adoptLegacyLayout().catch((err: Error) => {
     console.error(`[projects] the existing library could not be regrouped: ${err.message}`);
+  });
+  // And the one-evening migration beside it, for the same reason and with the
+  // same tolerance: a project whose reprint was catalogued as a second document
+  // gets it promoted to being the project's PDF (`promoteStrandedReprints`).
+  await promoteStrandedReprints().catch((err: Error) => {
+    console.error(`[projects] a reprint could not be adopted as its project's PDF: ${err.message}`);
   });
   createWindow();
 

@@ -95,8 +95,14 @@ import type {
   ProjectGeneratedRole,
   ProjectManifest,
   ProjectSummary,
+  ProjectStep,
+  ProjectTypeRecord,
+  ProjectWorkingFile,
   ProjectWorkingTree,
 } from '../shared/types';
+import { WHY_HANDMADE, WHY_IMPORTED, WHY_MODEL_PASS } from '../shared/types';
+import { STEP_LABELS, migrateToSteps, readTypeRecords } from '../shared/steps';
+import { GENERATED_ROLE_FOR } from '../shared/documents';
 
 /** Refusals from this module, named so a caller can tell them from an fs error. */
 export class ProjectError extends Error {
@@ -107,7 +113,15 @@ export class ProjectError extends Error {
 }
 
 /** The manifest schema this app writes and the only one it reads. */
-const MANIFEST_VERSION = 1;
+/**
+ * 2 — `generated` became `documents`, a list of file types with step chains.
+ *
+ * A v1 reader handed a v2 file would find no `generated` array and conclude
+ * nothing had ever been made from the book, which is why this moved. `readDocuments`
+ * migrates v1 in memory on every read, so an old project opens without ceremony
+ * and reaches disk in the new shape the next time anything edits it.
+ */
+const MANIFEST_VERSION = 2;
 
 const MANIFEST = 'project.json';
 
@@ -298,13 +312,35 @@ export async function readManifest(dir: string): Promise<ProjectManifest> {
     stem: typeof row['stem'] === 'string' && row['stem'].length > 0 ? row['stem'] : key,
     createdAt: typeof row['createdAt'] === 'number' ? row['createdAt'] : 0,
     archive: readArchive(row['archive']),
-    generated: readGenerated(row['generated']),
+    documents: readDocuments(row, readArchive(row['archive'])),
     working: {
       trees: readTrees(working['trees']),
       files: readWorkingFiles(working['files']),
     },
     final: readFinal(row['final']),
   };
+}
+
+/**
+ * The type records — read from a v2 catalogue, or built from a v1 one.
+ *
+ * MIGRATION HAPPENS ON EVERY READ AND IS NOT WRITTEN BACK BY ITSELF. A v1 file
+ * is turned into type records in memory here; the new shape reaches disk the
+ * next time anything edits the project through `withManifest`, which writes the
+ * whole file. That ordering is deliberate: reading somebody's library must not
+ * rewrite it, and a migration that only runs on write cannot half-finish across
+ * a crash — either the old file is still there and is migrated again on the next
+ * read, or the new one is complete.
+ */
+function readDocuments(
+  row: Record<string, unknown>,
+  archive: ProjectManifest['archive'],
+): ProjectTypeRecord[] {
+  if (Array.isArray(row['documents'])) return readTypeRecords(row['documents']);
+  return migrateToSteps(readGenerated(row['generated']), archive, {
+    archive: ARCHIVE,
+    generated: GENERATED,
+  });
 }
 
 function readArchive(value: unknown): ProjectManifest['archive'] {
@@ -464,7 +500,7 @@ function withCreatedProject<T>(
           stem,
           createdAt: Date.now(),
           archive: null,
-          generated: [],
+          documents: [],
           working: { trees: [], files: [] },
           final: [],
         };
@@ -514,11 +550,14 @@ const GENERATED_EXTENSIONS: Readonly<Record<ConversionKind, string>> = {
   txt: '.txt',
 };
 
-const GENERATED_ROLES: Readonly<Record<ConversionKind, ProjectGeneratedRole>> = {
-  epub: 'cast',
-  pdf: 'searchable',
-  txt: 'text',
-};
+/**
+ * Moved to `shared/documents.ts` and re-exported under its old name here.
+ *
+ * The OCR dialog needs this table to know whether the source somebody picked is
+ * the file their own run would write over, and a second copy in the renderer
+ * would be a second opinion about what a conversion produces.
+ */
+const GENERATED_ROLES = GENERATED_ROLE_FOR;
 
 /** `Working Towards The Fuhrer. Kershaw, Ian. (1993).epub` — the book's own name. */
 export function generatedFileFor(stem: string, kind: ConversionKind): string {
@@ -704,23 +743,68 @@ export async function importDocument(
       // A refusal from the stamp is a sentence and not a throw: the copy stands,
       // the book opens, and the person is told which of its doors is shut.
       if (made) notice = await stampImported(path.join(dir, live, liveFile));
-      const already = manifest.generated.find((row) => row.file === liveFile);
-      manifest.generated = [
-        ...manifest.generated.filter((row) => row.file !== liveFile),
-        {
-          file: liveFile,
-          kind: 'epub',
-          // An existing row KEEPS ITS ROLE. `<stem>.epub` is also the name a
-          // cast writes, and relabelling a cast book `imported` would tell every
-          // later pass that this project's origin came from the user.
-          role: already?.role ?? 'imported',
-          madeAt: already?.madeAt ?? Date.now(),
-        },
-      ];
+      /*
+       * THE EPUB'S ORIGIN, which is what an imported book is.
+       *
+       * Recorded only when the type has no chain yet: `<stem>.epub` is also the
+       * name a CAST writes, and a second import-shaped origin arriving over a
+       * cast one would rewrite this project's account of where its book came
+       * from. The first step wins, which is the same rule the old `role` field
+       * was protecting with the same comment.
+       */
+      recordStep(manifest, 'epub', {
+        file: `${live}/${liveFile}`,
+        label: 'The book you imported',
+        appliedAt: Date.now(),
+        kind: 'origin',
+        // The most expensive thing in the project: it came from outside this
+        // program and there may be no other copy of it anywhere.
+        retention: 'irreplaceable',
+        why: WHY_IMPORTED,
+      }, { onlyIfEmpty: true });
     }
     await writeManifest(dir, manifest);
     return { dir, entry: `${live}/${liveFile}`, key, stem: manifest.stem, notice };
   });
+}
+
+/**
+ * Append a step to one file type's chain, making the chain if it is the first.
+ *
+ * THE ONLY WRITER OF A CHAIN, so that "the live file is the last step" is true
+ * by construction rather than by everybody remembering to append. A step is
+ * never inserted, never reordered and never replaced: the array is a history,
+ * and the one thing a history may not do is change.
+ *
+ * `onlyIfEmpty` is for an ORIGIN that may be recorded twice — importing a book
+ * that is already this project's, most of all. The first origin is the true one;
+ * a later import of the same file is the app noticing something it already knew.
+ */
+function recordStep(
+  manifest: ProjectManifest,
+  kind: ProjectDocumentKind,
+  step: ProjectStep,
+  options: { onlyIfEmpty?: boolean } = {},
+): void {
+  const record = manifest.documents.find((row) => row.kind === kind);
+  if (record === undefined) {
+    manifest.documents = [...manifest.documents, { kind, steps: [step] }];
+    return;
+  }
+  if (options.onlyIfEmpty === true) return;
+  // The same file applied twice is one step. A rerun that lands on a path
+  // already at the top of the chain has replaced its contents, not added a
+  // version — and two identical rows would make "step back" a no-op.
+  if (record.steps[record.steps.length - 1]?.file === step.file) {
+    record.steps = [...record.steps.slice(0, -1), step];
+    return;
+  }
+  record.steps = [...record.steps, step];
+}
+
+/** The chain for one type, or an empty one. Never null, so callers stay flat. */
+function stepsOf(manifest: ProjectManifest, kind: ProjectDocumentKind): ProjectStep[] {
+  return manifest.documents.find((row) => row.kind === kind)?.steps ?? [];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -778,10 +862,11 @@ function stampedArchive(parent: string): string {
  * old one would open the OLD book's edits and never show the new conversion at
  * all — the failure would look like the run having done nothing.
  */
-export async function rotateGenerated(dir: string, file: string): Promise<void> {
+export async function rotateGenerated(dir: string, file: string): Promise<string | null> {
   const target = path.join(dir, GENERATED, file);
-  if (!await exists(target)) return;
+  if (!await exists(target)) return null;
 
+  let movedTo: string | null = null;
   await withManifest(dir, async (manifest) => {
     const from = `${GENERATED}/${file}`;
     const tree = manifest.working.trees.find((entry) => entry.from === from) ?? null;
@@ -803,15 +888,34 @@ export async function rotateGenerated(dir: string, file: string): Promise<void> 
       );
     }
     await fsp.mkdir(archive, { recursive: true });
-    await fsp.rename(target, path.join(archive, file));
+    movedTo = path.join(archive, file);
+    await fsp.rename(target, movedTo);
     if (tree !== null && treeRoot !== null && await exists(treeRoot)) {
       await fsp.rename(treeRoot, path.join(archive, `working-${tree.dir}`));
     }
 
-    manifest.generated = manifest.generated.filter((entry) => entry.file !== file);
+    /*
+     * THE ROTATED COPY STAYS IN THE CHAIN, at the path it was moved to.
+     *
+     * It used to be struck out of the catalogue entirely, which was right when a
+     * catalogue listed live files and wrong now that it records a history: the
+     * file this just moved aside is a previous version of this type, it is on
+     * disk, and it is exactly what "step back to an earlier one" reaches for.
+     * Only its location changed, so only its location is rewritten — the label,
+     * the cost and the time it was applied are what they always were.
+     */
+    const record = manifest.documents.find((row) => row.steps.some((s) => s.file === from));
+    if (record !== undefined && movedTo !== null) {
+      const moved = path.relative(dir, movedTo).split(path.sep).join('/');
+      record.steps = record.steps.map(
+        (step) => (step.file === from ? { ...step, file: moved } : step));
+    }
     manifest.working.trees = manifest.working.trees.filter((entry) => entry.from !== from);
     await writeManifest(dir, manifest);
   });
+  // Where it went, so a run whose own input is the copy being replaced can read
+  // it there — see `planTranslation`.
+  return movedTo;
 }
 
 /**
@@ -821,17 +925,32 @@ export async function rotateGenerated(dir: string, file: string): Promise<void> 
  * an intention: a run that fails at page 200 would otherwise leave a row in the
  * catalogue for a file that does not exist, and Home would offer it.
  *
- * A REAL-TEXT PDF IS A SECOND DOCUMENT, AND IT USED TO BE TREATED AS THE SAME
- * ONE. When this conversion laid an invisible layer over the scan, the file it
- * produced WAS the scan — same pages, same images, same bytes — so it replaced
- * the live PDF and the user rightly saw one row: one document that had been
- * improved. That is no longer what comes back. The conversion now reprints the
- * book as type on fresh paper and throws the scan's pixels away, so promoting it
- * would file the user's scan into `working/archived-<stamp>/` and hand them a
- * text reprint under the name of the photograph they imported — a substitution
- * they never asked for, of the one artefact the project exists to hold. So the
- * scan stays the live PDF and the reprint is a row of its own, beside the cast
- * EPUB and the plain text, which is what it now is.
+ * A PDF-PRODUCING CONVERSION REPLACES THE LIVE PDF. There is ONE PDF per
+ * project — "the PDF", the working document — and applying a change to it
+ * produces a new version of it rather than a second document beside it.
+ *
+ * ── This was got wrong once, and the reasoning is worth keeping ─────────────
+ *
+ * When the reprint stopped being the scan-with-a-layer and became type on blank
+ * paper, this promotion was removed and the reprint was given a row of its own.
+ * The fear was real: promoting it would file the user's SCAN into
+ * `working/archived-<stamp>/` and hand them a text-only document under the name
+ * of the photograph they imported. Nobody asked for their scan to be replaced.
+ *
+ * That was the right worry solved in the wrong place. The scan is protected by
+ * `archive/` BEING IMMUTABLE — it is copied in once at import and no path in
+ * this app is ever composed into it — not by making the user keep track of two
+ * PDFs with the same filename. Solving it here cost exactly what a wrong
+ * abstraction costs: two identical rows in the document list, two identical
+ * options in the OCR picker, and a refusal that told somebody to go and convert
+ * "the original instead" — an instruction about this app's filing, given to the
+ * person the filing is supposed to be invisible to.
+ *
+ * So the promotion is back and the user sees one PDF. The one they see is the
+ * working copy, it carries whatever has been applied to it, the previous version
+ * is rotated aside rather than lost, and the original they imported is still on
+ * disk untouched — reachable by exporting it or reverting to it, which are
+ * deliberate gestures rather than a row in a list.
  *
  * A failure here is LOGGED and not thrown. This runs at the end of a run that
  * may have taken three hours, and losing a row in a catalogue is not a reason to
@@ -861,21 +980,33 @@ export async function recordGenerated(
   }
   try {
     return await withManifest(dir, async (manifest) => {
-      manifest.generated = [
-        ...manifest.generated.filter((entry) => entry.file !== file),
-        { file, kind, role, madeAt: Date.now() },
-      ];
-      await writeManifest(dir, manifest);
       /*
-       * NULL FOR EVERY ROLE NOW, and the return type stays because the caller's
-       * question is still worth asking. `job-queue.ts` uses the answer to decide
-       * which path the finished row points at — the engine's output, or a live
-       * copy made from it — and there is exactly one role that ever made a live
-       * copy. Nothing does today (see this function's own note), so nothing is
-       * promoted; leaving the seam here means the day something is, the queue
-       * already knows how to point at it.
+       * A STEP ON THAT TYPE'S CHAIN, and the cost is recorded with it.
+       *
+       * Every role that reaches here is the product of a model pass — a cast, a
+       * reprint, a translation, a text emission all run the engine over the
+       * book — so the file is frozen the moment it exists and later work happens
+       * on a copy of it. The reason travels with the step so that the sweep, the
+       * rotation and the delete warning can all ask one question of one place.
        */
-      return null;
+      recordStep(manifest, kind, {
+        file: `${GENERATED}/${file}`,
+        label: STEP_LABELS[role],
+        appliedAt: Date.now(),
+        kind: role === 'translation' ? 'translate' : role === 'cast' ? 'origin' : 'convert',
+        retention: 'expensive',
+          why: WHY_MODEL_PASS,
+      });
+      // WRITTEN BEFORE the live copy is refreshed, and that ordering is the
+      // whole reason these are two writes. Refreshing can refuse — an archive
+      // folder from this same second already exists — and a refusal that took
+      // the origin's own catalogue row down with it would leave the engine's
+      // output on disk, uncatalogued, invisible to Home.
+      await writeManifest(dir, manifest);
+      if (role !== 'searchable') return null;
+      const live = await refreshLivePdf(dir, manifest, file);
+      await writeManifest(dir, manifest);
+      return live;
     });
   } catch (err) {
     console.error(`[projects] ${path.join(dir, MANIFEST)} could not record ${file}: ${(err as Error).message}`);
@@ -1087,6 +1218,79 @@ export function historyDir(dir: string): string {
   return path.join(dir, HISTORY);
 }
 
+/**
+ * Promote any reprint that was left sitting in `generated/` as a row of its own.
+ *
+ * A MIGRATION FOR ONE EVENING'S PROJECTS, and it is written down because it will
+ * look mysterious in a month. For a short while a PDF-producing conversion did
+ * not replace the live PDF — it was catalogued as a second document — so a
+ * project converted in that window has a `searchable` origin that was never
+ * promoted, and the listing now skips those rows. Without this, that reprint
+ * would simply vanish from the app: on disk, catalogued, and drawn nowhere.
+ *
+ * IDEMPOTENT, and that is the whole of its safety. It promotes only when the
+ * live PDF is not already the one made FROM that origin — `refreshLivePdf`
+ * records `from` on the working row, so a project that has been through this
+ * (or that was converted after the fix) is left completely alone. Running it at
+ * every launch therefore costs a manifest read per project and nothing else.
+ *
+ * A FAILURE IS A CONSOLE LINE, never a throw. This runs at startup across every
+ * project in the library; one project with a rotation folder from this same
+ * second, or a catalogue that will not parse, must not stop the app from opening
+ * — and the consequence of skipping one is a reprint the user can still reach by
+ * running the conversion again.
+ */
+export async function promoteStrandedReprints(): Promise<void> {
+  let dirs: string[];
+  try {
+    dirs = (await fsp.readdir(projectsDir(), { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(projectsDir(), entry.name));
+  } catch {
+    return; // No library yet is the ordinary state of a fresh install.
+  }
+
+  for (const dir of dirs) {
+    try {
+      const manifest = await readManifest(dir);
+      // The PDF chain's latest step, when it is something a conversion wrote.
+      const steps = stepsOf(manifest, 'pdf');
+      const latest = steps[steps.length - 1];
+      if (latest === undefined || !latest.file.startsWith(`${GENERATED}/`)) continue;
+      const reprint = { file: latest.file.slice(GENERATED.length + 1) };
+      const live = manifest.working.files.find((row) => row.kind === 'pdf');
+      if (live !== undefined && live.from === latest.file) continue;
+      if (!await exists(path.join(dir, GENERATED, reprint.file))) continue;
+      await withManifest(dir, async (current) => {
+        await refreshLivePdf(dir, current, reprint.file);
+        await writeManifest(dir, current);
+      });
+      console.log(`[projects] ${path.basename(dir)}: ${reprint.file} is now the project's PDF.`);
+    } catch (err) {
+      console.error(
+        `[projects] ${path.basename(dir)} could not adopt its reprint as the live PDF `
+        + `(${(err as Error).message}). Converting the book again will do it.`,
+      );
+    }
+  }
+}
+
+/**
+ * The name of the file in `archive/`, or null when this project has none.
+ *
+ * The one accessor for the source of record. `workspace.ts` turns it into a path
+ * to hand the engine; nothing else needs it, and nothing at all writes there.
+ */
+export async function archiveFileOf(dir: string): Promise<string | null> {
+  try {
+    return (await readManifest(dir)).archive?.file ?? null;
+  } catch {
+    // A catalogue that will not parse cannot name its archive. The caller falls
+    // back to the document it was given, which is what that project has.
+    return null;
+  }
+}
+
 /** Where a history that is not this working copy's goes. Nothing is deleted. */
 export function historyArchiveDir(dir: string): string {
   return stampedArchive(historyDir(dir));
@@ -1162,6 +1366,68 @@ export async function listProjects(): Promise<ProjectSummary[]> {
   return summaries.sort((a, b) => b.openedAt - a.openedAt);
 }
 
+/**
+ * The live PDF the catalogue names — or the one on disk that it forgot.
+ *
+ * ── Why a listing reconciles instead of trusting itself ─────────────────────
+ *
+ * A project on this machine came up with `working.files: []` and a perfectly
+ * good `working/<book>.pdf` sitting beside it, because a bug in the document
+ * delete struck the row out without removing the file (see `deleteDocument`).
+ * Under the step model the PDF row is built FROM that entry, so the catalogue's
+ * answer to "what does this project have" was: nothing. A user whose book had
+ * vanished from an app that was still storing every byte of it.
+ *
+ * The bug is fixed. This exists because fixing a bug does not repair the data it
+ * already wrote, and because it is not the only way to reach that state — a
+ * crash between the manifest write and the file copy, a file restored by hand
+ * from a backup, and a folder synced from another machine all land there too.
+ *
+ * SO THE DISK IS THE AUTHORITY ABOUT WHAT EXISTS and the catalogue is the
+ * authority about what it MEANS. A working copy present with no row is adopted
+ * with the only provenance that can be inferred — the archive, which is where an
+ * unrecorded working PDF must have come from — and the repair is logged, because
+ * an app that silently papers over a hole in its own bookkeeping is an app whose
+ * bookkeeping nobody can ever trust again.
+ *
+ * ── Why here, and why it does not write ─────────────────────────────────────
+ *
+ * IN `summarise`, not in the migration: the migration only ever runs on a v1
+ * catalogue, and this hole is reachable at any version. Not in a repair pass
+ * either, because a repair pass is a thing somebody has to remember to run, and
+ * the failure it prevents is a book that is invisible RIGHT NOW.
+ *
+ * It returns the row rather than writing it, so a listing stays a read. The
+ * repair is re-derived on every list — which costs one `exists` — and reaches
+ * disk the next time anything edits the project for a reason of its own. A read
+ * path that rewrote every catalogue it inspected would make opening Home a
+ * write across the whole library.
+ */
+async function reconcileLivePdf(
+  dir: string,
+  manifest: ProjectManifest,
+): Promise<ProjectWorkingFile | null> {
+  const recorded = manifest.working.files.find((row) => row.kind === 'pdf') ?? null;
+  if (recorded !== null) return recorded;
+  if (manifest.archive === null || manifest.archive.kind !== 'pdf') return null;
+
+  const file = `${manifest.stem}.pdf`;
+  if (!await exists(path.join(dir, WORKING, file))) return null;
+
+  console.warn(
+    `[projects] ${path.basename(dir)}: ${WORKING}/${file} is on disk with no catalogue row. `
+    + 'Listing it anyway — a document this app is storing must not be one it will not show.',
+  );
+  return {
+    file,
+    kind: 'pdf',
+    // The only provenance that can be inferred. An unrecorded working PDF came
+    // from the import: a promoted one would have been recorded by the promotion.
+    from: `${ARCHIVE}/${manifest.archive.file}`,
+    madeAt: manifest.createdAt,
+  };
+}
+
 async function summarise(dir: string, name: string): Promise<ProjectSummary> {
   let manifest: ProjectManifest;
   try {
@@ -1179,47 +1445,55 @@ async function summarise(dir: string, name: string): Promise<ProjectSummary> {
     };
   }
 
-  const documents: ProjectDocument[] = [];
-
-  // The PDF: the live copy, whichever origin it was last made from. There is
-  // never a second PDF row — see this function's own note.
-  for (const live of manifest.working.files) {
-    const file = path.join(dir, WORKING, live.file);
-    documents.push({
-      path: file,
-      kind: 'pdf',
-      role: live.from.startsWith(`${GENERATED}/`) ? 'searchable' : 'archive',
-      label: live.file,
-      at: live.madeAt,
-      missing: !await exists(file),
-      // The user's own scan, in their own folder, is where this came from: a
-      // dot saying "saved nowhere" would warn about a loss that cannot happen.
-      // Only a project adopted from the old flat layout has a live PDF this app
-      // made, and that one can be lost.
-      managed: live.from.startsWith(`${GENERATED}/`),
-    });
-  }
-
   /*
-   * The books. `imported` and `cast` are the same document to a reader — the
-   * one EPUB this project is about — and only one of the two can exist.
+   * ── ONE ROW PER FILE TYPE ─────────────────────────────────────────────────
    *
-   * `searchable` IS LISTED HERE NOW. It used to be skipped, because the file it
-   * named had been copied over the live PDF above and a second row would have
-   * been the same document twice. It is not the same document any more: it is
-   * the book reprinted as type with the scan's pixels gone, so the scan keeps
-   * its row and this gets one (`recordGenerated`).
+   * This is where a project stops being a folder of files and becomes what the
+   * user described: "each file type has its own row in the system… all they see
+   * is the different available file types."
+   *
+   * A row is a KIND — the PDF, the EPUB, the text — and everything underneath it
+   * is the chain that produced it. The chain is on disk already; what was
+   * missing was a record of which file was which. A converted project holds the
+   * archived original, the live PDF, the generated origin it was promoted from
+   * and several rotated predecessors, and the person who asked for a searchable
+   * book is owed "the PDF", once.
+   *
+   * WHAT THE ROW OPENS is the WORKING COPY where a type has one, and the latest
+   * step's file otherwise. That distinction is the model's other half: the
+   * chain records what was applied, the working copy is what the user touches,
+   * and edits go to the copy rather than to any step. Only the PDF has a
+   * separate working file today; an EPUB's working copy is the tree unpacked
+   * from its latest step, which the reader makes on open.
    */
-  for (const origin of manifest.generated) {
-    const file = path.join(dir, GENERATED, origin.file);
+  const documents: ProjectDocument[] = [];
+  const livePdf = await reconcileLivePdf(dir, manifest);
+
+  for (const record of manifest.documents) {
+    const steps = [...record.steps].sort((a, b) => a.appliedAt - b.appliedAt);
+    const latest = steps[steps.length - 1];
+    if (latest === undefined) continue;
+
+    const working = record.kind === 'pdf' && livePdf !== null
+      ? path.join(dir, WORKING, livePdf.file)
+      : path.join(dir, ...latest.file.split('/'));
     documents.push({
-      path: file,
-      kind: origin.kind,
-      role: origin.role,
-      label: origin.file,
-      at: origin.madeAt,
-      missing: !await exists(file),
-      managed: origin.role !== 'imported',
+      kind: record.kind,
+      path: working,
+      label: path.basename(working),
+      at: latest.appliedAt,
+      missing: !await exists(working),
+      /*
+       * `managed` asks whether losing this costs the user something they cannot
+       * get back from their own folders, which is now a question the chain
+       * answers directly: a row whose origin came from outside this program is
+       * theirs and sits somewhere they chose. Everything else this app made.
+       */
+      managed: steps[0]?.retention !== 'irreplaceable',
+      steps,
+      // The book itself — deleting this row is deleting the project. See
+      // `shared/original.ts`, where the rule it generalises lives.
+      origin: steps[0]?.retention === 'irreplaceable',
     });
   }
 
@@ -1255,16 +1529,25 @@ async function summarise(dir: string, name: string): Promise<ProjectSummary> {
     const live = path.join(dir, liveLayer, liveFile);
     const origin = path.join(dir, ARCHIVE, manifest.archive.file);
     const onDisk = await exists(live);
+    const step: ProjectStep = {
+      file: `${ARCHIVE}/${manifest.archive.file}`,
+      label: manifest.archive.kind === 'pdf' ? 'The scan you imported' : 'The book you imported',
+      appliedAt: manifest.createdAt,
+      kind: 'origin',
+      retention: 'irreplaceable',
+        why: WHY_IMPORTED,
+    };
     documents.push({
-      path: onDisk ? live : origin,
       kind: manifest.archive.kind,
-      role: 'archive',
+      path: onDisk ? live : origin,
       label: onDisk ? liveFile : manifest.archive.file,
       // The project's own age. Nothing recorded when this file arrived, because
       // until now nothing listed it.
       at: manifest.createdAt,
       missing: !onDisk && !await exists(origin),
       managed: false,
+      steps: [step],
+      origin: true,
     });
   }
 
@@ -1394,7 +1677,10 @@ export async function inspectProject(dir: string): Promise<ProjectInventory> {
     readings: await countBankPages(path.join(resolved, 'readings')),
     documents: manifest === null
       ? 0
-      : manifest.working.files.length + manifest.generated.length,
+      // Counted the way `summarise` counts rows, which is per ARTEFACT: the
+      // promoted reprint is the live PDF above and not a document beside it.
+      // One per file type, the way `summarise` counts rows — never one per file.
+      : manifest.documents.length,
     filed: (manifest?.final.length ?? 0) > 0,
     bytes: await measure(resolved),
   };
@@ -1463,6 +1749,63 @@ function deletableDocumentPath(filePath: string): { dir: string; resolved: strin
   return { dir: path.join(root, parts[0]!), resolved };
 }
 
+/**
+ * What ELSE goes when one document is deleted — counted, so the card can say so.
+ *
+ * ── What is in here, and the evidence for each ──────────────────────────────
+ *
+ * ARCHIVED PREDECESSORS. `rotateGenerated` moves `generated/<file>` aside into
+ * `generated/archived-<stamp>/<file>` before a rerun writes, so those are
+ * previous versions of THE VERY FILE being deleted — five of them in the
+ * Kershaw project from one evening's reruns. Matched by basename inside the
+ * file's own parent directory, which is exact rather than approximate: an output
+ * name is derived from the project's stem and its format (`generatedFileFor`),
+ * so at most one live document can carry a given basename, and every archived
+ * copy of that name is a former life of it. A rotation also parks the working
+ * tree beside the file as `working-<tree dir>`, so that goes with the same pass.
+ *
+ * THE WORKING TREE. `manifest.working.trees` keys a tree by the origin it was
+ * unpacked FROM (`recordWorkingTree`), so a tree serves exactly one document and
+ * `rotateGenerated` already treats the pair as inseparable — moving one without
+ * the other is a bug it exists to prevent. Its row goes with the directory.
+ *
+ * THE UNDO LEDGER. `history/<working tree name>.json` (electron/history.ts),
+ * keyed by the same `workingTreeName(entry)` the directory carries — derived
+ * from the origin, not from a runtime id, which is what makes it stable across
+ * sessions and per-document here. Its `archived-<stamp>/` copies go too: they
+ * are ledgers of the same book, kept only so a Ctrl+Z that lost its footing
+ * could be explained, and there is nothing left to explain once the book is
+ * gone. History's own rule is that a ledger is never deleted, only rotated —
+ * that rule is about a book that STILL EXISTS whose generation moved underneath
+ * it, and it has nothing to say about a book the user has just erased.
+ *
+ * ── What is NOT in here, and these are decisions ────────────────────────────
+ *
+ * THE READINGS BANK, above all — and it is the COST RULE in its purest form
+ * (`ProjectStep.retention`). `readings/` is the stored result of the expensive
+ * pass: it belongs to the source book rather than to any output made from it,
+ * it is hours of GPU, it cannot be remade from anything else on the disk, and it
+ * is the entire reason a conversion can be run again for nothing. Deleting the
+ * EPUB must never cost the bank — the whole point of throwing an output away is
+ * usually to make a better one from the same readings. (Deleting the book's own
+ * row is a different act: that is a project delete, it takes the bank with
+ * everything else, and it says so in those words.)
+ *
+ * THE FILED COPY. `final/` is where the user themself put a copy on purpose
+ * (`recordFinal`), which makes it theirs rather than the workspace's. A delete
+ * of the working document that also went and destroyed the copy somebody
+ * deliberately filed would be reaching outside what was asked for — the same
+ * reason a Save As to a USB stick is left alone.
+ */
+export interface DocumentAssets {
+  /** Previous versions of this same file, rotated aside by earlier runs. */
+  archivedVersions: number;
+  /** True when an unpacked working copy serves this document. */
+  workingTree: boolean;
+  /** Undo ledgers for it — the live one and any that were rotated aside. */
+  histories: number;
+}
+
 /** What became of a document that was asked to be deleted. */
 export interface DocumentRemoval {
   /** The project's own title, for the sentence the notice strip shows. */
@@ -1471,6 +1814,8 @@ export interface DocumentRemoval {
   label: string;
   /** True when the bytes were already gone and only the row was cleared. */
   wasMissing: boolean;
+  /** What went with it, so the notice can account for more than the one file. */
+  assets: DocumentAssets;
 }
 
 /**
@@ -1499,23 +1844,237 @@ export async function deleteDocument(filePath: string): Promise<DocumentRemoval>
 
   const label = path.basename(resolved);
   let title = path.basename(dir);
+  let sweep: Sweep = emptySweep();
+
   await withManifest(dir, async (manifest) => {
     title = manifest.title ?? title;
-    const gone = (file: string): boolean =>
-      path.resolve(dir, GENERATED, file).toLowerCase() === resolved.toLowerCase()
-      || path.resolve(dir, WORKING, file).toLowerCase() === resolved.toLowerCase()
-      || path.resolve(dir, FINAL, file).toLowerCase() === resolved.toLowerCase();
-    manifest.generated = manifest.generated.filter((row) => !gone(row.file));
-    manifest.working.files = manifest.working.files.filter((row) => !gone(row.file));
-    manifest.final = manifest.final.filter((row) => !gone(row.file));
+    sweep = await planSweep(dir, resolved, manifest);
+
+    /*
+     * REFUSED WHILE THE TREE IS OPEN, the same refusal and for the same reason
+     * `rotateGenerated` makes it: the renderer closes the tab before asking main
+     * to delete, but a tab it failed to close is a directory this window still
+     * has files open in, and on Windows the remove fails part way and leaves
+     * half a working copy behind.
+     */
+    if (sweep.treeRoot !== null && workingTreeHeld(sweep.treeRoot)) {
+      throw new ProjectError(
+        `${label} is open in Foundry right now, so it cannot be deleted — its working copy is `
+        + 'being read from this window. Close the book first, then delete it.',
+      );
+    }
+
+    /*
+     * A ROW IS MATCHED IN ITS OWN LAYER, AND THIS IS A BUG FIX WITH A CASUALTY.
+     *
+     * It used to resolve a row's basename against `generated/`, `working/` AND
+     * `final/` and delete the row if ANY of them equalled the path being
+     * removed. Every list was tested against every layer, so a name that appears
+     * in two layers — which is the ordinary case, since the live PDF is a COPY
+     * of the generated one and carries the same filename — matched twice.
+     *
+     * Deleting `generated/<book>.pdf` therefore struck the `working/<book>.pdf`
+     * row out of the catalogue as well, while `fsp.rm` removed only the file it
+     * was actually given. That is exactly what happened to the Kershaw project
+     * on this machine: `working.files` came back `[]` with the working PDF still
+     * sitting on disk, and the app then had a book it was storing every byte of
+     * and would not list. Item 2's reconciliation exists because of this, and
+     * this is why it must never happen again.
+     *
+     * Each list now asks only about its own directory.
+     */
+    const inLayer = (layer: string) => (file: string): boolean =>
+      path.resolve(dir, layer, file).toLowerCase() === resolved.toLowerCase();
+    /*
+     * THE WHOLE TYPE GOES, not one file out of it. A row is a file type and its
+     * chain, so deleting the row deletes the type — every step in it, which is
+     * exactly the set `planSweep` is about to remove from the disk. A chain with
+     * a hole in it would be a history that lies.
+     */
+    const relative = path.relative(dir, resolved).split(path.sep).join('/');
+    manifest.documents = manifest.documents.filter(
+      (record) => !record.steps.some((step) => step.file === relative));
+    manifest.working.files = manifest.working.files.filter((row) => !inLayer(WORKING)(row.file));
+    manifest.final = manifest.final.filter((row) => !inLayer(FINAL)(row.file));
+    // The tree's row goes with the tree itself: a catalogue entry for a
+    // directory that is not there is exactly the state `rotateGenerated` is
+    // careful never to leave behind.
+    if (sweep.treeEntry !== null) {
+      manifest.working.trees = manifest.working.trees.filter(
+        (row) => row.from !== sweep.treeEntry);
+    }
     await writeManifest(dir, manifest);
   });
 
-  // After the catalogue, not before: a manifest that still lists a file this is
-  // about to remove is a recoverable inconsistency, and bytes with no row are a
-  // folder nothing can account for.
+  /*
+   * The catalogue first, the bytes second. A manifest that still lists a file
+   * this is about to remove is a recoverable inconsistency — the row shows as
+   * "not there any more" and can be cleared; bytes with no row are a folder
+   * nothing can account for.
+   *
+   * `force: true` throughout, so a file somebody moved behind the app's back and
+   * a directory that is already half gone both finish quietly rather than
+   * failing a delete the user has already confirmed.
+   */
   await fsp.rm(resolved, { force: true });
-  return { title, label, wasMissing };
+  for (const target of sweep.files) await fsp.rm(target, { force: true });
+  for (const target of sweep.dirs) await fsp.rm(target, { recursive: true, force: true });
+
+  /*
+   * An `archived-<stamp>/` folder that held nothing but this document's past
+   * goes with it. Emptiness is the test rather than "we made it empty", because
+   * one rotation folder can hold several documents archived in the same second
+   * (`rotateGenerated` shares a stamp) — and one that still has a sibling's work
+   * in it is somebody else's record, which this has no business removing.
+   */
+  for (const archive of sweep.archives) {
+    try {
+      const left = await fsp.readdir(archive);
+      if (left.length === 0) await fsp.rmdir(archive);
+    } catch { /* already gone, or not readable — either way not ours to force */ }
+  }
+
+  return { title, label, wasMissing, assets: countSweep(sweep) };
+}
+
+/** The paths one document's delete takes with it, resolved and ready to remove. */
+interface Sweep {
+  /** Archived copies of this same output, and its ledgers. */
+  files: string[];
+  /** The working tree, and archived working trees of this same output. */
+  dirs: string[];
+  /** `archived-<stamp>/` folders to remove IF this emptied them. */
+  archives: string[];
+  /** The live working tree's root, for the open-book refusal. Null when none. */
+  treeRoot: string | null;
+  /** The manifest key of that tree (`generated/x.epub`), so its row can go. */
+  treeEntry: string | null;
+  /**
+   * The counts the card quotes, tallied AS THE PATHS ARE FOUND rather than
+   * re-derived from them afterwards. Reading "is this a version or a ledger?"
+   * back out of a string is a guess about a filename; counting at the moment the
+   * thing is identified is a fact, and the card is quoting these numbers to
+   * somebody about to destroy them.
+   */
+  archivedVersions: number;
+  histories: number;
+}
+
+function emptySweep(): Sweep {
+  return {
+    files: [], dirs: [], archives: [], treeRoot: null, treeEntry: null,
+    archivedVersions: 0, histories: 0,
+  };
+}
+
+function countSweep(sweep: Sweep): DocumentAssets {
+  return {
+    archivedVersions: sweep.archivedVersions,
+    workingTree: sweep.treeRoot !== null,
+    histories: sweep.histories,
+  };
+}
+
+/**
+ * Everything that belongs to this document alone, found rather than assumed.
+ *
+ * Nothing here deletes; it only looks. `documentAssets` uses it to tell the user
+ * what a delete would take, and `deleteDocument` uses the same answer to take
+ * it — so the card and the act cannot describe different things.
+ */
+async function planSweep(
+  dir: string,
+  resolved: string,
+  manifest: ProjectManifest,
+): Promise<Sweep> {
+  const sweep = emptySweep();
+
+  // The manifest spells an origin with forward slashes, relative to the project.
+  const entry = path.relative(dir, resolved).split(path.sep).join('/');
+  const tree = manifest.working.trees.find((row) => row.from === entry) ?? null;
+  const treeDir = tree?.dir ?? workingTreeName(entry);
+  if (tree !== null) {
+    sweep.treeEntry = entry;
+    sweep.treeRoot = path.join(dir, WORKING, tree.dir);
+    sweep.dirs.push(sweep.treeRoot);
+  }
+
+  /*
+   * THE LEDGERS, live and archived. Named for the working tree even when no tree
+   * is recorded any more: a history outlives the copy it was written against —
+   * that is what `history/archived-<stamp>/` is for — and one left behind here
+   * would be a file named after a book that no longer exists.
+   */
+  const history = historyDir(dir);
+  const ledger = `${treeDir}.json`;
+  if (await exists(path.join(history, ledger))) {
+    sweep.files.push(path.join(history, ledger));
+    sweep.histories += 1;
+  }
+  for (const archive of await archivesIn(history)) {
+    const inside = path.join(archive, ledger);
+    if (await exists(inside)) {
+      sweep.files.push(inside);
+      sweep.histories += 1;
+      sweep.archives.push(archive);
+    }
+  }
+
+  /*
+   * THE PREDECESSORS, in the file's own directory. `generated/archived-<stamp>/`
+   * for an output and `working/archived-<stamp>/` for a live copy are the same
+   * convention in two places, so this looks beside the file rather than in a
+   * named folder — whichever layer the document lives in, its past is rotated
+   * into a sibling of it.
+   */
+  const label = path.basename(resolved);
+  for (const archive of await archivesIn(path.dirname(resolved))) {
+    let touched = false;
+    const past = path.join(archive, label);
+    if (await exists(past)) {
+      sweep.files.push(past);
+      // The FILE is what a "version" is. Its tree below is the same version's
+      // working copy, not a second one, so it is swept and never counted twice.
+      sweep.archivedVersions += 1;
+      touched = true;
+    }
+    const pastTree = path.join(archive, `working-${treeDir}`);
+    if (await exists(pastTree)) { sweep.dirs.push(pastTree); touched = true; }
+    if (touched) sweep.archives.push(archive);
+  }
+  return sweep;
+}
+
+/** The `archived-<stamp>/` directories directly inside `parent`. */
+async function archivesIn(parent: string): Promise<string[]> {
+  let entries: Dirent[];
+  try {
+    entries = await fsp.readdir(parent, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith('archived-'))
+    .map((entry) => path.join(parent, entry.name));
+}
+
+/**
+ * What a delete of this document would take with it, for the card that asks.
+ *
+ * Reads the manifest directly rather than through the edit chain: this is a
+ * question, it writes nothing, and a describe that queued behind a conversion
+ * recording its output would leave the confirmation waiting on a job.
+ */
+export async function documentAssets(filePath: string): Promise<DocumentAssets> {
+  const { dir, resolved } = deletableDocumentPath(filePath);
+  try {
+    return countSweep(await planSweep(dir, resolved, await readManifest(dir)));
+  } catch {
+    // A catalogue that will not parse still deletes; it just cannot promise
+    // what else is in there. Saying "nothing extra" is the honest answer to a
+    // question this project cannot be asked.
+    return { archivedVersions: 0, workingTree: false, histories: 0 };
+  }
 }
 
 /** Every byte under `dir`, counted by walking it. Missing is zero, never a throw. */
@@ -1719,10 +2278,16 @@ async function adoptLegacyGenerated(said: string[]): Promise<void> {
           await fsp.rm(destination, { force: true });
           throw err;
         }
-        manifest.generated = [
-          ...manifest.generated.filter((existing) => existing.file !== file),
-          { file, kind, role, madeAt: Date.now() },
-        ];
+        recordStep(manifest, kind, {
+          file: `${GENERATED}/${file}`,
+          label: STEP_LABELS[role],
+          appliedAt: Date.now(),
+          kind: role === 'translation' ? 'translate' : role === 'cast' ? 'origin' : 'convert',
+          // Everything the old flat workspace held was written by the engine, so
+          // every one of these was a model pass.
+          retention: 'expensive',
+          why: WHY_MODEL_PASS,
+        });
         // Written before the refresh below, for the reason `recordGenerated`
         // gives: the move has already happened, and a refusal from the refresh
         // must not take the record of it down too.

@@ -425,11 +425,29 @@ export interface WorkspacePlan {
   /** `<basename>-<8 hex>` — the project's directory name and the bank's stem. */
   key: string;
   /**
+   * `<libraryDir>/projects/<key>/archive/<the file as imported>` — THE PIXELS.
+   *
+   * WHAT THE ENGINE READS, AND NOT WHAT THE USER POINTED AT. A conversion reads
+   * a book's PAGES, and the pages live in the scan the project was made from —
+   * which is in `archive/`, which nothing in this app ever writes.
+   *
+   * The user points at "the PDF", meaning the one this app shows them, and after
+   * a real-text conversion that document has no pixels in it at all: it is type
+   * on blank paper. Converting THAT would read a reprint of a reading. So the
+   * app resolves the source itself, every time, and the person asking never has
+   * to know which of the copies on disk is the one with the ink in it.
+   *
+   * It is also what makes a self-overwrite impossible by construction rather
+   * than by refusal: the input is always under `archive/` and the output never
+   * is, so the two paths cannot be equal and there is nothing left to check.
+   */
+  sourcePath: string;
+  /**
    * `<libraryDir>/projects/<key>/generated/<the book's name>.<ext>`.
    *
    * The GENERATED layer, because what the engine writes is an origin: it is the
    * record of what the model read, it is never written again, and the copy the
-   * user edits is unpacked from it.
+   * user edits is unpacked or copied from it.
    */
   outputPath: string;
   /** `<libraryDir>/projects/<key>/readings/<key>.jsonl`. Passed on every job. */
@@ -584,8 +602,25 @@ export interface ProjectFinal {
  * member list is the one long field and it is bounded by the book's own file
  * count (a few hundred), not by how much anybody edits.
  */
+/** One file type's whole record on disk: its chain, newest last. */
+export interface ProjectTypeRecord {
+  kind: ProjectDocumentKind;
+  /** Never empty — a type with no origin is not a type this project has. */
+  steps: ProjectStep[];
+}
+
 export interface ProjectManifest {
-  /** 1. Bumped only when a reader of an older file would get it wrong. */
+  /**
+   * 2. Bumped only when a reader of an older file would get it wrong.
+   *
+   * VERSION 2 REPLACED `generated` WITH `documents`. A v1 catalogue listed the
+   * files this app had made, each with a role; a v2 one lists the file TYPES the
+   * project has, each with the chain of files behind it. A v1 reader handed a v2
+   * file would find no `generated` array and conclude nothing had ever been made
+   * from the book — which is why this number moved. `readManifest` migrates v1
+   * in memory on every read (`migrateToSteps`), so an old project opens without
+   * ceremony and is rewritten in the new shape the next time anything edits it.
+   */
   version: number;
   /** `<slug>-<8 hex>`, and the directory's own name. */
   key: string;
@@ -601,7 +636,17 @@ export interface ProjectManifest {
   stem: string;
   createdAt: number;
   archive: ProjectArchive | null;
-  generated: ProjectGenerated[];
+  /**
+   * One record per file type this project has — the PDF, the EPUB, the text.
+   *
+   * Replaced `generated: ProjectGenerated[]`, which was one entry per file this
+   * app had written. That shape could not answer the question the app is now
+   * built around ("what types does this book have, and what has been done to
+   * each?") without the caller reconstructing it from roles, and two callers
+   * reconstructing it differently is how the same project came to be drawn as
+   * two rows on Home and one in the picker.
+   */
+  documents: ProjectTypeRecord[];
   working: {
     trees: ProjectWorkingTree[];
     files: ProjectWorkingFile[];
@@ -609,12 +654,151 @@ export interface ProjectManifest {
   final: ProjectFinal[];
 }
 
-/** One openable (or merely listable) document inside a project, as Home sees it. */
+/**
+ * How one step in a file type's history came about.
+ *
+ * `origin` is step 0 and every type has exactly one: the file as it was when it
+ * became unchangeable. For the PDF that is the import; for the EPUB it is the
+ * cast (or the import, when the project started from a book); for the text it is
+ * the moment it was generated.
+ *
+ * `edit` IS DECLARED AND NOTHING MINTS ONE YET, which is deliberate rather than
+ * an oversight. Editing a book is continuous — a hundred keystrokes are not a
+ * hundred steps — so it lands in the working copy, and the working copy is the
+ * material of whatever the last step produced. A step is a DISCRETE APPLIED
+ * OPERATION, the kind with a name you could put on a button. When something in
+ * this app applies one of those to a book's text, it mints this.
+ */
+export type ProjectStepKind = 'origin' | 'convert' | 'translate' | 'edit';
+
+/**
+ * One point in the life of one file type — what it was, after what was done.
+ *
+ * THE CHAIN IS THE FEATURE. A project's PDF is not a file, it is a sequence: the
+ * scan as imported, then the same book reprinted as real text. Keeping the
+ * sequence rather than only the newest is what lets somebody compare two of
+ * them, export an earlier one, or step back to where they started — and it costs
+ * nothing to keep, because every one of these files is on disk already. What was
+ * missing was the record of which file was which and what had been done to it.
+ */
+export interface ProjectStep {
+  /** Project-relative, forward slashes: `archive/x.pdf`, `generated/x.epub`. */
+  file: string;
+  /**
+   * What was applied, in words a person would recognise.
+   *
+   * "The scan you imported", "Reprinted as real text", "Translated into English".
+   * Never a path and never a role name: this is the only part of a project's
+   * bookkeeping the user is meant to read.
+   */
+  label: string;
+  appliedAt: number;
+  kind: ProjectStepKind;
+  /**
+   * WHAT IT WOULD COST TO GET THIS BACK — the field the whole store turns on.
+   *
+   * THREE STATES AND NOT A BOOLEAN, and the third one was learned the hard way.
+   * A first version of this asked only "is it expensive?", with cheap meaning
+   * "regenerate rather than store". That rule is right about machine work and
+   * DANGEROUSLY WRONG about a person's: a hundred keystrokes are trivial for a
+   * computer to write out again and impossible for anybody to reproduce. A
+   * two-state field could not tell those apart, and the first thing it would
+   * have got wrong is the one thing in a project that is genuinely unrecoverable.
+   *
+   * So the question is not "was this expensive" but "what happens if it is
+   * gone", and there are three answers:
+   *
+   *   `irreplaceable` — NOTHING gets it back. The file the user imported, whose
+   *   provenance only they know; and anything a PERSON made, at any size. Never
+   *   swept, never regenerated, and named first in any warning about erasing it.
+   *
+   *   `expensive` — a machine can make it again, at a cost somebody would feel.
+   *   Hours of GPU: a vision model over three hundred pages, a translation of
+   *   every block. Kept because redoing it is a real price, not because it
+   *   cannot be redone.
+   *
+   *   `regenerable` — cheap, deterministic, and derivable from what is still
+   *   here. Zipping a tree, unpacking one, rendering a deliverable at export.
+   *   These are MATERIALISED WHEN ASKED FOR rather than stored, which is the
+   *   whole reason the folder does not fill with copies nobody can account for.
+   *
+   * ── What the store is actually for ──────────────────────────────────────
+   *
+   * Not "a copy of every file we ever wrote". The user's words: "this is about
+   * retaining data from steps that took a lot of resources to run or acquire…
+   * being able to step back if they make a mistake, or to keep different
+   * steps/changes easily." So the store keeps the top two and lets the third go,
+   * and the two operations it is designed for are STEPPING BACK and HOLDING
+   * VARIANTS — not delivering files. A deliverable is a rendering of retained
+   * data and is made at export.
+   *
+   * The READINGS BANK is this exact principle one layer down: the bank is the
+   * `expensive` thing, the reprint is a `regenerable` rendering of it, and that
+   * is precisely why a rerun is free.
+   *
+   * ── Why it is DATA and not a rule in the code ───────────────────────────
+   *
+   * Four passes ask this question — the asset sweep, the rotation, the delete
+   * warning and the step chain — and a rule re-derived at each of them from the
+   * role, the directory or the file extension is a rule that drifts. Asked of
+   * the step, there is one answer, written down by the code that knew.
+   */
+  retention: StepRetention;
+  /** Why, in words a warning can quote without rephrasing. */
+  why: string;
+  /*
+   * NO GENERATOR VERSION IS RECORDED HERE, and that is a decision rather than an
+   * omission. There was briefly a `madeBy` stamp, to catch a rendering made by
+   * an older build so a compare screen could not blame our change on the user's.
+   * It is gone: the churn it guarded against is this week's tuning of the PDF
+   * emitter, not how the shipped program behaves. Rendering from retained data
+   * is deterministic — one program, one answer — so a re-render IS the same
+   * document, and permanent machinery built around a temporary condition is
+   * machinery that outlives its reason and confuses whoever finds it.
+   *
+   * If a rendering looks stale while the emitter is being tuned, the fix is to
+   * render it again, which is free precisely because the expensive data is what
+   * this store keeps.
+   */
+}
+
+/** See `ProjectStep.retention`. */
+export type StepRetention = 'irreplaceable' | 'expensive' | 'regenerable';
+
+/** The reasons, spelled once so every warning quotes the same words. */
+export const WHY_IMPORTED =
+  'the only copy of this document Foundry knows of — nobody knows where it came from';
+export const WHY_MODEL_PASS =
+  'hours of GPU: a model read every page of it';
+export const WHY_HANDMADE =
+  'changes you made by hand, which nothing can reproduce';
+
+/**
+ * ONE ROW PER FILE TYPE — the PDF, the EPUB, the text. Never one per file.
+ *
+ * ── What this replaced, and why ─────────────────────────────────────────────
+ *
+ * A row used to be a FILE with a role attached, which meant a project that had
+ * been converted showed the scan and the reprint as two documents with the same
+ * name, differing only by the directory this app happened to file them in. The
+ * user's account of what they wanted is the whole correction: "each file type
+ * has its own row in the system… all they see is the different available file
+ * types."
+ *
+ * So the identity of a row is its KIND. Everything else about it — which file is
+ * live, what was done to get there, what it was before — is the `steps` chain,
+ * and the user sees only the top of it unless they go looking.
+ *
+ * `path` is what a click opens: the working copy for a type that has one, the
+ * latest step's file otherwise. It is deliberately NOT the last step's `file`
+ * for every type — a PDF's live copy lives in `working/` and its step chain
+ * records the origins those copies were made from.
+ */
 export interface ProjectDocument {
-  path: string;
+  /** The row's identity. There is at most one row of each kind in a project. */
   kind: ProjectDocumentKind;
-  /** This app's own reasoning about the row. Never rendered. */
-  role: ProjectGeneratedRole | 'archive';
+  /** What opening this row opens. */
+  path: string;
   /**
    * The file's own name — `Working Towards The Fuhrer. Kershaw, Ian. (1993).epub`.
    * Never a layer name, never a path, never a slug.
@@ -627,6 +811,23 @@ export interface ProjectDocument {
    * have it in a folder they chose, so it carries no "saved nowhere" dot.
    */
   managed: boolean;
+  /**
+   * Step 0 is this type's origin; the last is what is live. Never empty.
+   *
+   * The array IS the pointer: the live file is `steps[steps.length - 1]`, and
+   * there is no separate `current` field precisely so the two can never
+   * disagree about which one that is.
+   */
+  steps: ProjectStep[];
+  /**
+   * True when this row's origin is the PROJECT's own import — the book itself.
+   *
+   * The PDF for a scanned book; the EPUB for a project started from one. It is
+   * `isOriginal` generalised from a file to a row (`shared/original.ts`), and it
+   * is what makes deleting this row a project delete: everything else in the
+   * folder was made from it, so there is nothing left to be a project without it.
+   */
+  origin: boolean;
 }
 
 /**

@@ -46,6 +46,7 @@ import { promises as fsp } from 'node:fs';
 import * as path from 'node:path';
 
 import {
+  archiveFileOf,
   generatedFileFor,
   importDocument,
   rotateGenerated,
@@ -81,12 +82,31 @@ export async function planConversion(
   const { dir, key, stem } = await importDocument(inputPath, 'pdf');
   const file = generatedFileFor(stem, kind);
   const outputPath = path.join(dir, 'generated', file);
-  refuseSelfOverwrite(inputPath, outputPath, file);
+  /*
+   * THE SOURCE IS THE APP'S TO CHOOSE, and that is the whole correction here.
+   *
+   * `inputPath` is whatever document the user was looking at when they asked.
+   * It is not necessarily the thing with the pages in it: after a real-text
+   * conversion the PDF this app shows them is type on blank paper, and reading
+   * THAT would be converting a reprint of a reading. So the pixels are fetched
+   * from where they are kept — `archive/`, which is written once at import and
+   * never again — and the user is never asked which copy is which.
+   *
+   * There used to be a `refuseSelfOverwrite` on the next line, and its removal
+   * is the point rather than a side effect. It fired when somebody asked to
+   * convert the reprint, and it told them to go and pick a different file: a
+   * refusal caused entirely by where this app had filed something, handed to
+   * the person who is not supposed to know that the filing exists. The state it
+   * guarded against is now unreachable — the input is always under `archive/`
+   * and no output path is ever composed there — so there is nothing to guard.
+   */
+  const sourcePath = await archiveOriginal(dir) ?? inputPath;
   await rotateGenerated(dir, file);
   await fsp.mkdir(path.join(dir, 'generated'), { recursive: true });
   await fsp.mkdir(path.join(dir, 'readings'), { recursive: true });
   return {
     key,
+    sourcePath,
     outputPath,
     /*
      * The bank is keyed by the BOOK, not by the format.
@@ -124,12 +144,30 @@ export async function planConversion(
 export async function planTranslation(
   inputPath: string,
   targetLanguage: string,
-): Promise<{ key: string; outputPath: string; bankPath: string }> {
+): Promise<{ key: string; sourcePath: string; outputPath: string; bankPath: string }> {
   const { dir, key, stem } = await importDocument(inputPath, 'epub');
   const file = translationFileFor(stem, targetLanguage);
   const outputPath = path.join(dir, 'generated', file);
-  refuseSelfOverwrite(inputPath, outputPath, file);
-  await rotateGenerated(dir, file);
+  /*
+   * A RE-TRANSLATION READS THE COPY IT IS ABOUT TO REPLACE.
+   *
+   * Translating the English edition into English again names one path twice:
+   * the output is composed from the PROJECT's stem and the language, so asking
+   * for a language a document already is lands on that document. This used to be
+   * refused, and the refusal is gone for the reason the conversion's was — the
+   * user asked for something perfectly sensible ("do that again") and got a
+   * sentence about the app's own filing.
+   *
+   * The rotation is what makes it work rather than a special case. `generated/`
+   * is never overwritten, so the previous edition is moved aside before the run
+   * regardless; when the run's own input is that edition, the copy just rotated
+   * aside IS the source of record and the engine reads it there. Read from what
+   * was, write to what will be — the same shape as every other job here.
+   */
+  const movedAside = await rotateGenerated(dir, file);
+  const sourcePath = movedAside !== null && samePath(inputPath, outputPath)
+    ? movedAside
+    : inputPath;
   await fsp.mkdir(path.join(dir, 'generated'), { recursive: true });
   await fsp.mkdir(path.join(dir, 'readings'), { recursive: true });
   /*
@@ -149,27 +187,58 @@ export async function planTranslation(
    * record: 152 blocks, killed, nothing kept.
    */
   const tag = targetLanguage.trim().replace(/[^A-Za-z0-9-]+/g, '') || 'translated';
-  return { key, outputPath, bankPath: path.join(dir, 'readings', `${key}.${tag}.bank.jsonl`) };
+  return {
+    key,
+    sourcePath,
+    outputPath,
+    bankPath: path.join(dir, 'readings', `${key}.${tag}.bank.jsonl`),
+  };
 }
 
 /**
- * A job whose output IS its input, refused by name before anything moves.
+ * The immutable original this project was made from, or null for a legacy one.
  *
- * Reachable in one gesture: open a project's own converted PDF and ask to
- * convert it to a PDF, or open its English translation and ask to translate it
- * into English. Both name a file inside a project, so the plan finds that project and
- * lands on the file that is open in front of the user — and the rotation that
- * runs next would move the engine's own input aside a moment before it tried to
- * read it, which arrives as a missing-file error from a subprocess about a path
- * nobody typed.
+ * `archive/` is written exactly once, by `importDocument`, and by nothing else
+ * ever. That makes it the source of record: the bytes the user handed over,
+ * unedited, however many conversions have since been run over them.
  *
- * Said out loud instead. The user asked for something that cannot mean what they
- * meant, and the sentence names the file and the way out.
+ * NULL IS A REAL ANSWER, not an error. A project adopted from the old flat
+ * workspace has outputs and no archive — nobody kept the scan, because the old
+ * layout had nowhere to keep it — and the honest fallback for those is the
+ * document the caller was pointing at. It is what that project has.
+ *
+ * ── Why there is no refusal anywhere near here ──────────────────────────────
+ *
+ * `refuseSelfOverwrite` used to live in this file and it is gone. It compared
+ * the input path with the output path and threw when they matched, which could
+ * happen because the user was allowed to point the engine at a file this app
+ * had filed in `generated/`. That is a guard against a state the architecture
+ * should never be able to reach, and a guard like that documents the
+ * architecture failing rather than protecting anybody: the person who met it had
+ * asked for something perfectly reasonable and was told to go and choose a
+ * different file because of where their conversions were being kept.
+ *
+ * Two invariants replace it, and both are properties of how paths are BUILT:
+ *
+ *   THE ARCHIVE IS NEVER A WRITE TARGET. Every output path in this app is
+ *   composed by `planConversion` or `planTranslation`, and both compose into
+ *   `generated/`. Nothing anywhere composes one into `archive/`.
+ *
+ *   THE USER IS ALWAYS IN A WORKING COPY. What they point at is a copy the app
+ *   made and may replace, so applying a change to it is always allowed. There is
+ *   no case left where this app knows better than the person who asked.
+ *
+ * The ENGINE keeps its own `--out == --pdf` refusal (src/vlm/convert.ts), and
+ * that one is not this one: it belongs to a command-line program anyone may hand
+ * two arbitrary paths, and it protects a run from destroying the input it is
+ * reading halfway through. This app simply never hands it such a pair.
  */
-function refuseSelfOverwrite(inputPath: string, outputPath: string, file: string): void {
-  if (path.resolve(inputPath).toLowerCase() !== path.resolve(outputPath).toLowerCase()) return;
-  throw new Error(
-    `That document IS this project's ${file}, so this run would have to read and replace the same `
-    + 'file. Run it on the original instead, or ask for a different format or language.',
-  );
+async function archiveOriginal(dir: string): Promise<string | null> {
+  const archive = await archiveFileOf(dir);
+  return archive === null ? null : path.join(dir, 'archive', archive);
+}
+
+/** One spelling for a path, so Windows' three become one. */
+function samePath(a: string, b: string): boolean {
+  return path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
 }

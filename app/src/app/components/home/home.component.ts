@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import { Router } from '@angular/router';
 
+import { typeLabel } from '@shared/documents';
 import type { ProjectSummary } from '@shared/types';
 
 import { api } from '../../core/foundry';
@@ -350,14 +351,18 @@ export class HomeComponent {
    * answer to what has been made from it.
    */
   protected tags(project: ProjectSummary): string[] {
-    const seen = new Set<string>();
+    const tags: string[] = [];
     for (const document of project.documents) {
-      if (document.role === 'archive' || document.role === 'imported') continue;
-      if (document.role === 'text') seen.add('plain text');
-      else if (document.role === 'searchable') seen.add('real text');
-      else seen.add(document.role);
+      /*
+       * THE FILE TYPES THIS BOOK HAS, which is what a row is now. The book's own
+       * type is not a tag — "you gave me a PDF" is not an answer to what has
+       * been made from it — so the row that IS the import contributes nothing,
+       * and everything beside it is something this app produced.
+       */
+      if (document.origin) continue;
+      tags.push(typeLabel(document.kind));
     }
-    return [...seen];
+    return tags;
   }
 
   /**

@@ -1,8 +1,11 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
+import { qualify } from '@shared/documents';
+import { fold } from '@shared/original';
 import type { ConversionKind, JobRequest } from '@shared/types';
 
+import { ProjectsService } from '../../core/projects.service';
 import { QueueService } from '../../core/queue.service';
 import { TabsService } from '../../core/tabs.service';
 import { UiService } from '../../core/ui.service';
@@ -60,14 +63,21 @@ import { api } from '../../core/foundry';
           -->
           <label class="field">
             <span class="label">Source</span>
+            <!--
+              QUALIFIED BY WHAT EACH ONE IS. A project's scan and the real-text
+              PDF made from it carry the SAME FILENAME — they differ only by the
+              directory, which the user is deliberately never shown — so drawn by
+              basename alone these were two identical options and picking the
+              wrong one earned a refusal after the form was filled in.
+            -->
             @if (sources().length > 1) {
               <select [ngModel]="input" (ngModelChange)="pick($event)" name="source" [title]="input">
                 @for (candidate of sources(); track candidate) {
-                  <option [value]="candidate">{{ baseName(candidate) }}</option>
+                  <option [value]="candidate">{{ optionFor(candidate) }}</option>
                 }
               </select>
             } @else {
-              <input type="text" [value]="input" readonly [title]="input">
+              <input type="text" [value]="optionFor(input)" readonly [title]="input">
             }
           </label>
 
@@ -307,6 +317,7 @@ export class OcrDialogComponent {
   protected readonly ui = inject(UiService);
   private readonly tabs = inject(TabsService);
   private readonly queue = inject(QueueService);
+  private readonly projects = inject(ProjectsService);
 
   /**
    * The PDF this conversion is OF: the focused pane's document, when it is one.
@@ -347,6 +358,22 @@ export class OcrDialogComponent {
     // A pick survives only while its document is still open: closing the tab a
     // held job was configured from should not leave the dialog pointing at it.
     if (chosen !== null && this.sources().includes(chosen)) return chosen;
+    return this.suggested();
+  });
+
+  /**
+   * What to start on when the user has not picked: the focused PDF, full stop.
+   *
+   * IT USED TO NEED A RULE HERE AND NO LONGER DOES. For a while this preferred
+   * the project's original whenever the focused document was one a conversion
+   * would write over — because the user could be reading the reprint, and
+   * converting it earned a refusal. That case is gone: there is one PDF per
+   * project now, main resolves the pixels out of `archive/` itself
+   * (`planConversion`), and every document the dialog can offer is a working
+   * copy a change may be applied to. The document in front of you is always the
+   * right answer, which is what it looked like all along.
+   */
+  private readonly suggested = computed(() => {
     const tab = this.tabs.activeDocument();
     return tab !== null && tab.kind === 'pdf' ? tab.path : null;
   });
@@ -357,6 +384,22 @@ export class OcrDialogComponent {
 
   protected baseName(filePath: string): string {
     return filePath.split(/[\\/]/).pop() ?? filePath;
+  }
+
+  /**
+   * A source named so two of them cannot read as one.
+   *
+   * ALWAYS QUALIFIED HERE, not only on a collision. This is a list somebody is
+   * CHOOSING FROM, and a picker whose entries change their wording depending on
+   * what else happens to be open is a picker whose entries cannot be learned.
+   * The role is what tells the scan from the reprint made of it, which are the
+   * same filename in the same project (`shared/documents.ts`).
+   */
+  protected optionFor(filePath: string): string {
+    const project = this.projects.projectFor(filePath);
+    const document = project?.documents.find((row) => fold(row.path) === fold(filePath));
+    const folder = filePath.split(/[\\/]/).slice(-2, -1)[0] ?? '';
+    return qualify(this.baseName(filePath), document?.kind ?? null, folder);
   }
 
   /** EPUB unless asked otherwise — it is the format this app can also read. */
@@ -400,7 +443,17 @@ export class OcrDialogComponent {
       const kind = this.kind();
       const plan = await api.workspace.plan(input, kind);
       const request: JobRequest = {
-        inputPath: input,
+        /*
+         * THE PLAN'S SOURCE, not the document the user picked.
+         *
+         * They pointed at "the PDF", meaning the one this app shows them —
+         * which after a real-text conversion is type on blank paper with no
+         * pixels in it at all. Main resolves what that book's PAGES actually
+         * are (`planConversion`: the immutable `archive/` original) and the job
+         * reads those. The person asking never has to know there is more than
+         * one copy, which is the whole of the working-copy model.
+         */
+        inputPath: plan.sourcePath,
         outputPath: plan.outputPath,
         kind,
         readingsPath: plan.readingsPath,
