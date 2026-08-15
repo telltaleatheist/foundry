@@ -207,7 +207,7 @@ That rule costs this phase less than it looks, because the verification it
 needs already exists. `test/vlm/dots.test.ts` is ~128 assertions written
 directly against the assembler's behaviour, and §2's contract is that this
 behaviour does not change. **The existing suite IS the byte-identical
-guard** — a hoist that keeps 909 tests green has demonstrated the only thing
+guard** — a hoist that keeps the suite green has demonstrated the only thing
 this phase claims. Writing a fresh contract test would be re-asserting, in
 new scaffolding, what the old scaffolding already asserts.
 
