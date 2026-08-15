@@ -135,6 +135,63 @@ shape as the translation-collision problem in §4.
 
 ---
 
+## 6. The undo stack stops persisting — commits are the durable history
+
+**The user's proposal (2026-08-15), and it is right:** the undo/redo stack goes
+back to being in-memory and starts fresh on every document open. Committing to
+the ledger is how a state becomes durable.
+
+**Why it is right, stated plainly:** two mechanisms for "go back" is one too
+many, and they conflict at exactly one place — moving between steps. A persisted
+undo row names an element and a field and replays a setter; replayed against a
+different step's state it is nonsense. Making the stack session-scoped removes
+the conflict by construction rather than by defending against it.
+
+**What is NOT lost, and this is the part that makes the trade cheap:** the live
+overlay still persists. Close the app mid-edit and every correction is still
+there on reopen — what ends is the ability to *step backwards through them one
+at a time*, replaced by stepping back to a commit. Fine-grained undo within a
+session, coarse-grained restore points across sessions.
+
+**What it deletes:** `overlays/<key>.ledger.json` and its read/write path, the
+archive-the-pair logic, ledger serialisation in `app/shared/overlay.ts`, and the
+generation-mismatch handling for the ledger specifically. The fine-tune plan is
+untouched — the labels live in the overlay, never in the undo stack.
+
+**Refinement worth taking:** "fresh on every document open" should also mean
+fresh when the underlying overlay identity changes — a re-read mints a new
+generation and archives the overlay, and a stack that outlived it describes a
+thing that is gone. But it does **not** need to reset on every position move:
+standing on a frozen save is read-only (`curation-lock.ts`), so the live overlay
+cannot change while the user is away from it. Peeking at an old save and coming
+back can keep the undo history, safely, by construction.
+
+**The caution — `history.ts` is a different animal.** There are two persisted
+histories, not one:
+
+- `overlays/<key>.ledger.json` — PDF block curation. Commits exist here, so the
+  proposal lands cleanly.
+- `history/<working tree name>.json` — the EPUB text editor, which the user
+  **explicitly asked for** ("open a project, edit a file, have Foundry die
+  randomly, and still be able to press Ctrl+Z"). EPUB text edits have **no
+  commit or step equivalent yet**, so dropping persistence there is a pure loss
+  with nothing to replace it.
+
+So this change applies where commits exist. `history.ts` keeps persisting until
+EPUB edits become steps of their own — which is a real gap in the step model
+worth naming separately: editing a book's HTML is user labour, therefore
+irreplaceable, therefore ought to be a retained step.
+
+**Open:**
+- Does uncommitted work need an indicator? Session-scoped undo means a restart
+  silently converts "undoable" into "permanent", and the app already has an
+  unsaved-dot idiom. Without something, people learn Save's value by losing
+  work.
+- Should closing a document with uncommitted corrections offer a commit rather
+  than auto-committing (which would spam the ledger)?
+
+---
+
 ## Suggested order
 
 §1 and §2 together (one feature, two ends), since they release the
