@@ -100,9 +100,22 @@ export class HistoryError extends Error {
 /** The schema this app writes and the only one it reads. */
 const HISTORY_VERSION = 1;
 
-/** The six routes a row can name. A file naming a seventh is a file from a future. */
+/**
+ * The seven routes a row can name. A file naming an eighth is a file from a
+ * future.
+ *
+ * `chapters` ARRIVED WITH THE BOOK'S OWN SPINE and is the one that was almost
+ * forgotten. A chapter line on the flowing book — dragged, renamed, added in
+ * the gutter — files a row here like every other decision, and the scan's
+ * ledger has listed the same name for as long as it has had chapter marks
+ * (`overlays.ts`). Writing a row was never validated, so the omission would not
+ * have failed anything on the way out; it would have failed on the way BACK,
+ * where an unknown field refuses the whole file, and the next opening of that
+ * book would archive its undo history aside with a notice about a version it
+ * did not recognise. The two sets are a pair and must be edited as one.
+ */
 const FIELDS: ReadonlySet<string> = new Set([
-  'cut', 'category', 'html', 'note-cut', 'nav-label', 'page-heading',
+  'cut', 'category', 'html', 'note-cut', 'nav-label', 'page-heading', 'chapters',
 ]);
 
 /**
