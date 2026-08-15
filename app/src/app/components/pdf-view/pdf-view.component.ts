@@ -744,7 +744,7 @@ export class PdfViewComponent implements OnDestroy {
      * <iframe> pointed at a URL it is already showing ignores it too — so this
      * pane reads it for the same reason the book's does.
      */
-    const source = computed(() => `${this.tab().revision} ${this.tab().path}`);
+    const source = computed(() => `${this.tab().revision}\u0000${this.tab().path}`);
     effect(() => {
       void source();
       const file = untracked(() => this.tab().path);

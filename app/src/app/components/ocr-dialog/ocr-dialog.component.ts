@@ -2,7 +2,6 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } 
 import { FormsModule } from '@angular/forms';
 
 import { qualify } from '@shared/documents';
-import { fold } from '@shared/original';
 import type { JobRequest } from '@shared/types';
 
 import { ProjectsService } from '../../core/projects.service';
@@ -70,11 +69,13 @@ import { api } from '../../core/foundry';
           <label class="field">
             <span class="label">Source</span>
             <!--
-              QUALIFIED BY WHAT EACH ONE IS. A project's scan and the real-text
-              PDF made from it carry the SAME FILENAME — they differ only by the
-              directory, which the user is deliberately never shown — so drawn by
-              basename alone these were two identical options and picking the
-              wrong one earned a refusal after the form was filled in.
+              THE BOOK, QUALIFIED BY WHAT IT IS. These options were basenames,
+              and every document of one project shares a single stem — so two
+              open books were two forty-character strings differing somewhere in
+              the middle, and a project's scan and the real-text PDF made from it
+              were the same option twice over, differing only by the directory the
+              user is deliberately never shown. Picking the wrong one earned a
+              refusal after the whole form had been filled in.
             -->
             @if (sources().length > 1) {
               <select [ngModel]="input" (ngModelChange)="pick($event)" name="source" [title]="input">
@@ -334,24 +335,35 @@ export class OcrDialogComponent {
     this.picked.set(filePath);
   }
 
-  protected baseName(filePath: string): string {
-    return filePath.split(/[\\/]/).pop() ?? filePath;
-  }
-
   /**
-   * A source named so two of them cannot read as one.
+   * The BOOK this option would read, and what it is.
+   *
+   * IT WAS A FILENAME, and the picker is where that hurt most: every candidate
+   * is a PDF in a project, every project's documents share one stem, so a person
+   * choosing between two open books read two strings that differed somewhere in
+   * the middle of forty characters of hyphens. The project's title is what Home
+   * and the document list call each of them, and a picker that agrees with the
+   * two screens somebody arrived from is a picker they can answer without
+   * looking twice.
    *
    * ALWAYS QUALIFIED HERE, not only on a collision. This is a list somebody is
    * CHOOSING FROM, and a picker whose entries change their wording depending on
    * what else happens to be open is a picker whose entries cannot be learned.
-   * The role is what tells the scan from the reprint made of it, which are the
-   * same filename in the same project (`shared/documents.ts`).
+   * The kind is passed rather than looked up because every candidate is a PDF by
+   * construction (`sources`) — and the folder fallback `qualify` offers for a
+   * document with no project is deliberately not taken here: a directory name is
+   * a path by another spelling, and this dialog is done showing people paths.
+   *
+   * The whole path is still on the control's own tooltip, which is where it
+   * belongs.
    */
   protected optionFor(filePath: string): string {
-    const project = this.projects.projectFor(filePath);
-    const document = project?.documents.find((row) => fold(row.path) === fold(filePath));
-    const folder = filePath.split(/[\\/]/).slice(-2, -1)[0] ?? '';
-    return qualify(this.baseName(filePath), document?.kind ?? null, folder);
+    return qualify(this.nameFor(filePath), 'pdf', '');
+  }
+
+  /** One rule for what a document is called, and it is not this file's. */
+  private nameFor(filePath: string): string {
+    return this.projects.nameFor(filePath);
   }
 
   protected readonly skipPages = signal('');
@@ -369,7 +381,7 @@ export class OcrDialogComponent {
     effect(() => {
       this.source();
       this.problem.set(null);
-      // And the confirmation with it: "Added Kershaw.pdf" over a form that now
+      // And the confirmation with it: "Added Working Towards the Führer" over a form that now
       // names a different book is a sentence about something else.
       this.added.set(null);
     });
@@ -420,7 +432,7 @@ export class OcrDialogComponent {
        * for a problem.
        */
       if (outcome === 'already') {
-        this.added.set(`${this.baseName(input)} is already waiting to be read — nothing was added.`);
+        this.added.set(`${this.nameFor(input)} is already waiting to be read — nothing was added.`);
         return;
       }
       this.ui.shelfExpanded.set(true);
@@ -444,7 +456,7 @@ export class OcrDialogComponent {
        * is silently replaced by a closing card.
        */
       this.ui.announce(
-        `Added ${this.baseName(input)} to be read. Press Start on the queue to run it.`);
+        `Added ${this.nameFor(input)} to be read. Press Start on the queue to run it.`);
       this.ui.focusShelf();
       this.ui.closeOcr();
     } catch (err) {

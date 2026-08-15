@@ -2,8 +2,10 @@ import {
   ChangeDetectionStrategy, Component, ElementRef, computed, effect, inject, viewChild,
 } from '@angular/core';
 
+import { typeLabel } from '@shared/documents';
 import type { Job } from '@shared/types';
 
+import { ProjectsService } from '../../core/projects.service';
 import { QueueService } from '../../core/queue.service';
 import { TabsService } from '../../core/tabs.service';
 import { UiService } from '../../core/ui.service';
@@ -77,7 +79,16 @@ import { api } from '../../core/foundry';
             @for (job of queue.jobs(); track job.id) {
               <div class="row" [attr.data-state]="job.state">
                 <div class="row-top">
-                  <span class="name" [title]="job.inputPath">{{ label(job) }}</span>
+                  <!--
+                    THE BOOK, and the files one hover away. A row here used to be
+                    the input's basename, which is the name of a copy in a folder
+                    this app never shows anybody — and for a reading it named the
+                    file in \`archive/\`, which is the one copy of the three the
+                    user has certainly never seen. Both paths are in the tooltip,
+                    because "where did that actually get written" is the question
+                    a person asks about a finished job.
+                  -->
+                  <span class="name" [title]="paths(job)">{{ label(job) }}</span>
                   <!--
                     TWO GESTURES THAT LOOK THE SAME AND ARE NOT. A running job is
                     CANCELLED — a child is holding a GPU, stopping it is a real
@@ -156,16 +167,21 @@ import { api } from '../../core/foundry';
                   @case ('done') {
                     <span class="sub ok" [title]="job.message ?? ''">
                       <!--
-                        A READING NAMES WHAT IT DID, not what it wrote. Its
-                        product is the bank — \`readings/<key>.jsonl\` — and
-                        "Done · Kershaw-a1b2c3d4.jsonl" would be this app showing
-                        somebody a filename from its own bookkeeping instead of
-                        telling them their book has been read. The engine's own
-                        last line is the tooltip either way.
+                        A JOB NAMES WHAT IT DID, not what it wrote — and a
+                        reading was the only one that got this right. Its product
+                        is the bank (\`readings/<key>.jsonl\`), and "Done ·
+                        Kershaw-a1b2c3d4.jsonl" would be this app showing
+                        somebody a filename out of its own bookkeeping instead of
+                        telling them their book had been read. THE SAME IS TRUE
+                        OF EVERY OTHER KIND: what a rendering produced is an
+                        EPUB, and the file it landed in has the project's stem on
+                        it, which the row above already answers for. The engine's
+                        own last line is the tooltip either way, and both paths
+                        are on the name.
                       -->
                       @if (job.kind === 'env-install') { Installed }
                       @else if (job.kind === 'read') { Read · ready to generate }
-                      @else { Done · {{ baseName(job.outputPath) }} }
+                      @else { Done · {{ made(job) }} }
                     </span>
                   }
                   @case ('cancelled') { <span class="sub">Cancelled</span> }
@@ -371,6 +387,8 @@ export class QueueShelfComponent {
   protected readonly queue = inject(QueueService);
   protected readonly ui = inject(UiService);
   private readonly tabs = inject(TabsService);
+  /** Only ever asked what a book is called. See `label`. */
+  private readonly projects = inject(ProjectsService);
 
   private readonly start = viewChild<ElementRef<HTMLButtonElement>>('start');
 
@@ -399,7 +417,7 @@ export class QueueShelfComponent {
     const waiting = this.queue.queued().length;
     const held = this.queue.held().length;
     if (active) {
-      const name = label(active);
+      const name = this.label(active);
       const behind = [
         waiting > 0 ? `${waiting} queued` : null,
         held > 0 ? `${held} held` : null,
@@ -465,13 +483,49 @@ export class QueueShelfComponent {
     return note(`${verb} ${p.page} / ${p.total} pages`, job);
   }
 
-  /** An env install names itself; a conversion is named by its document. */
+  /**
+   * An env install names itself; everything else is named by the BOOK it is
+   * about.
+   *
+   * IT WAS THE INPUT'S BASENAME, and for the job that matters most that was the
+   * worst possible answer: a reading's input is the archived original
+   * (`WorkspacePlan.sourcePath`), so the shelf named the one copy of the three
+   * on disk that the user has certainly never seen, in the spelling a filesystem
+   * needed. The project's title is what Home and the document list call this
+   * book, and the whole point of asking the library rather than the path is that
+   * all three now say the same thing.
+   *
+   * A JOB WHOSE FILE NO PROJECT CLAIMS still gets a name rather than nothing:
+   * `spokenName` is the file said aloud, which is the last resort everywhere
+   * else in this app too.
+   */
   protected label(job: Job): string {
-    return label(job);
+    return job.title ?? this.projects.nameFor(job.inputPath);
   }
 
-  protected baseName(filePath: string): string {
-    return baseName(filePath);
+  /**
+   * WHAT THIS JOB MADE, in the same three words the rest of the app uses for a
+   * document. A translation is an EPUB and says the more useful of the two
+   * things it is; an install made no document at all and never reaches here.
+   */
+  protected made(job: Job): string {
+    if (job.kind === 'translate') return 'translation';
+    if (job.kind === 'epub' || job.kind === 'pdf' || job.kind === 'txt') return typeLabel(job.kind);
+    return 'done';
+  }
+
+  /**
+   * The two files a job touched, for the one hover a month somebody spends
+   * asking where its output actually went.
+   *
+   * BOTH, because they are different questions and the interesting one changes
+   * with the state: a job that is waiting is about what it will read, a job that
+   * has landed is about what it wrote. A reading writes no document — its
+   * product is the bank — so it names only its input.
+   */
+  protected paths(job: Job): string {
+    if (job.kind === 'read' || job.kind === 'env-install') return job.inputPath;
+    return `${job.inputPath}\n→ ${job.outputPath}`;
   }
 
   /**
@@ -517,14 +571,6 @@ export class QueueShelfComponent {
   protected open(job: Job): void {
     void this.tabs.openFile(job.outputPath, true);
   }
-}
-
-function baseName(filePath: string): string {
-  return filePath.split(/[\\/]/).pop() ?? filePath;
-}
-
-function label(job: Job): string {
-  return job.title ?? baseName(job.inputPath);
 }
 
 /**

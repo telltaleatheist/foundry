@@ -1,9 +1,10 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
+import { qualify } from '@shared/documents';
 import type { DocumentMetadata } from '@shared/types';
 
-import { TabsService } from '../../core/tabs.service';
+import { TabsService, type Tab } from '../../core/tabs.service';
 import { UiService } from '../../core/ui.service';
 import { api } from '../../core/foundry';
 
@@ -53,9 +54,16 @@ import { api } from '../../core/foundry';
 
       @if (source(); as tab) {
         <div class="body">
+          <!--
+            THE DOCUMENT, NAMED THE WAY EVERY OTHER SURFACE NAMES IT. This box
+            held the whole path, which was doubly wrong here: this dialog is
+            about what a document says its title IS, and the field above the
+            title box was showing a filename that the title deliberately does not
+            follow (see this file's header). The path is on the tooltip.
+          -->
           <label class="field">
             <span class="label">Document</span>
-            <input type="text" [value]="tab.path" readonly [title]="tab.path">
+            <input type="text" [value]="named(tab)" readonly [title]="tab.path">
           </label>
 
           @if (loading()) {
@@ -310,6 +318,21 @@ export class MetadataDialogComponent {
     if (tab === null) return null;
     return tab.kind === 'epub' || tab.kind === 'pdf' ? tab : null;
   });
+
+  /**
+   * The document, named and qualified — "Working Towards the Führer · PDF".
+   *
+   * BOTH HALVES EARN THEIR PLACE. The name is the tab's, so this card agrees
+   * with the pane behind it and with the list on the left. The kind is what
+   * stops the field being ambiguous in the one case that matters here: a project
+   * holds a scan and a book cast from it, this dialog opens on whichever is
+   * focused, and the six fields it shows are a `dc:` package for one and an Info
+   * dictionary for the other. Somebody who cannot tell which they are editing
+   * cannot read the form.
+   */
+  protected named(tab: Tab): string {
+    return qualify(tab.title, tab.kind === 'epub' ? 'epub' : 'pdf', '');
+  }
 
   /** What the document said when the dialog opened. The baseline every save diffs against. */
   protected readonly record = signal<DocumentMetadata | null>(null);

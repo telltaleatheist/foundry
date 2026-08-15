@@ -54,9 +54,18 @@ const DEFAULT_OLLAMA = 'http://localhost:11434';
 
       @if (source(); as input) {
         <div class="body">
+          <!--
+            THE BOOK'S NAME, WHICH IS WHAT THE FIELD IS CALLED. It held the whole
+            path — a workspace directory, a project key with eight hex characters
+            in it and a stem built out of hyphens — in a box too narrow to read
+            half of, above a form asking which language to put the book into. The
+            book's own \`dc:title\` is what the tab, the pane and the window are
+            already calling it; the path is on the tooltip for the one person who
+            wants it.
+          -->
           <label class="field">
             <span class="label">Book</span>
-            <input type="text" [value]="input" readonly [title]="input">
+            <input type="text" [value]="name()" readonly [title]="input">
           </label>
 
           <div class="pair">
@@ -260,6 +269,17 @@ export class TranslateDialogComponent {
     const tab = this.tabs.activeDocument();
     return tab !== null && tab.kind === 'epub' ? tab.path : null;
   });
+
+  /**
+   * What that book is CALLED, which is a different question from where it is.
+   *
+   * Read off the tab rather than worked out here, because the tab is where this
+   * app decides what a document is named (`Tab.title`) — its `dc:title` for a
+   * book that has been unpacked, its project's title otherwise — and a dialog
+   * that named it a second way would be a second opinion about the book on
+   * screen behind it.
+   */
+  protected readonly name = computed(() => this.tabs.activeDocument()?.title ?? '');
 
   protected readonly to = signal('en');
   protected readonly from = signal('');

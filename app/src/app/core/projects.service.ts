@@ -1,5 +1,6 @@
 import { Injectable, effect, inject, signal } from '@angular/core';
 
+import { spokenName } from '@shared/documents';
 import { fold, originalOf } from '@shared/original';
 import type { ProjectDocument, ProjectSummary } from '@shared/types';
 
@@ -110,6 +111,48 @@ export class ProjectsService {
     const target = fold(filePath);
     return this.all().find(
       (project) => target.startsWith(`${fold(project.dir).replace(/\/+$/, '')}/`)) ?? null;
+  }
+
+  /**
+   * WHAT TO CALL THE DOCUMENT AT THIS PATH — the one answer, for every surface
+   * that has to draw a name.
+   *
+   * ── The bug this exists for ────────────────────────────────────────────────
+   *
+   * Home has always said "Working Towards the Führer". The list down the left,
+   * the pane's own toolbar, the window's title bar, the OCR picker and the queue
+   * shelf all said `Working-Towards-The-Fuhrer.-Kershaw-Ian.-1993.pdf`, because
+   * each of them reached for the basename — a string built to survive a
+   * filesystem, which is not the name of a book. Two surfaces of one window
+   * calling one book two things is not a cosmetic complaint: it is the app
+   * failing to agree with itself about what the user is looking at.
+   *
+   * ── Why it is HERE ────────────────────────────────────────────────────────
+   *
+   * Because this class is already the window's copy of the library, and the
+   * answer is a fact about the library: `ProjectSummary.title` is the book's own
+   * `dc:title` where anything has read one and the stem said aloud where nothing
+   * has (`readManifest`). Every caller reading it out of the same signal is what
+   * makes the disagreement impossible rather than merely fixed — four call sites
+   * each doing their own lookup is four chances for two of them to drift apart
+   * again, which is precisely the shape of what went wrong.
+   *
+   * A CATALOGUE THAT WILL NOT PARSE IS TREATED AS NO PROJECT AT ALL. A title
+   * guessed out of a manifest this app could not read is the kind of confident
+   * wrong answer that has somebody working on the wrong book.
+   *
+   * AND THE FILE IS THE LAST RESORT, never the first: a document nobody has
+   * imported — dropped on the window a second ago, or opened from a folder of
+   * their own that no project will ever claim — has no book behind it, so its
+   * own name is all there is. `spokenName` at least says it rather than spelling
+   * it.
+   */
+  nameFor(filePath: string): string {
+    const project = this.projectFor(filePath);
+    if (project !== null && project.problem === null && project.title.length > 0) {
+      return project.title;
+    }
+    return spokenName(filePath);
   }
 
   /**

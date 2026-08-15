@@ -2,8 +2,7 @@ import { NgTemplateOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 
-import { qualify } from '@shared/documents';
-import type { ProjectDocument } from '@shared/types';
+import { documentNames, qualify, typeLabel } from '@shared/documents';
 
 import { api } from '../../core/foundry';
 import { ProjectsService } from '../../core/projects.service';
@@ -48,6 +47,22 @@ import { UiService } from '../../core/ui.service';
  * there. That listing is `listProjects`' own (electron/projects.ts), which is
  * why it moved here rather than being rebuilt: one function decides what a
  * project contains, and this is now its reader.
+ *
+ * ── A ROW IS NOT A FILENAME ──────────────────────────────────────────────────
+ *
+ * THE HEADER NAMES THE BOOK AND THE ROWS NAME ITS FACES: "PDF", "EPUB", "text".
+ * They were basenames until now, and a project's documents all share one stem by
+ * construction, so the panel read as the same unpronounceable string three times
+ * with the only distinguishing fact in the extension. The names come from
+ * `documentNames` (shared/documents.ts), which is also what decides how two rows
+ * that would otherwise read alike are told apart — by what was last DONE to each,
+ * never by the file.
+ *
+ * THE FILE IS STILL HERE, in the tooltip, and that is deliberate rather than a
+ * leftover: "which copy is this, actually" is a real question, asked rarely, and
+ * a hover is the right price for a rare question. It is one of exactly two places
+ * in this app where a path is still shown to a person; the other is the OS save
+ * dialog, where the thing being named really is a file.
  *
  * AN AVAILABLE DOCUMENT IS A ROW THAT IS NOT OPEN YET, and the difference from
  * an open one is deliberately quiet — the same list, the same shape, dimmed and
@@ -235,13 +250,18 @@ import { UiService } from '../../core/ui.service';
             opened from outside the library is not this app's to erase, and the
             tooltip says which of the two the button is about to do rather than
             leaving it to be discovered.
+
+            "Delete the PDF" and not "Delete Kershaw-1993.pdf": the row's name is
+            what the thing IS now, so the sentence takes an article — and the
+            project that "from this project" refers to is named in the header
+            directly above, which is where the book is named.
           -->
           @if (row.grouped) {
             <button
               class="x danger"
               (click)="remove($event, row)"
-              [title]="'Delete ' + row.title + ' — permanently, from this project'"
-              [attr.aria-label]="'Delete ' + row.title"
+              [title]="'Delete the ' + row.title + ' — permanently, from this project'"
+              [attr.aria-label]="'Delete the ' + row.title"
             >✕</button>
           } @else if (row.tab !== null) {
             <button
@@ -508,7 +528,7 @@ export class OpenDocumentsComponent {
      * re-trigger the effect that asked for it.
      */
     effect(() => {
-      this.tabs.tabs().map((tab) => tab.path).join(' ');
+      this.tabs.tabs().map((tab) => tab.path).join('\u0000');
       void this.projects.refresh();
     });
   }
@@ -587,44 +607,40 @@ export class OpenDocumentsComponent {
       if (mine.length === 0) continue;
 
       /*
-       * QUALIFIED ONLY WHERE THE NAME IS AMBIGUOUS, which is the judgement this
-       * list makes differently from the OCR picker. There, somebody is CHOOSING
-       * between documents and every option is qualified so the entries can be
-       * learned; here they are reading a list of what is in a book's folder, and
-       * most projects hold one of each. Adding "· cast EPUB" to every row of
-       * every project would be noise on the rows that were never confusing.
+       * THE HEADER NAMES THE BOOK, SO A ROW NAMES WHAT IT IS.
        *
-       * The collision this was written for — a project's scan and the reprint
-       * made from it carrying one filename — cannot happen any more: they are
-       * one artefact and one row (`recordGenerated`). It stays because a project
-       * can still hold two documents named alike for other reasons, and because
-       * a list that tells them apart when it must costs nothing when it need
-       * not. Where two documents in one group share a label, BOTH say what they
-       * are — a qualifier on one of a pair reads as a remark about that one
-       * rather than as the thing that tells them apart.
+       * These rows used to be FILENAMES, and every document in one project
+       * shares a stem by construction (`ProjectManifest.stem`) — so under a
+       * header already reading "Working Towards the Führer" the list said the
+       * same string twice more, in the spelling a filesystem needs rather than
+       * the one a person reads, with the only fact that differed hiding in the
+       * last four characters. "PDF" and "EPUB" is the whole of what a row here
+       * has left to say, and `documentNames` is where that is decided — shared,
+       * so the qualifier that tells two alike rows apart is the same qualifier
+       * the pickers use, and tested, so it can never quietly fall back to the
+       * filename again.
        */
-      const seen = new Map<string, number>();
-      for (const document of project.documents) {
-        const key = document.label.toLowerCase();
-        seen.set(key, (seen.get(key) ?? 0) + 1);
-      }
-      const nameOf = (document: ProjectDocument): string =>
-        (seen.get(document.label.toLowerCase()) ?? 0) > 1
-          ? qualify(document.label, document.kind, '')
-          : document.label;
+      const names = documentNames(project.documents);
+      const nameOf = (at: number): string => names[at] ?? typeLabel(project.documents[at]!.kind);
 
       const rows: Row[] = [];
       const claimed = new Set<string>();
-      for (const document of project.documents) {
+      for (const [at, document] of project.documents.entries()) {
         const already = mine.find((row) => fold(row.path) === fold(document.path));
         if (already !== undefined) {
-          rows.push({ ...already, grouped: true, title: nameOf(document) });
+          rows.push({ ...already, grouped: true, title: nameOf(at) });
           claimed.add(already.key);
           // An editor open on this book belongs directly under it, inside the
           // group — the same nesting the flat list gives, one level further in.
+          //
+          // AND IT IS CALLED "HTML" HERE AND NOWHERE ELSE. Its tab is titled
+          // "<book> — HTML", which is right in the flat list where nothing else
+          // names the book; inside a group the header has said the book and the
+          // row above has said EPUB, so repeating both is two thirds of a row
+          // spent on what the reader can already see.
           for (const row of mine) {
             if (row.indent && row.tab?.sourceTabId === already.tab?.id) {
-              rows.push({ ...row, grouped: true });
+              rows.push({ ...row, grouped: true, title: 'HTML' });
               claimed.add(row.key);
             }
           }
@@ -642,13 +658,22 @@ export class OpenDocumentsComponent {
           key: `${project.key}:${document.path}`,
           tab: null,
           path: document.path,
-          title: nameOf(document),
+          title: nameOf(at),
           glyph: document.kind === 'epub' ? '▤' : document.kind === 'pdf' ? '▦' : '≡',
+          /*
+           * AND THE FILE IS HERE, which is the other half of taking it off the
+           * row. A path is the answer to a question a person asks about once a
+           * month — where does this actually live, which of these is the copy my
+           * sync client keeps eating — and a tooltip is exactly the right price
+           * for it: free to the reader who is not asking, one hover for the one
+           * who is. The lead line says what pressing the row would do, because
+           * an available row's whole point is that it can be opened.
+           */
           tooltip: document.missing
             ? `${document.path}\nNot there any more.`
             : document.kind === 'txt'
               ? `${document.path}\nPlain text — Foundry has no tab that reads one.`
-              : `Open ${document.label}\n${document.path}`,
+              : `Open this ${nameOf(at)}\n${document.path}`,
           indent: false,
           grouped: true,
           missing: document.missing,
@@ -661,12 +686,27 @@ export class OpenDocumentsComponent {
         });
       }
 
-      // A document open from inside the project folder that the catalogue does
-      // not list — an archived copy, something a user reached by hand. It is in
-      // the group because that is where it is on disk, and dropping it would be
-      // a row nobody could close.
+      /*
+       * A document open from inside the project folder that the catalogue does
+       * not list — an archived copy, something a user reached by hand. It is in
+       * the group because that is where it is on disk, and dropping it would be
+       * a row nobody could close.
+       *
+       * IT SAYS WHAT MAKES IT DIFFERENT, which is that the project does not
+       * claim it. Its tab is titled after the book, and under a header already
+       * reading the book's name that would be a row saying nothing at all —
+       * worse, a row indistinguishable from the catalogue's own row for the same
+       * kind. The old answer was the filename, which is the one thing this list
+       * is no longer allowed to fall back to; the honest answer is that this is
+       * a copy the reader went and opened themselves, with the path one hover
+       * away as always.
+       */
       for (const row of mine) {
-        if (!claimed.has(row.key)) rows.push({ ...row, grouped: true });
+        if (claimed.has(row.key)) continue;
+        const said = row.tab === null ? row.title
+          : row.tab.kind === 'editor' ? 'HTML'
+            : typeLabel(row.tab.kind);
+        rows.push({ ...row, grouped: true, title: qualify(said, null, 'a copy you opened') });
       }
 
       out.push({

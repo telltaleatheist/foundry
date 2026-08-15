@@ -1,7 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 
 import { qualify } from '@shared/documents';
-import { fold } from '@shared/original';
 import type { ConversionKind, JobRequest } from '@shared/types';
 
 import { ProjectsService } from '../../core/projects.service';
@@ -356,16 +355,22 @@ export class GenerateDialogComponent {
     });
   }
 
-  protected baseName(filePath: string): string {
-    return filePath.split(/[\\/]/).pop() ?? filePath;
+  /**
+   * The BOOK this rendering would be made from, and what it is.
+   *
+   * The same wording as the OCR dialog's picker, out of the same helper, because
+   * they name the same set of documents and a person moves between the two in one
+   * sitting. It was a basename — the name of a copy in a directory this app never
+   * shows anybody — and the path is still one hover away on the field itself,
+   * which is where somebody asking about a file rather than about a book looks.
+   */
+  protected optionFor(filePath: string): string {
+    return qualify(this.nameFor(filePath), 'pdf', '');
   }
 
-  /** The source named so two documents of one project cannot read as one. */
-  protected optionFor(filePath: string): string {
-    const project = this.projects.projectFor(filePath);
-    const document = project?.documents.find((row) => fold(row.path) === fold(filePath));
-    const folder = filePath.split(/[\\/]/).slice(-2, -1)[0] ?? '';
-    return qualify(this.baseName(filePath), document?.kind ?? null, folder);
+  /** One rule for what a document is called, and it is not this file's. */
+  private nameFor(filePath: string): string {
+    return this.projects.nameFor(filePath);
   }
 
   protected openDocument(): void {
@@ -410,11 +415,11 @@ export class GenerateDialogComponent {
 
       const outcome = await this.queue.enqueue(request);
       if (outcome === 'already') {
-        this.problem.set(`${this.baseName(input)} is already being generated as ${kind}.`);
+        this.problem.set(`${this.nameFor(input)} is already being generated as ${kind}.`);
         return;
       }
       this.ui.shelfExpanded.set(true);
-      this.ui.announce(`Generating ${this.baseName(input)} as ${kind}. It will open when it is done.`);
+      this.ui.announce(`Generating ${this.nameFor(input)} as ${kind}. It will open when it is done.`);
       this.ui.closeGenerate();
     } catch (err) {
       this.problem.set(err instanceof Error ? err.message : String(err));

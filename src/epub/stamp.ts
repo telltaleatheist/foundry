@@ -181,7 +181,7 @@ const ITEM_TAGS: ReadonlySet<string> = new Set(['li', 'dt', 'dd']);
 const PROSE_TAGS: ReadonlySet<string> = new Set(['p', 'div', 'pre', 'address']);
 
 /** A sentinel category: a heading, whose real value the position layer decides. */
-const HEADING = ' heading';
+const HEADING = '\u0000heading';
 
 // ═════════════════════════════════════════════════════════════════════════════
 // The report

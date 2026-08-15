@@ -31,6 +31,7 @@ import type {
   UnlinkedNote,
 } from '@shared/types';
 
+import { ProjectsService } from './projects.service';
 import { QueueService } from './queue.service';
 import { api } from './foundry';
 
@@ -106,7 +107,36 @@ export interface Tab {
    * it would throw away an unpack for nothing.
    */
   path: string;
+  /**
+   * WHAT THIS DOCUMENT IS CALLED, which is never its filename.
+   *
+   * A stem is built to survive a filesystem — `Working-Towards-The-Fuhrer.-
+   * Kershaw-Ian.-1993` — and this app used to put that on the pane, in the
+   * window's own title bar and in the list down the left. It is the name of a
+   * file, not of a book, and the two surfaces that showed it disagreed with the
+   * one that did not: Home has always said "Working Towards the Führer".
+   *
+   * So it is the BOOK's name — the project's title where a project claims this
+   * file, the book's own `dc:title` once it has been unpacked — and only where
+   * neither exists does it fall back to the file, said aloud (`spokenName`).
+   * The filename itself survives in the row's tooltip and in the save dialog,
+   * which are the two places somebody is asking about a file rather than about
+   * a book.
+   */
   title: string;
+  /**
+   * True once something CHOSE this title, rather than it being derived from
+   * whatever the document happens to be called on disk.
+   *
+   * IT REPLACES A STRING COMPARISON, and the comparison was the fragile part. The
+   * rule has always been "never clobber a title somebody chose" — a book's
+   * `dc:title` must survive the file moving between folders — and it used to be
+   * enforced by testing whether the title still EQUALLED the basename, which
+   * quietly stops working the moment the derived name is anything other than the
+   * basename. Written down as a flag, the rule is the same rule and cannot be
+   * broken by improving the fallback.
+   */
+  named: boolean;
   /**
    * The Chrome dot. True while no copy of this book exists anywhere the user
    * chose — it lives in the library workspace and nowhere else.
@@ -319,6 +349,18 @@ export interface FrameCommand {
 @Injectable({ providedIn: 'root' })
 export class TabsService {
   private readonly queue = inject(QueueService);
+  /**
+   * The library, read only to NAME things.
+   *
+   * Nothing about a tab's life depends on it — a document opens, unpacks, edits
+   * and saves whether or not a project has claimed it — which is why this is the
+   * one thing asked of it. The alternative was for every surface that draws a
+   * document (the list, the pane's toolbar, the window's title bar) to look the
+   * project up for itself, and three lookups of one fact is three chances for
+   * two of them to disagree about what a book is called, which is the exact
+   * failure this whole change exists to end.
+   */
+  private readonly projects = inject(ProjectsService);
 
   private readonly all = signal<Tab[]>([]);
   private readonly columns = signal<Pane[]>([]);
@@ -460,6 +502,47 @@ export class TabsService {
       }
       if (jobs.length > 0) first = false;
     });
+
+    /**
+     * A DOCUMENT LEARNS ITS BOOK'S NAME LATE, and this is what tells it.
+     *
+     * A file opened from outside the library is imported in the background: the
+     * tab exists before the project does, so at the moment it is made there is
+     * nothing to ask and the name falls back to the file. The project arrives
+     * some hundreds of milliseconds later as `projects:changed`, and without
+     * this the tab would keep the fallback for the rest of the session — the
+     * list on the left saying one thing about a book while Home said another,
+     * which is the disagreement this is all for.
+     *
+     * ONLY WHERE NOBODY CHOSE A NAME. `named` is the whole guard: an unpacked
+     * book's `dc:title` is a better answer than any project title and is never
+     * overwritten by this. Nor is the editor's "<book> — HTML".
+     *
+     * It converges in one pass and cannot loop: the patch below is the only
+     * write, it happens only when the name actually moved, and the run it
+     * triggers finds the same answer already in place.
+     */
+    effect(() => {
+      this.projects.items();
+      for (const tab of this.all()) {
+        if (tab.named) continue;
+        const want = this.nameFor(tab.path);
+        if (want !== tab.title) this.patch(tab.id, { title: want });
+      }
+    });
+  }
+
+  /**
+   * What to call a document at this path — the book, and the file only as a last
+   * resort.
+   *
+   * THE SAME STRING HOME SHOWS, and it is one call rather than a rule repeated
+   * here precisely so that it cannot become a second opinion: see
+   * `ProjectsService.nameFor`, which every surface that draws a document's name
+   * goes through.
+   */
+  private nameFor(filePath: string): string {
+    return this.projects.nameFor(filePath);
   }
 
   // ── Opening ──────────────────────────────────────────────────────────────
@@ -493,7 +576,12 @@ export class TabsService {
     if (admitted === null) {
       this.expectUnsaved.delete(key);
       this.expectOwnPane.delete(key);
-      this.notice.set(`${filePath} is no longer there.`);
+      // NAMED, NOT SPELLED OUT. A path in the strip is this app showing its own
+      // bookkeeping to somebody who asked for a book — and the whole path was
+      // never readable in one line of a notice anyway. The row that failed to
+      // open still carries the path in its tooltip, which is where a person
+      // debugging their own library goes looking.
+      this.notice.set(`${this.nameFor(filePath)} is no longer there.`);
     }
   }
 
@@ -546,7 +634,7 @@ export class TabsService {
 
     const kind: TabKind = key.endsWith('.epub') ? 'epub' : 'pdf';
     const unsaved = this.expectUnsaved.delete(key);
-    const tab = this.blankTab(kind, absolutePath, baseName(absolutePath));
+    const tab = this.blankTab(kind, absolutePath, this.nameFor(absolutePath));
     tab.unsaved = unsaved;
     this.all.update((tabs) => [...tabs, tab]);
     this.place(tab.id, ownPane);
@@ -645,11 +733,16 @@ export class TabsService {
       /*
        * THE TITLE ONLY IF NOBODY HAS SET A BETTER ONE. A book's title becomes
        * its `dc:title` when it unpacks — "Working Towards the Führer" rather
-       * than the filename it arrived under — and overwriting that with a
-       * basename because the file moved between folders would undo the one
-       * piece of naming this app does on the user's behalf.
+       * than the name it arrived under — and overwriting that because the file
+       * moved between folders would undo the one piece of naming this app does
+       * on the user's behalf.
+       *
+       * RE-DERIVED RATHER THAN CARRIED, because this move is the exact moment
+       * the answer changes: the file is going from a folder of the user's into
+       * a project, so the name it should now be wearing is the project's, and
+       * `nameFor` is where that is decided once for the whole app.
        */
-      ...(moving.title === baseName(moving.path) ? { title: baseName(to) } : {}),
+      ...(moving.named ? {} : { title: this.nameFor(to) }),
     });
     // The editor tab that is a face of this book points at the same file.
     const editor = this.all().find(
@@ -664,6 +757,7 @@ export class TabsService {
       kind,
       path,
       title,
+      named: false,
       unsaved: false,
       modified: false,
       savedPath: null,
@@ -693,6 +787,9 @@ export class TabsService {
       this.patch(id, {
         book,
         title: book.title,
+        // The book said what it is called, which outranks anything derived from
+        // a project or a path. See `Tab.named`.
+        named: true,
         chapterHref: book.chapters[0]?.href ?? null,
         // A book from the user's own disk already IS a copy somewhere they
         // chose, so Save has a destination from the start: the file itself.
@@ -1157,6 +1254,10 @@ export class TabsService {
       return;
     }
     const tab = this.blankTab('editor', book.path, `${book.title} — HTML`);
+    // Named after the book it is a face of, and never re-derived from the path
+    // it shares with it — an editor called "Working Towards The Fuhrer" with no
+    // "— HTML" on it would be a second row for the book, twice over.
+    tab.named = true;
     tab.sourceTabId = bookTabId;
     this.all.update((tabs) => [...tabs, tab]);
     this.place(tab.id, true, this.paneOf(bookTabId)?.id ?? null);
@@ -3304,7 +3405,8 @@ export class TabsService {
     }
     if (tab.kind === 'pdf') {
       try {
-        const destination = await api.documentSaveCopy(tab.path, suggestName(tab.title, '.pdf'));
+        const destination = await api.documentSaveCopy(
+          tab.path, suggestName(baseName(tab.path), '.pdf'));
         if (destination === null) return;
         this.patch(tab.id, { unsaved: false, savedPath: destination });
       } catch (err) {
@@ -3317,7 +3419,8 @@ export class TabsService {
       return;
     }
     await this.flushPending(this.editorFor(tab.id)?.id ?? null);
-    const chosen = await api.epub.chooseSavePath(tab.book.id, suggestName(tab.title, '.epub'));
+    const chosen = await api.epub.chooseSavePath(
+      tab.book.id, suggestName(baseName(tab.path), '.epub'));
     if (chosen === null) return;
     await this.writeBook(this.byId(tab.id) ?? tab, chosen);
   }
@@ -3589,15 +3692,25 @@ function baseName(filePath: string): string {
 }
 
 /**
- * A filename out of a book's title.
+ * What the save dialog opens pre-filled with.
  *
- * The characters removed are the ones Windows refuses outright; a title with a
+ * THE FILE'S OWN NAME, AND THIS IS ONE OF THE TWO PLACES A FILENAME BELONGS.
+ * Everywhere else in this window a document is called by its book — the pane's
+ * toolbar, the list on the left, the window's title bar — because a person
+ * reading their library is thinking about books. A person in a save dialog is
+ * thinking about a FILE: it is going into a folder of theirs, beside things they
+ * named, and it has to be findable there by whatever their other copy of it is
+ * called. It used to be fed the tab's title, which was the same string as the
+ * basename for a PDF and quietly stopped being one the moment titles became the
+ * book's.
+ *
+ * The characters removed are the ones Windows refuses outright; a name with a
  * colon in it is common (`Working Towards The Fuhrer: …`) and a save dialog that
  * opened pre-filled with an illegal name would fail on OK with a message from
  * the OS rather than from us.
  */
-function suggestName(title: string, extension: '.epub' | '.pdf'): string {
-  const cleaned = title.replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim();
+function suggestName(fileName: string, extension: '.epub' | '.pdf'): string {
+  const cleaned = fileName.replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim();
   const stem = cleaned.length > 0 ? cleaned : 'book';
   return stem.toLowerCase().endsWith(extension) ? stem : `${stem}${extension}`;
 }

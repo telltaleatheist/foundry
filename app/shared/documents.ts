@@ -1,4 +1,9 @@
-import type { ConversionKind, ProjectDocument, ProjectGeneratedRole } from './types';
+import type {
+  ConversionKind,
+  ProjectDocument,
+  ProjectGeneratedRole,
+  ProjectStep,
+} from './types';
 
 /**
  * Which role a conversion of each kind produces — the one mapping, shared.
@@ -79,6 +84,97 @@ export function qualify(label: string, kind: ProjectDocument['kind'] | null, fol
  */
 export function spokenStem(stem: string): string {
   return stem.replace(/[-_]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+}
+
+/**
+ * A FILE said aloud — the last thing a document can be called when nothing has
+ * a better name for it.
+ *
+ * THE EXTENSION GOES WITH THE FOLDERS. `.pdf` is the same class of fact as
+ * `working/`: it is how a filesystem tells two of this app's copies apart, and a
+ * person reading a list of their own books does not need to be told that the PDF
+ * is a PDF — the row beside it already says so, in the app's own word for it.
+ * What is left is the stem, and `spokenStem` is what makes a stem readable.
+ *
+ * IT IS THE LAST RESORT AND NOT THE RULE. A document inside a project is named
+ * by the project (`ProjectSummary.title`, which is the book's own `dc:title`
+ * where anything has read one); this is for the file somebody dropped on the
+ * window that no project has claimed yet, and for the one they opened from a
+ * folder of their own that never will be. Those have no book behind them, so the
+ * name on the disk is the only name there is — and it should at least be said
+ * rather than spelled.
+ */
+export function spokenName(filePath: string): string {
+  const base = filePath.split(/[\\/]/).pop() ?? filePath;
+  const stem = base.replace(/\.[^.]+$/, '');
+  return spokenStem(stem.length > 0 ? stem : base);
+}
+
+/**
+ * As much of a step as naming a row needs. `ProjectDocument` satisfies it.
+ *
+ * A STRUCTURAL SHAPE rather than the whole document, because the function below
+ * is the one piece of this file that has to be exercised against a project with
+ * an awkward set of rows in it, and building four complete `ProjectDocument`s to
+ * ask what three of them are called is a test about the wrong thing.
+ */
+export interface NamedDocument {
+  kind: ProjectDocument['kind'];
+  /** Oldest first, as `summarise` sorts them. The last one is what is live. */
+  steps: readonly Pick<ProjectStep, 'kind' | 'label'>[];
+}
+
+/**
+ * What each of a project's rows is CALLED, in the app's own words — one name per
+ * document, in the order they were handed over.
+ *
+ * ── The bug this exists for ─────────────────────────────────────────────────
+ *
+ * The nav drew these rows by FILENAME. A project's documents all share one stem
+ * by construction (`ProjectManifest.stem` — "the base filename every document in
+ * this project shares"), so under a header that already said the book's name the
+ * list read:
+ *
+ *   Working Towards The Fuhrer. Kershaw, Ian. (1993)
+ *     Working-Towards-The-Fuhrer.-Kershaw-Ian.-1993.pdf
+ *     Working-Towards-The-Fuhrer.-Kershaw-Ian.-1993.epub
+ *
+ * — the same string three times, twice in a spelling built to survive a
+ * filesystem rather than to be read, with the one fact a person actually wanted
+ * hiding in the last four characters. The header names the BOOK; a row's job is
+ * to say which of its faces this one is, and that is `typeLabel`.
+ *
+ * ── Why the qualifier is never the filename ─────────────────────────────────
+ *
+ * A row's identity is its KIND and there is at most one of each in a project
+ * (`ProjectDocument`), so "PDF" and "EPUB" cannot collide — but this does not
+ * lean on that, because falling back to the filename the moment the invariant
+ * bends is exactly how the old spelling would come back. Where two rows would
+ * read the same, BOTH say what was last done to them: the step's own label is
+ * the one field in a project's bookkeeping written to be read
+ * (`ProjectStep.label`), and it differs precisely because the files do.
+ *
+ * A TRANSLATION SAYS SO WITHOUT WAITING FOR A COLLISION. A book that is now in
+ * Hungarian is the EPUB — one row, one chain, the translation being its latest
+ * step — and a person opening a project three months later has no way to know
+ * that from the word "EPUB". The step label carries the language
+ * (`shared/ledger.ts`), so the row reads "EPUB · Translated (Hungarian)" and the
+ * question is answered before it is asked.
+ */
+export function documentNames(documents: readonly NamedDocument[]): string[] {
+  const twins = new Map<string, number>();
+  for (const document of documents) {
+    const said = typeLabel(document.kind).toLowerCase();
+    twins.set(said, (twins.get(said) ?? 0) + 1);
+  }
+  return documents.map((document) => {
+    const said = typeLabel(document.kind);
+    const latest = document.steps[document.steps.length - 1];
+    if (latest === undefined) return said;
+    const distinguish = latest.kind === 'translate'
+      || (twins.get(said.toLowerCase()) ?? 0) > 1;
+    return distinguish ? qualify(said, null, latest.label) : said;
+  });
 }
 
 /**
