@@ -916,8 +916,23 @@ async function pump(): Promise<void> {
          * codebase's oldest house rule forbids, and `migrateLedger` would rather
          * leave an old translation unlabelled than do it. This job asked for a
          * language; it says which.
+         *
+         * AND THE BANK IT FILLED, AND THE STEP BOTH FILES ARE NAMED AFTER, for the
+         * same reason twice over. The bank is where the per-block answers went
+         * (`--bank`, a few lines up in `argsFor`) and nothing on disk relates it to
+         * the EPUB afterwards — a rendering from this row, and every re-translation
+         * of it, has to be told. The step id was minted at the plan and written
+         * into both filenames since (`bankForTranslation`), so a landing that
+         * minted its own would leave them named after a row nobody created; it is
+         * spent only if this lands as an append.
          */
-        ...(request.kind === 'translate' ? { language: request.to } : {}),
+        ...(request.kind === 'translate'
+          ? {
+            language: request.to,
+            bank: request.bankPath,
+            ...(request.stepId !== undefined ? { stepId: request.stepId } : {}),
+          }
+          : {}),
       },
     );
     /*

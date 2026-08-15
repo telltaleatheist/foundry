@@ -51,6 +51,7 @@ import type {
   StepDeletion,
   StepRow,
   TranslateRequest,
+  TranslationPlan,
   UncommittedCuration,
   UnlinkedNote,
   UnlinkedNoteAnswer,
@@ -263,7 +264,7 @@ export interface FoundryApi {
     planTranslation(
       inputPath: string,
       targetLanguage: string,
-    ): Promise<{ key: string; outputPath: string; inputPath: string; bankPath: string }>;
+    ): Promise<TranslationPlan & { inputPath: string }>;
   };
 
   /**

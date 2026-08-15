@@ -97,7 +97,6 @@ import { openedAtFor } from './recents';
 import type {
   ConversionKind,
   LedgerParams,
-  LedgerStep,
   ProjectDocument,
   ProjectDocumentKind,
   ProjectGenerated,
@@ -125,11 +124,13 @@ import {
   curationInEffect,
   deleteCost,
   deleteSubtree,
+  destroyedBy,
   emptyLedger,
   generationForLanding,
   generationInEffect,
+  id8,
   migrateLedger,
-  orphanedPayloads,
+  orphanedBanks,
   originOf,
   originStep,
   parseLedger,
@@ -140,6 +141,10 @@ import {
   recordLanding,
   stepOf,
   subtree,
+  translatedInto,
+  translationBankOf,
+  translationFileFor,
+  translationTarget,
   type LandedRun,
   type Landing,
   type ReadAsk,
@@ -809,21 +814,15 @@ export function generatedRoleFor(kind: ConversionKind): ProjectGeneratedRole {
   return GENERATED_ROLES[kind];
 }
 
-/**
- * A translation's name: the book's, with the language in parentheses.
- *
- * `Working Towards The Fuhrer. Kershaw, Ian. (1993) (en).epub`. Parentheses and
- * not a `.en.` infix, because an infix reads as a technical suffix on a filename
- * and the whole point of naming these from the book is that a person opening the
- * folder recognises what they are looking at.
+/*
+ * `translationFileFor` MOVED TO shared/ledger.ts, and the move is the point rather
+ * than tidying. That name is now composed in two places for one run — here, and by
+ * the pure decision that says whether this translation is a branch and therefore
+ * carries an `<id8>` before its extension — and a second copy of the rule is a
+ * second answer about where a person's book went. It is imported above and used
+ * unchanged by the legacy adoption below, which is the one caller that has a bare
+ * tag rather than a step to ask.
  */
-export function translationFileFor(stem: string, languageTag: string): string {
-  // The tag reaches a filename, so it is reduced to the same character set
-  // everything else here is. `pt-BR` survives that unchanged; the engine has
-  // already refused anything that is not a language tag.
-  const tag = languageTag.trim().replace(/[^A-Za-z0-9-]+/g, '') || 'translated';
-  return `${stem} (${tag}).epub`;
-}
 
 /** Where an imported document ended up, and the project it now belongs to. */
 export interface ImportedDocument {
@@ -1285,8 +1284,9 @@ export async function describeStepDelete(dir: string, stepId: string): Promise<S
   // Run for its REFUSAL as much as for its list: this is the one place that can
   // say no before the user has agreed to anything.
   const deletion = deleteSubtree(ledger, stepId);
-  const destroyed = orphanedPayloads(deletion);
-  const sweeps = await planStepSweep(resolved, destroyed, banksAmong(deletion.removed), manifest);
+  const banks = new Set(orphanedBanks(deletion, manifest.key));
+  const destroyed = destroyedBy(deletion, manifest.key);
+  const sweeps = await planStepSweep(resolved, destroyed, banks, manifest);
   // The other refusal that must land before the card is drawn, for its own
   // reason: a book this window is reading cannot be unlinked on Windows, so a
   // card that ignored it would be a question whose yes main declines to act on.
@@ -1369,9 +1369,15 @@ async function planStepSweep(
   dir: string,
   payloads: readonly string[],
   /**
-   * Which of those payloads are READINGS BANKS, so the engine's in-flight debris
-   * beside them goes too. See `pendingBeside` for what that debris is and why no
-   * step will ever name it.
+   * Which of those files are BANKS, so the engine's in-flight debris beside them
+   * goes too. See `pendingBeside` for what that debris is and why no step will
+   * ever name it.
+   *
+   * Both kinds are in here (`orphanedBanks`): a reading's bank, which is also its
+   * step's payload, and a translation's, which is a file beside its step's payload
+   * and reaches this list only because `destroyedBy` put it there. The translate
+   * engine writes `<bank>.pending` and no request sidecar, and an absent sidecar
+   * simply fails the existence test below — one rule, two callers, no `if`.
    */
   banks: ReadonlySet<string>,
   manifest: ProjectManifest,
@@ -1400,17 +1406,14 @@ async function planStepSweep(
   return sweeps;
 }
 
-/**
- * Which of the payloads a delete destroys are readings banks.
- *
- * BY THE STEP'S OWN ACTION rather than by what the filename looks like. `readings/`
- * also holds translation banks and, now, one bank per branching re-read — telling
- * them apart by their characters would be exactly the basename matching this
- * codebase has paid for twice, and the ledger already knows which step made what.
+/*
+ * `banksAmong` MOVED TO shared/ledger.ts AS `orphanedBanks`, beside
+ * `orphanedPayloads`, whose question it is a second half of: what does this delete
+ * actually take off the disk? It is a pure map from a decided deletion to a list
+ * of paths — no directory, no filesystem — and it decides whether hours of GPU are
+ * destroyed, which is exactly the code this app keeps where a test can reach it
+ * (see that module's header). `destroyedBy` went with it for the same reason.
  */
-function banksAmong(removed: readonly LedgerStep[]): Set<string> {
-  return new Set(removed.filter((step) => step.action === 'read').map((step) => step.payload));
-}
 
 /**
  * What the sweep will take besides the payloads, as one sentence — or null.
@@ -1564,8 +1567,19 @@ export async function deletableStep(dir: string, stepId: string): Promise<StepSu
  * THEM — steps are minted on success and success is when the pending file stops
  * existing — so `orphanedPayloads` cannot find them and they would sit in
  * `readings/` forever after the bank they were replacing was deleted. Debris whose
- * bank is gone is debris about nothing. `banksAmong` decides which payloads are
+ * bank is gone is debris about nothing. `orphanedBanks` decides which files are
  * banks, from the step's own action, and `planStepSweep` adds the pair.
+ *
+ * ── AND A TRANSLATION'S BANK IS THE SAME ARGUMENT ABOUT A DIFFERENT FILE ────
+ *
+ * A translate step's payload is the EPUB; the answers it was assembled from are in
+ * the bank beside it, named by `params.bank` and by no step's payload anywhere. So
+ * `orphanedPayloads` cannot find that either, and deleting the English translation
+ * used to leave its whole per-block record in `readings/` — the same hours of GPU,
+ * kept for a row that no longer exists. It is destroyed with the step, guarded by
+ * the same whole-path check against what every surviving step MEANS by its bank
+ * (recorded, or composed from its language for a translation that predates the
+ * record), and its own pending file goes with it.
  *
  * A QUEUED JOB ABOUT TO RESUME ONE CANNOT LOSE IT TO THIS, and there is no new
  * mechanism for that: `refuseBusyStepDelete` (electron/main.ts) already refuses a
@@ -1579,13 +1593,9 @@ export async function deleteStep(dir: string, stepId: string): Promise<LedgerVie
   const resolved = deletableProjectDir(dir);
   const { ledger, orphans, sweeps } = await withManifest(resolved, async (manifest) => {
     const deletion = deleteSubtree(ledgerOf(manifest), stepId);
-    const destroyed = orphanedPayloads(deletion);
-    const planned = await planStepSweep(
-      resolved,
-      destroyed,
-      banksAmong(deletion.removed),
-      manifest,
-    );
+    const banks = new Set(orphanedBanks(deletion, manifest.key));
+    const destroyed = destroyedBy(deletion, manifest.key);
+    const planned = await planStepSweep(resolved, destroyed, banks, manifest);
     // PROVED AGAIN INSIDE THE TRANSACTION, never trusted from `describeStepDelete`:
     // a book can be opened between the question and the answer, and this is the
     // call that unlinks a working tree.
@@ -1840,16 +1850,59 @@ export async function bankForReading(dir: string, asked: ReadAsk): Promise<Plann
   return { readingsPath: path.join(dir, READINGS, file), stepId: minted };
 }
 
+/** A translation's files, and the step they belong to. See `bankForTranslation`. */
+export interface PlannedTranslation {
+  /** Absolute. What the engine is handed as `--out`. */
+  outputPath: string;
+  /** Absolute. What the engine is handed as `--bank`. */
+  bankPath: string;
+  /** `LandedRun.id` for this run: an existing step on a replace, minted on a branch. */
+  stepId: string;
+}
+
 /**
- * The front of a uuid, hyphens removed — eight hex characters.
+ * WHERE THIS TRANSLATION'S FILES GO, decided before the job is enqueued.
  *
- * The hyphens are stripped rather than sliced around because a uuid's first group
- * is already eight characters and this would still be right if anything ever
- * handed it an id spelled without them. Nobody reads this string; it exists so
- * that two banks in one folder cannot collide.
+ * `bankForReading` above, one folder over and for the identical reason: the engine
+ * is handed paths and writes into them for hours, so "is this the translation that
+ * already exists, or a new one beside it?" has to be answered at the plan and
+ * answered the SAME WAY the landing will answer it. `translationTarget` is that one
+ * answer, and it is pure so that both askings are the same code rather than the
+ * same intention.
+ *
+ * ── The parent is the POSITION, which is where a translation differs from a read ─
+ *
+ * A reading reads the pixels and is parented at the origin however far through
+ * their history the person pressing OCR is standing (`originOf`). A translation
+ * reads a BOOK — the rendering of wherever the user is standing — so its parent is
+ * the position, and that is the whole of why translating the reading and
+ * translating a curation of it are two rows rather than one overwritten twice.
+ *
+ * ── The window between this and the enqueue, stated rather than discovered ──
+ *
+ * `Job.parentStep` is captured at the press, a moment after this runs, and a
+ * pointer move in between would let the plan and the landing disagree about the
+ * parent — a branch planned and a replace landed, or the reverse. Both fall safely
+ * and neither invents a rule: a replace that lands on minted paths keeps its row
+ * and takes them, and `Landing.displaced` destroys what it left behind only after
+ * proving no surviving row names it; a branch that lands on an existing row's paths
+ * is the two-steps-one-payload state `orphanedPayloads` has always guarded. The
+ * alternative — trusting the renderer to hand back the parent this plan used — is a
+ * fact about a person's history taken from outside main.
  */
-function id8(uuid: string): string {
-  return uuid.replace(/-/g, '').slice(0, 8);
+export async function bankForTranslation(dir: string, language: string): Promise<PlannedTranslation> {
+  const manifest = await readManifest(dir);
+  const ledger = ledgerOf(manifest);
+  const target = translationTarget(
+    ledger,
+    { parent: positionOf(ledger)?.id ?? null, language, stem: manifest.stem, key: manifest.key },
+    randomUUID(),
+  );
+  return {
+    outputPath: path.join(dir, ...target.output.split('/')),
+    bankPath: path.join(dir, ...target.bank.split('/')),
+    stepId: target.stepId,
+  };
 }
 
 /**
@@ -2137,6 +2190,28 @@ export async function restoreRotation(dir: string, rotation: Rotation): Promise<
 }
 
 /**
+ * The bank a translation wrote, as a step param — or nothing, said as nothing.
+ *
+ * PROJECT-RELATIVE WITH FORWARD SLASHES, which is what `LedgerStep.payload` is and
+ * what everything that reaches a file from a step splits again. The job holds the
+ * absolute path it handed a child process, so the conversion happens here, once,
+ * where the project directory has just been proved.
+ *
+ * A PATH OUTSIDE THE PROJECT IS RECORDED AS NOTHING rather than stored as it is.
+ * Nothing composes one today — `bankForTranslation` builds every bank under
+ * `readings/` — but a step carrying an absolute path, or one climbing out with
+ * `..`, would be a row naming a file this project does not own and a sweep aiming
+ * at somebody else's disk. The honest answer for a bank this app cannot place is
+ * the one a translation made before banks were recorded gives: no claim at all.
+ */
+function bankParam(dir: string, bank: string | undefined): LedgerParams {
+  if (bank === undefined || bank.trim().length === 0) return {};
+  const inside = path.relative(dir, path.resolve(bank));
+  if (inside.length === 0 || inside.startsWith('..') || path.isAbsolute(inside)) return {};
+  return { bank: inside.split(path.sep).join('/') };
+}
+
+/**
  * Put a finished origin in the catalogue, and refresh the live copy it feeds.
  *
  * Called when the JOB SUCCEEDS rather than when it is planned, because a plan is
@@ -2194,6 +2269,27 @@ export async function recordGenerated(
     parentStep?: string | null;
     /** `TranslateRequest.to`, as the dialog named it. */
     language?: string;
+    /**
+     * `TranslateRequest.bankPath`, ABSOLUTE, as the engine was given it.
+     *
+     * Recorded as `params.bank` so this row can be rendered from and re-translated
+     * into for the rest of its life. Absolute here and project-relative in the
+     * step, because the job holds a path it handed a child process and the ledger
+     * holds project-relative payloads — the one conversion happens here, where the
+     * project directory has just been proved, rather than in a queue that would
+     * have to work out which project a path is in.
+     */
+    bank?: string;
+    /**
+     * `TranslateRequest.stepId` — the step the output and the bank were named
+     * after, minted at the plan (`bankForTranslation`).
+     *
+     * A branching translation writes `generated/<book> (en).<id8>.epub`, and the
+     * `id8` is the front of this uuid. Landing under a freshly minted id would
+     * leave both files named after a row nobody created. Spent only on an append,
+     * which is `LandedRun.id`'s own rule.
+     */
+    stepId?: string;
   } = {},
 ): Promise<string | null> {
   const resolved = path.resolve(outputPath);
@@ -2249,20 +2345,43 @@ export async function recordGenerated(
        * renderings do not.
        */
       let landing: Landing | null = null;
+      /** The bank the step named BEFORE this landing, for the displacement below. */
+      let bankWas: string | null = null;
       if (role === 'translation') {
+        const before = ledgerOf(manifest);
         landing = await landStep(manifest, {
           action: 'translate',
           parent: landed.parentStep ?? null,
           payload: `${GENERATED}/${file}`,
-          // Absent rather than empty when the caller did not say. An empty
-          // language would be this app claiming to know a fact it does not, and
-          // `labelFor` already prints the plain word for a step that says nothing
-          // about itself — which is what a migrated translation gets too.
-          ...(landed.language !== undefined && landed.language.trim().length > 0
-            ? { params: { language: landed.language.trim() } satisfies LedgerParams }
-            : {}),
+          /*
+           * WHAT WAS ASKED AND WHAT THE RUN WROTE, in one bag and sorted by
+           * `MINTED_BY_THE_RUN` rather than by this call site.
+           *
+           * `language` is the question — it is the whole of what makes this
+           * translation this one, and it decides whether the next translation from
+           * this step replaces this row or branches beside it. `bank` is the
+           * answer: the file the run filled, recorded so that rendering from this
+           * row reads the blocks this row was made of. Composing that path later
+           * from the key and the tag is the lie `readings/<key>.jsonl` was for
+           * readings — one name per book, and two rows both claiming it.
+           *
+           * Absent rather than empty when the caller did not say. An empty language
+           * would be this app claiming to know a fact it does not, and `labelFor`
+           * already prints the plain word for a step that says nothing about
+           * itself — which is what a migrated translation gets too.
+           */
+          params: { ...translatedInto(landed.language), ...bankParam(dir, landed.bank) },
           createdAt: Date.now(),
+          // Minted at the plan and written into two filenames since
+          // (`bankForTranslation`); spent here, and only if this appends.
+          ...(landed.stepId !== undefined ? { id: landed.stepId } : {}),
         });
+        if (landing?.replaced === true) {
+          bankWas = translationBankOf(
+            before.steps.find((step) => step.id === landing?.step.id) ?? landing.step,
+            manifest.key,
+          );
+        }
       }
       // WRITTEN BEFORE the live copy is refreshed, and that ordering is the
       // whole reason these are two writes. Refreshing can refuse — an archive
@@ -2275,6 +2394,30 @@ export async function recordGenerated(
       // names. Null on every ordinary re-translation, because the rotation
       // already moved the previous edition and the new one took its path.
       if (landing?.displaced != null) await destroyPayload(dir, landing.displaced);
+      /*
+       * AND THE BANK THE SWAP DISPLACED, on the same rule and for the same reason
+       * `Landing.displaced` exists — it is simply not a payload, so the ledger
+       * cannot be the one to notice.
+       *
+       * NULL ON EVERY ORDINARY RE-TRANSLATION: a replace was AIMED at the target
+       * step's own bank before the job was enqueued (`bankForTranslation`), so the
+       * path did not move and there is nothing left over. What makes this do real
+       * work is the one case where it can — a run planned as a BRANCH, its files
+       * minted with an `<id8>`, landing as a REPLACE because the pointer moved
+       * between the plan and the press, or because the step it would have branched
+       * beside was deleted while it ran. The row keeps its place and takes the new
+       * bank; the old one is now a file no row in this project means, proved by the
+       * whole path against every surviving step.
+       */
+      const bankNow = landing === null ? null : translationBankOf(landing.step, manifest.key);
+      if (
+        bankWas !== null
+        && bankWas !== bankNow
+        && !ledgerOf(manifest).steps.some((step) => translationBankOf(step, manifest.key) === bankWas)
+      ) {
+        await destroyPayload(dir, bankWas);
+        for (const debris of pendingBeside(bankWas)) await destroyPayload(dir, debris);
+      }
       if (role !== 'searchable') return null;
       const live = await refreshLivePdf(dir, manifest, file);
       await writeManifest(dir, manifest);

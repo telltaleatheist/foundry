@@ -232,6 +232,18 @@ describe('parseLedger refuses a wrong ledger by name rather than guessing at it'
       refusal(() => parseLedger({ steps: [{ ...ORIGIN, params: { pages: 3 } }] })),
       /A import is described by nothing at all/,
     );
+    /*
+     * A TRANSLATE IS TWO FIELDS NOW, and the sentence has to say both or the next
+     * person adding one is told the truth about half the table. `language` is what
+     * was asked and `bank` is where the answers went — the same split a read makes,
+     * enforced in the same place (`MINTED_BY_THE_RUN`). See translate-steps.test.ts
+     * for what each pile decides.
+     */
+    const translated = refusal(() => parseLedger({
+      steps: [ORIGIN, { ...READ, action: 'translate', params: { amendments: 23 } }],
+    }));
+    assert.match(translated, /is a translate and carries a param called "amendments"/);
+    assert.match(translated, /A translate is described by language and bank/);
   });
 
   test('a param of the wrong sort is refused by its own name', () => {

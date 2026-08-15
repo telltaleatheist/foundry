@@ -72,14 +72,14 @@ import {
   archiveFileOf,
   bankForPosition,
   bankForReading,
+  bankForTranslation,
   generatedFileFor,
   importDocument,
   overlayForPosition,
   rotationRefusal,
-  translationFileFor,
 } from './projects';
 import type { ReadAsk } from '../shared/ledger';
-import type { ConversionKind, ReadingPlan, WorkspacePlan } from '../shared/types';
+import type { ConversionKind, ReadingPlan, TranslationPlan, WorkspacePlan } from '../shared/types';
 
 /**
  * Where this book's ANSWERS go — everything an OCR job needs, and no more.
@@ -319,10 +319,32 @@ export async function planConversion(
 export async function planTranslation(
   inputPath: string,
   targetLanguage: string,
-): Promise<{ key: string; sourcePath: string; outputPath: string; bankPath: string }> {
-  const { dir, key, stem } = await importDocument(inputPath, 'epub');
-  const file = translationFileFor(stem, targetLanguage);
-  const outputPath = path.join(dir, 'generated', file);
+): Promise<TranslationPlan> {
+  const { dir, key } = await importDocument(inputPath, 'epub');
+  /*
+   * ── WHICH TRANSLATION THIS IS, AND THEREFORE WHAT ITS FILES ARE CALLED ────
+   *
+   * This used to compose `<stem> (<tag>).epub` from the stem and the language
+   * alone — one name per book per language, forever — which was true while a book
+   * could hold one translation into a language and became a collision the moment
+   * the ledger let it hold two. The user's own scenario is exactly that: translate
+   * the reading, strike some blocks, commit, translate the curation. Two steps,
+   * two sets of answers, and one filename holding whichever ran last.
+   *
+   * So the plan asks the ledger instead (`bankForTranslation` → `translationTarget`,
+   * shared/ledger.ts): a re-translation from the same step aims at that step's own
+   * EPUB and its own bank — which is what makes it nearly free, every unchanged
+   * block being a cache hit — and a translation from a DIFFERENT step mints
+   * `<name>.<id8>.<ext>` for both, `id8` being the front of the step's uuid.
+   *
+   * THE STEP ID IS MINTED HERE AND TRAVELS WITH THE JOB (`TranslateRequest.stepId`),
+   * for `planReading`'s reason: the files are named after a step that will not
+   * exist for hours, and minting a second id at the landing would leave them named
+   * after a row nobody created.
+   */
+  const planned = await bankForTranslation(dir, targetLanguage);
+  const outputPath = planned.outputPath;
+  const file = path.basename(outputPath);
   /*
    * THE ROTATION IS NOT HERE ANY MORE, AND NEITHER IS THE SOURCE SUBSTITUTION
    * THAT USED TO JUSTIFY IT.
@@ -394,13 +416,19 @@ export async function planTranslation(
    * four more hours re-translating the four hundred blocks that already
    * succeeded" that anybody wants, and the run that made this necessary is on
    * record: 152 blocks, killed, nothing kept.
+   *
+   * PER STEP AS WELL AS PER LANGUAGE now, and the name is composed where the
+   * output's is (`translationTarget`) rather than by a second copy of the tag rule
+   * here — the two files are one decision and a folder holding a branch's EPUB
+   * beside the first translation's bank would be answers filed under the wrong
+   * book.
    */
-  const tag = targetLanguage.trim().replace(/[^A-Za-z0-9-]+/g, '') || 'translated';
   return {
     key,
     sourcePath,
     outputPath,
-    bankPath: path.join(dir, 'readings', `${key}.${tag}.bank.jsonl`),
+    bankPath: planned.bankPath,
+    stepId: planned.stepId,
   };
 }
 

@@ -246,8 +246,29 @@ export interface TranslateRequest {
    * nothing at all. The engine keys every entry by the whole QUESTION (model,
    * languages, instructions, the block's own text), so a resumed run asks only
    * for what it still owes, and editing one paragraph re-asks that paragraph.
+   *
+   * NO LONGER ONE PATH PER BOOK PER LANGUAGE. Two translations into one language
+   * from two different steps are two sets of answers, and the plan decides which
+   * of them this is — see `stepId` below, which is the same decision.
    */
   bankPath: string;
+  /**
+   * THE STEP THESE FILES BELONG TO, minted with them and travelling with them.
+   *
+   * Exactly `ReadRequest.stepId`'s arrangement, for exactly its reason: a branching
+   * translation writes `generated/<book> (en).<id8>.epub` and a bank named the same
+   * way, where `id8` is the front of the new step's uuid — so the step that lands
+   * hours later has to BE that step, or both files are named after a row nobody
+   * ever created. Minting the id at the landing would mean composing the paths from
+   * an id the paths could not know.
+   *
+   * Spent only on an append (`LandedRun.id`): a landing that turns out to be a
+   * replace swaps into the step that already exists and throws this away, and it
+   * already had paths to aim at — that step's own.
+   *
+   * Optional because a job enqueued by a build that predates this carries none.
+   */
+  stepId?: string;
 }
 
 export interface Job {
@@ -618,6 +639,39 @@ export interface ReadingPlan {
    * The step the path above belongs to — see `ReadRequest.stepId`, which is where
    * it is going. Decided in the same breath as the path, because the two are one
    * decision: which reading is this, the one that exists or a new one?
+   */
+  stepId: string;
+}
+
+/**
+ * What a TRANSLATION job needs, which is a different answer again.
+ *
+ * A NAMED SHAPE RATHER THAN AN INLINE OBJECT AT EACH END, and it earned that the
+ * day it grew a fourth field: main composes it, the preload passes it, the api
+ * declares it and the dialog reads it, and a shape spelled four times is a shape
+ * that grows a field in three of them. `ReadingPlan` is the same arrangement for
+ * the same reason.
+ */
+export interface TranslationPlan {
+  key: string;
+  /** The EPUB the engine reads. Never written to. */
+  sourcePath: string;
+  /**
+   * The EPUB this run writes.
+   *
+   * `generated/<book> (<tag>).epub` for the first translation into a language, and
+   * `generated/<book> (<tag>).<id8>.epub` for a second one made from a different
+   * step — the branch that the user's own scenario (translate, strike, commit,
+   * translate again) produces, and which used to write both editions into one
+   * file.
+   */
+  outputPath: string;
+  /** The per-block answers, `readings/<key>.<tag>[.<id8>].bank.jsonl`. */
+  bankPath: string;
+  /**
+   * The step both paths belong to — see `TranslateRequest.stepId`. Decided in the
+   * same breath as the paths, because it is the same decision: is this translation
+   * the one that already exists, or a new one beside it?
    */
   stepId: string;
 }
@@ -1947,6 +2001,28 @@ export interface LedgerParams {
   completedAt?: number;
   /** `curate` — how many decisions the snapshot froze. For the row's sentence. */
   amendments?: number;
+  /**
+   * `translate` — the translation bank this run wrote, project-relative.
+   *
+   * WHAT IT IS FOR: a translation's payload is the EPUB, and the bank beside it is
+   * the per-block record the EPUB was assembled from — the thing that makes
+   * re-translating this row nearly free and the thing a rendering FROM this row
+   * has to read. There is no longer one bank per book per language (two
+   * translations into one language from two different steps are two banks,
+   * `translationTarget`), so composing the path from the key and the tag would be
+   * the same lie `readings/<key>.jsonl` was for readings: the older row naming a
+   * file the newer run wrote over.
+   *
+   * AN ANSWER, NOT A QUESTION, so it sits in `MINTED_BY_THE_RUN` beside the
+   * reading's generation and page count. Nobody chose it — the plan composed it
+   * out of the replace-or-branch decision itself — and comparing it would make a
+   * bank that ever moved look like a different translation.
+   *
+   * ABSENT ON EVERY TRANSLATION MADE BEFORE THIS WAS RECORDED, and those fall back
+   * to the path their language composes (`translationBankOf`), which is the only
+   * name `planTranslation` could ever have written.
+   */
+  bank?: string;
   /**
    * `read` — `--skip-pages`, verbatim: "3,17,19-24". See `ReadRequest.skipPages`.
    *

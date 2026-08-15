@@ -330,6 +330,11 @@ export class TranslateDialogComponent {
         // that is interrupted asks only for what it still owes. Never a choice
         // in this dialog: see the note on `argsFor`.
         bankPath: plan.bankPath,
+        // The step both of those files are named after, minted by the plan and
+        // carried to the landing so the row and the files agree about which
+        // translation this is. Never read here — this dialog does not know what a
+        // step is, and it is main's answer travelling back to main.
+        stepId: plan.stepId,
       };
       const from = this.from().trim();
       if (from.length > 0) request.from = from;
