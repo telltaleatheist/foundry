@@ -651,12 +651,21 @@ export class TabsService {
      *
      * Jobs already finished when this window loaded are marked as seen without
      * opening: a reload should not reopen five books somebody closed.
+     *
+     * A SAVE'S OWN BOOK IS THE EXCEPTION, and it is the one job here nobody
+     * ordered. Applying changes casts the book as of that save (`forStep`, the
+     * per-save cast), which is a rendering the app made for itself so that
+     * standing on an older save shows the book that save made — and it lands in
+     * the middle of somebody correcting the next paragraph. Every other job in
+     * this list is a thing a person pressed a button for and is waiting on; this
+     * one would be a tab arriving in front of work in progress, for a document
+     * they can already reach by clicking the row it belongs to.
      */
     let first = true;
     effect(() => {
       const jobs = this.queue.jobs();
       for (const job of jobs) {
-        if (!OPENS_ITSELF.has(job.kind) || job.state !== 'done') continue;
+        if (!OPENS_ITSELF.has(job.kind) || job.forStep !== undefined || job.state !== 'done') continue;
         if (this.openedJobs.has(job.id)) continue;
         this.openedJobs.add(job.id);
         if (first) continue;

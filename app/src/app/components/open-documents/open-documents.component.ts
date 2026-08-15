@@ -1581,14 +1581,16 @@ function glyphForPayload(payload: string): string {
  *
  * The reading wears the book's own mark because the reading IS the book; a save
  * wears the pencil the app uses everywhere for "edited"; a translation wears the
- * two ways it goes. Nothing here is load-bearing: the name beside it says the
- * same thing in words, and the glyph is what makes a tree of twenty rows
- * scannable.
+ * two ways it goes; a metadata edit wears the mark of a note about a thing rather
+ * than a change to it, which is what a record of the title is. Nothing here is
+ * load-bearing: the name beside it says the same thing in words, and the glyph is
+ * what makes a tree of twenty rows scannable.
  */
 function glyphForStep(step: LedgerStep): string {
   if (step.action === 'read') return '▤';
   if (step.action === 'curate') return '✎';
   if (step.action === 'translate') return '⇄';
+  if (step.action === 'metadata') return 'ⓘ';
   return '▦';
 }
 

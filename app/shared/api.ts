@@ -34,6 +34,7 @@ import type {
   LedgerLoad,
   LedgerStacks,
   MetadataOutcome,
+  MetadataWriteOutcome,
   NavEcho,
   OverlayFileWire,
   OverlayLoad,
@@ -267,11 +268,22 @@ export interface FoundryApi {
   meta: {
     /** The open book, by its id. Main resolves the working tree; the renderer names no path. */
     readEpub(bookId: string): Promise<MetadataOutcome>;
-    /** Only the fields that changed. A field left out is a field the engine never touches. */
-    writeEpub(bookId: string, patch: Partial<EpubMetadataFields>): Promise<MetadataOutcome>;
+    /**
+     * Only the fields that changed. A field left out is a field the engine never
+     * touches.
+     *
+     * AND THE HISTORY COMES BACK WITH IT. A metadata edit is a step now
+     * (`StepAction`, shared/types.ts), so a write changes two things a person is
+     * looking at — the document and the list of steps beside it — and the second
+     * one travels back with the first rather than being asked for a moment later.
+     * See `MetadataWriteOutcome.landed`, which is absent whenever nothing was
+     * minted: a loose file has no ledger, and a patch with no changed fields in it
+     * is a read.
+     */
+    writeEpub(bookId: string, patch: Partial<EpubMetadataFields>): Promise<MetadataWriteOutcome>;
     /** The working PDF, by the path this app already has open. Refused for any other. */
     readPdf(filePath: string): Promise<MetadataOutcome>;
-    writePdf(filePath: string, patch: Partial<PdfMetadataFields>): Promise<MetadataOutcome>;
+    writePdf(filePath: string, patch: Partial<PdfMetadataFields>): Promise<MetadataWriteOutcome>;
   };
 
   /**

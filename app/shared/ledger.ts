@@ -66,6 +66,7 @@ import {
   WHY_MODEL_PASS,
   type LedgerParams,
   type LedgerStep,
+  type MetadataPatch,
   type ProjectLedger,
   type ProjectManifest,
   type ProjectReading,
@@ -91,7 +92,7 @@ export class StepLedgerError extends Error {
 }
 
 /** Every action there is, in the order a project meets them. */
-export const STEP_ACTIONS = ['import', 'read', 'curate', 'translate'] as const;
+export const STEP_ACTIONS = ['import', 'read', 'curate', 'translate', 'metadata'] as const;
 
 /**
  * WHAT IT WOULD COST TO GET THIS PAYLOAD BACK, per action — the retention rule
@@ -113,6 +114,11 @@ export const RETENTION_OF: Readonly<Record<StepAction, LedgerStep['retention']>>
   read: 'expensive',
   curate: 'irreplaceable',
   translate: 'expensive',
+  // A person read the title off the book in their hands and typed it. The write
+  // took milliseconds and that is not the question this table asks — see the
+  // sentence above about machine cost, and `StepAction` for why a metadata edit
+  // is a step at all.
+  metadata: 'irreplaceable',
 };
 
 /**
@@ -140,6 +146,18 @@ export const PARAMS_OF: Readonly<Record<StepAction, readonly (keyof LedgerParams
   read: ['skipPages', 'language', 'generation', 'pages', 'completedAt'],
   curate: ['generation', 'amendments'],
   translate: ['language', 'bank'],
+  /*
+   * A METADATA EDIT IS DESCRIBED BY WHICH FIELDS IT SET, and by nothing else. The
+   * values are in the payload, where the thing an export replays belongs
+   * (`MetadataPatch`, shared/types.ts) — a params bag that carried them too would
+   * be two copies of one fact with no rule about which wins.
+   *
+   * NOTHING HERE IS IN `MINTED_BY_THE_RUN`, deliberately, and it costs nothing:
+   * `reRunTarget` never returns an irreplaceable step, so two edits of the same
+   * fields from one parent are two rows however this table reads. Which is the
+   * answer the spec asks for — each Apply is a deliberate act and appends.
+   */
+  metadata: ['fields'],
 };
 
 /**
@@ -177,6 +195,15 @@ export const RETAINED_BESIDE_YOU: Readonly<Record<StepAction, boolean>> = {
   read: false,
   curate: true,
   translate: false,
+  /*
+   * A METADATA EDIT IS THE SAME SHAPE OF GESTURE AS A SAVE, and the argument
+   * above transfers word for word. It makes no new state of the book to go and
+   * stand in — the document on screen already carries the new title, because the
+   * dialog wrote it there — and moving the pointer onto the row would take the
+   * block editor read-only as the reward for correcting an author's name, which
+   * is the exact punishment this table was written to stop.
+   */
+  metadata: true,
 };
 
 /**
@@ -253,6 +280,11 @@ const MINTED_BY_THE_RUN: Readonly<Record<StepAction, readonly (keyof LedgerParam
   read: ['generation', 'pages', 'completedAt'],
   curate: [],
   translate: ['bank'],
+  // Everything a metadata edit records was typed by a person into a box. There
+  // is no run to mint anything, and `reRunTarget` cannot reach an irreplaceable
+  // step in any case — this entry exists so the table stays exhaustive rather
+  // than because a comparison depends on it.
+  metadata: [],
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -316,6 +348,22 @@ export function labelFor(action: StepAction, params?: LedgerParams): string {
       return params?.amendments === undefined || params.amendments <= 0
         ? 'Applied changes'
         : `Applied changes (${params.amendments})`;
+    /*
+     * A METADATA ROW SAYS WHICH FIELDS IT SET, when saying so is short enough to
+     * be a row rather than a paragraph. A project can hold half a dozen of these
+     * and "Metadata" six times over is six rows nobody can tell apart; "Metadata
+     * (title, author)" is the one thing a person remembers about the edit they
+     * are looking for. Past a couple of fields the list stops being scannable and
+     * the plain word is the honest answer — the payload still holds every one of
+     * them, and this is a label rather than a record.
+     */
+    case 'metadata': {
+      const said = params?.fields ?? [];
+      const printed = said.join(', ');
+      return said.length === 0 || said.length > 3 || printed.length > 40
+        ? 'Metadata'
+        : `Metadata (${printed})`;
+    }
     default:
       return params?.language === undefined || params.language.length === 0
         ? 'Translated'
@@ -571,6 +619,24 @@ function isWord(key: keyof LedgerParams): key is typeof WORDS[number] {
   return (WORDS as readonly string[]).includes(key);
 }
 
+/**
+ * The params that are LISTS OF WORDS — which is one of them, and the reason it is
+ * a table anyway is `WORDS`' own.
+ *
+ * `metadata.fields` is the field names one edit set, and it is stored as an array
+ * because that is what it is. The considered alternative was a comma-joined string
+ * on `skipPages`' precedent, and it is not the same case: `skipPages` is stored
+ * verbatim because THE STRING IS WHAT WAS ASKED — "3,17" and "17,3" are two
+ * spellings this app deliberately does not claim to know are one thing — where a
+ * set of field names has no spelling of its own to preserve, and joining it would
+ * be a list pretending to be a word, to be split again by every reader.
+ */
+const LISTS = ['fields'] as const;
+
+function isList(key: keyof LedgerParams): key is typeof LISTS[number] {
+  return (LISTS as readonly string[]).includes(key);
+}
+
 /** `a`, `a and b`, `a, b and c` — this app writes sentences, not comma runs. */
 function spokenList(parts: readonly string[]): string {
   if (parts.length <= 1) return parts[0] ?? '';
@@ -596,7 +662,19 @@ function readParams(value: unknown, id: string, action: StepAction): LedgerParam
     const key = named as keyof LedgerParams;
     const said = record[key];
     if (said === undefined) continue;
-    if (isWord(key)) {
+    if (isList(key)) {
+      // EVERY ELEMENT CHECKED, and an empty list refused with the rest: a
+      // metadata row that set no fields is a row about nothing, and the label it
+      // composes would say the plain word while claiming an edit happened.
+      if (!Array.isArray(said) || said.length === 0
+        || said.some((named) => typeof named !== 'string' || named.length === 0)) {
+        throw new StepLedgerError(
+          `Step "${id}" says "${key}": ${JSON.stringify(said)}, and it is a list of field names with `
+          + 'at least one name in it',
+        );
+      }
+      params[key] = said as string[];
+    } else if (isWord(key)) {
       if (typeof said !== 'string') {
         throw new StepLedgerError(`Step "${id}" says "${key}": ${JSON.stringify(said)}, and it is a string`);
       }
@@ -1172,6 +1250,37 @@ export function translationTarget(
 }
 
 /**
+ * THE BOOK ONE CURATE STEP CAST FOR ITSELF — `<stem>.<id8>.epub`, project-relative.
+ *
+ * ── Why a save gets a file of its own ───────────────────────────────────────
+ *
+ * A curate row used to show the project's ONE cast, which meant every save in a
+ * book's history showed the same document: the live tree wearing today's marks.
+ * The whole point of clicking an old save is to see the book AS IT WAS THEN, so a
+ * landing casts its own book and the row shows that. The pointer does not move
+ * for a save (`RETAINED_BESIDE_YOU`), which is precisely why the plan has to be
+ * keyed to the STEP rather than to the position — see `planConversionForStep`
+ * (electron/workspace.ts), where getting this wrong would render the live overlay
+ * under a step-shaped name.
+ *
+ * THE SAME NAMING SCHEME READINGS AND TRANSLATIONS ALREADY USE, deliberately and
+ * not by imitation: `id8` of the step's own uuid, which is collision-free for the
+ * handful of files one project holds and — the part that matters here — means
+ * NOTHING EVER OVERWRITES. A cast per save under one name would be a rotation per
+ * save, and a rotation refused because somebody has the book open would make
+ * pressing Apply a thing that can fail.
+ *
+ * IT IS A RENDERING AND NEVER A PAYLOAD. The step's payload is the snapshot in
+ * `curations/`; this is made again from that snapshot for nothing, at any time.
+ * It is composed here rather than in main so that the three places that need the
+ * name — the plan, the resolution that shows it, and the sweep that removes it
+ * when the step goes — cannot come to three answers.
+ */
+export function curateCastFile(stem: string, stepId: string): string {
+  return `${stem}.${id8(stepId)}.epub`;
+}
+
+/**
  * Everything made from a replaced step, marked stale — and the step itself
  * marked fresh.
  *
@@ -1630,6 +1739,21 @@ export function chainsWithout(
 export function deleteCost(step: LedgerStep): string {
   switch (step.retention) {
     case 'irreplaceable':
+      /*
+       * A METADATA ROW IS THE ONE IRREPLACEABLE STEP WHOSE DELETE DOES NOT TAKE
+       * THE THING BACK, and saying so is the whole reason it has a sentence of its
+       * own. The values were written into the document when the user pressed
+       * Apply; what this row holds is the RECORD of that, which is what an export
+       * replays. Deleting it leaves the document exactly as it is and stops later
+       * exports carrying the correction — which is a real loss and a different one
+       * from "your work is gone", and a confirm that said the second about the
+       * first would be lying to somebody about to click it.
+       */
+      if (step.action === 'metadata') {
+        return `Discarding “${step.label}” destroys ${WHY_HANDMADE}. The document keeps the values `
+          + 'you typed — this is the record of them, so what is lost is that anything made from '
+          + 'here stops carrying them.';
+      }
       return step.action === 'import'
         ? `Discarding “${step.label}” destroys ${WHY_IMPORTED}. There is nowhere to fetch it back from.`
         : `Discarding “${step.label}” destroys ${WHY_HANDMADE}. No run remakes it, at any price.`;
@@ -1707,6 +1831,18 @@ const BOUNDS_THE_WALK: Readonly<Record<StepAction, boolean>> = {
   read: true,
   curate: false,
   translate: false,
+  /*
+   * A METADATA ROW IS TRANSPARENT TO THIS WALK. The questions it answers are
+   * "which bank" and "which curation", and a row that recorded a title says
+   * nothing about either — standing on the reading with a metadata edit between
+   * you and it must still find that reading. It is emphatically not a boundary:
+   * a boundary means "a different pass over the pages begins here", which is a
+   * claim about blocks that this action never makes.
+   *
+   * The metadata chain has a walk of its own (`metadataInEffect`) and it does not
+   * come through here, for the reason stated there.
+   */
+  metadata: false,
 };
 
 /**
@@ -1867,6 +2003,14 @@ const DISPLAYS_ITSELF: Readonly<Record<StepAction, boolean>> = {
   read: false,
   curate: true,
   translate: false,
+  /*
+   * A METADATA ROW FROZE NOBODY'S CORRECTIONS, so there is nothing of that kind
+   * to show and nothing to lock. It is the `translate` answer for the `translate`
+   * reason: what it retained is a record of six typed fields, not a copy of
+   * anybody's strikes, so the pane goes on drawing the live ones and a person
+   * standing there can still work.
+   */
+  metadata: false,
 };
 
 /**
@@ -1919,6 +2063,130 @@ export function displayedCuration(ledger: ProjectLedger): LedgerStep | null {
  */
 export function translationInEffect(ledger: ProjectLedger): LedgerStep | null {
   return nearestUpward(ledger, 'translate');
+}
+
+/**
+ * EVERY METADATA EDIT MADE ANYWHERE ON THE WAY TO WHERE YOU ARE STANDING, in the
+ * order they were made.
+ *
+ * ── The hole this closes ────────────────────────────────────────────────────
+ *
+ * An export is cast fresh from the bank, and the bank knows nothing about the
+ * title somebody typed into the dialog last week — that went into the OPF of the
+ * working tree, which is not an input to a cast. So the app wrote a book, filed
+ * it in `final/`, and the corrections were silently absent from it. The rows are
+ * the durable record precisely so that materialisation can replay them, and this
+ * is what it replays.
+ *
+ * ── Why this is a LIST and not the usual `nearestUpward` ────────────────────
+ *
+ * Every other question in this family is "which one is in effect" and has exactly
+ * one answer. This one accumulates: an edit that set the title and a later one
+ * that set the author are both in effect, and neither supersedes the other. So
+ * every row comes back and the MERGE decides field by field — newest value wins —
+ * which is `mergedMetadata` below, kept separate because merging patches is a
+ * different question from finding them and only one of the two needs a ledger.
+ *
+ * ── AND WHY IT IS NOT THE ANCESTRY, WHICH IS THE WHOLE TRAP HERE ────────────
+ *
+ * A metadata row is RETAINED BESIDE YOU: pressing Apply leaves the pointer where
+ * it was, so the row it minted is a CHILD of the position and never one of its
+ * ancestors. An ancestry walk therefore finds NOTHING in the ordinary case — edit
+ * the title standing on the reading, export from the reading, and the export
+ * carries nothing at all, which is the exact silence this unit exists to end,
+ * reintroduced by the one function meant to end it.
+ *
+ * So the question is asked the way the gesture actually happened: A METADATA ROW
+ * IS IN EFFECT WHEN THE STEP IT WAS MADE FROM IS ON THE PATH FROM THE IMPORT TO
+ * WHERE YOU ARE. That is "everything you typed while standing anywhere you have
+ * passed through", which is what a person means by "the book's title", and it
+ * still refuses the things it should: an edit made while standing on the English
+ * translation hangs off THAT row, so exporting the Hungarian one — a sibling,
+ * made from the same reading — does not carry it. Its parent is not on the path.
+ *
+ * ── And why it is not bounded by the reading ────────────────────────────────
+ *
+ * `nearestUpward` stops at a `read` because a bank's story begins there: a
+ * snapshot from above it names blocks that mean something else on this side. A
+ * TITLE MEANS THE SAME THING ON BOTH SIDES OF A READING. Reading the pages again
+ * does not un-say what the book is called, so the path runs to the import, and a
+ * correction made before the re-read is still the correction.
+ *
+ * IN THE ARRAY'S ORDER, which is the chronology by the ledger's own rule
+ * (`parseLedger` refuses a file whose rows run backwards). That makes "newest
+ * wins" a plain left-to-right fold with no comparator — and it has to be the
+ * array rather than the chain, because these rows hang off several different
+ * parents and the chain cannot order them against each other.
+ */
+export function metadataInEffect(
+  ledger: ProjectLedger,
+  /**
+   * Where the path ends — the step a JOB captured when it was enqueued, or null
+   * for the position now.
+   *
+   * The job's own parent is the honest answer for an export: it is where the
+   * person was standing when they pressed the button, and a pointer move made
+   * while the job waited in the queue must not change which corrections the book
+   * that comes out of it carries. Same rule as `Job.parentStep`, one layer down.
+   * An id this ledger no longer holds falls back to the position, on `landStep`'s
+   * reasoning: the row was deleted while the run was going, and refusing to
+   * describe the product is worse than describing it from where the user is.
+   */
+  from: string | null = null,
+): LedgerStep[] {
+  const standing = (from === null ? null : ledger.steps.find((step) => step.id === from))
+    ?? positionOf(ledger);
+  if (standing === null) return [];
+  const path = new Set(ancestry(ledger, standing.id).map((step) => step.id));
+  return ledger.steps.filter((step) => (
+    step.action === 'metadata' && step.parent !== null && path.has(step.parent)
+  ));
+}
+
+/**
+ * THE PATCH A PRODUCT CARRIES, out of the patches its ancestry recorded — newest
+ * value per field, and one kind of document only.
+ *
+ * ── Newest wins, field by field ─────────────────────────────────────────────
+ *
+ * Two edits that both set the title are one field corrected twice, and the second
+ * one is what the book is called. Two edits that set different fields are both in
+ * effect. That is the whole rule, and it is a fold rather than a "last patch
+ * wins" because the alternative would let an edit that touched only the publisher
+ * throw away the title an earlier one set.
+ *
+ * ── AND ONE KIND ONLY, WHICH IS THE PART WORTH ARGUING ──────────────────────
+ *
+ * A project holds a scan and the book cast from it, and the metadata dialog edits
+ * whichever the position is showing — so an import row's edit is about the PDF's
+ * Info dictionary and a read row's is about the package. They are two documents'
+ * records with two vocabularies (`author` against `dc:creator`; `subject` and
+ * `keywords` exist for one of them only), and the honest thing to do with a
+ * `pdf` patch while making an EPUB is to leave it alone. Carrying the title
+ * across because both formats happen to spell that one field the same way would
+ * be this app moving somebody's words between two documents on the strength of a
+ * coincidence in two file formats.
+ *
+ * PURE, AND IT TAKES THE CONTENTS RATHER THAN THE STEPS: the values live in
+ * payload files, reading files is main's job, and deciding what wins is exactly
+ * the kind of rule this module exists to keep where a test can reach it.
+ */
+export function mergedMetadata(
+  patches: readonly MetadataPatch[],
+  kind: MetadataPatch['kind'],
+): Record<string, string> {
+  const merged: Record<string, string> = {};
+  for (const patch of patches) {
+    if (patch.kind !== kind) continue;
+    for (const [field, value] of Object.entries(patch.fields)) {
+      // A blank is not a value. The engine refuses one by name — an empty
+      // `dc:title` is a book claiming to be called nothing — and a patch file
+      // somebody hand-edited must not be able to turn an export into a refusal.
+      if (typeof value !== 'string' || value.trim().length === 0) continue;
+      merged[field] = value;
+    }
+  }
+  return merged;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1999,6 +2267,13 @@ export const SHOWS_ITS_PAYLOAD: Readonly<Record<StepAction, boolean>> = {
   read: false,
   curate: false,
   translate: true,
+  /*
+   * A METADATA ROW'S PAYLOAD IS A PATCH, which is no more a thing a person reads
+   * than a curation snapshot is. What it shows is what the row beneath it shows —
+   * the book this project is working on, which is resolved by asking the project
+   * what it holds. The document did not change identity because its title did.
+   */
+  metadata: false,
 };
 
 /** Everything that decides the picture at the position, in one answer. */

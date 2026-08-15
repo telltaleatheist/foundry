@@ -84,13 +84,14 @@ import {
   generatedFileFor,
   importDocument,
   ledgerOf,
+  overlayFileFor,
   readManifest,
   readingBank,
   readingIsComplete,
   renderingOverlay,
   rotationRefusal,
 } from './projects';
-import { translationBankOf } from '../shared/ledger';
+import { curateCastFile, translationBankOf } from '../shared/ledger';
 import type { ReadAsk } from '../shared/ledger';
 import {
   DEFAULT_OLLAMA_ENDPOINT,
@@ -215,6 +216,42 @@ export async function planConversion(
 }
 
 /**
+ * The same rendering, KEYED TO ONE SAVE instead of to the position — the plan a
+ * curate landing's own book is cast from.
+ *
+ * ── The bug this shape exists to avoid ──────────────────────────────────────
+ *
+ * A save does not move the pointer (`RETAINED_BESIDE_YOU`, shared/ledger.ts):
+ * pressing Apply leaves the user standing exactly where they were, which is
+ * almost always the reading. So `planConversion` here would ask the position
+ * which corrections are in effect, get the LIVE overlay, and write it out under
+ * the save's name — the book as it is right now, filed as the book as it was
+ * then, and indistinguishable from the real thing forever after. The step's own
+ * snapshot is handed in instead, through the seam that already exists
+ * (`overlayFileFor`, electron/projects.ts).
+ *
+ * ── EPUB, always, and not a parameter ───────────────────────────────────────
+ *
+ * What a save row shows is the flowing book (`documentAtPosition`), which is the
+ * one format everything downstream of a reading works on. A facsimile of a save
+ * is a thing somebody can ask for through Export, from the row, at any time.
+ *
+ * ── A save under a translation is DECLINED, and declined out loud ───────────
+ *
+ * Casting one would mean running the translator, which is model time — and this
+ * plan is made by a landing rather than by a person pressing a button, so the
+ * whole justification for doing it unasked ("it is arithmetic, it takes seconds,
+ * it is free") stops being true. The refusal is the sentence, and the row keeps
+ * showing the project's cast, which is what every save showed before this unit.
+ */
+export async function planConversionForStep(
+  inputPath: string,
+  step: LedgerStep,
+): Promise<WorkspacePlan> {
+  return planRendering(inputPath, 'epub', GENERATED, step);
+}
+
+/**
  * Where this book's EXPORT goes — the same rendering, aimed at `final/`.
  *
  * ── One run, two landings, and which of them this is ────────────────────────
@@ -276,6 +313,17 @@ async function planRendering(
   inputPath: string,
   kind: ConversionKind,
   layer: RenderingLayer,
+  /**
+   * THE SAVE THIS RENDERING IS ABOUT, when it is about one rather than about the
+   * position. See `planConversionForStep`, which is the only caller that passes
+   * it and the header that argues for it.
+   *
+   * It changes exactly two of the answers below — which corrections are applied
+   * and what the file is called — and deliberately nothing else: the pixels, the
+   * bank, the completion refusal and the rotation rule are the same facts about
+   * the same project however this plan was reached.
+   */
+  forStep: LedgerStep | null = null,
 ): Promise<WorkspacePlan> {
   const { dir } = await importDocument(inputPath, 'pdf');
   /*
@@ -345,6 +393,29 @@ async function planRendering(
           + 'the finished reading afterwards, for nothing.',
     );
   }
+  /*
+   * A SAVE UNDER A TRANSLATION IS DECLINED BEFORE THE STAGE IS EVEN COMPOSED.
+   *
+   * The pipeline is read off the position, and a save's position is its own parent
+   * — the pointer does not move for one — so this is the save's own ancestry asked
+   * in the ordinary way. What it means is that casting this book would run the
+   * translator, and this plan is made by a LANDING rather than by a person pressing
+   * a button: the whole justification for doing it unasked is that it is arithmetic
+   * over a finished bank and costs seconds. A held two-stage job appearing in the
+   * shelf because somebody pressed Apply would be a translation of their book run
+   * behind a button labelled Apply changes.
+   *
+   * A refusal rather than a silent skip, and the caller turns it into a console
+   * line (`castCurateStep`, electron/job-queue.ts). The row goes on showing the
+   * project's cast, which is what every save showed before this unit.
+   */
+  if (forStep !== null && pipeline.translate !== null) {
+    throw new ProjectError(
+      `“${forStep.label}” stands under a translation, so the book it saved cannot be cast without `
+      + 'running the translator — which is model time, and not something a save spends on its own. '
+      + 'Generate from that step when you want it.',
+    );
+  }
   const staged = pipeline.translate === null
     ? null
     : await translateStage(dir, manifest, pipeline.translate, pipeline.landsUnder, kind, layer);
@@ -360,9 +431,18 @@ async function planRendering(
    * rendering that reconstructs exactly the path the stage composed; for an export
    * it puts the same book, under the same name, in the tray.
    */
-  const file = staged === null
-    ? generatedFileFor(stem, kind)
-    : path.basename(staged.outputPath);
+  /*
+   * AND A PER-SAVE CAST IS NAMED FOR ITS STEP — `<stem>.<id8>.epub`, the scheme
+   * readings and translations already use, composed by the ledger
+   * (`curateCastFile`) so the plan, the resolution that shows the file and the
+   * sweep that removes it cannot come to three answers. Nothing ever overwrites,
+   * which is what makes a cast-per-save safe to do automatically.
+   */
+  const file = forStep !== null
+    ? curateCastFile(stem, forStep.id)
+    : staged === null
+      ? generatedFileFor(stem, kind)
+      : path.basename(staged.outputPath);
   const outputPath = path.join(dir, layer, file);
   /*
    * THE SOURCE IS THE APP'S TO CHOOSE, and that is the whole correction here.
@@ -486,7 +566,16 @@ async function planRendering(
      * stricken after is translated in the bank and simply not asked for — same
      * artefact either way, and only the ledger's story about the order differs.
      */
-    overlayPath: renderingOverlay(dir, manifest),
+    /*
+     * AND A PER-SAVE CAST ASKS THE STEP INSTEAD OF THE POSITION, which is the
+     * whole reason `planConversionForStep` exists. `renderingOverlay` would answer
+     * the LIVE overlay here — the pointer has not moved, because a save does not
+     * move it — and the book as it is now would be written under the name of the
+     * book as it was then.
+     */
+    overlayPath: forStep === null
+      ? renderingOverlay(dir, manifest)
+      : overlayFileFor(dir, manifest, forStep),
     ...(staged === null ? {} : { thenTranslate: staged.thenTranslate }),
   };
 }

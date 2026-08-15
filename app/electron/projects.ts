@@ -98,6 +98,7 @@ import type {
   ConversionKind,
   LedgerParams,
   LedgerStep,
+  MetadataPatch,
   ProjectDocument,
   ProjectDocumentKind,
   ProjectFinal,
@@ -123,6 +124,7 @@ import {
   askedOf,
   chainsWithout,
   chronological,
+  curateCastFile,
   curationInEffect,
   deleteCost,
   deleteSubtree,
@@ -132,6 +134,8 @@ import {
   generationForLanding,
   generationInEffect,
   id8,
+  mergedMetadata,
+  metadataInEffect,
   migrateLedger,
   orphanedBanks,
   originOf,
@@ -231,6 +235,10 @@ const OVERLAYS = 'overlays';
  * The seventh: frozen curations. See `curationsDir`.
  */
 const CURATIONS = 'curations';
+/**
+ * The eighth: the metadata patches, one per Apply. See `metadataDir`.
+ */
+const METADATA = 'metadata';
 /**
  * And the bank of the model's answers — hours of GPU, the thing every rendering
  * is made from, and the product of the one job in this app that costs anything.
@@ -1158,6 +1166,26 @@ export function curationsDir(dir: string): string {
 }
 
 /**
+ * `<project>/metadata/` — the patches a metadata step retained, one per Apply.
+ *
+ * AN EIGHTH SIBLING, on `curations/`'s precedent and for the identical argument.
+ * A patch is a RETAINED PAYLOAD: named by a step, deleted only when that step is,
+ * never archived aside, and — the part that decides the folder — READ AGAIN LONG
+ * AFTER IT WAS WRITTEN, because every export replays the chain of them
+ * (`metadataInEffect`). Nothing in this app may treat what it finds here as
+ * disposable, which is exactly what a sweep of `working/` or `overlays/` assumes
+ * about its contents.
+ *
+ * `<uuid>.json` rather than a name anybody reads, for `curationsDir`'s reason:
+ * the step's LABEL is what a person sees ("Metadata (title, author)"), and a
+ * filename that tried to say the same thing would be a second place for it to be
+ * said differently.
+ */
+export function metadataDir(dir: string): string {
+  return path.join(dir, METADATA);
+}
+
+/**
  * A finished action, recorded against an OPEN manifest. The caller writes.
  *
  * ── The parent, and the two ways it can be wrong ────────────────────────────
@@ -1332,7 +1360,7 @@ export async function describeStepDelete(dir: string, stepId: string): Promise<S
   const deletion = deleteSubtree(ledger, stepId);
   const banks = new Set(orphanedBanks(deletion, manifest.key));
   const destroyed = destroyedBy(deletion, manifest.key);
-  const sweeps = await planStepSweep(resolved, destroyed, banks, manifest);
+  const sweeps = await planStepSweep(resolved, destroyed, banks, manifest, deletion.removed);
   // The other refusal that must land before the card is drawn, for its own
   // reason: a book this window is reading cannot be unlinked on Windows, so a
   // card that ignored it would be a question whose yes main declines to act on.
@@ -1347,7 +1375,21 @@ export async function describeStepDelete(dir: string, stepId: string): Promise<S
       cost: deleteCost(step),
       stale: step.stale === true,
     })),
-    files: destroyed.map((payload) => path.join(resolved, ...payload.split('/'))),
+    /*
+     * THE PAYLOADS, AND THE BOOKS THE DOOMED SAVES CAST FOR THEMSELVES.
+     *
+     * This list is what the window LETS GO OF before main unlinks anything, and a
+     * per-step cast is a document a person can have open in a tab exactly as a
+     * translation's EPUB is — it is what standing on that save shows. Leaving it
+     * out would meet main's own refusal one line after the user said yes, which is
+     * a dialog that asks a question and then declines to act on the answer.
+     * `castsAmong` is the same function the sweep above composed its paths with,
+     * so the card and the delete cannot come to two lists.
+     */
+    files: [
+      ...destroyed.map((payload) => path.join(resolved, ...payload.split('/'))),
+      ...await castsAmong(resolved, manifest, deletion.removed),
+    ],
   };
 }
 
@@ -1427,8 +1469,39 @@ async function planStepSweep(
    */
   banks: ReadonlySet<string>,
   manifest: ProjectManifest,
+  /**
+   * THE ROWS THIS DELETE TAKES OFF THE LEDGER, for the one file that belongs to a
+   * step and is nobody's payload: the book a curate landing cast for itself.
+   *
+   * It is a rendering — free, regenerable, never catalogued (`castForCurateStep`
+   * says why not) — which is exactly what makes it unreachable from every other
+   * mechanism in here. `orphanedPayloads` reasons over payloads and this is not
+   * one; `manifest.documents` has no row for it; the name is composed from the
+   * step's own uuid, so once the row is gone nothing on this disk could ever work
+   * out what the file was. Left behind it would be a whole EPUB in `generated/`
+   * that no screen in this app will ever mention again, which is the same failure
+   * a translation's abandoned bank was.
+   *
+   * THE STEPS AND NOT A LIST OF PATHS, because composing the name needs the
+   * project's stem and the step's id together, and a caller that composed it would
+   * be the second place that decides what a save's book is called.
+   */
+  removed: readonly LedgerStep[] = [],
 ): Promise<Sweep[]> {
   const sweeps: Sweep[] = [];
+  for (const cast of await castsAmong(dir, manifest, removed)) {
+    /*
+     * THROUGH `planSweep`, which is what makes this more than an unlink. A person
+     * who stood on that save and read the book has a working tree unpacked from
+     * this very file and an undo ledger named after that tree; both belong to it
+     * and to nothing else, and both would otherwise outlive the row. It also puts
+     * the file in front of `refuseOpenPayload`, so deleting a save while its book
+     * is open is refused rather than erased out from under the reader.
+     */
+    const sweep = await planSweep(dir, cast, manifest);
+    sweep.files.push(cast);
+    sweeps.push(sweep);
+  }
   for (const payload of payloads) {
     const resolved = path.join(dir, ...payload.split('/'));
     const sweep = await planSweep(dir, resolved, manifest);
@@ -1450,6 +1523,33 @@ async function planStepSweep(
     sweeps.push(sweep);
   }
   return sweeps;
+}
+
+/**
+ * The books the doomed saves cast for themselves, absolute, and only the ones
+ * that are actually there.
+ *
+ * ONE COMPOSITION FOR TWO CALLERS — the sweep that removes them and the card that
+ * names them — because a card may not destroy something it did not name, and two
+ * places composing `<stem>.<id8>.epub` is exactly how it ends up doing that.
+ *
+ * THE EXISTENCE TEST EARNS ITS STAT. A save from before casting was per-step, one
+ * whose cast failed, one whose cast was rotated aside: all of them are rows with
+ * no book of their own, and a path in either list for a file that was never made
+ * would be this app naming debris it invented.
+ */
+async function castsAmong(
+  dir: string,
+  manifest: ProjectManifest,
+  removed: readonly LedgerStep[],
+): Promise<string[]> {
+  const casts: string[] = [];
+  for (const step of removed) {
+    if (step.action !== 'curate') continue;
+    const cast = path.join(dir, ...castForCurateStep(manifest, step).split('/'));
+    if (await exists(cast)) casts.push(cast);
+  }
+  return casts;
 }
 
 /*
@@ -1641,7 +1741,7 @@ export async function deleteStep(dir: string, stepId: string): Promise<LedgerVie
     const deletion = deleteSubtree(ledgerOf(manifest), stepId);
     const banks = new Set(orphanedBanks(deletion, manifest.key));
     const destroyed = destroyedBy(deletion, manifest.key);
-    const planned = await planStepSweep(resolved, destroyed, banks, manifest);
+    const planned = await planStepSweep(resolved, destroyed, banks, manifest, deletion.removed);
     // PROVED AGAIN INSIDE THE TRANSACTION, never trusted from `describeStepDelete`:
     // a book can be opened between the question and the answer, and this is the
     // call that unlinks a working tree.
@@ -1738,6 +1838,124 @@ export async function recordCuration(
 }
 
 /**
+ * A metadata edit: the patch is already written, this is the step for it.
+ *
+ * ── What was missing, in one sentence ───────────────────────────────────────
+ *
+ * The dialog wrote a title into the open document and nothing else learned it had
+ * happened — no row, no announce, and an export that silently lost the edit,
+ * because an export is cast fresh from the bank and a working tree's package is
+ * not one of its inputs. This is the durable half. The write to the live document
+ * STAYS exactly where it was: the user has to see the correction at once, and the
+ * step is what makes it survive into everything made afterwards.
+ *
+ * THE SAME SHAPE AS `recordCuration` ABOVE, down to the reasons. The file work is
+ * the caller's (main writes the patch, then calls this — file before step, the
+ * rule `commitOverlay` states in full); the manifest surgery is this module's,
+ * because all of it happens behind `withManifest`.
+ *
+ * NO CAPTURED PARENT, and none is possible: an Apply is not a queue job. It
+ * happens the instant the user presses the button, so there is no gap between the
+ * gesture and the recording for a pointer move to slip through.
+ *
+ * AND THE POSITION IS STILL THAT ONE AFTERWARDS (`RETAINED_BESIDE_YOU`), for the
+ * reason a save is: the document in front of the user already carries the new
+ * values, so there is no new state to go and stand in, and a pointer that moved
+ * would take the block editor read-only as the reward for correcting a name.
+ */
+export async function recordMetadata(
+  dir: string,
+  payload: string,
+  params: LedgerParams,
+): Promise<LedgerView> {
+  const resolved = deletableProjectDir(dir);
+  const ledger = await withManifest(resolved, async (manifest) => {
+    const landing = await landStep(manifest, {
+      action: 'metadata',
+      parent: null,
+      payload,
+      params,
+      createdAt: Date.now(),
+    });
+    if (landing === null) {
+      throw new ProjectError(
+        `${path.basename(resolved)} has no recorded history for a metadata edit to be filed against `
+        + '— this app has no record of the document it was built on, so there is no step to hang one '
+        + 'off. Opening the book from Home imports it and gives this project an origin.',
+      );
+    }
+    await writeManifest(resolved, manifest);
+    return landing.ledger;
+  });
+  announceProjects();
+  return { ledger, rows: chronological(ledger) };
+}
+
+/**
+ * THE PATCH EVERY PRODUCT MADE FROM THIS POSITION CARRIES — the chain, read off
+ * the disk and merged.
+ *
+ * ── Where the split falls, and why it falls there ───────────────────────────
+ *
+ * The WALK and the MERGE are pure and live in shared/ledger.ts, where a test can
+ * reach the rule that decides whose title a book ends up with. What is here is
+ * the part that cannot be: opening the payload files. Each one is a few hundred
+ * bytes and a project holds a handful, so this is cheap enough to ask on the way
+ * into every export.
+ *
+ * A PATCH THAT WILL NOT READ IS A NAMED CONSOLE LINE AND NOT A THROW. The step
+ * says an edit happened and the file behind it is unreadable — that is worth
+ * seeing in a terminal, and it is not worth failing an export somebody is waiting
+ * on: the book comes out carrying every other correction, which is strictly more
+ * of what they asked for than no book at all.
+ */
+export async function metadataForProduct(
+  dir: string,
+  kind: MetadataPatch['kind'],
+  /** The step the job captured at enqueue, or null for the position now. */
+  from: string | null = null,
+): Promise<Record<string, string>> {
+  let manifest: ProjectManifest;
+  try {
+    manifest = await readManifest(dir);
+  } catch {
+    // A catalogue that will not parse says nothing about metadata either. The
+    // run that is about to happen has its own reasons to fail or not; this is not
+    // one of them.
+    return {};
+  }
+  const patches: MetadataPatch[] = [];
+  for (const step of metadataInEffect(ledgerOf(manifest), from)) {
+    // Project-relative with forward slashes, split on its own separator and
+    // joined for this platform — never matched by basename, which is the rule a
+    // project holding several `<uuid>.json` files under different folders makes
+    // load-bearing.
+    const file = path.join(dir, ...step.payload.split('/'));
+    try {
+      // `readJson` for the byte-order mark, which is what it is for: a patch
+      // file a person opened in an editor and saved again comes back with one,
+      // and `JSON.parse` on those bytes fails on the first character.
+      const read = readJson(await fsp.readFile(file, 'utf8')) as MetadataPatch | null;
+      if (read === null || (read.kind !== 'epub' && read.kind !== 'pdf')
+        || typeof read.fields !== 'object' || read.fields === null) {
+        console.error(
+          `[projects] ${path.basename(dir)}: the record behind “${step.label}” is not a metadata `
+          + 'patch, so that edit is not being applied to what is being made.',
+        );
+        continue;
+      }
+      patches.push({ kind: read.kind, fields: read.fields });
+    } catch (err) {
+      console.error(
+        `[projects] ${path.basename(dir)}: the record behind “${step.label}” could not be read `
+        + `(${(err as Error).message}), so that edit is not being applied to what is being made.`,
+      );
+    }
+  }
+  return mergedMetadata(patches, kind);
+}
+
+/**
  * The position of this project, or null when it has no history — the fact a job
  * captures at ENQUEUE.
  *
@@ -1810,8 +2028,17 @@ export function displayedOverlay(dir: string, manifest: ProjectManifest): string
   return overlayFileFor(dir, manifest, displayedCuration(ledgerOf(manifest)));
 }
 
-/** A snapshot's file, or the live overlay when there is no snapshot. */
-function overlayFileFor(
+/**
+ * A snapshot's file, or the live overlay when there is no snapshot.
+ *
+ * EXPORTED FOR THE ONE CALLER THAT KNOWS ITS SNAPSHOT WITHOUT ASKING THE
+ * POSITION: the per-step cast (`planConversionForStep`, electron/workspace.ts).
+ * A curate landing leaves the pointer where it was, so a plan that asked
+ * `renderingOverlay` there would render the LIVE overlay under a step-shaped
+ * name — the book as it is now, filed as the book as it was then. The step is
+ * handed in instead, and this is the composition both routes share.
+ */
+export function overlayFileFor(
   dir: string,
   manifest: ProjectManifest,
   snapshot: LedgerStep | null,
@@ -1938,11 +2165,19 @@ export async function bankForPosition(dir: string): Promise<string> {
  * the alternative is provenance bookkeeping for a file phase B replaces
  * (docs/DERIVED-BOOK.md §6).
  *
- * AND A CURATE ROW SHOWS THE CAST, NOT A RE-CAST OF ITSELF. Striking a paragraph
- * marks the working tree; nothing re-runs the engine at a save, so what a save row
- * shows is the same book its reading cast, wearing the marks the tree already
- * carries. Re-casting at a curate landing is deferred and recorded as deferred
- * (docs/WORKBENCH.md §3), so this is the truth about today rather than a gap.
+ * AND A CURATE ROW SHOWS ITS OWN CAST, WHICH IS THE DEFERRAL ABOVE, BUILT. It
+ * used to show the project's ONE cast — so every save in a book's history showed
+ * the same document, the live tree wearing today's marks, and clicking an old save
+ * showed you the present. A curate landing now casts its own book
+ * (`curateCastFile`, shared/ledger.ts; the job is fired at the commit in main.ts)
+ * and this is where that book becomes what the row shows.
+ *
+ * THE FALLBACK TO `castBook` IS NOT A LEGACY BRANCH. Every project curated before
+ * this unit has saves with no cast of their own, and they go on showing the
+ * project's cast exactly as they did — which is the honest answer for them, since
+ * nothing else about that save was ever recorded. So does a save whose cast has
+ * not landed yet: the job takes seconds, and a pane that showed nothing while it
+ * ran would be worse than one showing the book it is about to replace.
  *
  * ── The fallback is the old answer, and it is not a legacy branch ───────────
  *
@@ -1989,6 +2224,17 @@ export async function documentAtPosition(dir: string): Promise<string | null> {
   // A read or a save: the document produced from the reading this branch of the
   // story is about. No reading, nothing produced, nothing to show.
   if (view.reading === null) return null;
+  /*
+   * THE SAVE'S OWN BOOK FIRST, and `view.curation` is the right question rather
+   * than `view.step.action === 'curate'` spelled here: `displayedCuration` is what
+   * decides whether the row being stood on is a frozen save, and a second opinion
+   * composed at this call site is how the pane and the lock come to disagree about
+   * what the user is looking at (see `DISPLAYS_ITSELF`).
+   */
+  if (view.curation !== null) {
+    const own = await onDisk(resolved, castForCurateStep(manifest, view.curation));
+    if (own !== null) return own;
+  }
   const cast = castBook(manifest);
   const flowing = cast === null ? null : await onDisk(resolved, cast);
   if (flowing !== null) return flowing;
@@ -2129,6 +2375,23 @@ async function stepStandingFor(
   );
   if (translated !== null) return newestOfChain(ledger, translated).id;
 
+  /*
+   * A SAVE'S OWN BOOK STANDS ON THAT SAVE, and on nothing else — the one answer
+   * in this function that does NOT walk down to the newest step of a chain.
+   *
+   * The plain cast is shown by the reading and by every save under it, one file
+   * for many rows, so the reverse direction has to choose and chooses the row you
+   * can act from (the paragraph above). A per-step cast has no such ambiguity: it
+   * was made from exactly one snapshot and shows exactly one row's book, so
+   * walking anywhere from it would move the pointer off the document the person
+   * just focused — which is the selection fighting the user that this whole
+   * function exists to prevent.
+   */
+  const own = ledger.steps.find((step) => (
+    step.action === 'curate' && relative === fold(castForCurateStep(manifest, step))
+  ));
+  if (own !== undefined) return own.id;
+
   const cast = castBook(manifest);
   if (cast !== null && relative === fold(cast)) {
     const reading = newestWhere(ledger, (step) => step.action === 'read');
@@ -2217,6 +2480,28 @@ function newestOfChain(ledger: ProjectLedger, from: LedgerStep): LedgerStep {
  * reason — a chain read out of a catalogue somebody edited or a migration composed
  * is not guaranteed to be.
  */
+/**
+ * The book ONE CURATE STEP cast for itself, project-relative — a name, never a
+ * promise that the file is there.
+ *
+ * COMPOSED AND NOT CATALOGUED, which is the decision worth writing down. The
+ * per-step cast is a RENDERING: free, made again from the step's own snapshot at
+ * any time, and deliberately NOT a row in `manifest.documents`. Two things fall
+ * out of that and both are wanted. `castBook` goes on meaning the project's one
+ * flowing book — a per-step cast filed as a `generated/` origin would be the
+ * newest one, so a read row would start showing whichever save was pressed last,
+ * which is the exact confusion this whole unit exists to end. And Home's document
+ * rows go on listing the documents a person made rather than one per Apply.
+ *
+ * WHICH LEAVES ONE OBLIGATION, DISCHARGED IN `planStepSweep`: a file nothing
+ * catalogues is a file nothing would ever remove, so the step delete composes
+ * this same name and sweeps it. That is why the composition is in shared/ledger.ts
+ * (`curateCastFile`) and asked for here rather than spelled in either place.
+ */
+function castForCurateStep(manifest: ProjectManifest, step: LedgerStep): string {
+  return `${GENERATED}/${curateCastFile(manifest.stem, step.id)}`;
+}
+
 function castBook(manifest: ProjectManifest): string | null {
   const live = stepsOf(manifest, 'epub').filter(
     (step) => step.kind === 'origin'

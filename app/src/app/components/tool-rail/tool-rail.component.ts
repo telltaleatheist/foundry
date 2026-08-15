@@ -502,10 +502,32 @@ export class ToolRailComponent {
    * much use for as a book: a PDF's Info dictionary is the same six facts under
    * a different spelling, and a scan whose Title is the filename it was
    * downloaded under is the ordinary case.
+   *
+   * ── AND IT IS DEAD ON THE IMPORT ROW, WHICH IS THE RULE IT ALREADY CITED ───
+   *
+   * `canExport` above records the ruling in full — docs/WORKBENCH.md §6c, "Same
+   * rule for Export and Metadata" — and this button was the half of it that was
+   * never built: it keyed off the focused TAB, so standing on the import (having
+   * deliberately stepped back to the untouched scan) still offered a dialog whose
+   * Save is refused by main, in a sentence about a folder, one click later.
+   * `archive/` is written once and never again, and the honest surface for that is
+   * a shut door rather than a form that fills in and then declines.
+   *
+   * IT IS THE EXPORT SHAPE, LINE FOR LINE, including the reading test: a metadata
+   * step is replayed onto what materialisation makes, and in a project with
+   * nothing read there is nothing yet to make. A loose file keeps tab keying,
+   * having no ledger to key off instead, and a history this window has not read
+   * answers null — which is not the import, so the button stays live and main's
+   * own refusal is the backstop.
    */
   protected canEditMetadata(): boolean {
     const tab = this.tabs.activeDocument();
-    return tab !== null && (tab.kind === 'pdf' || tab.kind === 'epub');
+    if (tab === null) return false;
+    if (tab.kind !== 'pdf' && tab.kind !== 'epub') return false;
+    const project = this.projects.projectFor(tab.path);
+    if (project === null) return true;
+    if (!project.reading.done) return false;
+    return this.ledger.standingIn(project.dir)?.action !== 'import';
   }
 
   protected metadata(): void {

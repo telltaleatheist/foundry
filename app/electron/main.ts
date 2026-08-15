@@ -96,6 +96,7 @@ import {
   isManaged,
   ledgerOf,
   listProjects,
+  metadataDir,
   noteProjectTitle,
   onProjectsChanged,
   positionStepId,
@@ -105,6 +106,7 @@ import {
   readStepLedger,
   readingIsComplete,
   recordFinal,
+  recordMetadata,
   standForDocument,
 } from './projects';
 import {
@@ -140,10 +142,15 @@ import type {
   HeadingEcho,
   JobRequest,
   LedgerStacks,
+  LedgerStep,
+  MetadataPatch,
+  MetadataWriteOutcome,
   NavEcho,
   OverlayFileWire,
   ProjectDocument,
+  ProjectLedger,
   ProjectSummary,
+  StepRow,
   RecentKind,
   ReReadAnswer,
   SetupRequest,
@@ -2372,11 +2379,90 @@ function registerIpc(): void {
    * other read goes through, so a renderer cannot ask main to rewrite a file
    * nobody opened.
    */
+  /**
+   * THE STEP FOR A METADATA EDIT — written after the document, and never instead
+   * of it.
+   *
+   * ── What this is the second half of ─────────────────────────────────────────
+   *
+   * The write above is what the user SEES: the package or the Info dictionary
+   * changes and the pane in front of them says the new title at once. This is what
+   * SURVIVES it. An export is cast fresh from the bank and a working tree's package
+   * is not one of its inputs, so before this existed the correction was silently
+   * absent from every book the app filed afterwards (docs/WORKBENCH.md §9). The
+   * payload here is what materialisation replays.
+   *
+   * ── The file before the step, which is the rule and not a preference ───────
+   *
+   * A step is a pointer at a retained payload, so a step recorded before its
+   * payload exists is a row somebody can click, render from, and be shown a
+   * refusal by (`commitOverlay`, electron/overlays.ts, states it in full). The
+   * uuid makes the write collision-free by construction — two Applies a
+   * millisecond apart cannot land on one name — so there is no file here to
+   * overwrite and nothing to serialise against.
+   *
+   * ── A LANDING THAT FAILS IS A CONSOLE LINE, NOT A FAILED WRITE ─────────────
+   *
+   * By the time this runs the document has been edited: the values are in the
+   * book, visibly, and reporting failure would tell somebody their correction did
+   * not happen while leaving it done. What is actually lost is the RECORD of it,
+   * which is worth a named line in the terminal and is not worth turning a
+   * successful edit into a refusal.
+   *
+   * ── Absent for two ordinary states, and neither is an error ────────────────
+   *
+   * A patch with no changed fields in it is a read wearing a Save button, and a
+   * document outside every project — a file the user opened off their own disk —
+   * has no ledger for a row to go in. Both answer undefined, and the dialog knows
+   * that means there is nothing to adopt.
+   */
+  const landMetadata = async (
+    inside: string,
+    kind: MetadataPatch['kind'],
+    patch: Record<string, string | undefined>,
+  ): Promise<{ ledger: ProjectLedger; rows: StepRow[] } | undefined> => {
+    const fields: Record<string, string> = {};
+    for (const [field, value] of Object.entries(patch)) {
+      if (typeof value !== 'string' || value.trim().length === 0) continue;
+      fields[field] = value;
+    }
+    const named = Object.keys(fields);
+    if (named.length === 0) return undefined;
+    const dir = projectDirOf(inside);
+    if (dir === null) return undefined;
+    try {
+      const name = `${randomUUID()}.json`;
+      await fsp.mkdir(metadataDir(dir), { recursive: true });
+      const body: MetadataPatch = { kind, fields };
+      await fsp.writeFile(path.join(metadataDir(dir), name), `${JSON.stringify(body, null, 2)}\n`, 'utf8');
+      // PROJECT-RELATIVE WITH FORWARD SLASHES, as every payload is: the ledger's
+      // spelling of a path is not this platform's, and a payload that carried a
+      // backslash would be a row no other machine could resolve.
+      return await recordMetadata(dir, `metadata/${name}`, { fields: named });
+    } catch (err) {
+      console.error(
+        `[meta] the ${kind} record was written, but the step for it could not be: `
+        + `${err instanceof Error ? err.message : String(err)}. The document carries the values; `
+        + 'the history does not, so anything made from here will not carry them.',
+      );
+      return undefined;
+    }
+  };
+
   ipcMain.handle('meta:read-epub', (_event, id: string) => readEpubMetadata(workingTreeOf(id)));
   ipcMain.handle(
     'meta:write-epub',
-    (_event, id: string, patch: Record<string, string | undefined>) =>
-      writeEpubMetadata(workingTreeOf(id), patch),
+    async (_event, id: string, patch: Record<string, string | undefined>): Promise<MetadataWriteOutcome> => {
+      const tree = workingTreeOf(id);
+      const outcome = await writeEpubMetadata(tree, patch);
+      // A REFUSAL LANDS NOTHING. The engine says no to a package with two
+      // `dc:creator` elements and to a blank value, by name, and a row recording an
+      // edit that was refused would send every later export after values no
+      // document ever had.
+      if (!outcome.ok) return outcome;
+      const landed = await landMetadata(tree, 'epub', patch);
+      return landed === undefined ? outcome : { ...outcome, landed };
+    },
   );
   /*
    * The PDF's path goes through `admitted` — the SAME allow-list the pdf.js
@@ -2439,8 +2525,18 @@ function registerIpc(): void {
   };
   ipcMain.handle(
     'meta:write-pdf',
-    (_event, filePath: string, patch: Record<string, string | undefined>) =>
-      writePdfMetadata(writablePdf(filePath), patch),
+    async (_event, filePath: string, patch: Record<string, string | undefined>): Promise<MetadataWriteOutcome> => {
+      // Resolved once and used for both halves: the write goes to the working
+      // copy, and the step is filed against the project that copy is in. Asking
+      // `writablePdf` twice would be two answers about one document, and the
+      // refusals it makes are the ones that decide whether there is anything to
+      // record at all.
+      const working = writablePdf(filePath);
+      const outcome = await writePdfMetadata(working, patch);
+      if (!outcome.ok) return outcome;
+      const landed = await landMetadata(working, 'pdf', patch);
+      return landed === undefined ? outcome : { ...outcome, landed };
+    },
   );
 
   /*
@@ -2531,9 +2627,34 @@ function registerIpc(): void {
    * A refusal — nothing corrected yet — REJECTS with its sentence, so it reaches
    * the notice strip through the renderer's ordinary catch rather than looking
    * like a commit that quietly did nothing.
+   *
+   * ── AND THE SAVE CASTS ITS OWN BOOK, FROM HERE ─────────────────────────────
+   *
+   * Standing on a save has to show the book AS OF THAT SAVE, and nothing else in
+   * the app is in a position to make one: `overlays.ts` and `projects.ts` cannot
+   * import the queue (the cycle is real — the queue imports both), so the cast is
+   * fired where the queue is already reachable. `queue.ensureCast` sits four
+   * hundred lines above on exactly this precedent.
+   *
+   * THE ROW COMES OUT OF THE ANSWER rather than being read back off the disk: the
+   * commit hands back the ledger it just wrote, and the newest `curate` row in it
+   * is the step that was landed a moment ago. Re-reading the manifest would be a
+   * second answer about a catalogue that may have moved.
+   *
+   * FIRE AND FORGET, AND A FAILURE IS A CONSOLE LINE. The save is already on disk
+   * and in the ledger — that is what the user pressed the button for — and holding
+   * their gesture for a rendering, or failing it because one could not be planned,
+   * would be this app calling an afternoon's corrections lost over a file it can
+   * make again for nothing.
    */
-  ipcMain.handle('overlay:commit', (_event, filePath: string) =>
-    commitOverlay(admittedPdf(filePath)));
+  ipcMain.handle('overlay:commit', async (_event, filePath: string) => {
+    const pdf = admittedPdf(filePath);
+    const view = await commitOverlay(pdf);
+    let landed: LedgerStep | null = null;
+    for (const step of view.ledger.steps) if (step.action === 'curate') landed = step;
+    if (landed !== null) void queue.ensureCurateCast(pdf, landed);
+    return view;
+  });
   /**
    * What this book holds that no save of it does — asked on the way out of a
    * document, so it must never do anything but read.

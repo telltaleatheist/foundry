@@ -226,6 +226,32 @@ export interface GenerateRequest {
    */
   thenTranslate?: ThenTranslate;
   /**
+   * THIS IS ONE SAVE'S OWN BOOK — the cast a `curate` landing makes of itself,
+   * named after the step it belongs to.
+   *
+   * ── Why the landing has to be told, when the path already says it ──────────
+   *
+   * It does not say it. `generated/<stem>.<id8>.epub` is a filename, and working
+   * out which row a rendering is about by reading characters out of one is the
+   * thing this codebase's oldest house rule forbids — the job knows, so the job
+   * hands it over, exactly as a translation hands over its language rather than
+   * leaving it legible in a pair of parentheses.
+   *
+   * WHAT IT CHANGES IS THE LANDING, and it changes it to almost nothing. A
+   * per-save cast is a RENDERING of a payload that is already a step: free, made
+   * again from that save's snapshot at any time, and deliberately NOT catalogued
+   * as a document. Two things depend on that. `castBook` (electron/projects.ts)
+   * must go on meaning the project's one flowing book — a per-save cast filed as a
+   * `generated/` origin would be the newest one, so a read row would start showing
+   * whichever save was pressed last, which is precisely the confusion the per-step
+   * cast exists to end. And Home's document rows go on listing the documents a
+   * person made rather than growing one per Apply.
+   *
+   * The file is not orphaned by being uncatalogued: the step delete composes the
+   * same name and sweeps it (`planStepSweep`).
+   */
+  forStep?: string;
+  /**
    * THIS RENDERING IS TERMINAL — it lands in `final/` and nothing is ever made
    * from it.
    *
@@ -471,6 +497,25 @@ export interface Job {
    * on an `env-install`, which is not about a book at all.
    */
   parentStep?: string | null;
+  /**
+   * THIS ROW IS ONE SAVE'S OWN BOOK — see `GenerateRequest.forStep`, which is
+   * where it comes from and where the whole argument lives.
+   *
+   * ── Why the SHELF has to be able to tell, and not only the landing ─────────
+   *
+   * Because a finished `epub` job OPENS ITSELF (`OPENS_ITSELF`, TabsService), and
+   * that rule was written about the two `epub` jobs that existed: a Generate and
+   * the cast after a reading, both of which somebody asked for and wants to look
+   * at. A per-save cast is neither. It is made by pressing Apply — a gesture whose
+   * whole point is to keep working — and the book it produces is the one already
+   * on screen, frozen. Opening a tab for it would put a pane in front of somebody
+   * mid-correction, once per Apply.
+   *
+   * The renderer therefore needs the fact on the ROW, because the row is all it
+   * has: `kind` says `epub` for all three, and the only other thing that differs
+   * is a filename, which is not a thing this app reads facts out of.
+   */
+  forStep?: string;
   createdAt: number;
   startedAt?: number;
   finishedAt?: number;
@@ -1863,6 +1908,56 @@ export type MetadataOutcome =
   | { ok: true; metadata: DocumentMetadata }
   | { ok: false; reason: string };
 
+/**
+ * The same answer, plus THE HISTORY THE WRITE JUST CHANGED.
+ *
+ * A metadata edit is a step now, so a write that used to change one file changes
+ * two things a person is looking at: the document, and the list of steps beside
+ * it. The renderer must not have to ask again for the second — a re-read is a
+ * second answer composed a moment later, and the accordion would sit a turn
+ * behind its own new row (`LedgerService.adopt`, which is where this lands). So
+ * the landing travels back with the record, exactly as `overlay:commit`'s does.
+ *
+ * `landed` IS ABSENT FOR EVERY WRITE THAT MINTED NOTHING, and those are ordinary
+ * rather than exceptional: a loose file the user opened off their own disk has no
+ * project and no ledger to append to, and a patch with no changed fields in it is
+ * a read wearing a Save button. The dialog treats absent as "nothing to adopt".
+ */
+export type MetadataWriteOutcome =
+  | {
+    ok: true;
+    metadata: DocumentMetadata;
+    landed?: { ledger: ProjectLedger; rows: StepRow[] };
+  }
+  | { ok: false; reason: string };
+
+/**
+ * WHAT A `metadata` STEP RETAINED — the patch exactly as it was applied.
+ *
+ * ── Why the payload is the values and the params are the names ──────────────
+ *
+ * This file is what an export replays. Materialisation walks the position's
+ * ancestry, takes the newest value of each field, and hands the merged patch to
+ * `epub-meta` or `pdf-meta` as the last thing that happens to the product — which
+ * is only possible because the values were written down at the moment they were
+ * typed. The dialog's write to the live document is what the user SEES; this is
+ * what survives to be applied to a book cast three weeks later out of a bank that
+ * never knew the title had been corrected.
+ *
+ * `kind` IS LOAD-BEARING AND IS NOT A CONVENIENCE. A project holds a scan and the
+ * book cast from it, and they do not keep the same record: an Info dictionary's
+ * `author` and a package's `dc:creator` are the same fact under two spellings,
+ * and `subject`/`keywords` exist for one of them only. A row edited while
+ * standing on the import is about the SCAN, and applying its fields to an EPUB
+ * export would be this app moving somebody's words between two documents' records
+ * because the two happen to be in one folder.
+ */
+export interface MetadataPatch {
+  kind: 'epub' | 'pdf';
+  /** Field name → the value written. Never empty: an empty value is not a patch. */
+  fields: Record<string, string>;
+}
+
 export type DocumentMetadata =
   | {
     kind: 'epub';
@@ -2243,7 +2338,7 @@ export interface FrozenOverlayWire extends Omit<OverlayFileWire, 'frozen'> {
  */
 
 /**
- * The four things that mint a step. Everything else a project does is free.
+ * The five things that mint a step. Everything else a project does is free.
  *
  * IT IS A SHORT LIST BECAUSE A STEP IS A RETAINED PAYLOAD, not an event. The
  * queue is where expense happens, a step is what one expensive job left behind,
@@ -2258,12 +2353,37 @@ export interface FrozenOverlayWire extends Omit<OverlayFileWire, 'frozen'> {
  * person's judgement about four hundred blocks is the one thing in a project
  * that nothing can reproduce.
  *
+ * ── AND `metadata` IS THE SECOND ONE OF THOSE, FOR THE SAME REASON ──────────
+ *
+ * The user's own ruling put it here — "only steps that are going to lead to
+ * another step or to export are added to the steps ledger. including edit
+ * metadata" (docs/WORKBENCH.md §1) — and the ledger was lying by omission until
+ * it was: the dialog wrote a title straight into the open document's package and
+ * NOTHING else learned it had happened. No row, no announce, and, worse, an
+ * EXPORT that quietly lost the edit, because an export is cast fresh from the
+ * bank and the working tree's package is not one of its inputs. Both of those
+ * stop being true the moment the edit is a step: the row is the durable record,
+ * and materialisation applies the chain of them to whatever it makes.
+ *
+ * IRREPLACEABLE, on the same clause of the retention rule `curate` sits on. A
+ * title, an author, a publisher and a date are typed by a person out of the
+ * book in their hands — no machine makes them again at any price, and the fact
+ * that the write itself costs milliseconds is exactly the thing that rule was
+ * written to stop mattering.
+ *
+ * AND THE POINTER DOES NOT MOVE FOR IT (`RETAINED_BESIDE_YOU`). A metadata edit
+ * does not make a new state of the book to go and stand in; it records something
+ * about the state you are already standing in, and a pointer that jumped would
+ * take the block editor read-only as the reward for correcting an author's name.
+ * Each Apply appends its own row — two corrections are two decisions, and the
+ * newest value of a field is what the exports carry.
+ *
  * NO `generate`, deliberately. A rendering is reproducible from its step's
  * payload at any time, and minting a step for one would put a filename where an
  * action belongs. If "what did I export and when" is ever wanted, it is an
  * export log — a separate thing, and not this.
  */
-export type StepAction = 'import' | 'read' | 'curate' | 'translate';
+export type StepAction = 'import' | 'read' | 'curate' | 'translate' | 'metadata';
 
 /**
  * What was ASKED FOR, and what the run recorded about the answer.
@@ -2332,6 +2452,28 @@ export interface LedgerParams {
   completedAt?: number;
   /** `curate` — how many decisions the snapshot froze. For the row's sentence. */
   amendments?: number;
+  /**
+   * `metadata` — WHICH FIELDS THIS EDIT SET, by name, for the row's sentence.
+   *
+   * "Metadata (title, author)" rather than "Metadata", because a project can hold
+   * half a dozen of these rows and a list of identical labels is a list nobody can
+   * click on purpose. The names are the patch's own keys — `title`, `creator`,
+   * `language` for a package, `title`, `author`, `subject`, `keywords` for a scan
+   * — in the order the dialog composed them.
+   *
+   * THE NAMES AND NOT THE VALUES, which is the line this field is drawn on. What
+   * was actually written is the step's PAYLOAD (`metadata/<uuid>.json`), because
+   * that is what an export has to replay and a params bag is not a place to keep a
+   * record something is made from. Putting the values here as well would be two
+   * copies of one fact, and the day they disagreed the row would describe an edit
+   * the export did not make.
+   *
+   * A LIST, so `readParams` checks it as one: it is the only param in this app that
+   * is neither a word nor a count, and the alternative — a comma-joined string, on
+   * `skipPages`' precedent — would be a list pretending to be a spelling. See
+   * `LISTS` in shared/ledger.ts.
+   */
+  fields?: string[];
   /**
    * `translate` — the translation bank this run wrote, project-relative.
    *

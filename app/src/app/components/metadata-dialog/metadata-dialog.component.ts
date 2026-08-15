@@ -3,8 +3,9 @@ import { FormsModule } from '@angular/forms';
 
 import { qualify } from '@shared/documents';
 import { fold } from '@shared/original';
-import type { DocumentMetadata } from '@shared/types';
+import type { DocumentMetadata, ProjectLedger, StepRow } from '@shared/types';
 
+import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';
 import { TabsService, type Tab } from '../../core/tabs.service';
 import { UiService } from '../../core/ui.service';
@@ -310,6 +311,17 @@ export class MetadataDialogComponent {
   protected readonly ui = inject(UiService);
   private readonly tabs = inject(TabsService);
   private readonly projects = inject(ProjectsService);
+  /**
+   * The steps accordion's mirror — held here so that a save can hand it the
+   * history main just wrote.
+   *
+   * DIRECTLY, AND NOT THROUGH THE TABS SERVICE. The commit path goes through
+   * `TabsService` because that side is holding the document's path; this dialog
+   * already resolves its own document out of the position (`source` below), so a
+   * second hop would be a message passed through a class that has nothing to add
+   * to it. `adopt` is the public door and it is the same door the commit uses.
+   */
+  private readonly ledger = inject(LedgerService);
 
   /**
    * The document this record belongs to — THE ONE THE POSITION IS SHOWING, in a
@@ -508,6 +520,33 @@ export class MetadataDialogComponent {
     return trimmed === (was ?? '') ? undefined : trimmed;
   }
 
+  /**
+   * The history main just wrote, put where the accordion reads it.
+   *
+   * ── One answer, painted whole ───────────────────────────────────────────────
+   *
+   * An Apply mints a step, and the ROWS are main's to compose — the chronological
+   * order and the quiet "from …" annotation are the one concession this design
+   * makes to the tree, and a renderer deriving them would be a second
+   * implementation of the rule that decides whether the flat list misleads. So the
+   * write hands back both halves and this paints them, exactly as a curation
+   * commit does. Asking again afterwards would leave the accordion a turn behind
+   * its own new row.
+   *
+   * ABSENT IS ORDINARY AND MEANS NOTHING WAS MINTED: a loose file the user opened
+   * off their own disk has no project to file a step in, and a patch with no
+   * changed fields is a read that happened to be spelled as a Save.
+   */
+  private adopt(tab: Tab, history: { ledger: ProjectLedger; rows: StepRow[] } | undefined): void {
+    if (history === undefined) return;
+    const project = this.projects.projectFor(tab.path);
+    // The directory AS MAIN SPELLS IT, which is what every call back to main is
+    // made with — the mirror keys on a folded copy of it and keeps this one
+    // beside it. A project this window has not listed cannot be painted, and that
+    // is a repaint away from fixing itself.
+    if (project !== null) this.ledger.adopt(project.dir, history);
+  }
+
   protected async save(): Promise<void> {
     const tab = this.source();
     const meta = this.record();
@@ -536,6 +575,7 @@ export class MetadataDialogComponent {
         // NOT a revision bump: no chapter's markup moved, and reloading the
         // rendered pane would cost a scroll position to show nothing new.
         this.tabs.noteDocumentEdited(tab.id);
+        this.adopt(tab, outcome.landed);
       } else {
         const patch = {
           title: this.changedField(this.title(), meta.fields.title),
@@ -546,6 +586,7 @@ export class MetadataDialogComponent {
         const outcome = await api.meta.writePdf(tab.path, patch);
         if (!outcome.ok) { this.problem.set(outcome.reason); return; }
         this.tabs.noteDocumentEdited(tab.id);
+        this.adopt(tab, outcome.landed);
       }
       this.ui.closeMetadata();
     } catch (err) {

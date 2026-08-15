@@ -87,6 +87,7 @@ import { ENV_SPECS } from './env-catalog';
 import { destFor, installEnv } from './env-install';
 import {
   generatedRoleFor,
+  metadataForProduct,
   positionStepId,
   projectDirOf,
   recordFinal,
@@ -101,10 +102,10 @@ import {
 } from './projects';
 import { readSettings } from './settings';
 import { ensureServer, isLocalVllmEndpoint, noteQueueBusy, noteQueueIdle } from './vllm-server';
-import { planConversion } from './workspace';
+import { planConversion, planConversionForStep } from './workspace';
 import { translationStage } from '../shared/pipeline';
 import type {
-  EnvInstallRequest, GenerateRequest, Job, JobRequest, TranslateRequest,
+  ConversionKind, EnvInstallRequest, GenerateRequest, Job, JobRequest, LedgerStep, TranslateRequest,
 } from '../shared/types';
 
 /**
@@ -225,6 +226,16 @@ export function enqueue(
     state: request.kind === 'read' || request.thenTranslate !== undefined ? 'held' : 'queued',
     progress: null,
     parentStep,
+    /*
+     * CARRIED ONTO THE PUBLIC SHAPE, which almost nothing on a request is. The
+     * shelf's row is everything the renderer knows about a job, and this is the
+     * one fact that distinguishes a save's own book from the two `epub` jobs a
+     * person asks for — which matters there because a finished one opens itself.
+     * See `Job.forStep`.
+     */
+    ...(request.kind !== 'read' && request.forStep !== undefined
+      ? { forStep: request.forStep }
+      : {}),
     createdAt: Date.now(),
   };
   jobs.push(job);
@@ -654,6 +665,52 @@ function argsFor(request: EngineRequest): string[] {
 }
 
 /**
+ * THE RECORD A PRODUCT SHOULD CARRY, or nothing at all.
+ *
+ * Two lines over `projectDirOf` and `metadataForProduct`, spelled here for
+ * `parentOf`'s reason: the module that knows where a project's files live answers
+ * the question, and this is the two-line bridge from a path a job holds to that
+ * answer. A product outside every project — there is no such export today, and
+ * the type system cannot say so — carries nothing, which is the honest answer for
+ * a file with no ledger behind it.
+ *
+ * ASKED OF THE STEP THE JOB CAPTURED, never of the position now. A pointer move
+ * made while an export waited in the queue must not change which corrections the
+ * book that comes out of it carries — the same rule `overlayPath` obeys one layer
+ * up, and `metadataInEffect` falls back to the position for a captured step that
+ * has since been deleted.
+ */
+async function recordFor(
+  outputPath: string,
+  kind: ConversionKind,
+  parentStep: string | null,
+): Promise<Record<string, string>> {
+  const dir = projectDirOf(outputPath);
+  if (dir === null) return {};
+  return metadataForProduct(dir, kind === 'pdf' ? 'pdf' : 'epub', parentStep);
+}
+
+/**
+ * A merged patch as flags — `--title "…" --creator "…"`, in the order the engine
+ * declares its fields.
+ *
+ * ONE LINE PER FIELD AND NO INTERPRETATION. Both metadata commands take exactly
+ * this shape, and both refuse a blank value by name (an empty `dc:title` is a book
+ * claiming to be called nothing) — so an empty one is dropped here rather than
+ * turned into a failed export. `mergedMetadata` has already dropped them; this is
+ * the second half of one rule stated where the command line is composed, because
+ * this is the last place anything can still be wrong.
+ */
+function metaFlagsFor(record: Record<string, string>): string[] {
+  const flags: string[] = [];
+  for (const [field, value] of Object.entries(record)) {
+    if (typeof value !== 'string' || value.trim().length === 0) continue;
+    flags.push(`--${field}`, value);
+  }
+  return flags;
+}
+
+/**
  * The same Generate, with the fact that it is an export taken off it.
  *
  * ONE CALLER AND ONE REASON: the first stage of a translate-descended export,
@@ -881,9 +938,68 @@ async function pump(): Promise<void> {
   const untidied = piped === null || !exporting
     ? null
     : path.join(os.tmpdir(), 'foundry', `${next.id}.untidied.epub`);
-  if (intermediate !== null) {
+  /*
+   * ── AND AN EXPORT CARRIES THE RECORD THE PERSON TYPED ─────────────────────
+   *
+   * A metadata edit is a step now, and the reason it had to become one is exactly
+   * this: an export is cast fresh from the bank, the corrections went into the
+   * OPF of a working tree, and the working tree is not one of a cast's inputs —
+   * so a title corrected in the dialog was silently ABSENT from the book that
+   * landed in `final/`. The chain of patches on this position's ancestry is
+   * merged (`metadataForProduct`, electron/projects.ts) and applied to the
+   * product as the last thing that happens to it.
+   *
+   * ── Why a stage after, and not a flag on the run that makes the book ──────
+   *
+   * `vlm-convert` builds the package from the bank and has no notion of a record
+   * somebody typed a fortnight later; teaching it one would put the ledger inside
+   * the engine. `epub-meta` and `pdf-meta` already do exactly this to a finished
+   * file, are already how the dialog writes, and are the same two commands whose
+   * refusals the user has already seen. It is the `epub-final` tidy's arrangement,
+   * one stage further on, for the same reason it was chosen there.
+   *
+   * ── Which makes ANOTHER intermediate, and it is not avoidable ─────────────
+   *
+   * Both commands refuse to write over their input, and both are right to:
+   * `pdf-meta` re-emits the whole document through pdf-lib, so an `--out` equal to
+   * `--pdf` would destroy the file being read while it was being read. So whatever
+   * ran last aims here and the metadata stage lands the destination — which also
+   * means a run that gets this far and then cannot stamp the record leaves NO file
+   * in the tray, rather than one the user would reasonably believe carries their
+   * corrections.
+   *
+   * NULL FOR EVERY GENERATE, and for an export whose ancestry recorded nothing.
+   * `generated/` is the workbench and its casts are re-made constantly; stamping
+   * one would be bookkeeping applied to a file nobody keeps.
+   *
+   * PLAIN TEXT CARRIES NO RECORD AT ALL and is skipped by name: a `.txt` has
+   * nowhere to put a title, and there is no third command that would pretend
+   * otherwise.
+   */
+  const record = exporting && request.kind !== 'txt'
+    ? {
+      // The command follows the PRODUCT and not the position: a facsimile export
+      // takes the Info dictionary's four fields whatever kind of document the
+      // project started from. Carried as the kind rather than read back off the
+      // extension later, so the composition below names one fact once.
+      kind: request.kind === 'pdf' ? 'pdf' as const : 'epub' as const,
+      flags: metaFlagsFor(await recordFor(next.outputPath, request.kind, next.parentStep ?? null)),
+    }
+    : null;
+  /*
+   * The file the last engine stage writes when a record is going on afterwards —
+   * named for the job beside the other intermediates, under the same `foundry`
+   * subdirectory, and with the product's own extension because both metadata
+   * commands read the format they are given.
+   */
+  const unstamped = record === null || record.flags.length === 0
+    ? null
+    : path.join(os.tmpdir(), 'foundry', `${next.id}.unstamped${path.extname(next.outputPath)}`);
+  if (intermediate !== null || unstamped !== null) {
     try {
-      await fsp.mkdir(path.dirname(intermediate), { recursive: true });
+      // Either name gives the same directory — they are made beside each other on
+      // purpose — so whichever this job has is the one asked for.
+      await fsp.mkdir(path.dirname(intermediate ?? unstamped!), { recursive: true });
     } catch (err) {
       next.state = 'failed';
       next.error = `The temporary folder for this job could not be made: ${(err as Error).message}`;
@@ -1018,7 +1134,18 @@ async function pump(): Promise<void> {
    * covered by a test rather than by this file being read carefully.
    */
   const stages: EngineRequest[] = piped === null || intermediate === null
-    ? [spawned]
+    /*
+     * ONE RUN — AIMED AT THE INTERMEDIATE WHEN A RECORD IS GOING ON AFTER IT.
+     * `unstamped` is non-null only for an export whose ancestry recorded metadata
+     * (see it, above, for the whole argument), and both metadata commands refuse
+     * to write over their own input. Everything else about this stage is the
+     * request as it was stored — the stored one is what the row, the rotation and
+     * the landing are about, and only the child process sees this substitution.
+     */
+    // The `read` arm is unreachable — a reading is never an export and never has
+    // a record to carry — and it is written out because the alternative is a cast
+    // asserting that to the compiler, which is a promise rather than a fact.
+    ? [unstamped === null || spawned.kind === 'read' ? spawned : { ...spawned, outputPath: unstamped }]
     : [
       // Stage one writes to the temp file and is otherwise the Generate that was
       // planned: same pixels, same bank, same overlay, same format. The stored
@@ -1059,7 +1186,34 @@ async function pump(): Promise<void> {
    */
   const tidy: string[] | null = untidied === null || piped === null
     ? null
-    : ['epub-final', '--epub', untidied, '--out', piped.request.outputPath];
+    // The tidy stops being the last run when a record is going on after it, and
+    // then it writes the intermediate the stamping reads. Whichever of the two is
+    // last is the one that writes the file the row is about — see `unstamped`.
+    : ['epub-final', '--epub', untidied, '--out', unstamped ?? piped.request.outputPath];
+
+  /*
+   * ── THE LAST RUN: THE RECORD THE PERSON TYPED, PUT ON WHAT WAS MADE ───────
+   *
+   * `foundry epub-meta` or `foundry pdf-meta` over the finished product, into the
+   * file the row is about. It is the same command the metadata dialog writes
+   * with — the same refusals, in the same words, about the same fields — applied
+   * to a book that has just been assembled out of a bank that never knew the
+   * title had been corrected.
+   *
+   * SPELLED HERE for the tidy's reason, and it is the same argument: this is a
+   * step inside one job rather than a job, and a fourth request shape would have
+   * to be threaded through the plans, the shelf and every settle path to be used
+   * in one place. The flags are `metaFlagsFor`'s, which is one line and refuses to
+   * put an empty value on a command line.
+   *
+   * NULL FOR EVERY JOB THAT IS NOT AN EXPORT WITH SOMETHING TO SAY, which is
+   * nearly all of them.
+   */
+  const stamping: string[] | null = unstamped === null || record === null
+    ? null
+    : record.kind === 'pdf'
+      ? ['pdf-meta', '--pdf', unstamped, '--out', next.outputPath, ...record.flags]
+      : ['epub-meta', '--epub', unstamped, '--out', next.outputPath, ...record.flags];
 
   const watch = (line: string): void => {
     next.message = line;
@@ -1167,6 +1321,28 @@ async function pump(): Promise<void> {
     handle = runEngine(tidy, watch);
     result = await handle.done;
   }
+  /*
+   * ── AND THE RECORD, WHICH IS NOW THE LAST THING THAT HAPPENS ──────────────
+   *
+   * Only for an export whose ancestry recorded metadata, only when everything
+   * before it succeeded, and — like the tidy it follows — it is what actually
+   * writes the file the row is about. `handle` is reassigned exactly as it is
+   * between the other stages, so the ✕ still kills the child that is running.
+   *
+   * A FAILURE HERE FAILS THE JOB, in the engine's own words, and that is the
+   * conservative answer rather than the harsh one. The alternative is filing a
+   * book in the tray and reporting success while the corrections the person made
+   * are missing from it — which is the exact silence this whole unit exists to
+   * end, reintroduced one stage later.
+   */
+  if (stamping !== null && result.code === 0) {
+    next.message = 'Writing the record onto it…';
+    next.note = null;
+    changed();
+    console.log(`[job] ${next.kind} ${stamping.join(' ')}`);
+    handle = runEngine(stamping, watch);
+    result = await handle.done;
+  }
   running = null;
   next.finishedAt = Date.now();
 
@@ -1176,9 +1352,10 @@ async function pump(): Promise<void> {
    * a fresh one under its own job id — so keeping it would be hoarding half-books
    * nobody can name against a directory this app does not own.
    *
-   * BOTH OF THEM, on one rule rather than two: the untidied translation is the
-   * same kind of debris as the untranslated cast, made by the stage in between,
-   * and a second copy of this paragraph is a second place to forget one.
+   * ALL THREE OF THEM, on one rule rather than three: the untidied translation
+   * and the unstamped product are the same kind of debris as the untranslated
+   * cast, made by the stages in between, and a second copy of this paragraph is a
+   * second place to forget one.
    *
    * BEST EFFORT, AND NEVER A THROW. A leftover temp file is a console line; the
    * job it belonged to succeeded or failed on its own merits, and reporting three
@@ -1187,7 +1364,7 @@ async function pump(): Promise<void> {
    * already-absent file — the ordinary case when the run never got that far — is
    * silence rather than an error.
    */
-  for (const scratch of [intermediate, untidied]) {
+  for (const scratch of [intermediate, untidied, unstamped]) {
     if (scratch === null) continue;
     try {
       await fsp.rm(scratch, { force: true });
@@ -1286,6 +1463,32 @@ async function pump(): Promise<void> {
     if (exporting) {
       await recordFinal(next.outputPath);
       next.message = `Wrote ${path.basename(next.outputPath)}`;
+      changed();
+      void pump();
+      return;
+    }
+    /*
+     * ── A SAVE'S OWN BOOK IS FILED NOWHERE, AND THAT IS THE POINT ────────────
+     *
+     * It is a RENDERING of a payload that is already a step — the snapshot in
+     * `curations/` — so it is free to make again and there is nothing here for a
+     * catalogue to own. Cataloguing it would do active harm rather than merely
+     * being redundant: `castBook` (electron/projects.ts) picks the newest `origin`
+     * sitting directly in `generated/` as the project's flowing book, so the first
+     * Apply would quietly make a save's private book into what the READ row
+     * shows — the exact confusion the per-save cast was built to end. Home's
+     * document rows would grow one entry per Apply beside it.
+     *
+     * Which leaves the file's disposal, and it is not left to chance: the step
+     * delete composes the same name and sweeps it, along with any working tree
+     * unpacked from it (`planStepSweep`).
+     *
+     * NO LEDGER STEP EITHER, for the reason above it: the step this is the book of
+     * already exists, and minting a second one for the rendering would put a
+     * filename where an action belongs.
+     */
+    if (request.kind !== 'translate' && request.forStep !== undefined) {
+      next.message = 'The book as of that save is ready.';
       changed();
       void pump();
       return;
@@ -1505,6 +1708,40 @@ export async function ensureCast(readFrom: string): Promise<void> {
 }
 
 /**
+ * MAKE SURE THIS SAVE HAS ITS OWN BOOK — the same door, for one step.
+ *
+ * Called by the commit in main, the instant a `curate` step lands, so that
+ * standing on that row shows the book AS IT WAS THEN rather than the project's
+ * one cast wearing today's marks (docs/WORKBENCH.md §9).
+ *
+ * KEYED BY PROJECT **AND** STEP, which is the one line that differs from the
+ * caster above and the reason this is not a parameter on it. That set answers
+ * "this project is already having its flowing book planned", and it is exactly
+ * right there: there is one such book and a second planner would be a second row
+ * for it. There are as many per-save books as there are saves, and two commits in
+ * one project are two different files — a project-keyed guard would silently drop
+ * the second one, which is a save with no book of its own and no way to notice.
+ *
+ * FIRE AND FORGET, and here it matters more than it does above: the caller is a
+ * commit. A save must land whatever the caster does, so this is awaited by
+ * nobody, and every way it can fail is a console line.
+ */
+export async function ensureCurateCast(readFrom: string, step: LedgerStep): Promise<void> {
+  const project = (projectDirOf(readFrom) ?? path.resolve(readFrom)).toLowerCase();
+  // NUL-joined for the reason every composite key in this app is: it is the one
+  // byte that cannot appear in a path or a uuid, so no pair of them can run
+  // together into a third spelling that collides with an honest one.
+  const key = `${project}\u0000${step.id}`;
+  if (casting.has(key)) return;
+  casting.add(key);
+  try {
+    await castCurateStep(readFrom, step);
+  } finally {
+    casting.delete(key);
+  }
+}
+
+/**
  * A READING LANDED, SO THE BOOK EXISTS — cast it, now, without being asked.
  *
  * ── The gap this closes ─────────────────────────────────────────────────────
@@ -1587,6 +1824,71 @@ async function castFlowingBook(readFrom: string): Promise<void> {
       `[job] the reading of ${path.basename(readFrom)} landed, but the flowing book could not be `
       + `planned: ${err instanceof Error ? err.message : String(err)}. The bank is complete, so `
       + 'generating an EPUB from it is free whenever it is asked for.',
+    );
+  }
+}
+
+/**
+ * A SAVE LANDED, SO THAT SAVE'S BOOK CAN EXIST — cast it, without being asked.
+ *
+ * ── The gap this closes, in the user's terms ────────────────────────────────
+ *
+ * A curate row showed the project's ONE cast, so every save in a book's history
+ * showed the same document: the live tree wearing today's marks. Clicking a save
+ * from last week showed the present, which makes a restore point a row you can
+ * stand on and learn nothing from. The ruling (docs/WORKBENCH.md §9): a curate
+ * landing casts its own book, and standing on an older save shows the book as of
+ * that save.
+ *
+ * ── The same three arguments `castFlowingBook` makes, unchanged ─────────────
+ *
+ * It costs nothing (a `--reuse-readings` pass over a completed bank: no model, no
+ * socket, seconds); it is therefore not held and does not wait for the reading
+ * server; and it cannot loop, because a conversion landing enqueues nothing and
+ * this is called from a commit rather than from a settle.
+ *
+ * ── Every refusal is a console line, never a failed save ────────────────────
+ *
+ * That is the whole of the error handling and it is deliberate. The commit has
+ * already happened: the snapshot is on disk and the row is in the ledger, which
+ * is the thing the user pressed the button for. A save that reported failure
+ * because a rendering could not be planned would be this app calling somebody's
+ * work lost over a file it can make again for nothing — and the row still shows
+ * the project's cast, which is exactly what it showed before this existed.
+ */
+async function castCurateStep(readFrom: string, step: LedgerStep): Promise<void> {
+  try {
+    const plan = await planConversionForStep(readFrom, step);
+    enqueue(
+      {
+        kind: 'epub',
+        inputPath: plan.sourcePath,
+        outputPath: plan.outputPath,
+        readingsPath: plan.readingsPath,
+        /*
+         * THE SNAPSHOT, AND NOT THE LIVE OVERLAY. `planConversionForStep` is the
+         * whole of that decision and its header is the argument; carried here the
+         * way every other plan's answers are, so that a correction made while this
+         * job waits cannot change the book a save is about.
+         */
+        overlayPath: plan.overlayPath,
+        /*
+         * WHICH SAVE THIS IS THE BOOK OF. It stops the landing cataloguing the
+         * file as one of the project's documents — see `GenerateRequest.forStep`,
+         * where the reason is that `castBook` must go on meaning the project's one
+         * flowing book however many saves have been pressed.
+         */
+        forStep: step.id,
+      },
+      // The save this book is of. Nothing downstream spends it; the shelf's row
+      // says which step a job was started from, and this one genuinely was.
+      step.id,
+    );
+  } catch (err) {
+    console.error(
+      `[job] “${step.label}” was saved, but the book as of that save could not be planned: `
+      + `${err instanceof Error ? err.message : String(err)}. The save itself is recorded, and `
+      + 'that row goes on showing the book this project last cast.',
     );
   }
 }
