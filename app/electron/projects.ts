@@ -1252,15 +1252,26 @@ export interface LedgerView {
 }
 
 /**
- * One project's history, as the accordion needs it.
+ * One project's history, as the library needs it.
  *
  * The path is PROVEN to be a project before a byte is read — `deletableProjectDir`
  * — because every call in this family takes a directory named by the renderer and
  * one of them unlinks files. The gate is the same one on every member so that none
  * of them is the lenient way in.
+ *
+ * NULL FOR A PROJECT THAT IS GONE, and only for gone. The window re-reads every
+ * ledger it holds on `projects:changed`, and a delete IS a `projects:changed` —
+ * so the one guaranteed reader of a just-deleted project is this function, asked
+ * in good faith by a mirror that has not yet heard. That read used to throw
+ * ENOENT into the console on every announce for the rest of the session. "It no
+ * longer exists" is a state, not an exception; the caller drops its holding and
+ * stops asking. A manifest that EXISTS but will not parse still throws — that is
+ * a book somebody needs to fix a file for, and silence would bury it.
  */
-export async function readStepLedger(dir: string): Promise<LedgerView> {
-  const manifest = await readManifest(deletableProjectDir(dir));
+export async function readStepLedger(dir: string): Promise<LedgerView | null> {
+  const proven = deletableProjectDir(dir);
+  if (!await exists(path.join(proven, MANIFEST))) return null;
+  const manifest = await readManifest(proven);
   const ledger = ledgerOf(manifest);
   return { ledger, rows: chronological(ledger) };
 }

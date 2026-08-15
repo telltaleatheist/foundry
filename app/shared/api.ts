@@ -685,14 +685,20 @@ export interface FoundryApi {
    */
   ledger: {
     /**
-     * One project's steps, plus the flat list the accordion draws.
+     * One project's steps, plus the flat list the library draws.
      *
-     * REJECTS for a catalogue that will not parse, including one whose stored
-     * ledger is malformed — a project in that state is already listed on Home
-     * with the reason on its row, and this is the same refusal reaching the same
-     * strip.
+     * NULL when the project no longer exists. The window re-reads every held
+     * ledger on `projects:changed`, and a delete is one — so the guaranteed
+     * first reader of a deleted project is this call, asked by a mirror that
+     * has not heard yet. Null means "drop the holding and stop asking"; it is
+     * never the answer for a project that is merely unreadable.
+     *
+     * REJECTS for a catalogue that exists but will not parse, including one
+     * whose stored ledger is malformed — a project in that state is already
+     * listed on Home with the reason on its row, and this is the same refusal
+     * reaching the same strip.
      */
-    read(projectDir: string): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
+    read(projectDir: string): Promise<{ ledger: ProjectLedger; rows: StepRow[] } | null>;
     /**
      * Stand on a different step. Answers with the ledger and rows as they now
      * stand — the same rows, since a pointer move changes no step and no order.

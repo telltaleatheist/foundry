@@ -188,6 +188,23 @@ export class LedgerService {
     try {
       const view = await api.ledger.read(projectDir);
       if (this.issued.get(key) !== ticket) return;
+      /*
+       * NULL MEANS THE PROJECT IS GONE, and gone is not a problem to display —
+       * there is no row on Home to agree with and no tabs left to draw it (a
+       * delete refuses while any are open). The holding leaves entirely, ticket
+       * included, so the next `projects:changed` does not ask main about a
+       * directory that stopped existing. Without this, a deleted project's
+       * holding survived here forever and every announce for the rest of the
+       * session re-asked its ledger — an ENOENT in the console each time, timed
+       * exactly when a person is watching one because they just deleted a book.
+       */
+      if (view === null) {
+        this.issued.delete(key);
+        const held = new Map(this.held());
+        held.delete(key);
+        this.held.set(held);
+        return;
+      }
       this.put(key, { dir: projectDir, history: { ledger: view.ledger, rows: view.rows }, problem: null });
     } catch (err) {
       if (this.issued.get(key) !== ticket) return;
