@@ -770,7 +770,23 @@ async function pump(): Promise<void> {
        * rather than by where anybody was standing — see `originOf` in
        * shared/ledger.ts for what parenting it at the position would cost.
        */
-      await recordReading(next.outputPath);
+      /*
+       * WHAT IT ASKED FOR GOES WITH IT, THOUGH — which is the other half of the
+       * same rule and the opposite conclusion.
+       *
+       * The parent is settled by what a reading READS; the identity is settled by
+       * what it was ASKED. `--skip-pages` and `--language` are the whole of what
+       * the OCR dialog lets somebody choose (`ReadRequest`), and they decide
+       * whether the next reading of this book replaces this step or branches
+       * beside it. Nothing on disk can answer that afterwards: a bank does not
+       * record which pages it was told to leave out. So the job hands them over,
+       * exactly as a translation hands over its `--to` rather than leaving the
+       * language legible only in a filename.
+       */
+      await recordReading(next.outputPath, {
+        ...(request.skipPages !== undefined ? { skipPages: request.skipPages } : {}),
+        ...(request.language !== undefined ? { language: request.language } : {}),
+      });
       next.message = `Read ${path.basename(next.inputPath)} — the answers are banked.`;
       changed();
       void pump();

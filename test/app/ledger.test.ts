@@ -36,6 +36,7 @@ import {
   StepLedgerError,
   ancestry,
   appendStep,
+  chainsWithout,
   childrenOf,
   chronological,
   curationInEffect,
@@ -65,6 +66,7 @@ import {
   type ProjectLedger,
   type ProjectManifest,
   type ProjectStep,
+  type ProjectTypeRecord,
   type StepAction,
 } from '../../app/shared/types.ts';
 
@@ -219,9 +221,9 @@ describe('parseLedger refuses a wrong ledger by name rather than guessing at it'
   });
 
   test('a param the action has no use for is a step something wrote wrong', () => {
-    const wrong = refusal(() => parseLedger({ steps: [ORIGIN, { ...READ, params: { language: 'English' } }] }));
-    assert.match(wrong, /is a read and carries a param called "language"/);
-    assert.match(wrong, /A read is described by generation and pages/);
+    const wrong = refusal(() => parseLedger({ steps: [ORIGIN, { ...READ, params: { amendments: 23 } }] }));
+    assert.match(wrong, /is a read and carries a param called "amendments"/);
+    assert.match(wrong, /A read is described by skipPages, language, generation and pages/);
     // And the import is described by nothing at all.
     assert.match(
       refusal(() => parseLedger({ steps: [{ ...ORIGIN, params: { pages: 3 } }] })),
@@ -238,6 +240,21 @@ describe('parseLedger refuses a wrong ledger by name rather than guessing at it'
       refusal(() => parseLedger({ steps: [ORIGIN, { ...READ, params: { generation: 17 } }] })),
       /says "generation": 17, and it is a string/,
     );
+    // A page RANGE is words — "3,17,19-24" — and a step storing a number for it
+    // would be a step whose question nothing can compare.
+    assert.match(
+      refusal(() => parseLedger({ steps: [ORIGIN, { ...READ, params: { skipPages: 17 } }] })),
+      /says "skipPages": 17, and it is a string/,
+    );
+  });
+
+  test('a read carries what it was asked for as well as what it answered', () => {
+    const asked = parseLedger({
+      steps: [ORIGIN, { ...READ, params: { skipPages: '3,17,19-24', language: 'de', generation: GENERATION, pages: 17 } }],
+    });
+    assert.deepEqual(asked.steps[1]!.params, {
+      skipPages: '3,17,19-24', language: 'de', generation: GENERATION, pages: 17,
+    });
   });
 
   test('a step missing the parts that make it a step is refused by field', () => {
@@ -481,15 +498,78 @@ describe('reRunTarget: the branch-or-replace decision, which destroys a payload'
     assert.equal(again?.id, 's1');
   });
 
-  test('a different page count IS a different reading', () => {
-    assert.equal(reRunTarget(ledger, { action: 'read', parent: 's0', params: { pages: 40 } }), null);
+  test('THE PAGE-COUNT TRAP: a count that came back different is the same reading', () => {
+    /*
+     * `pages` is counted off the finished bank, so it is an ANSWER — and it used
+     * to decide identity, where it worked by accident until it did not. A run
+     * resumed after dying at page 200 comes home with a bigger count for the very
+     * bank the first step names, and treating that as a new question left two
+     * `read` steps pointing at one file.
+     */
+    assert.equal(reRunTarget(ledger, { action: 'read', parent: 's0', params: { pages: 40 } })?.id, 's1');
+  });
+
+  test('the same read request asked again is the same question, however it is spelled', () => {
+    // Nothing was skipped and no language was declared, in either run: the plain
+    // question, which is also what a migrated project's reading asks.
+    assert.equal(reRunTarget(ledger, { action: 'read', parent: 's0' })?.id, 's1');
+    assert.equal(reRunTarget(ledger, { action: 'read', parent: 's0', params: {} })?.id, 's1');
+    assert.equal(
+      reRunTarget(ledger, { action: 'read', parent: 's0', params: { skipPages: undefined } })?.id,
+      's1',
+    );
+  });
+
+  test('A DIFFERENT PAGE RANGE IS A DIFFERENT READING, which is the point of asking', () => {
+    assert.equal(
+      reRunTarget(ledger, { action: 'read', parent: 's0', params: { skipPages: '3,17,19-24' } }),
+      null,
+    );
+    // And a different declared language is a different reading too: the model is
+    // being shown the same pixels and asked to expect something else on them.
+    assert.equal(reRunTarget(ledger, { action: 'read', parent: 's0', params: { language: 'de' } }), null);
+  });
+
+  test('the same page range asked twice replaces, whatever the run then answered', () => {
+    let skipped = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100, 'Imported'));
+    skipped = appendStep(skipped, step({
+      id: 'r1', parent: 's0', action: 'read', payload: 'readings/book.jsonl', createdAt: 200,
+      params: { skipPages: '3,17', generation: GENERATION, pages: 15 },
+    }));
+    assert.equal(
+      reRunTarget(skipped, {
+        action: 'read',
+        parent: 's0',
+        params: { skipPages: '3,17', generation: 'a-second-pass', pages: 15 },
+      })?.id,
+      'r1',
+    );
+    // And dropping the skips is a different question, so it branches beside it.
+    assert.equal(reRunTarget(skipped, { action: 'read', parent: 's0' }), null);
+    // The string IS the question. This app does not claim to know that "17,3"
+    // names the same pages as "3,17", so it treats it as a different one.
+    assert.equal(reRunTarget(skipped, { action: 'read', parent: 's0', params: { skipPages: '17,3' } }), null);
   });
 
   test('params compare by field and not by the order JSON happened to spell them', () => {
-    const forwards: LedgerParams = { generation: GENERATION, pages: 17 };
-    const backwards: LedgerParams = { pages: 17, generation: GENERATION };
-    assert.equal(reRunTarget(ledger, { action: 'read', parent: 's0', params: forwards })?.id, 's1');
-    assert.equal(reRunTarget(ledger, { action: 'read', parent: 's0', params: backwards })?.id, 's1');
+    let asked = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100, 'Imported'));
+    asked = appendStep(asked, step({
+      id: 'r1', parent: 's0', action: 'read', payload: 'readings/book.jsonl', createdAt: 200,
+      params: { skipPages: '3,17', language: 'de', generation: GENERATION, pages: 15 },
+    }));
+    const forwards: LedgerParams = { skipPages: '3,17', language: 'de' };
+    const backwards: LedgerParams = { language: 'de', skipPages: '3,17' };
+    assert.equal(reRunTarget(asked, { action: 'read', parent: 's0', params: forwards })?.id, 'r1');
+    assert.equal(reRunTarget(asked, { action: 'read', parent: 's0', params: backwards })?.id, 'r1');
+    // One field of the pair changed is a different question, both ways round.
+    assert.equal(
+      reRunTarget(asked, { action: 'read', parent: 's0', params: { skipPages: '3,17', language: 'hu' } }),
+      null,
+    );
+    assert.equal(
+      reRunTarget(asked, { action: 'read', parent: 's0', params: { skipPages: '3', language: 'de' } }),
+      null,
+    );
   });
 
   test('a field set to undefined said nothing, and matches a step that omitted it', () => {
@@ -874,6 +954,53 @@ describe('migrateLedger: a project that predates all of this', () => {
     assert.deepEqual(migrateLedger(manifest({})), { steps: [] });
   });
 
+  test('a manifest with no reading FIELD AT ALL is read as having no reading', () => {
+    /*
+     * `readManifest` always writes the field, so this is unreachable through it —
+     * and the test was `!== null`, which is true of `undefined` and walked
+     * straight into reading a generation off it. Unreachable today is not a reason
+     * to be wrong: the next caller assembling a manifest by hand is the one who
+     * finds out, and what they get should be a ledger rather than a TypeError.
+     */
+    const absent = { ...V2, reading: undefined } as unknown as ProjectManifest;
+    assert.deepEqual(migrateLedger(absent).steps.map((row) => row.action), ['import', 'read']);
+    // The evidence of a bank is still there — an EPUB was cast from one — so the
+    // reading step stands, saying nothing about itself rather than inventing.
+    assert.equal(migrateLedger(absent).steps[1]!.params, undefined);
+    assert.equal(migrateLedger(absent).steps[1]!.label, 'Read');
+    // And the same is true of an archive nobody wrote down: it takes the adopted
+    // path — the first origin the chains have — rather than reading `.file` off
+    // a field that is not there.
+    const noArchive = { ...V2, archive: undefined } as unknown as ProjectManifest;
+    assert.equal(migrateLedger(noArchive).steps[0]!.payload, 'archive/Kershaw.pdf');
+    assert.equal(migrateLedger(noArchive).steps[0]!.action, 'import');
+  });
+
+  test('A MIGRATED READING ASKS THE PLAIN QUESTION, so a plain re-read replaces it', () => {
+    /*
+     * No old catalogue recorded which pages a reading was told to skip, and
+     * nothing on disk can answer it afterwards. So a migrated reading is the whole
+     * book with no language declared — which means somebody pressing OCR again
+     * without touching the form REPLACES it, rather than being left with two
+     * readings and no way to say which is current.
+     */
+    const migrated = migrateLedger(V2);
+    const origin = migrated.steps[0]!.id;
+    assert.equal(reRunTarget(migrated, { action: 'read', parent: origin })?.id, 'm1');
+    assert.equal(
+      reRunTarget(migrated, {
+        action: 'read', parent: origin, params: { generation: 'a-new-pass', pages: 400 },
+      })?.id,
+      'm1',
+    );
+    // And asking for something the old reading cannot have been asked for is a
+    // new question, which branches beside it.
+    assert.equal(
+      reRunTarget(migrated, { action: 'read', parent: origin, params: { skipPages: '3,17' } }),
+      null,
+    );
+  });
+
   test('a catalogue whose times run backwards still produces a readable list', () => {
     // A v1 `madeAt` was whatever the clock said, and one of them being earlier
     // than the import is a thing that happens.
@@ -999,6 +1126,47 @@ describe('recordLanding decides append-or-replace once, for every job that finis
     assert.equal(landed.step.params?.generation, 'a-completely-different-uuid');
   });
 
+  test('A RE-READ OF THE SAME REQUEST REPLACES, and the project keeps one bank', () => {
+    // The whole book read again, with the same page skips asked for. The counts
+    // differ because the model answered differently the second time, which is an
+    // answer and not a question.
+    let asked = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100, 'Imported'));
+    asked = appendStep(asked, step({
+      id: 'r1', parent: 's0', action: 'read', payload: 'readings/book.jsonl', createdAt: 200,
+      params: { skipPages: '3,17', generation: GENERATION, pages: 15 },
+    }));
+    const landed = recordLanding(asked, {
+      action: 'read', parent: 's0', payload: 'readings/book.jsonl',
+      params: { skipPages: '3,17', generation: 'second-pass', pages: 16 },
+      createdAt: 900, id: 'unused',
+    });
+    assert.equal(landed.replaced, true);
+    assert.equal(landed.step.id, 'r1');
+    assert.equal(landed.step.label, 'Read (16 pages)');
+    assert.deepEqual(landed.ledger.steps.map((row) => row.id), ['s0', 'r1']);
+  });
+
+  test('A RE-READ ASKING FOR DIFFERENT PAGES BRANCHES, because it is a different question', () => {
+    let asked = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100, 'Imported'));
+    asked = appendStep(asked, step({
+      id: 'r1', parent: 's0', action: 'read', payload: 'readings/book.jsonl', createdAt: 200,
+      params: { skipPages: '3,17', generation: GENERATION, pages: 15 },
+    }));
+    const landed = recordLanding(asked, {
+      action: 'read', parent: 's0', payload: 'readings/book.jsonl',
+      params: { skipPages: '3,17,19-24', generation: 'second-pass', pages: 9 },
+      createdAt: 900, id: 'r2',
+    });
+    assert.equal(landed.replaced, false);
+    assert.deepEqual(landed.ledger.steps.map((row) => row.id), ['s0', 'r1', 'r2']);
+    /*
+     * BOTH ROWS NAME THE ONE BANK the engine writes, which is why a delete asks
+     * `orphanedPayloads` rather than unlinking what a subtree named: destroying
+     * the older reading must not take the bank the newer one is made of.
+     */
+    assert.deepEqual(orphanedPayloads(deleteSubtree(landed.ledger, 'r1')), []);
+  });
+
   test('a re-read stales the saves and the translations made from the bank it replaced', () => {
     let ledger = read();
     ledger = appendStep(ledger, step({
@@ -1122,6 +1290,72 @@ describe('orphanedPayloads names only the files a delete really leaves nobody ho
     }));
     // `Book.pdf` twice, in two layers. The archive survives; the reprint goes.
     assert.deepEqual(orphanedPayloads(deleteSubtree(ledger, 's1')), ['generated/Book.pdf']);
+  });
+});
+
+describe('chainsWithout takes the per-type row down with the payload it named', () => {
+  function chain(kind: ProjectTypeRecord['kind'], files: readonly string[]): ProjectTypeRecord {
+    return {
+      kind,
+      steps: files.map((file, at): ProjectStep => ({
+        file,
+        label: at === 0 ? 'The scan you imported' : 'Translated',
+        appliedAt: at,
+        kind: at === 0 ? 'origin' : 'translate',
+        retention: at === 0 ? 'irreplaceable' : 'expensive',
+        why: at === 0 ? WHY_IMPORTED : WHY_MODEL_PASS,
+      })),
+    };
+  }
+
+  test('THE GHOST ROW: the file a delete destroyed is not left as a chain step', () => {
+    // The bug this exists for: deleting a translation struck the ledger step,
+    // destroyed the EPUB, and left the document row behind — which `summarise`
+    // then drew as `missing`, so a clean absence came out as a broken row.
+    const documents = [
+      chain('pdf', ['archive/Kershaw.pdf']),
+      chain('epub', ['generated/Kershaw.epub', 'generated/Kershaw (en).epub']),
+    ];
+    const after = chainsWithout(documents, ['generated/Kershaw (en).epub']);
+    assert.deepEqual(after.map((record) => record.steps.map((row) => row.file)), [
+      ['archive/Kershaw.pdf'],
+      ['generated/Kershaw.epub'],
+    ]);
+  });
+
+  test('a chain left with no steps is dropped, not kept as an empty husk', () => {
+    // `summarise` skips a record whose steps are empty, so a husk is a document
+    // the app will never draw again — and the type says a record is never empty.
+    const after = chainsWithout([chain('epub', ['generated/Kershaw (en).epub'])], [
+      'generated/Kershaw (en).epub',
+    ]);
+    assert.deepEqual(after, []);
+  });
+
+  test('a payload some surviving step still names keeps its row', () => {
+    // `orphanedPayloads` is what this is given, so a file that is still on disk
+    // because another step is made of it is a row that is still true.
+    const documents = [chain('epub', ['generated/Kershaw.epub', 'generated/Kershaw (en).epub'])];
+    assert.deepEqual(chainsWithout(documents, []), documents);
+  });
+
+  test('paths are compared whole, so one layer is never struck for another', () => {
+    // `Book.pdf` in three layers is three documents. A comparison that had thrown
+    // the layer away would strike the scan for a delete aimed at a reprint.
+    const documents = [chain('pdf', ['archive/Book.pdf', 'generated/Book.pdf'])];
+    const after = chainsWithout(documents, ['generated/Book.pdf']);
+    assert.deepEqual(after[0]!.steps.map((row) => row.file), ['archive/Book.pdf']);
+  });
+
+  test('what it was given is not touched, and untouched chains come back as they were', () => {
+    const documents = [
+      chain('pdf', ['archive/Kershaw.pdf']),
+      chain('epub', ['generated/Kershaw.epub', 'generated/Kershaw (en).epub']),
+    ];
+    const after = chainsWithout(documents, ['generated/Kershaw (en).epub']);
+    assert.equal(documents[1]!.steps.length, 2);
+    // The record nothing happened to is the very same object, not a copy of it.
+    assert.equal(after[0], documents[0]);
   });
 });
 

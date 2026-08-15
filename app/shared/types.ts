@@ -1734,11 +1734,40 @@ export interface LedgerParams {
    * generations would make every re-read a new branch — the rule inverted.
    */
   generation?: string;
-  /** `read` — page answers in the bank when it completed. */
+  /**
+   * `read` — page answers in the bank when it completed.
+   *
+   * AN ANSWER, NOT A QUESTION, which is why it is in `MINTED_BY_THE_RUN` beside
+   * the generation: it is counted off the bank AFTER the run, so a step carries
+   * the number of pages that came back rather than the number anybody asked for.
+   * It is here for the row's own sentence ("Read (317 pages)") and for nothing
+   * else. What identifies a reading is `skipPages` and `language`.
+   */
   pages?: number;
   /** `curate` — how many decisions the snapshot froze. For the row's sentence. */
   amendments?: number;
-  /** `translate` — the language translated INTO, as the dialog named it. */
+  /**
+   * `read` — `--skip-pages`, verbatim: "3,17,19-24". See `ReadRequest.skipPages`.
+   *
+   * ONE OF THE TWO THINGS A READING IS IDENTIFIED BY. Reading the book again
+   * with the same pages left out is the same question asked twice and replaces;
+   * reading it with a different range is a different question and branches. It
+   * is stored exactly as the engine was given it, because the string IS what was
+   * asked — "3,17" and "17,3" are two ways of saying one thing and this app does
+   * not claim to know that, so they branch. Absent means nothing was skipped.
+   */
+  skipPages?: string;
+  /**
+   * `read` — `--language`, the BCP-47 tag the pages were declared to be in.
+   * `translate` — the language translated INTO, as the dialog named it.
+   *
+   * ONE FIELD FOR TWO ACTIONS, which is worth saying out loud because they are
+   * not the same fact: one says what the model should expect to see, the other
+   * says what it should produce. They share a key because both are the language
+   * THAT ACTION WAS ASKED FOR — the same word the engine's own flag uses — and
+   * `PARAMS_OF` keys the meaning by action, so nothing ever has to read one and
+   * wonder which question it answers.
+   */
   language?: string;
 }
 

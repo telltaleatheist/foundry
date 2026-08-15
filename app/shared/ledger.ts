@@ -69,6 +69,7 @@ import {
   type ProjectLedger,
   type ProjectManifest,
   type ProjectStep,
+  type ProjectTypeRecord,
   type StepAction,
   type StepRow,
 } from './types';
@@ -117,13 +118,19 @@ export const RETENTION_OF: Readonly<Record<StepAction, LedgerStep['retention']>>
  * Which params each action is allowed to carry. Anything else is refused by name.
  *
  * This is where the action-specificity that a discriminated union would have
- * given at the type level actually lives (see `LedgerParams`). A read carrying a
- * `language` is not a read with a harmless extra field — it is a step something
- * wrote wrong, and the interesting question is which program wrote it.
+ * given at the type level actually lives (see `LedgerParams`). A read carrying an
+ * `amendments` count is not a read with a harmless extra field — it is a step
+ * something wrote wrong, and the interesting question is which program wrote it.
+ *
+ * A READ CARRIES WHAT THE OCR DIALOG ASKED FOR AND WHAT THE RUN ANSWERED, in that
+ * order of importance: `skipPages` and `language` are the question (`ReadRequest`
+ * has exactly those two fields the user fills in), and `generation` and `pages`
+ * are what came back. Both piles are recorded; only the question is compared. See
+ * `MINTED_BY_THE_RUN`, which is where that split is enforced.
  */
 export const PARAMS_OF: Readonly<Record<StepAction, readonly (keyof LedgerParams)[]>> = {
   import: [],
-  read: ['generation', 'pages'],
+  read: ['skipPages', 'language', 'generation', 'pages'],
   curate: ['generation', 'amendments'],
   translate: ['language'],
 };
@@ -149,10 +156,37 @@ export const PARAMS_OF: Readonly<Record<StepAction, readonly (keyof LedgerParams
  * So the comparison is over what was ASKED, and the generation is what came
  * back. The distinction is worth having a name for because it will come up
  * again: any params field a job STAMPS on its own answer belongs here.
+ *
+ * ── And `pages` is the field that proved it was a table ─────────────────────
+ *
+ * A page count is COUNTED OFF THE BANK AFTER THE RUN — `recordReading` counts the
+ * lines in the file the engine wrote — so it is an answer in exactly the way a
+ * generation is, and it sat in the question's pile for one release because it
+ * ALMOST WORKS THERE. Two readings of one book usually produce the same count, so
+ * a re-read usually matched the step it was meant to replace, and the count acted
+ * as a proxy for "the same page range". The cases where the proxy fails are the
+ * expensive ones and they fail silently:
+ *
+ *   A RE-READ WITH DIFFERENT `--skip-pages` produced a different count and so
+ *   BRANCHED — leaving two `read` steps both naming the single
+ *   `readings/<key>.jsonl` the engine writes, the older of them describing a bank
+ *   that has since been archived out from under it. Two steps, one payload, and a
+ *   row that renders somebody else's reading.
+ *
+ *   A RUN RESUMED after dying at page 200 landed with a bigger count and branched
+ *   the same way — for a run that added pages to the very bank the first step
+ *   names, which is the one case where "the same reading" is not even arguable.
+ *
+ * The fix is not to move `pages` on its own. It is to RECORD WHAT WAS ASKED FOR:
+ * `ReadRequest` carries the page skips and the language and nothing else the user
+ * chose, so those are what a reading is identified by, and the count went here
+ * where it always belonged. A re-read of the same request replaces; a re-read
+ * asking for a different page range is a different question and branches, which
+ * is the rule stated rather than approximated.
  */
 const MINTED_BY_THE_RUN: Readonly<Record<StepAction, readonly (keyof LedgerParams)[]>> = {
   import: [],
-  read: ['generation'],
+  read: ['generation', 'pages'],
   curate: [],
   translate: [],
 };
@@ -445,6 +479,27 @@ function readStep(entry: unknown, index: number): LedgerStep {
   return step;
 }
 
+/**
+ * The params that are WORDS rather than counts, so a stored one can be checked.
+ *
+ * A LIST RATHER THAN AN `if` OF LITERALS, which it used to be: with two string
+ * fields the condition read fine, and the third one — `skipPages`, "3,17,19-24" —
+ * would have been a fourth clause somebody could forget while adding a field, and
+ * a forgotten clause here means a page range checked as if it were a page count
+ * and refused for being a string. Everything not in here is a whole number.
+ */
+const WORDS = ['generation', 'language', 'skipPages'] as const;
+
+function isWord(key: keyof LedgerParams): key is typeof WORDS[number] {
+  return (WORDS as readonly string[]).includes(key);
+}
+
+/** `a`, `a and b`, `a, b and c` — this app writes sentences, not comma runs. */
+function spokenList(parts: readonly string[]): string {
+  if (parts.length <= 1) return parts[0] ?? '';
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
 function readParams(value: unknown, id: string, action: StepAction): LedgerParams {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new StepLedgerError(`Step "${id}" says "params": ${JSON.stringify(value)}, which is not a params object`);
@@ -456,7 +511,7 @@ function readParams(value: unknown, id: string, action: StepAction): LedgerParam
     if (!(allowed as readonly string[]).includes(named)) {
       throw new StepLedgerError(
         `Step "${id}" is a ${action} and carries a param called "${named}". A ${action} is described by `
-        + `${allowed.length === 0 ? 'nothing at all' : allowed.join(' and ')}`,
+        + `${allowed.length === 0 ? 'nothing at all' : spokenList(allowed)}`,
       );
     }
     // Narrowed only after the membership check above, which is what earns the
@@ -464,7 +519,7 @@ function readParams(value: unknown, id: string, action: StepAction): LedgerParam
     const key = named as keyof LedgerParams;
     const said = record[key];
     if (said === undefined) continue;
-    if (key === 'generation' || key === 'language') {
+    if (isWord(key)) {
       if (typeof said !== 'string') {
         throw new StepLedgerError(`Step "${id}" says "${key}": ${JSON.stringify(said)}, and it is a string`);
       }
@@ -991,12 +1046,22 @@ export function deleteSubtree(ledger: ProjectLedger, id: string): SubtreeDeletio
  * ── Why "the removed steps' payloads" is the wrong answer ───────────────────
  *
  * Two steps are allowed to name one file, and in this app they routinely do. A
- * re-read that branched rather than replaced — different pages asked for, so a
+ * re-read that branched rather than replaced — a different `--skip-pages`, so a
  * different question — leaves two `read` steps, and the readings bank has ONE
  * path: the engine archives the previous one aside and writes the same
  * `readings/<key>.jsonl` again. Delete the older of those two and a naive unlink
  * would destroy the bank the newer one is made of, which is hours of GPU thrown
  * away by a delete aimed at something else entirely.
+ *
+ * THAT BRANCH IS NOW DELIBERATE RATHER THAN ACCIDENTAL, which is worth writing
+ * down because it is what settles whether this function is still needed. It used
+ * to happen when a re-read came back with a different page COUNT, which was a
+ * proxy nobody chose (see `MINTED_BY_THE_RUN`); it now happens exactly when
+ * somebody asks a different question of the same book. The state this defends is
+ * therefore more reachable than before, not less — and a translation is the same
+ * story in another folder: two `translate` steps into one language from two
+ * different parents both name `generated/<book> (en).epub`, because the output
+ * path is composed from the stem and the tag and knows nothing about the ledger.
  *
  * So the question is not "what did this subtree name" but "what is left naming
  * it", asked of the ledger AFTER the surgery — and asked by whole project-
@@ -1014,6 +1079,60 @@ export function orphanedPayloads(deletion: SubtreeDeletion): string[] {
     orphaned.push(casualty.payload);
   }
   return orphaned;
+}
+
+/**
+ * The per-type chains with every row naming a destroyed file struck out.
+ *
+ * ── The ghost row this exists to prevent ────────────────────────────────────
+ *
+ * A delete used to do half the surgery. It took the steps off the ledger and
+ * destroyed their payloads, and left `manifest.documents` — the per-type chains
+ * Home's rows are drawn from — still naming the files it had just unlinked. So
+ * deleting a translation gave the user a document row for an EPUB that no longer
+ * existed, drawn by `summarise` as `missing`, which is the app's way of saying
+ * "something went wrong with a file you still have" about a file they had just
+ * told it to destroy. They asked for a clean absence and got a broken row.
+ *
+ * ── Which direction the truth runs ──────────────────────────────────────────
+ *
+ * THE LEDGER IS THE TRUTH AND THE PER-TYPE ROWS ARE A VIEW OF IT (see
+ * `ProjectManifest.ledger` and `currentStandard`), so this takes its instruction
+ * from the ledger's answer and never the other way round. It is handed
+ * `orphanedPayloads` — the files that are ACTUALLY being destroyed — rather than
+ * every removed step's payload, because a file some surviving step still names
+ * survives on disk, and a chain row for a file that is still there is a row that
+ * is still true.
+ *
+ * A CHAIN LEFT WITH NO STEPS IS DROPPED ENTIRELY, and that is what `summarise`
+ * already means by it: the loop that draws the rows takes the LATEST step of each
+ * record and skips a record that has none, so an empty chain is a document the
+ * app will never draw again. `ProjectTypeRecord.steps` says the same thing in the
+ * type — "never empty; a type with no origin is not a type this project has" — so
+ * keeping the husk would leave the catalogue asserting the project has an EPUB
+ * with nothing behind it, and `recordStep` rebuilds the record from nothing the
+ * moment another file of that type lands.
+ *
+ * BY THE WHOLE PROJECT-RELATIVE PATH, `namesPayload`'s rule, and it matters more
+ * here than anywhere: `archive/Book.pdf`, `working/Book.pdf` and
+ * `generated/Book.pdf` are three documents in one project, and a comparison that
+ * had thrown away the layer would strike the scan's row for a delete aimed at a
+ * reprint.
+ */
+export function chainsWithout(
+  documents: readonly ProjectTypeRecord[],
+  destroyed: readonly string[],
+): ProjectTypeRecord[] {
+  const gone = new Set(destroyed);
+  const kept: ProjectTypeRecord[] = [];
+  for (const record of documents) {
+    const steps = record.steps.filter((step) => !gone.has(step.file));
+    if (steps.length === 0) continue;
+    // Rebuilt only where something changed, so a project whose delete touched
+    // one type hands back the very same objects for every other one.
+    kept.push(steps.length === record.steps.length ? record : { ...record, steps });
+  }
+  return kept;
 }
 
 /**
@@ -1299,7 +1418,11 @@ function originPayload(manifest: ProjectManifest): { payload: string; label: str
     .flatMap((record) => record.steps)
     .find((step) => step.kind === kind);
 
-  if (manifest.archive !== null) {
+  // `!= null` for `readingParams`'s reason, two functions down: a manifest
+  // assembled by hand rather than by `readManifest` can leave a field off
+  // entirely, and a test written against `null` walks into the property access it
+  // was meant to guard.
+  if (manifest.archive != null) {
     const named = firstOf('origin');
     return {
       payload: `archive/${manifest.archive.file}`,
@@ -1325,12 +1448,29 @@ function originPayload(manifest: ProjectManifest): { payload: string; label: str
  * app claiming to know which pass the bank came from, which is the one claim the
  * generation exists to make honestly — and `overlayFate` already prints an empty
  * generation as "unrecorded", so the state is one this app has met before.
+ *
+ * NO `skipPages` AND NO `language`, ever, and their absence is what makes a
+ * migrated project's identity deterministic rather than merely unknown. Nothing
+ * in an old catalogue recorded which pages a reading was told to leave out; the
+ * only place that question survives is the shape of the bank itself, and
+ * inferring "3,17,19-24" from gaps in a file is exactly the sort of reconstruction
+ * this migration refuses to do. So a migrated reading asks the plain question —
+ * the whole book, no language declared — which means a re-read that also asks the
+ * plain question REPLACES it, and one that skips pages branches beside it. That is
+ * the right answer in both directions and it is the same answer on every read of
+ * the file.
+ *
+ * `!= null` RATHER THAN `!== null`: this took a manifest whose `reading` was
+ * undefined — a shape the type does not admit and `readManifest` never produces,
+ * because it always writes the field — and walked straight into reading
+ * `.generation` off it. Unreachable today is not a reason to be wrong; the next
+ * caller assembling a manifest by hand is the one who would find out.
  */
 function readingParams(
   manifest: ProjectManifest,
   chains: readonly { steps: ProjectStep[] }[],
 ): LedgerParams | null {
-  if (manifest.reading !== null) {
+  if (manifest.reading != null) {
     const params: LedgerParams = {};
     if (manifest.reading.generation.length > 0) params.generation = manifest.reading.generation;
     if (manifest.reading.pages > 0) params.pages = manifest.reading.pages;

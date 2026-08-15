@@ -76,6 +76,7 @@ import {
 } from './overlays';
 import {
   adoptLegacyLayout,
+  deletableStep,
   deleteDocument,
   deleteProject,
   deleteStep,
@@ -1283,8 +1284,23 @@ function registerIpc(): void {
    * the EPUB you did not like — and refusing it because something else in the
    * folder happened to be open would make the button useless exactly when it is
    * wanted. The renderer closes the file's own tab before asking (open-documents).
+   *
+   * THREE CALLERS NOW, AND THEY SHARE THE FACT RATHER THAN THE SENTENCE. What is
+   * the same for all of them is finding the job: which run is about to write into
+   * this folder, and whether it is going or waiting. What differs is the
+   * CONSEQUENCE — a project delete erases the folder the engine is writing into, a
+   * step delete destroys a payload it may be in the middle of producing — so the
+   * clause after "so" is the caller's, and everything before it is written once
+   * here. A second copy of the job search is how the day comes that one of them
+   * learns about a new job state and the other does not.
    */
-  function refuseBusyJob(project: { dir: string; title: string }): void {
+  function refuseBusyJob(
+    project: { dir: string; title: string },
+    /** The clause after "so", ending in what to do about it. */
+    consequence = `“${project.title}” cannot be deleted — the engine is writing into that `
+      + 'folder from another process, and erasing it underneath would leave half a project on '
+      + 'disk and a run writing into nothing. Cancel it in the shelf first, then delete.',
+  ): void {
     /*
      * A JOB WRITING INTO IT IS THE SAME HAZARD AS AN OPEN BOOK, and worse in
      * one way: the engine is a separate process holding a file open in
@@ -1307,9 +1323,7 @@ function registerIpc(): void {
     if (busy !== undefined) {
       throw new Error(
         `A ${busy.kind} job is ${busy.state === 'running' ? 'running' : 'waiting to run'} into `
-        + `“${project.title}” right now, so it cannot be deleted — the engine is writing into that `
-        + 'folder from another process, and erasing it underneath would leave half a project on '
-        + 'disk and a run writing into nothing. Cancel it in the shelf first, then delete.',
+        + `“${project.title}” right now, so ${consequence}`,
       );
     }
   }
@@ -1915,13 +1929,79 @@ function registerIpc(): void {
    * import is deleting the project, and the project ✕ does that with its own
    * ceremony and its own accounting of what it costs.
    */
+  /**
+   * A job writing into this project, and a delete that would take its payload.
+   *
+   * ── Why the delete owes this and the other two calls do not ─────────────────
+   *
+   * A held, queued or running job is a run that HAS ALREADY CHOSEN where its
+   * output goes: the bank is named, the EPUB's path is composed, and the parent
+   * step was captured when somebody pressed the button. Deleting a step while one
+   * waits is aimed at exactly the file that run is about to write — the reading
+   * whose bank it is filling, or the translation whose EPUB it is composing — and
+   * the two possible orders are both wrong. Destroy the payload first and the run
+   * finishes into a folder whose catalogue no longer describes it, leaving hours
+   * of GPU nothing in this app names. Let the run land first and it appends
+   * against a parent this delete has just taken off the ledger, which `landStep`
+   * survives by falling back to the position, but only by filing the work
+   * somewhere nobody chose.
+   *
+   * SO THE STEP DELETE REFUSES, on the project delete's own terms and with the
+   * same vocabulary — the shelf is where a person cancels a job, and the sentence
+   * says so. Coarse on purpose: ANY job writing into this project, not just one
+   * whose output happens to be a payload in the doomed subtree. The narrower test
+   * would have to predict where a run that has not started will write, and being
+   * clever about that is how a delete comes to race a job it decided was unrelated.
+   *
+   * ── THE OTHER TWO ARE NOT UNSAFE, AND REFUSING THEM WOULD BE ITS OWN BUG ────
+   *
+   * `ledger:go` writes one field of the manifest and touches nothing else. The
+   * design already defends the case it looks dangerous in: a job captures its
+   * parent at enqueue (`Job.parentStep`) and its overlay at plan time
+   * (`planConversion`), precisely so that clicking through the history while a run
+   * waits cannot retarget it. Moving the pointer is a repaint, it is free, and
+   * people do it while they wait — refusing it during a three-hour reading would
+   * take the history panel away for the whole time it is most wanted, to prevent
+   * nothing.
+   *
+   * `overlay:commit` writes `curations/<uuid>.json`, a path no job can be about to
+   * write, and appends a step of its own. It is the one action in this app that
+   * retains IRREPLACEABLE work — somebody's judgements about four hundred blocks —
+   * and refusing to let a person save those because a machine is busy would be
+   * this app declining to keep the only thing in a project it cannot make again.
+   * The interesting case is a commit made while a re-read is running, and the
+   * ledger already has the right answer for it: the snapshot is retained, and when
+   * the reading lands and replaces its parent, `markStale` dims the save rather
+   * than destroying it (the retention rule: user labour is never destroyed by a
+   * re-run). That is the designed outcome, not a race.
+   */
+  const refuseBusyStepDelete = async (projectDir: string, stepId: string): Promise<void> => {
+    // `deletableStep` proves the directory, names the step, AND runs the refusal
+    // that never lifts — the origin is not a deletable step at any hour — so this
+    // never tells somebody to cancel a job for a delete that would refuse them
+    // afterwards anyway.
+    const subject = await deletableStep(projectDir, stepId);
+    refuseBusyJob(subject, `“${subject.label}” cannot be deleted yet — that run is about to write `
+      + 'into this project, and destroying a step\'s files while it does would leave the job '
+      + 'finishing into a history this app no longer has. Cancel it in the shelf, or let it land, '
+      + 'then delete the step.');
+  };
+
   ipcMain.handle('ledger:read', (_event, projectDir: string) => readStepLedger(projectDir));
   ipcMain.handle('ledger:go', (_event, projectDir: string, stepId: string) =>
     goToStep(projectDir, stepId));
-  ipcMain.handle('ledger:describe-delete', (_event, projectDir: string, stepId: string) =>
-    describeStepDelete(projectDir, stepId));
-  ipcMain.handle('ledger:delete', (_event, projectDir: string, stepId: string) =>
-    deleteStep(projectDir, stepId));
+  ipcMain.handle('ledger:describe-delete', async (_event, projectDir: string, stepId: string) => {
+    // Proven BEFORE the card is composed, so a warning is never put on screen for
+    // something the delete would refuse a click later.
+    await refuseBusyStepDelete(projectDir, stepId);
+    return describeStepDelete(projectDir, stepId);
+  });
+  ipcMain.handle('ledger:delete', async (_event, projectDir: string, stepId: string) => {
+    // Proven again, never trusted from the describe: a job can be queued between
+    // the question and the answer, and this is the call that unlinks something.
+    await refuseBusyStepDelete(projectDir, stepId);
+    return deleteStep(projectDir, stepId);
+  });
 
   // ── The library folder ───────────────────────────────────────────────────
   ipcMain.handle('library:dir', () => readAppSettings().libraryDir);

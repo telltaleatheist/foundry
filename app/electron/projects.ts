@@ -111,6 +111,7 @@ import { spokenStem } from '../shared/documents';
 import { readJson } from '../shared/json';
 import { STEP_LABELS, migrateToSteps, readTypeRecords } from '../shared/steps';
 import {
+  chainsWithout,
   chronological,
   curationInEffect,
   deleteCost,
@@ -1237,6 +1238,54 @@ export async function describeStepDelete(dir: string, stepId: string): Promise<S
   };
 }
 
+/** The two names a refusal about one step has to be able to say out loud. */
+export interface StepSubject {
+  /** The directory, resolved and PROVEN to be one this app may delete inside. */
+  dir: string;
+  /** The project as its owner knows it — the book's title, never the key. */
+  title: string;
+  /** The step as the row on screen says it: "Read (317 pages)". Never a file. */
+  label: string;
+}
+
+/**
+ * Who a step delete is about — for a caller with a refusal of its own to compose.
+ *
+ * ── Why this is not `inspectProject` ────────────────────────────────────────
+ *
+ * The delete card's inventory measures every byte under the project and streams
+ * every bank in it to count pages, which is right for a dialog somebody opened on
+ * purpose and absurd for composing one sentence about a job in the shelf. This is
+ * the cheap half: one catalogue read, which is a few kilobytes.
+ *
+ * ── And why the two names travel together ───────────────────────────────────
+ *
+ * A refusal has to be actionable, and "a job is running, so this cannot be
+ * deleted" is not — the person is looking at a list of steps and a shelf of jobs
+ * and has to be told which of each. Both facts come out of the one manifest read
+ * that proves the directory, so there is no arrangement where a caller has one
+ * and has to go back for the other.
+ *
+ * ── THE PERMANENT REFUSAL IS RUN FIRST, AND THAT IS THE POINT OF THE NAME ───
+ *
+ * `deleteSubtree` is called for its refusal and its answer thrown away, exactly as
+ * `describeStepDelete` calls it. The order matters to the person reading the
+ * sentence: the origin can NEVER be deleted, and telling somebody to cancel a job
+ * and come back — about a step that will refuse them just as firmly in an hour —
+ * is a sentence that wastes their afternoon. A transient refusal must never be
+ * said in front of a permanent one.
+ *
+ * `stepOf` refuses an id this project does not hold, by name, which is the right
+ * answer for a renderer naming a row nobody drew.
+ */
+export async function deletableStep(dir: string, stepId: string): Promise<StepSubject> {
+  const resolved = deletableProjectDir(dir);
+  const manifest = await readManifest(resolved);
+  const ledger = ledgerOf(manifest);
+  deleteSubtree(ledger, stepId);
+  return { dir: resolved, title: manifest.title, label: stepOf(ledger, stepId).label };
+}
+
 /**
  * Take a step and everything made from it, off the ledger and off the disk.
  *
@@ -1259,14 +1308,32 @@ export async function describeStepDelete(dir: string, stepId: string): Promise<S
  * WHAT IS DESTROYED IS `orphanedPayloads` AND NOT "the removed steps' payloads".
  * Two steps are allowed to name one file and in this app routinely do — see that
  * function for the re-read that leaves two `read` steps pointing at one bank.
+ *
+ * ── AND THE PER-TYPE ROW GOES IN THE SAME BREATH ────────────────────────────
+ *
+ * `manifest.documents` is the other record of the same files — the chains Home's
+ * document rows are drawn from — and a delete that struck the ledger and left
+ * those alone gave the user a row for a file it had just erased, drawn as
+ * `missing`: the app's way of saying "something happened to a file you still
+ * have" about the one thing they had deliberately thrown away. So `chainsWithout`
+ * strikes them, from `orphanedPayloads` for the same reason the unlinking is —
+ * what a surviving step still names is still on disk and is still a true row.
+ *
+ * IN THIS TRANSACTION, not a second one. Both edits are made against the open
+ * manifest and land in ONE `writeManifest`, so there is no window where a crash
+ * could leave the two records disagreeing about what this project has. The window
+ * that does remain is the one below — rows written, files not yet unlinked — and
+ * it falls the survivable way on purpose.
  */
 export async function deleteStep(dir: string, stepId: string): Promise<ProjectLedger> {
   const resolved = deletableProjectDir(dir);
   const { ledger, orphans } = await withManifest(resolved, async (manifest) => {
     const deletion = deleteSubtree(ledgerOf(manifest), stepId);
+    const destroyed = orphanedPayloads(deletion);
     manifest.ledger = deletion.ledger;
+    manifest.documents = chainsWithout(manifest.documents, destroyed);
     await writeManifest(resolved, manifest);
-    return { ledger: deletion.ledger, orphans: orphanedPayloads(deletion) };
+    return { ledger: deletion.ledger, orphans: destroyed };
   });
   for (const payload of orphans) {
     try {
@@ -2091,7 +2158,26 @@ export async function readingGeneration(dir: string): Promise<string> {
  * reason to report those hours as a failure — the bank is on disk either way, and
  * the completion marker beside it is what a listing falls back to.
  */
-export async function recordReading(readingsPath: string): Promise<void> {
+export async function recordReading(
+  readingsPath: string,
+  /**
+   * WHAT THE RUN WAS ASKED FOR — the two fields of `ReadRequest` the person
+   * filled in — handed over rather than inferred from what came back.
+   *
+   * It is what decides whether the next reading of this book REPLACES this step
+   * or branches beside it (`MINTED_BY_THE_RUN`), and nothing on disk can answer
+   * it afterwards: a bank does not record which pages it was told to leave out,
+   * and working that out from the gaps in a file would be the same species of
+   * guess as reading a language out of a filename. The job knows what it asked;
+   * it says so, exactly as the translation hands over its `--to`.
+   *
+   * Defaulted so that a caller with nothing to say — a reading recorded by a
+   * build that predates this, or one adopted from outside the queue — records a
+   * reading of the whole book with no language declared, which is the plain
+   * question and the one a migrated project asks too.
+   */
+  asked: { skipPages?: string; language?: string } = {},
+): Promise<void> {
   const resolved = path.resolve(readingsPath);
   const dir = projectDirOf(resolved);
   if (dir === null) {
@@ -2129,13 +2215,15 @@ export async function recordReading(readingsPath: string): Promise<void> {
        * while looking at it, and every one of those steps would name the single
        * bank file the engine writes.
        *
-       * THE GENERATION IS CARRIED AND IS NOT PART OF THE QUESTION. `reRunTarget`
-       * excludes it deliberately (see `MINTED_BY_THE_RUN`): a re-read mints a new
-       * one — that is what a generation is FOR — so comparing them would make
-       * every re-read look like a new question and leave the project holding two
-       * banks where the user asked for one. What decides append-or-replace here is
-       * the parent and the page count; what the generation does is let a curation
-       * say which pass over the pages its block numbers are about.
+       * WHAT WAS ASKED FOR IS RECORDED SEPARATELY FROM WHAT CAME BACK, and the
+       * two piles decide different things. `generation` and `pages` are the run's
+       * own answer — one minted by the pass, one counted off the finished bank —
+       * and both are excluded from the re-run comparison (`MINTED_BY_THE_RUN`): a
+       * re-read mints a new generation by design, so comparing it would make every
+       * re-read look like a new question and leave the project holding two banks
+       * where the user asked for one. The page skips and the language are the
+       * QUESTION, so they are what decides append-or-replace, and a re-read of the
+       * same request replaces while one asking for a different range branches.
        *
        * A REPLACE STALES EVERYTHING DOWNSTREAM, which `recordLanding` does: the
        * saves made against the previous bank name blocks by numbers that mean
@@ -2148,7 +2236,21 @@ export async function recordReading(readingsPath: string): Promise<void> {
         action: 'read',
         parent: originOf(ledgerOf(manifest))?.id ?? null,
         payload: `${READINGS}/${manifest.key}.jsonl`,
-        params: { generation, pages },
+        // Trimmed and dropped when empty, so that "asked for nothing" has ONE
+        // spelling. A blank `--skip-pages` box and an absent field are the same
+        // statement, and two spellings of it would be two questions to
+        // `reRunTarget`: the same book read twice, branching because one run
+        // recorded the empty string somebody's cursor left behind.
+        params: {
+          generation,
+          pages,
+          ...asked.skipPages !== undefined && asked.skipPages.trim().length > 0
+            ? { skipPages: asked.skipPages.trim() }
+            : {},
+          ...asked.language !== undefined && asked.language.trim().length > 0
+            ? { language: asked.language.trim() }
+            : {},
+        },
         createdAt: Date.now(),
       });
       await writeManifest(dir, manifest);
