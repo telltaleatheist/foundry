@@ -1955,19 +1955,28 @@ export interface OverlayLoad {
    */
   file: OverlayFileWire;
   /**
-   * The frozen curation a rendering at the position is made with, FOR DISPLAY,
-   * or null when the live file is that curation.
+   * The frozen curation the position DISPLAYS, or null when what is on the pages
+   * is the live file.
    *
    * ── Why the answer carries two curations rather than resolving to one ───────
    *
    * `locateOverlay` has kept these apart on the disk side since the day snapshots
-   * existed: `file` is where a correction goes and `rendering` is what a Generate
-   * reads, because resolving one to the other would mean the next strike anybody
+   * existed: `file` is where a correction goes and `displayed` is what the pages
+   * draw, because resolving one to the other would mean the next strike anybody
    * made while standing on a save silently rewrote that save. What was missing is
-   * that `rendering` never crossed IPC, so the block editor drew the LIVE
-   * outlines over a book that renders frozen — read-only and honest about it, and
-   * showing the wrong corrections. The entire point of clicking an old save is to
-   * see the book as it was then.
+   * that the second one never crossed IPC, so the block editor drew the LIVE
+   * outlines over a book it was showing frozen — read-only and honest about it,
+   * and showing the wrong corrections. The entire point of clicking an old save
+   * is to see the book as it was then.
+   *
+   * IT IS NOT WHAT A GENERATE IS MADE WITH, which it was until translations
+   * landed. Standing on a `translate` row, a Generate applies the curation the
+   * translation was taken under while the pane shows the live corrections — the
+   * row froze a bank of translated blocks and nobody's strikes, so there is
+   * nothing there to display frozen and somebody standing on it is trying to
+   * correct the book they just translated. `DISPLAYS_ITSELF` (shared/ledger.ts)
+   * is the ruling; docs/TRANSLATION-STEPS.md §4 is why the gap between the two
+   * answers is closed by pressing Save rather than by picking one of them.
    *
    * NULL IS THE ORDINARY ANSWER, and it is null for every project nobody has
    * pressed Save in and for every position that is not standing on a save. It is

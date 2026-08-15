@@ -44,6 +44,7 @@ import {
   currentStandard,
   deleteCost,
   deleteSubtree,
+  displayedCuration,
   emptyLedger,
   labelFor,
   markStale,
@@ -1542,6 +1543,153 @@ describe('curationInEffect says which overlay a rendering at the position is mad
       params: { pages: 12 },
     }));
     assert.equal(curationInEffect({ ...ledger, position: 'r2' }), null);
+  });
+});
+
+/**
+ * ── AND `displayedCuration` SAYS WHICH OVERLAY IS ON THE PAGES ───────────────
+ *
+ * The two questions were one for as long as the only two states were "standing
+ * on a save" and "standing on the reading". A translation parted them. What a
+ * GENERATE is made with is a fact about the chain — the curation the translation
+ * was taken under, because that is the state its blocks were numbered in — and
+ * what the PANE draws is a fact about the row that was clicked. Asked the render
+ * question, the block editor went read-only under every translation made from a
+ * save, which made the user's own walkthrough (strike some blocks after
+ * translating, save, generate that row) impossible to perform.
+ *
+ * So: snapshots display themselves and lock; every other row displays the live
+ * overlay and edits. What is asserted here is that rule, and — on the one row
+ * where the two answers differ — that they still both hold, deliberately.
+ */
+describe('displayedCuration says which overlay the block editor is showing', () => {
+  /** import → read → save → a translation OF that save → a save under it. */
+  function branchedUnderATranslation(): ProjectLedger {
+    let ledger = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100, 'Imported'));
+    ledger = appendStep(ledger, step({
+      id: 'read', parent: 's0', action: 'read', payload: 'readings/book.jsonl', createdAt: 200,
+    }));
+    ledger = appendStep(ledger, step({
+      id: 'save', parent: 'read', action: 'curate', payload: 'curations/one.json', createdAt: 300,
+      params: { generation: GENERATION, amendments: 23 },
+    }));
+    ledger = appendStep(ledger, step({
+      id: 'en', parent: 'save', action: 'translate', payload: 'generated/Book (en).epub',
+      createdAt: 400, params: { language: 'English' },
+    }));
+    return appendStep(ledger, step({
+      id: 'after', parent: 'en', action: 'curate', payload: 'curations/two.json', createdAt: 500,
+      params: { generation: GENERATION, amendments: 4 },
+    }));
+  }
+
+  test('standing on a save shows that save', () => {
+    const at = { ...branchedUnderATranslation(), position: 'save' };
+    assert.equal(displayedCuration(at)?.payload, 'curations/one.json');
+  });
+
+  test('standing on the reading shows the live overlay', () => {
+    assert.equal(displayedCuration({ ...branchedUnderATranslation(), position: 'read' }), null);
+  });
+
+  test('standing on the import shows the live overlay', () => {
+    assert.equal(displayedCuration({ ...branchedUnderATranslation(), position: 's0' }), null);
+  });
+
+  test('standing on a translation shows the LIVE overlay, and the Generate still does not', () => {
+    /*
+     * THE ONE ROW WHERE THE TWO ANSWERS DIFFER, pinned from both sides so that
+     * neither can be "tidied" into the other. The pane shows the corrections
+     * somebody is working on; a Generate of the translation is made with the save
+     * it was taken under. The gap between them is closed by pressing Save, and the
+     * save is a row (docs/TRANSLATION-STEPS.md §4).
+     */
+    const at = { ...branchedUnderATranslation(), position: 'en' };
+    assert.equal(displayedCuration(at), null);
+    assert.equal(curationInEffect(at)?.payload, 'curations/one.json');
+  });
+
+  test('a save made UNDER a translation shows itself, because it is a save', () => {
+    const at = { ...branchedUnderATranslation(), position: 'after' };
+    assert.equal(displayedCuration(at)?.payload, 'curations/two.json');
+    // And that one the Generate agrees with: the pipeline renders THIS snapshot
+    // before the translate stage sees a word.
+    assert.equal(curationInEffect(at)?.payload, 'curations/two.json');
+  });
+
+  test('the newest step is the answer when no pointer is written down', () => {
+    // `positionOf`'s fallback, inherited rather than restated: the ledger above
+    // ends on a save, so a manifest that never recorded a position shows it.
+    const ledger = { ...branchedUnderATranslation(), position: undefined };
+    assert.equal(displayedCuration(ledger)?.payload, 'curations/two.json');
+  });
+
+  test('there is no walk here, so a save under an OLDER reading still shows itself', () => {
+    /*
+     * `curationInEffect` stops at a reading, because a snapshot from before a
+     * re-read names blocks by numbers that mean different blocks now. This does
+     * not stop anywhere, and it must not: the person clicked that row to see what
+     * they saved, and refusing to draw it would leave them looking at a book with
+     * no explanation of whose corrections are on it. What protects them is
+     * `readCuration` (electron/overlays.ts), which compares the snapshot's
+     * generation against the reading's and says the pages moved.
+     */
+    let ledger = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100, 'Imported'));
+    ledger = appendStep(ledger, step({
+      id: 'r1', parent: 's0', action: 'read', payload: 'readings/book.jsonl', createdAt: 200,
+    }));
+    ledger = appendStep(ledger, step({
+      id: 'old', parent: 'r1', action: 'curate', payload: 'curations/old.json', createdAt: 300,
+    }));
+    ledger = appendStep(ledger, step({
+      id: 'r2', parent: 's0', action: 'read', payload: 'readings/again.jsonl', createdAt: 400,
+    }));
+    assert.equal(displayedCuration({ ...ledger, position: 'r2' }), null);
+    assert.equal(displayedCuration({ ...ledger, position: 'old' })?.payload, 'curations/old.json');
+  });
+
+  test('a project nobody has ever saved in shows the live overlay everywhere', () => {
+    assert.equal(displayedCuration(branched()), null);
+    assert.equal(displayedCuration(emptyLedger()), null);
+  });
+
+  test('a save made standing on a translation lands UNDER it and moves nothing', () => {
+    /*
+     * The commit path, pure: `recordCuration` passes `parent: null`, `landStep`
+     * falls back to the standing position, and `recordLanding` is what actually
+     * files the row. Standing on the translation, that is a `curate` whose parent
+     * is the translation — which is what makes the strike-then-save-then-generate
+     * walkthrough produce a row of its own rather than a second opinion about the
+     * translation's. And the pointer stays on the translation, so the next strike
+     * is as editable as the last (`RETAINED_BESIDE_YOU`).
+     */
+    let ledger = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100, 'Imported'));
+    ledger = appendStep(ledger, step({
+      id: 'read', parent: 's0', action: 'read', payload: 'readings/book.jsonl', createdAt: 200,
+    }));
+    ledger = appendStep(ledger, step({
+      id: 'en', parent: 'read', action: 'translate', payload: 'generated/Book (en).epub',
+      createdAt: 300, params: { language: 'English' },
+    }));
+    assert.equal(positionOf(ledger)?.id, 'en');
+
+    const landed = recordLanding(ledger, {
+      action: 'curate',
+      // What `landStep` computes for a commit: nothing was captured at enqueue —
+      // a save happens now — so the position at this instant is the parent.
+      parent: positionOf(ledger)!.id,
+      payload: 'curations/after.json',
+      params: { generation: GENERATION, amendments: 4 },
+      createdAt: 400,
+      id: 'after',
+    });
+    assert.equal(landed.replaced, false);
+    assert.equal(landed.step.parent, 'en');
+    assert.equal(landed.step.retention, 'irreplaceable');
+    assert.equal(landed.ledger.position, 'en');
+    assert.equal(displayedCuration(landed.ledger), null);
+    assert.equal(displayedCuration({ ...landed.ledger, position: 'after' })?.payload,
+      'curations/after.json');
   });
 });
 

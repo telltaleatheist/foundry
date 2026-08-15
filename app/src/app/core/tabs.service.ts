@@ -371,9 +371,9 @@ export class TabsService {
    * The step ledger, read for ONE question this service has to answer for itself:
    * may this document be corrected right now?
    *
-   * Standing on a frozen save means every rendering at that position is made with
-   * the snapshot, while `overlay.save` writes the LIVE curation — so a gesture
-   * made there would land somewhere other than the book on screen. The three doors
+   * Standing on a save means the pages are showing that frozen copy, while
+   * `overlay.save` writes the LIVE curation — so a gesture made there would land
+   * somewhere other than the book on screen. The three doors
    * into a curation all ask before they write (see `heldByASave`), and the reason
    * the gate is in this class rather than in the panel is that a panel is not the
    * only way in: the Delete key, the undo chord and the menu reach the same
@@ -1663,10 +1663,13 @@ export class TabsService {
         detected: blocks.chapters,
         overlay: loaded.file as OverlayFile,
         /*
-         * THE SAVE THIS POSITION RENDERS WITH, drawn instead of the live outlines
-         * when there is one. Main decides which — `locateOverlay.rendering` is the
-         * same answer the engine's `--overlay` gets — so the pages and a Generate
-         * from here can never be about two different curations.
+         * THE SAVE THIS POSITION SHOWS, drawn instead of the live outlines when
+         * there is one — which is when the row being stood on IS a save, and never
+         * otherwise (`DISPLAYS_ITSELF`, shared/ledger.ts). Main decides:
+         * `locateOverlay.displayed`. The gate that turns correcting off is derived
+         * from the same answer (`curation-lock.ts`), so the outlines on the pages
+         * and the refusal a Delete key meets can never be about two different
+         * curations.
          */
         frozen: loaded.frozen as FrozenCuration | null,
         problem: null,
@@ -1845,17 +1848,28 @@ export class TabsService {
   // what makes clicking its row worth anything. Main protects that on the disk
   // side by keeping two paths apart rather than resolving one: `locateOverlay.file`
   // is always the LIVE curation, because that is where a correction goes, and
-  // `.rendering` is the snapshot when the position stands on one, because that is
-  // what a Generate reads. Its own comment says the rest — resolving `file` to the
+  // `.displayed` is the snapshot when the position stands on one, because that is
+  // what the pages draw. Its own comment says the rest — resolving `file` to the
   // snapshot would mean the next strike anybody made while standing on a save
   // silently rewrote that save.
   //
   // WHAT THAT LEAVES IS THIS SIDE'S JOB. This service writes through
   // `overlay.save`, which writes the live file, while the pages at that position
-  // are being rendered from the frozen one. Somebody striking a paragraph there
-  // would be correcting a book they are not looking at, and the first they would
-  // hear of it is a Generate that comes back without their strike in it. So the
-  // mode is READ-ONLY exactly where the two diverge.
+  // are showing the frozen one. Somebody striking a paragraph there would be
+  // correcting a book they are not looking at, and the first they would hear of
+  // it is a Generate that comes back without their strike in it. So the mode is
+  // READ-ONLY exactly where the two diverge.
+  //
+  // AND IT DIVERGES ON ONE KIND OF ROW ONLY — the row a save made. Nothing in
+  // this file decides that: `curationLock` and `OverlayLoad.frozen` are both the
+  // one display answer (`DISPLAYS_ITSELF`, shared/ledger.ts), so this mode goes
+  // read-only exactly when a snapshot is what is on the pages, and it inherits
+  // that rather than restating it. Standing on a TRANSLATION is live and editable
+  // for that reason: the translation retained a bank of translated blocks and
+  // froze nobody's corrections, so the outlines there are the live ones, a strike
+  // lands in the file it came from, and the walkthrough this app is for — strike
+  // some blocks after translating, save, generate that row — is a thing a person
+  // can do.
 
   /** The project this document belongs to, or null for a file opened from elsewhere. */
   private projectDirOf(tab: Tab): string | null {
@@ -2058,9 +2072,9 @@ export class TabsService {
     const tab = this.byId(tabId);
     if (view === null || view.overlay === null || !tab) return null;
 
-    // The first of the three doors. See `heldByASave`: standing where a rendering
-    // is made from a frozen save, this gesture would be written into the LIVE
-    // curation, which is not the book on screen.
+    // The first of the three doors. See `heldByASave`: standing on a save, the
+    // pages are showing that frozen copy while this gesture would be written into
+    // the LIVE curation, which is not the book on screen.
     const held = this.heldByASave(tabId);
     if (held !== null) {
       this.notice.set(held);
@@ -3251,10 +3265,10 @@ export class TabsService {
        * THE THIRD DOOR, and the one it would be easiest to forget. An undo is a
        * write like any other — it puts the rows of an action back into the live
        * curation and saves the whole file — so taking a correction BACK while
-       * standing on a frozen save changes the live state under a book being
-       * rendered from the snapshot, exactly as making one would. The stacks are
+       * standing on a frozen save changes the live state under a book the pages
+       * are showing from the snapshot, exactly as making one would. The stacks are
        * left where they are, so the chord works again the moment the user steps
-       * back to the reading.
+       * off the save onto a row that edits.
        */
       const held = this.heldByASave(tab.id);
       if (held !== null) {

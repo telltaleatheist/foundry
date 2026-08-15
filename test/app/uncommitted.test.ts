@@ -286,6 +286,50 @@ describe('which save the corrections are measured against', () => {
     assert.equal(restorePointOf(stale), null);
   });
 
+  test('corrections made standing UNDER a translation measure against the save made there', () => {
+    /*
+     * ── THE CLOSE DIALOG, ON THE ROW PHASE 3 MADE EDITABLE ────────────────────
+     *
+     * The block editor is live on a translate row now (`DISPLAYS_ITSELF`,
+     * shared/ledger.ts), so this is a place people genuinely correct in: translate
+     * a curated book, strike the running heads it turned into paragraphs, press
+     * Save. That save hangs UNDER the translation, which is a shape this module was
+     * written before anybody could make — so what it does with one is worth pinning
+     * rather than assuming.
+     *
+     * Nothing here needed changing and the reason is `liveRoot`. It walks to the
+     * nearest `read`, and a save under a translation still has that reading on its
+     * ancestry, so it is found exactly like a save made beside the reading. That is
+     * not a coincidence: a curation freezes the LIVE OVERLAY, which is corrections
+     * to the SCAN's blocks bound to the reading's generation, however far down the
+     * list it was committed. There is one live overlay per reading and this finds
+     * the newest snapshot of it.
+     */
+    let ledger = saveOn(read(), 's2', 's1', 300, 3);
+    ledger = appendStep(ledger, step({
+      id: 's3', parent: 's2', action: 'translate', payload: 'generated/Book (en).epub', createdAt: 400,
+      params: { language: 'English' },
+    }));
+    ledger = saveOn(ledger, 's4', 's3', 500, 5);
+    // The pointer is on the translation: a save is retained beside you, so the
+    // person who just pressed Save is standing exactly where they were correcting.
+    assert.equal(ledger.position, 's3');
+
+    const point = restorePointOf(ledger);
+    assert.equal(point?.id, 's4');
+    // Saved and closed straight away: the live overlay is what was frozen, and
+    // there is nothing to interrupt anybody about.
+    const saved = striking('7:14', '9:2', '9:3', '11:0', '11:1');
+    assert.equal(uncommittedCuration(saved, frozen(saved, point!.label)), null);
+    // One more strike after the save, and the question is about that one strike
+    // and names the row made under the translation.
+    const since = uncommittedCuration(
+      striking('7:14', '9:2', '9:3', '11:0', '11:1', '12:4'),
+      frozen(saved, point!.label),
+    );
+    assert.deepEqual(since, { blocks: 1, chapters: false, since: 'Saved corrections (5)' });
+  });
+
   test('a save under another branch’s reading is not this reading’s save', () => {
     // A re-read that asked a different question branches beside the first, and the
     // saves under the old reading are about the old reading's blocks.

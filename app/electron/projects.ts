@@ -97,6 +97,7 @@ import { openedAtFor } from './recents';
 import type {
   ConversionKind,
   LedgerParams,
+  LedgerStep,
   ProjectDocument,
   ProjectDocumentKind,
   ProjectGenerated,
@@ -125,6 +126,7 @@ import {
   deleteCost,
   deleteSubtree,
   destroyedBy,
+  displayedCuration,
   emptyLedger,
   generationForLanding,
   generationInEffect,
@@ -1728,15 +1730,51 @@ export async function positionStepId(dir: string): Promise<string | null> {
  * exactly the path it has always got.
  */
 export function renderingOverlay(dir: string, manifest: ProjectManifest): string {
-  const snapshot = curationInEffect(ledgerOf(manifest));
-  return snapshot === null
-    ? path.join(overlaysDir(dir), `${manifest.key}.json`)
-    : path.join(dir, ...snapshot.payload.split('/'));
+  return overlayFileFor(dir, manifest, curationInEffect(ledgerOf(manifest)));
 }
 
 /** The same answer for a caller that has not read the catalogue yet. */
 export async function overlayForPosition(dir: string): Promise<string> {
   return renderingOverlay(dir, await readManifest(dir));
+}
+
+/**
+ * The overlay the BLOCK EDITOR SHOWS at the position — and the reason there are
+ * two of these functions rather than one.
+ *
+ * ── Two questions that used to be one, and the row where they part ──────────
+ *
+ * What a Generate is made with and what the pages draw were the same answer for
+ * as long as the only two states were "standing on a save" and "standing on the
+ * reading". A translation broke that tie. A Generate from a translate row is made
+ * with the curation the translation was taken under, because that is the state
+ * its blocks were numbered in and it is a fact about the chain — but the PANE
+ * there shows the live corrections, because a translate row froze nobody's
+ * corrections and the person standing on it is trying to strike a paragraph in a
+ * book they just translated (`DISPLAYS_ITSELF`, shared/ledger.ts, and
+ * docs/TRANSLATION-STEPS.md §4).
+ *
+ * So this composes a path from `displayedCuration` and `renderingOverlay` above
+ * composes one from `curationInEffect`, and they agree everywhere except that one
+ * row. THEY SHARE THE COMPOSITION AND NOT THE QUESTION, which is the split stated
+ * exactly: the fallback to the live file, the project-relative payload split on
+ * its own forward slashes, the never-by-basename rule — all of that is one
+ * function below, so the day the layout changes it changes for both. What differs
+ * is the sentence each of them asks the ledger, and that is the whole of it.
+ */
+export function displayedOverlay(dir: string, manifest: ProjectManifest): string {
+  return overlayFileFor(dir, manifest, displayedCuration(ledgerOf(manifest)));
+}
+
+/** A snapshot's file, or the live overlay when there is no snapshot. */
+function overlayFileFor(
+  dir: string,
+  manifest: ProjectManifest,
+  snapshot: LedgerStep | null,
+): string {
+  return snapshot === null
+    ? path.join(overlaysDir(dir), `${manifest.key}.json`)
+    : path.join(dir, ...snapshot.payload.split('/'));
 }
 
 /**

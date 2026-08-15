@@ -64,6 +64,7 @@ import { randomUUID } from 'node:crypto';
 import { writeAtomically } from './epub-writer';
 import {
   curationsDir,
+  displayedOverlay,
   ledgerOf,
   overlayArchiveDir,
   overlaysDir,
@@ -72,7 +73,6 @@ import {
   readingBank,
   readingGeneration,
   recordCuration,
-  renderingOverlay,
   type LedgerView,
 } from './projects';
 import { restorePointOf, uncommittedCuration, type SavedCuration } from '../shared/uncommitted';
@@ -116,7 +116,7 @@ export interface OverlayLocation {
   file: string;
   ledger: string;
   /**
-   * The overlay a RENDERING at the project's position is made with — the frozen
+   * The overlay the BLOCK EDITOR SHOWS at the project's position — the frozen
    * curation snapshot when the user is standing on one, and `file` otherwise.
    *
    * ── Why this is a second field and not `file` resolved differently ──────────
@@ -131,12 +131,29 @@ export interface OverlayLocation {
    * do.
    *
    * So the two questions are kept apart, because they are two questions: WHERE
-   * DOES A CORRECTION GO (always the live pair) and WHAT DOES A RENDERING READ
-   * (the position's answer). Showing a snapshot read-only in the block editor
-   * when the position is a save is the renderer's job and a later pass; what this
-   * field settles is the one that reaches the engine's command line.
+   * DOES A CORRECTION GO (always the live pair) and WHAT IS ON THE PAGES (the
+   * position's answer). The second is what reaches the renderer as
+   * `OverlayLoad.frozen`, as a type nothing can write, and it is what
+   * `curation-lock.ts` refuses editing over — one answer, so the outlines and the
+   * gate cannot disagree about which curation this is.
+   *
+   * ── AND IT IS NOT WHAT A GENERATE READS, which it used to be ────────────────
+   *
+   * This field was `renderingOverlay` — the `--overlay` the engine is handed —
+   * on the reasoning that the pages and the product must show the same book. The
+   * two part company on exactly one row and it is the row the user's walkthrough
+   * lives on. A Generate from a `translate` step is made with the curation the
+   * translation was taken under, because that is the state its blocks were
+   * numbered in; the PANE there shows the live corrections, because a translate
+   * row froze nobody's corrections and somebody standing on it is trying to
+   * strike a paragraph in the book they just translated. Asked the render
+   * question, the editor went read-only under every translation made from a save
+   * and the walkthrough was impossible. See `DISPLAYS_ITSELF` (shared/ledger.ts)
+   * for the ruling and docs/TRANSLATION-STEPS.md §4 for why the difference
+   * between the two answers is resolved by pressing Save rather than by picking
+   * one of them.
    */
-  rendering: string;
+  displayed: string;
   /**
    * The readings bank these amendments are about.
    *
@@ -207,7 +224,7 @@ export async function locateOverlay(pdfPath: string): Promise<OverlayLocation> {
    *
    * `readingBank` walks up from the position to the reading this branch of the
    * story is about, and it is handed the manifest already open here for
-   * `renderingOverlay`'s reason: the bank and the curation must be answers about
+   * `displayedOverlay`'s reason: the bank and the curation must be answers about
    * one moment of one catalogue. A project with a single reading — which is every
    * project that predates per-step paths — gets the path it always got, because
    * that is what its read step says.
@@ -234,7 +251,7 @@ export async function locateOverlay(pdfPath: string): Promise<OverlayLocation> {
     // read: the position is a fact about the same catalogue this function has
     // open, and asking for it again would let the two answers be about two
     // different moments.
-    rendering: renderingOverlay(projectDir, manifest),
+    displayed: displayedOverlay(projectDir, manifest),
     readings,
     /**
      * THE PDF THE BANK WAS READ FROM, which is not the one the tab is showing.
@@ -349,7 +366,7 @@ export async function loadOverlayFile(pdfPath: string): Promise<OverlayLoad> {
 }
 
 /**
- * The frozen curation the position renders with, or null and a reason.
+ * The frozen curation the position DISPLAYS, or null and a reason.
  *
  * ── Why the snapshot is READ AGAIN rather than trusted for being retained ────
  *
@@ -377,14 +394,21 @@ async function readCuration(where: OverlayLocation): Promise<{
   frozen: FrozenCuration | null;
   notice: string | null;
 }> {
-  // The live file IS the rendering for almost every project and every position:
-  // nobody has pressed Save, or the pointer is not standing where a save is in
-  // effect. Compared by the whole path, never by a basename.
-  if (key(where.rendering) === key(where.file)) return { frozen: null, notice: null };
+  // The live file IS what the pages show for almost every project and every
+  // position: nobody has pressed Save, or the pointer is not standing on the row
+  // a save made. Compared by the whole path, never by a basename.
+  //
+  // AND THE SENTENCES BELOW ARE HONEST FOR IT. Every one of them opens "you are
+  // standing on a saved copy", which was very nearly a lie while this field
+  // answered the render question: standing on a TRANSLATION made from a save, a
+  // person who had never clicked a save row was told they were standing on one.
+  // The display question can only answer non-null for the row a save made, so
+  // the sentence is now true wherever it is reached.
+  if (key(where.displayed) === key(where.file)) return { frozen: null, notice: null };
 
   let text: string;
   try {
-    text = await fsp.readFile(where.rendering, 'utf8');
+    text = await fsp.readFile(where.displayed, 'utf8');
   } catch (err) {
     return {
       frozen: null,
@@ -396,7 +420,7 @@ async function readCuration(where: OverlayLocation): Promise<{
 
   let file: OverlayFile;
   try {
-    file = parseOverlay(text, where.rendering);
+    file = parseOverlay(text, where.displayed);
   } catch (err) {
     return {
       frozen: null,

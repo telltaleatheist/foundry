@@ -1792,6 +1792,91 @@ export function curationInEffect(ledger: ProjectLedger): LedgerStep | null {
 }
 
 /**
+ * ROWS THAT DISPLAY THEMSELVES — the other half of the pointer's job, and the
+ * half that is NOT the walk above.
+ *
+ * ── The ruling, in one line ─────────────────────────────────────────────────
+ *
+ * SNAPSHOTS DISPLAY THEMSELVES AND LOCK; EVERY OTHER ROW DISPLAYS THE LIVE
+ * OVERLAY AND EDITS. Standing on a `curate` puts that frozen copy on the pages
+ * and takes correcting away, because the whole point of clicking an old save is
+ * to see the book as it was then. Standing on anything else — the import, the
+ * reading, a translation — puts the LIVE corrections on the pages and lets a
+ * person work.
+ *
+ * ── Why a `translate` row is a live row, which is the line that changed ─────
+ *
+ * A translation used to be shown frozen, because the question asked of the
+ * ledger was `curationInEffect` and a translation made FROM a save resolves to
+ * that save. It made the editor read-only one row below the save, and it made
+ * the user's own walkthrough impossible: translate from a save, and correcting
+ * this book is off forever after — every row below it inherits the freeze, and
+ * the only way back to a working editor is to abandon the branch you just made.
+ *
+ * The mistake was treating two different things as one. A TRANSLATE ROW IS A
+ * STATE OF THE TEXT, NOT A SNAPSHOT OF CORRECTIONS. What it retained is a bank
+ * of translated blocks; it froze nobody's strikes and there is no copy of any
+ * corrections in it to be shown or protected. So the corrections pane there
+ * shows the corrections that are actually being worked on — the live ones — and
+ * striking a paragraph while standing on a translation is the ordinary gesture
+ * the walkthrough is made of: strike, commit, and the commit is a row under the
+ * translation.
+ *
+ * ── Why this is not `curationInEffect` with a flag ──────────────────────────
+ *
+ * Because it is a different question and the walk is the proof. DISPLAY IS
+ * ABOUT WHICH ROW YOU CLICKED; RENDER IS ABOUT WHAT STATE IS IN EFFECT — and
+ * only the second one has anything to walk. A rendering at a translation is
+ * made with the curation the translation was taken under, which is a fact three
+ * rows up the chain and has to be found; what the pane draws is a fact about the
+ * row itself and is answered by looking at it. Folding them into one function
+ * with a `forDisplay` argument would put a boolean where the difference in
+ * meaning is, and the day somebody passed the wrong one the failure would be
+ * silent in both directions.
+ *
+ * WHAT GENERATE RENDERS IS UNCHANGED BY ANY OF THIS. `renderingOverlay`
+ * (electron/projects.ts) and `renderPipeline`'s `curation` (shared/pipeline.ts)
+ * still ask `curationInEffect`, so a Generate is still made with the committed
+ * snapshot in effect and the dialog still names it. That leaves exactly one
+ * place where the pane and the Generate differ — standing on a translation with
+ * strikes nobody has committed, the pages show them and a Generate of the
+ * translation does not — and it is resolved the way this whole app resolves it:
+ * commit, and the commit is a row (docs/TRANSLATION-STEPS.md §4).
+ *
+ * A TABLE, for `RETAINED_BESIDE_YOU`'s reason. The lock derives from this answer
+ * (shared/curation-lock.ts) so the two cannot drift, and the day a fifth action
+ * arrives its author has to say whether that row is a frozen copy of somebody's
+ * corrections — which is a question with a real answer, and one that a literal
+ * `action === 'curate'` at a call site would let them skip.
+ */
+const DISPLAYS_ITSELF: Readonly<Record<StepAction, boolean>> = {
+  import: false,
+  read: false,
+  curate: true,
+  translate: false,
+};
+
+/**
+ * The curation snapshot the block editor SHOWS at the position, or null when the
+ * answer is the live overlay — the sibling of `curationInEffect` above, and much
+ * the simpler of the two on purpose.
+ *
+ * There is no walk here and there should not be one. See `DISPLAYS_ITSELF` for
+ * the whole of the reasoning; the short of it is that the walk belongs to the
+ * render, because "what state is in effect" is a fact about a chain, and this is
+ * "what did you click", which is a fact about one row.
+ *
+ * NULL IS THE ORDINARY ANSWER, as it is for every question in this family: a
+ * person correcting a scan stands on the reading, and a person who has just
+ * pressed Save is still standing on the reading (`RETAINED_BESIDE_YOU`).
+ */
+export function displayedCuration(ledger: ProjectLedger): LedgerStep | null {
+  const standing = positionOf(ledger);
+  if (standing === null) return null;
+  return DISPLAYS_ITSELF[standing.action] ? standing : null;
+}
+
+/**
  * The translation a Generate AT THE POSITION produces again, or null when the
  * position is one a single run of `vlm-convert` answers.
  *

@@ -485,11 +485,11 @@ export interface FoundryApi {
      *
      * TWO CURATIONS COME BACK AND ONLY ONE OF THEM MAY BE WRITTEN. `file` is the
      * live overlay, which is where every correction goes; `frozen` is the
-     * committed snapshot a rendering at the position is made with, handed over so
-     * the editor can DRAW the save somebody is standing on rather than drawing the
-     * live outlines over a book that renders frozen. It is a type the write path
-     * will not accept, so "display only" is enforced by the compiler rather than
-     * by remembering. See `OverlayLoad.frozen`.
+     * committed snapshot the position DISPLAYS — non-null only while somebody is
+     * standing on the row a save made — handed over so the editor can draw that
+     * save rather than drawing the live outlines over it. It is a type the write
+     * path will not accept, so "display only" is enforced by the compiler rather
+     * than by remembering. See `OverlayLoad.frozen`.
      */
     load(pdfPath: string): Promise<OverlayLoad>;
     /**

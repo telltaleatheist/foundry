@@ -4,13 +4,13 @@
  * A curation step is a copy of somebody's corrections that must never change
  * again — that is the entire reason a step can point at one and the entire
  * reason clicking its row is worth anything. The disk side already protects it:
- * `locateOverlay` keeps `file` (where a correction goes) and `rendering` (what a
- * Generate reads) as two fields rather than resolving one, so no write can land
+ * `locateOverlay` keeps `file` (where a correction goes) and `displayed` (what
+ * the pages draw) as two fields rather than resolving one, so no write can land
  * in a snapshot. What it cannot protect against is the RENDERER letting somebody
  * edit while standing there — the edit would go to the live overlay, the pages
- * are being rendered from the frozen one, and the person would be correcting a
- * book they are not looking at and would not find out until a Generate came back
- * without their strike in it.
+ * are showing the frozen one, and the person would be correcting a book they are
+ * not looking at and would not find out until a Generate came back without their
+ * strike in it.
  *
  * So the editor is read-only exactly where the two diverge, and these tests
  * assert where that is:
@@ -23,10 +23,22 @@
  *   ancestor. Getting this one wrong would take editing away from the state every
  *   curator spends their whole session in.
  *
- *   A TRANSLATION MADE FROM A SAVE IS LOCKED. This is the case the tempting test
- *   ("is the position a curate step") gets wrong, and it is the same divergence
- *   one row further down — `renderingOverlay` walks up to that save, so the pages
- *   are frozen there too.
+ *   A TRANSLATION MADE FROM A SAVE IS NOT LOCKED, and this is the one that
+ *   changed. It used to be: the gate asked `curationInEffect`, which walks up to
+ *   the save the translation was taken of, so the editor went read-only one row
+ *   below the save and stayed that way for every row below THAT — which made the
+ *   gesture this whole app is for impossible. Translate a curated book and there
+ *   was no longer any way to strike a paragraph in it. A translate row retained a
+ *   bank of translated blocks; it froze nobody's corrections, so there is nothing
+ *   there to be shown or protected, the pane draws the LIVE corrections, and a
+ *   strike lands in the file it came from. Snapshots display themselves and lock;
+ *   every other row displays the live overlay and edits.
+ *
+ *   A SAVE MADE UNDER A TRANSLATION IS LOCKED, because it is a save — the rule is
+ *   about what a row IS, not about where it sits — and the way out it names is
+ *   the translation, not the reading. Sending somebody all the way back to the
+ *   scan to do a thing they can do one click up would be the app making them
+ *   leave the branch they are working in.
  *
  *   THE WAY OUT IS NAMED. An editor that has quietly stopped responding to the
  *   Delete key with no account of itself is the failure this sentence exists to
@@ -128,26 +140,13 @@ describe('the reading is where live editing happens, whatever hangs off it', () 
   });
 });
 
-describe('standing where a rendering is frozen holds the editor', () => {
+describe('standing on a save holds the editor', () => {
   test('the save itself', () => {
     const lock = curationLock({ ...saved(), position: 's2' });
     assert.ok(lock !== null);
     assert.equal(lock.snapshot.id, 's2');
     assert.equal(lock.back?.id, 's1');
     assert.equal(editingIsHeld({ ...saved(), position: 's2' }), true);
-  });
-
-  test('a translation MADE FROM the save — the case "is the position a curate" misses', () => {
-    // `renderingOverlay` resolves this position to s2's snapshot, so the pages are
-    // frozen here exactly as they are one row up. An editor that let somebody
-    // strike a paragraph here would write it into the live curation, which is not
-    // what any rendering from this row reads.
-    const ledger = saved();
-    assert.equal(standingOn(ledger)?.id, 's3');
-    const lock = curationLock(ledger);
-    assert.ok(lock !== null);
-    assert.equal(lock.snapshot.id, 's2');
-    assert.equal(lock.back?.id, 's1');
   });
 
   test('a chain of saves names the one being stood on, not the first', () => {
@@ -160,6 +159,66 @@ describe('standing where a rendering is frozen holds the editor', () => {
     const lock = curationLock({ ...ledger, position: 's4' });
     assert.equal(lock?.snapshot.id, 's4');
     assert.equal(lock?.back?.id, 's1');
+  });
+});
+
+/**
+ * The walkthrough this whole phase exists for, held down step by step: translate
+ * a curated book, strike some blocks in it, save, and every one of those gestures
+ * has to be possible from the row the person is actually standing on.
+ */
+describe('a translation is a state of the TEXT, so its row edits', () => {
+  test('a translation made FROM a save is live — the case the old gate got wrong', () => {
+    // The pointer follows a translation, so this is where somebody lands the
+    // moment the run comes home. Asked `curationInEffect`, this position resolves
+    // to s2 and the editor was read-only here and everywhere below — which is the
+    // book translated and no longer correctable, forever.
+    const ledger = saved();
+    assert.equal(standingOn(ledger)?.id, 's3');
+    assert.equal(curationLock(ledger), null);
+    assert.equal(editingIsHeld(ledger), false);
+  });
+
+  test('a translation made straight from the reading is live too', () => {
+    const ledger = appendStep(saved(), step({
+      id: 's4', parent: 's1', action: 'translate', payload: 'generated/Book (hu).epub',
+      createdAt: 500, params: { language: 'Hungarian' },
+    }));
+    assert.equal(standingOn(ledger)?.id, 's4');
+    assert.equal(curationLock(ledger), null);
+  });
+
+  test('striking after translating and pressing Save leaves you editable on the translation', () => {
+    // The gesture in order: stand on the translation (live), strike, commit. The
+    // commit is retained BESIDE you, so the pointer never moves onto the snapshot
+    // and correcting is still on for the next strike.
+    const ledger = appendStep(saved(), step({
+      id: 's4', parent: 's3', action: 'curate', payload: 'curations/two.json', createdAt: 500,
+      params: { generation: GENERATION, amendments: 4 },
+    }));
+    assert.equal(standingOn(ledger)?.id, 's3');
+    assert.equal(curationLock(ledger), null);
+    assert.equal(editingIsHeld(ledger), false);
+  });
+
+  test('that save locks when you click IT, and the way out is the translation', () => {
+    /*
+     * The rule is about what a row IS. A save under a translation is a save, so
+     * standing on it shows the frozen copy and refuses edits exactly as any other
+     * save does — and the row it sends somebody back to is the nearest LIVE one,
+     * which is the translation they were working under. Naming the reading, as the
+     * old walk did, would send them out of the branch entirely to do a thing they
+     * can do one click up.
+     */
+    const ledger = appendStep(saved(), step({
+      id: 's4', parent: 's3', action: 'curate', payload: 'curations/two.json', createdAt: 500,
+      params: { generation: GENERATION, amendments: 4 },
+    }));
+    const lock = curationLock({ ...ledger, position: 's4' });
+    assert.ok(lock !== null);
+    assert.equal(lock.snapshot.id, 's4');
+    assert.equal(lock.back?.id, 's3');
+    assert.match(lock.why, /Translated \(English\)/);
   });
 });
 

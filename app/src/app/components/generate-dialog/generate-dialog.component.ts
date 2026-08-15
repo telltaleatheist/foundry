@@ -362,11 +362,18 @@ export class GenerateDialogComponent {
   protected readonly curated = computed(() => {
     const tab = this.tabs.activeDocument();
     if (tab === null || tab.kind !== 'pdf') return false;
-    // THE CURATION THIS POSITION RENDERS WITH, not the live one — which is the
-    // same file main will hand the engine as `--overlay` (`renderingOverlay`).
-    // Standing on a save, the live overlay is not what this Generate applies, and
-    // a sentence composed from it would be describing a different book than the
-    // one about to be made.
+    // THE CURATION THIS POSITION IS SHOWING, which is the frozen save when the
+    // user is standing on one — and standing on a save, the live overlay is not
+    // what this Generate applies, so a sentence composed from it would describe a
+    // different book than the one about to be made.
+    //
+    // It is not `curationInEffect` restated, and on one row it is not the same
+    // answer: standing on a TRANSLATION the pane shows the live corrections while
+    // the Generate applies the save the translation was taken under
+    // (`DISPLAYS_ITSELF`, shared/ledger.ts). This flag is under-promising there in
+    // the same direction it already under-promises everywhere else — it says a
+    // curation exists when the one being worked on has anything in it, and main
+    // applies whatever the position resolves to regardless.
     const shown = this.tabs.curationShown(tab.id);
     return (shown?.amendments.length ?? 0) > 0 || shown?.chapters !== undefined;
   });
