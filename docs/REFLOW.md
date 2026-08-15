@@ -123,8 +123,28 @@ this at `dots-book.ts:424-434` and `test/vlm/typography.test.ts` asserts it.
 Do not reorder for tidiness.
 
 **The cross-page join is new work in this pass**, because today it happens
-during emission (`1602-1620`) rather than in the prologue. It runs after
-step 6 and before step 8: joined text is what chapter detection should see.
+during emission (`1602-1620`) rather than in the prologue. ~~It runs after
+step 6 and before step 8: joined text is what chapter detection should
+see.~~
+
+> **THIS SPEC SAID THE JOIN RUNS BEFORE `proposeSections`, AND THE BUILD
+> PROVED IT CANNOT** (2026-08-15). Joining first removes a page's first
+> block, which shifts `firstIndexOnPage` — and "is this block first on its
+> page" is a condition `proposeChapters` tests, so a heading that is not
+> proposed today would start being proposed. A join could also then cross a
+> section start, which is impossible today because `buildChapterBody` is
+> called once per span. Either one changes the emitted book, which §2
+> forbids.
+>
+> So the order is: propose and fold in **banked-index space** (behaviour
+> untouched), then join with the post-fold starts as hard boundaries, then
+> translate the starts into flow space. Chapter detection still sees joined
+> text in the only sense that matters, because no proposal rule reads a
+> joined block's text — headings never join.
+>
+> **§2 beat §4, which is the fence working as designed.** Recorded rather
+> than quietly fixed: the next person to read §4 would otherwise re-derive
+> the same wrong order.
 
 Join gate, unchanged in substance from `dots-book.ts:1602`:
 
@@ -244,6 +264,26 @@ that rewrites the assembler:
 
 Step 2 is the load-bearing one. If the pass and the existing prologue
 disagree, that assertion catches it before the emitter is touched.
+
+## 9a. Owed after phase A — the ink's leftovers (2026-08-15)
+
+Deleting the ink test stranded the machinery that fed it. Both are LEFT IN
+PLACE deliberately, because removing them was not in the fence and neither is
+free:
+
+- **`src/scan/pgm.ts` is now unreferenced.** `readPgm`'s last caller went with
+  `carriesOver`. Deleting it means updating `docs/ARCHITECTURE.md` §9, which
+  is where the file is described.
+- **A grayscale PGM is still written for every page and now never read** —
+  `src/vlm/bridge.ts` (`grayscale`), `src/vlm/read.ts`, and `vlm_page.py`'s
+  `write_pgm`. Removing it crosses the Python seam and changes what
+  `--renders` leaves on disk. All three sites now carry a comment saying the
+  write is owed a removal, so the waste is documented where somebody will
+  meet it rather than only here.
+
+Neither is urgent — one is dead code, the other is disk somebody asked for
+with `--renders`. Both are cheap to do in a pass that is already touching the
+Python seam.
 
 ## 10. Decisions taken here, so nobody re-opens them mid-build
 
