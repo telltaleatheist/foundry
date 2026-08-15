@@ -135,7 +135,7 @@ import * as fs from 'node:fs';
 
 import { decodeEntities } from '../epub/xml.js';
 import { writeZip, zipText, type ZipEntry } from '../export/zip.js';
-import { bankKey, openTranslationBank } from './bank.js';
+import { bankKey, openTranslationBank, swapPendingBankIntoPlace } from './bank.js';
 import { findBlocks, retagLanguage, spliceAll, type BlockGroup, type BlockSite } from './blocks.js';
 import { languageRange, navLabels, readFoundryBook, resolveHref, type FoundryBook } from './book.js';
 import { readLanguage, type NamedLanguage } from './languages.js';
@@ -257,12 +257,16 @@ export interface TranslateOptions {
    */
   bankPath?: string;
   /**
-   * Archive whatever is banked and ask for every block again — `--fresh-bank`.
+   * Ask for every block again — `--fresh-bank`.
    *
    * The one instruction the key cannot express. A banked answer is reused
    * because the question is identical; this is a person saying they want the
    * identical question ASKED AGAIN, which a model being non-deterministic makes
    * a reasonable thing to want.
+   *
+   * IT DOES NOT ARCHIVE AND IT DESTROYS NOTHING UP FRONT: the second opinion is
+   * asked into a pending bank that replaces the first only when this run writes
+   * its book (`bank.ts`).
    */
   freshBank?: boolean;
   /** Requests in flight at once. Default `DEFAULT_TRANSLATE_CONCURRENCY`. */
@@ -931,10 +935,14 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
    * saying whether this run is going to translate the book or resume one is a
    * log somebody can read four hours later.
    *
-   * AFTER `requireModel`, and that order is load-bearing in exactly one
-   * direction: `--fresh-bank` ARCHIVES, and archiving somebody's GPU-hours and
-   * then failing with "no Ollama server answered at http://localhost:11434"
-   * would have rotated a bank aside to accomplish nothing at all.
+   * AFTER `requireModel`, and that order no longer decides anything about
+   * somebody's answers — it used to. `--fresh-bank` ARCHIVED, so opening the
+   * bank before the server was proved could rotate a bank aside and then fail
+   * with "no Ollama server answered at http://localhost:11434", accomplishing
+   * nothing at all. It now opens a pending file instead and the old bank is
+   * untouched until the book lands, which makes that failure cost an empty file.
+   * The order stays because the server error is still the first thing a person
+   * needs to read, and nothing is gained by moving it.
    */
   const bank = opts.bankPath === undefined
     ? null
@@ -1542,6 +1550,23 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
   });
 
   await Bun.write(opts.outPath, writeZip(entries));
+
+  /*
+   * THE BOOK EXISTS, SO THE SECOND OPINION TAKES ITS PLACE.
+   *
+   * Only a `--fresh-bank` run has a pending file, and for every other run this
+   * does nothing. It is here, after the bytes and not before them, for the same
+   * reason the readings bank swaps after its EPUB: a run that has not produced
+   * the thing it was ordered for has not earned the right to destroy the answers
+   * it was asked to improve on.
+   */
+  if (opts.bankPath !== undefined && bank !== null && bank.pendingPath !== null) {
+    swapPendingBankIntoPlace(opts.bankPath, bank.pendingPath);
+    opts.log(
+      `translate: this book was made from the answers in ${bank.pendingPath}, so they have taken `
+      + `the place of ${opts.bankPath} — one rename, after the book landed.`,
+    );
+  }
 
   const seconds = (Date.now() - started) / 1000;
   return {

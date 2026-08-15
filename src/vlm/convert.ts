@@ -58,7 +58,7 @@ import { requireVlmModel, type VlmModelDef } from './models.js';
 import { applyOverlay, emptyOverlay, loadOverlay, overlayTally, type Overlay } from './overlay.js';
 import { buildTextPdf } from './pdf-text.js';
 import { pixelBudget, readPagesIntoBank, VLM_DPI, type VlmBridge } from './read.js';
-import { readCompletionMarker, writeCompletionMarker } from './readings.js';
+import { readCompletionMarker, swapPendingIntoPlace } from './readings.js';
 import { formatConflict, type VlmOutputFormat } from './text-out.js';
 
 export interface VlmConvertOptions {
@@ -95,20 +95,26 @@ export interface VlmConvertOptions {
   /** JSONL of per-page answers, appended as they land. Makes a run resumable. */
   readingsPath?: string;
   /**
-   * Archive whatever is banked and read every page — `--fresh-readings`.
+   * Read every page again, and start the replacement over — `--fresh-readings`.
    *
    * The EXPLICIT form of the rule `readings.ts` applies on its own when a
    * completion marker is present, for a caller whose own records know the
    * conversion finished. A bank written before markers existed carries no
    * marker, and the caller that scheduled the job is the only thing that knows.
+   *
+   * IT DOES NOT ARCHIVE ANY MORE, and it never destroys the bank: the new
+   * reading goes into a pending file that replaces the bank when it finishes.
+   * What the flag adds beyond an ordinary re-read is the one thing nothing else
+   * can say — throw away a half-finished replacement rather than continue it.
    */
   freshReadings?: boolean;
   /**
    * Answer out of the bank even though a run completed here — `--reuse-readings`.
    *
    * The deliberate free reconvert: iterate on the parser or the assembler over
-   * answers that cost hours. Without it, a completed run's bank is archived and
-   * the book is read again, because that is what ordering the conversion means.
+   * answers that cost hours. Without it, a completed run's bank is read again
+   * into a pending bank beside it, because that is what ordering the conversion
+   * means.
    */
   reuseReadings?: boolean;
   /**
@@ -367,6 +373,9 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       ...(opts.readingsPath !== undefined ? { readingsPath: opts.readingsPath } : {}),
       ...(opts.freshReadings === true ? { freshReadings: true } : {}),
       ...(opts.reuseReadings === true ? { reuseReadings: true } : {}),
+      // Half of what a pending reading is identified by, and nothing this phase
+      // reads. See `ReadPhaseOptions.language`.
+      language: opts.language,
       ...(opts.bridge !== undefined ? { bridge: opts.bridge } : {}),
       log: opts.log,
     });
@@ -870,13 +879,19 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       opts.log(`vlm-convert: ${proposals.length} chapter proposal(s) written to ${opts.chaptersPath}`);
     }
     /*
-     * The book exists, so this conversion is FINISHED, and the bank beside it
-     * stops being a debt and becomes a record.
+     * The book exists, so this conversion is FINISHED, the reading this run made
+     * takes its place beside it, and the bank stops being a debt and becomes a
+     * record.
      *
-     * Written after the EPUB and nowhere else: the marker's only job is to let
-     * the next invocation tell a killed run from a finished one, and a marker
-     * written before the bytes landed would answer that question wrong. From
-     * here on, running this conversion again reads the book again unless
+     * BOTH HALVES HAPPEN AFTER THE EPUB AND NOWHERE ELSE. The marker's only job
+     * is to let the next invocation tell a killed run from a finished one, and a
+     * marker written before the bytes landed would answer that question wrong;
+     * the swap is the same promise about a bigger thing — a run that replaced a
+     * finished reading has not replaced anything until the document it was
+     * ordered for is on disk. Up to this line the old reading is untouched, so a
+     * conversion that died anywhere above cost the project nothing.
+     *
+     * From here on, running this conversion again reads the book again unless
      * somebody asks for the answers back with --reuse-readings.
      */
     if (opts.readingsPath !== undefined) {
@@ -887,14 +902,25 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
        * one rendering of it — a reading ordered in German is still a reading in
        * German after somebody exports a text file. Nothing here reads the value;
        * it is carried so that the second rendering finds what the first one did.
+       *
+       * READ BEFORE THE SWAP, because the swap deletes the marker it is read out
+       * of. A replacement reading is of the same book as the one it replaces, so
+       * the language carries across it too.
        */
       const previous = readCompletionMarker(opts.readingsPath);
-      const marker = writeCompletionMarker(opts.readingsPath, {
+      const marker = swapPendingIntoPlace(opts.readingsPath, phase.pendingPath, {
         completedAt: new Date().toISOString(),
         outPath,
         pages: run.pages.length,
         ...(previous?.language !== undefined ? { language: previous.language } : {}),
       });
+      if (phase.pendingPath !== null) {
+        opts.log(
+          `vlm-convert: the reading in ${phase.pendingPath} is complete and this book was made from `
+          + `it, so it has taken the place of ${path.resolve(opts.readingsPath)} — one rename, after `
+          + 'the book landed. The reading that was there was not touched by anything before this line.',
+        );
+      }
       opts.log(
         `vlm-convert: this conversion is recorded as completed at ${marker.completedAt}, so the next `
         + 'run over these readings reads the book again rather than replaying them.',

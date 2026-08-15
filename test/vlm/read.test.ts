@@ -381,6 +381,107 @@ test('vlm-read resumes its own bank and pays only for the pages missing from it'
   assert.equal(readCompletionMarker(readingsPath)?.language, undefined);
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// The re-read that does not destroy what it replaces
+//
+// `readings.ts` owns the rule and has the unit tests for every row of it. What
+// these two pin is the seam: that the phase actually appends to the pending file
+// the decision handed it, and that the swap happens at the END of the command
+// and nowhere else.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('a re-read writes a pending bank and takes its place only when the run finishes', async () => {
+  // Three pages banked and marked complete; the new reading is of two pages, so
+  // the bank's own size is the proof that the answers were REPLACED rather than
+  // resumed into.
+  const readingsPath = bankOf([1, 2, 3]);
+  markComplete(readingsPath, 3, path.join(path.dirname(readingsPath), 'book.epub'));
+  const watched = watch(2);
+  const lines: string[] = [];
+
+  const report = await vlmRead({
+    pdfPath: withPdf(readingsPath),
+    readingsPath,
+    modelId: 'dots-ocr',
+    bridge: watched.bridge,
+    log: (line) => lines.push(line),
+  });
+
+  // Every page was read: the pending started empty, so nothing was skipped.
+  assert.equal(report.inferredPages, 2);
+  assert.deepEqual(watched.rendered[0].skipPages, []);
+  assert.deepEqual(VlmReadings.open(readingsPath).pages(), [1, 2]);
+  assert.equal(readCompletionMarker(readingsPath)?.pages, 2);
+  // The gamble's files are gone and nothing was hoarded to make room for it.
+  assert.equal(fs.existsSync(`${readingsPath}.pending`), false);
+  assert.equal(fs.existsSync(`${readingsPath}.pending.request`), false);
+  assert.deepEqual(fs.readdirSync(path.dirname(readingsPath)).filter((e) => e.startsWith('archived-')), []);
+  assert.ok(lines.some((l) => l.includes('has taken the place of')), lines.join('\n'));
+});
+
+test('a re-read that dies leaves the finished reading untouched, and the retry pays for one page', async () => {
+  /*
+   * BANK-LIFECYCLE §1, fact 1, through the command that used to commit it: this
+   * run archived the finished reading before rendering a page, so dying at page
+   * 2 of 3 left the project worse off for having tried. Now nothing happened,
+   * and page 1's answer is waiting for the retry.
+   */
+  const readingsPath = bankOf([1, 2, 3]);
+  markComplete(readingsPath, 3, path.join(path.dirname(readingsPath), 'book.epub'));
+  const before = fs.readFileSync(readingsPath);
+
+  const dying: VlmBridge = {
+    readPages: async (o) => {
+      o.onPage?.({
+        number: 1,
+        width: 1300,
+        height: 2112,
+        renderSeconds: 0.1,
+        seconds: 2,
+        chars: answerFor(1).length,
+        tokens: 40,
+        finishReason: 'stop',
+        text: answerFor(1),
+        skipped: false,
+      }, 3);
+      throw new Error('the model runner has crashed');
+    },
+    fromEndpoint: async () => {},
+  };
+
+  await assert.rejects(
+    () => vlmRead({
+      pdfPath: withPdf(readingsPath),
+      readingsPath,
+      modelId: 'dots-ocr',
+      bridge: dying,
+      log: () => {},
+    }),
+    /the model runner has crashed/,
+  );
+
+  // NOT ONE BYTE of the finished reading moved, and its marker still stands.
+  assert.deepEqual(fs.readFileSync(readingsPath), before);
+  assert.equal(readCompletionMarker(readingsPath)?.pages, 3);
+  // And the page that was paid for is on disk, in the pending, waiting.
+  assert.equal(VlmReadings.open(`${readingsPath}.pending`).size, 1);
+
+  const watched = watch(3);
+  const report = await vlmRead({
+    pdfPath: withPdf(readingsPath),
+    readingsPath,
+    modelId: 'dots-ocr',
+    bridge: watched.bridge,
+    log: () => {},
+  });
+
+  // Two pages, not three: the debt is paid off, never re-paid.
+  assert.equal(report.inferredPages, 2);
+  assert.deepEqual(watched.rendered[0].skipPages, [1]);
+  assert.deepEqual(VlmReadings.open(readingsPath).pages(), [1, 2, 3]);
+  assert.equal(fs.existsSync(`${readingsPath}.pending`), false);
+});
+
 test('vlm-read names a PDF that is not there rather than banking nothing quietly', async () => {
   const readingsPath = bankOf([]);
   await assert.rejects(

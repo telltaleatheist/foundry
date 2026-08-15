@@ -1177,7 +1177,7 @@ test('a different model or different instructions re-asks the whole book', async
   }
 });
 
-test('--fresh-bank archives what is there and asks for every block again', async () => {
+test('--fresh-bank asks every block again into a pending bank and swaps it in with the book', async () => {
   const { epub, out, clean } = scratch(paragraphs(P1, P2, P3));
   const { dir, bankPath } = bankIn(out);
   try {
@@ -1200,13 +1200,75 @@ test('--fresh-bank archives what is there and asks for every block again', async
 
     assert.equal(server.asked.length, 3);
     assert.equal(report.fromBank, 0);
-    // NOTHING IS DELETED. The old answers are a directory away, not gone.
-    const archived = fs.readdirSync(dir).filter((name) => name.startsWith('archived-'));
-    assert.equal(archived.length, 1);
-    assert.deepEqual(fs.readdirSync(path.join(dir, archived[0]!)), ['answers.jsonl']);
-    assert.equal(bankLines(path.join(dir, archived[0]!, 'answers.jsonl')).length, 3);
-    assert.equal(bankLines(bankPath).length, 3, 'and the live bank was written again from scratch');
-    assert.ok(logged.some((l) => /fresh bank was asked for, so the 3 banked answer\(s\) were archived/.test(l)));
+    // NO HOARD. The second opinion replaced the first the moment the book was
+    // written, and nothing was rotated into `archived-<stamp>/` to do it.
+    assert.deepEqual(fs.readdirSync(dir).filter((name) => name.startsWith('archived-')), []);
+    assert.deepEqual(fs.readdirSync(dir).filter((name) => name.endsWith('.pending')), []);
+    assert.equal(bankLines(bankPath).length, 3, 'and the bank is this run\'s three answers');
+    assert.ok(logged.some((l) => /the \d+ banked answer\(s\) in .* are left exactly as they are/.test(l)), logged.join('\n'));
+    assert.ok(logged.some((l) => /have taken the place of/.test(l)), logged.join('\n'));
+  } finally {
+    clean();
+  }
+});
+
+test('a --fresh-bank run that dies leaves the old answers untouched, and the retry resumes its own', async () => {
+  /*
+   * The failure the pending file exists for, on this side of the house: the old
+   * behaviour rotated a complete bank into `archived-<stamp>/` BEFORE ASKING A
+   * SINGLE BLOCK, so a fresh run killed part-way had thrown away a whole book's
+   * answers and produced nothing to put in their place.
+   */
+  const { epub, out, clean } = scratch(paragraphs(P1, P2, P3));
+  const { dir, bankPath } = bankIn(out);
+  try {
+    await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: fakeOllama(), bankPath, log: quiet,
+    });
+    const first = bankLines(bankPath);
+    assert.equal(first.length, 3);
+    fs.rmSync(out);
+
+    const server = fakeOllama();
+    let calls = 0;
+    const dying: Transport = {
+      ...server,
+      post: async (url: string, body: string): Promise<HttpResponse> => {
+        calls += 1;
+        if (calls > 2) return { status: 500, body: 'model runner has crashed' };
+        return server.post(url, body);
+      },
+    };
+    await assert.rejects(
+      translateEpub({
+        epubPath: epub,
+        outPath: out,
+        to: 'en',
+        transport: dying,
+        bankPath,
+        freshBank: true,
+        concurrency: 1,
+        log: quiet,
+      }),
+      /answered 500/,
+    );
+
+    // NOTHING HAPPENED to the bank: the same three answers, byte for byte, and
+    // no book. The two the dead run paid for are beside it, waiting.
+    assert.equal(fs.existsSync(out), false);
+    assert.deepEqual(bankLines(bankPath), first);
+    assert.deepEqual(fs.readdirSync(dir).filter((name) => name.startsWith('archived-')), []);
+    assert.equal(bankLines(`${bankPath}.pending`).length, 2);
+
+    // The retry pays for the one block that is missing, not for three.
+    const second = fakeOllama();
+    const report = await translateEpub({
+      epubPath: epub, outPath: out, to: 'en', transport: second, bankPath, freshBank: true, log: quiet,
+    });
+    assert.equal(second.asked.length, 1);
+    assert.equal(report.fromBank, 2);
+    assert.equal(bankLines(bankPath).length, 3);
+    assert.equal(fs.existsSync(`${bankPath}.pending`), false);
   } finally {
     clean();
   }

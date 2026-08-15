@@ -81,9 +81,19 @@
  * asked again, because a model is not deterministic and a second opinion on a
  * chapter is a legitimate thing to want.
  *
- * THE BANK IS NEVER DELETED. `--fresh-bank` rotates the whole file into
- * `archived-<timestamp>/` and leaves it there. Deleting somebody's GPU-hours to
- * save a directory entry is not a trade this program makes.
+ * THE BANK IS NEVER DESTROYED UNTIL ITS REPLACEMENT EXISTS. `--fresh-bank` used
+ * to rotate the whole file into `archived-<timestamp>/` before a single block was
+ * asked, which meant that a fresh run killed at block 400 of 456 had thrown away
+ * a complete bank and produced nothing to put in its place. So the second opinion
+ * is asked into a PENDING BANK beside the real one, and that file is renamed over
+ * the bank when the run writes its EPUB — the same rule, the same ordering and
+ * the same reasoning as `src/vlm/readings.ts`, which has the long version.
+ *
+ * The difference here is how narrow the case is: this bank has no completion
+ * marker, so the pending path is used under `--fresh-bank` AND NOWHERE ELSE. An
+ * ordinary run resumes the bank in place, because a question-keyed bank cannot
+ * hold a wrong answer to the question being asked — the worst it can do is not
+ * hold one.
  */
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
@@ -256,38 +266,43 @@ export class TranslationBank {
   }
 }
 
+/** `<bank>.pending` — the whole bank path plus a suffix, never a rename of it. */
+export function pendingBankPath(bankPath: string): string {
+  return `${path.resolve(bankPath)}.pending`;
+}
+
 /**
- * Move the bank into `archived-<timestamp>/`, and return that directory.
+ * The pending bank becomes the bank, and the answers it replaces are gone.
  *
- * A rename, not a copy: the point is that the LIVE bank is gone, so the run
- * that follows asks for every block, and the answers that cost GPU-hours are
- * still on disk for anybody who wants them back. The timestamp is the ISO
- * instant with its colons replaced, because a colon is not a legal character in
- * a Windows filename and this program runs there.
+ * Called by the run at the one moment that means the gamble paid off — the EPUB
+ * on disk — and never before it. Two steps rather than the readings bank's four,
+ * because there is no completion marker here to delete first and none to write
+ * afterwards: rename, and the run is done. A crash before it leaves the old bank
+ * exactly as it was with the second opinion beside it as resumable debris, which
+ * is the whole point.
  *
- * An archive directory that already exists is refused rather than merged into:
- * two banks in one directory is two runs' answers under one name.
+ * `pending === null` is every ordinary run — one that was appending to the real
+ * bank all along — and for it this does nothing at all. THE CALLER PASSES WHAT IT
+ * ACTUALLY WROTE TO: a `.pending` on disk that this run did not open belongs to
+ * somebody else's abandoned `--fresh-bank`, and renaming it over a good bank
+ * would be the failure this whole arrangement exists to refuse.
  */
-export function archiveTranslationBank(bankPath: string, at: Date): string {
+export function swapPendingBankIntoPlace(bankPath: string, pending: string | null): void {
+  if (pending === null) return;
   const resolved = path.resolve(bankPath);
-  const runDir = path.dirname(resolved);
-  const stamp = at.toISOString().replace(/[:.]/g, '-');
-  const archiveDir = path.join(runDir, `archived-${stamp}`);
-  if (fs.existsSync(archiveDir)) {
+  const pendingResolved = path.resolve(pending);
+  if (!fs.existsSync(pendingResolved)) {
     throw new TranslateBankError(
-      `${archiveDir} already exists, so this run cannot archive the bank beside it without mixing `
-      + 'two runs\' answers into one directory. Move it aside and run again.',
+      `${pendingResolved} was this run's bank and it is not there, so there is nothing to put in `
+      + `place of ${resolved}. The bank that is there has been left exactly as it was found.`,
     );
   }
-  ensureDir(archiveDir);
-  if (fs.existsSync(resolved)) {
-    fs.renameSync(resolved, path.join(archiveDir, path.basename(resolved)));
-  }
-  return archiveDir;
+  ensureDir(path.dirname(resolved));
+  fs.renameSync(pendingResolved, resolved);
 }
 
 export type BankAction =
-  /** Every block is asked of the model. Any bank that was here has been archived. */
+  /** Every block is asked of the model. Nothing that was here has been touched. */
   | 'ask-fresh'
   /** A block whose question is banked is not asked; the rest are. */
   | 'resume';
@@ -296,18 +311,22 @@ export interface BankOutcome {
   action: BankAction;
   /** The bank this run answers out of and appends to. Empty for `ask-fresh`. */
   bank: TranslationBank;
-  /** Where the previous bank went, or null where nothing was archived. */
-  archivedTo: string | null;
+  /**
+   * The pending file this run appends to, or null where it appends the bank
+   * directly. Handed back to `swapPendingBankIntoPlace` when the EPUB lands.
+   */
+  pendingPath: string | null;
   /** ONE sentence, printed by the run. Never empty — every decision is stated. */
   sentence: string;
 }
 
 export interface BankRequest {
   bankPath: string;
-  /** `--fresh-bank`: archive whatever is banked and ask for every block again. */
+  /**
+   * `--fresh-bank`: ask for every block again, into a bank that replaces this one
+   * only if the run finishes. It does not archive and it destroys nothing.
+   */
   freshRequested: boolean;
-  /** Injectable so a test can pin the archive directory's name. */
-  now?: Date;
 }
 
 /**
@@ -316,6 +335,20 @@ export interface BankRequest {
  * Two outcomes rather than the readings file's three, and the missing one is
  * `reuse` — see this file's header for why a question-keyed bank does not need
  * to be told that a finished run is finished.
+ *
+ * A `--fresh-bank` RUN THAT WAS KILLED IS RESUMED RATHER THAN RESTARTED, and its
+ * pending file is where that is recorded. The second opinion is worth exactly
+ * what the first one was — it costs the same GPU — so a fresh run interrupted at
+ * block 400 picks up at 401 rather than paying for 400 answers a second time.
+ * There is no request sidecar as there is beside a readings bank, and none is
+ * needed: the key IS the question, so a pending answer that was asked under a
+ * different model, language or set of instructions simply does not match and is
+ * never handed to a block it is not an answer to.
+ *
+ * A pending left by an abandoned fresh run is left alone by an ordinary run,
+ * which appends to the real bank and never looks at it. It costs a directory
+ * entry, it holds real answers, and the next `--fresh-bank` finishes what it
+ * started.
  *
  * The sentence is not optional and not conditional. A run that is about to skip
  * three hundred blocks because a file on disk already answers for them has to
@@ -327,23 +360,27 @@ export function openTranslationBank(request: BankRequest): BankOutcome {
   const existing = TranslationBank.open(bankPath);
   const banked = existing.size;
 
-  if (request.freshRequested) {
-    if (banked === 0) {
-      return {
-        action: 'ask-fresh',
-        bank: existing,
-        archivedTo: null,
-        sentence: `translate: a fresh bank was asked for and ${bankPath} banks nothing, so every `
-          + 'block is asked of the model and banked there as it lands.',
-      };
-    }
-    const archivedTo = archiveTranslationBank(bankPath, request.now ?? new Date());
+  if (request.freshRequested && banked > 0) {
+    /*
+     * The gamble is opened here and the empty file created rather than waited
+     * for, so that the directory says out loud that a second opinion is in
+     * progress from the moment it is, rather than only once an answer lands.
+     */
+    const pending = pendingBankPath(bankPath);
+    ensureDir(path.dirname(pending));
+    fs.closeSync(fs.openSync(pending, 'a'));
+    const carried = TranslationBank.open(pending);
     return {
-      action: 'ask-fresh',
-      bank: TranslationBank.open(bankPath),
-      archivedTo,
-      sentence: `translate: a fresh bank was asked for, so the ${banked} banked answer(s) were `
-        + `archived to ${archivedTo} and every block is asked of the model again.`,
+      action: carried.size === 0 ? 'ask-fresh' : 'resume',
+      bank: carried,
+      pendingPath: pending,
+      sentence: carried.size === 0
+        ? `translate: a fresh bank was asked for, so every block is asked of the model again — the `
+          + `${banked} banked answer(s) in ${bankPath} are left exactly as they are and the new `
+          + `answers go to ${pending}, which replaces them only when this run writes its book.`
+        : `translate: a fresh bank was asked for and one was already begun — ${carried.size} `
+          + `answer(s) are in ${pending}, a block whose exact question is in there is not asked `
+          + `again, and it replaces ${bankPath} only when this run writes its book.`,
     };
   }
 
@@ -351,16 +388,19 @@ export function openTranslationBank(request: BankRequest): BankOutcome {
     return {
       action: 'ask-fresh',
       bank: existing,
-      archivedTo: null,
-      sentence: `translate: nothing is banked in ${bankPath}, so every block is asked of the model `
-        + 'and banked there as it lands.',
+      pendingPath: null,
+      sentence: request.freshRequested
+        ? `translate: a fresh bank was asked for and ${bankPath} banks nothing, so every block is `
+          + 'asked of the model and banked there as it lands.'
+        : `translate: nothing is banked in ${bankPath}, so every block is asked of the model `
+          + 'and banked there as it lands.',
     };
   }
 
   return {
     action: 'resume',
     bank: existing,
-    archivedTo: null,
+    pendingPath: null,
     sentence: `translate: ${banked} answer(s) are banked in ${bankPath} — a block whose exact `
       + 'question is in there is not asked again, and every new answer is added to it.',
   };

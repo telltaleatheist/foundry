@@ -47,7 +47,7 @@ import { requireVlmModel, type VlmModelDef } from './models.js';
 import {
   openReadingsBank,
   readCompletionMarker,
-  writeCompletionMarker,
+  swapPendingIntoPlace,
   type ReadingsBankAction,
   type VlmCompletion,
   type VlmReadings,
@@ -96,8 +96,9 @@ export function renderPath(dir: string, page: number): string {
  *
  * Asked before anything happens and WITHOUT DOING ANYTHING: it reads the
  * completion marker and nothing else. `openReadingsBank` answers the same
- * question later and acts on the answer — it archives, it opens the file — so
- * asking IT twice would archive twice. This is the question without the
+ * question later and ACTS on the answer — it opens a pending bank, writes a
+ * sidecar, throws away a replacement that answers a different question — so
+ * asking IT twice would do all of that twice. This is the question without the
  * consequences, and it exists for one caller: the argv layer, which has to
  * decide whether a run needs a reading backend at all before it can refuse over
  * the absence of one (`runVlmConvert` in `commands.ts`).
@@ -157,6 +158,17 @@ export interface ReadPhaseOptions {
   reuseReadings?: boolean;
   /** Pages that are not part of the book. Sorted, deduplicated. */
   skipPages: readonly number[];
+  /**
+   * The book's language as this run was told it, carried here for ONE reason:
+   * it is half of what a pending bank is identified by.
+   *
+   * Nothing in this phase reads it. `skipPages` and `language` are what the
+   * person asked for, and a pending replacement is continued or thrown away on
+   * those two and nothing else (`sameAsk`, `readings.ts`) — so the phase that
+   * opens the bank has to be told both, even though only one of them changes
+   * which pages it renders.
+   */
+  language?: string;
   log: (message: string) => void;
   /**
    * The subprocess and the socket, swappable.
@@ -181,6 +193,18 @@ export interface ReadPhase {
   sizes: Map<number, VlmPage>;
   /** The bank this run answered out of, or null where there is none. */
   readings: VlmReadings | null;
+  /**
+   * The pending file this run wrote its answers into, or null where it wrote the
+   * real bank.
+   *
+   * Carried out of the phase because the SWAP is not the phase's to make: the
+   * pending becomes the bank when the run has finished, and only the caller knows
+   * when that is — an EPUB on disk for `vlm-convert`, the last page banked for
+   * `vlm-read`. Handing the path back rather than recomputing it at the swap is
+   * what makes it impossible to rename somebody else's abandoned attempt over a
+   * good bank (`swapPendingIntoPlace`).
+   */
+  pendingPath: string | null;
   /** What was decided about the bank — `resume`, `reuse` or `read-fresh`. */
   bankAction: ReadingsBankAction | null;
   inferenceSeconds: number;
@@ -226,6 +250,11 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
       readingsPath: opts.readingsPath,
       freshRequested: opts.freshReadings === true,
       reuseRequested: opts.reuseReadings === true,
+      ask: {
+        skipPages: opts.skipPages,
+        ...(opts.language !== undefined ? { language: opts.language } : {}),
+        model: model.id,
+      },
     })
     : null;
   if (bank !== null) opts.log(bank.sentence);
@@ -393,6 +422,7 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
     unreadable,
     sizes,
     readings,
+    pendingPath: bank?.pendingPath ?? null,
     bankAction: bank?.action ?? null,
     inferenceSeconds,
     inferredPages,
@@ -473,9 +503,10 @@ export interface VlmReadReport {
  * this bank is finished work rather than an interrupted run, which is the
  * distinction `readings.ts` exists to keep — and it means the generation step
  * must ask for the answers with `--reuse-readings`. Without that flag a
- * completed bank is archived and the book is read again, because ordering a
- * conversion means ordering the work; that rule is not weakened here, and the
- * help for both commands says so.
+ * completed bank is READ AGAIN, into a pending bank beside it that replaces it
+ * only when the new reading is finished, because ordering a conversion means
+ * ordering the work; that rule is not weakened here, and the help for both
+ * commands says so.
  */
 export async function vlmRead(opts: VlmReadOptions): Promise<VlmReadReport> {
   const started = Date.now();
@@ -521,6 +552,7 @@ export async function vlmRead(opts: VlmReadOptions): Promise<VlmReadReport> {
       ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
       ...(opts.freshReadings === true ? { freshReadings: true } : {}),
       ...(opts.reuseReadings === true ? { reuseReadings: true } : {}),
+      ...(opts.language !== undefined ? { language: opts.language } : {}),
       ...(opts.bridge !== undefined ? { bridge: opts.bridge } : {}),
       log: opts.log,
     });
@@ -550,22 +582,37 @@ export async function vlmRead(opts: VlmReadOptions): Promise<VlmReadReport> {
     }
 
     /*
-     * The reading is finished, so the bank stops being a debt and becomes a
-     * record — the same marker `vlm-convert` writes when its EPUB lands, and for
-     * the same reason. `outPath` is NULL and says the honest thing: this run
-     * produced no document, and the bank beside the marker is the whole of what
-     * it made.
+     * THE READING IS FINISHED, SO IT TAKES ITS PLACE.
+     *
+     * This is the moment the whole pending arrangement is built around and it is
+     * one call: where this run was replacing a finished reading, the pending file
+     * is renamed over it here and nowhere else — after every page has landed,
+     * with the old bank untouched until this instant. Where it was not, this is
+     * exactly what it always was, a marker written beside the bank.
+     *
+     * The bank stops being a debt and becomes a record — the same marker
+     * `vlm-convert` writes when its EPUB lands, and for the same reason.
+     * `outPath` is NULL and says the honest thing: this run produced no document,
+     * and the bank beside the marker is the whole of what it made.
      */
-    const completion = writeCompletionMarker(readingsPath, {
+    const completion = swapPendingIntoPlace(readingsPath, phase.pendingPath, {
       completedAt: new Date().toISOString(),
       outPath: null,
       pages: phase.run.pages.length,
       ...(opts.language !== undefined ? { language: opts.language } : {}),
     });
+    if (phase.pendingPath !== null) {
+      opts.log(
+        `vlm-read: the reading in ${phase.pendingPath} is complete, so it has taken the place of `
+        + `${readingsPath} — one rename, after every page landed. The reading that was there is `
+        + 'gone now and was not touched by anything before this line.',
+      );
+    }
     opts.log(
       `vlm-read: this reading is recorded as completed at ${completion.completedAt}. Rendering it `
       + 'into a book is `vlm-convert --reuse-readings`, which reads no page and costs no GPU; '
-      + 'running vlm-read here again archives this bank and reads the book from the beginning.',
+      + 'running vlm-read here again reads the book from the beginning into a pending bank beside '
+      + 'this one, and replaces it only if that run finishes.',
     );
 
     const totalSeconds = (Date.now() - started) / 1000;

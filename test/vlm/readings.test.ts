@@ -20,13 +20,20 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
-  archiveReadingsBank,
   completionMarkerPath,
+  discardPending,
   openReadingsBank,
+  pendingPath,
+  pendingRequestPath,
   readCompletionMarker,
+  readPendingRequest,
+  sameAsk,
+  swapPendingIntoPlace,
   VlmReadings,
   VlmReadingsError,
   writeCompletionMarker,
+  writePendingRequest,
+  type ReadingsAsk,
 } from '../../src/vlm/readings.js';
 import { VERSION } from '../../src/version.js';
 
@@ -49,7 +56,35 @@ function markComplete(readingsPath: string, pages: number): void {
   });
 }
 
-const AT = new Date('2026-08-08T09:30:00.000Z');
+/**
+ * A half-finished replacement beside the bank, exactly as a killed run leaves
+ * one: the pending file with `pages` in it and the sidecar saying what it was
+ * asked for.
+ */
+function pendingOf(readingsPath: string, pages: readonly number[], ask: ReadingsAsk): string {
+  const pending = pendingPath(readingsPath);
+  fs.writeFileSync(pending, '', 'utf8');
+  const bank = VlmReadings.open(pending);
+  for (const page of pages) {
+    bank.append({ page, text: `page ${page}, again`, tokens: 10, finishReason: 'stop', seconds: 1 });
+  }
+  writePendingRequest(readingsPath, ask);
+  return pending;
+}
+
+/** What a run finishing here would record. */
+function completionOf(readingsPath: string, pages: number) {
+  return {
+    completedAt: '2026-08-09T10:00:00.000Z',
+    outPath: path.join(path.dirname(readingsPath), 'book.epub'),
+    pages,
+  };
+}
+
+/** Every entry in the bank's directory, sorted — for "nothing else appeared". */
+function listing(readingsPath: string): string[] {
+  return fs.readdirSync(path.dirname(readingsPath)).sort();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The marker
@@ -103,93 +138,119 @@ test('a marker missing a field is refused rather than half-believed', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Archiving — the answers are moved, never destroyed
+// The decision — the matrix of BANK-LIFECYCLE §2.2, one test a row
+//
+// The rule the rows are all instances of: THE BANK IS NEVER DESTROYED UNTIL ITS
+// REPLACEMENT EXISTS. Where there is nothing finished to protect, a run writes
+// the bank directly and always did; where there is, it writes a pending file
+// beside it and takes its place with one rename, at the end, or not at all.
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('archiving moves the bank and its marker aside and leaves the live path empty', () => {
-  const readingsPath = runDir([1, 2, 3]);
-  markComplete(readingsPath, 3);
-  const archiveDir = archiveReadingsBank(readingsPath, AT);
-
-  // The live bank is gone — that is what makes the next run read the book.
-  assert.equal(fs.existsSync(readingsPath), false);
-  assert.equal(fs.existsSync(completionMarkerPath(readingsPath)), false);
-  // And the hours it cost are still on disk, under a name a person can find.
-  assert.equal(path.basename(archiveDir), 'archived-2026-08-08T09-30-00-000Z');
-  assert.equal(VlmReadings.open(path.join(archiveDir, 'readings.jsonl')).size, 3);
-  // The marker keeps the name it had, which is its bank's — so an archive
-  // directory holding two runs' leavings still says which marker is whose.
-  assert.equal(fs.existsSync(path.join(archiveDir, 'readings.completed.json')), true);
-  // A colon is not a legal Windows filename character, and this program runs there.
-  assert.equal(archiveDir.slice(3).includes(':'), false);
-});
-
-test('an archive directory that already exists is refused, never merged into', () => {
-  const readingsPath = runDir([1]);
-  fs.mkdirSync(path.join(path.dirname(readingsPath), 'archived-2026-08-08T09-30-00-000Z'));
-  assert.throws(() => archiveReadingsBank(readingsPath, AT), (err: unknown) => {
-    assert.ok(err instanceof VlmReadingsError);
-    assert.match(err.message, /already exists/);
-    return true;
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The decision
-// ─────────────────────────────────────────────────────────────────────────────
-
-test('COMPLETED, nothing asked: the bank is archived and every page is read again', () => {
-  const readingsPath = runDir([1, 2, 3, 4]);
-  markComplete(readingsPath, 4);
+test('NO BANK: the whole book is read straight into it, and no pending appears', () => {
+  const readingsPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-readings-test-')), 'readings.jsonl');
   const outcome = openReadingsBank({ readingsPath, freshRequested: false, reuseRequested: false });
 
   assert.equal(outcome.action, 'read-fresh');
-  // Nothing is banked for this run, so no page is answered out of the cache.
   assert.equal(outcome.readings.size, 0);
-  assert.notEqual(outcome.archivedTo, null);
-  assert.equal(VlmReadings.open(path.join(outcome.archivedTo!, 'readings.jsonl')).size, 4);
-  // The sentence names the completion, the archive and the way back.
-  assert.match(outcome.sentence, /already completed 2026-08-01T12:00:00\.000Z/);
-  assert.match(outcome.sentence, /4 banked page answer\(s\) were archived to/);
-  assert.match(outcome.sentence, /every page is read from the model/);
-  assert.match(outcome.sentence, /--reuse-readings/);
+  // Nothing to protect, so nothing is built to protect it.
+  assert.equal(outcome.pendingPath, null);
+  assert.equal(fs.existsSync(pendingPath(readingsPath)), false);
+  assert.match(outcome.sentence, /nothing is banked in/);
 });
 
-test('INTERRUPTED: a bank with no marker is resumed, and the counts are printed', () => {
+test('INCOMPLETE, NO MARKER: the bank itself is resumed — the partial bank IS the debt', () => {
   const readingsPath = runDir([1, 2, 3]);
   const outcome = openReadingsBank({ readingsPath, freshRequested: false, reuseRequested: false });
 
   assert.equal(outcome.action, 'resume');
   assert.equal(outcome.readings.size, 3);
-  assert.equal(outcome.archivedTo, null);
-  // The bank is untouched: resuming never costs a page that was already paid for.
+  // No good copy is at risk, so a pending here would be ceremony over nothing —
+  // and would leave the three paid-for pages out of reach of the run resuming.
+  assert.equal(outcome.pendingPath, null);
+  assert.equal(fs.existsSync(pendingPath(readingsPath)), false);
   assert.equal(fs.existsSync(readingsPath), true);
   assert.match(outcome.sentence, /resuming an interrupted run — 3 page\(s\) already read and banked/);
 });
 
-test('REUSE REQUESTED over a completed run: the answers are replayed, and it says BY REQUEST', () => {
+test('COMPLETED, read again: the finished bank is left alone and the re-read goes pending', () => {
+  /*
+   * The bug this whole document is about, from the other side. This used to
+   * archive four paid-for answers BEFORE READING A SINGLE PAGE, so a run that
+   * died at page 2 left the project worse off for having tried.
+   */
+  const readingsPath = runDir([1, 2, 3, 4]);
+  markComplete(readingsPath, 4);
+  const before = fs.readFileSync(readingsPath);
+  const outcome = openReadingsBank({
+    readingsPath,
+    freshRequested: false,
+    reuseRequested: false,
+    ask: { skipPages: [3], language: 'de', model: 'dots-ocr' },
+  });
+
+  assert.equal(outcome.action, 'read-fresh');
+  assert.equal(outcome.readings.size, 0);
+  assert.equal(outcome.pendingPath, pendingPath(readingsPath));
+
+  // NOT ONE BYTE of the finished reading was touched, and its marker still stands.
+  assert.deepEqual(fs.readFileSync(readingsPath), before);
+  assert.equal(readCompletionMarker(readingsPath)?.pages, 4);
+  // No hoard: the answers are where they always were, not under a timestamp.
+  assert.deepEqual(listing(readingsPath).filter((e) => e.startsWith('archived-')), []);
+
+  // The sidecar says what the gamble was asked, so the run after a kill can tell.
+  const request = readPendingRequest(readingsPath)!;
+  assert.deepEqual(request.skipPages, [3]);
+  assert.equal(request.language, 'de');
+  assert.equal(request.model, 'dots-ocr');
+  assert.equal(request.foundryVersion, VERSION);
+
+  assert.match(outcome.sentence, /already completed 2026-08-01T12:00:00\.000Z/);
+  assert.match(outcome.sentence, /left exactly as they are/);
+  assert.match(outcome.sentence, /replaces them only when this run finishes/);
+  assert.match(outcome.sentence, /--reuse-readings/);
+});
+
+test('COMPLETED + --fresh-readings: the same pending path, and it says so', () => {
+  const readingsPath = runDir([1, 2, 3]);
+  markComplete(readingsPath, 3);
+  const outcome = openReadingsBank({ readingsPath, freshRequested: true, reuseRequested: false });
+
+  assert.equal(outcome.action, 'read-fresh');
+  assert.equal(outcome.pendingPath, pendingPath(readingsPath));
+  assert.equal(VlmReadings.open(readingsPath).size, 3);
+  // The MARKER is the more informative fact and the sentence leads with it: the
+  // flag and the marker are asking for the same thing here, and the completion
+  // date is the thing a person reading the log did not already know.
+  assert.match(outcome.sentence, /already completed 2026-08-01T12:00:00\.000Z/);
+  assert.match(outcome.sentence, /left exactly as they are/);
+});
+
+test('FRESH REQUESTED with no marker: the legacy bank goes pending rather than aside', () => {
+  // The case BookForge's own records answer: a bank written before markers
+  // existed, from a conversion the app knows finished. The flag still means READ
+  // THE BOOK AGAIN — it just no longer means "and lose the old reading first".
+  const readingsPath = runDir([1, 2]);
+  const outcome = openReadingsBank({ readingsPath, freshRequested: true, reuseRequested: false });
+
+  assert.equal(outcome.action, 'read-fresh');
+  assert.equal(outcome.readings.size, 0);
+  assert.equal(outcome.pendingPath, pendingPath(readingsPath));
+  assert.equal(VlmReadings.open(readingsPath).size, 2);
+  assert.match(outcome.sentence, /every page is read from the model again/);
+  assert.deepEqual(listing(readingsPath).filter((e) => e.startsWith('archived-')), []);
+});
+
+test('COMPLETED + --reuse-readings: the answers are replayed, and it says BY REQUEST', () => {
   const readingsPath = runDir([1, 2, 3, 4, 5]);
   markComplete(readingsPath, 5);
   const outcome = openReadingsBank({ readingsPath, freshRequested: false, reuseRequested: true });
 
   assert.equal(outcome.action, 'reuse');
   assert.equal(outcome.readings.size, 5);
-  assert.equal(outcome.archivedTo, null);
+  assert.equal(outcome.pendingPath, null);
   assert.equal(fs.existsSync(completionMarkerPath(readingsPath)), true);
   assert.match(outcome.sentence, /reusing 5 banked page answer\(s\) BY REQUEST \(--reuse-readings\)/);
-});
-
-test('FRESH REQUESTED with no marker: the legacy bank is archived anyway', () => {
-  // This is the case BookForge's own records answer: a bank written before
-  // markers existed, from a conversion the app knows finished.
-  const readingsPath = runDir([1, 2]);
-  const outcome = openReadingsBank({ readingsPath, freshRequested: true, reuseRequested: false });
-
-  assert.equal(outcome.action, 'read-fresh');
-  assert.equal(outcome.readings.size, 0);
-  assert.equal(VlmReadings.open(path.join(outcome.archivedTo!, 'readings.jsonl')).size, 2);
-  assert.match(outcome.sentence, /fresh readings were asked for, so the 2 banked page answer\(s\)/);
-  assert.match(outcome.sentence, /every page is read from the model again/);
 });
 
 test('REUSE REQUESTED with no marker resumes — there is no completed run to replay', () => {
@@ -198,17 +259,98 @@ test('REUSE REQUESTED with no marker resumes — there is no completed run to re
 
   assert.equal(outcome.action, 'resume');
   assert.equal(outcome.readings.size, 2);
+  assert.equal(outcome.pendingPath, null);
   assert.match(outcome.sentence, /no run has completed here — resuming the interrupted run, 2 page/);
 });
 
-test('an empty run directory reads the whole book and says so', () => {
-  const readingsPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-readings-test-')), 'readings.jsonl');
-  const outcome = openReadingsBank({ readingsPath, freshRequested: false, reuseRequested: false });
+test('PENDING EXISTS, same ask: it is resumed, and the pages in it are not paid for twice', () => {
+  const readingsPath = runDir([1, 2, 3]);
+  markComplete(readingsPath, 3);
+  const ask: ReadingsAsk = { skipPages: [4, 4, 2], language: 'de', model: 'dots-ocr' };
+  const pending = pendingOf(readingsPath, [1, 2], ask);
+
+  // The same ask written the other way round: identity is the NORMALISED list.
+  const outcome = openReadingsBank({
+    readingsPath,
+    freshRequested: false,
+    reuseRequested: false,
+    ask: { skipPages: [2, 4], language: 'de', model: 'dots-ocr' },
+  });
+
+  assert.equal(outcome.action, 'resume');
+  assert.equal(outcome.pendingPath, pending);
+  assert.equal(outcome.readings.size, 2);
+  // Out of the PENDING, not out of the bank — a re-read means re-read, and the
+  // old answers are not quietly reused to pretend the work was done.
+  assert.equal(outcome.readings.get(1)?.text, 'page 1, again');
+  assert.match(outcome.sentence, /resuming the replacement reading that was interrupted — 2 page/);
+  assert.match(outcome.sentence, /only when this run finishes/);
+});
+
+test('PENDING EXISTS, different ask: it is thrown away and the replacement starts over', () => {
+  const readingsPath = runDir([1, 2, 3]);
+  markComplete(readingsPath, 3);
+  const pending = pendingOf(readingsPath, [1, 2], { skipPages: [3], language: 'de' });
+
+  const outcome = openReadingsBank({
+    readingsPath,
+    freshRequested: false,
+    reuseRequested: false,
+    ask: { skipPages: [3, 4], language: 'de' },
+  });
+
+  // The user changed the question, which is them saying the half-answer to the
+  // old one is not worth finishing. Deleted, not archived: it is incomplete
+  // machine output whose completion nobody wants any more.
+  assert.equal(outcome.action, 'read-fresh');
+  assert.equal(outcome.pendingPath, pending);
+  assert.equal(outcome.readings.size, 0);
+  assert.equal(VlmReadings.open(pending).size, 0);
+  assert.deepEqual(readPendingRequest(readingsPath)?.skipPages, [3, 4]);
+  // And the FINISHED bank, which was never the thing in question, is untouched.
+  assert.equal(VlmReadings.open(readingsPath).size, 3);
+  assert.match(outcome.sentence, /was asked for pages 3 skipped, language de/);
+  assert.match(outcome.sentence, /this run asks for pages 3, 4 skipped/);
+  assert.match(outcome.sentence, /thrown away and the replacement starts over/);
+});
+
+test('PENDING EXISTS + --fresh-readings: that is what the flag now means', () => {
+  // `--fresh` stopped meaning "archive" and means "do not resume the pending,
+  // start it over" — the one instruction nothing else in the vocabulary can give.
+  const readingsPath = runDir([1, 2, 3]);
+  markComplete(readingsPath, 3);
+  const ask: ReadingsAsk = { skipPages: [], language: 'de' };
+  const pending = pendingOf(readingsPath, [1, 2], ask);
+
+  const outcome = openReadingsBank({ readingsPath, freshRequested: true, reuseRequested: false, ask });
 
   assert.equal(outcome.action, 'read-fresh');
   assert.equal(outcome.readings.size, 0);
-  assert.equal(outcome.archivedTo, null);
-  assert.match(outcome.sentence, /nothing is banked in/);
+  assert.equal(VlmReadings.open(pending).size, 0);
+  assert.equal(VlmReadings.open(readingsPath).size, 3);
+  assert.match(outcome.sentence, /2 page\(s\) of a half-finished replacement/);
+  assert.match(outcome.sentence, /thrown away and it starts over/);
+});
+
+test('a pending is invisible to --reuse-readings: not read, not resumed, not swept', () => {
+  /*
+   * A replay reads nothing, so it has nothing to protect the bank from, and the
+   * pending beside it belongs to an attempt that is none of its business. If it
+   * ever opened one, the swap at the end of that run would rename SOMEBODY
+   * ELSE'S half-read book over a finished one.
+   */
+  const readingsPath = runDir([1, 2, 3]);
+  markComplete(readingsPath, 3);
+  const pending = pendingOf(readingsPath, [1], { skipPages: [], language: 'de' });
+  const debris = fs.readFileSync(pending);
+
+  const outcome = openReadingsBank({ readingsPath, freshRequested: false, reuseRequested: true });
+
+  assert.equal(outcome.action, 'reuse');
+  assert.equal(outcome.pendingPath, null);
+  assert.equal(outcome.readings.size, 3);
+  assert.deepEqual(fs.readFileSync(pending), debris);
+  assert.equal(fs.existsSync(pendingRequestPath(readingsPath)), true);
 });
 
 test('--reuse-readings against an empty bank is refused, never turned into a full read', () => {
@@ -238,35 +380,295 @@ test('the two flags contradict each other and passing both is refused', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The bug, end to end on the filesystem
+// The sidecar — how a resume knows it is one
+//
+// Identity is `skipPages` and `language` and nothing else: the same split the
+// ledger makes (`PARAMS_OF.read` minus `MINTED_BY_THE_RUN.read`). What the run
+// STAMPED on its own answer is recorded and never compared.
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('a completed conversion re-ordered twice archives twice and never replays', () => {
+test('the model id is a recorded fact, not an identity field', () => {
+  // Nobody chooses it per run in the app — the same reason `pages` is minted
+  // rather than asked. A pending re-read is not thrown away because the default
+  // model moved under it; those answers cost the same GPU either way.
+  const readingsPath = runDir([1, 2]);
+  markComplete(readingsPath, 2);
+  pendingOf(readingsPath, [1], { skipPages: [5], language: 'de', model: 'dots-ocr' });
+
+  const outcome = openReadingsBank({
+    readingsPath,
+    freshRequested: false,
+    reuseRequested: false,
+    ask: { skipPages: [5], language: 'de', model: 'some-other-model' },
+  });
+
+  assert.equal(outcome.action, 'resume');
+  assert.equal(outcome.readings.size, 1);
+  // And the sidecar now records the model that is actually reading.
+  assert.equal(readPendingRequest(readingsPath)?.model, 'some-other-model');
+});
+
+test('a language named and a language absent are different asks', () => {
+  const readingsPath = runDir([1, 2]);
+  markComplete(readingsPath, 2);
+  pendingOf(readingsPath, [1], { skipPages: [], language: 'de' });
+
+  const outcome = openReadingsBank({ readingsPath, freshRequested: false, reuseRequested: false });
+  assert.equal(outcome.readings.size, 0);
+  assert.equal(readPendingRequest(readingsPath)?.language, null);
+});
+
+test('sameAsk compares the two fields the ledger compares, and normalises both', () => {
+  const request = { skipPages: [2, 4], language: 'de', model: 'dots-ocr', foundryVersion: '1.0.0' };
+  assert.equal(sameAsk(request, { skipPages: [4, 2, 4], language: 'de' }), true);
+  assert.equal(sameAsk(request, { skipPages: [2, 4], language: 'de', model: 'anything' }), true);
+  assert.equal(sameAsk(request, { skipPages: [2], language: 'de' }), false);
+  assert.equal(sameAsk(request, { skipPages: [2, 4], language: 'en' }), false);
+  assert.equal(sameAsk(request, { skipPages: [2, 4] }), false);
+});
+
+test('a pending with NO sidecar is resumed, not thrown away', () => {
+  /*
+   * Absent is not evidence of a different question — it is a pending written by
+   * a foundry from before sidecars, or one whose sidecar was swept. Resuming is
+   * correctness-safe (the bank is keyed by page, and a banked answer is a true
+   * answer for its page whatever the run around it was asked), and discarding
+   * would throw away GPU-minutes on no evidence at all.
+   */
+  const readingsPath = runDir([1, 2, 3]);
+  markComplete(readingsPath, 3);
+  const pending = pendingOf(readingsPath, [1, 2], { skipPages: [], language: 'de' });
+  fs.rmSync(pendingRequestPath(readingsPath));
+
+  const outcome = openReadingsBank({
+    readingsPath, freshRequested: false, reuseRequested: false, ask: { skipPages: [9] },
+  });
+
+  assert.equal(outcome.action, 'resume');
+  assert.equal(outcome.pendingPath, pending);
+  assert.equal(outcome.readings.size, 2);
+  // And the debris can account for itself again: this run wrote the sidecar it
+  // found missing, so the next kill is one the run after can reason about.
+  assert.deepEqual(readPendingRequest(readingsPath)?.skipPages, [9]);
+});
+
+test('a sidecar that will not parse is refused, and the refusal names both ways out', () => {
+  // "There is a file here I cannot read" and "no claim was made" are different
+  // facts, and one of the two guesses about them deletes somebody's reading.
+  const readingsPath = runDir([1, 2, 3]);
+  markComplete(readingsPath, 3);
+  pendingOf(readingsPath, [1], { skipPages: [], language: 'de' });
+  fs.writeFileSync(pendingRequestPath(readingsPath), '{ this is not json', 'utf8');
+
+  assert.throws(
+    () => openReadingsBank({ readingsPath, freshRequested: false, reuseRequested: false }),
+    (err: unknown) => {
+      assert.ok(err instanceof VlmReadingsError);
+      assert.match(err.message, /is not JSON/);
+      assert.match(err.message, /Delete that one file to resume the pending anyway/);
+      assert.match(err.message, /--fresh-readings/);
+      return true;
+    },
+  );
+  // Refused means refused: the pending is still there to be resumed by hand.
+  assert.equal(VlmReadings.open(pendingPath(readingsPath)).size, 1);
+});
+
+test('a sidecar missing its fields is refused rather than half-believed', () => {
+  const readingsPath = runDir([1]);
+  markComplete(readingsPath, 1);
+  pendingOf(readingsPath, [1], { skipPages: [], language: 'de' });
+  fs.writeFileSync(pendingRequestPath(readingsPath), JSON.stringify({ model: 'dots-ocr' }), 'utf8');
+
+  assert.throws(() => readPendingRequest(readingsPath), (err: unknown) => {
+    assert.ok(err instanceof VlmReadingsError);
+    assert.match(err.message, /not a pending readings request/);
+    return true;
+  });
+});
+
+test('a sidecar with no pending beside it is swept — it is a claim about nothing', () => {
+  const readingsPath = runDir([1, 2]);
+  writePendingRequest(readingsPath, { skipPages: [7], language: 'de' });
+
+  const outcome = openReadingsBank({ readingsPath, freshRequested: false, reuseRequested: false });
+
+  assert.equal(outcome.action, 'resume');
+  assert.equal(outcome.pendingPath, null);
+  assert.equal(fs.existsSync(pendingRequestPath(readingsPath)), false);
+});
+
+test('discarding a pending takes the sidecar with it and leaves the bank alone', () => {
+  const readingsPath = runDir([1, 2, 3]);
+  markComplete(readingsPath, 3);
+  pendingOf(readingsPath, [1], { skipPages: [], language: 'de' });
+
+  discardPending(readingsPath);
+
+  assert.equal(fs.existsSync(pendingPath(readingsPath)), false);
+  assert.equal(fs.existsSync(pendingRequestPath(readingsPath)), false);
+  assert.equal(VlmReadings.open(readingsPath).size, 3);
+  assert.equal(readCompletionMarker(readingsPath)?.pages, 3);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The swap, and every gap a crash can land in
+//
+// The order is: delete the old marker, rename the pending over the bank, remove
+// the sidecar, write the fresh marker. Each test below stages on disk exactly
+// what a crash between two of those steps leaves, and proves the next run heals
+// it without reading a page.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('the swap: the pending becomes the bank and the marker is the new run\'s', () => {
+  const readingsPath = runDir([1, 2, 3]);
+  markComplete(readingsPath, 3);
+  const pending = pendingOf(readingsPath, [1, 2, 3, 4], { skipPages: [], language: 'de' });
+
+  const marker = swapPendingIntoPlace(readingsPath, pending, completionOf(readingsPath, 4));
+
+  const bank = VlmReadings.open(readingsPath);
+  assert.equal(bank.size, 4);
+  assert.equal(bank.get(1)?.text, 'page 1, again');
+  assert.equal(marker.completedAt, '2026-08-09T10:00:00.000Z');
+  assert.equal(readCompletionMarker(readingsPath)?.pages, 4);
+  // The gamble's files are gone: the pending is the bank now, and the sidecar
+  // was a claim about a file that no longer exists.
+  assert.equal(fs.existsSync(pending), false);
+  assert.equal(fs.existsSync(pendingRequestPath(readingsPath)), false);
+  // One bank and one marker, and nothing else — the replaced reading is gone
+  // because its replacement exists, which is the whole of the amended rule.
+  assert.deepEqual(listing(readingsPath), ['readings.completed.json', 'readings.jsonl']);
+});
+
+test('with no pending the swap is exactly what it always was: the marker is written', () => {
+  const readingsPath = runDir([1, 2]);
+  const marker = swapPendingIntoPlace(readingsPath, null, completionOf(readingsPath, 2));
+
+  assert.equal(marker.pages, 2);
+  assert.equal(readCompletionMarker(readingsPath)?.completedAt, '2026-08-09T10:00:00.000Z');
+  assert.equal(VlmReadings.open(readingsPath).size, 2);
+});
+
+test('a swap whose pending is not there refuses rather than emptying the bank', () => {
   const readingsPath = runDir([1, 2, 3]);
   markComplete(readingsPath, 3);
 
-  // The re-order the user made: it must read the book.
-  const first = openReadingsBank({
-    readingsPath, freshRequested: false, reuseRequested: false, now: AT,
-  });
-  assert.equal(first.action, 'read-fresh');
+  assert.throws(
+    () => swapPendingIntoPlace(readingsPath, pendingPath(readingsPath), completionOf(readingsPath, 3)),
+    (err: unknown) => {
+      assert.ok(err instanceof VlmReadingsError);
+      assert.match(err.message, /there is nothing to put in place of/);
+      return true;
+    },
+  );
+  // The finished reading is exactly as it was found, marker and all.
+  assert.equal(VlmReadings.open(readingsPath).size, 3);
+  assert.equal(readCompletionMarker(readingsPath)?.pages, 3);
+});
 
-  // That run reads and banks its pages, then finishes.
-  const rebanked = VlmReadings.open(readingsPath);
-  for (const page of [1, 2, 3]) {
-    rebanked.append({ page, text: `page ${page} again`, tokens: 10, finishReason: 'stop', seconds: 1 });
-  }
+test('CRASH AFTER STEP 1 — old bank, no marker, complete pending: the swap is retried', () => {
+  /*
+   * The debris of a run killed between deleting the old marker and renaming its
+   * pending into place. Without the pending beating the marker, this reads as
+   * "an interrupted bank" and the finished replacement sitting beside it is
+   * abandoned — seventeen pages of GPU thrown away by a rule about a file that
+   * is not the one in question.
+   */
+  const readingsPath = runDir([1, 2, 3]);
+  const ask: ReadingsAsk = { skipPages: [], language: 'de', model: 'dots-ocr' };
+  const pending = pendingOf(readingsPath, [1, 2, 3], ask);
+  fs.rmSync(completionMarkerPath(readingsPath), { force: true });
+
+  const outcome = openReadingsBank({ readingsPath, freshRequested: false, reuseRequested: false, ask });
+
+  assert.equal(outcome.action, 'resume');
+  assert.equal(outcome.pendingPath, pending);
+  // NOT ONE PAGE IS MISSING, so the run reads nothing and goes straight to its end.
+  assert.deepEqual(outcome.readings.pages(), [1, 2, 3]);
+
+  const marker = swapPendingIntoPlace(readingsPath, outcome.pendingPath, completionOf(readingsPath, 3));
+  assert.equal(marker.pages, 3);
+  assert.equal(VlmReadings.open(readingsPath).get(2)?.text, 'page 2, again');
+  assert.equal(fs.existsSync(pending), false);
+});
+
+test('CRASH AFTER STEP 2 — new bank, no marker: it completes instantly and marks itself', () => {
+  /*
+   * The rename landed and the process died before the fresh marker. What is on
+   * disk is the new reading with no marker, which reads as an interrupted run
+   * with nothing missing: no page is read, and the next completion writes the
+   * marker that was owed.
+   */
+  const readingsPath = runDir([1, 2, 3]);
+  const outcome = openReadingsBank({ readingsPath, freshRequested: false, reuseRequested: false });
+
+  assert.equal(outcome.action, 'resume');
+  assert.equal(outcome.pendingPath, null);
+  assert.deepEqual(outcome.readings.pages(), [1, 2, 3]);
+
+  swapPendingIntoPlace(readingsPath, outcome.pendingPath, completionOf(readingsPath, 3));
+  assert.equal(readCompletionMarker(readingsPath)?.pages, 3);
+  assert.equal(VlmReadings.open(readingsPath).size, 3);
+});
+
+test('CRASH BETWEEN THE RENAME AND THE SIDECAR: the orphan is swept and nothing else moves', () => {
+  const readingsPath = runDir([1, 2, 3]);
   markComplete(readingsPath, 3);
+  writePendingRequest(readingsPath, { skipPages: [4], language: 'de' });
 
-  // And the one after it must read the book too — one marker does not exempt
-  // the next order, and the first archive is not overwritten by the second.
-  const second = openReadingsBank({
-    readingsPath, freshRequested: false, reuseRequested: false, now: new Date('2026-08-09T09:30:00.000Z'),
+  const outcome = openReadingsBank({
+    readingsPath, freshRequested: false, reuseRequested: false, ask: { skipPages: [4], language: 'de' },
   });
-  assert.equal(second.action, 'read-fresh');
-  assert.notEqual(second.archivedTo, first.archivedTo);
-  assert.equal(VlmReadings.open(path.join(first.archivedTo!, 'readings.jsonl')).size, 3);
-  assert.equal(VlmReadings.open(path.join(second.archivedTo!, 'readings.jsonl')).size, 3);
+
+  // A brand-new gamble, not a resume of a pending that is not there — and the
+  // stale sidecar was replaced rather than mistaken for this one's.
+  assert.equal(outcome.action, 'read-fresh');
+  assert.equal(outcome.pendingPath, pendingPath(readingsPath));
+  assert.equal(outcome.readings.size, 0);
+  assert.equal(VlmReadings.open(readingsPath).size, 3);
+});
+
+test('A RUN THAT DIES LEAVES THE PROJECT AS IT FOUND IT, and the retry pays for one page', () => {
+  /*
+   * The failure in BANK-LIFECYCLE §1, fact 1, end to end on the filesystem: a
+   * re-read of a finished 3-page reading dies after page 2. Before the pending
+   * bank the finished reading was already in `archived-<stamp>/` and the project
+   * was worse off for having tried; now nothing happened, and page 2's answer is
+   * waiting for the retry.
+   */
+  const readingsPath = runDir([1, 2, 3]);
+  markComplete(readingsPath, 3);
+  const ask: ReadingsAsk = { skipPages: [], language: 'de', model: 'dots-ocr' };
+
+  const first = openReadingsBank({ readingsPath, freshRequested: false, reuseRequested: false, ask });
+  first.readings.append({ page: 1, text: 'page 1, again', tokens: 1, finishReason: 'stop', seconds: 1 });
+  first.readings.append({ page: 2, text: 'page 2, again', tokens: 1, finishReason: 'stop', seconds: 1 });
+  // ...and the process dies here.
+
+  const bank = VlmReadings.open(readingsPath);
+  assert.equal(bank.size, 3);
+  assert.equal(bank.get(1)?.text, 'page 1');
+  assert.equal(readCompletionMarker(readingsPath)?.pages, 3);
+  assert.deepEqual(listing(readingsPath).filter((e) => e.startsWith('archived-')), []);
+
+  // The retry: two pages already paid for, one to go.
+  const second = openReadingsBank({ readingsPath, freshRequested: false, reuseRequested: false, ask });
+  assert.equal(second.action, 'resume');
+  assert.deepEqual(second.readings.pages(), [1, 2]);
+  second.readings.append({ page: 3, text: 'page 3, again', tokens: 1, finishReason: 'stop', seconds: 1 });
+
+  swapPendingIntoPlace(readingsPath, second.pendingPath, completionOf(readingsPath, 3));
+
+  const replaced = VlmReadings.open(readingsPath);
+  assert.equal(replaced.size, 3);
+  assert.equal(replaced.get(1)?.text, 'page 1, again');
+  assert.equal(readCompletionMarker(readingsPath)?.completedAt, '2026-08-09T10:00:00.000Z');
+  // One bank, one marker, and no hoard of the readings it replaced.
+  assert.deepEqual(
+    listing(readingsPath).filter((e) => e.startsWith('archived-') || e.includes('.pending')),
+    [],
+  );
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
