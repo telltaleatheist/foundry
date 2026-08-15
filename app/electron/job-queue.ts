@@ -689,23 +689,31 @@ async function pump(): Promise<void> {
   // running book.
   noteQueueBusy();
 
-  // The reading server, before the engine that will post pages to it. A remote
-  // endpoint is used exactly as given — only the local one is ours to start.
-  //
-  // A TRANSLATION NEVER WAITS FOR IT. Its model is Ollama, which this app does
-  // not start, and standing up twenty gigabytes of vLLM so that a job which
-  // will never send it a page can begin is a five-minute wait that buys
-  // nothing — and puts two models on one GPU if a conversion follows.
-  //
-  // AND NEITHER DOES A TWO-STAGE GENERATE, which is the same sentence about a
-  // job that happens to spend its first run inside `vlm-convert`. That run
-  // replays a completed bank — `replaysCompletedBank` is true by construction,
-  // because `planConversion` refuses the whole job when the ancestral reading
-  // carries no completion marker (docs/TRANSLATION-STEPS.md §3) — so it posts
-  // no page anywhere, and its second run is a translation, which is Ollama's.
-  // Waiting here would put a five-minute server start in front of a job that
-  // is arithmetic followed by a model this app does not own.
-  const endpoint = next.kind === 'translate' || piped !== null ? null : endpointFor();
+  /*
+   * The reading server, before the engine that will post pages to it. A remote
+   * endpoint is used exactly as given — only the local one is ours to start.
+   *
+   * ONLY A READING WAITS FOR IT, and that is the whole rule. `vlm-read` is the
+   * one job in this app that puts a page in front of a model; every other job
+   * either uses a model this app does not own or uses none at all.
+   *
+   * A GENERATE READS NOTHING. `argsFor` passes `--reuse-readings` on every
+   * conversion, without a switch anywhere that could turn it off, so the engine
+   * replays the completed bank: it loads no model, opens no socket, and leaves
+   * the bank byte for byte as it found it (`readings.ts`, `openReadingsBank`).
+   * A translation's model is Ollama's, which this app does not start. A
+   * two-stage Generate is those two facts in sequence.
+   *
+   * This used to be worded as a list of exceptions — translate, and the piped
+   * two-stage job — which meant a plain Generate still stood up twenty
+   * gigabytes of vLLM and waited five minutes for a server it would never
+   * address. Pressing a button labelled with a file format lit up the GPU, and
+   * the shelf said "Starting the reading server…" over a job that is
+   * arithmetic; the user reasonably read that as the model being run again.
+   * The exceptions were the majority, so the rule is stated the other way
+   * round: the job that reads waits, and nothing else does.
+   */
+  const endpoint = next.kind === 'read' ? endpointFor() : null;
   if (endpoint !== null && isLocalVllmEndpoint(endpoint)) {
     next.message = 'Starting the reading server…';
     changed();
