@@ -1,0 +1,144 @@
+# Next work — a skeleton to flesh out
+
+Draft, 2026-08-15. Four pieces, green-lit by the user but **not yet designed to
+the depth `STEP-LEDGER.md` was** before it was built. The open questions at the
+end of each section are the conversation still to have. Do not hand this to a
+build agent as it stands.
+
+Assumes the step ledger as built (`docs/STEP-LEDGER.md`, commits `e7cba53`,
+`f46e06d`, `e53435c`, `444a941`).
+
+---
+
+## 1. Bank replace-on-success
+
+**The rule, already settled:** a re-run replaces a step's payload, and *the old
+payload is destroyed only after the new run succeeds*. No `archived-<stamp>/`
+hoards accumulating in a project folder.
+
+**Today:** a fresh read archives the old bank up front, so a run that dies at
+page 9 of 17 has already moved the good bank aside. The overlay-archiving
+machinery leans on that current behaviour, which is why this needs care rather
+than a quick swap.
+
+**Shape:** the engine writes into a pending bank beside the real one and renames
+it into place only when the run completes — all pages landed, completion marker
+written. A dead run leaves the old bank untouched and the pending file as
+resumable debris. The engine owns it, so the CLI is safe too, not just the app.
+
+**The asymmetry to preserve:** banks swap-and-destroy (machine output you chose
+to replace); overlays and curations are archived forever (labour, and future
+fine-tune labels). The retention rule already draws this line.
+
+**Open:**
+- What happens to a *resumed* run's pending bank if the parameters changed
+  between attempts?
+- Does the pending bank participate in `orphanedPayloads` reasoning?
+
+---
+
+## 2. Queue confirm on re-run
+
+The other half of the same feature: the confirm names the cost **before** the
+job is enqueued.
+
+Now that the ledger exists it can name real things: "this replaces the 17-page
+reading, and marks stale your 2 saves and the English translation" — by name,
+from `markStale`'s own answer, not a count invented in the dialog. No reading
+yet → no confirm. And because the swap is on-success, the confirm is honest:
+nothing is lost if the re-run fails.
+
+**Open:**
+- Does a re-run that will *branch* rather than replace (different skip-pages,
+  per the identity rule) get a confirm at all? It costs GPU but destroys
+  nothing. Probably a quieter one, or none.
+
+---
+
+## 3. Step compare, side by side
+
+Pick a step, open its rendering in the second pane beside the current one —
+original beside translation being the case the user described.
+
+**Leaning:** compare is a *view*, not a position move. The comparison pane is
+read-only and does not disturb where the user is standing, because moving the
+pointer is what decides Generate and what the editor edits.
+
+**Open:**
+- Is it invoked from the step row, or from the pane?
+- Does closing the comparison restore anything, or is it just a pane close?
+- Block-level alignment between two renderings is a much larger feature —
+  explicitly out of scope unless the user asks.
+
+---
+
+## 4. Translation as a generatable step — and the question it opens
+
+**The user's model, in their words:** a translation is stored as a ledger entry
+the user can generate from whenever they like, so ten translations means ten
+steps and ten EPUBs on demand. Their walkthrough: translate → click the
+translation step → Generate produces the translation; then strike some blocks
+and commit → click *that* entry → Generate re-renders with the stricken items
+removed.
+
+**Also settled: no step picker on Generate.** Generate always renders the step
+currently selected — the ledger row *is* the picker. Revert is clicking step 0
+and generating. This is already how the built code behaves; the picker I had
+proposed is cancelled. (The dialog still *naming* which step it is about to
+render is worth keeping — a statement of fact, not a choice.)
+
+**What is actually missing:** rendering *from a translate step* was explicitly
+scoped out of the phase-2 wiring. Standing on a translate step today falls back
+to its nearest ancestor with a curation. So the work is: the translation's bank
+becomes a real render source, and Generate reads it when that is where the user
+stands.
+
+**THE OPEN QUESTION, and it is the important one.** The user's scenario puts a
+**curation on top of a translation**. That needs an overlay bound to the
+*translation's* bank — but overlays today are keyed to the **reading**'s
+generation. Options, unexplored:
+
+- Overlays become per-bank rather than per-reading, with a translate step's bank
+  carrying its own generation. Cleanest conceptually; touches the generation
+  binding, the archiving-on-mismatch machinery, and `curationInEffect`'s
+  stop-at-a-reading walk.
+- Or curation stays reading-only and strikes always apply upstream of
+  translation — which contradicts the user's walkthrough, so probably not.
+
+Related, and settled enough to state: **strikes made before a translation are
+baked into it**, because translating while standing on a curation takes the
+curated rendering as input. That is already the position model working
+correctly, and it is worth confirming with the user that it is what they expect.
+
+**Also needs solving:** two renderings from different steps must not share an
+output path. A translation's file is composed from stem + language tag and
+knows nothing about the ledger, so two translations into one language from
+different parents collide — which is exactly the before-strikes / after-strikes
+pair in the user's own example.
+
+---
+
+## 5. Carried over: one bank path per project
+
+Flagged during the ledger build, unresolved, and it belongs with §1 because both
+are about where a payload lives.
+
+A re-read with different skip-pages now *branches* by design — but there is one
+bank path per project key, so the older read step names a bank that was archived
+out from under it, and clicking that row renders the newer reading.
+`orphanedPayloads` defends the worst consequence (a delete will not destroy a
+bank a surviving step still needs), but the row still lies.
+
+The real fix is distinct payload paths per step. That is an on-disk layout
+change, so it wants a decision rather than an improvisation — and it is the same
+shape as the translation-collision problem in §4.
+
+---
+
+## Suggested order
+
+§1 and §2 together (one feature, two ends), since they release the
+`readings.ts` open/archive lifecycle that has been on hold. §5 folded in, since
+it is the same question about payload paths. Then §4, which is the biggest and
+has a live design question in it. §3 last — it is the least entangled and the
+most self-contained.
