@@ -102,10 +102,12 @@ export class ConfirmService {
     this.dismissed = question.dismissed;
     this.question.set(question);
     /*
-     * NOT `openConfirm()`, WHICH WOULD CLOSE WHATEVER RAISED THE QUESTION. See
-     * the header: the signal is set directly so the card stacks, and the other
-     * half of the one-at-a-time rule still holds because every other opener goes
-     * through `only()` and clears this.
+     * NOT `only()`, WHICH WOULD CLOSE WHATEVER RAISED THE QUESTION. See the
+     * header: the signal is set directly so the card stacks, and the other half
+     * of the one-at-a-time rule still holds because every other opener goes
+     * through `only()` and clears this. (UiService once offered an
+     * `openConfirm()` that was `only(confirmOpen)`; it never had a caller and
+     * was removed — the note where it stood says why it must not come back.)
      */
     this.ui.confirmOpen.set(true);
     return new Promise<QuestionAnswer>((resolve) => {

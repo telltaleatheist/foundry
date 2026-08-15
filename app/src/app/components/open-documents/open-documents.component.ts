@@ -87,7 +87,9 @@ import { UiService } from '../../core/ui.service';
  *
  * ── A STEP NODE IS NOT A TAB, and does not wear a tab's marks ────────────────
  *
- * No ✕, no middle-click close, no column badge, no accent bar for "on screen".
+ * No ✕ — the root is the single exception, and what its ✕ closes is the BOOK
+ * rather than the step, which is the next section — no middle-click close, no
+ * column badge, no accent bar for "on screen".
  * A step is a POSITION — clicking it moves where the project stands and the
  * panes follow — and the panel's statement about it is `.current`, one row in
  * the tree drawn in the accent. Marking step rows as "showing in column 3" as
@@ -96,23 +98,36 @@ import { UiService } from '../../core/ui.service';
  * HTML faces, copies, loose files — keep every one of those marks, because for
  * them the mark is the truth.
  *
- * ── The two ✕, and the one that left ─────────────────────────────────────────
+ * ── The three ✕, and the header they came from ───────────────────────────────
  *
  * THE ROW'S ✕ STILL DELETES, on an export and on a copy inside a project, behind
  * the app's one confirmation. Outside a project it still CLOSES: a file opened
  * from elsewhere is not main's to erase and `documents:delete` refuses it.
  *
- * THE GROUP HEADER'S ✕ IS GONE, and its job moved rather than went. The header
- * itself is gone — the import root took its place, which is what the user asked
- * for — and *"Right-click the import root → Close project"* is where closing a
- * book lives now. A step row wears no ✕ (see above), and the root is a step row;
- * putting one there anyway would be the one exception that teaches people to
- * look for ✕ on rows that must never have one. The tooltip names the gesture so
- * it is not something to be discovered.
+ * THE ROOT'S ✕ CLOSES THE BOOK, and it is the one place a node row wears one.
+ * The group header that used to carry this went when the import root took its
+ * place, and closing a book went with it into the right-click (§6c: *"Right-click
+ * the import root → Close project"*). The menu is still exactly where that lives
+ * — this button calls the same action through the same path, so there is one
+ * close-book in this file and not two. What the menu could not be is FINDABLE: a
+ * right-click is a gesture with nothing on screen to suggest it, so for anyone
+ * who was not told, the only way out of a book was to close its documents one at
+ * a time and hope the tree went with them.
+ *
+ * The rule it bends is worth stating so it is not read as a licence. What a step
+ * row must never carry is a ✕ meaning "delete this step and everything made from
+ * it" — that is the panel's most expensive ambiguity and it stays behind the
+ * menu, with main's accounting of the cost. This is not that button: it closes
+ * tabs, it writes nothing and destroys nothing, and the book is one click from
+ * coming back off Home's shelf. So it wears the ordinary ✕ and not the danger
+ * one, and it says "Close book" in words on hover, where the glyph alone would be
+ * asking the reader to guess which of the two meanings it has.
  *
  * MIDDLE-CLICK STAYS CLOSE on every row that is a tab, unchanged. It is the
  * gesture people bring from every other application, and it cannot destroy
- * anything.
+ * anything. It is NOT given the book as well: a root carries no tab, and a
+ * middle-click that shut five documents at once would be this app's largest
+ * gesture on its least deliberate input.
  *
  * ── Collapse is a session, not a setting ─────────────────────────────────────
  *
@@ -270,16 +285,34 @@ import { UiService } from '../../core/ui.service';
             <span class="column" [title]="'Showing in column ' + row.column">{{ row.column }}</span>
           }
           <!--
-            DELETES, inside a project — CLOSES, outside one. A file opened from
-            outside the library is not this app's to erase, and the tooltip says
-            which of the two the button is about to do rather than leaving it to
-            be discovered.
+            ONE GLYPH, THREE JOBS, AND EVERY ONE OF THEM SAID IN WORDS ON HOVER.
+            The root's closes the BOOK; a file's inside a project DELETES it; a
+            file's from outside one CLOSES it, because a file opened from
+            elsewhere is not this app's to erase. Three meanings on one shape is
+            only safe while the tooltip is what a person actually reads, so none
+            of these buttons is ever drawn without one.
 
-            NEITHER, ON A STEP. Deleting a step is not deleting a file — it takes
+            NONE, ON A STEP. Deleting a step is not deleting a file — it takes
             everything made from it — and that lives behind the right-click,
             with main's own accounting of what it costs.
           -->
-          @if (row.kind === 'export' || (row.kind === 'document' && row.dir !== null)) {
+          @if (row.kind === 'root') {
+            <!--
+              THE BOOK'S OWN ✕, and the only one on a node row. It closes this
+              book's tabs and nothing else — no file, no step, no confirmation of
+              its own beyond the ordinary close question a document with
+              uncommitted work still asks. So it wears the plain ✕ rather than the
+              danger one, and it calls the same action the right-click's Close
+              book calls, through the same path: two doors onto one gesture must
+              not become two implementations of it.
+            -->
+            <button
+              class="x"
+              (click)="closeBook($event, row)"
+              title="Close book"
+              aria-label="Close book"
+            >✕</button>
+          } @else if (row.kind === 'export' || (row.kind === 'document' && row.dir !== null)) {
             <button
               class="x danger"
               (click)="remove($event, row)"
@@ -1076,6 +1109,24 @@ export class OpenDocumentsComponent {
    */
   protected closeProject(group: Group): void {
     for (const id of [...group.tabIds]) void this.tabs.close(id);
+  }
+
+  /**
+   * The visible door onto that — the ✕ that appears on a root row under the
+   * pointer. Same gesture as the right-click's Close book, and deliberately the
+   * same CALL: it goes through the menu's own dispatch rather than looking a
+   * group up for itself, because finding the book from a root row is the part
+   * that can quietly be got wrong (the row's path is the project's directory,
+   * matched case-folded), and a second copy of that is a second thing to keep
+   * true. `fromMenu` closing a menu that is not open costs a signal write.
+   *
+   * `stopPropagation` because the click would otherwise land on the row as well
+   * and stand the project on its import — moving the position of a book on its
+   * way out of the library.
+   */
+  protected closeBook(event: MouseEvent, row: Row): void {
+    event.stopPropagation();
+    this.fromMenu(row, 'close-project');
   }
 
   /**

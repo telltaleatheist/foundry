@@ -87,11 +87,11 @@ import { TabsService, type Tab } from '../../core/tabs.service';
              sub-entries, one of it. -->
         <div class="reading">
           <header class="toolbar">
-            <!-- WHAT THIS COLUMN IS SHOWING, and it is here because nothing else
-                 says it any more: the Chrome-style strip that used to sit above
-                 this row is gone, and with five columns open a person needs to
-                 read the title off the pane rather than count along the list. -->
-            <span class="doc-title" [title]="tab().title">{{ tab().title }}</span>
+            <!-- THIS ROW DOES NOT NAME THE BOOK. It did, for as long as nothing
+                 above it would — but the Chrome-style strip is back (the
+                 workspace draws a tab per document, with its title on it), so a
+                 title here is the same word twice, one row apart, taking 40% of
+                 the row the mode line needs. -->
             <!--
               ── Edit HTML IS NOT OFFERED HERE, and the machinery is untouched ──
 
@@ -187,15 +187,6 @@ import { TabsService, type Tab } from '../../core/tabs.service';
       border-bottom: 1px solid var(--border-subtle);
       flex-shrink: 0;
     }
-    /* Capped at a share of the row rather than allowed to flex: the mode line
-       beside it is the reason the row exists, and a long title must not push
-       "Select — Delete cuts it" off the end of a narrow column. */
-    .doc-title {
-      flex: 0 1 auto;
-      max-width: 40%;
-      font-size: 12px; font-weight: 500; color: var(--text-primary);
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    }
     .state { flex: 1; min-width: 0; font-size: 11px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .mode {
       display: inline-block;
@@ -222,9 +213,10 @@ import { TabsService, type Tab } from '../../core/tabs.service';
     .problem h1 { margin: 0; font-size: 16px; font-weight: 600; color: var(--error); }
     .problem p { margin: 0; font-size: 13px; max-width: 60ch; white-space: pre-wrap; }
 
-    /* The button shapes that were here went with the buttons. This row names the
-       document and says what mode it is in; every control that used to sit on it
-       is on the dock, where the app keeps its tools. */
+    /* The button shapes that were here went with the buttons. All this row says
+       now is what mode the book is in and whether its edits are filed anywhere;
+       the strip above it names the document, and every control that used to sit
+       here is on the dock, where the app keeps its tools. */
   `],
 })
 export class EpubViewComponent implements OnDestroy {

@@ -27,15 +27,23 @@
  * believe they are replacing. A statement, not a question. And a project with NO
  * READING YET gets neither: there is nothing to say.
  *
- * ── Why the wording lives in `shared/` ──────────────────────────────────────
+ * ── Why the wording lives in `shared/`, and who owns the rest of the card ───
  *
- * Because it is the part that has to be tested. The counts and the names in these
- * sentences are read off the ledger and nowhere else — a dialog that said "your 2
- * saved corrections" over a project with three of them would be the app inventing
- * a fact about somebody's work — so the composition is a pure function with the
- * ledger as its only input, and `test/app/reread.test.ts` holds it down. Main
- * still owns the BOX: it draws it, it owns the buttons below, and it reads the
- * answer back by label (`main.ts`), exactly as every other dialog in this app.
+ * Because the sentences are ARITHMETIC OVER THE LEDGER and the renderer is the
+ * side already holding one. The counts and the names in them are read off that
+ * mirror and nowhere else — a dialog that said "your 2 saved corrections" over a
+ * project with three of them would be the app inventing a fact about somebody's
+ * work — so the composition is a pure function with the ledger as its only input,
+ * called from the OCR dialog as it decides whether to ask at all
+ * (`ocr-dialog.component.ts`). Main asking the disk for what the renderer is
+ * already looking at would be a round trip for a decision that is already made.
+ *
+ * WHAT MAIN OWNS IS THE QUESTION, NOT THE PROSE, and this is the only question in
+ * the app where that line falls here. `reading:confirm-re-read` (main.ts) takes
+ * these two strings and dresses them as an `AppQuestion`: the two choices, the
+ * key each one answers with, which of them a dismissal means. It draws nothing —
+ * no process does but the renderer, whose `ConfirmDialogComponent` paints this in
+ * the app's own idiom exactly as it paints every other question asked here.
  *
  * ── The last sentence, and why it may be said at all ────────────────────────
  *
@@ -56,10 +64,17 @@ import type { LedgerStep, ProjectLedger } from './types';
  * says "OK" makes the user re-read the question to find out what they are
  * agreeing to, at the one moment in this dialog where that matters.
  *
- * A native box answers with an INDEX, and an index is the wrong thing for main to
- * hold in its head (see `ANSWERS` in electron/main.ts, which is this rule already
- * written down for the closing question). So the label is the key, and both sides
- * import these rather than spelling them twice.
+ * THE LABEL IS NOT THE ANSWER, and nothing here reads one back. Main dresses
+ * these two words as the choices of an `AppQuestion` (`reading:confirm-re-read`,
+ * main.ts) and what a press sends back is that choice's own KEY — 'again' or
+ * 'leave' (`ReReadAnswer`, shared/types.ts) — never a label, and never the index
+ * a native box would have answered with. So the wording above can be rewritten
+ * without a single branch anywhere changing with it.
+ *
+ * THEY LIVE HERE even though main is the only importer, because the buttons are
+ * the last line of the question and the question is composed in this file. A
+ * proceed label kept in the process that draws no dialogs is a word nobody
+ * rereads on the day the sentence above it is rewritten.
  */
 export const RE_READ_PROCEED = 'Read it again';
 export const RE_READ_CANCEL = 'Leave the reading as it is';
@@ -68,11 +83,15 @@ export const RE_READ_CANCEL = 'Leave the reading as it is';
 export const BRANCH_SENTENCE = 'This will be a second reading beside the current one.';
 
 /**
- * The two halves of the native box, composed from the ledger.
+ * The two halves of the question, composed from the ledger: the line that is read
+ * first, and the one that is read after it.
  *
- * `message` and `detail` are Electron's own field names for the bold line and the
- * body, and they are used here so the thing that crosses IPC is already shaped
- * like the box it becomes — main adds the buttons and nothing else.
+ * `message` and `detail` were Electron's own field names for a message box's bold
+ * line and its body, from when this crossed the seam as one. They still name the
+ * same two jobs, but the slots they land in have moved: main dresses `message` as
+ * the card's TITLE and `detail` as its message (`reading:confirm-re-read`,
+ * main.ts), because a card carries a heading of its own where the box had window
+ * chrome — and the box's title and message were this same sentence, twice.
  */
 export interface ReReadPrompt {
   /** The headline: the question itself. */

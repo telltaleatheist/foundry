@@ -35,9 +35,22 @@ export class UiService {
   /**
    * The one confirmation, asked before anything is erased (ConfirmService).
    *
-   * In the list below with the rest, which is what stops a delete question from
-   * opening under an OCR card nobody can see past — and what lets the service
-   * turn "somebody closed it" into "they said no".
+   * IN THE LIST BELOW, BUT ONLY ONE DIRECTION OF THE RULE IS ABOUT IT. The
+   * service sets this signal DIRECTLY rather than through `only()`, deliberately
+   * and with its reasons written where it does it (`ConfirmService.put`): a
+   * question is asked ABOUT the gesture that raised it, the re-read question is
+   * raised from inside the OCR card by the very button that would enqueue the
+   * run, and a card that took the OCR dialog away in order to ask about it would
+   * answer a question nobody asked. So this one opening closes nothing. It does
+   * not have to: the confirm draws in its own layer above every other dialog
+   * (`z-index: 1300`, ConfirmDialogComponent), so drawing over one is exactly as
+   * modal as replacing it.
+   *
+   * WHAT MEMBERSHIP BUYS IS THE OTHER DIRECTION. Every other opener goes through
+   * `only()` and therefore clears this — and the service turns that into the
+   * question's own dismissal answer, so a dialog opening over an unanswered
+   * question cannot leave a caller holding a promise nobody will ever settle.
+   * "Somebody closed it" becomes "they said no".
    */
   readonly confirmOpen = signal(false);
   readonly shelfExpanded = signal(false);
@@ -153,10 +166,14 @@ export class UiService {
     this.metadataOpen.set(false);
   }
 
-  openConfirm(): void {
-    this.only(this.confirmOpen);
-  }
-
+  /*
+   * THERE IS NO `openConfirm()`. It was `only(confirmOpen)` and it never had a
+   * caller: the one thing that raises the confirmation sets the signal itself,
+   * because going through `only()` would close the dialog the question is about
+   * (see `confirmOpen` above, and `ConfirmService.put`). A public opener that
+   * does the one thing this dialog must never do is a trap left lying for the
+   * next person to reach for the obvious-looking method.
+   */
   closeConfirm(): void {
     this.confirmOpen.set(false);
   }
