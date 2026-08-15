@@ -531,7 +531,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     const geometryPages: DotsParsedPage[] = [];
     const prosePages: VlmPageBlocks[] = [];
     let droppedFurniture = 0;
-    const amended = { struck: 0, reclassified: 0, corrected: 0 };
+    const amended = { struck: 0, reclassified: 0, corrected: 0, joined: 0 };
 
     for (const page of run.pages) {
       const answer = answers.get(page.number);
@@ -582,6 +582,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
           amended.struck += tally.struck;
           amended.reclassified += tally.reclassified;
           amended.corrected += tally.corrected;
+          amended.joined += tally.joined;
         }
         // Not dropped on the PDF route, so not counted as dropped. That route
         // reprints the folio and the running head — they are what the page
@@ -610,9 +611,10 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     if (opts.overlayPath !== undefined) {
       opts.log(
         `vlm-convert: the overlay struck ${amended.struck} block(s) out of the book, rendered `
-        + `${amended.reclassified} as a category the model did not give them, and replaced the words `
-        + `of ${amended.corrected}; the readings they came from are unchanged, so a run without `
-        + '--overlay puts every one of them back',
+        + `${amended.reclassified} as a category the model did not give them, replaced the words `
+        + `of ${amended.corrected}, and joined ${amended.joined} across a seam the rules left split; `
+        + 'the readings they came from are unchanged, so a run without --overlay puts every one of '
+        + 'them back',
       );
     }
 

@@ -673,10 +673,12 @@ export function lineHeight(block: DotsBlock): number {
 /**
  * Does this text look like it continues the previous paragraph?
  *
- * The cheap half of the cross-page join: the previous block did not end on
- * terminal punctuation and this one opens lowercase. It is the test that costs
- * nothing; `dots-book.ts` reaches for the ink of the page only when this one
- * says no.
+ * The whole of the machine's cross-page join: the previous block did not end
+ * on terminal punctuation and this one opens lowercase. It used to be the
+ * cheap half — the ink of the page was sampled when this said no — and the ink
+ * test is dead (`dots-book.ts`, `DotsPageImages`). When this says no, the seam
+ * stays split until a person joins it with a recorded decision
+ * (`OverlayAmendment.join`), which is the deal that killed the ink.
  */
 export function continuesTextually(previous: string, next: string): boolean {
   if (previous.length === 0 || next.length === 0) return false;

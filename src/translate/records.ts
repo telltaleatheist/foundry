@@ -97,6 +97,21 @@ export class TranslationRecords {
   private readonly byParts = new Map<string, TranslationRecord>();
   /** The newest row per QUESTION — what the cost cache reads. */
   private readonly byKey = new Map<string, TranslationRecord>();
+  /**
+   * The newest KEYED row per position — which question this position was last
+   * an answer to.
+   *
+   * A person's row carries no key (they corrected a paragraph; they did not
+   * compute a question hash), so the position's newest row cannot say whether
+   * the source text has changed since the correction was made. This index can:
+   * it remembers the last row at this position that DID name its question, and
+   * a run compares that against the question it is about to ask. Same key —
+   * the source is unchanged, the correction answers the standing question, and
+   * the run leaves it alone. Different key — the source moved underneath the
+   * correction, and the machine's new answer takes over, said out loud. See
+   * `run.ts`'s `recordRow`, the only reader.
+   */
+  private readonly askedByParts = new Map<string, TranslationRecord>();
   private rows = 0;
 
   private constructor(readonly filePath: string) {}
@@ -158,7 +173,10 @@ export class TranslationRecords {
   private remember(row: TranslationRecord): void {
     this.rows += 1;
     this.byParts.set(row.parts, row);
-    if (row.key.length > 0) this.byKey.set(row.key, row);
+    if (row.key.length > 0) {
+      this.byKey.set(row.key, row);
+      this.askedByParts.set(row.parts, row);
+    }
   }
 
   /** How many lines were read. Not how many positions they cover. */
@@ -190,6 +208,15 @@ export class TranslationRecords {
    */
   rowFor(parts: string): TranslationRecord | undefined {
     return this.byParts.get(parts);
+  }
+
+  /**
+   * The key of the newest KEYED row at this position — the question this
+   * position currently answers — or undefined where no run has ever answered
+   * it. `askedByParts`' comment is the argument; `recordRow` is the reader.
+   */
+  questionFor(parts: string): string | undefined {
+    return this.askedByParts.get(parts)?.key;
   }
 
   /** Every position this file answers for, newest row each. */

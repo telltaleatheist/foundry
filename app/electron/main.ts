@@ -107,7 +107,9 @@ import {
   readingIsComplete,
   recordFinal,
   recordMetadata,
+  recordTranslationEdit,
   standForDocument,
+  translationWorldOf,
 } from './projects';
 import {
   clearRecents,
@@ -2848,6 +2850,30 @@ function registerIpc(): void {
     void towardTheFlowingBook(projectDir, resolved);
     return resolved;
   });
+  /*
+   * THE WORD OPS' TWO QUESTIONS ABOUT A TRANSLATION. `of-document` is free and
+   * read-only — which world does a word edit on this open book land in — and
+   * like `stand-for` it admits no path: the renderer is asking about a document
+   * it already has open. `record-edit` is the write, and the one rule composed
+   * HERE rather than in projects.ts is the queue's: a translation appends to
+   * its records file for hours, and a whole-file swap under a live run would
+   * drop answers, so the door is shut while a job is producing the file. The
+   * queue knows and projects.ts must not import it, so main — which holds both
+   * — hands the check in.
+   */
+  ipcMain.handle('translation:of-document', (_event, projectDir: string, filePath: string) =>
+    translationWorldOf(projectDir, filePath));
+  ipcMain.handle(
+    'translation:record-edit',
+    (_event, projectDir: string, filePath: string, parts: string, text: string) =>
+      recordTranslationEdit(projectDir, filePath, parts, text, (recordsFile) => (
+        queue.producing(recordsFile)
+          ? 'A translation is writing this book\'s records right now, so the correction was not '
+            + 'recorded — the edit is on screen and in this copy of the book. Let the run finish '
+            + '(or cancel it) and make the edit again.'
+          : null
+      )),
+  );
   ipcMain.handle('ledger:describe-delete', async (_event, projectDir: string, stepId: string) => {
     // Proven BEFORE the card is composed, so a warning is never put on screen for
     // something the delete would refuse a click later.

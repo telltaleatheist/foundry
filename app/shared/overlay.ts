@@ -168,6 +168,26 @@ export interface OverlayDecision {
    * page, and the chapter's NAME is a separate statement in `chapters` below.
    */
   text?: string;
+  /**
+   * JOIN THIS BLOCK TO ITS PREDECESSOR — the manual paragraph join.
+   *
+   * The reflow resolves a page turn on the banked words alone, and when the
+   * textual test says no the two halves stay two paragraphs — the ink test that
+   * used to break the tie is dead, and the compensation promised with its death
+   * is this field: the user sees the seam on the flowing page, joins it, and the
+   * ledger records labour like any other decision. The target is the
+   * CONTINUATION — the block that opens the next page — because that is the
+   * block whose belonging is in question, and its name survives a re-cast the
+   * way every target in this file does.
+   *
+   * The engine honours it wherever the structure allows a join to exist at all
+   * (a section boundary still closes every paragraph; see
+   * `src/vlm/overlay.ts`); this side's job is only to write it where the person
+   * pointed, and to take it back by REMOVING the field — absence is the default
+   * here as it is for every field of a decision. `false` is legal in the file
+   * and forces a split; nothing in this app writes it.
+   */
+  join?: boolean;
 }
 
 export interface OverlayAmendment extends OverlayDecision {
@@ -441,7 +461,7 @@ export function parseSourceKeys(value: string): OverlayTarget[] {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const OVERLAY_FIELDS = ['overlay', 'generation', 'amendments', 'chapters'] as const;
-const AMENDMENT_FIELDS = ['at', 'strike', 'category', 'text'] as const;
+const AMENDMENT_FIELDS = ['at', 'strike', 'category', 'text', 'join'] as const;
 const CHAPTER_FIELDS = ['at', 'title'] as const;
 const TARGET_FIELDS = ['page', 'order', 'part', 'note'] as const;
 
@@ -606,6 +626,18 @@ function readAmendment(entry: unknown, name: string, index: number): OverlayAmen
     refuseUnlessBlock(amendment.at, 'text', where);
     amendment.text = value;
   }
+  if ('join' in record) {
+    if (typeof record['join'] !== 'boolean') {
+      throw new OverlayError(
+        `${where} says "join": ${JSON.stringify(record['join'])}, and it is true or false — this `
+        + 'block continues the paragraph before it, or it does not',
+      );
+    }
+    // A note is gathered to the end of its chapter and never sits at a page
+    // seam. The engine's reader makes the same refusal in the same place.
+    refuseUnlessBlock(amendment.at, 'join', where);
+    amendment.join = record['join'];
+  }
 
   if (Object.keys(amendment).length === 1) {
     throw new OverlayError(
@@ -735,11 +767,11 @@ export function decisionFor(
 /**
  * The fields of a decision that can be edited, as the ledger spells them.
  *
- * The ledger's `field` and this app's setters are the same five names, so a row
+ * The ledger's `field` and this app's setters are the same names, so a row
  * read back off disk routes to the setter that wrote it without a translation
  * table in between.
  */
-export type OverlayField = 'strike' | 'category' | 'text';
+export type OverlayField = 'strike' | 'category' | 'text' | 'join';
 
 /**
  * One edit, applied to a copy — the ONE mutator, and every gesture goes through
@@ -768,7 +800,14 @@ export function amendOverlay(
 
   if (value.length === 0) delete decision[field];
   else if (field === 'strike') decision.strike = value === 'true' || value === '1';
-  else if (field === 'category') {
+  else if (field === 'join') {
+    // The writer's half of the reader's refusal, exactly as category and text
+    // have below: a join against one note of a block would be refused by name
+    // on the next load, so it is refused here, where the sentence can still
+    // name the gesture.
+    refuseUnlessBlock(target, 'join', 'This overlay');
+    decision.join = value === 'true' || value === '1';
+  } else if (field === 'category') {
     // The writer's half of `refuseUnlessBlock`. The reader refuses such a file
     // by name; this refuses it before it can be written, so the sentence names
     // the gesture rather than turning up on the next load of somebody's book.
@@ -880,6 +919,7 @@ export function amendmentsOf(decisions: ReadonlyMap<string, OverlayDecision>): O
     if (decision.strike !== undefined) kept.strike = decision.strike;
     if (decision.category !== undefined) kept.category = decision.category;
     if (decision.text !== undefined) kept.text = decision.text;
+    if (decision.join !== undefined) kept.join = decision.join;
     // An amendment that decides nothing is not written. This is where an
     // unstruck block stops costing a line in somebody's curation.
     if (Object.keys(kept).length === 0) continue;

@@ -36,9 +36,11 @@ import type {
   PdfBlock,
   PdfBlockPage,
   PdfDetectedChapter,
+  TranslationWorld,
   UncommittedCuration,
   UnlinkedNote,
 } from '@shared/types';
+import { unrenderBlock } from '@shared/unrender';
 
 import { LedgerService } from './ledger.service';
 import { ProjectsService } from './projects.service';
@@ -504,6 +506,18 @@ export interface BookSpine {
   marks: readonly ChapterMark[];
   confirmed: boolean;
   editable: boolean;
+  /**
+   * The recorded manual JOINS, resolved to the elements that continue — one
+   * entry per `join: true` decision whose continuation block this cast renders.
+   *
+   * It rides the spine rather than a read of its own because it is the same
+   * read: the same overlay (live, or the frozen one a save shows), the same
+   * provenance index, refreshed by the same two signals. The frame paints each
+   * as a seam already decided — the visible merge happens at the next cast, and
+   * an affordance that kept offering "join" over a decision already made would
+   * read as a gesture that did nothing.
+   */
+  joins: readonly { member: string; blockId: string }[];
 }
 
 /** Something the shell wants said to one tab's frame. See `frameCommand`. */
@@ -2645,6 +2659,11 @@ export class TabsService {
        */
       this.ledgers.delete(gone);
       this.editing.delete(gone);
+      // The world a word edit lands in is keyed by tab id and dies with it —
+      // the next tab on this document asks main afresh.
+      for (const key of [...this.translationWorlds.keys()]) {
+        if (key.startsWith(`${gone}|`)) this.translationWorlds.delete(key);
+      }
       /*
        * AND THE BLOCKS GO WITH THE TAB, for the frame state's reason exactly: a
        * book's worth of boxes held for a document nobody is looking at is memory
@@ -3716,10 +3735,25 @@ export class TabsService {
     const confirmed = shown.chapters !== undefined;
     const chapters = shown.chapters ?? (await this.spineOf(tab, file)) ?? [];
     const index = await this.sourceIndexOf(tab);
+    /*
+     * The joins the shown curation records, resolved through the same index the
+     * markers are: a `join: true` decision names the CONTINUATION block's first
+     * banked answer, which is exactly the key `sourceIndexOf` files each
+     * element under. A decision whose block this cast does not render is
+     * simply not drawn — it is still in the file, and the cast that consumes
+     * it will not show the seam at all.
+     */
+    const joins: { member: string; blockId: string }[] = [];
+    for (const [key, decision] of decisionsOf(shown)) {
+      if (decision.join !== true) continue;
+      const found = index.get(key);
+      if (found !== undefined) joins.push({ member: found.member, blockId: found.id });
+    }
     this.putBookSpine(tabId, {
       chapters,
       confirmed,
       editable: held === null,
+      joins,
       marks: chapters.map((one) => {
         const target = targetKey(one.at);
         const found = index.get(target) ?? null;
@@ -4396,27 +4430,51 @@ export class TabsService {
    * modal between a person and their own sentence. Cancel undoes.
    */
   async setBlockHtml(id: string, blockId: string, html: string, was: string): Promise<void> {
+    /*
+     * THE FIFTH DOOR MET ON THE WAY IN, and only by the world where it exists.
+     * A word edit over the SOURCE book is a decision in the live curation now
+     * (`mirrorWords`), so standing on a frozen save it would be the same
+     * silent rewrite `cutBlocks` refuses — and refused BEFORE the chapter is
+     * written, so the book and the curation cannot end up saying different
+     * things. Over a TRANSLATION the mirror is a record row, which no save
+     * freezes, and over a book in no project there is no mirror at all: both
+     * of those keep typing exactly as they always did.
+     */
+    const opening = this.byId(id);
+    if (opening !== null && opening.kind === 'epub' && opening.book !== null
+      && this.projectDirOf(opening) !== null
+      && await this.worldOf(opening) === null
+      && this.refusedByASave(id)) {
+      return;
+    }
+    let editedMember: string | null = null;
     const unlinked = await this.blockEdit(
       id,
       (bridge, book, member) => bridge.epub.setBlockHtml(book, member, blockId, html),
-      (_notes, member) => ({
-        label: `edited the words of ${blockId}`,
-        /*
-         * NO `was`, NO ROW. The frame hands over the block's previous markup
-         * and it is the only copy of it anywhere — main wrote the new words
-         * over the old ones. A row with an empty `before` would be a Ctrl+Z
-         * that blanks the paragraph, so an edit that arrives without it is
-         * applied and simply is not undoable. It cannot happen for an edit this
-         * app's own frame made; it is the shape of the message that allows it.
-         */
-        rows: was.length === 0 ? [] : [{
-          member,
-          target: blockId,
-          field: 'html' as const,
-          before: was,
-          after: html,
-        }],
-      }),
+      (_notes, member) => {
+        // The member the write actually landed in, held for the mirror below:
+        // the dialogs between here and there can take long enough for the
+        // reader to have scrolled another chapter under `chapterHref`.
+        editedMember = member;
+        return {
+          label: `edited the words of ${blockId}`,
+          /*
+           * NO `was`, NO ROW. The frame hands over the block's previous markup
+           * and it is the only copy of it anywhere — main wrote the new words
+           * over the old ones. A row with an empty `before` would be a Ctrl+Z
+           * that blanks the paragraph, so an edit that arrives without it is
+           * applied and simply is not undoable. It cannot happen for an edit this
+           * app's own frame made; it is the shape of the message that allows it.
+           */
+          rows: was.length === 0 ? [] : [{
+            member,
+            target: blockId,
+            field: 'html' as const,
+            before: was,
+            after: html,
+          }],
+        };
+      },
     );
     // Null is a refusal, and a refusal wrote nothing — there is no new text for
     // either question below to be about.
@@ -4424,10 +4482,18 @@ export class TabsService {
     if (unlinked.length > 0 && await this.askAboutUnlinkedNotes(id, blockId, was, unlinked)) {
       // Cancelled: the block is back to the markup it had, so the heading (if
       // this was one) reads what it always read and there is nothing to offer
-      // the contents.
+      // the contents — and nothing to mirror, because the mirror below records
+      // what is IN the book, and what is in the book is what was always there.
       return;
     }
     await this.askAboutNavEcho(id, blockId, was);
+    /*
+     * AND THE WORDS, RECORDED AS A DECISION — LAST, like every mirror in this
+     * file, because the only thing it can say is that the correction could not
+     * be recorded, and that sentence must not be painted over by anything
+     * reporting the success the user already watched land.
+     */
+    if (editedMember !== null) await this.mirrorWords(id, editedMember, blockId, html);
   }
 
   /**
@@ -5311,9 +5377,9 @@ export class TabsService {
     tabId: string,
     field: OverlayField,
     edits: readonly { at: OverlayTarget; value: string }[],
-  ): Promise<void> {
+  ): Promise<'written' | 'noop' | 'refused'> {
     const tab = this.byId(tabId);
-    if (!api || tab === null || edits.length === 0) return;
+    if (!api || tab === null || edits.length === 0) return 'noop';
     let file: OverlayFile;
     try {
       file = (await api.overlay.load(tab.path)).file as OverlayFile;
@@ -5322,7 +5388,7 @@ export class TabsService {
         `That change is in your book, but it could not be recorded as a decision: ${
           err instanceof Error ? err.message : String(err)}`,
       );
-      return;
+      return 'refused';
     }
     /*
      * READ BACK OFF THE FILE AFTER EVERY AMENDMENT, and it is not a formality:
@@ -5351,16 +5417,17 @@ export class TabsService {
       decisions = decisionsOf(file);
       touched += 1;
     }
-    if (touched === 0) return;
+    if (touched === 0) return 'noop';
 
     const refused = await this.putOverlay(tabId, file);
     if (refused !== null) {
       this.notice.set(
         `That change is in your book, but it could not be recorded as a decision: ${refused}`,
       );
-      return;
+      return 'refused';
     }
     this.repaintCurations(tab);
+    return 'written';
   }
 
   /**
@@ -5413,6 +5480,227 @@ export class TabsService {
    */
   private bankCategory(id: string): string | null {
     return BANK_CATEGORY_OF[id] ?? null;
+  }
+
+  /**
+   * Which world a word edit on this tab's book lands in, asked of main once and
+   * held.
+   *
+   * NULL is the source world — the project's flowing book, a save's cast — where
+   * a word edit mirrors to the overlay's `text` field. A `TranslationWorld` is a
+   * translate step's own book, where the same edit is a per-language correction
+   * in that step's records file. `'unknown'` is a resolve that failed, and it is
+   * a THIRD answer rather than a default, because the two defaults are both
+   * wrong in a way that writes: treating a translation as the source would
+   * record its Hungarian words as a correction to the German bank, and treating
+   * the source as a translation would look for records it does not have. An
+   * unknown world edits the book and records nothing, which is exactly what
+   * every word edit did before this unit.
+   *
+   * CACHEABLE BECAUSE THE ANSWER CANNOT MOVE under a tab: a re-cast is refused
+   * while the book is open, and a re-translation mints a new step and a new
+   * filename. Dropped with the tab's ledger on close.
+   */
+  private readonly translationWorlds = new Map<string, TranslationWorld | null | 'unknown'>();
+
+  private async worldOf(tab: Tab): Promise<TranslationWorld | null | 'unknown'> {
+    const dir = this.projectDirOf(tab);
+    if (!api || dir === null) return null;
+    const key = `${tab.id}|${fold(tab.path)}`;
+    const held = this.translationWorlds.get(key);
+    if (held !== undefined) return held;
+    try {
+      const world = await api.translation.ofDocument(dir, tab.path);
+      this.translationWorlds.set(key, world);
+      return world;
+    } catch {
+      // Not cached: the next gesture asks again, and a project whose catalogue
+      // was briefly unreadable is not condemned to a session of unrecorded
+      // edits.
+      return 'unknown';
+    }
+  }
+
+  /**
+   * THE WORD EDIT, RECORDED — the two text ops of the derived book, routed by
+   * world.
+   *
+   * ── Source world: the overlay's `text` field ────────────────────────────────
+   *
+   * The correction becomes an amendment against the banked answer the words
+   * came from, in the same live curation every strike and relabel lands in — so
+   * it survives the working tree, rides every future cast, and RE-KEYS the
+   * block's translations: the masked source changed, so the question changed,
+   * and a chained re-run re-asks exactly that block (the closure of D2's named
+   * cost (1)). The value is the flowing dialect, recovered from the edited
+   * markup by `unrenderBlock`.
+   *
+   * Two recorded limits, each refused with a sentence rather than widened:
+   *
+   *  - A MULTI-PART PARAGRAPH — one joined across a page seam, `data-bf-src`
+   *    naming several banked answers — cannot carry one correction, because an
+   *    amendment names exactly one block and nothing can honestly say where the
+   *    edited words divide between the two halves.
+   *  - A FOOTNOTE's words are facts about the whole banked answer its notes
+   *    were cut from (`refuseUnlessBlock`'s rule), so one aside's edit has no
+   *    amendment to become.
+   *
+   * ── Translated world: a human row in the step's records file ───────────────
+   *
+   * `{parts, text, author: "user"}`, keyless, appended by main — per-language
+   * by construction, newest row wins at the next cast, kept standing by the
+   * engine's own refusal while the source it answers is unchanged. Both limits
+   * above DISSOLVE here, deliberately: a record's `parts` is the element's
+   * whole space-joined provenance, and a note's record carries the `#ordinal`
+   * dimension, so a joined paragraph and a single footnote are both exactly one
+   * row.
+   *
+   * A LEGACY TRANSLATION IS REFUSED WITH THE WAY OUT — D2's export sentence,
+   * met at the third door.
+   */
+  private async mirrorWords(
+    tabId: string,
+    member: string,
+    blockId: string,
+    html: string,
+  ): Promise<void> {
+    const tab = this.byId(tabId);
+    if (!api || tab === null || tab.kind !== 'epub' || tab.book === null) return;
+    const dir = this.projectDirOf(tab);
+    if (dir === null) return;
+    const world = await this.worldOf(tab);
+    if (world === 'unknown') return;
+    const sources = await this.provenanceOf(tab.book.id, member);
+    const found = sources.byBlock.get(blockId);
+    // A book cast before provenance existed: the same silence, for the same
+    // reason, as `mirrorToCuration`.
+    if (found === undefined) return;
+
+    let text: string;
+    try {
+      text = unrenderBlock(html);
+    } catch (err) {
+      this.notice.set(
+        `That edit is in your book, but it could not be recorded as a decision: ${
+          err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+    if (text.trim().length === 0) return;
+
+    if (world !== null) {
+      if (world.legacy) {
+        this.notice.set(
+          'That edit is in this copy of the book, but this translation was made before Foundry '
+          + 'kept translations as records, so a corrected sentence has nowhere durable to go — it '
+          + 'will not survive this book being cast again. To make corrections that keep, translate '
+          + 'again from the step this translation was made from; everything after that is free.',
+        );
+        return;
+      }
+      const parts = found.note !== null ? `${found.src}#${found.note}` : found.src;
+      try {
+        await api.translation.recordEdit(dir, tab.path, parts, text);
+      } catch (err) {
+        this.notice.set(
+          `That edit is in your book, but the translation could not record it: ${
+            err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      return;
+    }
+
+    if (found.note !== null) {
+      this.notice.set(
+        'That edit is in your book, but it could not be recorded as a decision: these are the '
+        + 'words of one footnote, and a recorded correction speaks for the whole run of notes it '
+        + 'was cut from. The edit stays in this copy of the book and will not survive it being '
+        + 'cast again.',
+      );
+      return;
+    }
+    const targets = parseSourceKeys(found.src);
+    if (targets.length === 0) return;
+    if (targets.length > 1) {
+      // The recorded limit, stated rather than silently widened: an amendment
+      // names one block, and this paragraph is several.
+      this.notice.set(
+        'That edit is in your book, but it could not be recorded as a decision: this paragraph '
+        + `was joined across a page seam out of ${targets.length} blocks `
+        + `(${targets.map((one) => targetKey(one)).join(', ')}), and a recorded correction names `
+        + 'exactly one. The edit stays in this copy of the book and will not survive it being cast '
+        + 'again.',
+      );
+      return;
+    }
+    await this.amendCuration(tabId, 'text', [{ at: targets[0]!, value: text }]);
+  }
+
+  /**
+   * "JOIN THIS PARAGRAPH TO THE ONE BEFORE IT" — the manual join, the flagship
+   * recovered half: promised the day the ink test died, built here.
+   *
+   * The gesture arrives naming the CONTINUATION element — the paragraph that
+   * opens the page after the seam — and leaves as one `join` amendment against
+   * that element's first banked answer, which is the block whose belonging was
+   * in question. The reflow consumes it at the next cast and the two paragraphs
+   * become one, provenance intact (`flowBlocks`, src/vlm/dots-book.ts); until
+   * then the seam draws a marker so the decision is visible where it was made.
+   *
+   * IT WRITES NO BOOK, and its ledger row says so (`LedgerField`, `join`): the
+   * row exists so one Ctrl+Z takes the decision back, and its replay re-amends
+   * the overlay through the same resolution this makes. `join === false` is the
+   * taking-back gesture and REMOVES the field — absence is the default, as it
+   * is for every decision — never `join: false`.
+   */
+  async joinBlocks(tabId: string, blockId: string, member: string, join: boolean): Promise<void> {
+    if (this.refusedByASave(tabId)) return;
+    const tab = this.byId(tabId);
+    if (!api || tab === null || tab.kind !== 'epub' || tab.book === null) return;
+    if (this.projectDirOf(tab) === null) return;
+    const sources = await this.provenanceOf(tab.book.id, member);
+    const found = sources.byBlock.get(blockId);
+    if (found === undefined || found.note !== null) return;
+    const at = parseSourceKeys(found.src)[0];
+    if (at === undefined) return;
+    const outcome = await this.amendCuration(tabId, 'join', [{ at, value: join ? 'true' : '' }]);
+    if (outcome !== 'written') return;
+    // Recorded AFTER the write, because the row's only job is to reverse a
+    // decision that actually landed — the ordinary rule, with the ordinary
+    // spelling: '1' and '' are the two sides, as they are for a cut.
+    this.record(
+      tabId,
+      join ? 'joined the paragraph to the one before it' : 'took back a paragraph join',
+      [{
+        member,
+        target: blockId,
+        field: 'join',
+        before: join ? '' : '1',
+        after: join ? '1' : '',
+      }],
+    );
+  }
+
+  /** One join row put back — the replay's half of `joinBlocks`, same resolution. */
+  private async replayJoin(tabId: string, row: LedgerRow, value: string): Promise<boolean> {
+    const tab = this.byId(tabId);
+    if (!api || tab === null || tab.kind !== 'epub' || tab.book === null) return false;
+    // No project, or no provenance: the decision cannot be resolved to a block,
+    // and pretending the replay succeeded would pop an action that reversed
+    // nothing.
+    if (this.projectDirOf(tab) === null) return false;
+    const sources = await this.provenanceOf(tab.book.id, row.member);
+    const found = sources.byBlock.get(row.target);
+    if (found === undefined || found.note !== null) return false;
+    const at = parseSourceKeys(found.src)[0];
+    if (at === undefined) return false;
+    const outcome = await this.amendCuration(tabId, 'join', [{
+      at,
+      value: value === '1' ? 'true' : '',
+    }]);
+    // A no-op is a success here: the decision already says this — another pane
+    // wrote it, or the row is being replayed over its own landing.
+    return outcome !== 'refused';
   }
 
   // ── Undo / redo: the ledger ──────────────────────────────────────────────
@@ -5808,7 +6096,26 @@ export class TabsService {
      */
     if (action.rows.some((row) =>
       row.field === 'cut' || row.field === 'category' || row.field === 'note-cut'
-      || row.field === 'chapters')) {
+      || row.field === 'chapters' || row.field === 'join')) {
+      const heldBook = this.heldByASave(tab.id);
+      if (heldBook !== null) {
+        this.notice.set(heldBook);
+        return;
+      }
+    }
+    /*
+     * A WORD EDIT JOINED THEM CONDITIONALLY, because it stopped being "the
+     * book's markup and nothing else's" the day it started mirroring to the
+     * overlay's text field. Over the SOURCE book, taking an edit back
+     * un-records that correction in the live curation — the same silent
+     * rewrite the door above refuses — so it meets the same door. Over a
+     * TRANSLATION it does not: the mirror there is a record row, records are
+     * not what a save freezes, and a person may correct the Hungarian while
+     * standing wherever they like.
+     */
+    if (action.rows.some((row) => row.field === 'html')
+      && this.projectDirOf(tab) !== null
+      && (await this.worldOf(tab)) === null) {
       const heldBook = this.heldByASave(tab.id);
       if (heldBook !== null) {
         this.notice.set(heldBook);
@@ -5838,6 +6145,12 @@ export class TabsService {
     const noteCuts: { noteId: string; member: string; value: string }[] = [];
     /** And the spine entries, which are not amendments at all. */
     const chapterMarks: { id: string; member: string; mark: boolean }[] = [];
+    /**
+     * The word edits it owes — each one un-rendered and re-mirrored after the
+     * loop, exactly as the gesture mirrored it, so a Ctrl+Z that puts a
+     * sentence back also puts the recorded correction back to what it was.
+     */
+    const wordEdits: { member: string; target: string; html: string }[] = [];
     // A contents entry put back is a row in the sidebar, which is drawn from
     // `book.chapters` and not from the file — so undoing the write without this
     // would leave the panel showing a label the navigation document no longer
@@ -5863,6 +6176,26 @@ export class TabsService {
         if (stopped !== null) {
           this.notice.set(
             `${direction === 'undo' ? 'Undo' : 'Redo'} stopped at where this book divides: ${stopped}`,
+          );
+          return;
+        }
+        continue;
+      }
+      /*
+       * A JOIN IS NOT A CALL INTO THE BOOK EITHER — the chapters' reasoning,
+       * one decision over. The row names the continuation element and the
+       * chapter it is in; putting the decision back means resolving that name
+       * to its banked answer through the same provenance read the gesture
+       * made, and re-amending the overlay with the other value. Nothing in the
+       * working tree moves, so nothing reloads; the seam's marker redraws
+       * because the write bumps the curation counter the surface watches.
+       */
+      if (row.field === 'join') {
+        const put = await this.replayJoin(tab.id, row, value);
+        if (!put) {
+          this.notice.set(
+            `${direction === 'undo' ? 'Undo' : 'Redo'} stopped at a paragraph join: the decision `
+            + 'could not be rewritten.',
           );
           return;
         }
@@ -5938,6 +6271,9 @@ export class TabsService {
       // showing. There is no attribute to flip that would put a sentence back,
       // so these — and only these — reload the chapter.
       else reload = true;
+      // And the word edit owes the record back too — the html now in the file
+      // is `value`, and the mirror is recomputed from it after the loop.
+      if (row.field === 'html') wordEdits.push({ member: row.member, target: row.target, html: value });
     }
 
     for (const [cut, ids] of cutIds) {
@@ -5957,14 +6293,15 @@ export class TabsService {
     const current = this.byId(tab.id);
     const revision = current?.revision ?? tab.revision;
     /*
-     * AN ACTION MADE ONLY OF SPINE ROWS DID NOT TOUCH THE BOOK. `modified` means
-     * "the copy you filed is older than this one", and where the book divides
-     * lives in the curation beside the bank — not in a single byte of the
-     * working tree. Marking it would put a dot on the tab and raise the
-     * close-with-unsaved-work question over a file nothing wrote to, which is
-     * the same reason the scan's own replay sets no flag at all.
+     * AN ACTION MADE ONLY OF SPINE OR JOIN ROWS DID NOT TOUCH THE BOOK.
+     * `modified` means "the copy you filed is older than this one", and where
+     * the book divides — and where its seams join — lives in the curation
+     * beside the bank, not in a single byte of the working tree. Marking it
+     * would put a dot on the tab and raise the close-with-unsaved-work question
+     * over a file nothing wrote to, which is the same reason the scan's own
+     * replay sets no flag at all.
      */
-    const touchedBook = action.rows.some((row) => row.field !== 'chapters');
+    const touchedBook = action.rows.some((row) => row.field !== 'chapters' && row.field !== 'join');
     this.patch(tab.id, {
       ...(touchedBook ? { modified: true } : {}),
       revision: reload ? revision + 1 : revision,
@@ -6017,6 +6354,13 @@ export class TabsService {
         member,
         chapterMarks.filter((one) => one.member === member),
       );
+    }
+    // And the words — one at a time, because a word-edit action carries one
+    // row. The mirror is the gesture's own (`mirrorWords`), so a restored
+    // sentence re-records exactly what the edit recorded, in whichever world
+    // this book's words land.
+    for (const one of wordEdits) {
+      await this.mirrorWords(tab.id, one.member, one.target, one.html);
     }
   }
 
@@ -6732,6 +7076,15 @@ const LEDGER_FIELD_OF: Readonly<Record<OverlayField, LedgerField>> = {
   strike: 'strike',
   category: 'block-category',
   text: 'block-text',
+  /*
+   * THE SCAN'S BLOCK EDITOR NEVER WRITES THIS ROW. A join is a decision about
+   * the flowing page's seam, made on the book and recorded through the book's
+   * own ledger (`joinBlocks`), where its row is a BOOK row that writes no book.
+   * The entry exists because this table's type promises a ledger spelling for
+   * every overlay field, and a hole in it would be a compile error one field
+   * addition away from being papered over with a cast.
+   */
+  join: 'join',
 };
 
 const OVERLAY_FIELD_OF: Readonly<Record<string, OverlayField>> = {
@@ -6911,6 +7264,7 @@ const BANK_CATEGORY_OF: Readonly<Record<string, string>> = Object.fromEntries(
 function fieldValue(decision: OverlayDecision | undefined, field: OverlayField): string {
   if (decision === undefined) return '';
   if (field === 'strike') return decision.strike === true ? 'true' : '';
+  if (field === 'join') return decision.join === true ? 'true' : '';
   if (field === 'category') return decision.category ?? '';
   return decision.text ?? '';
 }

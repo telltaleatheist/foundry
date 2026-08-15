@@ -1845,6 +1845,28 @@ export interface UnlinkedNote {
 }
 
 /**
+ * Which world a word edit on an open book lands in — main's answer to
+ * `translation:of-document`, asked once per tab and cached by the renderer.
+ *
+ * NULL (the IPC's other answer) is the ordinary book: the source cast, a save's
+ * cast, or a foreign EPUB — a word edit there mirrors to the overlay's `text`
+ * field, or to nothing at all when the book is in no project. Non-null means
+ * the document is a TRANSLATE step's book, where a word edit is a per-language
+ * correction: a human row in that step's records file, never an amendment in
+ * the source curation.
+ */
+export interface TranslationWorld {
+  /** The step's recorded target language — `params.language`, `''` where unrecorded. */
+  language: string;
+  /**
+   * A translate row from before translations were records: its payload is the
+   * EPUB the old pipeline wrote and there is no records file, so a correction
+   * has nowhere durable to go. The renderer says so instead of writing.
+   */
+  legacy: boolean;
+}
+
+/**
  * What the user said about an unlinked footnote.
  *
  * THREE ANSWERS, and they write three different things: `cut` strikes the note
@@ -2128,6 +2150,17 @@ export interface EpubBook {
  */
 export type LedgerField =
   | 'cut' | 'category' | 'html' | 'note-cut' | 'nav-label' | 'page-heading'
+  /*
+   * `join` IS A BOOK ROW THAT WRITES NO BOOK. The manual paragraph join is a
+   * decision in the curation and nothing else — the two paragraphs on screen
+   * merge at the next cast, not at the gesture — so its replay skips the
+   * member setters entirely and re-amends the overlay, resolved through the
+   * same provenance read the gesture used. `target` is the continuation
+   * element's `data-bf-id`; `member` is the chapter that element is in, kept
+   * so an undo made with some other chapter on screen can still resolve the
+   * name. `'1'` and `''` are the two sides, exactly as `cut` spells them.
+   */
+  | 'join'
   /*
    * ── AND THE FOUR THE BLOCK EDITOR ADDS ──────────────────────────────────
    *

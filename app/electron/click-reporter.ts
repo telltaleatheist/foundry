@@ -314,10 +314,28 @@ const FLOW_CSS = [
    * click meant for the paragraph's first line still reaches the paragraph.
    */
   '[data-bf-gutter]{position:absolute;z-index:2147483645;cursor:pointer;display:flex;'
-  + 'align-items:center;justify-content:center;box-sizing:border-box;'
+  + 'align-items:center;justify-content:center;gap:8px;box-sizing:border-box;'
   + 'border-top:2px dotted rgba(47,125,79,.55);-webkit-user-select:none;user-select:none}',
   '[data-bf-gutter] span{padding:1px 8px;border-radius:9px;background:#2f7d4f;color:#fff;'
   + 'font-weight:600;font-size:10px;line-height:1.5;letter-spacing:.04em;font-style:normal;'
+  + 'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}',
+  /*
+   * THE SEAM'S SECOND PILL — the manual paragraph join. Amber rather than the
+   * chapters' green, because the two gestures in one strip answer different
+   * questions ("the book divides here" / "these are one paragraph") and a
+   * person hovering the seam has half a second to tell them apart.
+   */
+  '[data-bf-join-pill]{background:#8a6d1a}',
+  /*
+   * A SEAM ALREADY DECIDED. The paragraphs merge at the next cast, not at the
+   * click — the reflow is what joins them — so until then the decision is drawn
+   * where it was made: a small tag above the continuation, in the join's own
+   * colour. `text-indent:0` because the tag sits inside a paragraph whose own
+   * style may indent first lines.
+   */
+  '[data-bf-joined]::before{content:"\\2937 joined to the paragraph above";display:block;'
+  + 'text-indent:0;color:#8a6d1a;font-weight:600;font-style:normal;font-size:10px;'
+  + 'line-height:1.6;letter-spacing:.04em;'
   + 'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}',
 ].join('\n');
 
@@ -483,6 +501,11 @@ export const REPORTER_SOURCE = `(function () {
   var GUTTER = 'data-bf-gutter';
   var LANDING = 'data-bf-landing';
   var DRAGGING = 'data-bf-dragging';
+  // The seam's decided-join tag, and the pill that offers the gesture. Both are
+  // this script's own vocabulary, never written into the file: the decision
+  // lives in the curation and the parent restates it with the chapter marks.
+  var JOINED = 'data-bf-joined';
+  var JOIN_PILL = 'data-bf-join-pill';
 
   /** Off until the shell says this document is one panel of a stacked book. */
   var flow = false;
@@ -497,6 +520,10 @@ export const REPORTER_SOURCE = `(function () {
   var gutter = null;
   var gutterOrigin = null;
   var gutterAt = null;
+  /** What the join pill on the open gutter would post, or null for no pill. */
+  var gutterJoin = null;
+  /** The continuations whose seams are decided, as the parent last stated them. */
+  var joinedIds = [];
   var titleEditing = null;
   var titleWas = '';
   var lastHeight = -1;
@@ -1147,7 +1174,9 @@ export const REPORTER_SOURCE = `(function () {
     if (data.type === 'foundry:chapters') {
       marks = readMarks(data.marks);
       marksEditable = data.editable === true;
+      joinedIds = readJoins(data.joins);
       drawMarkers();
+      applyJoins();
       return;
     }
     if (data.type === 'foundry:locate') { locate(data.token, data.id, data.frag); return; }
@@ -1405,6 +1434,37 @@ export const REPORTER_SOURCE = `(function () {
     return line;
   }
 
+  /** What the parent said is joined, believed one id at a time — readMarks' rule. */
+  function readJoins(value) {
+    if (!Array.isArray(value)) return [];
+    var out = [];
+    for (var i = 0; i < value.length && i < 5000; i += 1) {
+      if (typeof value[i] !== 'string') continue;
+      if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/.test(value[i])) continue;
+      out.push(value[i]);
+    }
+    return out;
+  }
+
+  /**
+   * The decided seams, restated whole — drawMarkers' rule for the same reason:
+   * the list arrives complete, it is small, and a rebuild cannot drift from the
+   * parent's last word by one gesture. The attribute lives on the block ELEMENT
+   * in this frame's DOM and never reaches the file: every write out of this
+   * mode splices a block's INNER markup or flips an attribute main itself
+   * chose, so a mark this script sets on the start tag has no route to disk.
+   */
+  function applyJoins() {
+    var stale = document.querySelectorAll('[' + JOINED + ']');
+    for (var i = 0; i < stale.length; i += 1) stale[i].removeAttribute(JOINED);
+    if (!flow) return;
+    for (var j = 0; j < joinedIds.length; j += 1) {
+      var block = byBlockId(joinedIds[j]);
+      if (block) block.setAttribute(JOINED, '1');
+    }
+    heightSoon();
+  }
+
   /** What the parent said the spine is, believed one field at a time. */
   function readMarks(value) {
     if (!Array.isArray(value)) return [];
@@ -1573,13 +1633,34 @@ export const REPORTER_SOURCE = `(function () {
   /** How near a block's top edge counts as being in the seam above it. */
   var GUTTER_ZONE = 9;
 
-  function showGutter(id, top, left, width) {
+  function showGutter(id, top, left, width, joinState) {
+    // The pills are the affordance's content, so a seam whose offer CHANGED —
+    // the pointer moved from an ordinary seam to a joinable one, or onto a
+    // decided one — rebuilds the strip rather than showing yesterday's pills
+    // over today's seam.
+    if (gutter && gutterJoin !== joinState) hideGutter();
     if (!gutter) {
       gutter = document.createElement('div');
       gutter.setAttribute(GUTTER, '1');
       var pill = document.createElement('span');
       pill.textContent = 'Chapter starts here';
       gutter.appendChild(pill);
+      /*
+       * THE SEAM'S SECOND GESTURE, offered only where it means something: two
+       * prose paragraphs meeting at a page turn the reflow left split. One
+       * strip, two pills, because the seam is one place and a person hovering
+       * it should see everything it can be told — where the book divides, and
+       * that these are one paragraph.
+       */
+      if (joinState !== null) {
+        var join = document.createElement('span');
+        join.setAttribute(JOIN_PILL, joinState);
+        join.textContent = joinState === 'undo'
+          ? 'Joined — click to undo'
+          : 'Join with the paragraph above';
+        gutter.appendChild(join);
+      }
+      gutterJoin = joinState;
       (document.body || document.documentElement).appendChild(gutter);
       // MEASURED ONCE, at creation. \`originOf\` zeroes the element to ask where
       // it lands, and doing that on every mousemove would move the affordance to
@@ -1599,6 +1680,46 @@ export const REPORTER_SOURCE = `(function () {
     gutter = null;
     gutterOrigin = null;
     gutterAt = null;
+    gutterJoin = null;
+  }
+
+  /** The page a block key names, off either end of a data-bf-src. */
+  function keyPage(piece) {
+    var m = /^(\\d+):\\d+/.exec(piece || '');
+    return m ? parseInt(m[1], 10) : null;
+  }
+
+  /**
+   * What the seam ABOVE this block can say about joining, or null for nothing.
+   *
+   * 'undo' — the seam is already decided, and the pill takes the decision back.
+   * 'join' — two prose paragraphs meet here across a page turn the reflow left
+   * split: the previous sibling is a paragraph of body text whose LAST banked
+   * answer sits on an earlier page than this block's FIRST. Everything else is
+   * null: a mid-page seam is two paragraphs the printer set as two, a struck
+   * half is a block on its way out of the book, and anything that is not prose
+   * cannot continue a paragraph — the reflow would refuse the join this pill
+   * recorded, and an affordance for a decision that cannot land is a lie.
+   */
+  function joinOffer(block) {
+    var tag = block.tagName ? block.tagName.toLowerCase() : '';
+    if (tag !== 'p') return null;
+    if ((block.getAttribute(CAT) || '') !== 'text') return null;
+    var src = block.getAttribute(SRC);
+    if (!src || !block.getAttribute(ID)) return null;
+    if (block.hasAttribute(JOINED)) return 'undo';
+    if (block.hasAttribute(CUT)) return null;
+    var prev = block.previousElementSibling;
+    if (!prev || !prev.tagName || prev.tagName.toLowerCase() !== 'p') return null;
+    if ((prev.getAttribute(CAT) || '') !== 'text') return null;
+    if (prev.hasAttribute(CUT)) return null;
+    var prevSrc = prev.getAttribute(SRC);
+    if (!prevSrc) return null;
+    var pieces = prevSrc.replace(/^\\s+|\\s+$/g, '').split(/\\s+/);
+    var before = keyPage(pieces[pieces.length - 1]);
+    var after = keyPage(src.replace(/^\\s+|\\s+$/g, '').split(/\\s+/)[0]);
+    if (before === null || after === null || after <= before) return null;
+    return 'join';
   }
 
   function gutterMove(event) {
@@ -1624,7 +1745,7 @@ export const REPORTER_SOURCE = `(function () {
       return;
     }
     if (markerBefore(block)) { hideGutter(); return; }
-    showGutter(id, rect.top + scrollTop(), rect.left + scrollLeft(), rect.width);
+    showGutter(id, rect.top + scrollTop(), rect.left + scrollLeft(), rect.width, joinOffer(block));
   }
 
   // ═══ how tall this document is ═════════════════════════════════════════════
@@ -1701,6 +1822,8 @@ export const REPORTER_SOURCE = `(function () {
     flow = on;
     if (!on) {
       clearMarkers();
+      joinedIds = [];
+      applyJoins();
       hideGutter();
       closeLanding();
       removeFlowStyles();
@@ -1709,6 +1832,7 @@ export const REPORTER_SOURCE = `(function () {
     addFlowStyles();
     watchHeight();
     drawMarkers();
+    applyJoins();
     lastHeight = -1;
     heightBefore = -1;
     reportHeight();
@@ -1780,6 +1904,23 @@ export const REPORTER_SOURCE = `(function () {
       return;
     }
     if (start.closest('[' + GUTTER + ']') && gutterAt) {
+      /*
+       * THE JOIN PILL FIRST, because it is inside the same strip: a press on it
+       * is the seam's other statement — these are one paragraph — and it posts
+       * the CONTINUATION's name with the direction. The parent resolves the
+       * name to the banked answer the decision is keyed to, exactly as it does
+       * for a chapter, and the mark comes back with the next restatement.
+       */
+      var joinPill = start.closest('[' + JOIN_PILL + ']');
+      if (joinPill) {
+        post({
+          type: 'foundry:block-join',
+          id: gutterAt,
+          join: joinPill.getAttribute(JOIN_PILL) !== 'undo',
+        });
+        hideGutter();
+        return;
+      }
       // NO TITLE IN THE MESSAGE. The parent reads the block's own words out of
       // the chapter file — the same read the relabel gesture makes — so the two
       // ways of saying "the book divides here" name a chapter identically, and

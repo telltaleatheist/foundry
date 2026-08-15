@@ -101,7 +101,7 @@ export class HistoryError extends Error {
 const HISTORY_VERSION = 1;
 
 /**
- * The seven routes a row can name. A file naming an eighth is a file from a
+ * The eight routes a row can name. A file naming a ninth is a file from a
  * future.
  *
  * `chapters` ARRIVED WITH THE BOOK'S OWN SPINE and is the one that was almost
@@ -113,9 +113,14 @@ const HISTORY_VERSION = 1;
  * where an unknown field refuses the whole file, and the next opening of that
  * book would archive its undo history aside with a notice about a version it
  * did not recognise. The two sets are a pair and must be edited as one.
+ *
+ * `join` is the manual paragraph join — a book row that writes no book
+ * (shared/types.ts, `LedgerField`), listed here for exactly the reason
+ * `chapters` is: forgetting it would archive a book's whole undo history on
+ * the first reopen after somebody joined a seam.
  */
 const FIELDS: ReadonlySet<string> = new Set([
-  'cut', 'category', 'html', 'note-cut', 'nav-label', 'page-heading', 'chapters',
+  'cut', 'category', 'html', 'note-cut', 'nav-label', 'page-heading', 'chapters', 'join',
 ]);
 
 /**

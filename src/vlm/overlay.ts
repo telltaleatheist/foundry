@@ -137,6 +137,41 @@ export interface OverlayAmendment {
    * it is a deletion, and `strike` is the field that deletes.
    */
   text?: string;
+  /**
+   * JOIN THIS BLOCK TO ITS PREDECESSOR — the manual paragraph join, recorded.
+   *
+   * The reflow resolves a page turn on the bank alone: the previous paragraph
+   * did not end on terminal punctuation and this block opens lowercase
+   * (`continuesTextually`), plus the hyphen carry. When neither fires the two
+   * halves stay two paragraphs — the ink test that used to break the tie is
+   * dead, and the deal struck the day it died was that the AMBIGUOUS seams stay
+   * split and a person joins them with a recorded decision. This field is that
+   * decision, arriving years of a codebase later than the cost it compensates.
+   *
+   * `true` names this block a CONTINUATION: the reflow joins it onto the open
+   * paragraph before it wherever the structure allows one to exist at all — a
+   * person looking at the seam outranks every heuristic, exactly as a stated
+   * category outranks the model (`resolveCategory`'s layering). What it does
+   * NOT outrank are the structural absolutes: a section boundary still closes
+   * every paragraph (a join must never put the end of one chapter inside the
+   * beginning of the next), a category that cannot continue prose still opens
+   * its own element, and a Footnote still writes nothing where it stands. A
+   * join recorded against a block the structure gives no predecessor is simply
+   * not a join, the same way a chapter at a struck block is simply not a
+   * chapter (`chapterStarts`).
+   *
+   * `false` is the symmetric statement — these are two paragraphs, whatever
+   * the words suggest — honoured so that a boolean this file can hold cannot
+   * hold a meaning this program ignores. The app's writer removes the field to
+   * take a join back and never writes `false` today; a hand-written overlay
+   * may.
+   *
+   * It is a decision about the SEAM IN FRONT of the block it names, which is
+   * why the target is the continuation and not the pair: the block that opens
+   * a page is the one whose belonging is in question, and its name survives a
+   * re-cast the way every target in this file does.
+   */
+  join?: boolean;
 }
 
 /**
@@ -213,7 +248,7 @@ export function emptyOverlay(): Overlay {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The fields an amendment may carry, so an unknown one can be named. */
-const AMENDMENT_FIELDS = ['at', 'strike', 'category', 'text'] as const;
+const AMENDMENT_FIELDS = ['at', 'strike', 'category', 'text', 'join'] as const;
 const TARGET_FIELDS = ['page', 'order', 'part', 'note'] as const;
 const OVERLAY_FIELDS = ['overlay', 'generation', 'chapters', 'amendments'] as const;
 const CHAPTER_FIELDS = ['at', 'title'] as const;
@@ -436,13 +471,27 @@ function readAmendment(entry: unknown, name: string, index: number): OverlayAmen
     refuseUnlessBlock(at, 'text', where);
     amendment.text = text;
   }
+  if ('join' in record) {
+    if (typeof record['join'] !== 'boolean') {
+      throw new VlmOverlayError(
+        `${where} says "join": ${JSON.stringify(record['join'])}, and join is true or false — this `
+        + 'block continues the paragraph before it, or it does not.',
+      );
+    }
+    // A note is gathered to the end of its chapter and never sits at a page
+    // seam, so "join this note to its predecessor" names a place that does not
+    // exist. Same refusal, same words, as the other two per-block fields.
+    refuseUnlessBlock(at, 'join', where);
+    amendment.join = record['join'];
+  }
 
   if (amendment.strike === undefined
     && amendment.category === undefined
-    && amendment.text === undefined) {
+    && amendment.text === undefined
+    && amendment.join === undefined) {
     throw new VlmOverlayError(
-      `${where} names a block and says nothing about it — no strike, no category, no text. An `
-      + 'amendment that decides nothing is a decision that got lost between the app and this file.',
+      `${where} names a block and says nothing about it — no strike, no category, no text, no join. `
+      + 'An amendment that decides nothing is a decision that got lost between the app and this file.',
     );
   }
   return amendment;
@@ -539,6 +588,7 @@ interface Decision {
   strike?: boolean;
   category?: DotsCategory;
   text?: string;
+  join?: boolean;
 }
 
 /**
@@ -587,8 +637,29 @@ function decide(overlay: Overlay, block: DotsBlock): Decision {
     if (amendment.strike !== undefined) decision.strike = amendment.strike;
     if (amendment.category !== undefined) decision.category = amendment.category;
     if (amendment.text !== undefined) decision.text = amendment.text;
+    if (amendment.join !== undefined) decision.join = amendment.join;
   }
   return decision;
+}
+
+/**
+ * What the overlay says about the seam in FRONT of this block, or undefined
+ * when it says nothing — which is every block in a book but a handful.
+ *
+ * ── Why the join is not applied where every other decision is ───────────────
+ *
+ * `applyOverlay` rewrites BLOCKS — what one is, what it says, whether it is in
+ * the book — and runs at the parse, before any block has a neighbour. A join is
+ * a decision about the RELATION between two blocks, and the only pass that ever
+ * holds that relation is the reflow's own seam resolution (`flowBlocks`,
+ * dots-book.ts), which runs after sections are proposed and paragraphs are
+ * opened. So the decision rides the overlay to `reflowBook` — which already
+ * carries it for the chapters — and is read there, through this one function,
+ * so the fold rule (file order, last one wins, part-less spreads over parts)
+ * cannot be restated wrong at the seam.
+ */
+export function joinDecisionFor(overlay: Overlay, block: DotsBlock): boolean | undefined {
+  return decide(overlay, block).join;
 }
 
 /**
@@ -743,10 +814,11 @@ export function chapterStarts(
 export function overlayTally(
   blocks: readonly DotsBlock[],
   overlay: Overlay,
-): { struck: number; reclassified: number; corrected: number } {
+): { struck: number; reclassified: number; corrected: number; joined: number } {
   let struck = 0;
   let reclassified = 0;
   let corrected = 0;
+  let joined = 0;
   for (const block of blocks) {
     const decision = decide(overlay, block);
     if (decision.strike === true) {
@@ -755,6 +827,11 @@ export function overlayTally(
     }
     if (decision.category !== undefined && decision.category !== block.category) reclassified += 1;
     if (decision.text !== undefined && decision.text !== block.text) corrected += 1;
+    // A join the person forced, not one the words would have made anyway —
+    // the reflow may still refuse it structurally (a section boundary), but
+    // this count is what the curation ASKED, which is what the run's sentence
+    // is about.
+    if (decision.join === true) joined += 1;
   }
-  return { struck, reclassified, corrected };
+  return { struck, reclassified, corrected, joined };
 }

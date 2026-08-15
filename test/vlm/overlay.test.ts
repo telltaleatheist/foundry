@@ -330,9 +330,10 @@ test('the tally counts what the overlay did, before anything was removed', () =>
   const tally = overlayTally(blocks, overlay(
     { at: { page: 1, order: 0 }, strike: true },
     { at: { page: 1, order: 1 }, category: 'Footnote' },
+    { at: { page: 1, order: 2 }, join: true },
     { at: { page: 1, order: 2 }, text: 'corrected' },
   ));
-  assert.deepEqual(tally, { struck: 1, reclassified: 1, corrected: 1 });
+  assert.deepEqual(tally, { struck: 1, reclassified: 1, corrected: 1, joined: 1 });
 });
 
 // ── the spine ───────────────────────────────────────────────────────────────

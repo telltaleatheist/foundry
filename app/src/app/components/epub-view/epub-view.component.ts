@@ -705,6 +705,15 @@ export class EpubViewComponent implements OnDestroy {
       void this.tabs.removeChapterMark(this.tab().id, data.id, member);
       return;
     }
+    // The seam's own gesture: join this paragraph to the one before it — or
+    // take the decision back. Same shape as the chapter lines' four: a block
+    // name and nothing else, resolved by the service to the banked answer the
+    // decision is keyed to.
+    if (data.type === 'foundry:block-join') {
+      if (!isBlockId(data.id) || typeof data.join !== 'boolean') return;
+      void this.tabs.joinBlocks(this.tab().id, data.id, member, data.join);
+      return;
+    }
 
     if (data.type === 'foundry:select-refused') {
       if (typeof data.reason !== 'string') return;
@@ -781,7 +790,14 @@ export class EpubViewComponent implements OnDestroy {
       const marks = (spine?.marks ?? [])
         .filter((one) => one.member === page.member && one.blockId !== null)
         .map((one) => ({ id: one.blockId, title: one.title }));
-      this.postTo(page.member, { type: 'foundry:chapters', marks, editable });
+      // And the seams already joined by hand, so the frame marks them as
+      // decided instead of offering the same join twice. They ride the
+      // chapters message because they are the same read of the same curation,
+      // refreshed by the same signals.
+      const joins = (spine?.joins ?? [])
+        .filter((one) => one.member === page.member)
+        .map((one) => one.blockId);
+      this.postTo(page.member, { type: 'foundry:chapters', marks, editable, joins });
     }
   }
 
@@ -1036,6 +1052,7 @@ interface FrameMessage {
   from?: unknown;
   to?: unknown;
   title?: unknown;
+  join?: unknown;
 }
 
 /**

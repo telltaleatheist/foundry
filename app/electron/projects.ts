@@ -115,6 +115,7 @@ import type {
   StepCasualty,
   StepDeletion,
   StepRow,
+  TranslationWorld,
 } from '../shared/types';
 import { WHY_HANDMADE, WHY_IMPORTED, WHY_MODEL_PASS } from '../shared/types';
 import { spokenStem } from '../shared/documents';
@@ -152,6 +153,7 @@ import {
   subtree,
   translatedInto,
   translationBankOf,
+  translationInEffect,
   translationCastFile,
   translationFileFor,
   translationRecordsOf,
@@ -161,9 +163,13 @@ import {
   type ReadAsk,
 } from '../shared/ledger';
 import { GENERATED_ROLE_FOR } from '../shared/documents';
+// The records `parts` grammar is the overlay's target grammar — one spelling,
+// three readers — so the validator is the same function the curation uses.
+import { parseTargetKey } from '../shared/overlay';
 // One spelling for a path, so Windows' three become one — and the same one the
 // renderer compares with, which is the point of it living in `shared`.
 import { fold } from '../shared/original';
+import { writeAtomically } from './epub-writer';
 
 /**
  * Somebody has to be told when the library changes, and this is how.
@@ -2479,6 +2485,187 @@ async function stepStandingFor(
     if (reading !== null) return newestOfChain(ledger, reading).id;
   }
   return null;
+}
+
+/**
+ * The TRANSLATE step whose words this document SHOWS, or null for a book in its
+ * own language — the word ops' question, asked before an edit is mirrored
+ * anywhere.
+ *
+ * NOT merely "is this a translate step's cast". A save made under a
+ * translation casts its own book, and that book's blocks carry the ancestral
+ * records' words (`renderPipeline`'s table: curate under translate renders
+ * THIS snapshot + the ancestral records) — so a word edit over it is a
+ * correction to the TRANSLATION, and mirroring it into the source curation's
+ * `text` field would write Hungarian over the German bank, silently, in
+ * exactly the walkthrough this app is for (translate, strike, save, keep
+ * reading). So the question is answered the way every rendering answers it:
+ * `stepStandingFor` says which step this document belongs to, and
+ * `translationInEffect` walks the ancestry from there — one fact, read through
+ * the same two functions the cast itself was planned with, so the words on
+ * screen and the file a correction lands in cannot come to disagree.
+ */
+async function translateStepForDocument(
+  dir: string,
+  absolutePath: string,
+): Promise<LedgerStep | null> {
+  const resolved = deletableProjectDir(dir);
+  const manifest = await readManifest(resolved);
+  const ledger = ledgerOf(manifest);
+  const stepId = await stepStandingFor(resolved, manifest, absolutePath);
+  if (stepId === null) return null;
+  return translationInEffect(ledger, stepOf(ledger, stepId));
+}
+
+/**
+ * Which world a word edit on this document lands in — `translation:of-document`.
+ *
+ * Null is the ordinary book (the source world, where an edit mirrors to the
+ * curation); a record names a translate step's own book. `legacy` is
+ * `translationRecordsOf`'s null read back out as a fact the renderer can say a
+ * sentence about, rather than a refusal here — asking is free and asking is not
+ * yet editing.
+ */
+export async function translationWorldOf(
+  dir: string,
+  absolutePath: string,
+): Promise<TranslationWorld | null> {
+  const step = await translateStepForDocument(dir, absolutePath);
+  if (step === null) return null;
+  return {
+    language: step.params?.language ?? '',
+    legacy: translationRecordsOf(step) === null,
+  };
+}
+
+/**
+ * "Edit transformed text" — one corrected paragraph, appended to the translate
+ * step's records file as a keyless human row.
+ *
+ * ── The row, and why it carries no key ──────────────────────────────────────
+ *
+ * `{parts, text, author: "user"}`. A key is a hash over the masked SOURCE text
+ * and the run's own parameters, which a person correcting one paragraph has no
+ * way to compute — and a keyless row never enters the cost cache, so a
+ * correction can never be served as the banked answer to some other block's
+ * question. Materialization takes the newest row per position, so the
+ * correction shows from the next cast; a later run of the translator keeps it
+ * standing while the source it answers is unchanged (the engine reads the
+ * position's newest KEYED row to know which question the person was answering
+ * — src/translate/run.ts, `recordRow`).
+ *
+ * ── The write is append-by-rewrite, atomically ──────────────────────────────
+ *
+ * The engine appends with fsync because a run dies mid-book; this door writes
+ * ONE row per human gesture, so it reads the file, adds the line, and swaps
+ * the whole thing into place with the same temp-beside-target rename every
+ * other whole file in this app is written with. NOT the engine's `.pending`
+ * protocol: that name is a resumable fresh-run's, and a leftover of ours under
+ * it would be read as a translation somebody began. The caller (main) has
+ * already refused this call while a run is producing the file; the check and
+ * the write are not one atom, which is a millisecond race accepted and named
+ * over a lock file nobody else would honour.
+ *
+ * Serialised per file, because two edits half a second apart are the ordinary
+ * gesture stream and a read-modify-write that overlapped would drop the first.
+ */
+const recordEditWrites = new Map<string, Promise<void>>();
+
+export async function recordTranslationEdit(
+  dir: string,
+  absolutePath: string,
+  parts: string,
+  text: string,
+  /**
+   * The caller's answer to "is something producing this file right now" — a
+   * refusal sentence, or null to proceed. It is a parameter because the queue
+   * knows and this module must not import it (the queue imports this module);
+   * main, which composes the door, holds both.
+   */
+  busy: (recordsFile: string) => string | null = () => null,
+): Promise<void> {
+  const step = await translateStepForDocument(dir, absolutePath);
+  if (step === null) {
+    throw new ProjectError(
+      'This book is not a translation, so there is no translation to record the correction in. '
+      + 'The edit itself is in the book.',
+    );
+  }
+  const records = translationRecordsOf(step);
+  if (records === null) {
+    // D2's export refusal, continued at the third door: the legacy row's words
+    // exist only inside the book its run wrote.
+    throw new ProjectError(
+      `“${step.label}” was made before Foundry kept a translation as records, so a corrected `
+      + 'sentence has nowhere durable to be recorded — the edit is in this copy of the book and '
+      + 'will not survive it being cast again. To make corrections that keep, translate again from '
+      + 'the step it was made from; everything after that is free.',
+    );
+  }
+
+  // The grammar, checked piece by piece before a byte moves: `parts` is
+  // data-bf-src's spelling — space-joined block keys — with `#note` legal on a
+  // single-key row, exactly what the emitter stamps and the engine looks up by.
+  const pieces = parts.split(/\s+/).filter((piece) => piece.length > 0);
+  if (pieces.length === 0) {
+    throw new ProjectError('The edited block names no banked answer, so the correction cannot be recorded.');
+  }
+  for (const piece of pieces) {
+    const at = parseTargetKey(piece);
+    if (at.note !== undefined && pieces.length > 1) {
+      throw new ProjectError(
+        'A footnote correction names one note of one block, and this one names several blocks at '
+        + 'once — that is not a shape a record can hold.',
+      );
+    }
+  }
+  if (text.trim().length === 0) {
+    throw new ProjectError(
+      'A correction with no words in it is not a correction. Removing a block is a strike, made on '
+      + 'the source book.',
+    );
+  }
+  // Newlines are legal — the dialect keeps a poem's line breaks — and every
+  // other control character is refused: JSON.stringify would carry one
+  // faithfully into the file, and from there into somebody's book.
+  if (/[\u0000-\u0008\u000b-\u001f\u007f]/.test(text)) {
+    throw new ProjectError('That correction contains control characters, which no book\'s text can hold.');
+  }
+
+  const file = path.join(deletableProjectDir(dir), ...records.split('/'));
+  const held = busy(file);
+  if (held !== null) throw new ProjectError(held);
+  const key = fold(file);
+  const previous = recordEditWrites.get(key) ?? Promise.resolve();
+  const write = previous.then(
+    () => appendHumanRow(file, parts, text),
+    () => appendHumanRow(file, parts, text),
+  );
+  const settled = write.then(() => { /* kept */ }, () => { /* kept */ }).then(() => {
+    if (recordEditWrites.get(key) === settled) recordEditWrites.delete(key);
+  });
+  recordEditWrites.set(key, settled);
+  return write;
+}
+
+async function appendHumanRow(file: string, parts: string, text: string): Promise<void> {
+  let existing: string;
+  try {
+    existing = await fsp.readFile(file, 'utf8');
+  } catch {
+    // A missing records file is not an empty one — the step's payload has been
+    // swept or moved, and inventing a file here would put one paragraph of
+    // Hungarian where a whole translation is supposed to be.
+    throw new ProjectError(
+      'The translation\'s records file is not where this project says it is, so the correction '
+      + 'cannot be recorded. Translate again from the step this book was made from.',
+    );
+  }
+  const row = `${JSON.stringify({ parts, text, author: 'user' })}\n`;
+  const joined = existing.length === 0 || existing.endsWith('\n')
+    ? existing + row
+    : `${existing}\n${row}`;
+  await writeAtomically(file, Buffer.from(joined, 'utf8'));
 }
 
 /**

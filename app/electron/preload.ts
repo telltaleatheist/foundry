@@ -204,6 +204,13 @@ const api: FoundryApi = {
     delete: (projectDir, stepId) => ipcRenderer.invoke('ledger:delete', projectDir, stepId),
   },
 
+  translation: {
+    ofDocument: (projectDir, filePath) =>
+      ipcRenderer.invoke('translation:of-document', projectDir, filePath),
+    recordEdit: (projectDir, filePath, parts, text) =>
+      ipcRenderer.invoke('translation:record-edit', projectDir, filePath, parts, text),
+  },
+
   prefs: {
     unlinkedNoteAnswer: () => ipcRenderer.invoke('prefs:unlinked-note-answer'),
     setUnlinkedNoteAnswer: (answer) =>

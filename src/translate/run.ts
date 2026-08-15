@@ -1538,6 +1538,26 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
    * came straight back out of the file. So a position whose newest row is a
    * person's, ANSWERING THE SAME QUESTION, is left exactly as they left it.
    *
+   * A PERSON'S ROW IS KEYLESS, and the question it answers is read off the
+   * position rather than off the row. The app appends `{parts, text, author}`
+   * with no key at all — a person correcting a paragraph has no way to compute
+   * a question hash, and a keyless row can never pollute the cost cache
+   * (`records.ts`, `remember`) — so "answering the same question" cannot be
+   * asked of the row itself. It is asked of `questionFor(parts)`: the newest
+   * KEYED row at this position is the question the position was answering when
+   * the person corrected it, and if this run asks the same one, the correction
+   * stands. (The first shape of this check compared the USER row's key, which
+   * a keyless row fails by construction — every correction would have been
+   * clobbered on the next run, under a log line claiming the source had
+   * changed when it had not.)
+   *
+   * A POSITION NO RUN EVER ANSWERED KEEPS ITS CORRECTION TOO. The model
+   * refused the block, the person translated it by hand, and there is no
+   * recorded question to compare against — so whether the source has since
+   * changed is unknowable from this file. Both guesses are wrong somewhere;
+   * keeping a person's work is the failure that can be seen and corrected,
+   * where overwriting it is the one that cannot.
+   *
    * WHERE THE QUESTION CHANGED, THE MACHINE ROW GOES IN AND THE RUN SAYS SO.
    * A different key means the source block's words changed — somebody corrected
    * the German — and a correction made to the English of a paragraph that no
@@ -1552,9 +1572,15 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
     const text = restoreText(block.masked, answer);
     const newest = records!.records.rowFor(parts);
     if (newest !== undefined && newest.text === text && newest.key === key) return;
-    if (newest?.author === 'user' && newest.key === key) {
-      recordsHumanKept += 1;
-      return;
+    if (newest?.author === 'user') {
+      const asked = records!.records.questionFor(parts);
+      // The same-key test still honours a hand-written row that DID carry a
+      // key: a row stating its own question is at least as good evidence as
+      // the position's history.
+      if (asked === undefined || asked === key || newest.key === key) {
+        recordsHumanKept += 1;
+        return;
+      }
     }
     if (newest?.author === 'user') {
       opts.log(

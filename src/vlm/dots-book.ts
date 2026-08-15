@@ -129,7 +129,7 @@ import {
   type VlmNavItem,
   type VlmResource,
 } from './epub.js';
-import { chapterStarts, emptyOverlay, noteStruck, type Overlay } from './overlay.js';
+import { chapterStarts, emptyOverlay, joinDecisionFor, noteStruck, type Overlay } from './overlay.js';
 import { packageVlmText, type VlmOutputFormat } from './text-out.js';
 import {
   bodyTypeSize,
@@ -2504,9 +2504,11 @@ export interface FlowBookOptions {
   /** In page order. MUTATED, like every pass this is made of. */
   pages: readonly DotsParsedPage[];
   /**
-   * A person's decisions. Only the CHAPTERS are read here — the strikes, the
-   * categories and the text corrections were applied at the parse
-   * (`convert.ts`), so by now they are simply what the blocks say.
+   * A person's decisions. Two of them are read HERE — the CHAPTERS, because the
+   * spine is a fact about the whole book, and the JOINS, because a seam only
+   * exists once the blocks have neighbours — while the strikes, the categories
+   * and the text corrections were applied at the parse (`convert.ts`), so by
+   * now they are simply what the blocks say.
    */
   overlay?: Overlay;
 }
@@ -2542,9 +2544,12 @@ export interface FlowBookOptions {
  * THE PAGE TURN IS RESOLVED HERE, LAST, and it is resolved on the bank alone.
  * The textual test is `continuesTextually` — the previous paragraph did not end
  * on terminal punctuation and this one opens lowercase — plus the hyphen carry.
- * When neither fires the two paragraphs stay two paragraphs. There used to be a
- * third test that measured the page's ink, and `DotsPageImages` above says why
- * it is gone.
+ * When neither fires the two paragraphs stay two paragraphs, UNLESS A PERSON
+ * SAID OTHERWISE: a `join` decision in the overlay names the continuation and
+ * outranks the textual test, which is the compensation promised the day the
+ * third test — the one that measured the page's ink — was killed
+ * (`DotsPageImages` above says why it is gone). Machine passes stay
+ * conservative; judgment is recorded, never guessed.
  *
  * KNOW WHAT THAT COSTS IN A CASELESS SCRIPT. `continuesTextually` ends in
  * `first !== first.toUpperCase()`, which is true of a lowercase letter and
@@ -2652,7 +2657,26 @@ export function reflowBook(opts: FlowBookOptions): FlowBook {
     ? []
     : foldDuplicateSections(sourceBlocks, starts, opens);
 
-  const flow = flowBlocks(sourceBlocks, new Set(starts), column, lexicon);
+  /*
+   * The recorded joins, read off the overlay ONCE and handed to the seam pass
+   * as a map keyed by block IDENTITY — the same identity every measurement in
+   * this file keys on, and the reason nothing here may copy a block. Built
+   * only when an overlay is present at all, so `detectChapters` — which calls
+   * this pass overlay-less to seed the picker — pays nothing and stays what it
+   * is: the answer a run without decisions would give. (A join cannot move a
+   * chapter proposal: proposals are made from the pages above, before any
+   * seam is resolved, and a section start closes every open paragraph.)
+   */
+  let joins: Map<DotsBlock, boolean> | undefined;
+  if (opts.overlay !== undefined && opts.overlay.amendments.length > 0) {
+    for (const block of sourceBlocks) {
+      const decided = joinDecisionFor(opts.overlay, block);
+      if (decided === undefined) continue;
+      (joins ??= new Map()).set(block, decided);
+    }
+  }
+
+  const flow = flowBlocks(sourceBlocks, new Set(starts), column, lexicon, joins);
   return {
     blocks: flow.blocks,
     sourceBlocks,
@@ -2697,6 +2721,13 @@ export function flowBlocks(
   starts: ReadonlySet<number>,
   column: BodyColumn,
   lexicon: BookLexicon,
+  /**
+   * A person's recorded seam decisions, by block identity: `true` joins the
+   * block onto the open paragraph before it, `false` keeps it its own. Absent
+   * — the map, or the block from it — means the rules decide, which is every
+   * block of every book until somebody touches a seam.
+   */
+  joins?: ReadonlyMap<DotsBlock, boolean>,
 ): { blocks: FlowBlock[]; flowIndexOf: number[]; unjoinedTurns: number[] } {
   const out: FlowBlock[] = [];
   const flowIndexOf: number[] = [];
@@ -2747,8 +2778,33 @@ export function flowBlocks(
       continue;
     }
 
+    /*
+     * THE SEAM, RESOLVED IN LAYERS — the same layering `resolveCategory` gives
+     * a block's category, for the same reason.
+     *
+     * The rules first: a paragraph must be open, the block must sit at column
+     * width (a centered epigraph that happens to open lowercase is not a
+     * continuation of anything), the pages must adjoin, and the words must
+     * carry over (`continuesTextually`). And THE PERSON ON TOP: a recorded
+     * `join` decision is somebody looking at the seam on the flowing page and
+     * stating what the printer set, which outranks every heuristic below it —
+     * alignment, adjacency and the words alike — because each of those is a
+     * guess about exactly the question the person just answered. What it does
+     * not outrank is the STRUCTURE this loop has already enforced by the time
+     * it runs: a section start cleared `open` above (a join must never reach
+     * across where a chapter begins), a non-joinable category never opened a
+     * paragraph to continue, and a Footnote took the early exit. A decision
+     * those absolutes make unmeetable simply does not join — the same quiet
+     * `chapterStarts` keeps for a chapter at a block a strike removed.
+     *
+     * `false` forces the split with the same authority, so the field cannot
+     * hold a meaning this pass ignores; nothing writes it today.
+     */
+    const decided = open === null ? undefined : joins?.get(block);
     let joined = false;
-    if (open !== null && alignmentClass(block.box, column) === '' && adjoins(previous, block)) {
+    if (decided !== undefined) {
+      joined = decided;
+    } else if (open !== null && alignmentClass(block.box, column) === '' && adjoins(previous, block)) {
       joined = continuesTextually(open.text, block.text);
       /*
        * WHERE THE INK USED TO BE ASKED, and now nothing is. The words said no
@@ -2757,7 +2813,9 @@ export function flowBlocks(
        * run says how often that happened. Counted only across a TURN, because
        * that is the only place the old test was ever consulted — two blocks on
        * one page that the words do not join are two paragraphs the printer set
-       * as two, and there was never a question about them.
+       * as two, and there was never a question about them. A seam somebody has
+       * already DECIDED took the branch above and is not in this count: the
+       * count exists to surface the seams still waiting for a person.
        */
       if (!joined && previous !== null && block.page !== previous.page) {
         unjoinedTurns.push(block.page);

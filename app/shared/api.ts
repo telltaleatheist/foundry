@@ -55,6 +55,7 @@ import type {
   StepRow,
   TranslateRequest,
   TranslationPlan,
+  TranslationWorld,
   UncommittedCuration,
   UnlinkedNote,
   UnlinkedNoteAnswer,
@@ -835,6 +836,43 @@ export interface FoundryApi {
      * else; a payload that survives is one another step still names.
      */
     delete(projectDir: string, stepId: string): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
+  };
+
+  /**
+   * The word ops' questions about a TRANSLATE step's book — both asked by the
+   * document's path, resolved by main, because turning a path into a step means
+   * knowing which step's cast this file is, and those are main's records
+   * (`ledger.standFor`'s argument, one door over).
+   */
+  translation: {
+    /**
+     * Is this open document a translate step's own book — and if so, whose?
+     *
+     * NULL is the ordinary answer and means the source world: the project's
+     * flowing book, a save's cast, anything that is not a translation. The
+     * renderer asks once per tab and caches, because the answer cannot change
+     * while the tab shows the same file — a re-cast refuses while the book is
+     * open, and a re-translation mints a new step and a new filename.
+     */
+    ofDocument(projectDir: string, filePath: string): Promise<TranslationWorld | null>;
+    /**
+     * "Edit transformed text" — one corrected paragraph of one translation,
+     * written down where the translation lives.
+     *
+     * Appends a keyless human row `{parts, text, author: "user"}` to the
+     * translate step's records file. Per-language by construction — one records
+     * file per translate step — and never in the cost cache: a keyless row is
+     * remembered by position only. The newest row per position wins at
+     * materialization, so the correction shows from the next cast on, and a
+     * later run of the translator leaves it standing while the source text it
+     * answers is unchanged (the engine's own refusal).
+     *
+     * Rejects by name: a legacy translate step (its words exist only inside the
+     * book its run wrote — the sentence points at translating again), a records
+     * file a run is writing at this moment, and a `parts` or `text` that is not
+     * a shape a record can hold.
+     */
+    recordEdit(projectDir: string, filePath: string, parts: string, text: string): Promise<void>;
   };
 
   /**

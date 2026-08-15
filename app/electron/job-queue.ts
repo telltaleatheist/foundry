@@ -265,6 +265,21 @@ function pendingFor(outputPath: string): Job | undefined {
 }
 
 /**
+ * Is a live job producing this file right now?
+ *
+ * Asked by main before "edit transformed text" rewrites a records file whole: a
+ * translation appends to that file for hours, and a whole-file swap made in the
+ * middle of its run would drop every answer the run lands between the read and
+ * the rename. The check and the write are not one atom — a job could start in
+ * the millisecond between — but the whole window a run is actually open is
+ * caught here, and the sentence names the honest way out: wait, or cancel the
+ * run.
+ */
+export function producing(outputPath: string): boolean {
+  return pendingFor(outputPath) !== undefined;
+}
+
+/**
  * One spelling for a path, so Windows' three become one.
  *
  * It came from electron/workspace.ts with the translate rotation, and it is the

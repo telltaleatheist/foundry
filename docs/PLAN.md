@@ -192,13 +192,45 @@ everything after that is free. Everything else about a legacy row —
 parsing, rendering, focusing, deleting, chaining FROM it — works
 unchanged.
 
-### Wave 4
+### Wave 4 — LANDED
 
-- **Unit D3 — the ops.** "Edit transformed text" (a human row in the
-  records file, per-language by construction), "edit block text" mirroring
-  to the overlay instead of dying in the working tree, and **the manual
-  join op** — promised the day the ink test died, never built, recovered
-  by the 2026-08-15 sweep.
+- ~~Unit D3 — the ops~~ — landed. All three: "edit block text" mirrors
+  to the overlay (and the one-block-wide re-ask was VERIFIED through the
+  real key path — edited block's key changes, neighbour's does not —
+  which closes D2's stale-translation cost); "edit transformed text"
+  writes a keyless human row per language; **the manual join op**, the
+  flagship recovered half, runs overlay → reflow → gesture → ledger →
+  undo. The user's ruling that editing must reach chapter HEADERS was
+  already satisfied — the gesture targets `data-bf-cat`, which every
+  stamped element carries including `h1`–`h6` — and a header rename
+  propagates to the TOC because nav is minted from the substituted
+  heading. Verified end to end by script.
+
+  **The find that made op 2 real**: D1's "a run never appends over a
+  user row" refusal compared `newest.key === key`, but a human row is
+  KEYLESS by construction — so the comparison was never true and every
+  correction would have been silently overwritten on the next run,
+  under a log line falsely claiming the source had changed. Fixed with
+  `questionFor(parts)`: the newest KEYED row at a position is the
+  question the person was answering; same key, the correction stands;
+  different key, the machine takes over and says so.
+
+  **Three spec assumptions corrected by survey**: the ink test is
+  already gone (so the join is compensation for a cost being paid, not
+  a tie-break restored); `continuesTextually`'s own docstring lied
+  about a caller that no longer exists (fixed in place); and a join
+  CANNOT ride `applyOverlay`, because that runs at the parse where
+  blocks have no neighbours and there is no seam to decide — it reads
+  at `reflowBook` through the new `joinDecisionFor`.
+
+  **`history.ts` FIELDS gained `'join'`** — the same trap unit K hit;
+  omitting it archives a book's whole undo history on first reopen.
+
+  **The one honest gap**: the independent review agent D2 had was
+  killed by the wrap-up order, so this unit has no second pair of
+  eyes. Everything was self-verified against real modules with
+  throwaway scripts. If a session has budget for one thing, that is
+  the thing.
 
 ### Wave 5
 
@@ -309,9 +341,19 @@ supposed to be, and it exists so the same failure is visible next time.
   whose book is open in a tab leaves the old cast showing until the
   next cast — the recast is refused while a working tree is held, and
   logged.
-- **The bundle figure is 565.23 kB** (was 550.90 kB); the move arrived
-  with D2's dependency reinstall, not provably with its code. Still a
-  WARNING, not an ERROR; Phase E's deletions should move it down.
+- **The bundle figure is 573.44 kB** (550.90 → 565.23 with D2's
+  dependency reinstall, → 573.44 with D3's renderer additions and
+  `unrender.ts`). Still a WARNING, not an ERROR; Phase E's deletions
+  should move it down.
+- **`app/shared/unrender.ts` is a deliberate second copy** of the
+  engine's `flowtext.ts` inline table — the app never imports the
+  engine. Verified byte-identical on eight emitter constructs. **If
+  `dotsInline` grows a tag, both tables grow**; there is nothing that
+  will remind you but this line.
+- **D3 has no independent review.** Every other app-side unit this
+  week got a second agent over its diff. This one's was killed by the
+  wrap-up. Named here so it is a known debt, not an assumption of
+  parity.
 - **A part-divider's composed label stays in the source language** under
   records materialization (e.g. `PART III — RESISTANCE`). Nav labels and
   headings translate, because they are read off the substituted heading;
