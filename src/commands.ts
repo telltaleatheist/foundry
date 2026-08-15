@@ -186,6 +186,24 @@ const VLM_OVERLAY: OptionSpec = {
   describe: 'Decisions to apply: struck blocks, categories, corrected text, and the book\'s chapters.',
 };
 
+/**
+ * A transform's answers, put in place of the blocks' own words as the documents
+ * are written — `DotsBookOptions.records` in `src/vlm/dots-book.ts` argues the
+ * whole design, and `src/translate/records.ts` carries the format.
+ *
+ * The file is `translate --records`' product. This is the other half of it: a
+ * translated book is CAST, out of the same bank, through the same reflow,
+ * chapters, curation, edition rules and format fork as the source book, with
+ * different words in the blocks. dc:language and every xml:lang come from
+ * --language, because a file of sentences does not declare a language.
+ */
+const VLM_RECORDS: OptionSpec = {
+  name: 'records',
+  type: 'string',
+  placeholder: '<file.jsonl>',
+  describe: 'A transform\'s words, substituted per block as the book is written. From translate --records.',
+};
+
 const VLM_CHAPTERS: OptionSpec = {
   name: 'chapters',
   type: 'string',
@@ -342,6 +360,84 @@ const TR_FRESH_BANK: OptionSpec = {
   name: 'fresh-bank',
   type: 'boolean',
   describe: 'Ask the model for every block again, into a bank that replaces --bank only on success.',
+};
+
+/**
+ * ── RECORDS, NOT A BOOK, AND THIS IS THE SWITCH ─────────────────────────────
+ *
+ * Without it this command writes a SECOND EPUB: the same container, the same
+ * pictures, the same page provenance, with a translation inside every stamped
+ * element. That shipped, it works, and it is a dead end for everything that
+ * comes after a translation — because the product is a FILE. Striking a
+ * paragraph out of the translated edition, correcting one sentence of it,
+ * casting it as plain text, translating it again into a third language: every
+ * one of those is a decision about a BLOCK, and in an EPUB there are no blocks
+ * left to decide about, only markup to re-parse and re-splice.
+ *
+ * With it the same blocks are translated and the answers are written down as
+ * RECORDS — one JSONL row per flowing block, keyed by the block's position in
+ * the reading bank, in the same spelling `data-bf-src` writes and an overlay
+ * target uses. No EPUB is written and --out is refused. The book is made later,
+ * by `vlm-convert --records`, which puts those words into the same pipeline
+ * that already applies the curation, the chapters and the edition rules — so a
+ * translated book is CAST rather than converted, and every decision a person
+ * has made about the source reaches it for free.
+ *
+ * THE FILE IS ITS OWN BANK, which is why --bank is refused beside it: an
+ * unchanged block has an unchanged question, its key is already in the records
+ * file, and it is never asked again. One file to copy onto a branch, one file
+ * to sweep with the step.
+ *
+ * AND IT RE-ASKS THE BOOK ONCE. The masking moves one stage earlier — the
+ * flowing block's own text rather than rendered XHTML — so the masked source is
+ * a different string and the key is a different key. A book translated to an
+ * EPUB yesterday and to records today is paid for twice, once, and never again.
+ */
+const TR_RECORDS: OptionSpec = {
+  name: 'records',
+  type: 'string',
+  placeholder: '<file.jsonl>',
+  describe: 'Write RECORDS here instead of an EPUB: one row per block, keyed by its position.',
+};
+
+/**
+ * ── THE CHAIN — TRANSLATE THE TRANSLATION ───────────────────────────────────
+ *
+ * The user's own case: click the English translation, then click translate to
+ * Hungarian, and get German → English → Hungarian.
+ *
+ * With this, the question about each block is asked of the PARENT'S answer
+ * rather than of the book's own words: per position, the source text is the
+ * parent records file's newest row, and the book's own text is the fallback for
+ * a position the parent never answered — a block it refused, a table it
+ * skipped. The key hashes the masked PARENT text, so correcting one English
+ * record re-asks exactly the Hungarian blocks that record feeds and nothing
+ * else. That precision is why a chain is records-native and was never buildable
+ * over EPUBs, where "the source" is a whole file.
+ *
+ * PASS --from YOURSELF, and pass the parent's target language. Nothing here
+ * reads a language out of a records file: a file of sentences is not a
+ * declaration, and a guess would put "German → Hungarian" on a prompt holding
+ * English.
+ */
+const TR_SOURCE_RECORDS: OptionSpec = {
+  name: 'source-records',
+  type: 'string',
+  placeholder: '<file.jsonl>',
+  describe: 'Translate the records in this file rather than the book\'s own words — a chain. Read only.',
+};
+
+/**
+ * The app's binding of a records file to the reading it was made from, carried
+ * into every row and never interpreted here — `Overlay.generation`'s contract
+ * exactly. It exists so the app can tell records about THIS bank from records
+ * left beside a book that has since been read again.
+ */
+const TR_GENERATION: OptionSpec = {
+  name: 'generation',
+  type: 'string',
+  placeholder: '<token>',
+  describe: 'Written into every record row and never read here. The app\'s binding to a reading.',
 };
 
 const TR_CONCURRENCY: OptionSpec = {
@@ -646,6 +742,9 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
     ...(skipPages !== undefined ? { skipPages: parsePageList(skipPages, '--skip-pages') } : {}),
     ...(optionalString(args, 'overlay') ? { overlayPath: optionalString(args, 'overlay')! } : {}),
     ...(optionalString(args, 'chapters') ? { chaptersPath: optionalString(args, 'chapters')! } : {}),
+    // Passed only when it was asked for, so a book made of its own words hands
+    // the engine the options object it has always been handed — see VLM_RECORDS.
+    ...(optionalString(args, 'records') ? { recordsPath: optionalString(args, 'records')! } : {}),
     stripNoteMarkers: flag(args, 'strip-note-markers'),
     // Passed only when it was asked for, so a cast's options are the ones they
     // have always been — see VLM_FINAL for what the edition is.
@@ -875,7 +974,23 @@ export function defaultTranslationOut(epubPath: string, to: string): string {
 async function runTranslate(args: ParsedArgs): Promise<void> {
   const epubPath = requireString(args, 'epub', 'the EPUB to translate');
   const to = requireString(args, 'to', 'the language to translate into');
-  const outPath = optionalString(args, 'out') ?? defaultTranslationOut(epubPath, to);
+
+  /*
+   * WHICH OF THE TWO PRODUCTS THIS RUN IS FOR — see TR_RECORDS for the whole
+   * distinction. Every contradiction between them is refused here, at the argv
+   * layer, and again in the engine for a caller that is not this one.
+   */
+  const recordsPath = optionalString(args, 'records');
+  const named = optionalString(args, 'out');
+  if (recordsPath !== undefined && named !== undefined) {
+    throw new UsageError(
+      `--records writes records and no book, so the EPUB at --out ${named} would never be written. `
+      + 'A path this command accepts and does not write to is a file somebody goes looking for.',
+    );
+  }
+  const outPath = recordsPath !== undefined
+    ? undefined
+    : named ?? defaultTranslationOut(epubPath, to);
 
   /*
    * Refused here, before a byte is read. `--out` equal to `--epub` is the one
@@ -884,10 +999,21 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
    * copy of the thing being translated — including the source text every
    * refusal message would have pointed at.
    */
-  if (path.resolve(outPath) === path.resolve(epubPath)) {
+  if (outPath !== undefined && path.resolve(outPath) === path.resolve(epubPath)) {
     throw new UsageError(
       `--out ${outPath} is the input itself. foundry reads the one and writes the other; a book `
       + 'overwritten by its own translation is the single input this command cannot get back.',
+    );
+  }
+  /*
+   * The same refusal for the records file, and it is a sharper one: the input
+   * is a book and the output is JSONL, so this is not a mistake anybody makes
+   * by accident — but the cost of it is the converted book itself, and this
+   * command's whole promise is that the input is never written to.
+   */
+  if (recordsPath !== undefined && path.resolve(recordsPath) === path.resolve(epubPath)) {
+    throw new UsageError(
+      `--records ${recordsPath} is the input itself. The records file is written to; the book is not.`,
     );
   }
 
@@ -899,11 +1025,37 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
    * program drops on the floor is how somebody ends up believing they ordered a
    * fresh translation and got yesterday's answers back (ARCHITECTURE §8). The
    * engine refuses the same pair again, for a caller that is not this one.
+   *
+   * IN RECORDS MODE THE RECORDS FILE IS THE BANK, so `--fresh-bank` is about
+   * that file and `--bank` beside it is a second cache that could answer
+   * nothing the first one does not.
    */
   const bankPath = optionalString(args, 'bank');
   const freshBank = flag(args, 'fresh-bank');
-  if (freshBank && bankPath === undefined) {
-    throw new UsageError('--fresh-bank is about the bank --bank names, and no --bank was given.');
+  if (recordsPath !== undefined && bankPath !== undefined) {
+    throw new UsageError(
+      '--bank and --records: the records file already IS the bank — an unchanged block has an '
+      + 'unchanged question, its key is in the file, and it is never asked again. Pass one.',
+    );
+  }
+  if (freshBank && bankPath === undefined && recordsPath === undefined) {
+    throw new UsageError(
+      '--fresh-bank is about the file --bank or --records names, and neither was given.',
+    );
+  }
+  const sourceRecords = optionalString(args, 'source-records');
+  if (sourceRecords !== undefined && recordsPath === undefined) {
+    throw new UsageError(
+      '--source-records names the parent translation this one is a chain from, and only a --records '
+      + 'run can consume one: without it this command translates the words in the book it was given.',
+    );
+  }
+  const generation = optionalString(args, 'generation');
+  if (generation !== undefined && recordsPath === undefined) {
+    throw new UsageError(
+      '--generation is written into record rows, and without --records this run writes a book. '
+      + 'Nothing would carry it.',
+    );
   }
 
   // A count of requests, and the only readings of "0", "-2" and "four" are
@@ -915,7 +1067,10 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
 
   const report = await translateEpub({
     epubPath,
-    outPath,
+    ...(outPath !== undefined ? { outPath } : {}),
+    ...(recordsPath !== undefined ? { recordsPath } : {}),
+    ...(sourceRecords !== undefined ? { sourceRecordsPath: sourceRecords } : {}),
+    ...(generation !== undefined ? { generation } : {}),
     to,
     ...(bankPath !== undefined ? { bankPath } : {}),
     ...(freshBank ? { freshBank: true } : {}),
@@ -958,13 +1113,24 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
   // What the bank saved, on the line somebody actually reads. A resumed run
   // must VISIBLY cost less than the run it resumed, or nobody can tell the
   // feature is working from a model that happened to be quick today.
-  const banked = bankPath === undefined
+  // The same sentence for either cache, because in records mode the records
+  // file IS the bank and a person reading the line wants the same two numbers.
+  const banked = bankPath === undefined && recordsPath === undefined
     ? ''
     : `, ${report.fromBank} from the bank and ${report.answered} asked`;
+  // What actually landed in the file, which is not the same number: a position
+  // whose row already says this is not written again, and one a person
+  // corrected is left exactly as they left it.
+  const rows = recordsPath === undefined
+    ? ''
+    : `, ${report.recordsWritten} record(s) written`
+      + (report.recordsHumanKept === 0
+        ? ''
+        : ` and ${report.recordsHumanKept} left as a person corrected them`);
   log(
     `translate: ${report.blocks} blocks${sent} in ${report.seconds.toFixed(1)}s `
     + `(${(report.blocks / Math.max(report.seconds, 0.001)).toFixed(2)} a second, ${report.model})`
-    + `${banked}${struck}${asked}${kept}${echoed}${stuck}`,
+    + `${banked}${rows}${struck}${asked}${kept}${echoed}${stuck}`,
   );
   if (report.navUnmapped > 0) {
     log(
@@ -1401,7 +1567,7 @@ export const COMMANDS: readonly Command[] = [
     name: 'vlm-convert',
     summary: 'A vision model reads the pages: PDF in, EPUB, plain text or a real-text PDF out.',
     usage: '--pdf <file.pdf> --out <book.epub> [--format <epub|txt|pdf>] [--vlm-model <id>]'
-      + ' [--python <path>] [--overlay <file.json>]',
+      + ' [--python <path>] [--overlay <file.json>] [--records <file.jsonl>]',
     detail: [
       'A document vision model reads each page picture and hands back marked-up',
       'text, and foundry assembles those answers into an EPUB. No Tesseract, no',
@@ -1649,12 +1815,41 @@ export const COMMANDS: readonly Command[] = [
       'per-page structured data and whose answers are cached, the page is left out',
       'and reported BY NUMBER — in the log, in --chapters, and again on the last',
       'line of the run. What never happens is a page quietly guessed at.',
+      '',
+      '--records CASTS A TRANSFORM\'S WORDS INTO THE BOOK. The file is',
+      'translate --records\' product: one row per flowing block, keyed by the',
+      'block\'s position in the bank. Each block whose position the file answers',
+      'for is written with those words in place of its own, at the one point where',
+      'a block\'s text becomes a document — so everything upstream still runs on',
+      'the SOURCE text. That order is the design: the page-turn joins, the chapter',
+      'proposals, the dehyphenation and the running-head suppression all read the',
+      'words the model actually saw, in the language it saw them in, and only then',
+      'are the words exchanged. A position the file does not answer for keeps its',
+      'source text, so a partial translation renders honestly.',
+      '',
+      'PROVENANCE STILL NAMES THE SOURCE. data-bf-page, data-bf-cat and',
+      'data-bf-src are computed from where a block came from and never from what',
+      'it says, so a translated paragraph still points at the scan page a reader',
+      'would check it against. dc:language and every xml:lang come from --language,',
+      'because a file of sentences does not declare a language and guessing one is',
+      'not something this program does. The contents page needs no special',
+      'handling at all: nav labels are minted from the heading elements after their',
+      'words were substituted, so the chapter and the contents say the same thing',
+      'by construction.',
+      '',
+      'It composes with --final and with --format txt, which is how an export',
+      'works: the same reflow, the same curation, a struck note still absent from',
+      'the edition, the editing stamps still withheld, and the plain-text route',
+      'still the same documents with their tags off. It is refused with',
+      '--format pdf and on the prose dialects — a facsimile reprints the page and',
+      'a prose dialect has no blocks for a record to be about, and a records file',
+      'silently ignored is a book somebody believes is the translation.',
     ].join('\n'),
     options: [
       PDF_IN, OUT_PATH, VLM_FORMAT, VLM_MODEL, VLM_PYTHON, VLM_RENDERS, VLM_LANGUAGE,
       VLM_ENDPOINT, VLM_ENDPOINT_MODEL, VLM_CONCURRENCY, VLM_READINGS,
       VLM_FRESH_READINGS, VLM_REUSE_READINGS, VLM_SKIP_PAGES,
-      VLM_OVERLAY, VLM_CHAPTERS, VLM_STRIP_MARKERS, VLM_FINAL,
+      VLM_OVERLAY, VLM_CHAPTERS, VLM_STRIP_MARKERS, VLM_FINAL, VLM_RECORDS,
     ],
     run: runVlmConvert,
   },
@@ -1787,8 +1982,8 @@ export const COMMANDS: readonly Command[] = [
   {
     name: 'translate',
     summary: 'Translate a foundry EPUB with a local Ollama model: EPUB in, a second EPUB out.',
-    usage: '--epub <book.epub> --to <lang> [--from <lang>] [--out <path>] [--model <name>]'
-      + ' [--instructions <text>] [--bank <file.jsonl>] [--concurrency <n>]',
+    usage: '--epub <book.epub> --to <lang> [--from <lang>] [--out <path>|--records <file.jsonl>]'
+      + ' [--model <name>] [--instructions <text>] [--bank <file.jsonl>] [--concurrency <n>]',
     detail: [
       'Reads a book foundry converted and writes a SECOND BOOK beside it with the',
       'same structure, the same pictures and the same page provenance, and the',
@@ -1948,10 +2143,59 @@ export const COMMANDS: readonly Command[] = [
       'copy is left in the source language and reported rather than translated a',
       'second time — a contents page and a chapter heading that disagree is a book',
       'assembled from two editions.',
+      '',
+      '--records WRITES RECORDS INSTEAD OF A BOOK, and it is the mode everything',
+      'after a translation is built on. Without it the product is a second EPUB:',
+      'a file, in which there are no blocks left to decide anything about. With',
+      'it the product is one JSONL row per flowing block —',
+      '',
+      '  {"key":..,"parts":"12:3 13:0","generation":..,"text":"The state was.."}',
+      '',
+      'where "parts" is the block\'s position in the reading bank, in the same',
+      'spelling data-bf-src writes into a cast book and an overlay target uses:',
+      'page:order, page:order:part where the markdown pass split an answer,',
+      'space-joined where the reflow made one paragraph out of two pages\' blocks,',
+      'and page:order#n for one note of a Footnote block. --out is refused, since',
+      'no book is written. The book comes later, from',
+      'vlm-convert --records <file> --language <tag>, which puts those words into',
+      'the same pipeline that already applies the curation, the chapters and the',
+      'edition rules — so a translated book is CAST rather than converted, its',
+      'contents page comes out translated with no comparison of any kind, and',
+      'every decision somebody made about the source reaches it for free.',
+      '',
+      'THE RECORDS FILE IS ITS OWN BANK, so --bank is refused beside it: an',
+      'unchanged block has an unchanged question, its key is already in the file,',
+      'and it is never asked again. --fresh-bank still means "ask everything',
+      'again", into a pending file that replaces the records only on success. A',
+      'row is only appended where it says something new, so re-running over an',
+      'unchanged book writes nothing at all — and a position whose newest row a',
+      'PERSON wrote is left exactly as they left it, because a machine row',
+      'appended on top of a correction would silently revert it.',
+      '',
+      'IT RE-ASKS THE BOOK ONCE, AND ONLY ONCE. Records mask one stage earlier —',
+      'the flowing block\'s own text, where the markup is **emphasis** and',
+      'superscript note numbers, rather than rendered XHTML — so the masked source',
+      'is a different string and the key is a different key. A book translated to',
+      'an EPUB yesterday and to records today is paid for twice, once. Tables are',
+      'the one category records cannot carry: a table\'s text is the vision',
+      'model\'s own HTML and its cells are not banked blocks, so there is no',
+      'position a record about one could be written against. They are left in the',
+      'source language, counted, and named on the last line of the run.',
+      '',
+      '--source-records MAKES A CHAIN. Point it at a parent translation\'s records',
+      'and each block is translated from the PARENT\'S answer rather than from the',
+      'book\'s own words — German to English to Hungarian, with --from naming the',
+      'parent\'s language. A position the parent never answered falls back to the',
+      'book. The key hashes the masked parent text, so correcting one English',
+      'record re-asks exactly the Hungarian blocks that record feeds and nothing',
+      'else. The run says how many of the book\'s blocks the parent actually',
+      'answered for, before the GPU is spent, because a chain that chained nothing',
+      'is the one failure of this feature nobody can see in the output.',
     ].join('\n'),
     options: [
       TR_EPUB_IN, TR_TO, TR_FROM, TR_OUT, TR_MODEL, TR_OLLAMA, TR_INSTRUCTIONS,
       TR_BANK, TR_FRESH_BANK, TR_CONCURRENCY,
+      TR_RECORDS, TR_SOURCE_RECORDS, TR_GENERATION,
     ],
     run: runTranslate,
   },

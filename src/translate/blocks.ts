@@ -109,6 +109,33 @@ export interface BlockSite {
   id: string | null;
   /** Whether this block is a heading, which is what a nav label can come from. */
   heading: boolean;
+  /**
+   * `data-bf-src` — WHICH BANKED BLOCKS THIS ELEMENT'S WORDS CAME FROM, in the
+   * emitter's own spelling: `page:order[:part]`, space-joined where the reflow
+   * made one paragraph out of two pages' blocks (`dots-book.ts`, `stampSrc`).
+   *
+   * Null for every book that has none, and there are three of those: a book
+   * stamped by hand (`epub-stamp` writes categories and pages, not provenance),
+   * a book cast before the attribute existed, and an EDITION — `--final`
+   * withholds it deliberately, because it is this app's plumbing and means
+   * nothing to a reader.
+   *
+   * THE EPUB→EPUB MODE NEVER READS IT. That mode splices an answer back into
+   * the range it came out of, so the element's own offsets are the whole of the
+   * identity it needs. Records mode cannot do that — its product is keyed by
+   * position, and this attribute is the only place a rendered document says
+   * which banked blocks a paragraph is.
+   */
+  src: string | null;
+  /**
+   * `data-bf-note` — WHICH NOTE OF ITS BLOCK an `<aside>` is, counted from 0.
+   *
+   * One Footnote answer becomes several `<aside>`s at emit (`splitNotes`), and
+   * all of them carry the SAME `data-bf-src`. This is what tells the third from
+   * the fourth, and it is the `#note` dimension a record's position key carries.
+   * Null on everything that is not a note.
+   */
+  note: number | null;
   /** Source range of the inner XHTML, from `xml.ts`'s offsets. */
   innerStart: number;
   innerEnd: number;
@@ -191,6 +218,8 @@ export function findBlocks(source: string, where: string): ChapterBlocks {
     page: el.attrs.get('data-bf-page') ?? page,
     id: el.attrs.get('id') ?? null,
     heading: HEADING_TAGS.has(el.tag),
+    src: el.attrs.get('data-bf-src') ?? null,
+    note: noteOrdinal(el),
     innerStart: el.innerStart,
     innerEnd: el.innerEnd,
   });
@@ -374,6 +403,20 @@ function tableRows(wrapper: XmlElement): XmlElement[][] | null {
   }
   if (tables > 1) return null;
   return rows;
+}
+
+/**
+ * `data-bf-note` as a number, or null.
+ *
+ * An attribute that is there and is not a whole number is treated as absent
+ * rather than refused. It is the app's plumbing, not the book — a records run
+ * that cannot name a note says so about that note, by name, which is a better
+ * failure than a whole book refused over one malformed attribute.
+ */
+function noteOrdinal(el: XmlElement): number | null {
+  const raw = el.attrs.get('data-bf-note');
+  if (raw === undefined || !/^\d+$/.test(raw)) return null;
+  return Number(raw);
 }
 
 function ancestorIsStamped(el: XmlElement, stamped: ReadonlySet<XmlElement>): boolean {

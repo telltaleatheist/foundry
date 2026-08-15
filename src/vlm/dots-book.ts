@@ -1495,6 +1495,11 @@ export interface DotsChapterOptions {
    * suite pins it.
    */
   final?: boolean;
+  /**
+   * A transform's answers, keyed by position — `DotsBookOptions.records` has
+   * the whole argument. Absent is a book made of its own words.
+   */
+  records?: ReadonlyMap<string, string>;
 }
 
 export interface DotsChapterBody {
@@ -1530,6 +1535,17 @@ interface ChapterNote {
   seq: number;
   /** Which note of `block` this is, counted from 0 — see `FlowNote.ordinal`. */
   ordinal: number;
+  /**
+   * A transform's words for THIS NOTE, or null where there are none.
+   *
+   * Held beside `text` rather than replacing it, and the separation is the
+   * whole of what makes a translated note work. `text` stays the SOURCE, which
+   * is what `printed` was read off and what the reference markers in the prose
+   * match on — a note's printed number is a fact about the page and must not
+   * move because somebody translated the sentence under it. `translated` is the
+   * words, and only the words.
+   */
+  translated: string | null;
   /** The id of the FIRST prose marker that linked here — where the backlink aims. */
   refId: string | null;
   /**
@@ -1607,6 +1623,27 @@ export function buildChapterBody(
     ordinal: note.ordinal,
     refId: null,
     struck: opts.overlay !== undefined && noteStruck(opts.overlay, note.source, note.ordinal),
+    /*
+     * ── A RECORD PER NOTE, AND THE SPLIT IS STILL THE SOURCE'S ────────────────
+     *
+     * One banked Footnote answer is several notes, cut by `splitNotes` on the
+     * source's own rule — a superscript number at the start of a line — which is
+     * language-neutral because it runs on the words the SCAN had. That is why a
+     * transform can be per-note at all: the structure is decided here, from the
+     * bank, and the record supplies one note's words into a shape it did not
+     * choose. A record could never carry the shape itself; a whole-block
+     * translation of five notes would have no handle to drop the third when
+     * somebody strikes it.
+     *
+     * `#ordinal` is that handle, and it is the same dimension `data-bf-note`
+     * writes and an overlay's `note` target points at. So a struck note drops
+     * its record at materialization exactly as a struck block drops a block:
+     * under `--final` the aside is never written, and the record it would have
+     * held words for is simply never read.
+     */
+    translated: opts.records?.get(`${sourceKey(
+      note.source.page, note.source.order, note.source.part, opts.split,
+    )}#${note.ordinal}`) ?? null,
   }));
 
   /*
@@ -1716,6 +1753,40 @@ export function buildChapterBody(
   const sourceOf = (parts: readonly FlowPart[]): string =>
     parts.map((part) => sourceKey(part.page, part.order, part.part, opts.split)).join(' ');
 
+  /**
+   * ── THE ONE PLACE A TRANSFORM'S WORDS ENTER THE BOOK ────────────────────────
+   *
+   * A record is a translation of `FlowBlock.text` keyed by the block's position
+   * (`src/translate/records.ts`), and this is where a position's words become a
+   * file. The lookup is the SAME STRING `data-bf-src` is written from — worked
+   * out once per block above and passed here — which is what makes the
+   * correspondence checkable by opening the book: an element's `src` attribute
+   * is the key of the record that supplied its words.
+   *
+   * AFTER THE REFLOW AND NOT INSTEAD OF IT, and that ordering is the design.
+   * Everything the reflow decides — which blocks join across a page turn, where
+   * the chapters open, which word the column broke in half, which running heads
+   * were furniture — is decided by reading the SOURCE text, in the source
+   * language, with the book's own lexicon. A pass that substituted before it
+   * would be asking German questions of English sentences, and the joins are
+   * exactly the decisions that would go wrong first. So the base is built from
+   * the bank, always, and the words are exchanged at the last moment.
+   *
+   * PROVENANCE IS UNTOUCHED BY THIS. `data-bf-src`, `data-bf-page`,
+   * `data-bf-cat` and `data-bf-id` are all computed from `flow.parts` and the
+   * block's own identity, never from its text, so a substituted paragraph still
+   * names the banked blocks a reader would check it against. That is not a
+   * nicety: a translation whose page provenance pointed at the wrong scan page
+   * would be uncheckable, and uncheckable is what this program refuses.
+   *
+   * A POSITION WITH NO RECORD KEEPS ITS SOURCE TEXT. A partial translation is
+   * rendered honestly — the blocks that came back are in the target language
+   * and the blocks that did not are in the book exactly as it was read, which is
+   * what `translate` already does with a block the model refused.
+   */
+  const worded = (flow: FlowBlock, src: string): string =>
+    opts.records?.get(src) ?? flow.text;
+
   /** The same, for a block that reaches the stamp on its own — a note. */
   const sourceOfBlock = (block: DotsBlock): string =>
     sourceKey(block.page, block.order, block.part, opts.split);
@@ -1744,14 +1815,25 @@ export function buildChapterBody(
      * either is a decision about the same banked answer.
      */
     const src = sourceOf(flow.parts);
+    /** What this block SAYS: a record's words where there is one, its own otherwise. */
+    const words = worded(flow, src);
     if (flow.category === 'List-item') {
+      /*
+       * THE LIST'S TAG IS DECIDED ON THE SOURCE AND NEVER ON A RECORD. Whether
+       * this is an `<ol>` or a `<ul>` is a fact about what the printer set —
+       * the item opened with "1." on the page — and a translation is free to
+       * drop the numeral, spell it as a word, or use its own language's
+       * punctuation. Reading the tag off translated words would turn a numbered
+       * list into a bulleted one halfway down, or worse, close one list and
+       * open another mid-item.
+       */
       const tag = /^\d+[.)]/.test(flow.text) ? 'ol' : 'ul';
       if (openList !== tag) {
         closeList();
         out.push(`<${tag}${stamp(block, src)}>`);
         openList = tag;
       }
-      out.push(`  <li${stamp(block, src)}>${marker(block)}${inline(flow.text, block.page)}</li>`);
+      out.push(`  <li${stamp(block, src)}>${marker(block)}${inline(words, block.page)}</li>`);
       continue;
     }
     closeList();
@@ -1759,7 +1841,7 @@ export function buildChapterBody(
     switch (flow.category) {
       case 'Title':
       case 'Section-header': {
-        const xhtml = inline(flow.text, block.page);
+        const xhtml = inline(words, block.page);
         // The TAG still comes from the true category: `h1` for a Title and `h2`
         // for a Section-header is the book's own hierarchy, and a chapter that
         // opens on a Section-header did not become a Title by opening one.
@@ -1800,7 +1882,7 @@ export function buildChapterBody(
       case 'Quote':
         out.push(
           `<blockquote${stamp(block, src)}><p${sized(block)}${stamp(block, src)}>`
-          + `${marker(block)}${inline(flow.text, block.page)}</p></blockquote>`,
+          + `${marker(block)}${inline(words, block.page)}</p></blockquote>`,
         );
         break;
       case 'Footnote':
@@ -1809,13 +1891,23 @@ export function buildChapterBody(
         // begins.
         break;
       case 'Table':
+        /*
+         * `flow.text` AND NOT `words`, and this is the one category where that
+         * is deliberate. A Table block's text is the vision model's own HTML —
+         * the whole grid as one string — and there is no such thing as a record
+         * about it: `translate --records` refuses tables whole and says so,
+         * because the cells are not banked blocks and have no position a record
+         * could be keyed to. Reading a record here could therefore only find one
+         * this program did not write, and writing a stranger's HTML into a
+         * `<div class="tablewrap">` is not something to do on a maybe.
+         */
         out.push(
           `<div class="tablewrap"${stamp(block, src)}>${marker(block)}`
           + `${checkTableHtml(flow.text, block.page)}</div>`,
         );
         break;
       case 'Formula':
-        out.push(`<p class="formula"${stamp(block, src)}>${marker(block)}${inline(flow.text, block.page)}</p>`);
+        out.push(`<p class="formula"${stamp(block, src)}>${marker(block)}${inline(words, block.page)}</p>`);
         break;
       case 'Picture': {
         const name = `p${String(block.page).padStart(4, '0')}-${opts.firstPicture + crops.length}.png`;
@@ -1829,7 +1921,7 @@ export function buildChapterBody(
       case 'Caption':
         out.push(
           `<p class="caption"${sized(block)}${stamp(block, src)}>`
-          + `${marker(block)}${inline(flow.text, block.page)}</p>`,
+          + `${marker(block)}${inline(words, block.page)}</p>`,
         );
         break;
       default: {
@@ -1853,15 +1945,46 @@ export function buildChapterBody(
          */
         const align = alignmentClass(block.box, opts.column);
         const written: string[] = [];
+        /*
+         * ── A SUBSTITUTED PARAGRAPH HAS NO SEAM, so its markers go to the front ─
+         *
+         * The loop below writes the paragraph part by part precisely so the page
+         * marker can sit at the seam — the exact character where one page ended
+         * and the next began. A RECORD HAS NO SUCH CHARACTER. It is one
+         * translation of the whole paragraph; the words that were on page 48 and
+         * the words that were on page 49 are not separable in it, and any
+         * position this file picked inside it would be a claim about the paper
+         * that the sentence cannot support. Splitting the record by the source's
+         * part lengths would be exactly that claim with arithmetic in front of
+         * it.
+         *
+         * So the markers every part still owes are written together, in page
+         * order, at the head of the paragraph — the same place part 0's marker
+         * has always gone — and the paragraph that swallowed a page turn says
+         * "pages 48 and 49 begin here". That is one element early for the second
+         * of them and it is the honest reading: the `pb-N` anchors all exist,
+         * they are unique, they stay in ascending document order, and nothing
+         * downstream (`epub-final`'s cut machinery, a citation, a reader's
+         * page-list) is given a position the translation cannot back up.
+         *
+         * `joinedPages` is counted from the SOURCE either way, because it is a
+         * report about what the reflow did and the reflow ran on the bank.
+         */
+        const substituted = words !== flow.text;
         for (const [n, part] of flow.parts.entries()) {
-          if (part.join === 'space') written.push(' ');
+          if (!substituted) {
+            if (part.join === 'space') written.push(' ');
+          }
           written.push(marker(part.block));
-          if (part.fused !== null) written.push(inline(part.fused, part.page));
-          written.push(inline(part.text, part.page));
+          if (!substituted) {
+            if (part.fused !== null) written.push(inline(part.fused, part.page));
+            written.push(inline(part.text, part.page));
+          }
           // A TURN, not merely a part: two blocks the printer set one under the
           // other on one page are joined here too, and no page was turned.
           if (n > 0 && part.page !== flow.parts[n - 1].page) joinedPages.push(part.page);
         }
+        if (substituted) written.push(inline(words, block.page));
         out.push(
           `<p${classOf(align)}${sized(block)}${stamp(block, src)}>${written.join('')}</p>`,
         );
@@ -1904,9 +2027,27 @@ export function buildChapterBody(
        * it to a sibling note at the same page bottom — a wrong link, made
        * confidently.
        */
+      /*
+       * THE NUMBER COMES OFF THE SOURCE AND THE WORDS COME OFF THE RECORD.
+       *
+       * The printed number is the book's — it is what the page set, what the
+       * reference marker in the prose matched on, and what the backlink is
+       * keyed to — so it is read from `note.text` whether or not a translation
+       * exists. A model that shed the note's leading superscript run (a short
+       * note is mostly number, and that is exactly the failure `markers.ts`'s
+       * edge peel was invented for) therefore costs the book nothing here.
+       *
+       * The record's OWN leading run is stripped when it kept one, because the
+       * number is written from `printed` above and a note reading "¹ ¹ See the
+       * work of yesterday" is what happens if both are trusted.
+       */
       const lead = opts.stripNoteMarkers ? null : LEADING_SUPERSCRIPT.exec(note.text);
       const printed = lead ? printedNumber(lead[0]) : null;
-      const rest = lead ? note.text.slice(lead[0].length).replace(/^\s+/, '') : note.text;
+      const words = note.translated ?? note.text;
+      const cut = note.translated === null
+        ? lead
+        : opts.stripNoteMarkers ? null : LEADING_SUPERSCRIPT.exec(words);
+      const rest = cut ? words.slice(cut[0].length).replace(/^\s+/, '') : words;
       const number = printed === null
         ? ''
         : note.refId !== null
@@ -2817,6 +2958,66 @@ export interface DotsBookOptions {
    * formats at once, and it is upstream of the format fork by construction.
    */
   final?: boolean;
+  /**
+   * ── A TRANSFORM'S ANSWERS, KEYED BY POSITION — `vlm-convert --records` ──────
+   *
+   * `position → words`, where a position is `data-bf-src`'s own spelling
+   * (`page:order[:part]`, space-joined for a paragraph the reflow made out of
+   * two pages' blocks, plus `#note` for one note of a Footnote block) and the
+   * words are one flowing block's text in a language somebody asked for. The
+   * file it is read out of is `src/translate/records.ts`, which carries the
+   * format; the map arrives here already resolved to the newest row per
+   * position, because the emitter has no business knowing that the file appends.
+   *
+   * WHY MATERIALIZATION AND NOT A SECOND BOOK. `translate` used to produce an
+   * EPUB, which made the translated edition a FILE rather than a rendering — so
+   * striking a paragraph out of it, correcting a sentence of it, or casting it
+   * as plain text each needed the whole pipeline re-implemented over markup.
+   * Records make the translation a set of ANSWERS, and this flag is where they
+   * become a book: the same reflow, the same chapters, the same curation, the
+   * same edition rules, the same format fork, with different words in the blocks.
+   *
+   * THE THREE THINGS IT COMPOSES WITH, each load-bearing:
+   *
+   *  - `final`. An exported translation is cast with BOTH. Substitution never
+   *    resurrects anything the edition removes: a struck block was dropped at
+   *    the parse and is not in the flow at all, and a struck note has no
+   *    `<aside>` under `--final`, so the record that would have supplied its
+   *    words is never looked up. The editing stamps stay withheld.
+   *  - `format: 'txt'`. The substitution happens while the documents are
+   *    assembled, upstream of the format fork, so `packageVlmText` strips the
+   *    tags off translated documents exactly as it strips them off source ones.
+   *  - `metadata.language`. Records carry words and not a language declaration —
+   *    guessing one from a file of sentences is exactly the inference this
+   *    program refuses — so `dc:language` and every `xml:lang` come from
+   *    `vlm-convert --language`, which is the app's `params.language` for the
+   *    step (docs/WORKBENCH.md §10, ruling 4). The flag has always existed and
+   *    always done that job; what changed is that it is now the ONLY place the
+   *    language is said, because `translate` no longer retags a document it no
+   *    longer writes.
+   *
+   * AND THE NAV COMES OUT TRANSLATED FOR NOTHING, which is the part that deletes
+   * code rather than adding it. `relabelNav` (`src/translate/run.ts`) had to
+   * PROVE a contents label was a copy of a heading — comparing the label against
+   * that heading's text from before the translation — because it was editing a
+   * finished nav document whose labels might have been hand-edited, and
+   * inventing one there would put a different title in the contents than on the
+   * chapter. Here the nav does not exist yet: it is minted from `body.label`,
+   * read off the heading AFTER its words were substituted, so the contents and
+   * the chapter say the same thing by construction and there is no before/after
+   * comparison to make at all.
+   *
+   * ONE LIMIT, RECORDED RATHER THAN HIDDEN: a section whose contents label came
+   * from the page CLASSIFIER rather than from its own heading — a part divider,
+   * whose number and its name are two blocks and only `partVerdict` knows they
+   * belong together — keeps that label in the source language, because it is
+   * composed from block text before any substitution exists. Every ordinary
+   * chapter takes its label from its first heading and comes out translated.
+   *
+   * Absent is a book made of its own words, byte for byte, which is what every
+   * caller but an export passes.
+   */
+  records?: ReadonlyMap<string, string>;
 }
 
 export interface DotsBookResult {
@@ -2950,6 +3151,9 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
       // Spread the same way, so a run that did not ask for an edition hands the
       // chapter builder the exact options object it always did.
       ...(opts.final === true ? { final: true } : {}),
+      // And again for a transform's words. A cast with no records is handed the
+      // options object it has always been handed — see `DotsBookOptions.records`.
+      ...(opts.records !== undefined ? { records: opts.records } : {}),
     });
     notes += body.notes;
     crops.push(...body.crops);

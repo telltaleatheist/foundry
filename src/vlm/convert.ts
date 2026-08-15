@@ -39,6 +39,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { ensureDir } from '../fsdirs.js';
+import { TranslationRecords } from '../translate/records.js';
 import { cropPageRenders, type VlmPage, type VlmUnreadablePage } from './bridge.js';
 import { parsePage } from './dialect.js';
 import { DotsPageError, parseDotsPage, renderScale, smartResize, type DotsParsedPage } from './dots.js';
@@ -154,6 +155,27 @@ export interface VlmConvertOptions {
    * plain-text route never becomes one.
    */
   final?: boolean;
+  /**
+   * A transform's answers, substituted for the blocks' own words — `--records`,
+   * and `DotsBookOptions.records` in `dots-book.ts` argues the whole design.
+   *
+   * The file is `translate --records`' product: one JSONL row per flowing
+   * block, keyed by the block's position in the bank. This route reads it,
+   * resolves it to the newest row per position, and hands the emitter a map.
+   *
+   * GEOMETRIC DIALECTS ONLY, and refused rather than ignored anywhere else, for
+   * `--overlay`'s reason: a record names a block by its place in the model's
+   * answer, and a dialect that answers with prose has no blocks to name.
+   *
+   * THE FACSIMILE PDF ROUTE IS REFUSED TOO, and this is where it differs from
+   * `--final`. That flag is accepted there and documented as doing nothing,
+   * because the difference it makes — notes and editing stamps — does not exist
+   * on a route that reprints the page. A records file is not like that. It
+   * carries the whole book in another language, and a route that took it and
+   * printed German would hand somebody a facsimile they believe is the
+   * translation they ordered. Refused, by name, before a page renders.
+   */
+  recordsPath?: string;
   log: (message: string) => void;
   /** The subprocess and the socket, swappable — see `ReadPhaseOptions.bridge`. */
   bridge?: VlmBridge;
@@ -343,6 +365,68 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       `vlm-convert: overlay ${path.resolve(opts.overlayPath)} — ${overlay.amendments.length} `
       + `amendment(s), applied to the blocks as each page is parsed; ${spine}. The readings bank is `
       + 'not touched: what the model said and what a person decided about it are two files.',
+    );
+  }
+
+  /*
+   * A TRANSFORM'S ANSWERS, READ BEFORE A PAGE RENDERS, for the overlay's reason
+   * doubled: this file is hours of somebody's GPU in another language, and a run
+   * that discovers it is malformed after the reading has finished has spent the
+   * whole conversion to say so. Both refusals below are about the ROUTE rather
+   * than about the file, so they come first.
+   */
+  if (opts.recordsPath !== undefined && !geometric) {
+    throw new Error(
+      `--records holds a translation keyed to the blocks it is a translation of, and ${model.id} `
+      + `answers in the ${model.dialect} dialect, which is prose: it reports what a page says and `
+      + 'never which element of its answer said it, so there is no block for a record to be about. '
+      + 'Use a dialect that answers with geometry — dots-ocr does, and it is the default.',
+    );
+  }
+  if (opts.recordsPath !== undefined && format === 'pdf') {
+    throw new Error(
+      '--records with --format pdf: the facsimile route reprints the PAGE, block by block, where '
+      + 'the model found it — none of the passes that make a book run on it, and it has no place to '
+      + 'put a translated paragraph that no longer fits the box the source words came out of. '
+      + 'Refused rather than ignored: a facsimile printed in the source language, from a job that '
+      + 'named a translation, is a file somebody would keep believing it was the translation.',
+    );
+  }
+  /*
+   * A RECORDS FILE THAT IS NOT THERE IS NOT AN EMPTY ONE.
+   *
+   * `TranslationRecords.open` answers "nothing recorded" for a path with no
+   * file at it, which is exactly right where `translate` is about to CREATE
+   * one and exactly wrong here: every position would fall back to its source
+   * text, the run would succeed, and what came out would be the German book
+   * wearing whatever `--language` said. That is the silent, plausible-looking
+   * output this program refuses everywhere else, and it is worse here than
+   * elsewhere because the file it names is somebody's hours of GPU.
+   */
+  if (opts.recordsPath !== undefined && !fs.existsSync(opts.recordsPath)) {
+    throw new Error(
+      `--records ${path.resolve(opts.recordsPath)} does not exist. A missing records file is not an `
+      + 'empty one: every block would keep its source text and this run would write the untranslated '
+      + `book with "${opts.language}" stamped on it, which is a file nobody can tell from the `
+      + 'translation they asked for.',
+    );
+  }
+  const records = opts.recordsPath === undefined
+    ? null
+    : TranslationRecords.open(opts.recordsPath).positionMap();
+  if (records !== null && records.size === 0) {
+    throw new Error(
+      `--records ${path.resolve(opts.recordsPath!)} answers for no position at all. The same refusal `
+      + 'as a missing file and for the same reason — a run that substituted nothing would write the '
+      + 'untranslated book and call it a translation.',
+    );
+  }
+  if (records !== null) {
+    opts.log(
+      `vlm-convert: records ${path.resolve(opts.recordsPath!)} — ${records.size} position(s) whose `
+      + 'words are substituted for the book\'s own as the documents are written. The reflow, the '
+      + 'chapters and the curation all run on the SOURCE text first, and dc:language comes from '
+      + `--language (${opts.language}), because a file of sentences does not declare a language.`,
     );
   }
 
@@ -743,6 +827,9 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
         // `DotsBookOptions.final` for what the edition is and why it is decided
         // here rather than over the finished file.
         ...(opts.final === true ? { final: true } : {}),
+        // And the same again for a transform's words: a run with no records
+        // hands the assembler exactly the object it has always been handed.
+        ...(records !== null ? { records } : {}),
         images: openPageImages((requests) => cropRenders(requests, pdfPath, rendersDir, opts.python)),
       });
       bytes = built.bytes;

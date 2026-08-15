@@ -138,12 +138,17 @@ import { writeZip, zipText, type ZipEntry } from '../export/zip.js';
 import { bankKey, openTranslationBank, swapPendingBankIntoPlace } from './bank.js';
 import { findBlocks, retagLanguage, spliceAll, type BlockGroup, type BlockSite } from './blocks.js';
 import { languageRange, navLabels, readFoundryBook, resolveHref, type FoundryBook } from './book.js';
+import { flowTextOf } from './flowtext.js';
 import { readLanguage, type NamedLanguage } from './languages.js';
 import {
   checkMarkers, maskBlock, MarkerError, restoreMarkers, stripMarkers,
   type MarkerCounter, type MaskedBlock,
 } from './markers.js';
 import { chat, fetchTransport, requireModel, type Transport } from './ollama.js';
+import {
+  openTranslationRecords, swapPendingRecordsIntoPlace, TranslationRecords,
+} from './records.js';
+import { maskText, restoreText, roundTrips } from './textmask.js';
 
 /** The run could not produce a book. Names every block that refused. */
 export class TranslateError extends Error {
@@ -240,7 +245,80 @@ export type ChunkShape =
 
 export interface TranslateOptions {
   epubPath: string;
-  outPath: string;
+  /**
+   * Where the translated BOOK is written. Absent only in records mode, which
+   * writes no book — see `recordsPath`.
+   */
+  outPath?: string;
+  /**
+   * ── THE TRANSFORM PRODUCES RECORDS, NOT AN EPUB — `--records <file.jsonl>` ──
+   *
+   * WHAT THE TWO MODES ARE. Without this flag the command does what it has
+   * always done: read a stamped EPUB, translate the words inside every stamped
+   * element, and write a SECOND BOOK with the same pictures, the same
+   * provenance and the same structure. With it, the same blocks are translated
+   * and the answers are written as RECORDS — one line per flowing block, keyed
+   * by the block's position in the bank (`records.ts` has the format and the
+   * argument). No EPUB is produced and `--out` is refused.
+   *
+   * WHY A SECOND MODE RATHER THAN A BETTER FIRST ONE. The EPUB is a dead end
+   * for everything that comes after a translation. Striking a paragraph out of
+   * the translated edition, correcting one sentence of it, casting it as plain
+   * text, translating it again into a third language — every one of those is a
+   * decision about a BLOCK, and in an EPUB there are no blocks left to decide
+   * about, only markup that has to be re-parsed and re-spliced. A record is the
+   * answer keyed to the block, so the edition is built by materialization
+   * (`vlm-convert --records`) with every one of those decisions already in the
+   * pipeline that has always applied them.
+   *
+   * WHAT CHANGES ABOUT THE QUESTION, said out loud because it costs money. The
+   * masking moves one stage earlier — `textmask.ts` over the flowing block's
+   * own text rather than `markers.ts` over rendered XHTML — so the masked
+   * source is a different string and the key is a different key
+   * (`bank.ts`, `KEY_FORMATS`). A book translated to an EPUB yesterday and to
+   * records today is asked of the model twice. That is ruled and accepted
+   * (docs/WORKBENCH.md §10, ruling 1).
+   *
+   * THE FILE IS ITS OWN BANK. `--bank` is refused beside it, because the
+   * records file already answers "has this exact question been asked" — one
+   * file, one cache, seeded onto a branch by copying it.
+   */
+  recordsPath?: string;
+  /**
+   * ── A CHAIN: TRANSLATE THE TRANSLATION — `--source-records <file.jsonl>` ──
+   *
+   * The user's own case: *"if they click the english translation and then click
+   * translate to hungarian, it translates from english to hungarian, thus
+   * creating a chain of translations: german to english to hungarian."*
+   *
+   * With this, the question about a block is asked of the PARENT'S ANSWER
+   * rather than of the book's own words: per position, the source text is the
+   * parent records file's newest row for that position, and the book's text is
+   * the fallback for a position the parent never answered (a block the parent
+   * run refused, a table it skipped, a note it could not name). The key hashes
+   * the masked PARENT text, so an edit to one English record re-asks exactly
+   * the Hungarian blocks it feeds and nothing else — which is the whole reason
+   * a chain is records-native and was not buildable over EPUBs.
+   *
+   * `--from` is the caller's to state, and it should be the parent's target
+   * language: nothing here reads a language out of a records file, because a
+   * file of sentences is not a declaration and guessing one would put "German →
+   * Hungarian" on a prompt holding English.
+   *
+   * READ, NEVER WRITTEN. The parent belongs to the parent step.
+   */
+  sourceRecordsPath?: string;
+  /**
+   * The app's binding of these records to the reading they were made from,
+   * carried into every row and NEVER interpreted — `Overlay.generation`'s
+   * contract exactly (`src/vlm/overlay.ts`).
+   *
+   * The engine has no opinion about the value, never compares two of them and
+   * never refuses a run over one. It exists so that a records file can be told
+   * apart from one left beside a book that has since been read again, which is
+   * a question only the app can answer.
+   */
+  generation?: string;
   /** Target language tag, already read. */
   to: string;
   /** Source language tag. Absent means the model is told to detect it. */
@@ -319,8 +397,21 @@ export interface TranslateReport {
   keptUntranslated: string[];
   navRelabelled: number;
   navUnmapped: number;
+  /**
+   * Records mode only: rows this run appended, and rows it left alone because
+   * the newest row for that position was written by a PERSON.
+   *
+   * The second number is not a curiosity. A re-generate over an unchanged book
+   * asks the model nothing and would otherwise re-append the machine's answer
+   * on top of somebody's correction — the correction would still be in the file
+   * and would no longer be what the book says. Reported so that a run which
+   * declined to do that says so.
+   */
+  recordsWritten: number;
+  recordsHumanKept: number;
   seconds: number;
   model: string;
+  /** The book, or — in records mode — the records file. What this run made. */
   outPath: string;
 }
 
@@ -341,6 +432,13 @@ interface PendingBlock {
   ordinal: number;
   site: BlockSite;
   masked: MaskedBlock;
+  /**
+   * RECORDS MODE ONLY: where this block lives in the bank, in `data-bf-src`'s
+   * own spelling plus `#note` for one note of a Footnote block. Null in the
+   * EPUB→EPUB mode, which splices an answer back into the range it came out of
+   * and needs no name for it.
+   */
+  parts: string | null;
   /**
    * Nothing but markup — a heading that is only a pagebreak span, an empty
    * table cell. There is nothing to ask a model, so nothing is asked; but in a
@@ -894,7 +992,46 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
    * that would send nothing at all, and guessing which of the two was meant is
    * guessing.
    */
-  if (opts.bankPath === undefined && opts.freshBank === true) {
+  /*
+   * ── WHICH PRODUCT THIS RUN IS FOR, decided here and nowhere else ───────────
+   *
+   * Every contradiction between the two modes is refused before a byte is read,
+   * because each of them is a flag this program would otherwise silently drop:
+   * an `--out` that never gets written, a bank that is never consulted, a
+   * parent's records that nothing reads.
+   */
+  const wantsRecords = opts.recordsPath !== undefined;
+  if (wantsRecords && opts.outPath !== undefined) {
+    throw new TranslateError(
+      'recordsPath and outPath were both given. A records run produces records and no book, so '
+      + 'the EPUB named by outPath would never be written — and a path this command accepts and '
+      + 'does not write to is how somebody ends up looking for a file that was never going to exist.',
+    );
+  }
+  if (!wantsRecords && opts.outPath === undefined) {
+    throw new TranslateError(
+      'no outPath and no recordsPath: this run has nowhere to put what it produces.',
+    );
+  }
+  if (wantsRecords && opts.bankPath !== undefined) {
+    throw new TranslateError(
+      'recordsPath and bankPath were both given, and the records file IS the bank — an unchanged '
+      + 'block has an unchanged question, its key is already in the records file, and it is never '
+      + 'asked again. A second cache beside it would answer nothing the first one does not.',
+    );
+  }
+  if (opts.sourceRecordsPath !== undefined && !wantsRecords) {
+    throw new TranslateError(
+      'sourceRecordsPath names the parent translation this one is a chain from, and only a records '
+      + 'run can consume one: the EPUB→EPUB mode translates the words in the book it was handed.',
+    );
+  }
+  if (opts.generation !== undefined && !wantsRecords) {
+    throw new TranslateError(
+      'generation is written into records rows, and this run produces a book. Nothing would carry it.',
+    );
+  }
+  if (opts.bankPath === undefined && !wantsRecords && opts.freshBank === true) {
     throw new TranslateError(
       'freshBank was set without a bank file, so there is no bank for it to act on.',
     );
@@ -952,6 +1089,54 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
     });
   if (bank !== null) opts.log(bank.sentence);
 
+  /*
+   * The records file, opened on exactly the bank's terms and for exactly its
+   * reasons — this file IS the bank in records mode, so `--fresh-bank` means
+   * the same thing about it and the pending gamble works the same way.
+   */
+  const records = opts.recordsPath === undefined
+    ? null
+    : openTranslationRecords({
+      recordsPath: opts.recordsPath,
+      freshRequested: opts.freshBank === true,
+    });
+  if (records !== null) opts.log(records.sentence);
+
+  /*
+   * THE PARENT OF A CHAIN, read and never written.
+   *
+   * Opened through the same reader as this run's own file, so a malformed
+   * parent is refused in the same words rather than half-consumed. What is
+   * taken from it is one thing: the newest text for a position, which becomes
+   * the SOURCE this run translates.
+   */
+  /*
+   * A PARENT THAT IS NOT THERE IS NOT AN EMPTY PARENT. `TranslationRecords.open`
+   * answers "nothing recorded" for a path with no file at it — right for this
+   * run's own output file, which it is about to create, and wrong for a parent,
+   * where it would silently turn a chain into an ordinary translation of the
+   * German with the parent's language on the prompt. Hours of GPU, and nothing
+   * in the output to tell it from the chain that was ordered.
+   */
+  if (opts.sourceRecordsPath !== undefined && !fs.existsSync(opts.sourceRecordsPath)) {
+    throw new TranslateError(
+      `${opts.sourceRecordsPath} was named as the parent of this chain and there is no file there. `
+      + 'A missing parent is not an empty one: every block would fall back to the book\'s own words '
+      + `and this run would translate the source text as though "${opts.from ?? 'the detected '
+        + 'source'}" were what it says.`,
+    );
+  }
+  const sourceRecords = opts.sourceRecordsPath === undefined
+    ? null
+    : TranslationRecords.open(opts.sourceRecordsPath);
+  if (sourceRecords !== null) {
+    opts.log(
+      `translate: this is a chain — ${sourceRecords.positions} position(s) of `
+      + `${opts.sourceRecordsPath!} are the SOURCE, and a block that file does not answer for is `
+      + 'translated from the book\'s own words instead.',
+    );
+  }
+
   // ── the plan ──────────────────────────────────────────────────────────────
 
   const skipped = new Map<string, number>();
@@ -965,6 +1150,40 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
    * about the finished book and a reader has to be told either way.
    */
   const kept: string[] = [];
+  /** Blocks whose source text came out of the parent records file. */
+  let chained = 0;
+
+  /**
+   * WHERE A BLOCK LIVES, in the one spelling this program has for a position.
+   *
+   * `data-bf-src` plus `#note`, which is `parseTargetKey`'s grammar and
+   * `stampSrc`'s output — see `BlockSite.src`. A records run cannot proceed
+   * without it: a record with no position is a translation nothing can ever put
+   * back, so this throws rather than skipping, and the message says which book
+   * would have been needed.
+   */
+  const positionOf = (site: BlockSite, where: string): string => {
+    if (site.src === null || site.src.trim().length === 0) {
+      throw new TranslateError(
+        `${where} carries a data-bf-cat="${site.category}" block with no data-bf-src on it, so `
+        + 'there is no way to say WHICH banked block a record about it would be about. Records are '
+        + 'keyed by position, and a translation that cannot be put back is not one. This is either '
+        + 'a book stamped by hand (foundry epub-stamp writes categories, not provenance) or an '
+        + 'edition (foundry vlm-convert --final withholds the editing stamps deliberately). '
+        + 'Translate the CAST book — the working copy — and export the edition afterwards.',
+      );
+    }
+    if (site.category !== 'footnote') return site.src;
+    if (site.note === null) {
+      throw new TranslateError(
+        `${where} carries a footnote with no data-bf-note on it. One banked Footnote answer becomes `
+        + 'several notes at emit, so all of them wear the same data-bf-src and the ordinal is the '
+        + 'only thing that tells the third from the fourth. Without it a record could only be '
+        + 'written about all of them at once. Re-cast the book with this version of foundry.',
+      );
+    }
+    return `${site.src}#${site.note}`;
+  };
 
   for (const document of book.documents) {
     if (!document.stamped) continue;
@@ -983,6 +1202,41 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
 
     for (const group of found.groups) {
       /*
+       * A TABLE HAS NO RECORD, AND THE REFUSAL IS THE WHOLE GROUP'S.
+       *
+       * The EPUB→EPUB mode translates a table cell by cell: the cells are
+       * elements of the document, each has its own range, and each answer is
+       * spliced into the cell it came from. A record cannot work that way. A
+       * Table block's TEXT is the vision model's own HTML — the whole grid, as
+       * one string, which is what `checkTableHtml` writes into the file and what
+       * materialization would substitute — and the cells are not banked blocks,
+       * carry no `data-bf-src`, and have no position a record could be keyed to.
+       *
+       * Translating the grid as one string is the option that exists and is
+       * refused: it would hand a model `<tr>`, `<td>` and every attribute in
+       * them and ask it not to touch any of it, which is exactly the failure
+       * `markers.ts`'s header measured — a table whose columns quietly swapped
+       * is worse than a table nobody translated, because it looks fine.
+       *
+       * So the table is left in the source language, counted where the skipped
+       * figures are counted, said at the moment it happens, and put in
+       * `keptUntranslated` so it reaches the completion line. Exactly what this
+       * run already does for a table it cannot mask, arrived at one step
+       * earlier.
+       */
+      if (records !== null && group.kind === 'table') {
+        skipped.set('table', (skipped.get('table') ?? 0) + 1);
+        const page = group.parts[0]?.page ?? null;
+        const name = `${document.path} table${page === null ? '' : ` on page ${page}`}`
+          + ` (${group.parts.length} cells)`;
+        const why = 'a table\'s text is the vision model\'s own HTML and its cells are not banked '
+          + 'blocks, so there is no position a record about one could be written against';
+        kept.push(`${name} — ${why}`);
+        opts.log(`translate: ${name} LEFT IN THE SOURCE LANGUAGE — ${why}`);
+        continue;
+      }
+
+      /*
        * ONE COUNTER FOR THE WHOLE GROUP. Every part of it may arrive in one
        * answer, so `⟦e1⟧` has to mean one thing across all of them — see
        * `MarkerCounter`. A `single` group gets a fresh counter and therefore
@@ -990,10 +1244,40 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
        */
       const counter: MarkerCounter = { paired: 0, atomic: 0 };
       let masked: MaskedBlock[];
+      /** Records mode: one position per part, in the same order. */
+      let positions: (string | null)[] = group.parts.map(() => null);
       try {
-        masked = group.parts.map(
-          (site) => maskBlock(document.source.slice(site.innerStart, site.innerEnd), counter),
-        );
+        if (records === null) {
+          masked = group.parts.map(
+            (site) => maskBlock(document.source.slice(site.innerStart, site.innerEnd), counter),
+          );
+        } else {
+          positions = group.parts.map((site) => positionOf(site, document.path));
+          masked = group.parts.map((site, i) => {
+            /*
+             * THE QUESTION, IN THREE STEPS AND IN THIS ORDER.
+             *
+             * The block's own text, recovered from the element the emitter
+             * wrote it into (`flowtext.ts`); then, in a chain, the PARENT'S
+             * answer for this position in place of it — which is what makes
+             * "German → English → Hungarian" ask the model about English words
+             * rather than about German ones; then the masking, at text level.
+             *
+             * The round trip is CHECKED rather than trusted: a block whose
+             * masking does not put it back exactly as it was found is refused
+             * here, by the same door a table is, because the alternative is a
+             * record holding this program's own token characters.
+             */
+            const own = flowTextOf(document.source.slice(site.innerStart, site.innerEnd));
+            const parent = sourceRecords?.textFor(positions[i]!);
+            if (parent !== undefined) chained += 1;
+            const source = parent ?? own;
+            const block = maskText(source, counter);
+            const trouble = roundTrips(source, block);
+            if (trouble !== null) throw new MarkerError(trouble);
+            return block;
+          });
+        }
       } catch (error) {
         /*
          * A TABLE THIS STAGE CANNOT TAKE APART IS LEFT AS THE BOOK WROTE IT,
@@ -1013,15 +1297,54 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
          * with no name behind it would be exactly the undetectable outcome this
          * command exists to refuse (ARCHITECTURE §8).
          */
-        if (group.kind !== 'table' || !(error instanceof MarkerError)) throw error;
-        skipped.set('table', (skipped.get('table') ?? 0) + 1);
+        /*
+         * IN RECORDS MODE THE SAME MERCY COVERS EVERY GROUP, and it has to.
+         * The table above is out of the plan before this point, so what reaches
+         * here is a block whose markup `flowtext.ts` has no text-level rule for
+         * — an element the emitter does not write, an anchor somebody added by
+         * hand, a block whose own words contain this stage's token characters.
+         * Every one of those is a fact about ONE group, and killing a run of two
+         * thousand blocks over it is precisely the trade the flyleaf accession
+         * number settled: the group stays in the source language, it is counted,
+         * and it is named on the completion line.
+         */
+        if (!(error instanceof MarkerError)) throw error;
         const page = group.parts[0]?.page ?? null;
-        const name = `${document.path} table${page === null ? '' : ` on page ${page}`}`
-          + ` (${group.parts.length} cells)`;
+        const where = page === null ? '' : ` on page ${page}`;
+        if (group.kind === 'table') {
+          skipped.set('table', (skipped.get('table') ?? 0) + 1);
+          const name = `${document.path} table${where} (${group.parts.length} cells)`;
+          kept.push(`${name} — ${error.message}`);
+          opts.log(
+            `translate: ${name} LEFT IN THE SOURCE LANGUAGE — its cells hold markup this stage has `
+            + `no rule for, so its words never travelled: ${error.message}`,
+          );
+          continue;
+        }
+        /*
+         * IN RECORDS MODE THE SAME MERCY COVERS EVERY GROUP, and it has to. A
+         * table is already out of the plan before this point, so what reaches
+         * here is a block whose markup `flowtext.ts` has no text-level rule for
+         * — an element the emitter does not write, an anchor somebody added by
+         * hand, a block whose own words contain this stage's token characters.
+         * Every one of those is a fact about ONE group, and killing a run of two
+         * thousand blocks over it is precisely the trade the flyleaf accession
+         * number settled: the group stays in the source language, it is counted,
+         * and it is named on the completion line.
+         *
+         * The EPUB→EPUB mode still throws, and that is not an inconsistency: in
+         * that mode `markers.ts` is masking the emitter's own output and an
+         * element it has no rule for means this stage has fallen behind the
+         * emitter — a defect in foundry rather than a fact about the book.
+         */
+        if (records === null) throw error;
+        const category = group.parts[0]!.category;
+        skipped.set(category, (skipped.get(category) ?? 0) + 1);
+        const name = `${document.path} ${category}${where} (${group.parts.length} block(s))`;
         kept.push(`${name} — ${error.message}`);
         opts.log(
-          `translate: ${name} LEFT IN THE SOURCE LANGUAGE — its cells hold markup this stage has no `
-          + `rule for, so its words never travelled: ${error.message}`,
+          `translate: ${name} LEFT IN THE SOURCE LANGUAGE — its words are markup this stage has no `
+          + `text-level rule for, so they never travelled: ${error.message}`,
         );
         continue;
       }
@@ -1032,6 +1355,7 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
           ordinal: pending.length + 1,
           site,
           masked: masked[i]!,
+          parts: positions[i]!,
           wordless: stripMarkers(masked[i]!.text).length === 0 && masked[i]!.markers.length === 0,
         };
         pending.push(block);
@@ -1067,6 +1391,24 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
     `translate: ${model} at ${endpoint}, ${from === null ? 'detected source' : from.name} → ${to.name}`
     + `, up to ${concurrency} request${concurrency === 1 ? '' : 's'} in flight`,
   );
+  /*
+   * HOW MUCH OF A CHAIN IS ACTUALLY A CHAIN, counted and said before the work.
+   *
+   * A run pointed at a parent's records that answers for none of this book's
+   * positions is not a chain at all — it is a translation of the German with an
+   * English `--from` on the prompt, which is the one failure of this feature a
+   * person cannot see in the output. The number says so before the GPU is spent.
+   */
+  if (sourceRecords !== null) {
+    opts.log(
+      `translate: ${chained} of ${pending.length} block(s) are translated from the parent's answer `
+      + `and ${pending.length - chained} from the book's own words`
+      + (chained === 0
+        ? ' — NOTHING IN THIS BOOK IS ANSWERED BY THAT FILE, so this run is not a chain: check that '
+          + 'the parent records were made from this same reading.'
+        : '.'),
+    );
+  }
 
   // ── the work ──────────────────────────────────────────────────────────────
 
@@ -1079,6 +1421,9 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
   let answered = 0;
   /** Blocks whose accepted answer came out of the bank. No GPU was spent. */
   let fromBank = 0;
+  /** Records mode: rows appended, and rows a person's own row kept this run off. */
+  let recordsWritten = 0;
+  let recordsHumanKept = 0;
   /**
    * Blocks this run is FINISHED with: translated, kept for having no words, or
    * refused after every attempt.
@@ -1109,10 +1454,19 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
       to: to.tag,
       from: from === null ? null : from.tag,
       instructions: opts.instructions,
+      // The masking stage is part of the question — see `bank.ts`, `KEY_FORMATS`.
+      ...(records === null ? {} : { masking: 'text' as const }),
     });
     keys.set(block, key);
     return key;
   };
+
+  /**
+   * The answer already on disk for this question, out of whichever file this
+   * run is caching in. Null in both means every block is asked.
+   */
+  const cached = (block: PendingBlock): string | undefined =>
+    (records !== null ? records.records.get(keyOf(block)) : bank?.bank.get(keyOf(block)));
 
   /**
    * An accepted answer, with the book's own markup put back around it.
@@ -1150,11 +1504,71 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
       fromBank += 1;
     }
     settled += 1;
-    translated.set(
-      block,
-      block.masked.leading + restoreMarkers(block.masked, answer) + block.masked.trailing,
-    );
+    if (records === null) {
+      translated.set(
+        block,
+        block.masked.leading + restoreMarkers(block.masked, answer) + block.masked.trailing,
+      );
+    } else {
+      recordRow(block, answer);
+    }
     opts.log(`translate: block ${settled}/${pending.length} (${block.documentPath})`);
+  };
+
+  /**
+   * One accepted answer, written down as a record.
+   *
+   * THE ROW IS WRITTEN EVEN WHEN THE ANSWER CAME OUT OF THE FILE, because the
+   * two identities in it are not the same identity. A key answers "has this
+   * question been asked"; a position answers "what does this paragraph say".
+   * Two paragraphs with identical words share one key and need two rows, or the
+   * second of them silently keeps its source text at materialization.
+   *
+   * AND IT IS NOT WRITTEN TWICE FOR THE SAME ANSWER. A re-generate over an
+   * unchanged book asks the model nothing and must add nothing: the file is
+   * appended to for its whole life, so a run that re-stated every position
+   * would double the file every time somebody pressed the button.
+   *
+   * ── A PERSON'S ROW IS NOT OVERWRITTEN BY A MACHINE'S ────────────────────────
+   *
+   * "Edit transformed text" appends `{…, "author":"user"}` and materialization
+   * takes the newest row for a position, so a machine row appended afterwards
+   * would silently revert somebody's correction — and it would do it on a run
+   * that asked the model nothing, because the key is unchanged and the answer
+   * came straight back out of the file. So a position whose newest row is a
+   * person's, ANSWERING THE SAME QUESTION, is left exactly as they left it.
+   *
+   * WHERE THE QUESTION CHANGED, THE MACHINE ROW GOES IN AND THE RUN SAYS SO.
+   * A different key means the source block's words changed — somebody corrected
+   * the German — and a correction made to the English of a paragraph that no
+   * longer exists is not a correction to this one. Keeping it would put a
+   * translation of deleted words under text nobody wrote them for. The person's
+   * row is still in the file, above the new one, which is the whole reason this
+   * format appends.
+   */
+  const recordRow = (block: PendingBlock, answer: string): void => {
+    const key = keyOf(block);
+    const parts = block.parts!;
+    const text = restoreText(block.masked, answer);
+    const newest = records!.records.rowFor(parts);
+    if (newest !== undefined && newest.text === text && newest.key === key) return;
+    if (newest?.author === 'user' && newest.key === key) {
+      recordsHumanKept += 1;
+      return;
+    }
+    if (newest?.author === 'user') {
+      opts.log(
+        `translate: ${parts} was corrected by hand and its source text has since changed, so this `
+        + 'run\'s answer takes over — the correction is still in the file, above it.',
+      );
+    }
+    records!.records.append({
+      key,
+      parts,
+      ...(opts.generation !== undefined ? { generation: opts.generation } : {}),
+      text,
+    });
+    recordsWritten += 1;
   };
 
   /*
@@ -1206,11 +1620,28 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
          * beside this one.
          */
         + `${pending.length - settled} block(s) this run has not finished would cost hours to `
-        + 'prove the same thing. NOTHING WAS WRITTEN'
-        + (bank === null
-          ? '.'
-          : `, though the ${answered} answer(s) this run banked in ${bank.bank.filePath} are on `
-            + 'disk and will not be paid for again.')
+        /*
+         * WHAT IS ON DISK IS SAID EXACTLY, and records mode is the case where
+         * it matters most. A records run that dies here has written rows for
+         * every block it settled — they are real answers, they cost real GPU,
+         * and the next run over the same book will not pay for them again — but
+         * it has NOT swapped a pending file into place, so a `--fresh-bank` run
+         * that failed has left the records it was asked to improve on exactly
+         * as it found them.
+         */
+        + 'prove the same thing. '
+        + (records !== null
+          ? `NO BOOK IS WRITTEN BY THIS MODE AT ALL, and the ${recordsWritten} record(s) this run `
+            + `wrote to ${records.records.filePath} are on disk and will not be paid for again`
+            + (records.pendingPath === null
+              ? '.'
+              : ' — in the pending file, which has NOT taken the place of the records it was asked'
+                + ' to replace.')
+          : 'NOTHING WAS WRITTEN'
+            + (bank === null
+              ? '.'
+              : `, though the ${answered} answer(s) this run banked in ${bank.bank.filePath} are on `
+                + 'disk and will not be paid for again.'))
         + '\n\n'
         + kept.map((r) => `  - ${r}`).join('\n'),
       );
@@ -1328,7 +1759,18 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
      */
     for (const part of chunk.parts) {
       if (!part.wordless) continue;
-      translated.set(part, part.masked.leading + part.masked.text + part.masked.trailing);
+      /*
+       * IN RECORDS MODE A WORDLESS BLOCK GETS NO ROW AT ALL, and that is the
+       * same behaviour said in the other mode's vocabulary. There, the block is
+       * written back byte-identical to the source; here, a position with no
+       * record keeps its source text at materialization — so writing a row
+       * holding the source words would be a longer way of saying nothing, and
+       * one that would then have to be told apart from a real translation that
+       * happens to read the same.
+       */
+      if (records === null) {
+        translated.set(part, part.masked.leading + part.masked.text + part.masked.trailing);
+      }
       wordless += 1;
       settled += 1;
     }
@@ -1348,7 +1790,7 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
      */
     const missing: PendingBlock[] = [];
     for (const part of askable) {
-      const banked = bank === null ? undefined : bank.bank.get(keyOf(part));
+      const banked = cached(part);
       if (banked === undefined) { missing.push(part); continue; }
       accept(part, banked, 'bank');
     }
@@ -1439,6 +1881,16 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
       + `were asked of ${model}; every answer this run accepted is in ${bank.bank.filePath}.`,
     );
   }
+  if (records !== null) {
+    opts.log(
+      `translate: ${fromBank} of ${pending.length} block(s) were already answered in the records and `
+      + `${answered} were asked of ${model}; ${recordsWritten} row(s) were written to `
+      + `${records.records.filePath}`
+      + (recordsHumanKept === 0
+        ? '.'
+        : `, and ${recordsHumanKept} position(s) were left exactly as a person corrected them.`),
+    );
+  }
 
   /*
    * A TRANSLATION THAT TRANSLATED NOTHING IS NOT ONE.
@@ -1471,6 +1923,54 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
       + 'they are in the book exactly as it wrote them:',
     );
     for (const one of kept) opts.log(`translate:   - ${one}`);
+  }
+
+  // ── the records ───────────────────────────────────────────────────────────
+
+  /*
+   * THE PRODUCT ALREADY EXISTS, so all that is left is to make it the file
+   * everybody names.
+   *
+   * There is no assembly here and that is the whole point of the mode: every
+   * row was fsynced the moment its answer was accepted, so a run killed at
+   * block 400 of 456 leaves 399 usable records rather than nothing. What the
+   * swap adds is the `--fresh-bank` guarantee — a second opinion asked into a
+   * pending file takes the place of the records it was asked to improve on only
+   * once every block has a verdict, and never before.
+   */
+  if (records !== null) {
+    swapPendingRecordsIntoPlace(opts.recordsPath!, records.pendingPath);
+    if (records.pendingPath !== null) {
+      opts.log(
+        `translate: these records were asked into ${records.pendingPath}, so they have taken the `
+        + `place of ${opts.recordsPath} — one rename, after every block had a verdict.`,
+      );
+    }
+    return {
+      blocks: pending.length,
+      chunks: chunks.length,
+      documents: perDocument.size,
+      skipped,
+      answered,
+      fromBank,
+      retries,
+      wordless,
+      markerNotes,
+      keptUntranslated: kept,
+      // A records run relabels no contents page and retags no document: both of
+      // those are jobs about a FILE, and this mode produces none. They move to
+      // materialization, where the nav is minted from substituted headings and
+      // the language comes off `vlm-convert --language` (docs/WORKBENCH.md §10,
+      // ruling 4). Reported as zero rather than omitted, because the field means
+      // "how many entries this run relabelled" and the honest answer is none.
+      navRelabelled: 0,
+      navUnmapped: 0,
+      recordsWritten,
+      recordsHumanKept,
+      seconds: (Date.now() - started) / 1000,
+      model,
+      outPath: opts.recordsPath!,
+    };
   }
 
   // ── the book ──────────────────────────────────────────────────────────────
@@ -1549,7 +2049,7 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
     };
   });
 
-  await Bun.write(opts.outPath, writeZip(entries));
+  await Bun.write(opts.outPath!, writeZip(entries));
 
   /*
    * THE BOOK EXISTS, SO THE SECOND OPINION TAKES ITS PLACE.
@@ -1582,9 +2082,13 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
     keptUntranslated: kept,
     navRelabelled: nav?.relabelled ?? 0,
     navUnmapped: nav?.unmapped ?? 0,
+    // Zero on this route by construction: records are the other mode's product,
+    // and a run that wrote a book wrote no rows.
+    recordsWritten: 0,
+    recordsHumanKept: 0,
     seconds,
     model,
-    outPath: opts.outPath,
+    outPath: opts.outPath!,
   };
 }
 

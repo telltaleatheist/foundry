@@ -125,15 +125,63 @@ export interface BankQuestion {
   from: string | null;
   /** `--instructions`, appended to the prompt verbatim. */
   instructions: string | undefined;
+  /**
+   * WHICH STAGE THE TEXT WAS MASKED AT. Absent is `xhtml`, which is what the
+   * EPUB→EPUB mode has always asked and what every bank on disk holds.
+   *
+   * See `KEY_FORMATS` below for why this is part of the key rather than a
+   * detail of the caller.
+   */
+  masking?: MaskingLevel;
 }
+
+/**
+ * Where a question's markers came from: the book's XHTML, or the flowing
+ * block's own text.
+ *
+ * `xhtml` is `markers.ts` over a stamped element's inner markup — the mode that
+ * splices a translation back into an EPUB. `text` is `textmask.ts` over a
+ * FlowBlock's text, which is what a RECORD is a translation of.
+ */
+export type MaskingLevel = 'xhtml' | 'text';
 
 /**
  * Stamped into every key, so a change to what a key MEANS cannot be mistaken
  * for a change to the question. If the fields below ever change, this string
  * changes with them and every old key stops matching — which re-asks the book
  * rather than replaying answers to a question this version never asked.
+ *
+ * ── WHY THERE ARE TWO OF THEM, AND WHY NOTHING IS MIGRATED ──────────────────
+ *
+ * Records mode masks one stage earlier (`textmask.ts`): the markers stand for
+ * `**emphasis**` and a superscript run rather than for `<strong>` and a
+ * noteref anchor, and the text around them is the flowing block's own words
+ * rather than a slice of somebody's XHTML with entities in it. The same
+ * paragraph therefore produces a DIFFERENT masked string in the two modes —
+ * which is precisely a changed question, and precisely what this constant
+ * exists to make loud.
+ *
+ * So `text` questions carry `foundry-translate-bank-2` and `xhtml` questions
+ * carry the string they have always carried. Nothing about the EPUB→EPUB mode
+ * moves, no bank on disk stops matching, and the two modes cannot hand each
+ * other an answer to a question the other asked — which they could not usefully
+ * do anyway: one answer carries `<em>` and the other carries `*`.
+ *
+ * CONSIDERED AND REJECTED: migrating old answers by re-keying them under the
+ * new format. To do it, this file would have to recompute a cross-version
+ * masked form — take a bank line written against XHTML markers, work out what
+ * the same paragraph's TEXT masking would have produced, and hash that. That
+ * recomputation is exactly the ambiguity a key format forbids: it would be a
+ * guess about a string this version never saw, and a wrong guess hands a
+ * paragraph an answer to a different question, silently. The bank is a cost
+ * cache and not truth. The honest price is one full re-ask the first time a
+ * book is translated into records, and it is accepted
+ * (docs/WORKBENCH.md §10, ruling 1).
  */
-const KEY_FORMAT = 'foundry-translate-bank-1';
+const KEY_FORMATS: Record<MaskingLevel, string> = {
+  xhtml: 'foundry-translate-bank-1',
+  text: 'foundry-translate-bank-2',
+};
 
 /**
  * The field separator inside a key. See `bankKey` for why it is this one, and
@@ -156,7 +204,7 @@ const NUL = String.fromCharCode(0);
  */
 export function bankKey(question: BankQuestion): string {
   const fields = [
-    KEY_FORMAT,
+    KEY_FORMATS[question.masking ?? 'xhtml'],
     question.model.trim(),
     question.to,
     question.from ?? '',
