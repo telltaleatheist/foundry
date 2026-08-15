@@ -197,26 +197,24 @@ behaviour change is invisible unless it is reported. So:
   off the base directly. That is a phase-C tidy, and doing it here would
   break §2's byte-identical contract.
 
-## 8. Tests
+## 8. Tests — do not write any
 
-**Write:**
+**Standing rule (user, 2026-08-15): no new tests unless asked for.** *"we
+dont need all these tests. i didnt even ask for tests. keep only whats
+necessary."*
 
-- **The contract test the phase is named for**: same bank in → same base out,
-  deep-equal, run twice. There are **no golden fixtures anywhere in `test/`**
-  — every assertion is inline over hand-built blocks — so this is new
-  scaffolding, not a snapshot to regenerate.
-- Provenance: a block joined across a page turn carries both parts, in order;
-  an unjoined block carries exactly one.
-- The join gate: joins on the textual test; joins on the hyphen carry; does
-  NOT join across a `--skip-pages` gap; does NOT join a centred block; does
-  NOT join where only ink would have said yes (this is the deleted
-  behaviour — assert the seam stays).
-- Object identity: the typography map still finds every block after the pass.
-- `detectChapters` and `buildDotsBook` return the same chapters — now by
-  construction.
+That rule costs this phase less than it looks, because the verification it
+needs already exists. `test/vlm/dots.test.ts` is ~128 assertions written
+directly against the assembler's behaviour, and §2's contract is that this
+behaviour does not change. **The existing suite IS the byte-identical
+guard** — a hoist that keeps 909 tests green has demonstrated the only thing
+this phase claims. Writing a fresh contract test would be re-asserting, in
+new scaffolding, what the old scaffolding already asserts.
+
+So: run the gates, keep them green, add nothing.
 
 **Expect to break, and fix rather than delete** (these are the assertions
-that pin today's behaviour, all in `test/vlm/dots.test.ts`, ~128 tests):
+that pin today's behaviour, all in `test/vlm/dots.test.ts`):
 
 - `:386-464` — the ink tests. These go with `carriesOver`.
 - `:1143` — "a paragraph joined across a page turn is one paragraph, hyphen
