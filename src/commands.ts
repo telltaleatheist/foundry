@@ -39,6 +39,7 @@ import { probeEndpoint, probeLocalPython, probeVllmLocal, probeWslVllm } from '.
 import { loadSettings, settingsPath, type FoundrySettings } from './backend/settings.js';
 import { dumpBlocks } from './vlm/blocks-dump.js';
 import { vlmConvert } from './vlm/convert.js';
+import { vlmRead } from './vlm/read.js';
 import { DEFAULT_VLM_CONCURRENCY } from './vlm/endpoint.js';
 import { DEFAULT_VLM_MODEL_ID, VLM_MODELS } from './vlm/models.js';
 import { parsePageList } from './vlm/pages.js';
@@ -196,6 +197,30 @@ const VLM_STRIP_MARKERS: OptionSpec = {
   name: 'strip-note-markers',
   type: 'boolean',
   describe: 'Remove footnote reference numbers from the prose. For a narration build.',
+};
+
+// ── vlm-read ─────────────────────────────────────────────────────────────────
+
+/**
+ * Where the reading goes, and it is REQUIRED here.
+ *
+ * The same flag `vlm-convert` takes, and on that command it is optional because
+ * a conversion can be ordered without banking anything. On this one the bank is
+ * the entire product: a run with nowhere to put it would spend the GPU-hours and
+ * leave nothing behind.
+ */
+const VR_READINGS: OptionSpec = {
+  name: 'readings',
+  type: 'string',
+  placeholder: '<file.jsonl>',
+  describe: 'Where the reading is banked, page by page as each answer lands. Required — it is the product.',
+};
+
+const VR_LANGUAGE: OptionSpec = {
+  name: 'language',
+  type: 'string',
+  placeholder: '<bcp47>',
+  describe: "The book's language, recorded in the marker for whoever renders it later. Not used here.",
 };
 
 // ── vlm-blocks ───────────────────────────────────────────────────────────────
@@ -580,6 +605,109 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
       + report.unreadable.map((p) => p.number).join(', '),
     );
   }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// vlm-read
+// ═════════════════════════════════════════════════════════════════════════════
+
+async function runVlmRead(args: ParsedArgs): Promise<void> {
+  // Both paths are read first, so a half-typed command is answered by what is
+  // missing from it rather than by a fact about this machine's backends.
+  const pdfPath = requireString(args, 'pdf', 'the PDF to read');
+  const readingsPath = requireString(
+    args,
+    'readings',
+    'where the reading is banked — it is what this command produces',
+  );
+
+  const concurrency = optionalString(args, 'vlm-concurrency');
+  if (concurrency !== undefined && !/^[1-9]\d*$/.test(concurrency)) {
+    throw new UsageError(`--vlm-concurrency takes a positive whole number, not "${concurrency}"`);
+  }
+  const skipPages = optionalString(args, 'skip-pages');
+
+  /*
+   * The two bank flags contradict each other, exactly as they do for
+   * vlm-convert. There is no "and no --readings" case to refuse here: the bank
+   * IS this command's product, so `--readings` is required and `requireString`
+   * has already said so by the time either flag could matter.
+   */
+  const freshReadings = flag(args, 'fresh-readings');
+  const reuseReadings = flag(args, 'reuse-readings');
+  if (freshReadings && reuseReadings) {
+    throw new UsageError(
+      '--fresh-readings and --reuse-readings say opposite things about the same bank. Pass one.',
+    );
+  }
+
+  const settings: FoundrySettings = loadSettings();
+  const endpointFromSettings =
+    settings.backend?.mode === 'endpoint' ? settings.backend.endpointUrl : undefined;
+  const endpoint = fromFlagOrSettings(args, 'vlm-endpoint', endpointFromSettings, 'backend.endpointUrl');
+  const endpointModel = endpoint === undefined
+    ? optionalString(args, 'vlm-endpoint-model')
+    : fromFlagOrSettings(args, 'vlm-endpoint-model', settings.backend?.endpointModel, 'backend.endpointModel');
+  const python = fromFlagOrSettings(args, 'python', settings.backend?.python, 'backend.python');
+
+  // The same refusal vlm-convert makes, for the same reason: off macOS the only
+  // reading path is an endpoint, and a run allowed to proceed without one ends
+  // in "no Python with MLX was found", which points a Windows user at entirely
+  // the wrong problem.
+  if (endpoint === undefined && process.platform !== 'darwin') {
+    throw new Error(
+      'no reading backend for this run: the local MLX path is Apple silicon only, and no endpoint '
+      + 'was named. Pass --vlm-endpoint <url> (e.g. a vLLM server), or set backend.mode to '
+      + `"endpoint" with backend.endpointUrl in ${settingsPath()}. `
+      + '`foundry doctor` reports what this machine has.',
+    );
+  }
+
+  const report = await vlmRead({
+    pdfPath,
+    readingsPath,
+    modelId: optionalString(args, 'vlm-model') ?? DEFAULT_VLM_MODEL_ID,
+    ...(python !== undefined ? { python } : {}),
+    ...(endpoint !== undefined ? { endpoint } : {}),
+    ...(endpointModel !== undefined ? { endpointModel } : {}),
+    ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
+    ...(optionalString(args, 'renders') ? { rendersDir: optionalString(args, 'renders')! } : {}),
+    ...(freshReadings ? { freshReadings: true } : {}),
+    ...(reuseReadings ? { reuseReadings: true } : {}),
+    ...(skipPages !== undefined ? { skipPages: parsePageList(skipPages, '--skip-pages') } : {}),
+    ...(optionalString(args, 'language') !== undefined
+      ? { language: optionalString(args, 'language')! }
+      : {}),
+    log,
+  });
+
+  const { timings } = report;
+  const perPage = timings.inferenceSeconds / report.inferredPages;
+  const rate = report.inferredPages === 0
+    ? 'every page was already banked'
+    : `${report.inferredPages} read this run at ${perPage.toFixed(1)}s a page, `
+      + `${(60 / perPage).toFixed(1)} pages a minute`;
+  const struck = report.skippedPages.length === 0
+    ? ''
+    : `, ${report.skippedPages.length} skipped (${report.skippedPages.join(', ')})`;
+  const peak = report.peakRssBytes === null
+    ? ''
+    : `, peak ${(report.peakRssBytes / 1024 / 1024 / 1024).toFixed(1)} GiB`;
+  log(
+    `vlm-read: ${report.pages.length} pages in ${timings.totalSeconds.toFixed(1)}s (${rate})${struck}${peak}`,
+  );
+  if (report.unreadable.length > 0) {
+    // Last, and named again: a page with no answer in the bank is a page every
+    // rendering made from that bank will be missing.
+    log(
+      `vlm-read: ${report.unreadable.length} PAGE(S) HAVE NO ANSWER — `
+      + report.unreadable.map((p) => p.number).join(', '),
+    );
+  }
+
+  // The bank is the RESULT, so its path is what goes to stdout — the same
+  // contract every other command that writes a file keeps.
+  process.stdout.write(`${report.readingsPath}\n`);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1223,8 +1351,16 @@ export const COMMANDS: readonly Command[] = [
       'ever deleted: a page costs GPU-minutes and a book costs hours.',
       '',
       '--reuse-readings overrides that and rebuilds the book from the banked',
-      'answers. That is the deliberate free reconvert — iterating on the parser or',
-      'the assembler over answers that are already known good. --fresh-readings is',
+      'answers, AND THAT IS NOW A ROUTE OF ITS OWN. `foundry vlm-read` reads a',
+      'book into a bank and writes no document; this command with',
+      '--reuse-readings renders that bank into a format, as many times and in as',
+      'many formats as somebody wants. Over a complete bank it loads no model and',
+      'contacts no server: the pages are rasterised, because the ink of a page',
+      'turn is measured in them and figures are cut out of them, and nothing is',
+      'inferred. It is also the deliberate free reconvert — iterating on the',
+      'parser or the assembler over answers that are already known good. A page',
+      'the bank has no answer for is NOT read to fill the gap; it is named, and',
+      'every rendering says what is missing. --fresh-readings is',
       'the opposite and the explicit form: archive and re-read whatever the marker',
       'says, for a caller whose own records know the conversion finished (a bank',
       'written before markers existed carries no marker). Passing both, or either',
@@ -1375,6 +1511,70 @@ export const COMMANDS: readonly Command[] = [
       VLM_OVERLAY, VLM_CHAPTERS, VLM_STRIP_MARKERS,
     ],
     run: runVlmConvert,
+  },
+  {
+    name: 'vlm-read',
+    summary: 'Read a PDF into a readings bank with a document VLM. No book is written.',
+    usage: '--pdf <file.pdf> --readings <file.jsonl> [--vlm-model <id>] [--vlm-endpoint <url>]'
+      + ' [--skip-pages <3,17,19-24>] [--language <bcp47>] [--python <path>]',
+    detail: [
+      'THE READING IS THE PRODUCT. This command renders every page at 200 dpi,',
+      'asks the model for it, and appends the answer to --readings as it lands.',
+      'It writes no EPUB, no text file and no PDF, and it never asks which of',
+      'those you wanted — that is a separate question, asked later, of a bank',
+      'that already exists.',
+      '',
+      'WHY IT IS ITS OWN COMMAND. Reading a book costs GPU-minutes a page and',
+      'hours a book; rendering one out of a finished reading costs seconds and no',
+      'GPU at all. Binding them together meant the format had to be chosen before',
+      'a page was read, so wanting the same book as text as well as an EPUB meant',
+      'either paying for the reading twice or knowing to say --reuse-readings.',
+      'Read once; render as often as you like:',
+      '',
+      '  foundry vlm-read --pdf book.pdf --readings book.jsonl',
+      '  foundry vlm-convert --pdf book.pdf --readings book.jsonl --reuse-readings \\',
+      '      --format epub --out book.epub',
+      '  foundry vlm-convert --pdf book.pdf --readings book.jsonl --reuse-readings \\',
+      '      --format txt --out book.txt',
+      '',
+      'THE SECOND AND THIRD COMMANDS READ NO PAGE. With a complete bank and',
+      '--reuse-readings no model is loaded and no server is contacted; the pages',
+      'are still rasterised, because a rendering measures the ink of a page turn,',
+      'cuts figures out of the scan and takes the cover from it, but nothing',
+      'infers anything. --reuse-readings is not optional there: without it a',
+      'completed bank is archived and the book is READ AGAIN, because ordering a',
+      'conversion means ordering the work. That rule is not weakened by this',
+      'command — it is the rule that makes a bank safe to keep.',
+      '',
+      'EVERY ANSWER IS APPENDED AND FSYNCED THE MOMENT IT EXISTS, so a kill costs',
+      'the page that was in flight and nothing more, and running this command',
+      'again over the same bank resumes it: only the pages that are missing are',
+      'read. Each record holds what the model returned in full — the answer, the',
+      'token counts, the whole of the server\'s response body where there was one',
+      '— together with the render size and the pixel budget the boxes were',
+      'measured in, so the bank can be turned back into blocks with no PDF and no',
+      'rasteriser at all (see `foundry vlm-blocks`).',
+      '',
+      'WHEN THE READING FINISHES A COMPLETION MARKER IS WRITTEN beside the bank,',
+      'and its outPath is null: this run produced no document, and the marker',
+      'says so rather than naming a file that does not exist. Markers written by',
+      'a conversion still name their EPUB, and still read.',
+      '',
+      '--skip-pages 3,17,19-24 leaves pages out: never rasterised, never read,',
+      'never in the bank, and every page that stays keeps its true PDF number.',
+      '--language is recorded in the marker for whoever renders the book later',
+      'and is not used here; a reading has no document to declare a language on.',
+      '',
+      'A page that came back empty or hit the token cap is NAMED, in the log and',
+      'again on the last line, and the reading is kept: every other page cost',
+      'real GPU. What never happens is a page quietly guessed at.',
+    ].join('\n'),
+    options: [
+      PDF_IN, VR_READINGS, VLM_MODEL, VLM_PYTHON, VLM_RENDERS, VR_LANGUAGE,
+      VLM_ENDPOINT, VLM_ENDPOINT_MODEL, VLM_CONCURRENCY,
+      VLM_FRESH_READINGS, VLM_REUSE_READINGS, VLM_SKIP_PAGES,
+    ],
+    run: runVlmRead,
   },
   {
     name: 'vlm-blocks',

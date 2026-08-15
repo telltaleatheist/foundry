@@ -42,7 +42,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { MLX_MAX_PIXELS, readPagesWithVlm } from './bridge.js';
-import { VLM_DPI } from './convert.js';
+import { VLM_DPI } from './read.js';
 import { detectChapters, type DetectedChapter } from './dots-book.js';
 import {
   DotsPageError,

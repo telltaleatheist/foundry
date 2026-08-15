@@ -1,14 +1,21 @@
 /**
  * vlm/convert — the whole of `foundry vlm-convert`, in order.
  *
- * PDF in, EPUB out, four phases: the pages are rendered and read (`bridge.ts`
- * on this machine's GPU, `endpoint.ts` on somebody else's), each page's answer
- * is parsed in its own dialect (`dialect.ts`, or `dots.ts` for the one dialect
- * that answers with geometry), the blocks are assembled into a book (`epub.ts`,
- * or `dots-book.ts`), and the bytes are written. Nothing here touches a run
- * directory, and no stage of the pipeline in PIPELINE.md is reachable from this
- * file — that separation is the point of the mode, not an omission
- * (see `models.ts`).
+ * PDF in, EPUB out, four phases: the pages are rendered and read (`read.ts`,
+ * over `bridge.ts` on this machine's GPU or `endpoint.ts` on somebody else's),
+ * each page's answer is parsed in its own dialect (`dialect.ts`, or `dots.ts`
+ * for the one dialect that answers with geometry), the blocks are assembled into
+ * a book (`epub.ts`, or `dots-book.ts`), and the bytes are written. Nothing here
+ * touches a run directory, and no stage of the pipeline in PIPELINE.md is
+ * reachable from this file — that separation is the point of the mode, not an
+ * omission (see `models.ts`).
+ *
+ * THE FIRST PHASE IS A COMMAND OF ITS OWN NOW. `read.ts` holds it, `foundry
+ * vlm-read` is nothing but that phase plus the completion marker, and this file
+ * calls the identical function — so a book can be read once and rendered as an
+ * EPUB, a text file and a facsimile PDF afterwards, each for no GPU, with
+ * `--reuse-readings`. Everything below the read in this file is arithmetic over
+ * answers that already exist.
  *
  * TWO ROUTES THROUGH THIS FILE, and the fork is `model.dialect`. A dialect that
  * answers with prose gets the emitter that builds a book out of prose. A
@@ -32,7 +39,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { ensureDir } from '../fsdirs.js';
-import { cropPageRenders, MLX_MAX_PIXELS, readPagesWithVlm, type VlmPage, type VlmUnreadablePage } from './bridge.js';
+import { cropPageRenders, type VlmPage, type VlmUnreadablePage } from './bridge.js';
 import { parsePage } from './dialect.js';
 import { DotsPageError, parseDotsPage, renderScale, smartResize, type DotsParsedPage } from './dots.js';
 import {
@@ -46,22 +53,13 @@ import {
   type DotsHeadingMerge,
   type FurnitureEvidence,
 } from './dots-book.js';
-import { DEFAULT_VLM_CONCURRENCY, readPagesFromEndpoint } from './endpoint.js';
 import { buildVlmEpub, type VlmChapter, type VlmEpubMetadata, type VlmPageBlocks } from './epub.js';
 import { requireVlmModel, type VlmModelDef } from './models.js';
 import { applyOverlay, emptyOverlay, loadOverlay, overlayTally, type Overlay } from './overlay.js';
 import { buildTextPdf } from './pdf-text.js';
-import { openReadingsBank, writeCompletionMarker } from './readings.js';
+import { pixelBudget, readPagesIntoBank, VLM_DPI } from './read.js';
+import { readCompletionMarker, writeCompletionMarker } from './readings.js';
 import { formatConflict, type VlmOutputFormat } from './text-out.js';
-
-/**
- * The resolution every page is rendered at, and not a setting.
- *
- * The models are measured on 200 dpi pages — 1300×2112 for a 468×760 pt page —
- * and a model's behaviour moves with its input resolution. The same pin, for
- * the same reason, as the rest of foundry (ARCHITECTURE §5).
- */
-export const VLM_DPI = 200;
 
 export interface VlmConvertOptions {
   pdfPath: string;
@@ -319,25 +317,13 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     );
   }
 
-  /*
-   * The pixel budget, and the one number the two routes disagree about.
-   *
-   * A geometric dialect answers in the frame its processor resized the page to,
-   * so whatever budget the reader used has to reach the parser. On MLX this
-   * program chooses it — `MLX_MAX_PIXELS`, a measurement, halving the per-page
-   * cost. Against an endpoint it does not: the server was started with a
-   * processor config, so the model's own cap is what the boxes are in, and at
-   * 200 dpi that means no resize at all. A dialect with no geometry gets no
-   * budget from here — its behaviour was measured at the processor's default
-   * and changing that would change the model.
-   */
-  const maxPixels = !geometric ? undefined : viaEndpoint ? requireMaxPixels(model) : MLX_MAX_PIXELS;
+  // The budget the boxes were measured in — `read.ts` owns the rule, because it
+  // is the phase that shows the model the page.
+  const maxPixels = pixelBudget(model, viaEndpoint);
 
   // The pages this run is not about. Sorted, so the log line, the report and
-  // the chapters file all name them in the same order; also held as a set,
-  // because what the readings cache asks is membership.
+  // the chapters file all name them in the same order.
   const skipPages = [...new Set(opts.skipPages ?? [])].sort((a, b) => a - b);
-  const notInBook = new Set(skipPages);
 
   opts.log(
     `vlm-convert: ${model.id} (${viaEndpoint ? opts.endpoint : model.repo}), pages rendered at `
@@ -351,164 +337,39 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
   const rendersDir = opts.rendersDir !== undefined
     ? path.resolve(opts.rendersDir)
     : fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-vlm-'));
-  const needRenders = geometric || viaEndpoint;
-
-  if (skipPages.length > 0) {
-    opts.log(
-      `vlm-convert: ${skipPages.length} page(s) skipped, not read and not in the book — `
-      + skipPages.join(', '),
-    );
-  }
-
-  /*
-   * What this run does about the readings it found, decided once and STATED.
-   *
-   * `readings.ts` owns the rule; what happens here is that the sentence it
-   * returns is printed before a single page is rendered, so the log of a
-   * forty-minute run opens by saying whether that run is going to read the book
-   * or replay it. A run with no `--readings` at all has no bank, no decision and
-   * nothing to say.
-   */
-  const bank = opts.readingsPath !== undefined
-    ? openReadingsBank({
-      readingsPath: opts.readingsPath,
-      freshRequested: opts.freshReadings === true,
-      reuseRequested: opts.reuseReadings === true,
-    })
-    : null;
-  if (bank !== null) opts.log(bank.sentence);
-  const readings = bank === null ? null : bank.readings;
-  // A banked answer for a page this run skips stays in the file, untouched and
-  // unread. The cache is keyed by page and belongs to the PDF; the skip list
-  // belongs to the run, and tomorrow's run may keep the page.
-  const banked = readings !== null ? readings.pages().filter((p) => !notInBook.has(p)) : [];
 
   try {
-    const run = await readPagesWithVlm({
+    /*
+     * THE EXPENSIVE HALF, and it is not in this file any more.
+     *
+     * `read.ts` renders the pages, gets an answer for every one of them and
+     * banks each answer as it lands — the identical phase `foundry vlm-read`
+     * runs on its own, because it IS that command. Everything below this line is
+     * the other half: turning answers that already exist into a document, which
+     * costs no GPU and can therefore be done again, in another format, whenever
+     * somebody asks.
+     */
+    const phase = await readPagesIntoBank({
+      label: 'vlm-convert',
       pdfPath,
       model,
-      dpi: VLM_DPI,
-      ...(opts.python ? { python: opts.python } : {}),
-      ...(needRenders || keepRenders ? { rendersDir } : {}),
-      ...(maxPixels !== undefined ? { maxPixels } : {}),
-      ...(viaEndpoint ? { renderOnly: true } : {}),
-      ...(geometric ? { grayscale: true, unreadablePages: 'record' as const } : {}),
-      ...(readings !== null ? { skipPages: banked } : {}),
-      ...(skipPages.length > 0 ? { excludePages: skipPages } : {}),
-      onLoaded: (seconds) => opts.log(`vlm-convert: model resident in ${seconds.toFixed(1)}s`),
-      onPage: (page, total) => {
-        if (page.skipped) return;
-        /*
-         * Banked with the geometry the model was actually shown, not with what
-         * a later run would work out. The render size is this page's own — a
-         * book's pages are not all one size, and the JSTOR cover page in front
-         * of the Kershaw article is 1653 px wide in front of sixteen 1300 px
-         * ones — and the budget is the one THIS run scaled by. Together they are
-         * what makes the answer re-parsable out of the bank without the PDF.
-         *
-         * No `response` on this route: the helper's page event holds nothing
-         * that is not already a field here (`VlmReading.response`).
-         */
-        readings?.append({
-          page: page.number,
-          text: page.text,
-          tokens: page.tokens,
-          finishReason: page.finishReason,
-          seconds: page.seconds,
-          render: { width: page.width, height: page.height },
-          ...(maxPixels !== undefined ? { maxPixels } : {}),
-          model: model.id,
-        });
-        opts.log(
-          `vlm-convert: page ${page.number}/${total} — ${page.width}x${page.height}, `
-          + `${page.chars} chars, ${page.tokens} tokens, `
-          + `${page.renderSeconds.toFixed(2)}s render, ${page.seconds.toFixed(1)}s inference`,
-        );
-      },
+      rendersDir,
+      keepRenders,
+      maxPixels,
+      skipPages,
+      ...(opts.python !== undefined ? { python: opts.python } : {}),
+      ...(opts.endpoint !== undefined ? { endpoint: opts.endpoint } : {}),
+      ...(opts.endpointModel !== undefined ? { endpointModel: opts.endpointModel } : {}),
+      ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
+      ...(opts.readingsPath !== undefined ? { readingsPath: opts.readingsPath } : {}),
+      ...(opts.freshReadings === true ? { freshReadings: true } : {}),
+      ...(opts.reuseReadings === true ? { reuseReadings: true } : {}),
+      log: opts.log,
     });
-
-    // Keyed by page: the bridge names a truncated page, and so does the
-    // readings file it was banked in. One page, one line in the report.
-    const unreadable = new Map<number, VlmUnreadablePage>(
-      run.unreadable.map((page) => [page.number, page]),
-    );
+    const { run, answers, unreadable, sizes } = phase;
     const refuse = (number: number, reason: string): void => {
       if (!unreadable.has(number)) unreadable.set(number, { number, reason });
     };
-    let inferenceSeconds = run.inferenceSeconds;
-    let inferredPages = run.pages.filter((page) => !page.skipped).length + run.unreadable.length;
-
-    // ── the answers, from wherever they came ────────────────────────────────
-    const answers = new Map<number, string>();
-    for (const page of run.pages) {
-      if (!page.skipped) answers.set(page.number, page.text);
-    }
-    if (readings !== null) {
-      for (const page of banked) {
-        const reading = readings.get(page)!;
-        if (reading.finishReason === 'length') {
-          refuse(page, `it hit the ${model.maxTokens}-token cap when it was read, so its answer is truncated`);
-          continue;
-        }
-        answers.set(page, reading.text);
-      }
-    }
-
-    // Every page as the rasteriser measured it, by number. Read when an answer
-    // is banked and again when one is parsed, so that the geometry recorded
-    // beside an answer is the geometry that answer was produced under.
-    const sizes = new Map(run.pages.map((page) => [page.number, page]));
-
-    if (viaEndpoint) {
-      const wanted = run.pages.filter((p) => !answers.has(p.number));
-      const concurrency = opts.concurrency ?? DEFAULT_VLM_CONCURRENCY;
-      opts.log(
-        `vlm-convert: ${wanted.length} page(s) to ${opts.endpoint}, ${concurrency} at a time`,
-      );
-      const endpointStarted = Date.now();
-      let done = 0;
-      await readPagesFromEndpoint({
-        endpoint: opts.endpoint!,
-        model: opts.endpointModel ?? model.endpointModel ?? model.repo,
-        prompt: model.prompt,
-        maxTokens: model.maxTokens,
-        concurrency,
-        pages: wanted.map((p) => ({ number: p.number, imagePath: renderPath(rendersDir, p.number) })),
-        onPage: (page) => {
-          done += 1;
-          // The whole of the server's answer, and the geometry it was an answer
-          // ABOUT. `sizes` is the render pass's own measurement of this page —
-          // the same numbers the parser is handed below, so the bank and the
-          // book cannot disagree about the frame a box was measured in.
-          const render = sizes.get(page.number);
-          readings?.append({
-            page: page.number,
-            text: page.text,
-            tokens: page.tokens,
-            finishReason: page.finishReason,
-            seconds: page.seconds,
-            response: page.response,
-            ...(render !== undefined ? { render: { width: render.width, height: render.height } } : {}),
-            ...(maxPixels !== undefined ? { maxPixels } : {}),
-            model: model.id,
-          });
-          if (page.finishReason === 'length') {
-            refuse(page.number, `it hit the ${model.maxTokens}-token cap, so the model was still`
-              + ' writing when it was cut off');
-          } else if (page.text.trim().length === 0) {
-            refuse(page.number, `it came back empty from ${model.id}`);
-          } else {
-            answers.set(page.number, page.text);
-          }
-          opts.log(
-            `vlm-convert: page ${page.number} (${done}/${wanted.length}) — ${page.text.length} chars, `
-            + `${page.tokens} tokens, ${page.seconds.toFixed(1)}s`,
-          );
-        },
-      });
-      inferenceSeconds = (Date.now() - endpointStarted) / 1000;
-      inferredPages = wanted.length;
-    }
 
     // ── parse ──────────────────────────────────────────────────────────────
     const parseStarted = Date.now();
@@ -978,10 +839,20 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
      * somebody asks for the answers back with --reuse-readings.
      */
     if (opts.readingsPath !== undefined) {
+      /*
+       * A FACT THE BANK ALREADY RECORDED IS NOT ERASED BY A RENDERING. The
+       * marker is rewritten here to name the document this run produced, and the
+       * language `vlm-read` wrote into it belongs to the BOOK rather than to any
+       * one rendering of it — a reading ordered in German is still a reading in
+       * German after somebody exports a text file. Nothing here reads the value;
+       * it is carried so that the second rendering finds what the first one did.
+       */
+      const previous = readCompletionMarker(opts.readingsPath);
       const marker = writeCompletionMarker(opts.readingsPath, {
         completedAt: new Date().toISOString(),
         outPath,
         pages: run.pages.length,
+        ...(previous?.language !== undefined ? { language: previous.language } : {}),
       });
       opts.log(
         `vlm-convert: this conversion is recorded as completed at ${marker.completedAt}, so the next `
@@ -1025,7 +896,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       blocks,
       unreadable: skipped,
       skippedPages: skipPages,
-      inferredPages,
+      inferredPages: phase.inferredPages,
       proposals,
       categories,
       footnotes,
@@ -1038,7 +909,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       timings: {
         loadSeconds: run.loadSeconds,
         renderSeconds: run.renderSeconds,
-        inferenceSeconds,
+        inferenceSeconds: phase.inferenceSeconds,
         parseSeconds,
         xhtmlSeconds,
         zipSeconds,
@@ -1091,20 +962,6 @@ function countCategories(pages: readonly DotsParsedPage[]): Record<string, numbe
     }
   }
   return counts;
-}
-
-function requireMaxPixels(model: VlmModelDef): number {
-  if (model.maxPixels === undefined) {
-    throw new Error(
-      `${model.id} answers with geometry but its registry entry declares no maxPixels, so its`
-      + ' boxes cannot be scaled back into the render. Add it in src/vlm/models.ts.',
-    );
-  }
-  return model.maxPixels;
-}
-
-function renderPath(dir: string, page: number): string {
-  return path.join(dir, `page-${String(page).padStart(4, '0')}.png`);
 }
 
 async function cropRenders(

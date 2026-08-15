@@ -235,14 +235,36 @@ export class VlmReadings {
 
 /** What a finished run records about itself. Every field is a fact, none is a default. */
 export interface VlmCompletion {
-  /** When the EPUB was written. ISO 8601, UTC. */
+  /** When the run finished. ISO 8601, UTC. */
   completedAt: string;
-  /** The EPUB that run produced, absolute. */
-  outPath: string;
-  /** Pages the book was built from — not the size of the bank. */
+  /**
+   * The document that run produced, absolute — and NULL where it produced none.
+   *
+   * Null is `foundry vlm-read`: a run whose whole product is the bank this
+   * marker sits beside. It could have been left out, or filled in with the
+   * bank's own path, and both would have been a marker that says something
+   * untrue about what happened. The field means "what was written HERE", and a
+   * reading writes no document, so it says so.
+   *
+   * MARKERS WRITTEN BEFORE THAT WAS POSSIBLE ALL CARRY A PATH, and they still
+   * read: the reader below accepts a string or a null and refuses only a field
+   * that is missing entirely, which is a marker this program did not write.
+   */
+  outPath: string | null;
+  /** Pages the run was about — not the size of the bank. */
   pages: number;
   /** The foundry that wrote it, so a marker can be traced to a build. */
   foundryVersion: string;
+  /**
+   * The book's language, as the run was told it. Absent where nobody said.
+   *
+   * Recorded rather than used. It is `dc:language` on a document and a reading
+   * writes no document — but the person who ordered the reading knew it, and the
+   * step that renders the book out of this bank is a separate invocation that
+   * would otherwise have to be told a second time. It is written down here where
+   * that step can find it, and nothing in this program reads it back yet.
+   */
+  language?: string;
 }
 
 /**
@@ -291,9 +313,14 @@ export function readCompletionMarker(readingsPath: string): VlmCompletion | null
     );
   }
   const record = parsed as Partial<VlmCompletion>;
+  // `outPath: null` is a reading — a run that produced no document (`vlm-read`).
+  // ABSENT is a different thing and is still refused: a marker that does not say
+  // what it produced, one way or the other, is not one this program wrote.
+  const outPath = record.outPath ?? null;
   if (
     typeof record.completedAt !== 'string'
-    || typeof record.outPath !== 'string'
+    || !('outPath' in (record as object))
+    || (outPath !== null && typeof outPath !== 'string')
     || typeof record.pages !== 'number'
     || typeof record.foundryVersion !== 'string'
   ) {
@@ -304,9 +331,10 @@ export function readCompletionMarker(readingsPath: string): VlmCompletion | null
   }
   return {
     completedAt: record.completedAt,
-    outPath: record.outPath,
+    outPath,
     pages: record.pages,
     foundryVersion: record.foundryVersion,
+    ...(typeof record.language === 'string' ? { language: record.language } : {}),
   };
 }
 
