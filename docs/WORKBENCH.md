@@ -288,6 +288,48 @@ vocabulary (phase D).
 
 ---
 
+## 6a. Unit A2 — Apply changes, unblocked (added after R1 stopped honestly)
+
+R1 proved the mapping does not exist: the cast book stamps
+`data-bf-id="p<page>-<n>"` where `n` counts *emitted XHTML elements* per page
+(`dots-book.ts:1234-1245` says so — a list writes `<ul>` AND `<li>`, both
+stamped), while the ledger keys `page:order[:part]` off the model's answer
+index (`overlay.ts:283`, `targetKey`). Only the emitter, holding the live
+`elementNumbers` map, ever knew the correspondence, and it writes it nowhere.
+No renderer-side mapping is possible or permitted. The fix is provenance,
+which is DERIVED-BOOK §2's own finding #1 finally closed:
+
+1. **Engine** (`src/vlm/dots-book.ts`, `src/vlm/epub.ts` as needed): the
+   stamp also writes `data-bf-src` — the block's source parts as
+   `page:order` (or `page:order:part` for a sub-split), space-separated when
+   a flow block was joined from several source blocks. Every stamped element
+   of one block carries the same `data-bf-src`. Deterministic, from the
+   FlowBook's own provenance; no new tests (fix any the new attribute
+   invalidates).
+2. **Reporter** (`app/electron/click-reporter.ts`): block messages
+   (`blocks-cut`, `blocks-relabelled`, `block-click`, `block-selected`)
+   carry each block's `src` alongside its id.
+3. **Mirror** (`tabs.service.ts`): at the choke point where a cut/restore or
+   relabel is KNOWN to have landed in the working tree (so undo replays
+   pass through the same door), amend the overlay via the existing
+   `amendBlocks` path with targets parsed from `data-bf-src`. Verify the
+   overlay IPC resolves an epub tab's path to the project's overlay
+   (locateOverlay resolves the project and never reads the named file —
+   confirm, don't assume). Note cuts: mirror only if the overlay's
+   vocabulary already holds them; otherwise leave them out and report.
+4. **The button** (`inspector`): **Apply changes** in the Steps section,
+   shown when the position holds uncommitted decisions
+   (`overlay:uncommitted`), wired to the existing `saveCorrections` →
+   `overlay:commit` → curate-step machinery, its gating broadened beyond
+   the PDF block view. Sections stay Steps #1 / Chapters #2 / Categories
+   #3, stationary; hint blocks keep their fixed reserve.
+
+A book cast BEFORE this lands carries no `data-bf-src`; the mirror must
+treat a missing attribute as "this book predates provenance" and skip
+silently — the next cast repairs it.
+
+---
+
 ## 7. Order, gates, house rules
 
 Units E and R2 run in parallel (disjoint fences, contracts in §5). Unit R1
