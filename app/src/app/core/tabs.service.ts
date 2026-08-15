@@ -462,6 +462,42 @@ interface PositionMove {
   now: ShownPicture;
 }
 
+/**
+ * One entry of the chapters spine as the FLOWING BOOK has to know it.
+ *
+ * TWO NAMES FOR ONE PLACE, and both are needed for the reason `sourceIndexOf`
+ * spells out: `target` is the banked answer the file is keyed to and survives
+ * the book being cast again; `blockId` is the element in front of the reader,
+ * which is the only name a sandboxed frame can speak. A marker whose block this
+ * cast of the book does not carry has `member` and `blockId` null — it is still
+ * in the file, still listed, and simply has no line to draw.
+ */
+export interface ChapterMark {
+  /** The banked answer, as `page:order[:part]` — the spine's own key. */
+  target: string;
+  title: string;
+  /** The document of the book this block is rendered in, or null. */
+  member: string | null;
+  /** The `data-bf-id` the line sits above, or null. */
+  blockId: string | null;
+}
+
+/**
+ * The spine as one flowing book is showing it.
+ *
+ * `confirmed` is the same distinction `chaptersFor` draws over a scan: an
+ * overlay with no `chapters` field is the ENGINE's answer, seeded for display,
+ * and the first edit takes the whole list over. `editable` is the read-only lock
+ * — false while the position stands on a frozen save, so the lines are drawn and
+ * nothing on them may be dragged, renamed or removed.
+ */
+export interface BookSpine {
+  chapters: readonly OverlayChapter[];
+  marks: readonly ChapterMark[];
+  confirmed: boolean;
+  editable: boolean;
+}
+
 /** Something the shell wants said to one tab's frame. See `frameCommand`. */
 export interface FrameCommand {
   tabId: string;
@@ -3559,6 +3595,441 @@ export class TabsService {
     }]);
   }
 
+  // ── The spine, on the flowing book ───────────────────────────────────────
+  //
+  // ── The same list, drawn as lines instead of as rows ────────────────────────
+  //
+  // Everything above this comment is the SCAN's projection of the chapters
+  // spine: a list in the inspector, over pages this service draws itself, keyed
+  // to a block view it holds in memory. The book has no block view and never
+  // will — its pages are documents in sandboxed frames — so the marker lines
+  // drawn down the continuous book need their own read of the same file, and
+  // that is what this section is. The user's ruling, which is what makes the two
+  // projections one thing rather than two:
+  //
+  //   "That dotted line is the definitive chapter info for the book."
+  //
+  // So: ONE FILE, ONE FIELD, two surfaces that draw it. A line dragged on the
+  // book and a row renamed in the panel are the same `setChapters` write, the
+  // same ledger row, the same Apply changes.
+  //
+  // ── Why a marker needs TWO names ────────────────────────────────────────────
+  //
+  // The spine is keyed to the BANK — `page:order[:part]`, the answer the model
+  // gave — because that is the only name that survives the book being cast
+  // again. The frame can only speak `data-bf-id`, because that is what is
+  // written on the elements in front of the reader. So every marker carries
+  // both, resolved through the same provenance read `mirrorChapterMarks` makes,
+  // and a chapter whose block this cast of the book does not contain simply has
+  // no line to draw — it is still in the file, still in the list, and the next
+  // cast puts it back on screen.
+
+  /**
+   * One chapter of the spine as the flowing book has to know it: where the file
+   * says it is, what it is called, and which element on screen (if any) carries
+   * the words it starts at.
+   */
+  private readonly bookSpines = signal<ReadonlyMap<string, BookSpine>>(new Map());
+
+  /**
+   * What the last spine read was ABOUT, so a repaint does not re-read the file.
+   *
+   * The book's surface asks on every tab patch — a strike, a relabel, a
+   * revision bump — because it has no narrower signal to watch, and the answer
+   * only moves when this window writes a curation or the position steps onto (or
+   * off) a frozen save. Both are in the key.
+   */
+  private readonly bookSpineKeys = new Map<string, string>();
+
+  /**
+   * A number that changes whenever this window writes a curation.
+   *
+   * Read by the flowing book so that a strike made in one pane redraws the
+   * chapter lines in another — the same reason `repaintCurations` re-reads a
+   * scan's outlines, said as a signal because the book's surface is a component
+   * and not a service.
+   */
+  readonly curationRevision = this.curationSeq.asReadonly();
+
+  /** The spine as the flowing book draws it, or null while it has not been read. */
+  bookSpineFor(tabId: string | null): BookSpine | null {
+    return tabId === null ? null : this.bookSpines().get(tabId) ?? null;
+  }
+
+  /**
+   * Read the spine this book is showing — the live curation, or the frozen one
+   * when the position stands on a save.
+   *
+   * A SAVE'S CHAPTERS ARE THE ONES DRAWN, exactly as `chaptersFor` draws them
+   * over a scan's pages and for the same reason: a save is as much a statement
+   * about where the book divides as about what is struck, and a page showing
+   * frozen outlines under live chapter lines would be half of one curation and
+   * half of another. The lines are drawn and not draggable — `editable` — which
+   * is the read-only lock the other three doors already enforce, said in the
+   * surface so it is visible before anything is pressed.
+   */
+  async ensureBookSpine(tabId: string): Promise<void> {
+    const tab = this.byId(tabId);
+    if (!api || tab === null || tab.kind !== 'epub' || tab.book === null) return;
+    if (this.projectDirOf(tab) === null) {
+      // A book opened from the user's own disk: no bank, no curation, nothing to
+      // key a chapter to. It still reads, and it draws no lines.
+      this.bookSpineKeys.delete(tabId);
+      this.putBookSpine(tabId, null);
+      return;
+    }
+    const held = this.heldByASave(tabId);
+    const key = `${tab.book.id}\u0000${this.curationSeq()}\u0000${held ?? ''}`;
+    if (this.bookSpineKeys.get(tabId) === key) return;
+    this.bookSpineKeys.set(tabId, key);
+
+    let loaded: OverlayLoad;
+    try {
+      loaded = await api.overlay.load(tab.path);
+    } catch {
+      /*
+       * SILENT, and it is the same silence `provenanceOf` keeps. Nothing the
+       * user did has failed: they are reading a book, and what could not be read
+       * is the file that says where it divides. The lines are simply not drawn,
+       * and the next write of the curation asks again — a sentence in the strip
+       * here would be a complaint about this app's bookkeeping appearing over a
+       * page nobody touched.
+       */
+      this.bookSpineKeys.delete(tabId);
+      return;
+    }
+    // The tab was closed, or the book re-opened, while the read was in flight.
+    const now = this.byId(tabId);
+    if (now === null || now.book === null || now.book.id !== tab.book.id) return;
+
+    const file = loaded.file as OverlayFile;
+    const frozen = loaded.frozen as FrozenCuration | null;
+    const shown: CurationContent = frozen ?? file;
+    const confirmed = shown.chapters !== undefined;
+    const chapters = shown.chapters ?? (await this.spineOf(tab, file)) ?? [];
+    const index = await this.sourceIndexOf(tab);
+    this.putBookSpine(tabId, {
+      chapters,
+      confirmed,
+      editable: held === null,
+      marks: chapters.map((one) => {
+        const target = targetKey(one.at);
+        const found = index.get(target) ?? null;
+        return {
+          target,
+          title: one.title,
+          member: found?.member ?? null,
+          blockId: found?.id ?? null,
+        };
+      }),
+    });
+  }
+
+  private putBookSpine(tabId: string, spine: BookSpine | null): void {
+    this.bookSpines.update((map) => {
+      const next = new Map(map);
+      if (spine === null) next.delete(tabId);
+      else next.set(tabId, spine);
+      return next;
+    });
+  }
+
+  /**
+   * Every banked answer this book renders, and the element that renders it.
+   *
+   * THE WHOLE BOOK AND NOT THE CHAPTER ON SCREEN, because there is no chapter on
+   * screen any more: the flowing book draws every document of the spine at once,
+   * so a marker line may belong to any of them. It is one read per member
+   * through the cache `mirrorChapterMarks` already fills, held per book and
+   * dropped with the book — ids and provenance do not move while a book is open
+   * (`provenanceOf` says why), and a re-cast is a new book id.
+   *
+   * THE FIRST SOURCE PART, and the first element that claims it. A paragraph
+   * joined across a page turn names several banked answers and a chapter starts
+   * in front of the words that OPENED it; a list and its items are two elements
+   * over one answer, and the container is the one a line belongs above.
+   */
+  private async sourceIndexOf(tab: Tab): Promise<ReadonlyMap<string, { member: string; id: string }>> {
+    if (tab.book === null) return new Map();
+    const held = this.sourceIndexes.get(tab.book.id);
+    if (held !== undefined) return held;
+    const index = new Map<string, { member: string; id: string }>();
+    for (const member of membersOf(tab.book)) {
+      const sources = await this.provenanceOf(tab.book.id, member);
+      for (const [id, found] of sources.byBlock) {
+        // A note is a piece of a block, never the start of a chapter.
+        if (found.note !== null) continue;
+        const at = parseSourceKeys(found.src)[0];
+        if (at === undefined) continue;
+        const key = targetKey(at);
+        if (!index.has(key)) index.set(key, { member, id });
+      }
+    }
+    this.sourceIndexes.set(tab.book.id, index);
+    return index;
+  }
+
+  private readonly sourceIndexes = new Map<string, ReadonlyMap<string, { member: string; id: string }>>();
+
+  // ── The three gestures on a line ─────────────────────────────────────────
+  //
+  // Every one of them arrives naming a `data-bf-id` — the only name the frame
+  // has — and leaves as one `setChapters` write with one ledger row carrying the
+  // whole list. They are the same ops the Chapters section makes, from the other
+  // projection, and they meet the same read-only lock a strike does.
+
+  /** "The book divides here" — the gutter's click, titled with the block's own words. */
+  async addChapterMark(tabId: string, blockId: string, member: string): Promise<void> {
+    if (this.refusedByASave(tabId)) return;
+    const found = await this.markPlace(tabId, blockId, member);
+    if (found === null) return;
+    const { spine, at } = found;
+    if (spine.chapters.some((one) => atSameBlock(one.at, at.where))) {
+      this.notice.set('A chapter already starts at that block.');
+      return;
+    }
+    const title = at.title.length > 0 ? at.title : `Chapter at ${targetKey(at.where)}`;
+    await this.writeBookSpine(
+      tabId,
+      [...spine.chapters, { at: at.where, title }],
+      `made “${title}” a chapter start`,
+    );
+  }
+
+  /**
+   * The drag: the marker that was above one block is now above another.
+   *
+   * ONE OP AND NOT A REMOVE FOLLOWED BY AN ADD, because it is one gesture and
+   * one Ctrl+Z has to reverse it — and because the TITLE has to survive the
+   * journey. A chapter somebody named "The Windmill" and then dragged two
+   * paragraphs up is still called The Windmill; re-seeding it from the block it
+   * landed on would silently rename it to whatever that paragraph says.
+   */
+  async moveChapterMark(
+    tabId: string,
+    fromBlockId: string,
+    toBlockId: string,
+    member: string,
+  ): Promise<void> {
+    if (this.refusedByASave(tabId)) return;
+    const from = await this.markPlace(tabId, fromBlockId, member);
+    const to = await this.markPlace(tabId, toBlockId, member);
+    if (from === null || to === null) return;
+    const going = from.spine.chapters.find((one) => atSameBlock(one.at, from.at.where));
+    if (going === undefined) return;
+    if (atSameBlock(from.at.where, to.at.where)) return;
+    if (from.spine.chapters.some((one) => atSameBlock(one.at, to.at.where))) {
+      this.notice.set(`A chapter already starts there, so “${going.title}” has been left where it was.`);
+      return;
+    }
+    await this.writeBookSpine(
+      tabId,
+      from.spine.chapters.map((one) => (one === going ? { at: to.at.where, title: one.title } : one)),
+      `moved the chapter “${going.title}”`,
+    );
+  }
+
+  /** The double-click: a new name, typed on the line itself. */
+  async renameChapterMark(
+    tabId: string,
+    blockId: string,
+    member: string,
+    title: string,
+  ): Promise<void> {
+    if (this.refusedByASave(tabId)) return;
+    const found = await this.markPlace(tabId, blockId, member);
+    if (found === null) return;
+    // Collapsed and stripped like every other sentence that arrives from a
+    // frame: it is our own element the words were typed into, but they crossed
+    // the same channel as everything else and are treated the same way.
+    const named = title.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+    const current = found.spine.chapters.find((one) => atSameBlock(one.at, found.at.where));
+    if (current === undefined || named.length === 0 || named === current.title) return;
+    await this.writeBookSpine(
+      tabId,
+      found.spine.chapters.map((one) => (one === current ? { at: one.at, title: named } : one)),
+      `renamed a chapter to “${named}”`,
+    );
+  }
+
+  /**
+   * Hand the book back to the engine's own detection — the book's side of
+   * `resetChapters`, and the only gesture that REMOVES the list rather than
+   * editing it.
+   *
+   * It exists here for the reason it exists there: the seeding is one-way
+   * otherwise. The first line somebody drags turns "the engine decides" into
+   * forty-one blocks stated exactly, and without a way back a person who curated
+   * a spine and then wanted the app's answer again would have no gesture for it.
+   */
+  async resetBookSpine(tabId: string): Promise<void> {
+    if (this.refusedByASave(tabId)) return;
+    const tab = this.byId(tabId);
+    if (!api || tab === null || tab.kind !== 'epub' || tab.book === null) return;
+    if (this.projectDirOf(tab) === null) return;
+    await this.writeBookSpine(tabId, null, 'gave the chapters back to Foundry to work out');
+  }
+
+  /** The ✕ on the line: this is not where the book divides. */
+  async removeChapterMark(tabId: string, blockId: string, member: string): Promise<void> {
+    if (this.refusedByASave(tabId)) return;
+    const found = await this.markPlace(tabId, blockId, member);
+    if (found === null) return;
+    const going = found.spine.chapters.find((one) => atSameBlock(one.at, found.at.where));
+    if (going === undefined) return;
+    await this.writeBookSpine(
+      tabId,
+      found.spine.chapters.filter((one) => one !== going),
+      `took out the chapter “${going.title}”`,
+    );
+  }
+
+  /**
+   * A block name out of the frame, resolved to the banked answer a marker is
+   * keyed to — and the spine it would be written into.
+   *
+   * READ FRESH FROM THE FILE, never from the drawn spine. The lines on screen
+   * are a picture of a read that happened at some point in the past; between
+   * then and this gesture a strike in another pane, an undo, or the other
+   * projection's own rename may have moved the list. `mirrorChapterMarks` reads
+   * fresh for exactly this reason and says so; a spine written from a stale copy
+   * would erase whatever arrived in between, and the spine is the one field
+   * where that means the whole book's divisions at once.
+   */
+  private async markPlace(
+    tabId: string,
+    blockId: string,
+    member: string,
+  ): Promise<{ spine: { chapters: readonly OverlayChapter[] }; at: { where: OverlayTarget; title: string } } | null> {
+    const tab = this.byId(tabId);
+    if (!api || tab === null || tab.kind !== 'epub' || tab.book === null) return null;
+    if (this.projectDirOf(tab) === null) return null;
+    const sources = await this.provenanceOf(tab.book.id, member);
+    const found = sources.byBlock.get(blockId);
+    if (found === undefined) return null;
+    const where = parseSourceKeys(found.src)[0];
+    if (where === undefined) return null;
+    let file: OverlayFile;
+    try {
+      file = (await api.overlay.load(tab.path)).file as OverlayFile;
+    } catch (err) {
+      this.notice.set(
+        `Where this book divides could not be read, so nothing was changed: ${
+          err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+    const seeded = await this.spineOf(tab, file);
+    if (seeded === null) return null;
+    return { spine: { chapters: seeded }, at: { where, title: found.text.slice(0, 120) } };
+  }
+
+  /**
+   * The book's side of `writeChapters` — the same file, the same one-row ledger
+   * entry, a different way of getting at the overlay.
+   *
+   * The scan's version writes through the block view it holds in memory. There
+   * is none here, so the list is folded into the file this gesture just read and
+   * handed to `putOverlay`, which writes it and leaves any scan pane of the same
+   * project to re-read (`repaintCurations`). The ledger row is IDENTICAL in
+   * shape to the scan's — one row, the whole list on each side — because it has
+   * to be replayable by an undo that does not know which pane made it.
+   *
+   * ── ONE THING OUTSIDE THIS UNIT'S REACH, NAMED WHERE IT BITES ───────────────
+   *
+   * The row is a `chapters` row in a BOOK's ledger, and that is a field a book's
+   * ledger has never carried before: the spine was only editable over a scan,
+   * whose ledger is the overlay's (`electron/overlays.ts`, whose `FIELDS` set
+   * already lists `chapters`). The book's ledger file has its own set — six
+   * names, `electron/history.ts` — and `chapters` is not in it. Writing is
+   * unvalidated, so the row lands; READING it back refuses the whole file, which
+   * archives that book's undo history aside with a sentence the next time it
+   * opens.
+   *
+   * The fix is one entry in that set and a comment that counts to seven, and it
+   * is outside this unit's fence, so it is not made here. Undo and redo work
+   * within the session either way — the stacks are in memory — and the row is
+   * written rather than withheld, because a spine op that quietly could not be
+   * taken back is the half-built shape this plan exists to stop.
+   */
+  private async writeBookSpine(
+    tabId: string,
+    chapters: readonly OverlayChapter[] | null,
+    label: string,
+  ): Promise<void> {
+    const tab = this.byId(tabId);
+    if (!api || tab === null) return;
+    let file: OverlayFile;
+    try {
+      file = (await api.overlay.load(tab.path)).file as OverlayFile;
+    } catch (err) {
+      this.notice.set(
+        `Where this book divides could not be read, so nothing was changed: ${
+          err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+    const before = chaptersText(file.chapters ?? null);
+    const after = chaptersText(chapters);
+    if (before === after) return;
+    let next: OverlayFile;
+    try {
+      next = setChapters(file, chapters);
+    } catch (err) {
+      this.notice.set(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    const refused = await this.putOverlay(tabId, next);
+    if (refused !== null) {
+      this.notice.set(
+        `That correction could not be written to disk, so it has been taken back: ${refused}`,
+      );
+      return;
+    }
+    this.record(tabId, label, [{
+      member: this.overlayKey(tab),
+      target: this.overlayKey(tab),
+      field: 'chapters',
+      before,
+      after,
+    }]);
+    this.repaintCurations(tab);
+    // The lines redraw from the file rather than from what this function was
+    // asked for: `putOverlay` bumped the curation counter, the surface's effect
+    // is watching it, and `ensureBookSpine` reads the disk again. Nothing here
+    // paints optimistically, which is the one place the flowing book differs
+    // from a strike — a spine is one statement about the whole book, and a wrong
+    // guess at it is forty chapters in the wrong place rather than one paragraph.
+  }
+
+  /**
+   * One `chapters` row of a book's undo history, put back.
+   *
+   * ── Why the book's replay needed a branch of its own ────────────────────────
+   *
+   * Every other row a book's ledger holds names an element of a chapter file and
+   * is replayed through the setter that wrote it (`replayRow`). This one names
+   * the overlay and is replayed through `setChapters`, which is exactly what the
+   * scan's `replayOverlayRow` does — but the scan's replay runs off a block view
+   * held in memory, and the book has none. So the file is read, the list is
+   * folded in, and the write goes through the same `putOverlay` every other
+   * correction uses.
+   */
+  private async replayBookSpine(tabId: string, text: string): Promise<string | null> {
+    const tab = this.byId(tabId);
+    if (!api || tab === null) return 'this document is no longer open.';
+    let file: OverlayFile;
+    try {
+      file = (await api.overlay.load(tab.path)).file as OverlayFile;
+      file = setChapters(file, chaptersOfText(text, 'this undo entry'));
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+    const refused = await this.putOverlay(tabId, file);
+    if (refused === null) this.repaintCurations(tab);
+    return refused;
+  }
+
   // ── Writing it down ──────────────────────────────────────────────────────
 
   /**
@@ -4445,6 +4916,9 @@ export class TabsService {
     for (const key of [...this.chapterFacts.keys()]) {
       if (key.startsWith(`${bookId}|`)) this.chapterFacts.delete(key);
     }
+    // And the reverse of the same read, which is derived from it and would
+    // otherwise outlive the ids it is an index of.
+    this.sourceIndexes.delete(bookId);
     /*
      * AND THE DETECTED SPINES, all of them, because a book going away is the
      * moment the detection could have changed underneath one. A re-read renumbers
@@ -5317,8 +5791,16 @@ export class TabsService {
      * nothing mirrored it in either direction; it is a decision in the same file
      * now, so taking it back meets the same door.
      */
+    /*
+     * `chapters` JOINED THEM when the flowing book grew lines you can hold. A
+     * marker dragged, renamed, added or removed is a write of the live
+     * curation's spine and nothing else — no member of the book moves at all —
+     * so taking one back while a frozen save is on screen would change where the
+     * book divides underneath pages showing somebody else's divisions.
+     */
     if (action.rows.some((row) =>
-      row.field === 'cut' || row.field === 'category' || row.field === 'note-cut')) {
+      row.field === 'cut' || row.field === 'category' || row.field === 'note-cut'
+      || row.field === 'chapters')) {
       const heldBook = this.heldByASave(tab.id);
       if (heldBook !== null) {
         this.notice.set(heldBook);
@@ -5358,6 +5840,26 @@ export class TabsService {
     for (let at = action.rows.length - 1; at >= 0; at -= 1) {
       const row = action.rows[at]!;
       const value = direction === 'undo' ? row.before : row.after;
+      /*
+       * THE SPINE IS NOT A CALL INTO THE BOOK, so it goes round `replayRow`
+       * rather than through it. Every other row here names an element of a
+       * chapter file and is put back by the setter that wrote it; this one names
+       * the overlay, carries the whole list on each side, and is put back by
+       * `setChapters` — which is precisely what the scan's replay does with the
+       * identical row from the other projection. No member changed, so nothing
+       * is reloaded and no `memberChanged` is owed; the lines redraw because the
+       * write bumps the curation counter the surface is watching.
+       */
+      if (row.field === 'chapters') {
+        const stopped = await this.replayBookSpine(tab.id, value);
+        if (stopped !== null) {
+          this.notice.set(
+            `${direction === 'undo' ? 'Undo' : 'Redo'} stopped at where this book divides: ${stopped}`,
+          );
+          return;
+        }
+        continue;
+      }
       try {
         await this.replayRow(bookId, row, value, direction);
       } catch (err) {
@@ -5446,8 +5948,17 @@ export class TabsService {
 
     const current = this.byId(tab.id);
     const revision = current?.revision ?? tab.revision;
+    /*
+     * AN ACTION MADE ONLY OF SPINE ROWS DID NOT TOUCH THE BOOK. `modified` means
+     * "the copy you filed is older than this one", and where the book divides
+     * lives in the curation beside the bank — not in a single byte of the
+     * working tree. Marking it would put a dot on the tab and raise the
+     * close-with-unsaved-work question over a file nothing wrote to, which is
+     * the same reason the scan's own replay sets no flag at all.
+     */
+    const touchedBook = action.rows.some((row) => row.field !== 'chapters');
     this.patch(tab.id, {
-      modified: true,
+      ...(touchedBook ? { modified: true } : {}),
       revision: reload ? revision + 1 : revision,
       ...(renamed.size > 0 && current?.book
         ? {
@@ -6561,6 +7072,28 @@ function normalise(filePath: string): string {
 /** A sidebar href without its #fragment — the member file it lives in. */
 function memberOf(href: string): string {
   return href.split('#')[0] ?? href;
+}
+
+/**
+ * The book's documents, in reading order, once each.
+ *
+ * `EpubBook.chapters` IS THE SPINE with the navigation's labels laid over it
+ * (electron/epub-reader.ts says so where it builds the list), plus one extra row
+ * per section header the engine anchored — those carry a `#fragment` and name
+ * the document they are inside. Folding on the member is therefore the spine
+ * itself, and the ORDER is the order a reader meets them, which is the order the
+ * flowing book stacks them in.
+ */
+export function membersOf(book: EpubBook): readonly string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const chapter of book.chapters) {
+    const member = memberOf(chapter.href);
+    if (seen.has(member)) continue;
+    seen.add(member);
+    out.push(member);
+  }
+  return out;
 }
 
 function baseName(filePath: string): string {

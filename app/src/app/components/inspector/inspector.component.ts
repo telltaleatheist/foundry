@@ -16,7 +16,7 @@ import type { EpubChapter, UncommittedCuration } from '@shared/types';
 
 import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';
-import { TabsService, type BlockElement } from '../../core/tabs.service';
+import { TabsService, type BlockElement, type ChapterMark } from '../../core/tabs.service';
 
 /**
  * The inspector — what the focused book IS, down the right-hand side.
@@ -212,9 +212,15 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
         </section>
         }
 
-        <!-- ── The chapters, for a scan ─────────────────────────────────── -->
-        @if (panel.kind === 'pdf') {
-          <section class="accordion" [class.shut]="!chaptersOpen()">
+        <!--
+          ── The chapters — the LIST VIEW of the same spine the book draws ──
+
+          Drawn for a scan being corrected and for the flowing book alike, and
+          the rows are the same rows: one overlay field, two projections of it.
+          Over the book the lines on the page are the other one, and either
+          surface's rename lands in the same file through the same door.
+        -->
+        <section class="accordion" [class.shut]="!chaptersOpen()">
             <button class="head" (click)="chaptersOpen.set(!chaptersOpen())">
               <span class="twist">{{ chaptersOpen() ? '▾' : '▸' }}</span>
               <span class="label">Chapters</span>
@@ -256,7 +262,7 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
                       } @else {
                         <button
                           class="chapter"
-                          [title]="row.present ? row.title : row.title + ' — not on these pages'"
+                          [title]="row.present ? row.title : row.title + ' — the block it starts at is not in this rendering'"
                           (click)="showBlock(row.target)"
                           (dblclick)="startChapterRename(row)"
                         >
@@ -274,12 +280,25 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
                 </ul>
 
                 <div class="acts">
-                  <button
-                    class="act"
-                    [disabled]="onlyBlock() === null || onlyBlockIsChapter() || frozen()"
-                    [title]="chapterAddTitle()"
-                    (click)="makeChapter()"
-                  >Chapter starts here</button>
+                  <!--
+                    ADDING ONE IS THE SCAN'S BUTTON AND THE BOOK'S GUTTER.
+
+                    Over a scan, "here" is the one block a person has selected on
+                    the pages, and this button is the only way to say it. Over
+                    the flowing book "here" is a seam between two paragraphs the
+                    reader can point at directly — the affordance appears in the
+                    gap and the click adds the break — so a button that acted on
+                    a selection would be a second, worse gesture for a thing the
+                    page already offers where the eye is.
+                  -->
+                  @if (panel.kind === 'pdf') {
+                    <button
+                      class="act"
+                      [disabled]="onlyBlock() === null || onlyBlockIsChapter() || frozen()"
+                      [title]="chapterAddTitle()"
+                      (click)="makeChapter()"
+                    >Chapter starts here</button>
+                  }
                   <!--
                     The way back. The first chapter edit turns "Foundry decides"
                     into forty-one blocks stated exactly, and without this that
@@ -295,10 +314,15 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
                     (click)="resetChapters()"
                   >Use Foundry's</button>
                 </div>
+                @if (panel.kind === 'epub') {
+                  <p class="hint">
+                    On the book, a chapter is the green dotted line. Drag one to move it,
+                    double-click it to rename it, or hover between two blocks to add one.
+                  </p>
+                }
               </div>
             }
           </section>
-        }
 
         <!-- ── Category ─────────────────────────────────────────────────── -->
         <section class="accordion" [class.shut]="!categoryOpen()">
@@ -941,14 +965,45 @@ export class InspectorComponent {
     else this.tabs.strikeCategory(category);
   }
 
-  // ── The scan's chapters ──────────────────────────────────────────────────
+  // ── The chapters — one spine, two projections ────────────────────────────
+  //
+  // ── The list beside the lines ───────────────────────────────────────────────
+  //
+  // This section used to be the SCAN's and only the scan's, because the overlay's
+  // chapters spine could only be edited over the pages the block editor drew. The
+  // flowing book draws the same spine as green dotted lines you can drag, rename
+  // and delete (app-epub-view, electron/click-reporter.ts), and the user's ruling
+  // is that the line IS the record: *"that dotted line is the definitive chapter
+  // info for the book."*
+  //
+  // So the section survives as THE LIST VIEW OF THE SAME THING. Sixty chapters
+  // read as a list in a way they never read as sixty lines a scroll apart, and
+  // renaming the eleventh from here beats scrolling to it. One signal source —
+  // whichever surface is in front, the rows and the lines are read off one file
+  // and written through one door — so the two cannot disagree.
+  //
+  // WHAT DIFFERS BETWEEN THE TWO IS ONLY HOW A ROW IS ADDRESSED. A scan's spine
+  // entry names a block the service itself is drawing, so the panel can reach it
+  // directly. A book's names a banked answer, which the service has already
+  // resolved to a document and an element for the lines' sake — so the panel
+  // reads that resolution rather than doing its own.
 
   /** The spine as it stands, and whose it is. */
   protected readonly spine = computed(() => {
     const panel = this.subject();
-    return panel === null || panel.kind !== 'pdf'
+    if (panel === null) return { chapters: [] as readonly OverlayChapter[], confirmed: false };
+    if (panel.kind === 'pdf') return this.tabs.chaptersFor(panel.id);
+    const book = this.tabs.bookSpineFor(panel.id);
+    return book === null
       ? { chapters: [] as readonly OverlayChapter[], confirmed: false }
-      : this.tabs.chaptersFor(panel.id);
+      : { chapters: book.chapters, confirmed: book.confirmed };
+  });
+
+  /** The book's spine with each entry already resolved to a document and an element. */
+  private readonly bookMarks = computed<readonly ChapterMark[]>(() => {
+    const panel = this.subject();
+    if (panel === null || panel.kind !== 'epub') return [];
+    return this.tabs.bookSpineFor(panel.id)?.marks ?? [];
   });
 
   /**
@@ -960,10 +1015,23 @@ export class InspectorComponent {
    * not refuse it either. Hiding the row would take somebody's chapter name off
    * the screen while leaving it in the file; drawing it as though it were fine
    * would promise a division the book is not going to have.
+   *
+   * The same rule reads the same way on the book, where "gone" means this cast
+   * of it does not render the banked answer the chapter is keyed to — a struck
+   * block, a page dropped — and the row is dimmed rather than dropped for the
+   * identical reason: the name is still in the file.
    */
   protected readonly chapterRows = computed<ChapterRow[]>(() => {
     const panel = this.subject();
-    if (panel === null || panel.kind !== 'pdf') return [];
+    if (panel === null) return [];
+    if (panel.kind === 'epub') {
+      return this.bookMarks().map((one) => ({
+        target: one.target,
+        title: one.title,
+        where: `p${one.target.split(':')[0] ?? ''}`,
+        present: one.blockId !== null,
+      }));
+    }
     return this.spine().chapters.map((one) => {
       const target = targetKey(one.at);
       return {
@@ -996,9 +1064,34 @@ export class InspectorComponent {
       : 'The book divides at this block, and the contents lists it';
   }
 
+  /**
+   * Put a chapter in front of the reader.
+   *
+   * ONE SIGNAL, TWO SURFACES: `revealBlock` names a document and a banked answer
+   * and lets whichever pane is drawing that document do the moving. Over a scan
+   * that is a jump to the page the block is on; over the flowing book it is a
+   * SCROLL — §11's "the accordion's jump to chapter becomes a scroll-to" — and
+   * the viewer resolves the answer to an element through the spine it already
+   * holds. Neither is this panel's business beyond saying which chapter.
+   */
   protected showBlock(target: string): void {
     const panel = this.subject();
-    if (panel !== null && panel.kind === 'pdf') this.tabs.revealBlock(panel.id, target);
+    if (panel !== null) this.tabs.revealBlock(panel.id, target);
+  }
+
+  /**
+   * Which document and element a book's chapter row addresses, or null.
+   *
+   * The book's ops are keyed by `data-bf-id` — the only name a sandboxed frame
+   * can speak, and therefore the name the service's marker door takes. A row
+   * whose block this cast does not render has none, and every gesture on it is
+   * refused here rather than sent and dropped: renaming a chapter the book
+   * cannot show is a real thing to want, but it is not a thing this door can do,
+   * and the row already says so by being dimmed.
+   */
+  private markAt(target: string): ChapterMark | null {
+    const found = this.bookMarks().find((one) => one.target === target);
+    return found !== undefined && found.blockId !== null && found.member !== null ? found : null;
   }
 
   protected makeChapter(): void {
@@ -1020,12 +1113,20 @@ export class InspectorComponent {
 
   protected dropChapter(target: string): void {
     const panel = this.subject();
-    if (panel !== null && panel.kind === 'pdf') void this.tabs.removeChapter(panel.id, target);
+    if (panel === null) return;
+    if (panel.kind === 'pdf') {
+      void this.tabs.removeChapter(panel.id, target);
+      return;
+    }
+    const mark = this.markAt(target);
+    if (mark !== null) void this.tabs.removeChapterMark(panel.id, mark.blockId!, mark.member!);
   }
 
   protected resetChapters(): void {
     const panel = this.subject();
-    if (panel !== null && panel.kind === 'pdf') void this.tabs.resetChapters(panel.id);
+    if (panel === null) return;
+    if (panel.kind === 'pdf') void this.tabs.resetChapters(panel.id);
+    else void this.tabs.resetBookSpine(panel.id);
   }
 
   protected startChapterRename(row: ChapterRow): void {
@@ -1041,8 +1142,13 @@ export class InspectorComponent {
     const panel = this.subject();
     const label = this.renameText().trim();
     this.renamingHref.set(null);
-    if (panel === null || panel.kind !== 'pdf' || label.length === 0) return;
-    void this.tabs.renameChapter(panel.id, target, label);
+    if (panel === null || label.length === 0) return;
+    if (panel.kind === 'pdf') {
+      void this.tabs.renameChapter(panel.id, target, label);
+      return;
+    }
+    const mark = this.markAt(target);
+    if (mark !== null) void this.tabs.renameChapterMark(panel.id, mark.blockId!, mark.member!, label);
   }
 
   // ── The one selected block's words ───────────────────────────────────────

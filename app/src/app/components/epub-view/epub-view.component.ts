@@ -7,62 +7,90 @@ import {
   effect,
   inject,
   input,
+  signal,
   viewChild,
+  viewChildren,
 } from '@angular/core';
 import { DomSanitizer, type SafeResourceUrl } from '@angular/platform-browser';
 
-import { TabsService, type Tab } from '../../core/tabs.service';
+import { TabsService, membersOf, type Tab } from '../../core/tabs.service';
 
 /**
- * The book — the chapter, and the toolbar over it.
+ * The book — the whole of it, in one scroll, with the chapter lines on it.
  *
- * THE CHAPTER LIST USED TO BE THE LEFT COLUMN OF THIS COMPONENT and is now one
- * accordion of the inspector in the shell (app-inspector). It was 260 pixels
- * inside every pane, so five open books spent 1300 of them on five lists of the
- * same shape; there is one now, showing the focused document's contents, and it
- * sits beside the Category rows a curator works with in the same pass.
+ * ── WHAT THIS COMPONENT IS NOW, AND WHAT IT USED TO BE ──────────────────────
  *
- * SCROLLING TEXT, NO PAGINATION, and that is a decision rather than an omission.
- * Pagination in a reflowable book means measuring the rendered text and cutting
- * it into columns, which means reaching into the iframe's document — and the
- * iframe is sandboxed precisely so that nothing reaches into it. A book you can
- * scroll and search with Ctrl+F is a book you can read; the page-turn can come
- * when there is a reason for it beyond resembling other readers.
+ * It used to render ONE CHAPTER: the tab held a `chapterHref`, this drew the
+ * <iframe> for it, and the contents list in the inspector was how you got to the
+ * next one. That is gone, and it went on a ruling of the user's:
  *
- * ── Editing ──────────────────────────────────────────────────────────────────
+ *   "Instead of splitting chapters the way we currently do, let's have the whole
+ *    book flow from start to finish, and chapters can be dotted lines with
+ *    titles that show where they separate. The user can grab the chapter line
+ *    and drag it up or down, or they can double click it and change what it
+ *    says. That dotted line is the definitive chapter info for the book. The
+ *    user can also click to add a chapter break anywhere they want."
  *
- * "Edit HTML" USED TO SPLIT THIS COMPONENT down the middle: a textarea on the
- * left, the rendered chapter on the right, one tab holding both. It opens a TAB
- * now (app-html-editor), which the pane rules place beside the book — so the
- * source can be widened without narrowing the page it is there to fix, and the
- * book can be read with the editor closed without the tab remembering a mode.
- * All the writing, debouncing and flushing moved with it; what stays here is the
- * book. NOTHING IN THIS TOOLBAR OPENS IT any more, and the comment in the
- * template says why; the editor tab itself is unchanged and phase E is what
- * finally takes it away.
+ * So the spine's documents are STACKED — one frame each, in reading order, each
+ * sized to the height it reports — inside one column that scrolls. A reader gets
+ * a book rather than a filing cabinet, and where it divides is drawn ON the
+ * text, as a green dotted line wearing the chapter's name, which is a thing a
+ * hand can take hold of.
+ *
+ * ── The route, and why it is this one ───────────────────────────────────────
+ *
+ * The obvious alternative was to make the ENGINE emit one document — a workbench
+ * cast with marker elements in it. It was rejected, and the spec rejected it in
+ * advance for the right reason: it forks the cast format, and every consumer of
+ * a cast (translate, export, the records substitution, epub-final) would have to
+ * learn the fork. This route changes nothing outside the viewer. The cast is
+ * still an ordinary multi-document EPUB, the EDITION still splits into real
+ * chapter documents at materialization, and a continuous scroll is how the
+ * WORKBENCH shows a book rather than how a reader receives one.
+ *
+ * ── What stacking costs, honestly ───────────────────────────────────────────
+ *
+ * A selection, a marquee and a key press all live inside ONE document, because
+ * an opaque origin is a wall in both directions. So the shell has to referee:
+ * when one frame says something is selected, every other frame is told to let go
+ * (`foundry:clear-selection`, answered silently so the inspector is not blanked
+ * by the frame that just let go). A marquee still cannot cross a document
+ * boundary, and neither can a chapter line's drag — the pointer stops being
+ * deliverable the moment it leaves the frame it was pressed in. That is a real
+ * edge and it is named rather than papered over: a break that needs to move into
+ * the NEXT document is removed and re-added by clicking that document's gutter.
  *
  * ── Where the reader is ─────────────────────────────────────────────────────
  *
- * A chapter is re-served on every path that writes to it, and a re-served
- * <iframe> starts at the top. This component remembers the frame's last reported
- * scroll position and hands it back after a reload of the SAME chapter, which is
- * the whole of the fix for "i delete a footnote and the next thing i know, im
- * looking at the chapter header". Both ends of the channel are documented in
- * electron/click-reporter.ts; this side is `onFrameMessage` and `restoreScroll`
- * below.
+ * The complaint this used to answer — "i delete a footnote and the next thing i
+ * know, im looking at the chapter header" — is answered STRUCTURALLY now rather
+ * than by a channel. The scroll offset used to live inside the frame, so every
+ * re-serve of a chapter dropped the reader at the top and the position had to be
+ * captured and handed back. The offset lives on the COLUMN now, which is app DOM
+ * and is not reloaded by anything; a frame that re-serves keeps the height this
+ * component already assigned it, so the document under the reader does not even
+ * move. And a write to one chapter reloads ONE frame — see `pageUrls` — where it
+ * used to reload the only frame there was.
+ *
+ * ── Editing ─────────────────────────────────────────────────────────────────
+ *
+ * "Edit HTML" is still not offered here and the machinery is still untouched;
+ * phase E retires it. Select mode, striking, relabelling and in-place block
+ * editing all work exactly as they did — every one of them is a message from the
+ * frame that owns the block, and the only thing this component adds is telling
+ * the service WHICH document that frame is, so the write lands in the right
+ * member (see `claim`).
  *
  * The chapter comes out of the main process through `foundry-file://epub/…`
  * (electron/main.ts) into an iframe with `sandbox="allow-scripts"` — and ONLY
  * that token, never allow-same-origin: the frame keeps an opaque origin, no
- * storage, no reach into this page. The one script that can actually execute in
- * there is main's own click reporter (electron/click-reporter.ts documents the
- * serve-time sanitization that keeps a book's own scripts dead), and its whole
- * output is a postMessage naming the block that was clicked. This component checks the
- * SOURCE of every message — only its own iframe's window is listened to — and
- * hands it to the service, which is where the editor (a pane away now) picks it
- * up and jumps to the block, Calibre-style. Foundry wrote these books, but the
- * user is free to open one it did not, and a book is ultimately somebody else's
- * markup.
+ * storage, no reach into this page. The one script that can execute in there is
+ * main's own click reporter (electron/click-reporter.ts documents the serve-time
+ * sanitization that keeps a book's own scripts dead). This component checks the
+ * SOURCE of every message — only its own iframes' windows are listened to — and
+ * every field of every message is checked before it is believed. Foundry wrote
+ * these books, but the user is free to open one it did not, and a book is
+ * ultimately somebody else's markup.
  *
  * The URL is bypassed through the sanitizer because Angular strips any resource
  * URL on a scheme it does not know, and `foundry-file:` is ours by construction:
@@ -82,9 +110,9 @@ import { TabsService, type Tab } from '../../core/tabs.service';
         <!-- THE CHAPTER LIST IS NOT HERE ANY MORE. It was a 260px column inside
              every one of these, so five panes spent 1300 pixels on five copies
              of the same kind of list. It is one accordion in the inspector on
-             the right of the shell now (app-inspector), which shows the FOCUSED
-             document's — same rows, same rename gesture, same fragment
-             sub-entries, one of it. -->
+             the right of the shell now (app-inspector) — and with the book in
+             one scroll, clicking a row there scrolls this column to it rather
+             than swapping the document out. -->
         <div class="reading">
           <header class="toolbar">
             <!-- THIS ROW DOES NOT NAME THE BOOK. It did, for as long as nothing
@@ -115,6 +143,10 @@ import { TabsService, type Tab } from '../../core/tabs.service';
               pressed the rail button by accident has to be able to read what
               happened. The keys are named here rather than in a tooltip
               nobody hovers — Delete and Enter are the whole interface.
+
+              WITH THE MODE OFF the line says what the chapter lines are for,
+              because the gestures on them are invisible until somebody tries
+              one: a dotted line is obviously a mark and not obviously a handle.
             -->
             <span class="state">
               @if (tab().selectMode) {
@@ -126,6 +158,11 @@ import { TabsService, type Tab } from '../../core/tabs.service';
                 } @else { Click a block, or drag a rectangle over several }
               }
               @else if (writing()) { Writing… }
+              @else if (spineLocked()) { Chapter lines show where this saved book divides }
+              @else if (marked() > 0) {
+                Drag a chapter line to move it, double-click it to rename it, or click between
+                two blocks to add one
+              }
               @else if (tab().modified) { Edits are in the workspace copy }
               @else if (tab().savedPath) { Saved }
             </span>
@@ -148,20 +185,36 @@ import { TabsService, type Tab } from '../../core/tabs.service';
           </header>
 
           <div class="panes">
-            @if (chapterUrl(); as url) {
+            @if (pages().length > 0) {
               <!--
-                sandbox="allow-scripts" and nothing else: opaque origin, no
-                same-origin power. The only script that can execute is main's
-                click reporter (serve-time sanitization kills a book's own),
-                and its postMessage is what makes click-to-source work.
+                ONE COLUMN, ONE SCROLLBAR, and the frames inside it are as tall
+                as they say they are. The column is the scroller, so the reader's
+                place is app state that no re-serve of a chapter can throw away.
               -->
-              <iframe
-                #frame
-                class="page"
-                [src]="url"
-                sandbox="allow-scripts"
-                [title]="tab().chapterHref ?? book.title"
-              ></iframe>
+              <div class="column" #column (scroll)="onColumnScroll()">
+                @for (page of pages(); track page.member) {
+                  <!--
+                    sandbox="allow-scripts" and nothing else: opaque origin, no
+                    same-origin power. The only script that can execute is main's
+                    click reporter (serve-time sanitization kills a book's own),
+                    and its postMessages are what make click-to-source, select
+                    mode and the chapter lines work.
+
+                    scrolling="no" is not decoration: a frame that keeps its own
+                    scrollbar is a document the reader can lose their place
+                    inside of, which is the whole thing one column is for.
+                  -->
+                  <iframe
+                    #frame
+                    class="page"
+                    [src]="page.url"
+                    sandbox="allow-scripts"
+                    scrolling="no"
+                    [style.height.px]="page.height"
+                    [title]="page.label"
+                  ></iframe>
+                }
+              </div>
             } @else {
               <div class="problem"><p>This book has no chapters in its spine.</p></div>
             }
@@ -201,8 +254,21 @@ import { TabsService, type Tab } from '../../core/tabs.service';
 
     .panes { flex: 1; min-height: 0; display: flex; }
 
-    /* White, because a book is white. The chrome around it is the dark part. */
-    .page { flex: 1; min-width: 0; height: 100%; border: none; display: block; background: #fff; }
+    /* White, because a book is white. The chrome around it is the dark part.
+       position:relative because the frames' offsetTop is measured against this
+       box when the inspector asks the column to scroll to a chapter. */
+    .column {
+      position: relative;
+      flex: 1; min-width: 0;
+      overflow-y: auto; overflow-x: hidden;
+      background: #fff;
+    }
+
+    /* NO BORDER BETWEEN DOCUMENTS. The seam between two spine files is an
+       accident of how the book was packed, and drawing it would put a line
+       across the page in a place the book itself does not divide — which is
+       exactly the confusion the chapter lines exist to end. */
+    .page { display: block; width: 100%; border: none; background: #fff; }
 
     .problem {
       flex: 1;
@@ -228,43 +294,222 @@ export class EpubViewComponent implements OnDestroy {
   /** The editor's flush, said in the book's toolbar because it is the book being written. */
   protected readonly writing = computed(() => this.tabs.writingTo() === this.tab().id);
 
-  private readonly frame = viewChild<ElementRef<HTMLIFrameElement>>('frame');
+  /** How many chapter lines this book is drawing, for the toolbar's one sentence. */
+  protected readonly marked = computed(() => this.tabs.bookSpineFor(this.tab().id)?.marks.length ?? 0);
+
+  /** True while a frozen save is on screen: the lines draw, and nothing on them moves. */
+  protected readonly spineLocked = computed(() => {
+    const spine = this.tabs.bookSpineFor(this.tab().id);
+    return spine !== null && !spine.editable;
+  });
+
+  private readonly frames = viewChildren<ElementRef<HTMLIFrameElement>>('frame');
+  private readonly column = viewChild<ElementRef<HTMLElement>>('column');
 
   /**
    * The blocks the frame says are selected, for the toolbar line.
    *
-   * NOT A FACT ABOUT THE BOOK — a selection lives in the frame's DOM and dies
+   * NOT A FACT ABOUT THE BOOK — a selection lives in a frame's DOM and dies
    * with the frame; everything that IS a fact about the book (the cut, the
    * words, the category) is an attribute in the working copy and nothing else.
-   * It is kept on the SERVICE rather than in this component now, because the
+   * It is kept on the SERVICE rather than in this component, because the
    * inspector is in the shell and cannot see five viewers' private signals. The
-   * service keys it by tab, so five panes cannot blank each other's.
+   * service keys it by tab, so five panes cannot blank each other's — and this
+   * component keys the ONE selection a stacked book may hold to the frame that
+   * announced it, so thirty documents cannot blank each other's either.
    */
   protected readonly selectedIds = computed<readonly string[]>(() =>
     this.tabs.selectionFor(this.tab().id)?.blockIds ?? []);
 
+  // ── The documents, stacked ───────────────────────────────────────────────
+
+  /**
+   * The book's documents in reading order, once each.
+   *
+   * `EpubBook.chapters` is the SPINE with the navigation's labels laid over it,
+   * plus one row per section header the engine anchored — those carry a
+   * `#fragment` and name a document that is already in the list. `membersOf`
+   * folds them, so this is exactly the reading order and nothing is drawn twice.
+   */
+  private readonly documents = computed<readonly { member: string; label: string; base: string }[]>(() => {
+    const book = this.tab().book;
+    if (book === null) return [];
+    const rows = new Map<string, { label: string; base: string }>();
+    for (const chapter of book.chapters) {
+      const member = chapter.href.split('#')[0] ?? chapter.href;
+      if (rows.has(member)) continue;
+      rows.set(member, { label: chapter.label, base: chapter.url.split('#')[0] ?? chapter.url });
+    }
+    return membersOf(book).flatMap((member) => {
+      const row = rows.get(member);
+      return row === undefined ? [] : [{ member, label: row.label, base: row.base }];
+    });
+  });
+
+  /** What each frame is showing, at the height it last said it was. */
+  protected readonly pages = computed<readonly FlowPage[]>(() => {
+    const heights = this.heights();
+    const members = this.memberRevisions();
+    const shared = this.globalRevision();
+    return this.documents().map((doc) => {
+      // `?v=` is what makes an edit visible: the bytes changed and the URL did
+      // not, and an <iframe> already showing a URL does nothing when told to
+      // show it again. The protocol handler reads the path and ignores the
+      // query.
+      const bump = shared + (members.get(doc.member) ?? 0);
+      const url = bump === 0 ? doc.base : `${doc.base}?v=${bump}`;
+      return {
+        member: doc.member,
+        label: doc.label,
+        url: this.trusted(url),
+        height: heights.get(doc.member) ?? PAGE_HEIGHT_BEFORE_MEASURING,
+      };
+    });
+  });
+
+  /**
+   * One SafeResourceUrl per URL string, for as long as that string is current.
+   *
+   * `bypassSecurityTrustResourceUrl` mints a NEW object every call, and the
+   * `[src]` binding compares by identity — so without this, every repaint of the
+   * component (and there is one on every strike, every keystroke, every tab
+   * patch) would hand thirty frames thirty "different" URLs and reload the whole
+   * book. It is a cache with the same key as the thing it caches, cleared
+   * whenever the set of live URLs changes, so it cannot grow with a session.
+   */
+  private readonly trustedUrls = new Map<string, SafeResourceUrl>();
+
+  private trusted(url: string): SafeResourceUrl {
+    const held = this.trustedUrls.get(url);
+    if (held !== undefined) return held;
+    const made = this.sanitizer.bypassSecurityTrustResourceUrl(url);
+    if (this.trustedUrls.size > MAX_TRUSTED_URLS) this.trustedUrls.clear();
+    this.trustedUrls.set(url, made);
+    return made;
+  }
+
+  /** As tall as each frame last said it is, keyed by the document it is showing. */
+  private readonly heights = signal<ReadonlyMap<string, number>>(new Map());
+
+  private setHeight(member: string, height: number): void {
+    if (this.heights().get(member) === height) return;
+    this.heights.update((map) => new Map(map).set(member, height));
+  }
+
+  /**
+   * Which documents have been written since this book opened, counted one at a
+   * time — and the count that reloads all of them.
+   *
+   * ── Why a whole-book reload had to stop being the only answer ──────────────
+   *
+   * `Tab.revision` is the app's "re-serve what this tab is showing" signal, and
+   * with one chapter on screen that was one frame. With the book in one scroll
+   * it is thirty, and a word edit in chapter nine would re-serve — and re-lay-out
+   * and re-measure — every document in the book to show one corrected sentence.
+   *
+   * The service already says more than the tab does: `memberWritten` names the
+   * chapter a write landed in, and it exists because a bump could not say it
+   * (see its comment). So the two are read TOGETHER, and the pairing is the
+   * whole rule:
+   *
+   *   - a bump that ARRIVED WITH a member write is that member's, and reloads
+   *     one frame;
+   *   - a bump with no member write is the "put the truth back over the guess"
+   *     path — a refusal, a stalled undo — and reloads everything, which is what
+   *     it is for;
+   *   - a member write with NO bump is a strike or a relabel, which the frame
+   *     has already painted, and reloads nothing at all. That is the rule the
+   *     old viewer followed by not watching `memberWritten`, and it is why a
+   *     held-down Delete key does not cost a reader their place.
+   */
+  private readonly memberRevisions = signal<ReadonlyMap<string, number>>(new Map());
+  private readonly globalRevision = signal(0);
+  private seenRevision = -1;
+  private seenMemberSeq = 0;
+
+  private reloadMember(member: string): void {
+    this.memberRevisions.update((map) =>
+      new Map(map).set(member, (map.get(member) ?? 0) + 1));
+  }
+
+  // ── The frames, and which is which ───────────────────────────────────────
+
+  /**
+   * WHICH DOCUMENT A MESSAGE CAME FROM, resolved by the posting window.
+   *
+   * `event.source` is the only identity a sandboxed frame has, and it is already
+   * how this component refuses the other four panes' books. With thirty frames
+   * in one pane it does a second job: it says which of this book's documents the
+   * gesture was made in, which is what every write behind it needs to name.
+   */
+  private memberOfSource(source: MessageEventSource | null): string | null {
+    if (source === null) return null;
+    const frames = this.frames();
+    const pages = this.pages();
+    for (let at = 0; at < frames.length; at += 1) {
+      if (frames[at]?.nativeElement.contentWindow === source) return pages[at]?.member ?? null;
+    }
+    return null;
+  }
+
+  private frameFor(member: string): HTMLIFrameElement | null {
+    const pages = this.pages();
+    const frames = this.frames();
+    for (let at = 0; at < pages.length; at += 1) {
+      if (pages[at]?.member === member) return frames[at]?.nativeElement ?? null;
+    }
+    return null;
+  }
+
+  /**
+   * A gesture arrived from one document, so that is the document this tab is
+   * standing in.
+   *
+   * ── The one thing stacking would otherwise have broken silently ────────────
+   *
+   * Every write behind a book gesture resolves its member from `tab.chapterHref`
+   * — `blockEdit`, `mirrorBlockEdit`, `mirrorChapterEdit`, the footnote dialog.
+   * That was exact while a tab showed one chapter and would be a quiet disaster
+   * now: a strike made in chapter nine would be written into whichever chapter
+   * the field happened to hold, against ids that document does not contain.
+   *
+   * So the field keeps meaning what it always meant — the document this tab is
+   * working in — and it is set from the frame that spoke, immediately before the
+   * service is asked to do anything. It is a plain patch and it lands
+   * synchronously, so the call below it reads the value this line just wrote.
+   */
+  private claim(member: string): void {
+    if (this.tab().chapterHref === member) return;
+    this.fromFrame = member;
+    this.tabs.showChapter(this.tab().id, member);
+  }
+
+  /** The last member THIS component put on the tab, so its own write is not read as a jump. */
+  private fromFrame: string | null = null;
+
   /**
    * The click reporter's messages. Bound once so add/removeEventListener see
-   * the same function, and gated hard: only THIS component's iframe is listened
-   * to (event.source), and every field of every message is checked before it is
-   * believed. A click-to-source jump goes to whichever editor claims it (or
-   * nowhere); select mode's messages are refused outright unless they carry the
-   * shapes below.
+   * the same function, and gated hard: only THIS component's iframes are
+   * listened to (event.source), and every field of every message is checked
+   * before it is believed. A click-to-source jump goes to whichever editor
+   * claims it (or nowhere); select mode's messages are refused outright unless
+   * they carry the shapes below.
    *
    * A WINDOW LISTENER AND NOT A DOCUMENT ONE, and it stays safe with five panes
    * on screen: `event.source` is the posting window, so each instance answers
-   * only its own iframe. Five books rendered at once are five listeners that
-   * each ignore the other four.
+   * only its own iframes. Five books rendered at once are five listeners that
+   * each ignore the other four's.
    */
   private readonly onFrameMessage = (event: MessageEvent): void => {
-    const frame = this.frame()?.nativeElement;
-    if (!frame || event.source !== frame.contentWindow) return;
+    const member = this.memberOfSource(event.source);
+    if (member === null) return;
     const data = event.data as FrameMessage | null;
     if (!data || typeof data.type !== 'string') return;
 
     if (data.type === 'foundry:block-click') {
       if (typeof data.tag !== 'string' || !/^[a-z][a-z0-9]*$/.test(data.tag)) return;
       if (typeof data.index !== 'number' || !Number.isInteger(data.index) || data.index < 0) return;
+      this.claim(member);
       // The service decides whether anything is listening — the editor is a tab
       // in another pane now, and this component has no business knowing where.
       this.tabs.reportSourceClick(this.tab().id, data.bf === true, data.tag, data.index);
@@ -280,37 +525,91 @@ export class EpubViewComponent implements OnDestroy {
      * and a character class are what stop it being anything else.
      */
     if (data.type === 'foundry:reporter-ready') {
-      // A frame that has just (re)loaded is a frame with the mode off. Telling
-      // it what the tab thinks is what survives the reloads nobody asked for —
-      // an editor flush, a chapter change, the stamping pass.
-      //
-      // It is also a frame that has FORGOTTEN WHAT WAS SELECTED, because a
-      // selection lives in a DOM that no longer exists. Saying so keeps the
-      // inspector from offering to relabel a block that is not on screen — and
-      // after a chapter change, is not even in this file.
-      this.tabs.reportSelection(this.tab().id, [], null);
-      this.tabs.reportEditing(this.tab().id, false);
-      this.pushSelectMode();
-      this.restoreScroll();
+      /*
+       * A frame that has just (re)loaded is a frame with the mode off, with no
+       * chapter lines on it and with no idea how tall it is. Telling it all
+       * three is what survives the reloads nobody asked for — an editor flush, a
+       * write to this member, the stamping pass.
+       *
+       * IT IS ALSO A FRAME THAT HAS FORGOTTEN WHAT WAS SELECTED, because a
+       * selection lives in a DOM that no longer exists — but only its OWN
+       * selection. Saying "nothing is selected" on behalf of the whole tab would
+       * blank the inspector for a curator working in another document of the
+       * same book, so it is said only by the frame that was holding it.
+       */
+      if (this.activeMember === member) {
+        this.activeMember = null;
+        this.tabs.reportSelection(this.tab().id, [], null);
+      }
+      if (this.editingMember === member) {
+        this.editingMember = null;
+        this.tabs.reportEditing(this.tab().id, false);
+      }
+      this.frameCounts.delete(member);
+      this.pushSelectMode(member);
+      this.pushFlow(member);
       return;
     }
     /*
-     * WHERE THE READER IS, kept against the chapter that reported it.
-     *
-     * Held on the component and not on the service, unlike the selection: five
-     * panes each own one frame, and where somebody is in a chapter is not a fact
-     * any other surface has a use for. It dies with the component, which is
-     * correct — a pane that was closed is not owed its scrollbar back.
+     * HOW TALL THAT DOCUMENT IS, which is the one measurement a stacked book
+     * cannot take for itself. The frame is behind an opaque origin, so this side
+     * can no more read its scrollHeight than it can hit-test a paragraph.
      */
+    if (data.type === 'foundry:page-height') {
+      const height = pageHeight(data.height);
+      if (height === null) return;
+      this.setHeight(member, height);
+      return;
+    }
     if (data.type === 'foundry:scroll-report') {
-      const at = scrollAt(data.x, data.y);
-      if (at !== null) this.frameScroll = at;
+      /*
+       * IGNORED, DELIBERATELY, and this is where the scroll-restore channel went.
+       *
+       * A frame in the stack never scrolls — it is exactly as tall as its
+       * content and the column outside it is the scroller — so what this reports
+       * is always the top of a document, and handing it back would be telling a
+       * page to stay where it already is. The property the channel existed for
+       * (a re-served chapter must not throw the reader to its top) is now true
+       * by construction: the offset is on the column, which nothing reloads, and
+       * a re-serving frame keeps the height this component already gave it.
+       *
+       * The messages are left flowing rather than removed from the reporter,
+       * because a document that somehow does scroll — a book that defeats the
+       * height guard — is better off still saying so than silently not.
+       */
+      return;
+    }
+    if (data.type === 'foundry:located') {
+      if (typeof data.token !== 'number') return;
+      const waiting = this.locating.get(data.token);
+      if (waiting === undefined) return;
+      this.locating.delete(data.token);
+      const y = typeof data.y === 'number' && Number.isFinite(data.y) && data.y >= 0 ? data.y : null;
+      if (y !== null) this.scrollColumnTo(waiting, y);
       return;
     }
     if (data.type === 'foundry:block-selected') {
       const ids = blockIds(data.ids);
       if (ids === null) return;
+      /*
+       * ONE SELECTION PER BOOK, refereed here because no frame can see another.
+       *
+       * A frame that announces a selection takes it: every other frame is told
+       * to let go, silently. A frame announcing an EMPTY selection is only
+       * believed when it is the one that was holding it — otherwise a document
+       * being clicked would be blanked a moment later by a document reporting
+       * that it, too, has nothing selected.
+       */
+      if (ids.length === 0) {
+        if (this.activeMember !== member) return;
+        this.activeMember = null;
+      } else if (this.activeMember !== member) {
+        const was = this.activeMember;
+        this.activeMember = member;
+        if (was !== null) this.postTo(was, { type: 'foundry:clear-selection' });
+      }
       const category = isCategoryName(data.cat) ? data.cat : null;
+      this.claim(member);
       this.tabs.reportSelection(this.tab().id, ids, category);
       return;
     }
@@ -318,6 +617,9 @@ export class EpubViewComponent implements OnDestroy {
       // Not a fact about the book and never written anywhere: it exists so that
       // Ctrl+Z can tell "undo my typing" from "undo what I did to the book".
       if (typeof data.on !== 'boolean') return;
+      if (data.on) this.editingMember = member;
+      else if (this.editingMember === member) this.editingMember = null;
+      else return;
       this.tabs.reportEditing(this.tab().id, data.on);
       return;
     }
@@ -333,6 +635,7 @@ export class EpubViewComponent implements OnDestroy {
       // is restored from. Capped like the other side, and an edit that arrives
       // without it is still applied: the question then simply has two answers.
       const was = typeof data.was === 'string' && data.was.length <= MAX_BLOCK_HTML ? data.was : '';
+      this.claim(member);
       void this.tabs.setBlockHtml(this.tab().id, data.id, data.html, was);
       return;
     }
@@ -340,6 +643,7 @@ export class EpubViewComponent implements OnDestroy {
       if (!isCategoryName(data.cat)) return;
       const ids = blockIds(data.ids);
       if (ids === null || ids.length === 0) return;
+      this.claim(member);
       void this.tabs.setBlockCategories(this.tab().id, ids, data.cat);
       return;
     }
@@ -351,6 +655,7 @@ export class EpubViewComponent implements OnDestroy {
       // select-all-by-category sends one — a marquee's worth of blocks is
       // whatever kinds the user dragged over and has no single name.
       const category = isCategoryName(data.cat) ? data.cat : null;
+      this.claim(member);
       void this.tabs.cutBlocks(this.tab().id, ids, data.cut, category);
       return;
     }
@@ -358,17 +663,76 @@ export class EpubViewComponent implements OnDestroy {
       const counts = tally(data.counts);
       const struck = tally(data.struck);
       if (counts === null || struck === null) return;
-      this.tabs.reportCategoryCounts(this.tab().id, { counts, struck });
+      /*
+       * THE WHOLE BOOK'S TALLY, ADDED UP HERE. Each frame counts what it can
+       * see, which is one document; the legend in the inspector is about the
+       * book in front of the reader, and the book in front of the reader is all
+       * of them. Kept per document and summed, so a document that re-serves
+       * replaces its own contribution instead of being added twice.
+       */
+      this.frameCounts.set(member, { counts, struck });
+      this.tabs.reportCategoryCounts(this.tab().id, this.wholeBookCounts());
       return;
     }
+
+    // ── The chapter lines ──────────────────────────────────────────────────
+    //
+    // All four arrive naming a `data-bf-id` and nothing else, and the service
+    // resolves each to the banked answer the spine is keyed to — the same
+    // resolution the relabel-to-chapter-opening gesture already makes, through
+    // the same provenance read. NO TITLE IS CARRIED except the one somebody
+    // typed: an added marker is named with the block's own words, read off the
+    // chapter file, because that is the §6b rule and because an undo has no
+    // message to get a name back from.
+    if (data.type === 'foundry:chapter-add') {
+      if (!isBlockId(data.id)) return;
+      void this.tabs.addChapterMark(this.tab().id, data.id, member);
+      return;
+    }
+    if (data.type === 'foundry:chapter-move') {
+      if (!isBlockId(data.from) || !isBlockId(data.to)) return;
+      void this.tabs.moveChapterMark(this.tab().id, data.from, data.to, member);
+      return;
+    }
+    if (data.type === 'foundry:chapter-rename') {
+      if (!isBlockId(data.id) || typeof data.title !== 'string') return;
+      if (data.title.length > MAX_CHAPTER_TITLE) return;
+      void this.tabs.renameChapterMark(this.tab().id, data.id, member, data.title);
+      return;
+    }
+    if (data.type === 'foundry:chapter-remove') {
+      if (!isBlockId(data.id)) return;
+      void this.tabs.removeChapterMark(this.tab().id, data.id, member);
+      return;
+    }
+
     if (data.type === 'foundry:select-refused') {
       if (typeof data.reason !== 'string') return;
       // Clamped and stripped of control characters before it is shown: it is
       // our own script's sentence, but it arrives over the same channel as
       // everything else and is treated the same way.
-      this.tabs.reportSelectRefusal(data.reason.replace(CONTROL_CHARACTERS, " ").slice(0, 400));
+      this.tabs.reportSelectRefusal(data.reason.replace(CONTROL_CHARACTERS, ' ').slice(0, 400));
     }
   };
+
+  /** Which document is holding the selection, and which one has a caret in it. */
+  private activeMember: string | null = null;
+  private editingMember: string | null = null;
+
+  /** What each document says it holds, added up for the inspector's legend. */
+  private readonly frameCounts = new Map<string, { counts: Record<string, number>; struck: Record<string, number> }>();
+
+  private wholeBookCounts(): { counts: Record<string, number>; struck: Record<string, number> } {
+    const counts: Record<string, number> = {};
+    const struck: Record<string, number> = {};
+    for (const one of this.frameCounts.values()) {
+      for (const [name, n] of Object.entries(one.counts)) counts[name] = (counts[name] ?? 0) + n;
+      for (const [name, n] of Object.entries(one.struck)) struck[name] = (struck[name] ?? 0) + n;
+    }
+    return { counts, struck };
+  }
+
+  // ── Parent → frame ───────────────────────────────────────────────────────
 
   /**
    * PARENT → FRAME, which did not exist until select mode: the reporter has
@@ -377,81 +741,119 @@ export class EpubViewComponent implements OnDestroy {
    * origin string that names it, and the frame checks that the SOURCE is its
    * own parent.
    */
-  private pushSelectMode(): void {
-    const frame = this.frame()?.nativeElement;
-    frame?.contentWindow?.postMessage(
-      { type: 'foundry:select-mode', on: this.tab().selectMode },
-      '*',
-    );
+  private postTo(member: string, message: Record<string, unknown>): void {
+    this.frameFor(member)?.contentWindow?.postMessage(message, '*');
+  }
+
+  private broadcast(message: Record<string, unknown>): void {
+    for (const frame of this.frames()) frame.nativeElement.contentWindow?.postMessage(message, '*');
+  }
+
+  private pushSelectMode(member?: string): void {
+    const message = { type: 'foundry:select-mode', on: this.tab().selectMode };
+    if (member === undefined) this.broadcast(message);
+    else this.postTo(member, message);
   }
 
   /**
-   * Which chapter, in which tab, the frame is currently holding — and where the
-   * reader had got to in it.
+   * Tell a document it is one panel of a stacked book, and what the spine says
+   * about it.
    *
-   * ONE POSITION AND NOT A MAP, and that is the ruling rather than a shortcut: a
-   * chapter opened fresh legitimately starts at the top, so a position kept for
-   * a chapter the reader has since left is a position nothing is ever allowed to
-   * use. Keeping one is what makes the test below a comparison rather than a
-   * cache-invalidation problem.
+   * TWO MESSAGES AND NOT ONE, because they answer to different things: flow mode
+   * is a fact about the surface and never changes while a book is open, and the
+   * lines change every time somebody touches them. Both are re-sent on every
+   * handshake, because a frame comes back from a re-serve knowing neither.
    */
-  private frameChapter: string | null = null;
-  private frameScroll: { x: number; y: number } | null = null;
-
-  /**
-   * The tab AND the chapter: one pane can be handed a different tab's document.
-   *
-   * Joined on a NUL rather than on a separator either half could contain — an
-   * href is a path and a path is allowed to hold anything a filesystem is. Same
-   * escape, same reason, as the source key in pdf-view.
-   */
-  private chapterKey(): string {
-    return `${this.tab().id}\u0000${this.tab().chapterHref ?? ''}`;
+  private pushFlow(member?: string): void {
+    const flow = { type: 'foundry:flow', on: true };
+    if (member === undefined) this.broadcast(flow);
+    else this.postTo(member, flow);
+    this.pushChapters(member);
   }
 
-  /**
-   * Put the reader back after a RELOAD, and never after a navigation.
-   *
-   * ── The complaint this answers ──────────────────────────────────────────────
-   *
-   * "i delete a footnote and the next thing i know, im looking at the chapter
-   * header." Striking a block paints in the frame and posts the write behind it;
-   * a refusal reloads the frame to put the truth back, the stamping pass reloads
-   * it, and an editor flush bumps the revision and reloads it. Every one of those
-   * is a fresh document at offset zero, and a curation pass over a long chapter
-   * becomes a scroll back to the place after every gesture.
-   *
-   * ── Why it is fixed HERE, at the handshake ─────────────────────────────────
-   *
-   * Because `foundry:reporter-ready` is the ONE event every reload path passes
-   * through — the frame posts it at the end of its own execution whatever caused
-   * it to run. Fixing the strike path, the refusal path and the flush path each
-   * where they sit would be three fixes and a fourth reload nobody thought of;
-   * this is one, and it covers the paths that do not exist yet.
-   *
-   * A DIFFERENT CHAPTER IS NOT A RELOAD. Clicking through to the next chapter is
-   * a request to read it from its beginning, and handing that document somebody
-   * else's offset would be the same defect wearing the opposite sign. So the key
-   * carries the chapter, and a key that moved drops the position instead of
-   * spending it.
-   */
-  private restoreScroll(): void {
-    const chapter = this.chapterKey();
-    const reloaded = this.frameChapter === chapter;
-    this.frameChapter = chapter;
-    const at = this.frameScroll;
-    if (!reloaded || at === null) {
-      this.frameScroll = null;
-      return;
+  private pushChapters(member?: string): void {
+    const spine = this.tabs.bookSpineFor(this.tab().id);
+    const editable = spine?.editable === true;
+    for (const page of this.pages()) {
+      if (member !== undefined && page.member !== member) continue;
+      // EACH DOCUMENT GETS ITS OWN, so a marker cannot be drawn twice by two
+      // frames that both happen to hold an element of that name.
+      const marks = (spine?.marks ?? [])
+        .filter((one) => one.member === page.member && one.blockId !== null)
+        .map((one) => ({ id: one.blockId, title: one.title }));
+      this.postTo(page.member, { type: 'foundry:chapters', marks, editable });
     }
-    // The frame decides WHEN — it is the only side that can see whether its own
-    // images have finished arriving, and a scroll issued into a document that is
-    // still growing is clamped short of where the reader was.
-    this.frame()?.nativeElement.contentWindow?.postMessage(
-      { type: 'foundry:scroll-restore', x: at.x, y: at.y },
-      '*',
-    );
   }
+
+  // ── Scrolling to a place ─────────────────────────────────────────────────
+
+  /**
+   * Put a place in the book in front of the reader — the inspector's contents
+   * row, and its chapter row.
+   *
+   * IT TAKES TWO HOPS AND HAS TO. The column knows where each frame BEGINS
+   * (`offsetTop`, app DOM, measurable); only the frame knows where a heading or
+   * a block sits inside its own document. So the frame is asked, answers with a
+   * y in its own coordinates, and this adds the two. A name no document carries
+   * gets a null and the column does not move, which is the honest answer for a
+   * chapter whose block this cast of the book does not contain.
+   */
+  private locateSeq = 0;
+  private readonly locating = new Map<number, string>();
+
+  private askToLocate(member: string, what: { id?: string; frag?: string }): void {
+    if (this.frameFor(member) === null) return;
+    this.locateSeq += 1;
+    // Bounded: a book that never answers must not accumulate a request per
+    // click for the life of the pane.
+    if (this.locating.size > MAX_PENDING_LOCATES) this.locating.clear();
+    this.locating.set(this.locateSeq, member);
+    this.postTo(member, { type: 'foundry:locate', token: this.locateSeq, ...what });
+  }
+
+  private scrollColumnTo(member: string, y: number): void {
+    const column = this.column()?.nativeElement;
+    const frame = this.frameFor(member);
+    if (!column || !frame) return;
+    // A little air above the thing being shown, so a heading does not land
+    // flush against the toolbar and read as cut off.
+    column.scrollTop = Math.max(0, frame.offsetTop + y - SCROLL_TO_MARGIN);
+  }
+
+  /**
+   * Which document the reader is actually looking at, kept on the tab.
+   *
+   * The contents list marks a row as current, and with one scroll there is no
+   * other way for it to know which. It is also the field every write resolves
+   * its member from, which is why `claim` sets it explicitly before a gesture
+   * rather than trusting this: a curator can perfectly well strike a paragraph
+   * in a document that is not the one at the top of the viewport.
+   *
+   * Throttled, and it only writes when the answer MOVED: a patch replaces the
+   * tab object, and a patch per scroll event would be sixty recomputations a
+   * second of every binding in this pane.
+   */
+  protected onColumnScroll(): void {
+    if (this.scrollTimer !== null) return;
+    this.scrollTimer = setTimeout(() => {
+      this.scrollTimer = null;
+      const column = this.column()?.nativeElement;
+      if (!column) return;
+      const at = column.scrollTop + SCROLL_TO_MARGIN;
+      let showing: string | null = null;
+      const pages = this.pages();
+      const frames = this.frames();
+      for (let n = 0; n < pages.length; n += 1) {
+        const frame = frames[n]?.nativeElement;
+        const page = pages[n];
+        if (!frame || page === undefined) continue;
+        if (frame.offsetTop <= at) showing = page.member;
+      }
+      if (showing !== null) this.claim(showing);
+    }, SCROLL_SETTLE_MS);
+  }
+
+  private scrollTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     window.addEventListener('message', this.onFrameMessage);
@@ -462,43 +864,147 @@ export class EpubViewComponent implements OnDestroy {
     // effect tracks — there is nothing else to read here.
     effect(() => { this.pushSelectMode(); });
 
-    /**
-     * The inspector's commands, on their way into the frame.
+    /*
+     * THE SPINE, ASKED FOR AND THEN DRAWN.
      *
-     * THE PANEL IS IN THE SHELL AND THE FRAME IS BEHIND A SANDBOXED ORIGIN, so
-     * the two cannot be introduced: only this <iframe> element can post into
-     * that window. The service holds the command with the tab it is for, and
+     * The service holds no chapters for a book until something asks — the read
+     * is an overlay off disk plus one pass over every document of the book, and
+     * a pane that is only showing a scan should pay for neither. So the surface
+     * that draws the lines is the surface that asks for them.
+     *
+     * IT RE-ASKS ON TWO THINGS AND THE SERVICE THROWS AWAY THE REST. A curation
+     * write by this window (`curationRevision`) moves the spine; the position
+     * moving onto or off a frozen save (`lockOn`) changes WHICH spine is shown
+     * and whether it may be dragged. `ensureBookSpine` keys on both and returns
+     * without a read when neither has moved, which is what makes it safe to call
+     * from an effect that also re-runs on every ordinary tab patch.
+     */
+    effect(() => {
+      const tab = this.tab();
+      this.tabs.curationRevision();
+      this.tabs.lockOn(tab.id);
+      if (tab.kind !== 'epub' || tab.book === null) return;
+      void this.tabs.ensureBookSpine(tab.id);
+    });
+
+    // And drawn, whenever the answer moves. Every frame is told its own share.
+    effect(() => {
+      this.tabs.bookSpineFor(this.tab().id);
+      this.pushChapters();
+    });
+
+    /**
+     * The inspector's commands, on their way into the frames.
+     *
+     * THE PANEL IS IN THE SHELL AND THE FRAMES ARE BEHIND SANDBOXED ORIGINS, so
+     * the two cannot be introduced: only these <iframe> elements can post into
+     * those windows. The service holds the command with the tab it is for, and
      * every viewer ignores the four that are not its own — which is the same
      * arrangement `sourceJump` uses for a click travelling the other way.
+     *
+     * BROADCAST, and that is a change stacking makes rather than a shortcut.
+     * `relabel` and `cut-category` act on what a frame holds, and exactly one
+     * frame holds a selection; `mark-blocks` and `mark-labels` are an undo
+     * repainting itself and name blocks that may be in any document — those used
+     * to be silently dropped when the row named a chapter that was not on
+     * screen, and now they land wherever the block actually is.
      */
     effect(() => {
       const command = this.tabs.frameCommand();
       if (!command || command.tabId !== this.tab().id) return;
-      const frame = this.frame()?.nativeElement;
-      frame?.contentWindow?.postMessage(command.message, '*');
+      this.broadcast(command.message);
+    });
+
+    /*
+     * ── The two reload rules, read as one ────────────────────────────────────
+     *
+     * See `memberRevisions` for the argument. The pairing is decided here, in
+     * one effect, because it depends on whether the two signals moved TOGETHER —
+     * and an effect reads both at their settled values, so a bump and the member
+     * write that caused it are seen in the same run.
+     */
+    effect(() => {
+      const tab = this.tab();
+      const written = this.tabs.memberWritten();
+      const mine = written !== null && written.tabId === tab.id ? written : null;
+      const wroteAMember = mine !== null && mine.seq > this.seenMemberSeq;
+      if (mine !== null) this.seenMemberSeq = Math.max(this.seenMemberSeq, mine.seq);
+      if (this.seenRevision === tab.revision) return;
+      const first = this.seenRevision < 0;
+      this.seenRevision = tab.revision;
+      if (first) return;
+      if (wroteAMember && mine !== null) {
+        this.reloadMember(mine.member);
+        return;
+      }
+      this.globalRevision.update((n) => n + 1);
+    });
+
+    /*
+     * A ROW IN THE CONTENTS, clicked. It used to swap the document out; there is
+     * one document now, so it scrolls to the place instead — which is what §11
+     * asks for in one line ("the accordion's jump to chapter becomes a
+     * scroll-to").
+     *
+     * A HREF THIS COMPONENT ITSELF WROTE IS NOT A JUMP. `claim` puts the acting
+     * document on the tab before every gesture and the scroll handler puts the
+     * visible one there as the reader moves, so without this the column would
+     * yank itself back to the top of a chapter every time somebody struck a
+     * paragraph in it.
+     */
+    effect(() => {
+      const href = this.tab().chapterHref;
+      // THE FIELD IS RECORDED WHETHER OR NOT IT IS ACTED ON, and that is not
+      // bookkeeping: this effect re-runs on every tab patch, so a value skipped
+      // without being recorded would be acted on by the next unrelated patch —
+      // and the column would jump to the top of a chapter because somebody
+      // struck a paragraph two chapters later.
+      if (href === null || this.seenHref === href) return;
+      const first = this.seenHref === null;
+      this.seenHref = href;
+      const mine = this.fromFrame;
+      this.fromFrame = null;
+      const member = href.split('#')[0] ?? href;
+      // The href a book opens with is "the first document", not a request to go
+      // anywhere: the column already starts there.
+      if (first || mine === member) return;
+      const fragment = href.slice(member.length + 1);
+      if (fragment.length > 0) this.askToLocate(member, { frag: decodeURIComponent(fragment) });
+      else this.scrollColumnTo(member, 0);
+    });
+
+    /*
+     * A CHAPTER ROW, clicked — the other projection of the same spine asking the
+     * book to show it. The reveal names the banked answer (`page:order`), which
+     * is what the file holds; the spine this component already has resolves it
+     * to a document and an element.
+     */
+    effect(() => {
+      const reveal = this.tabs.blockReveal();
+      if (!reveal || reveal.tabId !== this.tab().id || reveal.seq === this.seenReveal) return;
+      this.seenReveal = reveal.seq;
+      const mark = this.tabs.bookSpineFor(this.tab().id)?.marks
+        .find((one) => one.target === reveal.target);
+      if (!mark || mark.member === null || mark.blockId === null) return;
+      this.askToLocate(mark.member, { id: mark.blockId });
     });
   }
 
+  private seenHref: string | null = null;
+  private seenReveal = 0;
+
   ngOnDestroy(): void {
     window.removeEventListener('message', this.onFrameMessage);
+    if (this.scrollTimer !== null) clearTimeout(this.scrollTimer);
   }
+}
 
-  protected readonly chapterUrl = computed<SafeResourceUrl | null>(() => {
-    const current = this.tab();
-    const chapter = current.book?.chapters.find((entry) => entry.href === current.chapterHref);
-    if (chapter === undefined) return null;
-    // `?v=` is what makes an edit visible: the bytes changed and the URL did
-    // not, and an <iframe> already showing a URL does nothing when told to show
-    // it again. The protocol handler reads the path and ignores the query. A
-    // section-header row's url carries a #fragment, and the query has to go
-    // BEFORE it — `file#frag?v=2` is a fragment named "frag?v=2".
-    const [base, fragment] = chapter.url.split('#');
-    const url = current.revision === 0
-      ? chapter.url
-      : `${base}?v=${current.revision}${fragment !== undefined ? `#${fragment}` : ''}`;
-    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
-  });
-
+/** One document of the book, as the column draws it. */
+interface FlowPage {
+  member: string;
+  label: string;
+  url: SafeResourceUrl;
+  height: number;
 }
 
 /**
@@ -525,27 +1031,53 @@ interface FrameMessage {
   reason?: unknown;
   x?: unknown;
   y?: unknown;
+  height?: unknown;
+  token?: unknown;
+  from?: unknown;
+  to?: unknown;
+  title?: unknown;
 }
 
 /**
- * A scroll offset out of the frame, or null if it is not one.
+ * As tall as one document may claim to be, in CSS pixels.
  *
- * CHECKED LIKE EVERY OTHER FIELD ON THIS CHANNEL, and for a reason that is not
- * only hygiene: this number is handed straight back to the same document as a
- * scrollTo, so a NaN is a book that answers a delete by jumping to the top —
- * which is precisely the failure the whole channel exists to remove. The cap is
- * far past the height of any chapter a reader will ever meet and refuses a
- * message that is arithmetic rather than a position.
+ * Checked like every other field on this channel, and for a reason that is not
+ * only hygiene: the number becomes the height of an element in this page, so a
+ * NaN is a frame that disappears and a number with an exponent in it is a column
+ * a scrollbar cannot address. The cap is far past the longest chapter anybody
+ * will meet and refuses a message that is arithmetic rather than a measurement.
  */
-function scrollAt(x: unknown, y: unknown): { x: number; y: number } | null {
-  if (typeof x !== 'number' || typeof y !== 'number') return null;
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-  if (x < 0 || y < 0 || x > MAX_SCROLL || y > MAX_SCROLL) return null;
-  return { x, y };
+function pageHeight(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  if (value < 0 || value > MAX_PAGE_HEIGHT) return null;
+  return Math.ceil(value);
 }
 
-/** As far down a chapter as a position may claim to be, in CSS pixels. */
-const MAX_SCROLL = 10_000_000;
+/** As far down a document as a height may claim to reach, in CSS pixels. */
+const MAX_PAGE_HEIGHT = 2_000_000;
+
+/**
+ * What a frame is given before it has said how tall it is.
+ *
+ * Not zero, and not something enormous: zero would collapse the whole book into
+ * a scrollbar-less strip for the instant before the first measurement arrives,
+ * and a huge placeholder would make the column jump backwards as thirty
+ * documents each shrank to their real size. A screenful is the closest guess
+ * available with no information at all.
+ */
+const PAGE_HEIGHT_BEFORE_MEASURING = 700;
+
+/** How much of the column is left above something being scrolled to. */
+const SCROLL_TO_MARGIN = 24;
+
+/** How long the scrollbar has to be still before "which chapter is this" is re-asked. */
+const SCROLL_SETTLE_MS = 200;
+
+/** How many unanswered "where is this?" questions may be outstanding at once. */
+const MAX_PENDING_LOCATES = 64;
+
+/** As long as a chapter's name may be on the wire. The spine clamps it again. */
+const MAX_CHAPTER_TITLE = 2_000;
 
 /**
  * The shape of a `data-bf-id`, checked before it is handed to an IPC call that
@@ -592,6 +1124,9 @@ const MAX_BLOCK_HTML = 200_000;
  * thousand ids in an IPC call.
  */
 const MAX_BATCH = 5_000;
+
+/** How many URL strings are kept trusted before the cache is thrown away whole. */
+const MAX_TRUSTED_URLS = 4_000;
 
 /**
  * A `data-bf-cat` value, checked before it is handed to a call that writes it

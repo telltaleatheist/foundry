@@ -227,12 +227,111 @@ const SELECT_CSS = [
   + 'background-color:rgba(47,125,79,.09);cursor:text}',
 ].join('\n');
 
+/**
+ * The CONTINUOUS BOOK's own stylesheet — the chapter line, and the two rules
+ * that let a document be stacked rather than scrolled.
+ *
+ * ── Why this is a second sheet and not more of the one above ────────────────
+ *
+ * Select mode is a MODE: it comes on when a curator presses a button and the
+ * whole of it — the outlines, the marquee, the suppressed text selection — goes
+ * away again when they press it a second time. A chapter line is not a mode. It
+ * is how the book says where it divides, and it is drawn for somebody who is
+ * only reading, exactly as a printed book prints its chapter openings whether or
+ * not anybody is holding a pencil. So the two are added and removed
+ * independently, and a person who never touches Select still sees the spine.
+ *
+ * ── THE GREEN DOTTED LINE, and where the look comes from ───────────────────
+ *
+ * Owen's own reference: *"this logic already exists in mupdf in Bookforge, kind
+ * of. A chapter marker that's a green dotted line."* The green is this app's own
+ * editing green (`#2f7d4f`, the colour the in-place block editor already
+ * outlines with), so the line reads as one of foundry's marks rather than as
+ * something the book printed. The two dotted halves are `::before`/`::after` on
+ * a flex row, which is what makes the rule span whatever width the text column
+ * turns out to be WITHOUT this script measuring anything — the same reason the
+ * strike's X is a pair of gradients.
+ *
+ * THE TITLE IS ON THE LINE AND NOT IN A TOOLTIP. It is the definitive chapter
+ * information for the book (the user's words), and a fact nobody can read
+ * without hovering is a fact the page does not actually state. It is clamped to
+ * a share of the width and ellipsised rather than allowed to wrap, so a marker
+ * stays one line high and the book's rhythm is not broken by a name somebody
+ * pasted a paragraph into.
+ *
+ * THE GRAB AREA IS THE WHOLE LINE. `padding:9px 0` gives the row about twenty
+ * pixels of height to catch a pointer with, because the brief is *"grab the
+ * chapter line and drag it"* and a two-pixel rule is not a thing a hand can
+ * reliably take hold of. The block underneath keeps its own margin: the padding
+ * is inside the marker, so nothing about the book's spacing moves.
+ *
+ * ── The stacking rules ─────────────────────────────────────────────────────
+ *
+ * `html,body{height:auto;overflow:visible}` is the whole of what makes one
+ * scroll out of many documents. The shell sizes each <iframe> to the height this
+ * frame reports and lets ITS OWN container scroll; a book whose stylesheet says
+ * `body{height:100%}` — which plenty of hand-made EPUBs do — would otherwise
+ * report the height of the box it was given, forever, and the document would
+ * render as a fixed-height window with its own scrollbar inside the flow.
+ * `!important` over somebody else's stylesheet is a thing this codebase does
+ * once, here, and only at serve time: the disk copy and every repack see none of
+ * it, exactly as they see none of the reporter.
+ */
+const FLOW_CSS = [
+  'html,body{height:auto !important;min-height:0 !important;overflow:visible !important}',
+  '[data-bf-chapter]{display:flex;align-items:center;gap:10px;margin:1.4em 0;padding:9px 0;'
+  + 'text-indent:0;cursor:grab;-webkit-user-select:none;user-select:none}',
+  '[data-bf-chapter]::before,[data-bf-chapter]::after{content:"";flex:1 1 0;'
+  + 'border-top:2px dotted #2f7d4f;align-self:center}',
+  '[data-bf-chapter-title]{flex:0 1 auto;max-width:62%;overflow:hidden;text-overflow:ellipsis;'
+  + 'white-space:nowrap;padding:1px 5px;border-radius:3px;color:#2f7d4f;font-weight:600;'
+  + 'font-style:normal;font-size:12px;line-height:1.4;letter-spacing:.03em;'
+  + 'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}',
+  // The one place a book's words may be typed into that is not a block: the
+  // caret needs a text selection and a box to sit in, and it has to be visibly
+  // different from the label it was a moment ago.
+  '[data-bf-chapter-title][contenteditable="true"]{-webkit-user-select:text;user-select:text;'
+  + 'cursor:text;outline:2px solid #2f7d4f;outline-offset:1px;'
+  + 'background-color:rgba(47,125,79,.10);max-width:none;overflow:visible;text-overflow:clip}',
+  '[data-bf-chapter-drop]{flex:0 0 auto;cursor:pointer;color:#2f7d4f;opacity:.55;'
+  + 'font-size:11px;line-height:1;padding:2px 4px;border-radius:3px}',
+  '[data-bf-chapter-drop]:hover{opacity:1;background-color:rgba(47,125,79,.14)}',
+  '[data-bf-chapter]:hover [data-bf-chapter-title]{background-color:rgba(47,125,79,.10)}',
+  // Mid-drag the line itself fades and the LANDING line is what the eye
+  // follows, so the answer to "where will this end up" is drawn where it will
+  // end up rather than under the pointer.
+  '[data-bf-chapter][data-bf-dragging]{opacity:.35;cursor:grabbing}',
+  '[data-bf-landing]{position:absolute;z-index:2147483646;pointer-events:none;height:0;'
+  + 'border-top:3px solid #2f7d4f;box-sizing:border-box}',
+  /*
+   * THE GUTTER AFFORDANCE — "the user can also click to add a chapter break
+   * anywhere they want", drawn only while the pointer is in the seam between two
+   * blocks.
+   *
+   * `position:absolute` and a measured origin, exactly like the marquee: a book
+   * is free to position its own body, so where 0,0 lands is asked rather than
+   * assumed. It is deliberately thin and biased UPWARD into the gap, so that a
+   * click meant for the paragraph's first line still reaches the paragraph.
+   */
+  '[data-bf-gutter]{position:absolute;z-index:2147483645;cursor:pointer;display:flex;'
+  + 'align-items:center;justify-content:center;box-sizing:border-box;'
+  + 'border-top:2px dotted rgba(47,125,79,.55);-webkit-user-select:none;user-select:none}',
+  '[data-bf-gutter] span{padding:1px 8px;border-radius:9px;background:#2f7d4f;color:#fff;'
+  + 'font-weight:600;font-size:10px;line-height:1.5;letter-spacing:.04em;font-style:normal;'
+  + 'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}',
+].join('\n');
+
 export const REPORTER_SOURCE = `(function () {
   'use strict';
   var BLOCK = /^(${BLOCK_TAGS})$/i;
   document.addEventListener('click', function (event) {
     var start = event.target instanceof Element ? event.target : null;
     if (!start) return;
+    // A CHAPTER LINE IS NOT A PLACE IN THE SOURCE. The marker and the gutter
+    // affordance are this script's own elements sitting in the book's flow, and
+    // a marker inserted before a paragraph inside a blockquote would otherwise
+    // walk up to the blockquote and report a click on somebody else's block.
+    if (start.closest('[' + CHAPTER + '],[' + GUTTER + ']')) return;
     // The nearest foundry block wins: data-bf-page is on every block the model
     // read, and its index in document order equals its index in the source.
     var bf = start.closest('[data-bf-page]');
@@ -344,6 +443,66 @@ export const REPORTER_SOURCE = `(function () {
    * arrives cannot eat a later one.
    */
   var dropClick = false;
+
+  /*
+   * ═══ THE CONTINUOUS BOOK ═════════════════════════════════════════════════
+   *
+   * This document is no longer a page the reader navigates TO. The shell stacks
+   * every document of the spine in one scrolling column, sizes each frame to the
+   * height reported from in here, and the book runs start to finish — which is
+   * the ruling this half of the file exists for:
+   *
+   *   "Instead of splitting chapters the way we currently do, let's have the
+   *    whole book flow from start to finish, and chapters can be dotted lines
+   *    with titles that show where they separate."
+   *
+   * SO THE FRAME HAS TWO NEW JOBS. It says how tall it is, because the shell
+   * cannot measure a document behind an opaque origin any more than it can
+   * hit-test a paragraph. And it draws the chapter lines, for the same reason
+   * select mode's outlines are drawn here: a marker has to sit BETWEEN two
+   * blocks, in the flow, and only something inside this document knows where
+   * that is.
+   *
+   * WHAT THE LINE IS NOT is a fact this script keeps. \`marks\` below is the
+   * parent's last statement of the overlay's chapters spine, held only so a
+   * redraw can happen without asking again; every gesture on a line posts out
+   * and changes NOTHING here, and the line moves when the spine comes back
+   * saying it moved. That is the same discipline the cut follows — the frame
+   * paints, the file decides — with the optimism removed, because a spine is one
+   * statement about the whole book and a wrong guess at it is forty chapters in
+   * the wrong place rather than one paragraph.
+   *
+   * AND NONE OF IT IS IN THE BOOK. The marker elements are created here, live in
+   * this document only, and are removed and rebuilt on every restatement; the
+   * disk copy, \`epub:read-member\` and every repack see a chapter exactly as it
+   * was written, exactly as they see none of this script.
+   */
+  var CHAPTER = 'data-bf-chapter';
+  var CHAPTER_TITLE = 'data-bf-chapter-title';
+  var CHAPTER_DROP = 'data-bf-chapter-drop';
+  var GUTTER = 'data-bf-gutter';
+  var LANDING = 'data-bf-landing';
+  var DRAGGING = 'data-bf-dragging';
+
+  /** Off until the shell says this document is one panel of a stacked book. */
+  var flow = false;
+  var flowSheet = null;
+  /** The spine as the parent last stated it: [{id, title}], nearest thing to truth in here. */
+  var marks = [];
+  /** False while a frozen save is on screen — the lines are drawn, and they do not move. */
+  var marksEditable = false;
+  var chapterDrag = null;
+  var landing = null;
+  var landingOrigin = null;
+  var gutter = null;
+  var gutterOrigin = null;
+  var gutterAt = null;
+  var titleEditing = null;
+  var titleWas = '';
+  var lastHeight = -1;
+  var heightBefore = -1;
+  var heightTimer = null;
+  var heightWatched = false;
 
   function post(message) { window.parent.postMessage(message, '*'); }
 
@@ -554,6 +713,11 @@ export const REPORTER_SOURCE = `(function () {
     var start = event.target instanceof Element ? event.target : null;
     if (!start) return;
     if (start.closest('[' + CAT + ']')) return;
+    // A press on a chapter line is a DRAG OF THE LINE, and a press on the gutter
+    // affordance is a chapter about to be added. Neither is empty space, so
+    // neither may start a rectangle over the page — this is the same exclusion
+    // \`closest(CAT)\` above makes for a press inside a paragraph.
+    if (start.closest('[' + CHAPTER + '],[' + GUTTER + ']')) return;
     var x = event.clientX + scrollLeft();
     var y = event.clientY + scrollTop();
     marquee = {
@@ -833,6 +997,9 @@ export const REPORTER_SOURCE = `(function () {
   function beginEdit(element, caretAtEnd) {
     if (editing === element) return;
     if (editing) commitEdit();
+    // Two carets cannot be in one document, and the chapter title is the other
+    // place this frame lets somebody type.
+    if (titleEditing) commitTitle();
     var inside = element.getElementsByTagName('*');
     for (var i = 0; i < inside.length; i += 1) {
       var name = inside[i].tagName.toLowerCase();
@@ -968,6 +1135,24 @@ export const REPORTER_SOURCE = `(function () {
       return;
     }
     /*
+     * THE CONTINUOUS BOOK'S FOUR, and they are all ABOVE the mode gate for the
+     * same reason the scroll restore is: none of them is a power select mode
+     * confers. A reader who never presses Select still gets one scroll, still
+     * sees where the book divides, and still has an inspector that can scroll
+     * them to a chapter — and a frame that only reported its height while
+     * somebody was curating would render the book as thirty stacked windows the
+     * moment the mode came off.
+     */
+    if (data.type === 'foundry:flow') { setFlow(data.on === true); return; }
+    if (data.type === 'foundry:chapters') {
+      marks = readMarks(data.marks);
+      marksEditable = data.editable === true;
+      drawMarkers();
+      return;
+    }
+    if (data.type === 'foundry:locate') { locate(data.token, data.id, data.frag); return; }
+    if (data.type === 'foundry:clear-selection') { dropSelectionQuietly(); return; }
+    /*
      * EVERYTHING ELSE THE PARENT CAN ASK FOR NEEDS THE MODE ON. These are the
      * inspector's gestures — relabel the selected block, strike a whole
      * category — and with the mode off there is no selection, no stylesheet and
@@ -1022,7 +1207,11 @@ export const REPORTER_SOURCE = `(function () {
      * only thing in this frame that has a text history at all.
      */
     if (data.type === 'foundry:undo-typing') {
-      if (editing) document.execCommand(data.redo === true ? 'redo' : 'undo');
+      // A chapter title being typed into is the second contenteditable this
+      // document can hold, and it has the same claim on the chord: the parent
+      // sends this whenever the frame has said a caret is in the page, and a
+      // title edit raises that flag exactly as a block edit does.
+      if (editing || titleEditing) document.execCommand(data.redo === true ? 'redo' : 'undo');
       return;
     }
     if (data.type === 'foundry:recount') countCategories();
@@ -1090,9 +1279,539 @@ export const REPORTER_SOURCE = `(function () {
     countCategories();
   }
 
+  // ═══ the chapter lines ═════════════════════════════════════════════════════
+
+  function addFlowStyles() {
+    if (flowSheet) return;
+    flowSheet = document.createElement('style');
+    flowSheet.textContent = ${JSON.stringify(FLOW_CSS)};
+    (document.head || document.documentElement).appendChild(flowSheet);
+  }
+
+  function removeFlowStyles() {
+    if (flowSheet && flowSheet.parentNode) flowSheet.parentNode.removeChild(flowSheet);
+    flowSheet = null;
+  }
+
+  /**
+   * Where an absolutely positioned element of ours actually lands.
+   *
+   * The marquee measures this for itself and says why: position:absolute
+   * resolves against the nearest POSITIONED ancestor, and a book whose own
+   * stylesheet positions or transforms its body would put the line a page
+   * margin away from the boundary it is describing. Asked once per element
+   * rather than assumed, exactly as \`openBox\` does.
+   */
+  function originOf(element) {
+    element.style.left = '0px';
+    element.style.top = '0px';
+    var at = element.getBoundingClientRect();
+    return { x: at.left + scrollLeft(), y: at.top + scrollTop() };
+  }
+
+  /**
+   * Every block a chapter could START AT, boxed in document coordinates.
+   *
+   * BOTH NAMES OR NEITHER. \`data-bf-id\` is what a message out of here says and
+   * \`data-bf-src\` is what the parent turns it into — the banked answer the spine
+   * is keyed to — so a block carrying only one of them is not a place this app
+   * can honestly record a division at, and it is left out of the drop targets
+   * rather than offered and then refused. A book cast before provenance existed
+   * has none of these, and its lines simply cannot be dragged; the same silence
+   * \`mirrorToCuration\` keeps for the same reason.
+   */
+  function markableBlocks() {
+    var all = document.querySelectorAll('[' + ID + '][' + SRC + ']');
+    var ox = scrollLeft();
+    var oy = scrollTop();
+    var out = [];
+    for (var i = 0; i < all.length; i += 1) {
+      var r = all[i].getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) continue;
+      out.push({
+        el: all[i],
+        id: all[i].getAttribute(ID),
+        left: r.left + ox,
+        top: r.top + oy,
+        right: r.right + ox,
+        bottom: r.bottom + oy,
+      });
+    }
+    return out;
+  }
+
+  /** The boundary a dragged line would land on: the block start nearest the pointer. */
+  function nearestBoundary(boxes, y) {
+    var best = null;
+    var gap = 0;
+    for (var i = 0; i < boxes.length; i += 1) {
+      var away = Math.abs(boxes[i].top - y);
+      if (best === null || away < gap) { best = boxes[i]; gap = away; }
+    }
+    return best;
+  }
+
+  function markerBefore(block) {
+    var previous = block.previousElementSibling;
+    return previous && previous.hasAttribute(CHAPTER) ? previous : null;
+  }
+
+  function clearMarkers() {
+    var all = document.querySelectorAll('[' + CHAPTER + ']');
+    for (var i = 0; i < all.length; i += 1) {
+      if (all[i].parentNode) all[i].parentNode.removeChild(all[i]);
+    }
+  }
+
+  /**
+   * The spine, rendered — REMOVED AND REBUILT WHOLE on every restatement.
+   *
+   * A diff would be three cases (added, gone, renamed) against a list that
+   * arrives complete anyway, and the list is sixty entries at the outside. What
+   * a rebuild costs is one layout of a document that is about to be measured
+   * again regardless, and what it buys is that the lines on screen are the
+   * parent's last word about the file and cannot drift from it by one gesture.
+   */
+  function drawMarkers() {
+    if (titleEditing) cancelTitle();
+    clearMarkers();
+    if (flow) {
+      for (var i = 0; i < marks.length; i += 1) {
+        var block = byBlockId(marks[i].id);
+        if (!block || !block.parentNode) continue;
+        block.parentNode.insertBefore(markerFor(marks[i]), block);
+      }
+    }
+    heightSoon();
+  }
+
+  function markerFor(mark) {
+    var line = document.createElement('div');
+    line.setAttribute(CHAPTER, mark.id);
+    var title = document.createElement('span');
+    title.setAttribute(CHAPTER_TITLE, '1');
+    title.textContent = mark.title;
+    line.appendChild(title);
+    // NO ✕ WHILE A SAVE IS ON SCREEN. The lines still draw — a frozen curation
+    // is as much a statement about where the book divides as about what is
+    // struck, and it should be readable — but nothing on them may be pressed.
+    if (marksEditable) {
+      var drop = document.createElement('span');
+      drop.setAttribute(CHAPTER_DROP, '1');
+      drop.setAttribute('title', 'Not a chapter');
+      drop.textContent = '\\u2715';
+      line.appendChild(drop);
+    }
+    return line;
+  }
+
+  /** What the parent said the spine is, believed one field at a time. */
+  function readMarks(value) {
+    if (!Array.isArray(value)) return [];
+    var out = [];
+    for (var i = 0; i < value.length && i < 2000; i += 1) {
+      var one = value[i];
+      if (!one || typeof one.id !== 'string' || typeof one.title !== 'string') continue;
+      if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/.test(one.id)) continue;
+      out.push({ id: one.id, title: one.title.replace(/[\\u0000-\\u001f\\u007f]+/g, ' ').slice(0, 200) });
+    }
+    return out;
+  }
+
+  // ── Drag the line ──────────────────────────────────────────────────────────
+  //
+  // "The user can grab the chapter line and drag it up or down." The whole row
+  // is the handle, the landing line says where the drop will put it, and the
+  // drop posts two block names — where it was, where it now sits above. Nothing
+  // moves in this document: the spine is written by the parent and comes back as
+  // a restatement, which is what makes a refusal (a frozen save, a write that
+  // would not land) leave the page saying what the file says.
+
+  function openLanding() {
+    if (!landing) {
+      landing = document.createElement('div');
+      landing.setAttribute(LANDING, '1');
+      (document.body || document.documentElement).appendChild(landing);
+    }
+    landing.style.width = '0px';
+    landingOrigin = originOf(landing);
+  }
+
+  function closeLanding() {
+    if (landing && landing.parentNode) landing.parentNode.removeChild(landing);
+    landing = null;
+    landingOrigin = null;
+  }
+
+  function chapterDown(event) {
+    if (!flow || !marksEditable || event.button !== 0) return;
+    var start = event.target instanceof Element ? event.target : null;
+    if (!start) return;
+    // The ✕ is a press of its own, and the title being typed into is a caret.
+    if (start.closest('[' + CHAPTER_DROP + ']')) return;
+    if (titleEditing && titleEditing.contains(start)) return;
+    var marker = start.closest('[' + CHAPTER + ']');
+    if (!marker) return;
+    if (titleEditing) commitTitle();
+    chapterDrag = {
+      marker: marker,
+      id: marker.getAttribute(CHAPTER),
+      y: event.clientY + scrollTop(),
+      moved: false,
+      boxes: markableBlocks(),
+      target: null,
+    };
+    // Chromium would otherwise start a text sweep from the press, and the book
+    // would end the drag with a blue smear across three paragraphs.
+    event.preventDefault();
+  }
+
+  function chapterMove(event) {
+    if (!chapterDrag) return;
+    // The button came back up somewhere this frame cannot hear — over the
+    // toolbar, the inspector, the next pane. Same recovery the marquee makes.
+    if (event.buttons === 0) { chapterUp(); return; }
+    var y = event.clientY + scrollTop();
+    if (!chapterDrag.moved) {
+      if (Math.abs(y - chapterDrag.y) <= MARQUEE_SLOP) return;
+      chapterDrag.moved = true;
+      chapterDrag.marker.setAttribute(DRAGGING, '1');
+      openLanding();
+    }
+    var found = nearestBoundary(chapterDrag.boxes, y);
+    chapterDrag.target = found;
+    if (found && landing && landingOrigin) {
+      landing.style.left = (found.left - landingOrigin.x) + 'px';
+      landing.style.top = (found.top - landingOrigin.y) + 'px';
+      landing.style.width = (found.right - found.left) + 'px';
+    }
+  }
+
+  function chapterUp() {
+    if (!chapterDrag) return;
+    var drag = chapterDrag;
+    chapterDrag = null;
+    drag.marker.removeAttribute(DRAGGING);
+    closeLanding();
+    if (!drag.moved) return;
+    // A drag that ended over empty space would otherwise be read as "put the
+    // selection down" by select mode's click handler, exactly as a marquee is.
+    dropClick = true;
+    if (!drag.target || !drag.target.id || drag.target.id === drag.id) return;
+    post({ type: 'foundry:chapter-move', from: drag.id, to: drag.target.id });
+  }
+
+  // ── Rename it in place ─────────────────────────────────────────────────────
+  //
+  // "Or they can double click it and change what it says." The title element
+  // itself becomes the editor — no dialog, no box somewhere else on screen —
+  // and it commits on Enter or blur and cancels on Escape, which are the three
+  // endings the in-place block editor already taught this document.
+
+  function beginTitle(marker) {
+    var title = marker.querySelector('[' + CHAPTER_TITLE + ']');
+    if (!title || titleEditing === title) return;
+    if (titleEditing) commitTitle();
+    if (editing) commitEdit();
+    titleEditing = title;
+    titleWas = title.textContent || '';
+    title.setAttribute('contenteditable', 'true');
+    title.focus();
+    var range = document.createRange();
+    range.selectNodeContents(title);
+    var selection = window.getSelection();
+    if (selection) { selection.removeAllRanges(); selection.addRange(range); }
+    // The same flag a block edit raises, and for the same one decision: while a
+    // caret is in this page Ctrl+Z means the typing rather than the book.
+    post({ type: 'foundry:block-editing', on: true });
+  }
+
+  function endTitle(title) {
+    title.removeAttribute('contenteditable');
+    post({ type: 'foundry:block-editing', on: false });
+  }
+
+  function commitTitle() {
+    var title = titleEditing;
+    if (!title) return;
+    titleEditing = null;
+    endTitle(title);
+    var marker = title.parentElement;
+    var text = (title.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 200);
+    /*
+     * AN EMPTY NAME IS NOT A RENAME, and it is not a removal either. A chapter
+     * with no title is a line in the contents somebody cannot read, and the
+     * gesture for "this is not a chapter" is the ✕ beside it — so the old name
+     * comes back and nothing is posted. The same rule \`renameChapter\` enforces
+     * on the other side of the window, said here so the page does not go blank
+     * on its way to being refused.
+     */
+    if (text.length === 0 || text === titleWas.replace(/\\s+/g, ' ').trim() || !marker) {
+      title.textContent = titleWas;
+      return;
+    }
+    title.textContent = text;
+    post({ type: 'foundry:chapter-rename', id: marker.getAttribute(CHAPTER), title: text });
+  }
+
+  function cancelTitle() {
+    var title = titleEditing;
+    if (!title) return;
+    titleEditing = null;
+    title.textContent = titleWas;
+    endTitle(title);
+  }
+
+  // ── Click the gutter to add one ────────────────────────────────────────────
+  //
+  // "The user can also click to add a chapter break anywhere they want." The
+  // affordance appears only while the pointer is in the seam above a block, and
+  // it names no title: the parent reads the block's own words out of the chapter
+  // file, which is the §6b rule — THE BLOCK IS THE TITLE — reaching this gesture
+  // through exactly the door the relabel already uses.
+
+  /** How near a block's top edge counts as being in the seam above it. */
+  var GUTTER_ZONE = 9;
+
+  function showGutter(id, top, left, width) {
+    if (!gutter) {
+      gutter = document.createElement('div');
+      gutter.setAttribute(GUTTER, '1');
+      var pill = document.createElement('span');
+      pill.textContent = 'Chapter starts here';
+      gutter.appendChild(pill);
+      (document.body || document.documentElement).appendChild(gutter);
+      // MEASURED ONCE, at creation. \`originOf\` zeroes the element to ask where
+      // it lands, and doing that on every mousemove would move the affordance to
+      // the corner and back sixty times a second under the pointer chasing it.
+      gutterOrigin = originOf(gutter);
+    }
+    if (!gutterOrigin) return;
+    gutter.style.left = (left - gutterOrigin.x) + 'px';
+    gutter.style.top = (top - gutterOrigin.y - 9) + 'px';
+    gutter.style.width = width + 'px';
+    gutter.style.height = '18px';
+    gutterAt = id;
+  }
+
+  function hideGutter() {
+    if (gutter && gutter.parentNode) gutter.parentNode.removeChild(gutter);
+    gutter = null;
+    gutterOrigin = null;
+    gutterAt = null;
+  }
+
+  function gutterMove(event) {
+    if (!flow || !marksEditable || chapterDrag || marquee || editing || titleEditing) {
+      hideGutter();
+      return;
+    }
+    var start = event.target instanceof Element ? event.target : null;
+    if (!start) { hideGutter(); return; }
+    // Hovering the affordance itself is not a reason to take it away.
+    if (start.closest('[' + GUTTER + ']')) return;
+    if (start.closest('[' + CHAPTER + ']')) { hideGutter(); return; }
+    var block = start.closest('[' + ID + ']');
+    if (!block || !block.getAttribute(SRC)) { hideGutter(); return; }
+    var id = block.getAttribute(ID);
+    if (!id) { hideGutter(); return; }
+    var rect = block.getBoundingClientRect();
+    // Only the seam, and only above: a pointer in the middle of a paragraph is
+    // reading it, and a paragraph that already opens a chapter has no seam left
+    // to offer.
+    if (event.clientY - rect.top > GUTTER_ZONE || event.clientY < rect.top - GUTTER_ZONE) {
+      hideGutter();
+      return;
+    }
+    if (markerBefore(block)) { hideGutter(); return; }
+    showGutter(id, rect.top + scrollTop(), rect.left + scrollLeft(), rect.width);
+  }
+
+  // ═══ how tall this document is ═════════════════════════════════════════════
+  //
+  // The one measurement the shell cannot make for itself. Each frame is sized to
+  // what it reports and never scrolls; the column outside them does. A frame
+  // that under-reports clips its own last paragraph, so the answer is the
+  // largest of the four numbers a document can be asked for its height by —
+  // books disagree about which of them is meaningful, depending on whether the
+  // body is floated, absolutely positioned or plain.
+
+  function measuredHeight() {
+    var body = document.body;
+    var root = document.documentElement;
+    return Math.max(
+      body ? body.scrollHeight : 0,
+      body ? body.offsetHeight : 0,
+      root ? root.scrollHeight : 0,
+      root ? root.offsetHeight : 0,
+    );
+  }
+
+  function reportHeight() {
+    heightTimer = null;
+    if (!flow) return;
+    var now = measuredHeight();
+    // UNCHANGED IS UNSAID. Setting the frame's height reflows this document,
+    // which is what fires the observer below — so a report that repeated the
+    // number it was answering would be a loop with a layout in it.
+    if (now === lastHeight) return;
+    /*
+     * AND NEITHER IS THE NUMBER BEFORE LAST, which kills the one oscillation
+     * this arrangement can actually produce. A book whose own stylesheet sizes
+     * something in \`vh\` measures differently at two frame heights, so A sets the
+     * frame to B, B measures back to A, and the pair ping-pongs forever with a
+     * layout on every hop. Refusing the value it just came from stops the cycle
+     * at its second lap and leaves the frame at whichever of the two it reached
+     * first — slightly wrong for one strange book, rather than a spinning fan
+     * for anybody who opens it.
+     */
+    if (now === heightBefore) return;
+    heightBefore = lastHeight;
+    lastHeight = now;
+    post({ type: 'foundry:page-height', height: now });
+  }
+
+  function heightSoon() {
+    if (!flow || heightTimer !== null) return;
+    heightTimer = setTimeout(reportHeight, 60);
+  }
+
+  /**
+   * Everything that can change a document's height, watched once.
+   *
+   * THE OBSERVER IS ON THE BODY and not on the documentElement: the root's box
+   * tracks the frame it was given, so observing it would report the height the
+   * shell just set rather than the height the content wants. \`load\` catches the
+   * images that arrive after this script runs — the same late growth
+   * \`restoreScroll\` has always had to wait for — and \`resize\` catches the column
+   * being made narrower, which reflows every paragraph in the book.
+   */
+  function watchHeight() {
+    if (heightWatched) return;
+    heightWatched = true;
+    if (typeof ResizeObserver === 'function' && document.body) {
+      new ResizeObserver(heightSoon).observe(document.body);
+    }
+    window.addEventListener('resize', heightSoon, true);
+    window.addEventListener('load', heightSoon);
+  }
+
+  function setFlow(on) {
+    if (on === flow) return;
+    flow = on;
+    if (!on) {
+      clearMarkers();
+      hideGutter();
+      closeLanding();
+      removeFlowStyles();
+      return;
+    }
+    addFlowStyles();
+    watchHeight();
+    drawMarkers();
+    lastHeight = -1;
+    heightBefore = -1;
+    reportHeight();
+  }
+
+  /**
+   * Where a name is on this page, answered in document coordinates.
+   *
+   * The shell asks this to scroll its column to a chapter somebody clicked in
+   * the inspector: it knows which frame holds the name and where that frame
+   * begins, and this supplies the only part it cannot see. \`null\` for a name
+   * this document does not carry, which is the ordinary answer from the other
+   * thirty frames of a book.
+   */
+  function locate(token, blockId, fragment) {
+    var element = null;
+    if (typeof blockId === 'string') element = byBlockId(blockId);
+    else if (typeof fragment === 'string'
+      && fragment.indexOf('"') < 0 && fragment.indexOf('\\\\') < 0) {
+      element = document.querySelector('[id="' + fragment + '"]');
+    }
+    post({
+      type: 'foundry:located',
+      token: token,
+      y: element ? element.getBoundingClientRect().top + scrollTop() : null,
+    });
+  }
+
+  /**
+   * Put the selection down WITHOUT saying so — the one drop that is not an
+   * announcement.
+   *
+   * A stacked book is thirty documents and one inspector. When a click lands in
+   * one of them the shell tells the other twenty-nine to let go, and if they
+   * answered they would each post "nothing is selected" over the selection that
+   * had just been made. So this is deliberately silent: the frame that DID the
+   * selecting is the one that speaks for it.
+   */
+  function dropSelectionQuietly() {
+    if (editing) commitEdit();
+    for (var i = 0; i < picked.length; i += 1) picked[i].removeAttribute(SEL);
+    picked = [];
+  }
+
   // The marquee's three, on the DOCUMENT rather than on any element: the drag
   // has to keep tracking after the pointer has left whatever it started over,
   // and a book's own markup is not a place to hang a listener.
+  //
+  // The chapter line's three are registered FIRST, so a press that lands on a
+  // marker is a drag of the line before anything else has a chance to read it.
+  document.addEventListener('mousedown', chapterDown, true);
+  document.addEventListener('mousemove', chapterMove, true);
+  document.addEventListener('mouseup', chapterUp, true);
+  document.addEventListener('mousemove', gutterMove, true);
+  // ON THE ROOT AND WITHOUT CAPTURE, which is not fussiness: \`mouseleave\` does
+  // not bubble but it DOES capture, so the same listener on \`document\` would
+  // fire every time the pointer left any paragraph in the book and the
+  // affordance would never survive being approached. On the documentElement it
+  // means what it says — the pointer has left this document.
+  document.documentElement.addEventListener('mouseleave', hideGutter);
+
+  document.addEventListener('click', function (event) {
+    var start = event.target instanceof Element ? event.target : null;
+    if (!start || !flow || !marksEditable) return;
+    var drop = start.closest('[' + CHAPTER_DROP + ']');
+    if (drop) {
+      var marker = drop.closest('[' + CHAPTER + ']');
+      if (marker) post({ type: 'foundry:chapter-remove', id: marker.getAttribute(CHAPTER) });
+      return;
+    }
+    if (start.closest('[' + GUTTER + ']') && gutterAt) {
+      // NO TITLE IN THE MESSAGE. The parent reads the block's own words out of
+      // the chapter file — the same read the relabel gesture makes — so the two
+      // ways of saying "the book divides here" name a chapter identically, and
+      // an undo of either has somewhere to get the name back from.
+      post({ type: 'foundry:chapter-add', id: gutterAt });
+      hideGutter();
+    }
+  }, true);
+
+  document.addEventListener('dblclick', function (event) {
+    if (!flow || !marksEditable) return;
+    var start = event.target instanceof Element ? event.target : null;
+    if (!start) return;
+    var marker = start.closest('[' + CHAPTER + ']');
+    if (!marker) return;
+    event.preventDefault();
+    beginTitle(marker);
+  }, true);
+
+  document.addEventListener('keydown', function (event) {
+    if (!titleEditing) return;
+    if (event.key === 'Escape') { event.preventDefault(); cancelTitle(); }
+    // Enter commits rather than inserting a line, exactly as it does in a
+    // block: a chapter's name is one line by construction.
+    else if (event.key === 'Enter') { event.preventDefault(); commitTitle(); }
+  }, true);
+
+  document.addEventListener('focusout', function (event) {
+    if (!titleEditing || event.target !== titleEditing) return;
+    commitTitle();
+  }, true);
+
   document.addEventListener('mousedown', marqueeDown, true);
   document.addEventListener('mousemove', marqueeMove, true);
   document.addEventListener('mouseup', marqueeUp, true);
@@ -1105,6 +1824,11 @@ export const REPORTER_SOURCE = `(function () {
     if (dropClick) { dropClick = false; return; }
     var start = event.target instanceof Element ? event.target : null;
     if (!start) return;
+    // A press on a chapter line or on the gutter affordance is that gesture and
+    // nothing else. Without this, adding a break would also put down whatever
+    // the curator had selected, because neither element is inside a block and
+    // the rule below reads "outside every block" as "put the selection down".
+    if (start.closest('[' + CHAPTER + '],[' + GUTTER + ']')) return;
     // A click INSIDE the block being edited is a caret being placed. Anything
     // else here would fight the thing the user is doing.
     if (editing && editing.contains(start)) return;
@@ -1120,6 +1844,10 @@ export const REPORTER_SOURCE = `(function () {
     if (!mode) return;
     var start = event.target instanceof Element ? event.target : null;
     if (!start) return;
+    // The chapter line's own double-click has already been handled above, and a
+    // marker sitting inside a container the model stamped would otherwise be
+    // read as a double-click on that container's words.
+    if (start.closest('[' + CHAPTER + '],[' + GUTTER + ']')) return;
     var target = start.closest('[' + CAT + ']');
     if (!target) return;
     event.preventDefault();
@@ -1173,7 +1901,10 @@ export const REPORTER_SOURCE = `(function () {
   // invent. It goes in as text with its whitespace collapsed, which is what
   // pasting INTO one block of a book means.
   document.addEventListener('paste', function (event) {
-    if (!mode || !editing) return;
+    // The title is the second thing that can be typed into, and it needs this
+    // more than a block does: a chapter name is text by construction, so markup
+    // arriving from a clipboard has nowhere legal to land at all.
+    if (!titleEditing && (!mode || !editing)) return;
     event.preventDefault();
     var text = event.clipboardData ? event.clipboardData.getData('text/plain') : '';
     if (text) document.execCommand('insertText', false, text.replace(/\\s+/g, ' '));
@@ -1256,6 +1987,9 @@ export const REPORTER_SOURCE = `(function () {
   // the throttled reports are what makes that acceptable rather than fatal.
   window.addEventListener('pagehide', function () {
     commitEdit();
+    // The half-typed chapter name gets the same last chance the half-typed
+    // paragraph does.
+    commitTitle();
     if (scrollTimer !== null) clearTimeout(scrollTimer);
     reportScroll();
   });
