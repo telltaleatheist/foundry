@@ -572,9 +572,31 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
       font-weight: 500;
     }
 
+    /*
+      THE SPACE IS RESERVED, so the rows under a hint never move.
+
+      Every one of these paragraphs says a DIFFERENT SENTENCE depending on the
+      state it is about — "4:2 is selected" against the three-line legend of the
+      colours, "these are your chapters" against the longer sentence about
+      chapters Foundry only proposed. The sentences are different lengths, so
+      left to size themselves they grew and shrank as the user clicked and the
+      whole list slid up and down underneath: the panel rearranging itself in
+      answer to a click on the book, which is the one thing this column must
+      never do.
+
+      FOUR LINES, sized to the LONGEST sentence in the panel — the unconfirmed
+      chapters one — rather than to each section's own, because one height for
+      every hint is a rule that holds when somebody adds a section, and a
+      per-section height is a measurement that rots the first time a sentence is
+      reworded. The cost is some quiet space under the short ones, which is what
+      buying a still panel costs. A sentence longer than this will start the
+      movement again: measure before you write one.
+    */
     .hint {
       margin: 0 0 6px;
       padding: 0 12px;
+      min-height: calc(4 * 1.4em);
+      box-sizing: content-box;
       font-size: 11px; line-height: 1.4;
       color: var(--text-tertiary);
     }
