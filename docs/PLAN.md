@@ -283,6 +283,51 @@ why Phase G is not optional — the gates caught none of them.
    nav before building; the fragment mismatch is strongly indicated
    but was not observed directly.
 
+### Wave 4c — THE SECOND SITTING (user, 2026-08-15, after 4b)
+
+Four more, and the user's judgement on them is part of the record:
+*"theres a lot that's incomplete here, and hasnt implement what i
+intended and what we discussed in great detail, and that concerns
+me."* That is the same complaint this file opens with, and it is
+being made about work that landed AFTER this file was written. Do not
+explain it away.
+
+4. ~~**The translation model is never brought down.**~~ FIXED, and
+   pushed as `3622069` — the user said "fix that now" and it was the
+   one item that could be fixed in place with certainty. Ollama holds
+   a model for five minutes after its last request and this program
+   never asked it not to, so a finished book left ~20 GB pinned on the
+   card the reading server wants next. Every run now ends with
+   `keep_alive: 0`, in a `finally` so a FAILED run gives the card back
+   too, best-effort so it can never fail a run that produced its book.
+   `--keep-model` is the hatch for an Ollama this machine does not own;
+   the app never passes it.
+5. **Chapter mode is a mode, not a hover.** User ruling, verbatim:
+   *"chapter markers shouldnt light up when i drag the mouse around,
+   it should be a button i press - add chapter. then it lets me pick
+   where it goes, then it exits chapter mode. i should be able to
+   delete chapters or move them around freely."* So: the gutter's
+   add-affordance stops responding to an idle pointer entirely. A
+   button — **Add chapter** — enters a mode; the next click places the
+   line; placing it EXITS the mode. Deleting a line and dragging one
+   are free actions available without entering any mode. Unit K built
+   the drag and the double-click rename correctly; what it got wrong
+   is that adding was ambient instead of asked for.
+6. **A translation lands in the inspector's Contents but not in the
+   left nav's tree.** User: *"i thought we worked that logic out
+   already. why would it be showing up on the right side/contents
+   instead of the tree?"* — and the ruling that governs is §2's tree,
+   where a translation is a step under the thing it was made from.
+   **DIAGNOSE BEFORE BUILDING**: the tree already draws stranded steps
+   defensively (`open-documents.component.ts:817-829`), so a translate
+   step present in the ledger should be drawn even with a broken
+   parent link. That points at the step not being in the ledger the
+   tree is READING — either `recordTranslation` (D2, `projects.ts`)
+   not landing a row, or the renderer's history not reloading when a
+   translate job settles, which would show exactly this: a book on
+   screen and no row for it until reopen. Check which before touching
+   anything; the fixes are different and only one is right.
+
 ### Wave 5
 
 - **Phase E — retire the old surfaces.** The html-editor machinery (dead
