@@ -625,6 +625,29 @@ export interface FoundryApi {
      */
     go(projectDir: string, stepId: string): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
     /**
+     * WHICH DOCUMENT BELONGS ON SCREEN AT THIS PROJECT'S POSITION — absolute, or
+     * null when the position names no document of its own.
+     *
+     * ── Why the renderer asks rather than works it out ──────────────────────
+     *
+     * Every path in a project is a path main composes. A renderer that built
+     * `working/<stem>.pdf` for itself would be a second opinion about a question
+     * the ledger has already answered, and the way that opinion is wrong is that a
+     * branch read answers with the original reading's file. Main also has to admit
+     * the answer to the viewer's allow-list before handing it over, which is not
+     * something a renderer can do for itself and must not be.
+     *
+     * NULL IS ORDINARY AND MEANS "KEEP WHAT YOU HAVE": a project with no reading
+     * yet, a payload that has been swept, a position that is simply about the
+     * document already on screen. It is never a refusal, and the caller must not
+     * put a sentence on the strip about it — clicking a row is an instruction to
+     * look at that step, and the app's answer to "I have nowhere to show it" is to
+     * put it somewhere rather than to explain.
+     *
+     * Rejects only for a catalogue that will not parse, like everything else here.
+     */
+    documentAt(projectDir: string): Promise<string | null>;
+    /**
      * What deleting this step would take — the facts for the confirm card.
      *
      * EVERY CASUALTY, NAMED, WITH ITS OWN COST SENTENCE. A delete cascades: a

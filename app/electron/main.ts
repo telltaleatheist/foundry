@@ -83,11 +83,13 @@ import {
   deleteStep,
   describeStepDelete,
   documentAssets,
+  documentAtPosition,
   finalDir,
   goToStep,
   importDocument,
   inspectProject,
   type ProjectInventory,
+  isArchived,
   isManaged,
   listProjects,
   noteProjectTitle,
@@ -2146,9 +2148,26 @@ function registerIpc(): void {
    * unmanaged path is refused with the reason and with what to do about it,
    * rather than being quietly redirected — a metadata dialog that reported
    * success against a file the user was not looking at would be its own bug.
+   *
+   * ── AND `archive/` IS INSIDE THE LIBRARY AND STILL NOT WRITABLE ────────────
+   *
+   * `isManaged` answers true for every layer of a project on purpose (its own
+   * header says so), and that was a complete gate for exactly as long as no
+   * surface ever put an archived path in front of a writer. Standing on the origin
+   * row now shows the untouched original (`documentAtPosition`, projects.ts), so
+   * the dialog's `tab.path` can be that file — and a title edit made there would
+   * re-emit the only copy of somebody's scan this program knows of through
+   * pdf-lib, silently, in the one place the app promises it does not. The refusal
+   * names the row rather than the folder: a step is named by the action it was.
    */
   const writablePdf = (candidate: string): string => {
     const resolved = admittedPdf(candidate);
+    if (isArchived(resolved)) {
+      throw new Error(
+        'This is the document exactly as you imported it, which Foundry keeps and never writes to. '
+        + 'Step forward off the import in the history panel and edit the copy this app works on.',
+      );
+    }
     if (isManaged(resolved)) return resolved;
     throw new Error(
       `"${resolved}" is your own file, outside Foundry's library, and this app does not write to `
@@ -2329,6 +2348,23 @@ function registerIpc(): void {
   ipcMain.handle('ledger:read', (_event, projectDir: string) => readStepLedger(projectDir));
   ipcMain.handle('ledger:go', (_event, projectDir: string, stepId: string) =>
     goToStep(projectDir, stepId));
+  /*
+   * MAIN RESOLVES IT, SO MAIN ADMITS IT — the same pairing the import's relocation
+   * already makes (`document:relocated`, above), and for the same reason. The
+   * renderer is about to point a viewer, the block editor and the metadata dialog
+   * at this path, and every one of those doors asks the allow-list; a path the
+   * renderer named for itself is a path this process never agreed to serve.
+   *
+   * NOT REMEMBERED AS A RECENT. Nothing was opened here: the person clicked a row
+   * in the history of a book they already have open, and a library list that grew
+   * a row per click of the Steps accordion would be bookkeeping about a gesture
+   * that is meant to be free.
+   */
+  ipcMain.handle('ledger:document-at', async (_event, projectDir: string) => {
+    const resolved = await documentAtPosition(projectDir);
+    if (resolved !== null) openable.add(path.resolve(resolved));
+    return resolved;
+  });
   ipcMain.handle('ledger:describe-delete', async (_event, projectDir: string, stepId: string) => {
     // Proven BEFORE the card is composed, so a warning is never put on screen for
     // something the delete would refuse a click later.

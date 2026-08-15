@@ -1938,23 +1938,43 @@ export function translationInEffect(ledger: ProjectLedger): LedgerStep | null {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * ROWS WHOSE OWN PAYLOAD NOTHING CAN PUT IN A PANE — a table, for
- * `DISPLAYS_ITSELF`'s reason, and a table that is expected to lose its one `true`.
+ * ROWS WHOSE OWN PAYLOAD IS THE DOCUMENT THEY SHOW — a table, for
+ * `DISPLAYS_ITSELF`'s reason.
  *
- * A translate row retained an EPUB, and a pane can certainly open an EPUB — what
- * is missing is the step-payload→path resolution in main that would tell it which
- * one. Until that exists, standing on a translation shows the pages the
- * translation was made FROM, which is honest but is emphatically not the row's own
- * payload, and the app owes the person who clicked it a sentence saying so.
+ * ── What this replaced, and what that cost ──────────────────────────────────
+ *
+ * This used to be `SHOWN_ELSEWHERE`, and its one `true` meant "a pane cannot open
+ * this row's payload". That was never a fact about translations; it was a fact
+ * about the app, which had no way to turn a step's project-relative payload into a
+ * path a pane could be pointed at. Standing on a translation therefore showed the
+ * pages the translation was made FROM — a German book for somebody who had just
+ * clicked the row labelled *Translated (Hungarian)* — with a sentence underneath
+ * admitting it. A sentence is not a document. The resolution now exists
+ * (`documentAtPosition`, electron/projects.ts) and the table says the thing that
+ * is actually true of a row instead.
+ *
+ * ── The two piles ──────────────────────────────────────────────────────────
+ *
+ * AN IMPORT AND A TRANSLATION RETAINED A DOCUMENT: the untouched original, and
+ * the book in the other language. Standing on one of those shows that file, and
+ * nothing else in the project is the answer.
+ *
+ * A READ AND A SAVE DID NOT. A readings bank is per-page model answers and a
+ * curation snapshot is a set of decisions about blocks — neither is a thing a
+ * person reads. What those rows show is the document PRODUCED from them, which is
+ * a rendering rather than a payload and is therefore resolved by asking the
+ * project what it holds, not by reading the step's own `payload` field. (That is
+ * exactly the seam docs/DERIVED-BOOK.md §6 phase B moves: the produced document
+ * becomes the reflowed HTML, and this table does not change a line.)
  *
  * IT IS A FACT ABOUT THE ROW AND NOT ABOUT THE CHAIN, exactly as `DISPLAYS_ITSELF`
- * is: "can this thing be shown" is answered by looking at what the row retained,
- * where "what state is in effect" is answered by walking. Writing it as
- * `action === 'translate'` at the one call site that asks today would make the fix
- * — when it comes — a search for every place that guessed.
+ * is: "what did this row retain" is answered by looking at it, where "what state
+ * is in effect" is answered by walking. Writing it as `action === 'translate'` at
+ * the one call site that asks today would make the next change a search for every
+ * place that guessed.
  */
-const SHOWN_ELSEWHERE: Readonly<Record<StepAction, boolean>> = {
-  import: false,
+const SHOWS_ITS_PAYLOAD: Readonly<Record<StepAction, boolean>> = {
+  import: true,
   read: false,
   curate: false,
   translate: true,
@@ -1986,8 +2006,17 @@ export interface PositionView {
    * the pane making a claim about a step the user is standing BEFORE.
    */
   outlines: boolean;
-  /** True when this row's own payload is a document no pane can open yet. See `SHOWN_ELSEWHERE`. */
-  elsewhere: boolean;
+  /**
+   * True when the document at this position is the row's OWN retained payload —
+   * the untouched original, the translated book — rather than something produced
+   * from it. See `SHOWS_ITS_PAYLOAD`.
+   *
+   * Main is the side that turns either answer into a path (`documentAtPosition`,
+   * electron/projects.ts); what this decides is WHICH QUESTION it asks, and it is
+   * asked here so that the renderer's change detection and main's resolution
+   * cannot come to two opinions about it.
+   */
+  own: boolean;
 }
 
 /**
@@ -2009,7 +2038,7 @@ export function positionView(ledger: ProjectLedger): PositionView {
     reading,
     curation: displayedCuration(ledger),
     outlines: reading !== null,
-    elsewhere: step !== null && SHOWN_ELSEWHERE[step.action],
+    own: step !== null && SHOWS_ITS_PAYLOAD[step.action],
   };
 }
 
@@ -2028,9 +2057,13 @@ export function positionView(ledger: ProjectLedger): PositionView {
  * re-read swaps a bank in beneath a position that never moved.
  *
  * So the key is what actually decides what is on screen: which bank, which
- * corrections over it, and — for a row whose payload is somewhere no pane can
- * reach — which row, because two translations of one book share a reading and a
- * curation and are still two different things to be standing on.
+ * corrections over it, and — for a row that shows its own payload — which row,
+ * because two translations of one book share a reading and a curation and are
+ * still two different documents to be standing on. That last term is also what
+ * makes a move between the import and a translation re-ask main which file belongs
+ * on screen: both rows show a payload of their own, neither changes the bank or
+ * the corrections, and without the row in the key the pane would sit on whichever
+ * of the two it happened to be showing.
  *
  * NUL-JOINED for `identityOf`'s reason: it is the one byte that cannot appear in
  * a uuid, so no pair of ids can run together into a third spelling that collides
@@ -2040,7 +2073,7 @@ export function positionPicture(view: PositionView): string {
   return [
     view.outlines ? view.reading?.id ?? '' : '',
     view.curation?.id ?? '',
-    view.elsewhere ? view.step?.id ?? '' : '',
+    view.own ? view.step?.id ?? '' : '',
   ].join('\u0000');
 }
 

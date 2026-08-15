@@ -138,6 +138,7 @@ import {
   parseLedger,
   pendingBeside,
   positionOf,
+  positionView,
   reRunTarget,
   readingInEffect,
   recordLanding,
@@ -276,6 +277,33 @@ export function projectDirOf(filePath: string): string | null {
  */
 export function isManaged(filePath: string): boolean {
   return projectDirOf(filePath) !== null;
+}
+
+/**
+ * True while `filePath` is the UNTOUCHED ORIGINAL — the copy in a project's
+ * `archive/`, which nothing in this app may write.
+ *
+ * ── Why this became a question worth asking out loud ────────────────────────
+ *
+ * `archive/` has always been write-only-once by convention: it is copied at import
+ * and then never named by anything that writes. The convention held because
+ * nothing ever put that path in front of a writer — every surface was handed the
+ * live copy. `documentAtPosition` changed that: standing on the origin row now
+ * shows the archived scan, so the metadata dialog's `tab.path` can BE the untouched
+ * original, and `isManaged` says true of it (deliberately — see above), so the one
+ * guard that stood between a write and a project layer would have let it through.
+ *
+ * The invariant is worth more than the convenience: `archive/` is the only copy of
+ * that scan this program knows of, `overlay:blocks` re-measures a bank against it,
+ * and the revert row's whole meaning is that it is the file as it came in.
+ */
+export function isArchived(filePath: string): boolean {
+  const dir = projectDirOf(filePath);
+  if (dir === null) return false;
+  // The whole first segment, compared as a segment — never a `startsWith` on the
+  // string, which would claim `archived-2026/` and any other folder that happens
+  // to begin with the word.
+  return path.relative(dir, path.resolve(filePath)).split(path.sep)[0] === ARCHIVE;
 }
 
 /**
@@ -1812,6 +1840,150 @@ export function readingBank(dir: string, manifest: ProjectManifest): string {
 /** The same answer for a caller that has not read the catalogue yet. */
 export async function bankForPosition(dir: string): Promise<string> {
   return readingBank(dir, await readManifest(dir));
+}
+
+/**
+ * WHICH DOCUMENT THE PANES SHOW AT THE POSITION — the last third of the pointer's
+ * promise, and the one that was never built.
+ *
+ * ── What clicking a row did, and what the user said about it ────────────────
+ *
+ * `positionView` already decided the block editor's MODE and which corrections
+ * are drawn, and `b61bfab` wired both of those to a pointer move. What it never
+ * touched was WHICH FILE was under them: `Tab.path` is fixed when a document is
+ * opened from the documents panel and nothing else ever moved it. So a project
+ * holding both `archive/<scan>.pdf` and the reprint made from its reading showed
+ * exactly one of them however many rows the user clicked — *"switching between
+ * steps doesnt switch between the original pdf and the rendered facsimile like i
+ * expected"* — and when the app had nothing it could change it said so, which is
+ * the other half of the same complaint: *"instead of showing the document, it gave
+ * me an error saying it couldnt show the document… it should be showing me
+ * document"*.
+ *
+ * ── Why the resolution is HERE and not in the renderer ──────────────────────
+ *
+ * Because composing a project path in the renderer is how a branch read ends up
+ * answering for the original reading's file. It is the same rule that put
+ * `readingBank` and `renderingOverlay` in this file rather than at their call
+ * sites: the pointer decides which of several files a surface is handed, and a
+ * second opinion composed from the project key is a lie the moment a project holds
+ * two of anything. Main also has to ADMIT the path to the viewer's allow-list
+ * (main.ts, `openable`), which the renderer cannot do for itself and must not be
+ * able to.
+ *
+ * ── The four rows ───────────────────────────────────────────────────────────
+ *
+ * A ROW THAT RETAINED A DOCUMENT SHOWS IT (`PositionView.own`): the import shows
+ * the untouched original, a translation shows the book in the other language.
+ * Nothing is walked and nothing is composed — the step's own payload, resolved
+ * against the project directory.
+ *
+ * A READ OR A SAVE SHOWS THE DOCUMENT PRODUCED FROM IT, which is the project's
+ * live copy: the reprint once one has been generated, the scan's own copy until
+ * then. That is a rendering rather than a payload (renderings are deliberately not
+ * steps — STEP-LEDGER.md "Decided" #4), so it is answered by asking the project
+ * what it holds.
+ *
+ * ── The live copy and not `generated/`, deliberately ────────────────────────
+ *
+ * `generated/<stem>.pdf` is the reprint's origin and this app never writes one;
+ * `working/<stem>.pdf` is the copy it edits, the copy the documents panel opens,
+ * and — after a reprint lands — a copy of that very file (`refreshLivePdf`).
+ * Pointing a pane at `generated/` would put the viewer on a layer the working-copy
+ * model says nothing edits, and would open a second document with the same
+ * basename as the one already on screen: the exact collision shared/documents.ts
+ * exists to describe. Aiming at the live copy means an edit made to it can never
+ * be stranded behind a file the app decided to show instead.
+ *
+ * ── The limitation, named rather than engineered around ─────────────────────
+ *
+ * NOTHING RECORDS WHICH READING A REPRINT WAS MADE FROM. Renderings are not steps
+ * and are not going to become steps, so a project with two `read` rows (a re-read
+ * asking for a different page range branches — `MINTED_BY_THE_RUN`) has one live
+ * PDF and two rows that would both claim it. Both get it. That is wrong for at
+ * most one of them, it is visibly the same pages either way, and the alternative —
+ * provenance bookkeeping for a file that phase B stops producing — is machinery
+ * with a shorter life than the comment describing it (docs/DERIVED-BOOK.md §6:
+ * a read row becomes the reflowed HTML document, and this function is the seam
+ * where that answer changes).
+ *
+ * ── Null is an ordinary answer ──────────────────────────────────────────────
+ *
+ * A project with no reading yet, a row whose payload has been swept off the disk,
+ * an EPUB-only project standing where a scan would be: all of them mean "this
+ * position names no document of its own", and the panes correctly keep the one
+ * they have rather than being sent somewhere. Proved to exist before it is
+ * returned, because a path handed to a viewer for a file that is not there is a
+ * blank pane with nothing on screen saying why.
+ */
+export async function documentAtPosition(dir: string): Promise<string | null> {
+  const resolved = deletableProjectDir(dir);
+  const manifest = await readManifest(resolved);
+  const ledger = ledgerOf(manifest);
+  const view = positionView(ledger);
+  if (view.step === null) return null;
+
+  if (view.own) {
+    /*
+     * THE ORIGIN IS THE ONE ROW WHOSE ANSWER CAN BE A COPY OF ITSELF, and saying
+     * so here is what stops a pointless swap. A project nobody has generated
+     * anything from has `working/<stem>.pdf` copied from `archive/<file>.pdf`
+     * byte for byte, and an EPUB project works from the stamped copy in
+     * `generated/` precisely because `archive/` is never addressed. Sending the
+     * pane to the archive in either case would reload the viewer to show the same
+     * pages, and for the EPUB it would show a book without the stamps every later
+     * pass needs. Where the live copy is NOT the original's own copy — a reprint
+     * has replaced it — the archive is the only place the untouched scan still is,
+     * and that is what the revert row is for.
+     */
+    const live = view.step.action === 'import' ? await liveCopyOf(resolved, manifest, view.step.payload) : null;
+    return await onDisk(resolved, live ?? view.step.payload);
+  }
+
+  // A read or a save: the document produced from the reading this branch of the
+  // story is about. No reading, nothing produced, nothing to show.
+  if (view.reading === null) return null;
+  const live = await reconcileLivePdf(resolved, manifest);
+  return live === null ? null : onDisk(resolved, `${WORKING}/${live.file}`);
+}
+
+/**
+ * The project's own working copy of an archived file, project-relative, or null
+ * when the archive is all there is.
+ *
+ * COMPARED BY THE WHOLE PROJECT-RELATIVE PATH and never by basename, which is this
+ * codebase's oldest house rule and is load-bearing here of all places: a project
+ * holds `archive/Book.pdf`, `working/Book.pdf` and `generated/Book.pdf` at once,
+ * and matching on the last segment would call the reprint a copy of the scan.
+ *
+ * The two kinds keep their copies in different layers because they are different
+ * arrangements, not because anything is inconsistent: a PDF's live copy is
+ * `working/`, catalogued in `working.files` with the layer it came from; an EPUB's
+ * is the STAMPED copy in `generated/`, recorded as that type's own origin step
+ * (`importDocument`), because a book without Foundry's stamps is one no later pass
+ * will admit.
+ */
+async function liveCopyOf(
+  dir: string,
+  manifest: ProjectManifest,
+  archived: string,
+): Promise<string | null> {
+  if (manifest.archive?.kind === 'epub') {
+    const origin = stepsOf(manifest, 'epub')[0];
+    return origin !== undefined
+      && origin.retention === 'irreplaceable'
+      && origin.file.startsWith(`${GENERATED}/`)
+      ? origin.file
+      : null;
+  }
+  const live = await reconcileLivePdf(dir, manifest);
+  return live !== null && live.from === archived ? `${WORKING}/${live.file}` : null;
+}
+
+/** A project-relative payload as an absolute path, or null when it is not there. */
+async function onDisk(dir: string, relative: string): Promise<string | null> {
+  const resolved = path.join(dir, ...relative.split('/'));
+  return await exists(resolved) ? resolved : null;
 }
 
 /**

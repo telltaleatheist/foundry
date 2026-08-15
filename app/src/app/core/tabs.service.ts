@@ -361,6 +361,17 @@ interface ShownPicture {
 interface PositionMove {
   /** The project directory, folded — the key `showing` is kept under. */
   key: string;
+  /**
+   * The same directory AS MAIN SPELLS IT, kept beside the folded key.
+   *
+   * The key is folded because on Windows one path arrives spelled three ways and
+   * two spellings of one project would be two entries. What must NOT be folded is
+   * what goes back over IPC: main proves the directory is one of Home's projects
+   * before it reads a byte, and a lowercased path is a project on this filesystem
+   * and a stranger to a string comparison. (`LedgerService.Holding` keeps both for
+   * the identical reason.)
+   */
+  dir: string;
   /** What the panes were showing, or null for a project this window has just met. */
   was: ShownPicture | null;
   now: ShownPicture;
@@ -681,19 +692,17 @@ export class TabsService {
         if (now === null) continue;
         const was = this.showing.get(key) ?? null;
         if (was !== null && was.picture === now.picture) continue;
-        moves.push({ key, was, now });
+        moves.push({ key, dir, was, now });
       }
       /*
-       * WHICH DOCUMENTS ARE ACTUALLY IN A COLUMN, read here in the tracked part
-       * rather than inside the work below. It decides whether this move has
-       * anywhere to be shown, and a move that has nowhere says so out loud — so
-       * reading it untracked would mean a book dragged into a column afterwards
-       * never re-asked the question, and the app would be holding a refusal about
-       * a pane that has since appeared.
+       * WHICH COLUMNS ARE OPEN IS NO LONGER READ HERE, and its absence is the
+       * ruling rather than an oversight. This used to be tracked so that a move
+       * with nowhere to be shown could put a sentence on the strip and then re-ask
+       * once a column appeared. There is no such state any more: clicking a row is
+       * an instruction to LOOK at that step, so a document that is open but in no
+       * column is put in one and a document that is not open is opened. The app
+       * does the thing instead of explaining why it cannot.
        */
-      const inAColumn = new Set(this.columns()
-        .map((pane) => pane.tabId)
-        .filter((id): id is string => id !== null));
       untracked(() => {
         for (const key of [...this.showing.keys()]) {
           if (!open.has(key)) this.showing.delete(key);
@@ -701,7 +710,7 @@ export class TabsService {
         for (const move of moves) {
           this.showing.set(move.key, move.now);
           if (move.was === null) continue;
-          this.showPosition(move, inAColumn);
+          void this.showPosition(move);
         }
       });
     });
@@ -729,108 +738,211 @@ export class TabsService {
   }
 
   /**
-   * Make every pane of this project show the position — and SAY SO when none of
-   * them can.
+   * Make this project's pane show the position — the DOCUMENT first, and then what
+   * is drawn over it.
    *
-   * ── The three pictures, and what each costs ─────────────────────────────────
+   * ── What a click used to be worth, and what the user said about it ──────────
+   *
+   * `b61bfab` made a pointer move drive the block editor's mode and which
+   * corrections are drawn, and left the file underneath both of them exactly where
+   * it was: `Tab.path` is fixed when a document is opened from the documents panel
+   * and nothing else ever moved it. So a project holding the scan and the reprint
+   * made from its reading showed one of them however many rows were clicked —
+   * *"switching between steps doesnt switch between the original pdf and the
+   * rendered facsimile like i expected"* — and when there was nothing this could
+   * change it put a sentence on the strip instead, which is the half the user was
+   * angrier about: *"i wanted the document to show. instead of showing the
+   * document, it gave me an error saying it couldnt show the document… it should be
+   * showing me document"*.
+   *
+   * ── The ruling this is built to ─────────────────────────────────────────────
+   *
+   * CLICKING A ROW IS AN INSTRUCTION TO LOOK AT THAT STEP, and the app satisfies it
+   * rather than explaining why it cannot. In order: swap the pane to the step's
+   * document; if that document is open but in no column, put it in one; if it is
+   * not open at all, open it. Nothing here reports a state it could have fixed,
+   * which is why this function no longer has a sentence to say.
+   *
+   * ── The three pictures over it, and what each costs ─────────────────────────
    *
    * NO OUTLINES (the import, and any position with no reading above it): the pane
    * comes out of the block editor. Nothing had been read at that point in the
-   * book's story, so boxes drawn over the scan there would be the pane making a
-   * claim about a step the user is standing BEFORE — which is the one thing the
-   * revert row exists to let somebody look at without.
+   * book's story, so boxes drawn there would be the pane making a claim about a
+   * step the user is standing BEFORE — which is the one thing the revert row exists
+   * to let somebody look at without.
    *
-   * OUTLINES, PANE NOT IN THE MODE: it goes into the mode and reads the bank. This
-   * is the click the user was actually making when they reported that nothing
-   * happened, and it is the expensive one — but it is expensive exactly once per
-   * genuinely different picture, and it is what they asked for by clicking the row.
+   * OUTLINES, PANE NOT IN THE MODE: it goes into the mode and reads the bank. The
+   * expensive one, and it is expensive exactly once per genuinely different
+   * picture.
    *
-   * OUTLINES, PANE ALREADY IN THE MODE: the bank is re-read only if the READING
-   * moved. Otherwise this is a few kilobytes of corrections off a disk, which is
-   * what keeps stepping between a reading and its saves as free as the panel
+   * OUTLINES, PANE ALREADY IN THE MODE: the bank is re-read if the READING moved,
+   * or if the pages under it changed — a document swap is a different PDF, and
+   * boxes measured against the old one would be drawn over the new one's pages.
+   * Otherwise this is a few kilobytes of corrections off a disk, which is what
+   * keeps stepping between a reading and its saves as free as a history panel
    * promises. See `refreshCuration`.
-   *
-   * ── And why "nothing to do" is a sentence rather than silence ───────────────
-   *
-   * A gesture that produces no visible change is indistinguishable from a broken
-   * app, and this one has three honest ways to produce none: the book's pages are
-   * not in any column, the row's payload is a document no pane can open yet, or
-   * the pane is already showing exactly this. All three are things the person who
-   * clicked deserves to be told, in words, rather than left to conclude that the
-   * history panel does not work. That was the whole of the original complaint.
    */
-  private showPosition(move: PositionMove, inAColumn: ReadonlySet<string>): void {
+  private async showPosition(move: PositionMove): Promise<void> {
     const view = move.now.view;
+    /*
+     * ASKED OF MAIN, EVERY MOVE, AND NEVER COMPOSED HERE. A project's layers are
+     * main's bookkeeping — which folder holds the live copy, which of two readings
+     * a reprint belongs to — and a renderer that spelled `working/<stem>.pdf` for
+     * itself would be a second opinion that goes wrong exactly where it is dearest:
+     * a branch read answering with the original reading's file. Main also admits
+     * the answer to the viewer's allow-list on the way out, which this side cannot
+     * do for itself. Null is the ordinary "this position names no document of its
+     * own" and means keep the one we have.
+     */
+    const target = await this.ledger.documentAt(move.dir);
+    /*
+     * AND THE ANSWER IS DROPPED IF THE USER HAS MOVED AGAIN. Somebody clicking
+     * down a history four rows deep issues four of these, and main answers them in
+     * whatever order the disk feels like — so without this the pane could settle on
+     * the document of a row nobody is standing on any more, and stay there until
+     * the next click. `showing` already holds the newest picture (the effect writes
+     * it synchronously before starting any of this), so identity against it is the
+     * whole test. It is `LedgerService`'s ticket, in the one other place that asks
+     * main a question a later question can invalidate.
+     */
+    if (this.showing.get(move.key) !== move.now) return;
+    const swapped = await this.showDocument(move, target);
     const readingMoved = (move.was?.view.reading?.id ?? null) !== (view.reading?.id ?? null);
     const curationMoved = (move.was?.view.curation?.id ?? null) !== (view.curation?.id ?? null);
-    let reachable = false;
-    let repainted = false;
     for (const tab of this.all()) {
       if (tab.kind !== 'pdf') continue;
       const dir = this.projectDirOf(tab);
       if (dir === null || fold(dir) !== move.key) continue;
-      // A document open in the list but not in any column still has its state put
-      // right — it is one click from being back on screen and must not come back
-      // showing a step nobody is standing on — but it cannot be what makes this
-      // move visible.
-      const seen = inAColumn.has(tab.id);
+      // EVERY PDF TAB OF THIS PROJECT, in a column or not. One that is only in the
+      // list is a click from being back on screen and must not come back outlined
+      // against a step nobody is standing on.
       if (!view.outlines) {
         if (!tab.blockView) continue;
         this.patch(tab.id, { blockView: false });
         this.forgetBlockView(tab.id);
-        if (seen) repainted = true;
       } else if (!tab.blockView) {
         this.patch(tab.id, { blockView: true });
         void this.loadBlockView(tab.id, tab.path);
-        if (seen) repainted = true;
-      } else if (readingMoved) {
+      } else if (readingMoved || swapped) {
         void this.loadBlockView(tab.id, tab.path);
-        if (seen) repainted = true;
       } else if (curationMoved) {
         void this.refreshCuration(tab.id, tab.path);
-        if (seen) repainted = true;
       }
-      if (seen) reachable = true;
     }
-    const said = this.unshownAt(view, reachable, repainted);
-    if (said !== null) this.notice.set(said);
   }
 
   /**
-   * Why this move produced nothing to look at, or null when it produced something.
+   * Put the position's document on screen, and answer whether the pages moved.
    *
-   * ONE SENTENCE PER REASON, and each one names the row in the app's own words —
-   * never a filename, because a step is named by the action it was (the rule
-   * `labelFor` exists to keep). A person who clicks a row in their own history and
-   * sees the page not move has to be able to find out why from the app rather than
-   * from us.
+   * ── Three ways to satisfy one instruction ───────────────────────────────────
+   *
+   * ALREADY THE DOCUMENT ON THAT TAB: `reveal`, which is a no-op when it is in a
+   * column and PUTS IT IN ONE when it is not. That second case is the exact state
+   * the app used to describe back at the user — their book was open, no column was
+   * showing it, and they were told to go and click it in the list. Doing it for
+   * them is the whole of the fix.
+   *
+   * A PDF THIS PROJECT ALREADY HAS A TAB FOR: the tab MOVES to the new file. One
+   * document per project per pane is what makes "the pane shows the step" true;
+   * opening the scan beside the reprint would leave two tabs with the same book's
+   * name in the list and neither of them following the pointer. `app-pdf-view`
+   * watches `tab.path` and re-opens when the string changes, so the swap is the
+   * patch and nothing else — the same mechanism `relocate` uses when an import
+   * moves a tab onto the project's copy.
+   *
+   * ANYTHING ELSE: opened, through the one door every open in this app goes
+   * through. That covers a translation's EPUB, which is emphatically NOT swapped
+   * into a PDF tab — a book is UNPACKED, and patching a path would leave a viewer
+   * serving chapters out of a tree belonging to a different book — and it covers a
+   * project whose document nobody has open. `adopt` refuses to make a second tab
+   * for a file already open, so this cannot double up.
+   *
+   * ── Which tab follows the pointer, when the project has several ─────────────
+   *
+   * The one in the focused column first, then any in a column, then any at all —
+   * and ONLY of the kind the target is. A person comparing the scan against the
+   * cast EPUB has two tabs of one project on screen, and swapping the EPUB's pane
+   * to a PDF because they clicked a read row would take away the book they were
+   * reading to answer a question about the pages.
    */
-  private unshownAt(view: PositionView, reachable: boolean, repainted: boolean): string | null {
-    const label = view.step?.label ?? null;
-    if (label === null) return null;
-    if (!reachable) {
-      return `You are standing on “${label}”, and none of the open columns is showing this book’s `
-        + 'pages — so there is nothing on screen for that to change. Put the scan in a column, by '
-        + 'clicking it in the list down the left or opening it from Home, and the pages will show '
-        + 'the step you are standing on.';
+  private async showDocument(move: PositionMove, target: string | null): Promise<boolean> {
+    const mine = this.all().filter((tab) => {
+      if (tab.kind === 'editor') return false;
+      const dir = this.projectDirOf(tab);
+      return dir !== null && fold(dir) === move.key;
+    });
+    if (target === null) {
+      /*
+       * NOTHING TO SWAP TO, AND STILL SOMETHING TO DO. A position with no document
+       * of its own — a project with no reading yet, a payload since swept — is
+       * still a row somebody clicked, so if none of this book's tabs is in a column
+       * one of them goes in one. The instruction was "show me this step"; the
+       * honest answer is this book, where they can see it.
+       */
+      if (mine.some((tab) => this.paneOf(tab.id) !== null)) return false;
+      const first = mine[0];
+      if (first !== undefined) this.reveal(first.id);
+      return false;
     }
-    if (view.elsewhere) {
-      // The one row whose own payload this app cannot yet put in a pane. Said
-      // every time it is stood on rather than once, because it is not an error
-      // that has been noted — it is the standing state of that row, and somebody
-      // stepping between two translations is asking the same question again.
-      return `You are standing on “${label}”. Foundry cannot open a translated book from its row `
-        + 'yet, so these pages are still the ones it was translated from, with your live '
-        + 'corrections drawn on them — which is where a strike made here would land. Generate '
-        + 'from this row to read the translation itself.';
+
+    const key = normalise(target);
+    const already = mine.find((tab) => normalise(tab.path) === key);
+    if (already !== undefined) {
+      this.reveal(already.id);
+      return false;
     }
-    if (repainted) return null;
-    if (!view.outlines) {
-      return `You are standing on “${label}” — the pages exactly as they came in. Nothing had been `
-        + 'read from this book at that point in its story, so there is nothing outlined over them, '
-        + 'and that is what this column is already showing.';
+
+    /*
+     * WHETHER FOUNDRY MADE THIS FILE, ASKED OF THE CATALOGUE RATHER THAN ASSUMED.
+     * It is what the Chrome dot and the closing question are about: "no copy of
+     * this exists anywhere you chose". True of a reprint and a translation; false
+     * of the untouched original in `archive/`, which is in this app precisely
+     * BECAUSE the user still has their own. Home draws one row per file type and
+     * the archive is the layer it never draws, so a path the listing does not name
+     * is the original — and false is the right answer for exactly that.
+     */
+    const madeByUs = this.projects.projectFor(target)?.documents
+      .some((row) => normalise(row.path) === key && row.managed) === true;
+
+    const wanted: TabKind = key.endsWith('.epub') ? 'epub' : 'pdf';
+    const follower = wanted === 'pdf' ? this.followerAmong(mine) : null;
+    if (follower === null) {
+      await this.openFile(target, madeByUs);
+      return true;
     }
-    return `You are standing on “${label}”, and this column is already showing it.`;
+    this.patch(follower.id, {
+      path: target,
+      // The dot follows the file, for the reason above: the tab is about to stop
+      // being about the copy Foundry made and start being about the user's own.
+      unsaved: madeByUs,
+      /*
+       * THE REVISION MOVES WITH THE PATH. It is what makes a pane re-read bytes it
+       * is already pointed at (see `openFinished`), and the two files this swaps
+       * between can have the same name in two layers of one project — so a viewer
+       * that compared only the string would faithfully conclude there was nothing
+       * to do, which is the failure that whole comment exists about.
+       */
+      revision: follower.revision + 1,
+      /*
+       * AND THE NAME ONLY IF NOBODY CHOSE ONE, which is `relocate`'s rule and its
+       * reason: a book's `dc:title` outranks anything derived from a path, and
+       * these files are all one book anyway — `nameFor` answers the project's title
+       * for every layer of it.
+       */
+      ...(follower.named ? {} : { title: this.nameFor(target) }),
+    });
+    this.reveal(follower.id);
+    return true;
+  }
+
+  /** The PDF tab that follows the pointer: focused column, then any column, then any. */
+  private followerAmong(mine: readonly Tab[]): Tab | null {
+    const pdfs = mine.filter((tab) => tab.kind === 'pdf');
+    if (pdfs.length === 0) return null;
+    const focused = this.focusedPane()?.tabId ?? null;
+    return pdfs.find((tab) => tab.id === focused)
+      ?? pdfs.find((tab) => this.paneOf(tab.id) !== null)
+      ?? pdfs[0]!;
   }
 
   /**

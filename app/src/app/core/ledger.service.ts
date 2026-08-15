@@ -226,6 +226,35 @@ export class LedgerService {
   }
 
   /**
+   * Which document belongs on screen at this project's position — main's answer,
+   * passed through and never derived.
+   *
+   * ── Why this is not composed from the ledger this class already holds ───────
+   *
+   * Because the ledger says `readings/<key>.jsonl` and `generated/<book> (en).epub`
+   * — project-RELATIVE payloads — and turning one of those into a file a viewer can
+   * open means knowing which layer a project keeps its live copy of a thing in, and
+   * which of two readings a reprint came from. Those are facts about a folder, main
+   * owns the folder, and a renderer that composed them would be a second opinion
+   * that goes wrong exactly where it is most expensive: a branch read answering
+   * with the original reading's file.
+   *
+   * NOT HELD, NOT CACHED, NOT A SIGNAL. Everything else here is a mirror of the
+   * catalogue because several surfaces read it on every repaint; this is asked once
+   * per pointer move by the one surface that acts on it, and a copy kept between
+   * moves would be a path that has since been rotated aside.
+   *
+   * NULL FOR EVERY REFUSAL. A catalogue that will not parse is already a sentence
+   * on the project's row on Home and in the accordion; a pointer move is not the
+   * place to say it a third time, and there is nothing useful the caller could do
+   * with the news anyway.
+   */
+  async documentAt(projectDir: string): Promise<string | null> {
+    if (!api) return null;
+    return await api.ledger.documentAt(projectDir).catch(() => null);
+  }
+
+  /**
    * The ✕ on a row: ask main what it costs, ask the user in the app's own card,
    * then do it.
    *
