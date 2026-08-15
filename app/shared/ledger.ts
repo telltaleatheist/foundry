@@ -1909,6 +1909,142 @@ export function translationInEffect(ledger: ProjectLedger): LedgerStep | null {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// WHAT THE PANES SHOW AT THE POSITION
+//
+// The pointer's first job, written down in docs/STEP-LEDGER.md and never built:
+// "What do the viewers show? The rendering of the position step. Moving the
+// pointer repaints the open tabs of that project." What the app actually did was
+// a third of that. A pointer move re-read the CURATION and left the blocks under
+// it exactly where they were — so moving between two readings drew one reading's
+// corrections over the other reading's boxes, with nothing on screen admitting
+// the swap — and a move onto the import, or onto any row at all while the pane
+// was not in the block editor, did nothing whatsoever. Somebody with a two-step
+// history clicked both of their own rows and watched the app sit there, which is
+// the whole of the complaint this exists to answer.
+//
+// SO THE QUESTION IS ASKED ONCE, HERE, AS ONE VALUE, and the renderer's job
+// becomes "make the pane match this" rather than "work out what that click
+// meant". Three surfaces were about to need the same derivation — the pane, the
+// notice that admits when a move cannot be shown, and whatever phase B puts on a
+// read row — and a rule re-derived at each of them is a rule that drifts, which
+// is the reasoning every table in this file is built on.
+//
+// AND IT IS THE SEAM docs/DERIVED-BOOK.md §6 PHASE B NEEDS. A read row is going
+// to stop meaning "the scan with the model's outlines over it" and start meaning
+// "the reflowed HTML document". That changes WHAT this answers; it must not
+// change HOW a pointer move drives a pane. Everything on the renderer side reads
+// these fields and none of it re-reads the ledger, so the day the flowing surface
+// lands, the fields grow and the effect that drives the panes does not move.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * ROWS WHOSE OWN PAYLOAD NOTHING CAN PUT IN A PANE — a table, for
+ * `DISPLAYS_ITSELF`'s reason, and a table that is expected to lose its one `true`.
+ *
+ * A translate row retained an EPUB, and a pane can certainly open an EPUB — what
+ * is missing is the step-payload→path resolution in main that would tell it which
+ * one. Until that exists, standing on a translation shows the pages the
+ * translation was made FROM, which is honest but is emphatically not the row's own
+ * payload, and the app owes the person who clicked it a sentence saying so.
+ *
+ * IT IS A FACT ABOUT THE ROW AND NOT ABOUT THE CHAIN, exactly as `DISPLAYS_ITSELF`
+ * is: "can this thing be shown" is answered by looking at what the row retained,
+ * where "what state is in effect" is answered by walking. Writing it as
+ * `action === 'translate'` at the one call site that asks today would make the fix
+ * — when it comes — a search for every place that guessed.
+ */
+const SHOWN_ELSEWHERE: Readonly<Record<StepAction, boolean>> = {
+  import: false,
+  read: false,
+  curate: false,
+  translate: true,
+};
+
+/** Everything that decides the picture at the position, in one answer. */
+export interface PositionView {
+  /** The row being stood on, or null for a project with nothing recorded yet. */
+  step: LedgerStep | null;
+  /**
+   * The reading whose bank the pages are drawn from, or null.
+   *
+   * `readingInEffect`, unchanged and unwrapped: it is the walk that finds the pass
+   * over the pages this branch of the story is about, and a caller that composed
+   * the bank path from the project key instead would be the exact lie that
+   * function's header is about.
+   */
+  reading: LedgerStep | null;
+  /** The frozen save drawn over them, or null when the answer is the live corrections. */
+  curation: LedgerStep | null;
+  /**
+   * True when the pages carry the model's outlines at all.
+   *
+   * IT FALLS OUT OF THE WALK RATHER THAN BEING A CASE FOR THE IMPORT. Standing on
+   * the origin, `readingInEffect` answers null — the walk is bounded by the import
+   * itself (`BOUNDS_THE_WALK`) — so "nothing has been read at this point in the
+   * story" and "this project has never been read" are one answer, which is right:
+   * both mean there is nothing to outline. Drawing boxes over the import would be
+   * the pane making a claim about a step the user is standing BEFORE.
+   */
+  outlines: boolean;
+  /** True when this row's own payload is a document no pane can open yet. See `SHOWN_ELSEWHERE`. */
+  elsewhere: boolean;
+}
+
+/**
+ * The picture at the position — composed from the three selectors above and
+ * deriving nothing of its own.
+ *
+ * That is deliberate to the point of being the whole design. `readingInEffect`
+ * and `displayedCuration` are two DIFFERENT questions with two different walks
+ * (see `DISPLAYS_ITSELF` for why folding them together would be a boolean where
+ * the difference in meaning is), and this is the one place that holds both
+ * answers at once because the pane needs both at once: which blocks, and which
+ * corrections over them.
+ */
+export function positionView(ledger: ProjectLedger): PositionView {
+  const step = positionOf(ledger);
+  const reading = readingInEffect(ledger);
+  return {
+    step,
+    reading,
+    curation: displayedCuration(ledger),
+    outlines: reading !== null,
+    elsewhere: step !== null && SHOWN_ELSEWHERE[step.action],
+  };
+}
+
+/**
+ * THE PICTURE AS ONE STRING, so a surface can tell "the user moved" from "the
+ * user moved somewhere that looks the same".
+ *
+ * ── The pointless reload this exists to prevent ─────────────────────────────
+ *
+ * The obvious key is the step id, and the step id is wrong in both directions.
+ * Two rows can share a reading — a save and the reading it was made from, a
+ * translation and the reading under it — and reloading a bank because somebody
+ * clicked between them would put a spawn of the engine and a re-measure of five
+ * hundred pages behind the one gesture in this app that is meant to be free. And
+ * one row can be stood on twice with different pictures under it, because a
+ * re-read swaps a bank in beneath a position that never moved.
+ *
+ * So the key is what actually decides what is on screen: which bank, which
+ * corrections over it, and — for a row whose payload is somewhere no pane can
+ * reach — which row, because two translations of one book share a reading and a
+ * curation and are still two different things to be standing on.
+ *
+ * NUL-JOINED for `identityOf`'s reason: it is the one byte that cannot appear in
+ * a uuid, so no pair of ids can run together into a third spelling that collides
+ * with an honest one.
+ */
+export function positionPicture(view: PositionView): string {
+  return [
+    view.outlines ? view.reading?.id ?? '' : '',
+    view.curation?.id ?? '',
+    view.elsewhere ? view.step?.id ?? '' : '',
+  ].join('\u0000');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Which pass over the pages an overlay is about
 //
 // The generation is the id a curation carries and the app compares before it

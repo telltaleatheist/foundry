@@ -3,6 +3,7 @@ import { Injectable, computed, effect, inject, signal, untracked } from '@angula
 import type { FoundryApi } from '@shared/api';
 import { categoryLabel, pdfCategoryLabel } from '@shared/categories';
 import type { CurationLock } from '@shared/curation-lock';
+import { positionPicture, positionView, type PositionView } from '@shared/ledger';
 import { fold } from '@shared/original';
 import {
   amendOverlay,
@@ -343,6 +344,28 @@ function bucket<K>(map: Map<K, string[]>, key: K): string[] {
   return made;
 }
 
+/**
+ * The picture one project's panes are showing, and the string that decides
+ * whether it has moved.
+ *
+ * BOTH TOGETHER, never one without the other. The view is what a repaint acts on
+ * and the string is what a repaint is decided by, and they are made in one call
+ * (`pictureIn`) so that no surface can compare by one answer and act on another.
+ */
+interface ShownPicture {
+  view: PositionView;
+  picture: string;
+}
+
+/** One project whose position has moved since this window last painted it. */
+interface PositionMove {
+  /** The project directory, folded — the key `showing` is kept under. */
+  key: string;
+  /** What the panes were showing, or null for a project this window has just met. */
+  was: ShownPicture | null;
+  now: ShownPicture;
+}
+
 /** Something the shell wants said to one tab's frame. See `frameCommand`. */
 export interface FrameCommand {
   tabId: string;
@@ -557,14 +580,13 @@ export class TabsService {
     /**
      * A STEP WAS DELETED, so the panes showing that book read their state again.
      *
-     * ── Why this fires for a delete and not for a pointer move ────────────────
+     * ── Why a delete has an effect of its own at all ──────────────────────────
      *
-     * Clicking a row is free — one line of the manifest, no file touched — and
-     * everything on screen that depends on where the user is standing is derived
-     * from the ledger signal, so it repaints for nothing. Reloading here would put
-     * a spawn of the engine and a re-measure of five hundred pages behind the one
-     * gesture in this app that is genuinely instant, which is precisely the
-     * ceremony a history panel promises it does not have.
+     * A delete may not move the pointer, and the effect below only ever acts on a
+     * picture that has CHANGED. Delete a stale translation while standing on the
+     * reading and every field of `positionView` answers exactly what it answered a
+     * moment ago — same bank, same corrections — so nothing there would fire, and
+     * yet the disk underneath the panes is not the disk they were painted from.
      *
      * A delete is the other thing entirely: it UNLINKS PAYLOADS. An open block
      * editor may be drawing a readings bank that has just stopped existing, and a
@@ -592,59 +614,224 @@ export class TabsService {
     });
 
     /**
-     * THE POINTER MOVED, so the pages redraw with the curation that position
-     * renders with — the frozen save, or the live overlay again.
+     * THE POINTER MOVED, SO THE PANES SHOW THE STEP THE USER IS STANDING ON.
      *
-     * ── Why a pointer move needs anything at all ────────────────────────────
+     * ── What clicking a row used to do, which was very nearly nothing ────────
      *
-     * Standing on a save means every rendering from here is made with that
-     * snapshot, and the whole reason to click the row is to SEE it. The blocks
-     * themselves do not move — they are the model's answer over the bank, and the
-     * bank is the same bank — so this asks for the curation and nothing else: one
-     * file read, no engine, no re-measure of five hundred pages. That is what
-     * keeps the click as free as the panel promises, while still showing the book
-     * as it was.
+     * `docs/STEP-LEDGER.md` has promised since the day the ledger was designed
+     * that the position decides what the viewers show, and this effect used to
+     * keep about a third of that promise. It re-read the CURATION and left the
+     * blocks under it exactly where they were, which is correct only while both
+     * rows are about one reading: move between two readings and the pane went on
+     * drawing the first reading's boxes with the second reading's corrections over
+     * them, silently, with nothing on screen admitting the swap. And it was
+     * guarded on the pane already being in the block editor, so for a scan nobody
+     * had pressed Blocks on — and for the import row, where the honest picture is
+     * no outlines at all — a click on a row in somebody's own history did
+     * literally nothing. That is what a user with a two-step project saw: they
+     * clicked the import, they clicked the read, and the app sat there.
      *
-     * ONE READ PER ACTUAL MOVE, which is what `positionShown` is for. The effect
-     * runs whenever anything in any held ledger changes — a job landing in another
-     * book, a title being noticed — and re-reading a curation on every one of those
-     * would put an IPC call behind events that have nothing to do with this tab.
+     * ── What it does now: make the pane match the answer ─────────────────────
      *
-     * ONLY TABS IN THE MODE. A scan nobody has opened the block editor on has no
-     * curation on screen to be wrong.
+     * `positionView` (shared/ledger.ts) says what the picture at the position IS —
+     * which reading's bank, which corrections over it, whether there are outlines
+     * at all — and this effect's whole job is to make the panes of that project
+     * agree with it. Nothing here re-derives any of that; the day a read row comes
+     * to mean a reflowed HTML document rather than a scan with boxes on it
+     * (docs/DERIVED-BOOK.md §6 phase B), the answer changes shape and this loop
+     * does not.
+     *
+     * A MOVE THAT CHANGES THE BANK RELOADS; A MOVE THAT CHANGES ONLY THE
+     * CORRECTIONS DOES NOT. Re-reading a bank is a spawn of the engine and a
+     * re-measure of five hundred pages, and putting that behind the one gesture in
+     * this app that is meant to be free is the exact ceremony a history panel
+     * promises it does not have. So a save and the reading it was made from — two
+     * rows, one bank — cost one small file read between them, and only a genuinely
+     * different reading pays for the blocks. `positionPicture` is what makes that
+     * distinction; the step id would have been wrong in both directions.
+     *
+     * ── Keyed by PROJECT, and the first sighting is a baseline ───────────────
+     *
+     * By project because the position is a fact about a book rather than about a
+     * viewer of one, and because two panes onto one project must not each decide
+     * separately what that book is standing on.
+     *
+     * THE FIRST SIGHTING RECORDS AND ACTS ON NOTHING, which is what keeps this
+     * from turning the block editor on by itself. Block view is deliberately not
+     * persisted — a scan that reopened covered in coloured rectangles looks broken
+     * until you find the button that was already pressed (see `Tab.blockView`) —
+     * so opening a document must not be read as a move. A pointer move is a
+     * DIFFERENCE from what this window was last showing, and a project it has
+     * never seen has no difference to be. The entry is dropped again when the last
+     * tab of that project closes, so a reopen baselines afresh rather than
+     * inheriting a picture from a session nobody is in any more.
      */
     effect(() => {
-      const moved: { id: string; path: string; at: string }[] = [];
+      const moves: PositionMove[] = [];
+      const open = new Set<string>();
       for (const tab of this.all()) {
-        if (tab.kind !== 'pdf' || !tab.blockView) continue;
-        const at = this.positionOfTab(tab.id);
-        if (this.positionShown.get(tab.id) === at) continue;
-        moved.push({ id: tab.id, path: tab.path, at });
+        const dir = this.projectDirOf(tab);
+        if (dir === null) continue;
+        const key = fold(dir);
+        if (open.has(key)) continue;
+        open.add(key);
+        const now = this.pictureIn(dir);
+        // Nobody has read this project's history yet, so there is no position to
+        // obey. It arrives as its own change and is baselined then.
+        if (now === null) continue;
+        const was = this.showing.get(key) ?? null;
+        if (was !== null && was.picture === now.picture) continue;
+        moves.push({ key, was, now });
       }
+      /*
+       * WHICH DOCUMENTS ARE ACTUALLY IN A COLUMN, read here in the tracked part
+       * rather than inside the work below. It decides whether this move has
+       * anywhere to be shown, and a move that has nowhere says so out loud — so
+       * reading it untracked would mean a book dragged into a column afterwards
+       * never re-asked the question, and the app would be holding a refusal about
+       * a pane that has since appeared.
+       */
+      const inAColumn = new Set(this.columns()
+        .map((pane) => pane.tabId)
+        .filter((id): id is string => id !== null));
       untracked(() => {
-        for (const tab of moved) {
-          this.positionShown.set(tab.id, tab.at);
-          void this.refreshCuration(tab.id, tab.path);
+        for (const key of [...this.showing.keys()]) {
+          if (!open.has(key)) this.showing.delete(key);
+        }
+        for (const move of moves) {
+          this.showing.set(move.key, move.now);
+          if (move.was === null) continue;
+          this.showPosition(move, inAColumn);
         }
       });
     });
   }
 
   /**
-   * The step this tab's project is standing on, as a string this can compare —
-   * `''` for a document in no project and for a ledger nobody has read yet.
-   *
-   * The two are ONE ANSWER on purpose. Neither has a position to draw a frozen
-   * curation from, and a tab that moves between them has nothing to re-read.
+   * The picture each project's panes are currently showing, keyed by the folded
+   * directory — this window's memory of where every open book was standing.
    */
-  private positionOfTab(tabId: string): string {
-    const tab = this.byId(tabId);
-    if (tab === null) return '';
-    return this.ledger.standingIn(this.projectDirOf(tab))?.id ?? '';
+  private readonly showing = new Map<string, ShownPicture>();
+
+  /**
+   * What this project's panes OUGHT to be showing, or null while nothing has read
+   * its history.
+   *
+   * The view and the string it compares by are made together and never apart: a
+   * caller holding one without the other would either compare pictures it cannot
+   * act on or act on a picture it cannot compare.
+   */
+  private pictureIn(projectDir: string | null): ShownPicture | null {
+    const history = this.ledger.historyFor(projectDir);
+    if (history === null) return null;
+    const view = positionView(history.ledger);
+    return { view, picture: positionPicture(view) };
   }
 
-  /** The position each block-view tab's curation on screen was read for. */
-  private readonly positionShown = new Map<string, string>();
+  /**
+   * Make every pane of this project show the position — and SAY SO when none of
+   * them can.
+   *
+   * ── The three pictures, and what each costs ─────────────────────────────────
+   *
+   * NO OUTLINES (the import, and any position with no reading above it): the pane
+   * comes out of the block editor. Nothing had been read at that point in the
+   * book's story, so boxes drawn over the scan there would be the pane making a
+   * claim about a step the user is standing BEFORE — which is the one thing the
+   * revert row exists to let somebody look at without.
+   *
+   * OUTLINES, PANE NOT IN THE MODE: it goes into the mode and reads the bank. This
+   * is the click the user was actually making when they reported that nothing
+   * happened, and it is the expensive one — but it is expensive exactly once per
+   * genuinely different picture, and it is what they asked for by clicking the row.
+   *
+   * OUTLINES, PANE ALREADY IN THE MODE: the bank is re-read only if the READING
+   * moved. Otherwise this is a few kilobytes of corrections off a disk, which is
+   * what keeps stepping between a reading and its saves as free as the panel
+   * promises. See `refreshCuration`.
+   *
+   * ── And why "nothing to do" is a sentence rather than silence ───────────────
+   *
+   * A gesture that produces no visible change is indistinguishable from a broken
+   * app, and this one has three honest ways to produce none: the book's pages are
+   * not in any column, the row's payload is a document no pane can open yet, or
+   * the pane is already showing exactly this. All three are things the person who
+   * clicked deserves to be told, in words, rather than left to conclude that the
+   * history panel does not work. That was the whole of the original complaint.
+   */
+  private showPosition(move: PositionMove, inAColumn: ReadonlySet<string>): void {
+    const view = move.now.view;
+    const readingMoved = (move.was?.view.reading?.id ?? null) !== (view.reading?.id ?? null);
+    const curationMoved = (move.was?.view.curation?.id ?? null) !== (view.curation?.id ?? null);
+    let reachable = false;
+    let repainted = false;
+    for (const tab of this.all()) {
+      if (tab.kind !== 'pdf') continue;
+      const dir = this.projectDirOf(tab);
+      if (dir === null || fold(dir) !== move.key) continue;
+      // A document open in the list but not in any column still has its state put
+      // right — it is one click from being back on screen and must not come back
+      // showing a step nobody is standing on — but it cannot be what makes this
+      // move visible.
+      const seen = inAColumn.has(tab.id);
+      if (!view.outlines) {
+        if (!tab.blockView) continue;
+        this.patch(tab.id, { blockView: false });
+        this.forgetBlockView(tab.id);
+        if (seen) repainted = true;
+      } else if (!tab.blockView) {
+        this.patch(tab.id, { blockView: true });
+        void this.loadBlockView(tab.id, tab.path);
+        if (seen) repainted = true;
+      } else if (readingMoved) {
+        void this.loadBlockView(tab.id, tab.path);
+        if (seen) repainted = true;
+      } else if (curationMoved) {
+        void this.refreshCuration(tab.id, tab.path);
+        if (seen) repainted = true;
+      }
+      if (seen) reachable = true;
+    }
+    const said = this.unshownAt(view, reachable, repainted);
+    if (said !== null) this.notice.set(said);
+  }
+
+  /**
+   * Why this move produced nothing to look at, or null when it produced something.
+   *
+   * ONE SENTENCE PER REASON, and each one names the row in the app's own words —
+   * never a filename, because a step is named by the action it was (the rule
+   * `labelFor` exists to keep). A person who clicks a row in their own history and
+   * sees the page not move has to be able to find out why from the app rather than
+   * from us.
+   */
+  private unshownAt(view: PositionView, reachable: boolean, repainted: boolean): string | null {
+    const label = view.step?.label ?? null;
+    if (label === null) return null;
+    if (!reachable) {
+      return `You are standing on “${label}”, and none of the open columns is showing this book’s `
+        + 'pages — so there is nothing on screen for that to change. Put the scan in a column, by '
+        + 'clicking it in the list down the left or opening it from Home, and the pages will show '
+        + 'the step you are standing on.';
+    }
+    if (view.elsewhere) {
+      // The one row whose own payload this app cannot yet put in a pane. Said
+      // every time it is stood on rather than once, because it is not an error
+      // that has been noted — it is the standing state of that row, and somebody
+      // stepping between two translations is asking the same question again.
+      return `You are standing on “${label}”. Foundry cannot open a translated book from its row `
+        + 'yet, so these pages are still the ones it was translated from, with your live '
+        + 'corrections drawn on them — which is where a strike made here would land. Generate '
+        + 'from this row to read the translation itself.';
+    }
+    if (repainted) return null;
+    if (!view.outlines) {
+      return `You are standing on “${label}” — the pages exactly as they came in. Nothing had been `
+        + 'read from this book at that point in its story, so there is nothing outlined over them, '
+        + 'and that is what this column is already showing.';
+    }
+    return `You are standing on “${label}”, and this column is already showing it.`;
+  }
 
   /**
    * What to call a document at this path — the book, and the file only as a last
@@ -1634,7 +1821,8 @@ export class TabsService {
      * in which a Delete key does the one thing this design exists to prevent.
      * `ensure` is silent and idempotent: a project already held is a no-op.
      */
-    this.ledger.ensure(this.projects.projectFor(pdfPath)?.dir ?? null);
+    const dir = this.projects.projectFor(pdfPath)?.dir ?? null;
+    this.ledger.ensure(dir);
     this.setBlockView(tabId, {
       pages: [], detected: [], overlay: null, frozen: null, problem: null, loading: true,
     });
@@ -1648,14 +1836,14 @@ export class TabsService {
         return;
       }
       /*
-       * THE POSITION THIS LOAD IS ABOUT, read BEFORE the call and not after it.
+       * THE PICTURE THIS LOAD IS ABOUT, read BEFORE the call and not after it.
        * Somebody who clicks a save row while the mode is still coming up has moved
        * the pointer under this load, and recording where they ended up would tell
-       * the effect below that the pre-move curation on screen is the one they
-       * asked for. Recorded as it was asked, the effect sees the mismatch and
-       * re-reads — which is the same recovery a move at any other moment gets.
+       * the effect above that the pre-move picture on screen is the one they asked
+       * for. Recorded as it was asked, the effect sees the mismatch and puts it
+       * right — which is the same recovery a move at any other moment gets.
        */
-      const at = this.positionOfTab(tabId);
+      const at = this.pictureIn(dir);
       const loaded: OverlayLoad = await api.overlay.load(pdfPath);
       if (!this.stillInBlockView(tabId)) return;
       this.setBlockView(tabId, {
@@ -1676,8 +1864,8 @@ export class TabsService {
         loading: false,
       });
       // So the effect that watches for a pointer move does not immediately ask
-      // again for a curation that has just arrived.
-      this.positionShown.set(tabId, at);
+      // again for blocks and corrections that have just arrived.
+      if (dir !== null && at !== null) this.showing.set(fold(dir), at);
       if (loaded.notice !== null) this.notice.set(loaded.notice);
       /*
        * AND THE UNDO HISTORY, from the same pair of files. `restoreLedger` is
@@ -1807,10 +1995,17 @@ export class TabsService {
       next.delete(tabId);
       return next;
     });
-    // The mode is gone, so there is no curation on screen and no position it was
-    // read for. Left behind, the entry would tell the effect that a tab reopened
-    // on the same id is already showing a curation it has never read.
-    this.positionShown.delete(tabId);
+    /*
+     * `showing` IS DELIBERATELY LEFT ALONE HERE, and that is a change of key
+     * rather than an omission. It used to be per tab and was dropped with the
+     * mode; it is now per PROJECT — the record of where this window last painted
+     * a book standing, which is still true of a project whose pane somebody has
+     * pressed Blocks off in. Dropping it here would re-baseline the project, and
+     * the very next pointer move would be read as this window's first sighting of
+     * it and obeyed by doing nothing. It is dropped when the last tab of the
+     * project closes, which is where "this window is no longer showing that book"
+     * is actually true.
+     */
     this.forgetFrameState(tabId);
   }
 
