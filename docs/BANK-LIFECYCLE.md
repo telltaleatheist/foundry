@@ -260,9 +260,46 @@ worst case is a stale sentence, and the alternative — re-confirming at spawn
   real work: a replace whose old payload path differs (a branch re-run
   landing as replace after a delete, the one case paths can drift) destroys
   the unnamed file, and `namesPayload`'s whole-path rule already guards it.
-- `overlaysDir` pairing, `locateOverlay`, `curationInEffect` — unchanged.
-  Overlays are keyed to the *generation*, which is minted per run, not per
-  path; nothing there reads a bank path.
+- `overlaysDir` pairing, `curationInEffect` — unchanged. **`locateOverlay`
+  is NOT unchanged** (the build corrected this section): it composed
+  `readings/<key>.jsonl` into `OverlayLocation.readings`, which is what
+  `vlm-blocks` — the block editor's page source — runs against. It asks
+  `readingBank(projectDir, manifest)` now, or the editor would draw the
+  newer bank's pages under the older row's corrections.
+
+### 4.4 The generation must stop counting archive folders
+
+Found after phases 1 and 2 landed; this section is the fix's spec.
+
+`readingGeneration` (`projects.ts:2511`) re-mints the overlay-invalidating
+generation only when `countArchivedBanks(dir)` moves — and after §2 nothing
+ever archives a bank again, so a fresh re-read would keep the old generation
+and stale amendments would silently apply to renumbered blocks. A *branched*
+read (§4.1) writes a new bank at a new path — also no archive — so a branch
+would inherit the first reading's generation the same way. The folder count
+was always a proxy; both phases knocked its legs out at once.
+
+The step model already holds the truth: **a read step's `params.generation`
+is the authority**, and the generation a viewer compares against is the
+*position's* — the nearest read step on the ancestry (`readingInEffect`),
+falling back to `manifest.reading` for a ledgerless project, falling back to
+first-touch minting exactly as today. `countArchivedBanks` is deleted.
+
+The invariants, which are the test list:
+
+1. a fresh re-read (the §2 swap) changes the generation its step answers;
+2. a resume completing a project's FIRST read adopts a first-touch
+   generation minted mid-read (`manifest.reading` present with
+   `readAt === 0`) — an overlay made against the pages already read
+   survives the run finishing, exactly the case the folder count got right;
+3. a branch mints its own generation, so standing on either branch compares
+   the live overlay against THAT branch — the archive-the-pair machinery
+   then hands the overlay off correctly instead of never firing;
+4. a re-render (`--reuse-readings`) never re-mints — no landing, no mint;
+5. a bank swapped by the CLI behind the app's back is caught: the landing
+   records the completion marker's `completedAt` beside the generation, and
+   `readingGeneration` re-mints when the marker on disk disagrees with the
+   record — the honest successor to "the folder count moved".
 
 ### 4.3 What is deliberately not done
 
