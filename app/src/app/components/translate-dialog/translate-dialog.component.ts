@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
+import { languageTagFor, translationInEffect } from '@shared/ledger';
 import { fold } from '@shared/original';
 import {
   DEFAULT_OLLAMA_ENDPOINT as DEFAULT_OLLAMA,
@@ -8,6 +9,7 @@ import {
 } from '@shared/pipeline';
 import type { TranslateRequest } from '@shared/types';
 
+import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';
 import { QueueService } from '../../core/queue.service';
 import { TabsService } from '../../core/tabs.service';
@@ -15,16 +17,16 @@ import { UiService } from '../../core/ui.service';
 import { api } from '../../core/foundry';
 
 /*
- * THE TWO DEFAULTS MOVED TO `shared/` AND ARE IMPORTED UNDER THEIR SHORT NAMES.
+ * THE TWO DEFAULTS LIVE IN `shared/` AND ARE IMPORTED UNDER THEIR SHORT NAMES.
  *
- * They were constants in this file, where they were the values the two fields
- * open on, and this dialog was the only thing that ever asked. It is not any
- * more: a Generate standing on a translation runs a translate stage with no form
- * in front of it (`renderPipeline`, shared/pipeline.ts), so main needs the same
- * answer this dialog would have given. Two copies of a model id is two answers
- * the day somebody bumps one of them, and that failure presents as a re-render
- * quietly asking a different model than the translation was made with — filling
- * the same bank with answers in a second voice.
+ * They were constants in this file, where they are the values the two fields open
+ * on, and they moved out when a Generate standing on a translation could run the
+ * translator with no form in front of it. That path is gone — a translated book is
+ * cast from records now, and this dialog is once again the only door to a
+ * translation — and the constants stay in `shared/` deliberately: they are the
+ * engine's own defaults, they are what a person is shown before they change them,
+ * and a copy of a model id in a component is how a bump ends up applying to one of
+ * two places.
  *
  * Aliased on the way in because the long names are what a shared module owes its
  * readers and the short ones are what a dozen lines below already say.
@@ -85,20 +87,46 @@ import { api } from '../../core/foundry';
             <input type="text" [value]="name()" readonly [title]="input">
           </label>
 
+          <!--
+            THE SOURCE IS A FACT WHERE THE POSITION IS A TRANSLATION, and a
+            question everywhere else. Standing on the English translation and
+            asking for Hungarian is the user's own chain — *"it translates from
+            english to hungarian, thus creating a chain of translations"* — and
+            what that run reads is the English row's own answers, whose language
+            that row recorded. Offering a From box there would invite somebody to
+            disagree with the ledger, and the way that disagreement presents is a
+            prompt told it is holding German while it holds English.
+          -->
           <div class="pair">
             <label class="field">
               <span class="label">Into</span>
               <input type="text" placeholder="en" [ngModel]="to()" (ngModelChange)="to.set($event)" name="to">
             </label>
-            <label class="field">
-              <span class="label">From <em>optional</em></span>
-              <input type="text" placeholder="detect" [ngModel]="from()" (ngModelChange)="from.set($event)" name="from">
-            </label>
+            @if (sourceLanguage(); as standing) {
+              <label class="field">
+                <span class="label">From <em>the translation you are on</em></span>
+                <input type="text" [value]="standing" readonly>
+              </label>
+            } @else {
+              <label class="field">
+                <span class="label">From <em>optional</em></span>
+                <input type="text" placeholder="detect" [ngModel]="from()" (ngModelChange)="from.set($event)" name="from">
+              </label>
+            }
           </div>
-          <p class="note">
-            Language tags, not names: <code>en</code>, <code>de</code>, <code>pt-BR</code>.
-            Left blank, the source language is the model's to work out from the text.
-          </p>
+          @if (sourceLanguage(); as standing) {
+            <p class="note">
+              Language tags, not names: <code>en</code>, <code>de</code>, <code>pt-BR</code>.
+              This one is translated from the <code>{{ standing }}</code> translation you are
+              standing on, paragraph by paragraph, so the words it starts from are the ones that
+              row holds rather than the book's own.
+            </p>
+          } @else {
+            <p class="note">
+              Language tags, not names: <code>en</code>, <code>de</code>, <code>pt-BR</code>.
+              Left blank, the source language is the model's to work out from the text.
+            </p>
+          }
 
           <label class="field">
             <span class="label">Model</span>
@@ -143,6 +171,24 @@ import { api } from '../../core/foundry';
             job fails — nothing half-translated is ever written.
           </p>
 
+          <!--
+            A LANGUAGE INTO ITSELF IS NOT A TRANSLATION, and this says so before
+            the button rather than after it. Standing on the English translation
+            and asking for English again would ask a model to render every
+            paragraph of an English book in English — hours of it — and file the
+            result as a second row that means nothing. Redoing a translation is a
+            different gesture: stand on the step it was made FROM and ask for that
+            language again, which replaces the row you already have.
+          -->
+          @if (sameLanguage()) {
+            <p class="problem">
+              You are standing on the {{ sourceLanguage() }} translation, so translating it into
+              {{ sourceLanguage() }} would be asking the model to say the same thing again. To redo
+              this one, stand on the step it was made from and translate to
+              {{ sourceLanguage() }} there.
+            </p>
+          }
+
           @if (problem(); as reason) {
             <p class="problem">{{ reason }}</p>
           }
@@ -150,7 +196,11 @@ import { api } from '../../core/foundry';
 
         <footer class="foot">
           <button class="ghost" (click)="ui.closeTranslate()">Cancel</button>
-          <button class="primary" [disabled]="busy() || to().trim().length === 0" (click)="add()">
+          <button
+            class="primary"
+            [disabled]="busy() || to().trim().length === 0 || sameLanguage()"
+            (click)="add()"
+          >
             {{ busy() ? 'Working…' : 'Add to queue' }}
           </button>
         </footer>
@@ -280,6 +330,7 @@ export class TranslateDialogComponent {
   private readonly tabs = inject(TabsService);
   private readonly queue = inject(QueueService);
   private readonly projects = inject(ProjectsService);
+  private readonly ledger = inject(LedgerService);
 
   /**
    * The book this translation is OF — THE POSITION'S DOCUMENT, in a project.
@@ -347,8 +398,56 @@ export class TranslateDialogComponent {
     return showing?.title ?? this.projects.nameFor(input);
   });
 
+  /**
+   * THE LANGUAGE THIS ONE WOULD BE MADE OUT OF, when the position stands on a
+   * translation — or null for a translation of the book's own words.
+   *
+   * ── Why the dialog knows this at all ────────────────────────────────────────
+   *
+   * Because it changes what the form ASKS. A translation made from a standing
+   * translation is a chain (docs/WORKBENCH.md §10, ruling 3): the run reads that
+   * row's own answers, so its source language is a fact the ledger recorded rather
+   * than a box for somebody to fill in — and translating a language into itself is
+   * a run that spends hours to say the same thing.
+   *
+   * `translationInEffect` IS THE WALK THE PLAN MAKES, asked of the same mirror the
+   * inspector paints its rows from. It answers the nearest translate step above
+   * the position, so it is right for a save made under one as well as for the
+   * translation itself, and it answers null everywhere else — which is every
+   * project that has never been translated.
+   *
+   * THIS WINDOW DOES NOT DECIDE ANYTHING WITH IT. Main composes the chain from its
+   * own ledger (`planTranslation`, electron/workspace.ts) and hands the answer
+   * back; what this is for is the sentence on screen and the button that goes
+   * quiet, because a refusal a person meets before they press is worth more than
+   * the same refusal afterwards.
+   */
+  protected readonly sourceLanguage = computed(() => {
+    const project = this.projects.projectFor(this.tabs.activeDocument()?.path ?? '');
+    const ledger = this.ledger.historyFor(project?.dir ?? null)?.ledger ?? null;
+    const said = ledger === null ? undefined : translationInEffect(ledger)?.params?.language;
+    return said !== undefined && said.trim().length > 0 ? said.trim() : null;
+  });
+
   protected readonly to = signal('en');
   protected readonly from = signal('');
+
+  /**
+   * Whether the target IS the standing translation's own language.
+   *
+   * FOLDED THE WAY THE FILENAMES ARE, so `EN` and `en` are one language here as
+   * they are everywhere else in this app: `languageTagFor` is the single spelling
+   * of that reduction (shared/ledger.ts), and lowercasing after it is what stops a
+   * capital letter turning "the same language" into a chain nobody asked for.
+   * Main folds the same pair the same way when it decides whether this run is a
+   * chain, so the two sides cannot disagree about what the button did.
+   */
+  protected readonly sameLanguage = computed(() => {
+    const standing = this.sourceLanguage();
+    const wanted = this.to().trim();
+    if (standing === null || wanted.length === 0) return false;
+    return languageTagFor(standing).toLowerCase() === languageTagFor(wanted).toLowerCase();
+  });
   protected readonly model = signal(DEFAULT_MODEL);
   protected readonly ollama = signal(DEFAULT_OLLAMA);
   protected readonly instructions = signal('');
@@ -388,21 +487,41 @@ export class TranslateDialogComponent {
       const request: TranslateRequest = {
         kind: 'translate',
         inputPath: plan.inputPath,
-        outputPath: plan.outputPath,
         to,
         model: this.model().trim() || DEFAULT_MODEL,
         ollama: this.ollama().trim() || DEFAULT_OLLAMA,
-        // Where each accepted block lands the moment it is accepted, so a run
-        // that is interrupted asks only for what it still owes. Never a choice
-        // in this dialog: see the note on `argsFor`.
-        bankPath: plan.bankPath,
-        // The step both of those files are named after, minted by the plan and
-        // carried to the landing so the row and the files agree about which
-        // translation this is. Never read here — this dialog does not know what a
-        // step is, and it is main's answer travelling back to main.
+        /*
+         * WHERE THE ANSWERS GO, AND THE WHOLE OF WHAT THIS RUN MAKES. Every
+         * accepted block lands there the moment it is accepted, so a run that is
+         * interrupted asks only for what it still owes — and there is no second
+         * file, because the records ARE the cache. Never a choice in this dialog:
+         * see the note on `argsFor`.
+         */
+        recordsPath: plan.recordsPath,
+        /*
+         * AND THE CHAIN, COMPOSED BY MAIN AND CARRIED BACK — the parent
+         * translation's answers, and the language they are in. This window holds a
+         * mirror of the ledger and shows what it says (`sourceLanguage` above);
+         * WHICH FILE that is, and therefore what the model is actually asked, is a
+         * fact about somebody's history and is decided where the history lives.
+         */
+        ...(plan.sourceRecords !== undefined ? { sourceRecords: plan.sourceRecords } : {}),
+        ...(plan.seedRecords !== undefined ? { seedRecords: plan.seedRecords } : {}),
+        ...(plan.generation !== undefined ? { generation: plan.generation } : {}),
+        // The step the file is named after, minted by the plan and carried to the
+        // landing so the row and the file agree about which translation this is.
+        // Never read here — this dialog does not know what a step is, and it is
+        // main's answer travelling back to main.
         stepId: plan.stepId,
       };
-      const from = this.from().trim();
+      /*
+       * THE SOURCE LANGUAGE IS MAIN'S WHERE MAIN HAS ONE. Translating a standing
+       * translation asks its questions of that row's own answers, and what language
+       * those are in is recorded on the row — so the field is not offered there and
+       * the plan's answer wins. Everywhere else it is what the person typed, and
+       * blank still means "work it out from the text".
+       */
+      const from = plan.from ?? this.from().trim();
       if (from.length > 0) request.from = from;
       const instructions = this.instructions().trim();
       if (instructions.length > 0) request.instructions = instructions;

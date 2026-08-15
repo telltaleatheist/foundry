@@ -104,7 +104,7 @@ import { api } from '../../core/foundry';
                   role="radio"
                   [attr.aria-checked]="kind() === choice.kind"
                   [class.on]="kind() === choice.kind"
-                  [disabled]="epubOnly() && choice.kind !== 'epub'"
+                  [disabled]="noFacsimile() && choice.kind === 'pdf'"
                   (click)="kind.set(choice.kind)"
                 >
                   <span class="kind-name">{{ choice.label }}</span>
@@ -113,18 +113,24 @@ import { api } from '../../core/foundry';
               }
             </div>
 
-            @if (epubOnly()) {
+            @if (noFacsimile()) {
               <!--
-                THE BOUND, SAID RATHER THAN JUST APPLIED. Two dead cards with no
-                sentence beside them is an app that has decided something and will
+                THE BOUND, SAID RATHER THAN JUST APPLIED. A dead card with no
+                sentence beside it is an app that has decided something and will
                 not say what. Main refuses the same pair for the same reason
-                (planConversion) — this is the courtesy, not the rule.
+                (planExport), and the engine refuses it again underneath — this is
+                the courtesy, not the rule.
+
+                IT USED TO SAY "the EPUB only", and it was true of a translated
+                export while that job ended in a run that reads a book and writes a
+                book. A translation is a records file now and the words go into the
+                blocks as the book is assembled, upstream of the format fork — so
+                plain text works from here too, and only the facsimile cannot.
               -->
               <p class="note">
-                The EPUB only, standing here. You are on a translation, and what Foundry can make
-                from one is the book: reprinting the scan's own photographed pages in another
-                language is not something the engine does. Click back to the reading for a
-                facsimile or a text file of the original.
+                No facsimile, standing here. You are on a translation, and a facsimile reprints the
+                scan's own photographed pages — there is nowhere on a photograph of a German page to
+                put a Hungarian paragraph. Click back to the reading for a facsimile of the original.
               </p>
             }
 
@@ -152,20 +158,19 @@ import { api } from '../../core/foundry';
             <!--
               WHAT THIS IS MADE FROM, said plainly, because it is the reassurance
               that makes exporting a second time feel free rather than reckless.
-              A translation position gets a different second sentence, because the
-              first one would lie there: the render half is still free, but the
-              translator runs over whatever the bank cannot answer, and a job that
-              can spend model time starts from the queue, not from this button.
+
+              A TRANSLATION POSITION USED TO GET A SECOND SENTENCE HERE, admitting
+              that the export could spend model time: it ran the translator over
+              whatever the bank could not answer, and a job like that starts from
+              the queue rather than from this button. A translated export is one
+              rendering now — the words are read out of the translation's records
+              file, which is on disk — so the plain sentence is true everywhere and
+              the caveat is gone rather than merely unshown.
             -->
             <p class="note quiet">
               Made from the {{ pages() > 0 ? pages().toLocaleString() + ' pages' : 'pages' }} the
               model has already read{{ curated() ? ', with your block corrections applied' : '' }}.
-              @if (epubOnly()) {
-                Blocks already translated come out of the bank; anything changed since is asked of
-                the translator again. It waits in the queue until you press Start.
-              } @else {
-                Nothing is read again and no GPU is used.
-              }
+              Nothing is read again and no GPU is used.
             </p>
 
             <!--
@@ -431,7 +436,7 @@ export class ExportDialogComponent {
    * make the book they had just stepped away from (docs/WORKBENCH.md §6c — every
    * action keys off the position, "on the import row = disabled").
    *
-   * FROM THE LEDGER MIRROR, like `epubOnly` beside it. A project whose history
+   * FROM THE LEDGER MIRROR, like `noFacsimile` beside it. A project whose history
    * this window has not read yet answers null, and null is not the import — the
    * dialog stays open and main's own refusal is the backstop, which is this file's
    * rule everywhere: a shut door explains itself, and a door shut on a guess does
@@ -483,25 +488,28 @@ export class ExportDialogComponent {
   ];
 
   /**
-   * Whether the only thing that can be made from here is the book itself.
+   * Whether the one thing that cannot be made from here is the facsimile.
    *
    * ── The bound, and where it is actually enforced ────────────────────────────
    *
-   * Standing under a translation, an export is two runs: render the curated book
-   * out of the readings bank, then translate that rendering (`renderPipeline`,
-   * shared/pipeline.ts). The second stage is an EPUB transform — the translate
-   * command reads a book and writes a book — and there is no version of the
-   * engine's facsimile pass that reprints the scan's photographed pages in
-   * Hungarian. So the other two cards are dead here.
+   * A facsimile reprints the PAGE — the scan's own photographed lines, set back as
+   * type — and there is nowhere in that route for a translated paragraph to go.
+   * The engine refuses the pair by name (src/vlm/convert.ts) and main refuses it a
+   * step earlier (`planExport`); this is the card going quiet before either of
+   * them has to say so.
+   *
+   * IT USED TO BE `epubOnly`, AND THE PLAIN TEXT CARD WAS DEAD WITH IT. That was
+   * honest about the two-stage pipeline: an export standing under a translation
+   * ended in `translate`, which reads a book and writes a book, so there was no
+   * route to the text emitter at all. A translation is a records file now and its
+   * words are substituted before the format fork, so plain text comes out
+   * translated for free — one product this app could not offer yesterday.
    *
    * FROM THE LEDGER MIRROR, the same one the inspector paints its rows from and
    * the OCR dialog asks what a re-read would cost. `translationInEffect` is the
-   * walk `curationInEffect` already makes, asked one more question — and it is the
-   * NON-refusing half of the pair deliberately: `renderPipeline` throws for a
-   * translation of a translation, and a computed that can throw is a template that
-   * can go blank. Main says that sentence when the button is pressed.
+   * walk `curationInEffect` already makes, asked one more question.
    */
-  protected readonly epubOnly = computed(() => {
+  protected readonly noFacsimile = computed(() => {
     const ledger = this.ledger.historyFor(this.project()?.dir ?? null)?.ledger ?? null;
     return ledger !== null && translationInEffect(ledger) !== null;
   });
@@ -533,7 +541,7 @@ export class ExportDialogComponent {
      * selection that is now a disabled card — and would press Export to be told
      * by main what the card in front of them already said.
      */
-    effect(() => { if (this.epubOnly()) this.kind.set('epub'); });
+    effect(() => { if (this.noFacsimile() && this.kind() === 'pdf') this.kind.set('epub'); });
   }
 
   /**
@@ -614,14 +622,20 @@ export class ExportDialogComponent {
          */
         export: true,
         /*
-         * AND THE SECOND STAGE, WHEN MAIN PUT ONE IN THE PLAN — carried, never
-         * composed. Which language, which bank and which row this lands in are
+         * AND THE TRANSLATION'S OWN WORDS, WHEN MAIN PUT THEM IN THE PLAN —
+         * carried, never composed. Which translation this position is about is
          * read off the ledger, and the ledger main holds is the truth; this
          * window holds a mirror of it that is a repaint behind at worst. Copying
          * what the plan says is the same rule `readingsPath` and `overlayPath`
          * have always obeyed one line up.
+         *
+         * This used to be a whole second STAGE — a translate run after the
+         * rendering, with a language, a bank and a row to land in. A translation
+         * is a records file now, so what the plan hands over is that file and the
+         * language to declare the book as, and one engine run makes the edition.
          */
-        ...(plan.thenTranslate !== undefined ? { thenTranslate: plan.thenTranslate } : {}),
+        ...(plan.records !== undefined ? { records: plan.records } : {}),
+        ...(plan.language !== undefined ? { language: plan.language } : {}),
       };
 
       const outcome = await this.queue.enqueue(request);
@@ -630,13 +644,16 @@ export class ExportDialogComponent {
         return;
       }
       this.ui.shelfExpanded.set(true);
-      // A two-stage job is HELD (it can spend model time — see the queue's hold
-      // rule), so the sentence has to hand the person to the button that
-      // actually starts it, the way the Translate dialog's always has.
-      this.ui.announce(plan.thenTranslate !== undefined
-        ? `${this.nameFor(input)} is queued. Press Start on the shelf to run it.`
-        : `Making the ${this.labelFor(kind)} of ${this.nameFor(input)}. It will be filed under `
-          + 'this project when it is done.');
+      /*
+       * ONE SENTENCE NOW, AND IT SAYS THE JOB IS MOVING. A translated export used
+       * to be HELD — it ran the translator as its second stage, which can spend
+       * model time — so the line had to hand the person to the Start button. It
+       * is one `vlm-convert` with the translation's words read out of a file: no
+       * model, no server, seconds. Nothing is waiting for a press, so nothing
+       * should tell somebody to go and find one.
+       */
+      this.ui.announce(`Making the ${this.labelFor(kind)} of ${this.nameFor(input)}. It will be `
+        + 'filed under this project when it is done.');
       this.ui.closeExport();
     } catch (err) {
       this.problem.set(err instanceof Error ? err.message : String(err));

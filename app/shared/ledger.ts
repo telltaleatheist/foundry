@@ -136,16 +136,23 @@ export const RETENTION_OF: Readonly<Record<StepAction, LedgerStep['retention']>>
  * compared. See `MINTED_BY_THE_RUN`, which is where that split is enforced.
  *
  * A TRANSLATE IS THE SAME TWO PILES IN THE SAME ORDER. `language` is the whole of
- * what the Translate dialog decides about which translation this is, and `bank` is
- * where the run put its answers — a fact about the answer, recorded so that
- * rendering from this row hours later reads the blocks this row was made of rather
- * than a path composed from the project key and hoped for.
+ * what the Translate dialog decides about which translation this is; `from` is the
+ * language a CHAINED run consumed, read off its parent rather than typed; and
+ * `bank` is where a run made before records mode put its answers.
+ *
+ * `bank` IS KEPT FOR THE STEPS THAT HAVE ONE AND IS WRITTEN BY NOTHING. A
+ * translation's answers are its own records file now, which is the step's PAYLOAD
+ * — the same arrangement a reading has always had, where the bank is the payload
+ * and no param names it. Every translation made before that is on somebody's disk
+ * with `params.bank` in it, and a table that stopped admitting the field would
+ * refuse those ledgers outright (`readParams` refuses a param the action does not
+ * declare, by name). It is a field this app reads and never writes.
  */
 export const PARAMS_OF: Readonly<Record<StepAction, readonly (keyof LedgerParams)[]>> = {
   import: [],
   read: ['skipPages', 'language', 'generation', 'pages', 'completedAt'],
   curate: ['generation', 'amendments'],
-  translate: ['language', 'bank'],
+  translate: ['language', 'bank', 'from'],
   /*
    * A METADATA EDIT IS DESCRIBED BY WHICH FIELDS IT SET, and by nothing else. The
    * values are in the payload, where the thing an export replays belongs
@@ -274,12 +281,19 @@ export const RETAINED_BESIDE_YOU: Readonly<Record<StepAction, boolean>> = {
  * ask for it, which `reRunTarget` settles by the parent before it ever reaches
  * these params. (If that ruling chafes, the fix is one line in `PARAMS_OF` — which
  * is the reason the table exists.)
+ *
+ * `from` IS IN THE ANSWER PILE FOR A SHARPER VERSION OF THE SAME REASON. Nobody
+ * typed it: a chained run reads the source language off its parent translate step,
+ * and WHICH parent is already the first thing `reRunTarget` compares. Comparing it
+ * again here would mean a re-translation of a chain stopped matching the row it
+ * exists to refresh the day somebody corrected the parent's own language — a
+ * second English row beside the one they asked to redo.
  */
 const MINTED_BY_THE_RUN: Readonly<Record<StepAction, readonly (keyof LedgerParams)[]>> = {
   import: [],
   read: ['generation', 'pages', 'completedAt'],
   curate: [],
-  translate: ['bank'],
+  translate: ['bank', 'from'],
   // Everything a metadata edit records was typed by a person into a box. There
   // is no run to mint anything, and `reRunTarget` cannot reach an irreplaceable
   // step in any case — this entry exists so the table stays exhaustive rather
@@ -364,10 +378,32 @@ export function labelFor(action: StepAction, params?: LedgerParams): string {
         ? 'Metadata'
         : `Metadata (${printed})`;
     }
-    default:
-      return params?.language === undefined || params.language.length === 0
-        ? 'Translated'
-        : `Translated (${params.language})`;
+    /*
+     * A TRANSLATION NAMES BOTH ENDS WHERE ONE END IS NOT ENOUGH.
+     *
+     * "Translated (hu)" says everything there is to say about a book read in
+     * German: there is one other language in the story, and it is the book's. A
+     * CHAIN breaks that — *German → English → Hungarian* is two rows, and which
+     * one the Hungarian was made from is the whole of what a person is looking for
+     * when they click between them. So a run that consumed another translation
+     * recorded what it consumed (`params.from`, written by nothing else) and the
+     * row says "Translated (en → hu)".
+     *
+     * THE TAGS AND NOT THE NAMES, because the tags are what was asked for: the
+     * dialog's own field says "language tags, not names", the engine refuses
+     * anything that is not one, and a label that printed "English" for `en` would
+     * be this app translating somebody's input in order to display it back.
+     *
+     * The single-hop wording is untouched, which is the point of the condition:
+     * every row already on a disk keeps the words it was stamped with, and the
+     * ones that go on being unambiguous keep them for good.
+     */
+    default: {
+      const into = params?.language ?? '';
+      if (into.length === 0) return 'Translated';
+      const outOf = params?.from ?? '';
+      return outOf.length === 0 ? `Translated (${into})` : `Translated (${outOf} → ${into})`;
+    }
   }
 }
 
@@ -613,7 +649,7 @@ function readStep(entry: unknown, index: number): LedgerStep {
  * a forgotten clause here means a page range checked as if it were a page count
  * and refused for being a string. Everything not in here is a whole number.
  */
-const WORDS = ['bank', 'generation', 'language', 'skipPages'] as const;
+const WORDS = ['bank', 'from', 'generation', 'language', 'skipPages'] as const;
 
 function isWord(key: keyof LedgerParams): key is typeof WORDS[number] {
   return (WORDS as readonly string[]).includes(key);
@@ -1119,6 +1155,100 @@ export function translationBankFileFor(key: string, language: string, branch?: s
 }
 
 /**
+ * A translation's RECORDS: the project's key, the language, and what it is.
+ *
+ * ── The file that replaced both the bank and the book ───────────────────────
+ *
+ * A translation used to leave two things: `generated/<book> (hu).epub`, which is
+ * what a person read, and `readings/<key>.hu.bank.jsonl` beside it, which is what
+ * made re-translating nearly free. It leaves ONE now — a row per flowing block,
+ * keyed by the block's position in the reading bank — and that one file is both:
+ * the book is cast from it on demand, and an unchanged block's question is
+ * already answered in it, so it is never asked twice. `translate --records`
+ * refuses `--bank` beside it by name for exactly that reason.
+ *
+ * IN `readings/` BESIDE THE OTHER TWO, because all three are the same thing:
+ * hours of a model held as answers about this book. `.records.` is what tells them
+ * apart to a person looking at the directory; nothing in the app ever tells them
+ * apart by name — it asks the step (`translationRecordsOf`).
+ *
+ * THE SAME BRANCH SUFFIX AS EVERYTHING ELSE IN HERE, and it is the same decision:
+ * the first translation into a language keeps the plain name, and a second one
+ * made from a different step mints `<id8>` from its own uuid, so the older row
+ * goes on naming the answers it is actually about (`translationTarget`).
+ */
+export function translationRecordsFileFor(key: string, language: string, branch?: string): string {
+  const tag = languageTagFor(language);
+  return `${key}.${tag}${branch === undefined ? '' : `.${branch}`}.records.jsonl`;
+}
+
+/**
+ * THE RECORDS A TRANSLATE STEP MEANS — its own payload — or null for one made
+ * before translations were records.
+ *
+ * ── Why the payload IS the answer, and what that replaced ──────────────────
+ *
+ * A translate step used to retain the EPUB the translator wrote, with the bank
+ * beside it recorded as a param. It retains the RECORDS FILE now, and the
+ * symmetry with a reading is exact rather than convenient: both actions run a
+ * model over a whole book, both produce a `.jsonl` of per-position answers in
+ * `readings/`, and for both of them the document a person reads is CAST from that
+ * file for nothing, at any time. A read step's payload has always been its bank
+ * (docs/BANK-LIFECYCLE.md §4.1); this is the same sentence about the other model
+ * pass. `orphanedPayloads` therefore protects and destroys a translation's answers
+ * by the rule it already had, with nothing taught to it.
+ *
+ * ── How an old row is told apart, and why it is not by its name ────────────
+ *
+ * By its LAYER, which this app composed itself: a translate step's payload is
+ * either the records file it wrote (`readings/`) or the EPUB the old EPUB→EPUB
+ * translator wrote (`generated/`), and nothing else has ever been either. That is
+ * not the basename matching the house rule forbids — no segment is compared, no
+ * extension is parsed for meaning, and the two layers mean two different things
+ * everywhere else in this app for the same reason they do here.
+ *
+ * NULL IS AN ORDINARY ANSWER, not a defect: it is every translation made before
+ * this unit, and what those rows have instead is a book on disk and a bank beside
+ * it (`translationBankOf`).
+ */
+export function translationRecordsOf(step: LedgerStep): string | null {
+  if (step.action !== 'translate') return null;
+  return step.payload.startsWith('readings/') ? step.payload : null;
+}
+
+/**
+ * THE BOOK ONE TRANSLATE STEP IS SHOWN AS — `<stem> (<tag>).<id8>.epub`,
+ * project-relative.
+ *
+ * ── Why a translation's book is a rendering now ─────────────────────────────
+ *
+ * Because the run does not write one. `translate --records` produces answers and
+ * no document, and the document is `vlm-convert` over the SAME reading bank with
+ * those answers substituted into the blocks — which means a translated book comes
+ * out of the same reflow, the same curation, the same chapters and the same
+ * edition rules as the source book rather than out of a second pipeline. It is
+ * free, it is made again at any time, and it is nobody's payload: exactly what
+ * `curateCastFile` above says about a save's own book, for exactly its reasons.
+ *
+ * `<id8>` ON EVERY ONE OF THEM, including the first, which is the one place this
+ * scheme differs from the payload names it borrows from. Those carry the suffix
+ * only on a branch because the plain name is what every project on every disk
+ * already holds and a migration was refused; a cast is a file this unit invents,
+ * so there is nothing to be compatible with and every reason to make the name
+ * collision-free — a re-translation that landed on a name another row's book
+ * already had would rotate somebody else's book aside to make room for this one.
+ *
+ * THE LANGUAGE STAYS IN THE NAME, because a person who opens `generated/` should
+ * see `Book (hu).<id8>.epub` and know what they are looking at. Nothing reads it
+ * back out: this composition is asked for by the plan that writes the file, the
+ * resolution that shows it and the sweep that removes it, so all three come to one
+ * answer without any of them parsing a filename.
+ */
+export function translationCastFile(stem: string, language: string, stepId: string): string {
+  return `${stem} (${languageTagFor(language)}).${id8(stepId)}.epub`;
+}
+
+/**
  * THE BANK A TRANSLATE STEP MEANS — what it recorded, or the path its language
  * composes for a step that landed before banks were recorded.
  *
@@ -1141,6 +1271,16 @@ export function translationBankFileFor(key: string, language: string, branch?: s
  */
 export function translationBankOf(step: LedgerStep, key: string): string | null {
   if (step.action !== 'translate') return null;
+  /*
+   * A RECORDS-MODE TRANSLATION HAS NO BANK AT ALL, and saying so here is what
+   * keeps the composed fallback below from inventing one. Its records file IS its
+   * bank — the engine refuses `--bank` beside `--records` for that reason — so it
+   * records no `params.bank`, and without this line the fallback would compose
+   * `readings/<key>.<tag>.bank.jsonl` for it: a path belonging to some other
+   * project's legacy translation or to nothing, offered to the sweep as a file
+   * this step's delete may destroy.
+   */
+  if (translationRecordsOf(step) !== null) return null;
   const recorded = step.params?.bank;
   if (recorded !== undefined && recorded.length > 0) return recorded;
   const language = step.params?.language;
@@ -1154,9 +1294,14 @@ export interface TranslationAsk {
   parent: string | null;
   /** `--to`, as the dialog named it. The whole of what makes this translation this one. */
   language: string;
-  /** The book's own name, which the EPUB is named after. */
-  stem: string;
-  /** The project key, which the bank is named after. */
+  /**
+   * The project key, which the records file is named after.
+   *
+   * THE BOOK'S STEM USED TO BE IN HERE TOO, for the EPUB this run no longer
+   * writes. What a translation produces is answers, and answers are named for the
+   * project rather than for the book — the same rule the readings bank has always
+   * obeyed, one file over.
+   */
   key: string;
 }
 
@@ -1164,10 +1309,17 @@ export interface TranslationAsk {
 export interface TranslationTarget {
   /** `LandedRun.id` for this run: an existing step on a replace, the minted id on a branch. */
   stepId: string;
-  /** The EPUB, project-relative. `LedgerStep.payload` when this lands. */
-  output: string;
-  /** The translation bank, project-relative. `params.bank` when this lands. */
-  bank: string;
+  /**
+   * The records file, project-relative. `LedgerStep.payload` when this lands.
+   *
+   * ONE PATH WHERE THERE USED TO BE TWO. This carried an `output` (the EPUB) and a
+   * `bank` beside it, because a translation wrote a book and banked its answers in
+   * a second file. It writes records and nothing else now, that file is the
+   * step's payload, and the book is cast from it afterwards under a name composed
+   * from the step itself (`translationCastFile`) — so there is one decision here
+   * instead of two that had to agree.
+   */
+  records: string;
   /** The step this would swap into, or null when it appends beside one. */
   replaces: LedgerStep | null;
 }
@@ -1186,29 +1338,38 @@ export interface TranslationTarget {
  *
  * ── The three answers ───────────────────────────────────────────────────────
  *
- * A REPLACE AIMS AT THE STEP'S OWN FILES: its payload, and the bank it recorded.
- * Same row, same paths, new contents — which is what `recordLanding` already says
- * about the row, now true of the files. Re-translating into a bank that is already
- * full is what makes a re-translation nearly free: every block whose masked source
- * has not changed is a cache hit and is never asked again.
+ * A REPLACE AIMS AT THE STEP'S OWN RECORDS. Same row, same path, new contents —
+ * which is what `recordLanding` already says about the row, now true of the file.
+ * Re-translating into a records file that is already full is what makes a
+ * re-translation nearly free: every block whose masked source has not changed is
+ * already answered in there and is never asked again.
  *
- * A FIRST TRANSLATION INTO A LANGUAGE KEEPS THE PLAIN NAMES. That is what every
- * project on every disk already holds, and the whole reason this scheme needs no
- * migration.
+ * A REPLACE OF A ROW THAT PREDATES RECORDS AIMS AT THE PLAIN NAME instead, and it
+ * is the one case where a re-run genuinely moves a payload. That step retains an
+ * EPUB the old translator wrote (`translationRecordsOf` answers null for it); this
+ * run writes records, so the row's payload changes layer, and `Landing.displaced`
+ * is what destroys the book it used to name once no surviving row does. The answers
+ * that book was assembled from are re-asked in full — the masked source moved a
+ * stage earlier when records arrived, so every key in the old bank misses by design
+ * (docs/WORKBENCH.md §10, ruling 1) — and that price was accepted when the format
+ * was bumped rather than discovered here.
  *
- * A BRANCH MINTS `<name>.<id8>.<ext>` FOR BOTH. The branch deliberately does NOT
- * share the first translation's bank: sharing would be harmless for cache hits and
- * would let a delete of either step destroy a bank the other one is made of, which
- * is the failure `orphanedPayloads` exists to prevent one folder over.
+ * A FIRST TRANSLATION INTO A LANGUAGE KEEPS THE PLAIN NAME, which is the same
+ * courtesy the banks and the EPUBs were given: nothing about a project's first
+ * translation into German should be spelled with a uuid in it.
  *
- * ── "Plain" means both names, and it is asked of the ledger ─────────────────
+ * A BRANCH MINTS `<name>.<id8>.jsonl`. It deliberately does NOT share the first
+ * translation's file: sharing would be harmless for cache hits and would let a
+ * delete of either step destroy the answers the other one is made of, which is the
+ * failure `orphanedPayloads` exists to prevent.
  *
- * Whether the plain names are free is decided by whether any step already names
- * them — by the whole project-relative path (`namesPayload`'s rule) and by
- * `translationBankOf` for the bank, which is what makes a step that landed before
- * banks were recorded count as holding the plain bank. BOTH are asked, and either
- * one being taken branches both, because a run that wrote a fresh EPUB into a bank
- * another row is made of would be two rows sharing one payload by another name.
+ * ── "Plain" is asked of the ledger, by the whole path ───────────────────────
+ *
+ * Whether the plain name is free is decided by whether any step already names it,
+ * by the whole project-relative path (`namesPayload`'s rule). The legacy names are
+ * not consulted and do not need to be: a project holding a pre-records German
+ * translation has its EPUB in `generated/` and its bank under `.bank.jsonl`, and
+ * neither of those is a records file, so the plain records name is genuinely free.
  */
 export function translationTarget(
   ledger: ProjectLedger,
@@ -1216,10 +1377,7 @@ export function translationTarget(
   /** Spent only on a branch. See `LandedRun.id` for the same arrangement. */
   minted: string,
 ): TranslationTarget {
-  const plain = {
-    output: `generated/${translationFileFor(ask.stem, ask.language)}`,
-    bank: `readings/${translationBankFileFor(ask.key, ask.language)}`,
-  };
+  const plain = `readings/${translationRecordsFileFor(ask.key, ask.language)}`;
   const target = reRunTarget(ledger, {
     action: 'translate',
     parent: ask.parent,
@@ -1228,23 +1386,19 @@ export function translationTarget(
   if (target !== null) {
     return {
       stepId: target.id,
-      output: target.payload,
-      // The fallback is `plain.bank` by construction rather than by coincidence:
-      // a re-run target matched on the SAME language, so the path its language
-      // composes is the path this ask composes.
-      bank: translationBankOf(target, ask.key) ?? plain.bank,
+      // The fallback is `plain` by construction rather than by coincidence: a
+      // re-run target matched on the SAME language from the SAME parent, so the
+      // path its language composes is the path this ask composes. It is taken
+      // only by a row that predates records, which had no records file to name.
+      records: translationRecordsOf(target) ?? plain,
       replaces: target,
     };
   }
-  const taken = ledger.steps.some((step) => (
-    step.payload === plain.output || translationBankOf(step, ask.key) === plain.bank
-  ));
-  if (!taken) return { stepId: minted, output: plain.output, bank: plain.bank, replaces: null };
-  const branch = id8(minted);
+  const taken = ledger.steps.some((step) => step.payload === plain);
+  if (!taken) return { stepId: minted, records: plain, replaces: null };
   return {
     stepId: minted,
-    output: `generated/${translationFileFor(ask.stem, ask.language, branch)}`,
-    bank: `readings/${translationBankFileFor(ask.key, ask.language, branch)}`,
+    records: `readings/${translationRecordsFileFor(ask.key, ask.language, id8(minted))}`,
     replaces: null,
   };
 }
@@ -1584,8 +1738,15 @@ export function orphanedPayloads(deletion: SubtreeDeletion): string[] {
  * caller knows the file it is about to unlink IS a bank, and that the engine's
  * in-flight debris beside it goes too (`pendingBeside`).
  *
- * A TRANSLATION'S BANK IS NOT. The payload is the EPUB a person reads; the bank is
- * the per-block record beside it, named by `params.bank` and by no step's payload
+ * A TRANSLATION'S ANSWERS ARE ITS PAYLOAD TOO, NOW — the records file
+ * (`translationRecordsOf`), which `orphanedPayloads` has therefore already decided
+ * the fate of by the same whole-path rule. It is named here for the reading's
+ * reason: so the caller knows the file it is about to unlink IS a bank, and that
+ * the engine's in-flight debris beside it goes too.
+ *
+ * A TRANSLATION MADE BEFORE RECORDS IS THE CASE THIS FUNCTION WAS WRITTEN FOR, and
+ * it is still here. Those steps retain the EPUB a person reads; the bank is the
+ * per-block record beside it, named by `params.bank` and by no step's payload
  * anywhere in the project. So `orphanedPayloads` cannot find it and should not
  * learn how — that function reasons over payloads, and a params-reading exception
  * in it would be the first of many. Without this, deleting the English translation
@@ -1606,15 +1767,26 @@ export function orphanedPayloads(deletion: SubtreeDeletion): string[] {
 export function orphanedBanks(deletion: SubtreeDeletion, key: string): string[] {
   const orphaned: string[] = [];
   for (const casualty of deletion.removed) {
-    const bank = casualty.action === 'read' ? casualty.payload : translationBankOf(casualty, key);
-    if (bank === null || orphaned.includes(bank)) continue;
-    // BOTH CHARACTERS A FILE CAN HAVE, asked of every survivor: the payload a row
-    // names and the bank a row means. A reading's bank is the first, a
-    // translation's is the second, and a file that is either to anything still in
-    // this project is not a file this delete is about.
-    if (namesPayload(deletion.ledger, bank)) continue;
-    if (deletion.ledger.steps.some((step) => translationBankOf(step, key) === bank)) continue;
-    orphaned.push(bank);
+    /*
+     * EVERY CHARACTER OF "BANK" ONE STEP CAN HAVE, and a translation can have two
+     * over the life of a project: its records file, and — for a row that predates
+     * records, or one whose re-translation moved it onto records — the old bank its
+     * language composes. Both are asked because a delete that took only one of them
+     * would leave the other in `readings/` for a row that no longer exists.
+     */
+    const banks = casualty.action === 'read'
+      ? [casualty.payload]
+      : [translationRecordsOf(casualty), translationBankOf(casualty, key)];
+    for (const bank of banks) {
+      if (bank === null || orphaned.includes(bank)) continue;
+      // BOTH CHARACTERS A FILE CAN HAVE, asked of every survivor: the payload a row
+      // names and the bank a row means. A reading's bank is the first, a
+      // pre-records translation's is the second, and a file that is either to
+      // anything still in this project is not a file this delete is about.
+      if (namesPayload(deletion.ledger, bank)) continue;
+      if (deletion.ledger.steps.some((step) => translationBankOf(step, key) === bank)) continue;
+      orphaned.push(bank);
+    }
   }
   return orphaned;
 }
@@ -1855,8 +2027,25 @@ const BOUNDS_THE_WALK: Readonly<Record<StepAction, boolean>> = {
  * a curate step hanging off the reading is not on the path from the import to a
  * position standing on the reading itself.
  */
-function nearestUpward(ledger: ProjectLedger, wanted: StepAction): LedgerStep | null {
-  const standing = positionOf(ledger);
+function nearestUpward(
+  ledger: ProjectLedger,
+  wanted: StepAction,
+  /**
+   * WHERE THE WALK STARTS, when it starts somewhere other than the position.
+   *
+   * A landing casts a book FOR ONE STEP — a save's own book, a translation's — and
+   * the pointer at that moment is wherever the person happens to be standing
+   * (`RETAINED_BESIDE_YOU`, and a queue that runs minutes later). A plan keyed to a
+   * step therefore cannot ask the position which corrections or which records are
+   * in effect: it would render the book as it is NOW under a name that says as it
+   * was THEN. Every one of these questions is "the nearest such row on the way up
+   * from HERE", and here is an argument.
+   *
+   * Null and absent both mean the position, which is what every viewer asks.
+   */
+  from: LedgerStep | null = null,
+): LedgerStep | null {
+  const standing = from ?? positionOf(ledger);
   if (standing === null) return null;
   const chain = ancestry(ledger, standing.id);
   for (let at = chain.length - 1; at >= 0; at -= 1) {
@@ -1892,8 +2081,12 @@ function nearestUpward(ledger: ProjectLedger, wanted: StepAction): LedgerStep | 
  * with no reading at all, and a position standing on the import — the revert row,
  * which is about the untouched original rather than about any bank.
  */
-export function readingInEffect(ledger: ProjectLedger): LedgerStep | null {
-  return nearestUpward(ledger, 'read');
+export function readingInEffect(
+  ledger: ProjectLedger,
+  /** The step to walk up from, or null for the position. See `nearestUpward`. */
+  at: LedgerStep | null = null,
+): LedgerStep | null {
+  return nearestUpward(ledger, 'read', at);
 }
 
 /**
@@ -1932,12 +2125,16 @@ export function readingInEffect(ledger: ProjectLedger): LedgerStep | null {
  * no `curate` step anywhere, so every position resolves to the live overlay and
  * nothing about this app's behaviour changes.
  */
-export function curationInEffect(ledger: ProjectLedger): LedgerStep | null {
+export function curationInEffect(
+  ledger: ProjectLedger,
+  /** The step to walk up from, or null for the position. See `nearestUpward`. */
+  at: LedgerStep | null = null,
+): LedgerStep | null {
   // The walk and its stopping places are `nearestUpward`'s, shared with
   // `readingInEffect` rather than spelled twice: both questions are "the nearest
   // one of these on the way up", and both stop at the reading whose blocks the
   // answer would be about. See `BOUNDS_THE_WALK`.
-  return nearestUpward(ledger, 'curate');
+  return nearestUpward(ledger, 'curate', at);
 }
 
 /**
@@ -2061,8 +2258,12 @@ export function displayedCuration(ledger: ProjectLedger): LedgerStep | null {
  * the ledger says, and what this app will and will not run from it is
  * `renderPipeline`'s to say (shared/pipeline.ts).
  */
-export function translationInEffect(ledger: ProjectLedger): LedgerStep | null {
-  return nearestUpward(ledger, 'translate');
+export function translationInEffect(
+  ledger: ProjectLedger,
+  /** The step to walk up from, or null for the position. See `nearestUpward`. */
+  at: LedgerStep | null = null,
+): LedgerStep | null {
+  return nearestUpward(ledger, 'translate', at);
 }
 
 /**
@@ -2219,8 +2420,7 @@ export function mergedMetadata(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * ROWS WHOSE OWN PAYLOAD IS THE DOCUMENT THEY SHOW — a table, for
- * `DISPLAYS_ITSELF`'s reason.
+ * ROWS THAT ARE A BOOK OF THEIR OWN — a table, for `DISPLAYS_ITSELF`'s reason.
  *
  * ── What this replaced, and what that cost ──────────────────────────────────
  *
@@ -2234,35 +2434,38 @@ export function mergedMetadata(
  * (`documentAtPosition`, electron/projects.ts) and the table says the thing that
  * is actually true of a row instead.
  *
- * ── The two piles ──────────────────────────────────────────────────────────
+ * ── And it used to be called `SHOWS_ITS_PAYLOAD`, which stopped being true ──
  *
- * AN IMPORT AND A TRANSLATION RETAINED A DOCUMENT: the untouched original, and
- * the book in the other language. Standing on one of those shows that file, and
- * nothing else in the project is the answer.
+ * The import still shows its payload: the untouched original is a document, and
+ * standing on that row means looking at it. A TRANSLATION NO LONGER DOES. What a
+ * translate step retains is its records file (`translationRecordsOf`) — per-block
+ * answers, in the same layer and the same shape as a reading's bank — and nobody
+ * reads a `.jsonl`. What it SHOWS is the book cast from those records, which is a
+ * rendering (`translationCastFile`), resolved the way every other rendering in this
+ * app is: by asking the project what it holds.
  *
- * A READ AND A SAVE DID NOT. A readings bank is per-page model answers and a
- * curation snapshot is a set of decisions about blocks — neither is a thing a
- * person reads. What those rows show is the document PRODUCED from them, which is
- * a rendering rather than a payload and is therefore resolved by asking the
- * project what it holds, not by reading the step's own `payload` field. (That is
- * exactly the seam docs/DERIVED-BOOK.md §6 phase B moves: the produced document
- * becomes the reflowed HTML, and this table does not change a line.)
+ * So the question the table answers is the one that did not change: IS THIS ROW A
+ * BOOK OF ITS OWN, or is it another state of the project's one flowing book? Both
+ * of its `true`s are books of their own — the untouched original and the
+ * translation — and everything downstream wanted that question rather than the
+ * payload one. `documentAtPosition` asks it to decide which document to resolve;
+ * `positionPicture` asks it to decide whether the ROW belongs in the key, which is
+ * what makes clicking between two translations of one book repaint; and
+ * `standForDocument` asks it while walking DOWN a chain, because a descendant that
+ * is a book of its own must stop the walk rather than be offered as the newest step
+ * of the reading it was made from.
+ *
+ * A READ AND A SAVE ARE NOT. A readings bank is per-page model answers and a
+ * curation snapshot is a set of decisions about blocks; what those rows show is the
+ * project's flowing book, in the state that row is about.
  *
  * IT IS A FACT ABOUT THE ROW AND NOT ABOUT THE CHAIN, exactly as `DISPLAYS_ITSELF`
- * is: "what did this row retain" is answered by looking at it, where "what state
- * is in effect" is answered by walking. Writing it as `action === 'translate'` at
- * the one call site that asks today would make the next change a search for every
- * place that guessed.
- *
- * EXPORTED FOR THE REVERSE DIRECTION. `standForDocument` (electron/projects.ts)
- * resolves a document back to the step it belongs to, and the question it asks
- * while walking DOWN a chain is this same one: a descendant that retained a
- * document of its own is a different book, so the walk stops there rather than
- * offering a translation as the newest step of the reading it was made from. That
- * is the exact `action === 'translate'` this table was written to prevent being
- * spelled a second time.
+ * is: "what kind of thing is this row" is answered by looking at it, where "what
+ * state is in effect" is answered by walking. Writing it as `action === 'translate'`
+ * at the call sites that ask would make the next change a search for every place
+ * that guessed.
  */
-export const SHOWS_ITS_PAYLOAD: Readonly<Record<StepAction, boolean>> = {
+export const A_BOOK_OF_ITS_OWN: Readonly<Record<StepAction, boolean>> = {
   import: true,
   read: false,
   curate: false,
@@ -2303,9 +2506,9 @@ export interface PositionView {
    */
   outlines: boolean;
   /**
-   * True when the document at this position is the row's OWN retained payload —
-   * the untouched original, the translated book — rather than something produced
-   * from it. See `SHOWS_ITS_PAYLOAD`.
+   * True when the document at this position is a BOOK OF ITS OWN — the untouched
+   * original, the translation — rather than the project's one flowing book in the
+   * state this row is about. See `A_BOOK_OF_ITS_OWN`.
    *
    * Main is the side that turns either answer into a path (`documentAtPosition`,
    * electron/projects.ts); what this decides is WHICH QUESTION it asks, and it is
@@ -2334,7 +2537,7 @@ export function positionView(ledger: ProjectLedger): PositionView {
     reading,
     curation: displayedCuration(ledger),
     outlines: reading !== null,
-    own: step !== null && SHOWS_ITS_PAYLOAD[step.action],
+    own: step !== null && A_BOOK_OF_ITS_OWN[step.action],
   };
 }
 

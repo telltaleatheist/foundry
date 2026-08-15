@@ -345,10 +345,18 @@ export const MAX_PANES = 5;
  * tab to open into, `env-install` made no document at all, and `read` made no
  * document EITHER — its product is the bank, which is not a thing anybody looks
  * at. What you look at is what you generate from it, and generating is one of
- * the three kinds above, which is exactly why they open themselves: somebody
+ * the two kinds above, which is exactly why they open themselves: somebody
  * asks for an EPUB precisely because they want to read it.
+ *
+ * `translate` left this set when its product became a records file. Its
+ * `.jsonl` is a bank's kind of thing — nobody reads it — and opening it here
+ * produced a refusal notice per finished translation. The translated BOOK
+ * still arrives in front of the person, by the other door: the position moves
+ * onto the translate row, the pane follows through `showPosition`, and the
+ * cast that renders it carries `forStep`, which the auto-open effect already
+ * skips.
  */
-const OPENS_ITSELF: ReadonlySet<JobKind> = new Set<JobKind>(['epub', 'pdf', 'translate']);
+const OPENS_ITSELF: ReadonlySet<JobKind> = new Set<JobKind>(['epub', 'pdf']);
 
 /**
  * No tabs at all — the default for `questionBefore`'s second argument.

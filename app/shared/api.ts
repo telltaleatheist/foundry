@@ -331,11 +331,11 @@ export interface FoundryApi {
      *
      * EVERYTHING ELSE IS IDENTICAL, deliberately: the same completed-bank refusal
      * said in the same words, the same curation resolved from the same position,
-     * and the same translate stage when the position stands under a translation —
-     * so exporting the Hungarian from a save made under it produces the Hungarian
-     * with that save's cuts applied, which is the whole promise of generating from
-     * a row. The answer is a `WorkspacePlan` like any other; only `outputPath`
-     * says where it landed.
+     * and the same translation's words put into the blocks when the position
+     * stands under one — so exporting the Hungarian from a save made under it
+     * produces the Hungarian with that save's cuts applied, which is the whole
+     * promise of making a product from a row. The answer is a `WorkspacePlan` like
+     * any other; only `outputPath` says where it landed.
      *
      * The caller sets `GenerateRequest.export` on the request it builds from this.
      * That flag is what the queue's landing reads, and it is the renderer's to set
@@ -343,12 +343,26 @@ export interface FoundryApi {
      */
     planExport(inputPath: string, kind: ConversionKind): Promise<WorkspacePlan>;
     /**
-     * Where a translation of this book goes: `<the book's name> (<lang>).epub`,
-     * in the same project as the book it was made from.
+     * Where a translation of this book goes — which is a RECORDS FILE beside the
+     * reading it was taken of, `readings/<key>.<lang>[.<id8>].records.jsonl`, and
+     * no book at all.
      *
-     * Separate from `plan` because it answers a smaller question — there is no
-     * readings bank to name, and the language rather than a format decides the
-     * name.
+     * The run writes one row per flowing block, keyed by that block's own position
+     * in the reading bank, and the translated book is CAST from those rows
+     * afterwards by the same `vlm-convert` that assembles every other book here.
+     * So there is no output EPUB in this answer, and no separate bank: the records
+     * file is its own cache, which is why the engine refuses `--bank` beside it.
+     *
+     * Separate from `plan` because it answers a different question — there is no
+     * format to choose and no `generated/` predecessor to rotate, and the language
+     * rather than a format decides the name.
+     *
+     * IT MAY ALSO ANSWER WITH A CHAIN. Standing under a translation, this run's
+     * questions are asked of that row's own answers (`sourceRecords`) in the
+     * language that row recorded (`from`) — the user's *"german to english to
+     * hungarian"*. Both are composed by main off the ledger, never by this window:
+     * a source language taken from a mirror is a prompt that can be told the wrong
+     * thing about what it is holding.
      *
      * It also answers back with the input the job must READ. Main exports the
      * book's working copy first, because an edit no longer repacks and the

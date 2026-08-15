@@ -199,35 +199,66 @@ export interface GenerateRequest {
    */
   overlayPath?: string;
   /*
-   * NO `--skip-pages` AND NO `--language` HERE, and their absence is the split
-   * doing its work. Both are statements about READING the book — which pages are
-   * not part of it, and what language the pages are in — so they are answered
-   * once, in the OCR dialog, and are facts about the bank from then on. A
-   * rendering that could be given a different page-skip from the reading it
+   * NO `--skip-pages` HERE, and its absence is the split doing its work. It is a
+   * statement about READING the book — which pages are not part of it — so it is
+   * answered once, in the OCR dialog, and is a fact about the bank from then on.
+   * A rendering that could be given a different page-skip from the reading it
    * renders would be a rendering of a book that was never read.
    */
   /**
-   * AND THEN TRANSLATE IT — the second stage, when the position stands under a
-   * translation.
+   * `--records` — A TRANSFORM'S WORDS, PUT INTO THE BLOCKS AS THE BOOK IS
+   * WRITTEN. The translated book, and the whole of what replaced the two-stage
+   * pipeline.
    *
-   * Absent for every Generate this app has ever run and for every one made from
-   * a position with no translation on its ancestry, which is what keeps this a
-   * `GenerateRequest` rather than a third request shape: the stages share an
-   * input, an overlay and a bank, and only the last of them writes the file the
-   * row is about.
+   * ── What this field is instead of ───────────────────────────────────────────
    *
-   * COMPOSED AT PLAN TIME, like everything else about a Generate. `overlayPath`
-   * is resolved by `planConversion` for the stated reason — it is which state of
-   * the book the user chose when they pressed the button, and re-resolving it at
-   * spawn would let a pointer move made while the job waited silently render a
-   * different book than the dialog said it would — and every word of that applies
-   * to the language, the bank and the step this lands under. Same rule as
-   * `Job.parentStep`, one layer down.
+   * A Generate standing under a translation used to be TWO engine runs under one
+   * queue row: `vlm-convert` into a nameless EPUB in the OS temp directory, then
+   * `translate` reading that file and writing the real one — plus, for an export,
+   * a third run to tidy the result into an edition. Every one of those stages
+   * existed because the translation was a FILE, and the only way to get a
+   * translated book with this position's strikes in it was to make the book, hand
+   * it to the translator, and take back whatever came out.
+   *
+   * A translation is a RECORDS FILE now (`translate --records`): one row per
+   * flowing block, keyed by the block's own position in the reading bank. So the
+   * translated book is CAST rather than converted — one `vlm-convert` over the
+   * same bank, through the same reflow, the same curation, the same chapters and
+   * the same edition rules as the source book, with different words in the blocks.
+   * Two spawns, one intermediate and one whole class of failure go with the
+   * change, and every decision a person has made about the source reaches the
+   * translated product for free.
+   *
+   * RESOLVED AT PLAN TIME like everything else about a Generate (`overlayPath`
+   * says why at length): WHICH translation this book is being cast in is the state
+   * of the project the user chose when they pressed the button, and a pointer move
+   * made while the job waited must not silently produce a different language.
+   *
+   * Absent for every Generate that is not standing under a translation, which is
+   * most of them — and the engine refuses a `--records` file that is not there, by
+   * name, so a path is only ever carried when the plan proved one.
    */
-  thenTranslate?: ThenTranslate;
+  records?: string;
   /**
-   * THIS IS ONE SAVE'S OWN BOOK — the cast a `curate` landing makes of itself,
-   * named after the step it belongs to.
+   * `--language` — the tag the cast declares itself to be in.
+   *
+   * IT TRAVELS WITH `records` AND ONLY WITH IT. A file of sentences does not
+   * declare a language, so `dc:language` and every `xml:lang` in a translated cast
+   * come from here; without it the engine writes the book as the language it has
+   * always defaulted to, which for a Hungarian translation is a book that lies
+   * about itself to every reader that asks.
+   */
+  language?: string;
+  /**
+   * THIS IS ONE STEP'S OWN BOOK — the cast a `curate` or `translate` landing makes
+   * of itself, named after the step it belongs to.
+   *
+   * A SAVE'S BOOK is the project's flowing book with that snapshot applied, so
+   * standing on an old save shows the book as it was then. A TRANSLATION'S BOOK is
+   * the same book with that step's records substituted into the blocks, and it
+   * exists for a sharper reason: the run that made the translation wrote per-block
+   * answers and no document at all, so without a cast the row would have nothing a
+   * pane could show.
    *
    * ── Why the landing has to be told, when the path already says it ──────────
    *
@@ -238,14 +269,20 @@ export interface GenerateRequest {
    * leaving it legible in a pair of parentheses.
    *
    * WHAT IT CHANGES IS THE LANDING, and it changes it to almost nothing. A
-   * per-save cast is a RENDERING of a payload that is already a step: free, made
-   * again from that save's snapshot at any time, and deliberately NOT catalogued
-   * as a document. Two things depend on that. `castBook` (electron/projects.ts)
-   * must go on meaning the project's one flowing book — a per-save cast filed as a
-   * `generated/` origin would be the newest one, so a read row would start showing
-   * whichever save was pressed last, which is precisely the confusion the per-step
-   * cast exists to end. And Home's document rows go on listing the documents a
-   * person made rather than growing one per Apply.
+   * per-step cast is a RENDERING of a payload that is already a step: free, made
+   * again from that step's snapshot or records at any time, and deliberately NOT
+   * catalogued as a document. Two things depend on that. `castBook`
+   * (electron/projects.ts) must go on meaning the project's one flowing book — a
+   * per-step cast filed as a `generated/` origin would be the newest one, so a read
+   * row would start showing whichever save was pressed last, which is precisely the
+   * confusion the per-step cast exists to end. And Home's document rows go on
+   * listing the documents a person made rather than growing one per Apply.
+   *
+   * A TRANSLATION'S BOOK IS UNCATALOGUED FOR THE SAME REASON AND AT A PRICE WORTH
+   * NAMING: Home's per-type EPUB list no longer holds a row for a translated book,
+   * where the old EPUB→EPUB translator's output was filed there as one. The tree
+   * draws from the ledger (docs/WORKBENCH.md §6c) and the translate step is in it,
+   * which is where a person looks for their translation now.
    *
    * The file is not orphaned by being uncatalogued: the step delete composes the
    * same name and sweeps it (`planStepSweep`).
@@ -284,87 +321,23 @@ export interface GenerateRequest {
   export?: true;
 }
 
-/**
- * The translate stage of a two-stage Generate: what the second spawn is asked.
+/*
+ * `ThenTranslate` USED TO LIVE HERE, and its removal is the shape of this whole
+ * change rather than a tidy-up.
  *
- * A NAMED SHAPE because four places hold one — the plan that composes it, the
- * request that carries it, the queue that turns it into a command line, and the
- * landing that files the step — and a shape spelled four times is a shape that
- * grows a field in three of them. `TranslationPlan` is the same arrangement for
- * the same reason.
+ * It described the SECOND SPAWN of a Generate standing under a translation:
+ * render the curated book into a nameless EPUB in the OS temp directory, then run
+ * `translate` over that file into the row's own one. Five fields travelled with
+ * it — the language, the bank, the model, the endpoint, the step it landed under
+ * — because the second run was a translation in every sense, with a bank to fill
+ * and a row to file.
+ *
+ * A translation is a RECORDS FILE now (`GenerateRequest.records`), so there is no
+ * second spawn to describe: the translated book is one `vlm-convert` with the
+ * records substituted into the blocks as it writes. Nothing composes a translate
+ * stage inside another job any more, and a shape nothing composes is a shape that
+ * quietly grows a field the day somebody adds one to its siblings.
  */
-export interface ThenTranslate {
-  /** `--to`: the language the ancestral translate step recorded (`params.language`). */
-  to: string;
-  /**
-   * `--bank`, ABSOLUTE: the per-block answers this run reads and fills.
-   *
-   * From `translationTarget` — the step's own bank on a re-render of that step,
-   * which is what makes it nearly free, and a branch's own bank for a curation
-   * made under it. Never composed from the key and the tag: that is the lie
-   * `readings/<key>.jsonl` was for readings, and `translationBankOf` is where the
-   * legacy fallback for a step that predates recorded banks already lives.
-   */
-  bank: string;
-  /** `--model`. Nobody chose it — there is no dialog here — so it is the default. */
-  model: string;
-  /** `--ollama`. Used, never started, exactly as a translate job uses it. */
-  ollama: string;
-  /**
-   * The ANCESTRAL translation's bank, ABSOLUTE — copied over `bank` at spawn
-   * when `bank` does not exist yet.
-   *
-   * ── Why a branch starts with its parent's answers ───────────────────────────
-   *
-   * A save made under a translation branches, and a branch deliberately owns its
-   * own bank (docs/TRANSLATION-STEPS.md §2) — but an EMPTY one would make the
-   * first strike-then-Generate a full re-translation of a book that is already
-   * translated, when the whole promise of the question-keyed bank is that an
-   * unchanged block is never asked twice. The keys are hashes of the blocks'
-   * own text, so the parent's answers are exactly as true in the branch as they
-   * were at home: the stricken blocks are simply never looked up, and only text
-   * somebody edited since is re-asked.
-   *
-   * COPIED AT SPAWN, NOT AT PLAN, because a plan is not a commitment: a held job
-   * that is removed must leave `readings/` exactly as it found it, and a file
-   * seeded at plan time would sit there named by no step, invisible to the sweep,
-   * forever. Absent when the run replaces the translate step itself — its bank
-   * already exists and already holds its own answers.
-   */
-  seedBank?: string;
-  /**
-   * `--instructions`, when there are any.
-   *
-   * NOTHING COMPOSES ONE TODAY and the field is still here rather than left out.
-   * A step deliberately does not record the instructions it was translated with
-   * (`PARAMS_OF.translate` refuses the param by name — a re-translation with
-   * different instructions is somebody refining THIS translation, not asking a
-   * new one), so a re-render has nowhere honest to read them from. The day a
-   * caller has some, this is where they go; until then its absence is the truth.
-   */
-  instructions?: string;
-  /**
-   * The step this run's EPUB is filed against — `RenderPipeline.landsUnder`.
-   *
-   * NOT `Job.parentStep`, and that is the whole reason it is carried here.
-   * `parentStep` is the position at the press, which for a re-render of a
-   * translation is the translation itself — and filing a translation against a
-   * translation is a second row beside the one the user asked to refresh. The
-   * pipeline decides the parent at plan time with the same walk that decided
-   * everything else about the run; the queue spends it at the landing.
-   */
-  parent: string | null;
-  /**
-   * The step both files are named after, minted at the plan.
-   *
-   * `TranslateRequest.stepId`'s arrangement, for exactly its reason: a branching
-   * translation writes `generated/<book> (hu).<id8>.epub` and a bank named the
-   * same way, so the step that lands has to BE that step. Spent only on an
-   * append; a landing that turns out to be a replace swaps into the row that is
-   * already there and throws this away.
-   */
-  stepId?: string;
-}
 
 /**
  * Everything the Translate dialog decides before a job is enqueued.
@@ -382,14 +355,84 @@ export interface ThenTranslate {
  */
 export interface TranslateRequest {
   kind: 'translate';
-  /** The EPUB to read. Never written to. */
+  /**
+   * The CAST to read — the flowing book this app made, stamped.
+   *
+   * Never written to, and never an EDITION: records mode reads `data-bf-src` off
+   * every translatable block and `data-bf-note` off every aside, and refuses a
+   * book that carries neither by name (`--final` withholds exactly those). The
+   * position's own document is what the dialog hands over, which is the cast.
+   */
   inputPath: string;
-  /** From `WorkspacePlan.outputPath`. The managed workspace, always. */
-  outputPath: string;
+  /**
+   * `--records`: WHERE THE ANSWERS GO, and the whole product of this job.
+   *
+   * ── The output path that used to be here, and why it is gone ────────────────
+   *
+   * A translation wrote a SECOND EPUB: same container, same pictures, same page
+   * provenance, translated text inside every stamped element. That worked and it
+   * was a dead end for everything downstream — striking a paragraph out of it,
+   * correcting one sentence, casting it as plain text, translating it again into
+   * a third language are all decisions about a BLOCK, and an EPUB has no blocks
+   * left to decide about, only markup to re-parse and re-splice.
+   *
+   * So this run writes `readings/<key>.<tag>[.<id8>].records.jsonl` — one row per
+   * flowing block, keyed by the block's own position in the reading bank — and no
+   * book at all. The book is CAST from it afterwards, by `vlm-convert --records`,
+   * through the same reflow and curation as the source (`GenerateRequest.records`).
+   *
+   * IT IS THE PRODUCT, WHICH IS WHY IT IS ALSO THE JOB'S IDENTITY. `ReadRequest`
+   * has had exactly this shape for as long as reading has been its own job: no
+   * output document, one file that IS the expensive thing, and the queue dedupes
+   * and reveals on it (`enqueue`). Two translations of one book into one language
+   * from one step are one job, and the file they would both write is what says so.
+   *
+   * AND IT IS ITS OWN BANK. `--bank` is refused beside it by the engine: an
+   * unchanged block has an unchanged question, its key is already in the records
+   * file, and it is never asked twice. One file to copy onto a branch, one file to
+   * sweep with the step, one file for the ledger to name as this step's payload.
+   */
+  recordsPath: string;
   /** `--to`: the BCP-47 tag to translate INTO. */
   to: string;
-  /** `--from`. Absent means the model is told to determine it. */
+  /**
+   * `--from`. Absent means the model is told to determine it.
+   *
+   * COMPOSED BY MAIN FOR A CHAIN, typed by the person otherwise. Translating a
+   * translation asks its questions of the PARENT'S words, so the source language
+   * is a fact the ledger holds (`params.language` of the parent translate step)
+   * rather than a guess the dialog invites — and nothing reads a language out of a
+   * records file, because a file of sentences is not a declaration.
+   */
   from?: string;
+  /**
+   * `--source-records`: THE PARENT TRANSLATION'S ANSWERS — the chain.
+   *
+   * The user's own case: *"if they click the english translation and then click
+   * translate to hungarian, it translates from english to hungarian, thus creating
+   * a chain of translations: german to english to hungarian."*
+   *
+   * With this, each block's question is asked of the parent's answer rather than
+   * of the book's own words: per position, the source text is the parent records
+   * file's newest row, and the book's own text is the fallback for a position the
+   * parent never answered. The key hashes the masked PARENT text, so correcting
+   * one English record re-asks exactly the Hungarian blocks that record feeds and
+   * nothing else — which is the precision that made a chain records-native and
+   * unbuildable over EPUBs, where "the source" is a whole file.
+   *
+   * Absent for a translation made straight from the book, which is most of them.
+   */
+  sourceRecords?: string;
+  /**
+   * `--generation`: the reading this records file is about, carried into every row
+   * and never interpreted by the engine.
+   *
+   * `Overlay.generation`'s contract exactly, one folder over. It exists so that
+   * records made against THIS pass over the pages can be told from records left
+   * beside a book that has since been read again — the same defence an overlay has
+   * had since amendments could outlive the blocks they name.
+   */
+  generation?: string;
   /** `--model`: the Ollama model that translates. */
   model: string;
   /** `--ollama`: the server's URL. Used, never started. */
@@ -397,36 +440,40 @@ export interface TranslateRequest {
   /** `--instructions`: appended to the system prompt verbatim, per book. */
   instructions?: string;
   /**
-   * `--bank`: where each accepted block is written the moment it is accepted.
+   * A RECORDS FILE TO COPY OVER `recordsPath` AT SPAWN when `recordsPath` does not
+   * exist yet — the answers a branch starts life with.
    *
-   * From `planTranslation`, and passed on every translation — a translation is
-   * hours of GPU and a run that dies at block 400 of 456 used to have written
-   * nothing at all. The engine keys every entry by the whole QUESTION (model,
-   * languages, instructions, the block's own text), so a resumed run asks only
-   * for what it still owes, and editing one paragraph re-asks that paragraph.
+   * ── Why a branch starts with its parent's answers ───────────────────────────
    *
-   * NO LONGER ONE PATH PER BOOK PER LANGUAGE. Two translations into one language
-   * from two different steps are two sets of answers, and the plan decides which
-   * of them this is — see `stepId` below, which is the same decision.
+   * Translating from a save made under a translation branches, and a branch
+   * deliberately owns its own file (docs/TRANSLATION-STEPS.md §2) — but an EMPTY
+   * one would make that first run a full re-translation of a book that is already
+   * translated, when the whole promise of a question-keyed record is that an
+   * unchanged block is never asked twice. The keys are hashes of the blocks' own
+   * text, so the parent's answers are exactly as true in the branch as they were
+   * at home: the stricken blocks are simply never looked up, and only text
+   * somebody edited since is re-asked.
+   *
+   * BOTH DOORS SEED, WHICH THEY DID NOT USED TO. This was composed only by the
+   * Generate-under-a-translation path, so a branch ordered from the Translate
+   * dialog started empty and paid full model price for a book whose translation
+   * was sitting one row up. One rule now, at the one spawn.
+   *
+   * COPIED AT SPAWN, NOT AT PLAN, because a plan is not a commitment: a held job
+   * that is removed must leave `readings/` exactly as it found it, and a file
+   * seeded at plan time would sit there named by no step, invisible to the sweep,
+   * forever. Absent when the run replaces a translate step that already has its
+   * own answers, and `argsFor` never reads it — the engine never knows it happened.
    */
-  bankPath: string;
+  seedRecords?: string;
   /**
-   * A bank to copy over `bankPath` at spawn when `bankPath` does not exist —
-   * the parent translation's answers, seeding a branch so the first Generate
-   * from a save-under-a-translation is not a full re-translation of a book that
-   * is already translated. See `ThenTranslate.seedBank` for the whole argument;
-   * `argsFor` never reads it, so the engine never knows it happened.
-   */
-  seedBank?: string;
-  /**
-   * THE STEP THESE FILES BELONG TO, minted with them and travelling with them.
+   * THE STEP THIS FILE BELONGS TO, minted with it and travelling with it.
    *
    * Exactly `ReadRequest.stepId`'s arrangement, for exactly its reason: a branching
-   * translation writes `generated/<book> (en).<id8>.epub` and a bank named the same
-   * way, where `id8` is the front of the new step's uuid — so the step that lands
-   * hours later has to BE that step, or both files are named after a row nobody
-   * ever created. Minting the id at the landing would mean composing the paths from
-   * an id the paths could not know.
+   * translation writes `readings/<key>.<tag>.<id8>.records.jsonl`, where `id8` is
+   * the front of the new step's uuid — so the step that lands hours later has to BE
+   * that step, or the file is named after a row nobody ever created. Minting the id
+   * at the landing would mean composing the path from an id the path could not know.
    *
    * Spent only on an append (`LandedRun.id`): a landing that turns out to be a
    * replace swaps into the step that already exists and throws this away, and it
@@ -498,7 +545,7 @@ export interface Job {
    */
   parentStep?: string | null;
   /**
-   * THIS ROW IS ONE SAVE'S OWN BOOK — see `GenerateRequest.forStep`, which is
+   * THIS ROW IS ONE STEP'S OWN BOOK — see `GenerateRequest.forStep`, which is
    * where it comes from and where the whole argument lives.
    *
    * ── Why the SHELF has to be able to tell, and not only the landing ─────────
@@ -506,10 +553,12 @@ export interface Job {
    * Because a finished `epub` job OPENS ITSELF (`OPENS_ITSELF`, TabsService), and
    * that rule was written about the two `epub` jobs that existed: a Generate and
    * the cast after a reading, both of which somebody asked for and wants to look
-   * at. A per-save cast is neither. It is made by pressing Apply — a gesture whose
-   * whole point is to keep working — and the book it produces is the one already
-   * on screen, frozen. Opening a tab for it would put a pane in front of somebody
-   * mid-correction, once per Apply.
+   * at. A per-step cast is neither. A save's is made by pressing Apply — a gesture
+   * whose whole point is to keep working — and the book it produces is the one
+   * already on screen, frozen; a translation's is made by the landing of the
+   * translation itself, and the position has already moved onto that row, so the
+   * pane is about to show it anyway. Opening a tab for either would put a pane in
+   * front of somebody who did not ask for one.
    *
    * The renderer therefore needs the fact on the ROW, because the row is all it
    * has: `kind` says `epub` for all three, and the only other thing that differs
@@ -801,14 +850,18 @@ export interface WorkspacePlan {
    */
   overlayPath: string;
   /**
-   * The second stage, when the position stands under a translation — carried
-   * onto the request by whoever enqueues, and absent for every other Generate.
+   * The translation's own words, when the position stands under a translation —
+   * carried onto the request by whoever enqueues, and absent for every other
+   * rendering.
    *
-   * The dialog copies it rather than composing it: which runs a button press
-   * becomes is main's decision, taken from a ledger the renderer holds only a
-   * mirror of (`renderPipeline`, shared/pipeline.ts).
+   * The dialog copies it rather than composing it: WHICH translation a button
+   * press is about is main's decision, taken from a ledger the renderer holds only
+   * a mirror of (`renderPipeline`, shared/pipeline.ts). See
+   * `GenerateRequest.records`, which is where this goes and where the argument is.
    */
-  thenTranslate?: ThenTranslate;
+  records?: string;
+  /** The tag that cast declares itself to be in. Travels with `records`, always. */
+  language?: string;
 }
 
 /**
@@ -854,24 +907,57 @@ export interface ReadingPlan {
  */
 export interface TranslationPlan {
   key: string;
-  /** The EPUB the engine reads. Never written to. */
+  /** The cast the engine reads. Never written to. */
   sourcePath: string;
   /**
-   * The EPUB this run writes.
+   * The per-block answers this run writes, and the whole of what it produces:
+   * `readings/<key>.<tag>.records.jsonl` for the first translation into a
+   * language, `readings/<key>.<tag>.<id8>.records.jsonl` for a second one made
+   * from a different step — the branch the user's own scenario (translate, strike,
+   * commit, translate again) produces, and which used to write both editions into
+   * one filename.
    *
-   * `generated/<book> (<tag>).epub` for the first translation into a language, and
-   * `generated/<book> (<tag>).<id8>.epub` for a second one made from a different
-   * step — the branch that the user's own scenario (translate, strike, commit,
-   * translate again) produces, and which used to write both editions into one
-   * file.
+   * THERE IS NO OUTPUT EPUB TO NAME any more; the book is cast from this file
+   * afterwards. See `TranslateRequest.recordsPath`.
    */
-  outputPath: string;
-  /** The per-block answers, `readings/<key>.<tag>[.<id8>].bank.jsonl`. */
-  bankPath: string;
+  recordsPath: string;
   /**
-   * The step both paths belong to — see `TranslateRequest.stepId`. Decided in the
-   * same breath as the paths, because it is the same decision: is this translation
-   * the one that already exists, or a new one beside it?
+   * The parent translation's answers, when this one is a CHAIN — `--source-records`.
+   *
+   * Composed by main because it is a fact about the ledger: the nearest translate
+   * step above where the person is standing. The renderer displays the language it
+   * implies and carries this back; it never works out which file that is.
+   */
+  sourceRecords?: string;
+  /**
+   * `--from` for a chain: the language the parent translation is IN.
+   *
+   * The dialog's own From field answers this for a translation made straight from
+   * the book, and is not offered when the source is a standing translation — the
+   * ledger already knows what language that row is, and inviting somebody to
+   * disagree with it would put "German → Hungarian" on a prompt holding English.
+   */
+  from?: string;
+  /**
+   * The records a BRANCH starts life as a copy of — see
+   * `TranslateRequest.seedRecords`, which is where this goes and where the whole
+   * argument lives.
+   *
+   * Composed by main because it is the same question the chain is: which row is
+   * above this one. Absent when the run replaces a translation that already has
+   * its own answers, and absent for the first translation of a book.
+   */
+  seedRecords?: string;
+  /**
+   * The reading generation these records are bound to — `--generation`, written
+   * into every row and interpreted by nobody. Absent for a project whose reading
+   * predates recorded generations.
+   */
+  generation?: string;
+  /**
+   * The step the records file belongs to — see `TranslateRequest.stepId`. Decided
+   * in the same breath as the path, because it is the same decision: is this
+   * translation the one that already exists, or a new one beside it?
    */
   stepId: string;
 }
@@ -2507,6 +2593,28 @@ export interface LedgerParams {
    * not claim to know that, so they branch. Absent means nothing was skipped.
    */
   skipPages?: string;
+  /**
+   * `translate` — the language this translation was made OUT OF, when it was made
+   * out of another translation.
+   *
+   * ── Why a chain records both ends and a single hop records neither ──────────
+   *
+   * "Translated (hu)" is a complete sentence about a book read in German: there is
+   * one other language in the story and it is the book's. It stops being one the
+   * moment a project holds *German → English → Hungarian*, because two rows then
+   * say "Translated (hu)" and "Translated (en)" while the interesting fact — which
+   * of them the Hungarian was made from — is legible only by walking the parents.
+   * So a chained run records the language it consumed and `labelFor` says both
+   * ends: "Translated (en → hu)". A run made straight from the book records
+   * nothing here, and its row keeps the words it has always had.
+   *
+   * AN ANSWER, NOT A QUESTION (`MINTED_BY_THE_RUN`). Nobody typed it: the plan
+   * read it off the parent translate step, which `reRunTarget` already compares by
+   * identity before it looks at any param — so comparing this as well would be a
+   * second opinion about the same fact, and a parent whose own language was
+   * corrected would make its child unrecognisable to the row it should replace.
+   */
+  from?: string;
   /**
    * `read` — `--language`, the BCP-47 tag the pages were declared to be in.
    * `translate` — the language translated INTO, as the dialog named it.

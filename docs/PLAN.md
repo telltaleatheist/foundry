@@ -83,6 +83,7 @@ unit K).
 | 4 | Debris: stale comments, dead `openConfirm()`, duplicate toolbar titles, visible Close-book ✕ on the tree root | `54bb437` |
 | 5 | **Phase C — what lands in `final/` is an edition**: struck notes never emitted, noterefs demoted to the printed digit, editing attributes withheld, translated exports tidied after their last stage, Save-As no longer zips the workbench verbatim | `2beeaf5` |
 | 6 | **Unit D1 — the engine's records mode**: text-level masking (a new tokenizer; the edge-peel hack proved unnecessary), `translate --records` + `--source-records` (chain-ready), `vlm-convert --records` substitution at the emitter, per-note footnote records, KEY_FORMAT bumped, composes with `--final` | `cd919d0` |
+| 7 | **Unit D2 — the app orders records, and chains**: a translate step's payload IS its records file; the two-stage export pipeline deleted, not bypassed; the one-hop refusal out, chains in; plain text of a translation works for the first time; `SHOWS_ITS_PAYLOAD` renamed `A_BOOK_OF_ITS_OWN` | see §4 |
 | — | The specs for everything below, and this file | `f2a8141`, `da96196`, `fea8f6b` |
 
 Phase C's premise was corrected by survey before it was built: struck
@@ -119,25 +120,26 @@ Fences are disjoint within a wave; a wave lands before the next starts.
   generalization, `params.language` → `--from` wiring, and the
   "Translate (English → Hungarian)" labels.
 
-### Wave 3 — Unit K LANDED (`0e2cd1c` + `e9ed0ef`); Unit D2 running
+### Wave 3 — LANDED (K `0e2cd1c` + `e9ed0ef`; D2 in this commit)
 
-**Unit K's residual, owed before this wave is called done:** K was
-committed on gates 1–3 verified by the lead (`bun test`, root `tsc`,
-electron `tsc`) plus the builder's own five-gate run in an isolated
-worktree. The lead could NOT re-run `tsconfig.app.json` and `ng build`
-independently, because those resolve Angular only from the main
-checkout and the main tree was dirty with D2's mid-flight work. **When
-D2 lands, the combined five-gate run is what confirms K's app build**;
-if it fails and the cause is K's, fix it there. Recorded rather than
-glossed, because "the gates passed" meant something narrower here than
-it usually does.
+**Unit K's residual is DISCHARGED.** The combined five-gate run on
+D2's landing — run by the lead, in the main tree — came back green:
+396 pass, three clean typechecks, `ng build` complete with the
+pre-existing budget WARNING only. That run is what K's narrower
+gate claim was waiting on.
 
 Also learned, so nobody repeats the hour: an isolated worktree cannot
 run the Angular gates. `bunx tsc -p tsconfig.app.json` and `ng build`
 work only in `C:\Users\tellt\Projects\foundry` — `@angular/*` is not
 in either `node_modules` and junctioning them into a worktree does not
 reproduce whatever resolves it. Verify app-side units in the main tree,
-one at a time, or accept a narrower claim and say so.
+one at a time, or accept a narrower claim and say so. (D2's builder
+then found `app/node_modules` missing `@angular` entirely and repaired
+it with `bun install` — npm's own install refuses with EBUSY while the
+Foundry app is running. The reinstall moved the bundle figure from
+550.90 kB to 565.23 kB; attribution to the reinstall is likely but was
+not proven, because a stash-and-rebuild mid-unit risked more than
+14 kB of attribution is worth.)
 
 - ~~Unit K~~ — landed. Viewer-side stacking; the cast format is
   untouched and the engine never learned about it. Route 2 (a
@@ -154,26 +156,41 @@ one at a time, or accept a narrower claim and say so.
   ledger the `chapters` field, which would otherwise have archived a
   book's whole undo history aside on next open.
 
-**D2 is IN FLIGHT as of `caefbfd`**, and its work is UNCOMMITTED IN THE
-WORKING TREE — agents never commit, so a dirty tree here is the normal
-state of a running unit, not damage. The files it holds:
-`app/shared/{types,ledger,pipeline}.ts`,
-`app/electron/{job-queue,main,projects,workspace}.ts`, and the
-translate / export / queue-shelf dialogs. If a session ends before it
-reports: `git stash list` is empty, nothing is lost that was committed,
-and the choice is to let the agent finish or `git checkout --` those
-paths and relaunch from this spec. Do NOT commit them unverified.
+- ~~Unit D2~~ — landed. A translate step's payload is now its RECORDS
+  file — the builder's argument was a symmetry, not a preference: a
+  records translation is the same shape of act as a reading, so the
+  payload rule, orphan sweep, displacement handling and debris sweep
+  all fell out of machinery that already existed. **One reported
+  divergence from the spec**: `PARAMS_OF.translate` did NOT gain
+  `records` (the payload IS the file; a param would be two copies of
+  one fact) — it gained `from` instead, which is what the chain labels
+  need. `SHOWS_ITS_PAYLOAD` renamed `A_BOOK_OF_ITS_OWN` because that
+  was the question all three consumers were asking. The two-stage
+  export pipeline was deleted, not bypassed (`ThenTranslate`,
+  `translationStage`, `withoutExport`, `landsUnder`, both tmp
+  intermediates); three things got better as side effects: plain text
+  of a translation works for the first time, a translated export is
+  immediate, and a save under a translation casts its own book. The
+  builder ran an independent review over its own diff; all six
+  findings were real and fixed (the worst: a translated rendering
+  catalogued as the project's flowing book, and a `generated/` name
+  collision with every legacy translate payload that would have let
+  `rotateGenerated` archive a row's own book). One routed fix outside
+  the fence, applied by the lead: `translate` left `OPENS_ITSELF`
+  (tabs.service.ts) — its product is a `.jsonl` nobody reads, and
+  opening it produced a refusal notice per finished translation.
+- ~~Unit K~~ — landed (see above). Continuous book, chapter lines.
 
-- **Unit D2 — the app switches to records.** Planning, ledger, sweep and
-  seeding move to record files; **and CHAINS**: the one-hop refusal
-  (`pipeline.ts:207-214`) comes out, `landsUnder` generalizes, a
-  translate under a translate takes the parent's record text as its
-  source. User-ruled 2026-08-15, reversing a same-day deferral of mine.
-- **Unit K — the continuous book and chapter lines.** Spec: WORKBENCH
-  §11. The whole book in one scroll; a chapter is a green dotted line
-  wearing its title — drag to move, double-click to rename, click the
-  gutter to add. Reverses the earlier "no dotted lines" decision. May run
-  beside D2 if the fences verify disjoint.
+**What an old translate step can no longer do, ruled honest by the
+bank math**: export from it (or from a save under it) is refused with
+a sentence saying to translate again — after D1's KEY_FORMAT bump its
+bank misses every key, so the old pipeline would have re-translated
+the whole book at full model price while claiming to be arithmetic.
+Re-translating a legacy row replaces it in place (payload swaps to the
+records file, displaced EPUB and orphaned bank destroyed) and
+everything after that is free. Everything else about a legacy row —
+parsing, rendering, focusing, deleting, chaining FROM it — works
+unchanged.
 
 ### Wave 4
 
@@ -280,6 +297,21 @@ supposed to be, and it exists so the same failure is visible next time.
   builder named this as the one honest gap in the unit, and it is repeated
   here rather than left in a report nobody re-reads. If the testing ruling
   ever relaxes, this is the second place to spend it (after the app).
+- **D2's named costs, kept visible until their closers land.** (1) An
+  edit to source text under a translation yields STALE translated text
+  at export until the translation is re-run — records are looked up by
+  position, so materialization substitutes what was recorded. Ruling 7
+  (unit D3) is what closes this; the old pipeline hid it by re-asking
+  the model at export time. (2) Home's per-type EPUB list loses
+  translation rows for records-mode translations — a translation's
+  book is a rendering and renderings are uncatalogued, like a save's;
+  the library tree still shows the step. (3) Re-translating a row
+  whose book is open in a tab leaves the old cast showing until the
+  next cast — the recast is refused while a working tree is held, and
+  logged.
+- **The bundle figure is 565.23 kB** (was 550.90 kB); the move arrived
+  with D2's dependency reinstall, not provably with its code. Still a
+  WARNING, not an ERROR; Phase E's deletions should move it down.
 - **A part-divider's composed label stays in the source language** under
   records materialization (e.g. `PART III — RESISTANCE`). Nav labels and
   headings translate, because they are read off the substituted heading;

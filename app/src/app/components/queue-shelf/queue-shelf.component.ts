@@ -130,11 +130,14 @@ import { api } from '../../core/foundry';
                       the scan's layout and lose the scan's grey, and whether the
                       model read them right is a thing you look at.
 
-                      A TRANSLATION OPENS for the same reason as a conversion:
-                      what it made is a book, and the tab that reads one already
-                      exists.
+                      A TRANSLATION DOES NOT OPEN, AND IT USED TO. What it makes
+                      is a records file — one row per paragraph, keyed by where
+                      that paragraph sits in the reading — and there is no tab in
+                      this app that reads one, nor should there be. The book
+                      follows it seconds later, cast from those answers, and the
+                      row in the tree is what opens it.
                     -->
-                    @if (job.kind === 'epub' || job.kind === 'pdf' || job.kind === 'translate') {
+                    @if (job.kind === 'epub' || job.kind === 'pdf') {
                       <button class="open" (click)="open(job)"
                               [title]="job.kind === 'pdf' ? 'Open this PDF in a tab' : 'Open this book in a tab'">Open</button>
                     }
@@ -192,6 +195,7 @@ import { api } from '../../core/foundry';
                       -->
                       @if (job.kind === 'env-install') { Installed }
                       @else if (job.kind === 'read') { Read · the book follows }
+                      @else if (job.kind === 'translate') { Translated · the book follows }
                       @else { Done · {{ made(job) }} }
                     </span>
                   }
@@ -516,8 +520,10 @@ export class QueueShelfComponent {
 
   /**
    * WHAT THIS JOB MADE, in the same few words the rest of the app uses for a
-   * document. A translation is a book and says the more useful of the two things
-   * it is; an install made no document at all and never reaches here.
+   * document. An install made no document at all and never reaches here, and
+   * neither does a translation any more: what that one makes is a file of answers
+   * about paragraphs, so its row says what a reading's says — the thing itself
+   * happened, and the book follows.
    *
    * ── "EPUB" MEANS FINISHED, AND THE CAST BOOK IS NOT FINISHED ───────────────
    *
@@ -544,7 +550,6 @@ export class QueueShelfComponent {
    * may not have been filed.
    */
   protected made(job: Job): string {
-    if (job.kind === 'translate') return 'translation';
     if (job.kind === 'epub' && !this.filed(job)) return 'the book';
     if (job.kind === 'epub' || job.kind === 'pdf' || job.kind === 'txt') return typeLabel(job.kind);
     return 'done';

@@ -90,9 +90,11 @@ import {
   metadataForProduct,
   positionStepId,
   projectDirOf,
+  readStepLedger,
   recordFinal,
   recordGenerated,
   recordReading,
+  recordTranslation,
   restoreFinalRotation,
   restoreRotation,
   rotateFinal,
@@ -103,9 +105,8 @@ import {
 import { readSettings } from './settings';
 import { ensureServer, isLocalVllmEndpoint, noteQueueBusy, noteQueueIdle } from './vllm-server';
 import { planConversion, planConversionForStep } from './workspace';
-import { translationStage } from '../shared/pipeline';
 import type {
-  ConversionKind, EnvInstallRequest, GenerateRequest, Job, JobRequest, LedgerStep, TranslateRequest,
+  ConversionKind, EnvInstallRequest, Job, JobRequest, LedgerStep, TranslateRequest,
 } from '../shared/types';
 
 /**
@@ -214,16 +215,18 @@ export function enqueue(
      * running. That is the machine being busy rather than the person being
      * asked, which is the distinction `held` and `queued` have always drawn.
      *
-     * A TWO-STAGE GENERATE IS NOT A RENDERING — it is the exception's own test
-     * applied honestly. The paragraph above holds because a replay costs
-     * nothing, and a job whose second stage runs the translator is not that
-     * job: a seeded bank makes it cheap, but text edited since the translation
-     * is re-asked of a model, and a cold Ollama makes it a translation run in
-     * everything but the button that started it. So it is held, exactly as
-     * `enqueueTranslate` holds every translate — one press to ask, one press
-     * to spend.
+     * A TRANSLATED RENDERING IS STILL A RENDERING, and it did not used to be.
+     * This line held a Generate standing under a translation, honestly: that job
+     * ran the TRANSLATOR as its second stage, and a seeded bank made it cheap
+     * rather than free — text edited since the translation was re-asked of a
+     * model, and a cold Ollama made it a translation run in everything but the
+     * button that started it. There is no second stage now. A translated book is
+     * one `vlm-convert` with the records substituted into the blocks: no model,
+     * no socket, seconds, and repeatable as often as somebody likes. So it is
+     * queued like every other rendering, and the hold goes back to meaning what
+     * it has always meant — nothing expensive starts until the user says so.
      */
-    state: request.kind === 'read' || request.thenTranslate !== undefined ? 'held' : 'queued',
+    state: request.kind === 'read' ? 'held' : 'queued',
     progress: null,
     parentStep,
     /*
@@ -293,13 +296,20 @@ export function enqueueTranslate(
   /** The position at the press. See `enqueue` above and `Job.parentStep`. */
   parentStep: string | null = null,
 ): Job {
-  const already = pendingFor(request.outputPath);
+  /*
+   * WHAT THIS JOB PRODUCES, which for a translation is now the RECORDS — the same
+   * sentence `enqueue` makes about a reading and its bank, and for the same
+   * reason. A translation writes no document any more: it writes per-block answers
+   * that a cast turns into a book afterwards. So the identity a row is deduped on
+   * and the file Reveal shows is the file the run actually makes.
+   */
+  const already = pendingFor(request.recordsPath);
   if (already) return already;
 
   const job: Job = {
     id: randomUUID(),
     inputPath: request.inputPath,
-    outputPath: request.outputPath,
+    outputPath: request.recordsPath,
     kind: 'translate',
     state: 'held',
     progress: null,
@@ -520,36 +530,60 @@ function argsFor(request: EngineRequest): string[] {
   if (request.kind === 'translate') {
     /*
      * A translation shares nothing with a conversion's command line but the
-     * program name. No `--format` (the output is an EPUB by definition), and
+     * program name. No `--format` and no `--out`: this run writes RECORDS, one
+     * row per flowing block keyed by the block's own position in the reading
+     * bank, and the engine refuses an `--out` beside `--records` by name because
+     * the EPUB it would write is a book nobody would ever open.
+     *
      * `--ollama` IS passed — unlike the reading backend, which the settings
      * screen owns and which the engine reads for itself. Ollama has no settings
      * screen here because it is not a server this app manages.
      *
-     * `--bank` IS PASSED ON EVERY RUN, and is the exact counterpart of
-     * `--readings` on a conversion: both are hours of GPU held as answers. It
-     * stopped being optional the day a 456-block book was killed at block 152
-     * and had written nothing at all — the engine used to hold every answer in
-     * memory and write the EPUB at the end. There is no version of "translate
-     * the four hundred blocks that already succeeded again" that anybody wants,
-     * so there is no checkbox for it either.
+     * `--records` IS THE CACHE AS WELL AS THE PRODUCT, which is why there is no
+     * `--bank` on this line any more and why the engine refuses the pair. It was
+     * the exact counterpart of `--readings` on a conversion — both hours of a
+     * model held as answers — and it stopped being optional the day a 456-block
+     * book was killed at block 152 having written nothing at all. Nothing about
+     * that is weakened: an unchanged block's question is already answered in the
+     * records file and is never asked twice, and every answer is appended the
+     * moment it is accepted.
      */
     const args = [
       'translate',
-      /*
-       * MAY NOT BE THE PATH THE REQUEST WAS STORED WITH. A re-translation into a
-       * language the document already is reads the copy the rotation moved aside
-       * a moment ago, and `pump()` hands this function a spawn-time copy of the
-       * request with that archived path in it. Read the note above the rotation
-       * there; this line is deliberately unaware of which of the two it has.
-       */
+      // The CAST, and never an edition: records mode reads `data-bf-src` off
+      // every translatable block and `data-bf-note` off every aside, and refuses
+      // a book carrying neither by name — which is exactly what `--final`
+      // withholds. What the dialog hands over is the position's own document,
+      // and the position's own document is the cast.
       '--epub', request.inputPath,
-      '--out', request.outputPath,
+      '--records', request.recordsPath,
       '--to', request.to,
       '--model', request.model,
       '--ollama', request.ollama,
-      '--bank', request.bankPath,
     ];
     if (request.from && request.from.trim().length > 0) args.push('--from', request.from.trim());
+    /*
+     * ── THE CHAIN, WHICH IS TWO FLAGS AND NO NEW MACHINERY ────────────────────
+     *
+     * `--source-records` makes each block's question about the PARENT'S answer
+     * rather than about the book's own words, and `--from` above says which
+     * language those answers are in. Both are composed by the plan off the
+     * ledger (`planTranslation`, electron/workspace.ts): nothing reads a language
+     * out of a records file, because a file of sentences is not a declaration and
+     * a guess would put "German → Hungarian" on a prompt holding English.
+     */
+    if (request.sourceRecords !== undefined && request.sourceRecords.length > 0) {
+      args.push('--source-records', request.sourceRecords);
+    }
+    /*
+     * The reading these answers are about, written into every row and read by
+     * nobody in the engine — `Overlay.generation`'s contract, one folder over. It
+     * is what lets the app tell records made against THIS pass over the pages from
+     * records left beside a book that has since been read again.
+     */
+    if (request.generation !== undefined && request.generation.length > 0) {
+      args.push('--generation', request.generation);
+    }
     if (request.instructions && request.instructions.trim().length > 0) {
       args.push('--instructions', request.instructions.trim());
     }
@@ -618,6 +652,35 @@ function argsFor(request: EngineRequest): string[] {
   if (request.overlayPath !== undefined && existsSync(request.overlayPath)) {
     args.push('--overlay', request.overlayPath);
   }
+  /*
+   * ── AND THE TRANSLATION'S OWN WORDS, WHICH IS THE WHOLE OF THE SECOND STAGE ─
+   *
+   * A rendering standing under a translation used to be TWO spawns: this one into
+   * a nameless EPUB in the temp directory, then `translate` reading that file and
+   * writing the real one. It is one spawn and two flags now. `--records` puts the
+   * translation's per-block answers into the blocks as the book is assembled, and
+   * `--language` declares what comes out — a records file is a file of sentences
+   * and does not say what language it is in, so without it `dc:language` and every
+   * `xml:lang` would keep the source book's answer and the product would lie about
+   * itself to every reader that asked.
+   *
+   * NOT TESTED FOR EXISTENCE, unlike the overlay above, and the difference is
+   * deliberate. An absent overlay means "nobody has curated this book", which is a
+   * state; an absent records file means the answers this product is MADE OF are
+   * gone, and a run that quietly wrote the book in its original language while the
+   * row said Hungarian is the worst outcome available here. The engine refuses a
+   * `--records` it cannot open, by name, and that refusal is the right one.
+   *
+   * THEY TRAVEL TOGETHER OR NOT AT ALL — `planRendering` composes both or neither
+   * — so a book cast in a language it does not hold is not a state this app can
+   * construct.
+   */
+  if (request.records !== undefined && request.records.length > 0) {
+    args.push('--records', request.records);
+    if (request.language !== undefined && request.language.length > 0) {
+      args.push('--language', request.language);
+    }
+  }
   // Passed only when it is not the default, so an EPUB job's command line is the
   // one it has always been and a diff of two runs shows what actually differed.
   // The extension `planConversion` chose already agrees with it; the engine
@@ -637,20 +700,21 @@ function argsFor(request: EngineRequest): string[] {
    *
    * ONE FLAG, DECIDED OFF THE ONE FIELD THAT SAYS WHERE THE FILE IS GOING —
    * `export`, the same field `pump()` resolves into `exporting` for the rotation
-   * and the landing, asked here of the REQUEST THIS FUNCTION WAS HANDED rather
-   * than of the one the shelf is about. The two are the same object for a
-   * one-stage job and deliberately different for a piped one.
+   * and the landing. It is asked here of the REQUEST THIS FUNCTION WAS HANDED,
+   * which is the stored one for every job except an export carrying a metadata
+   * record: that one is handed a copy aimed at a temp file, and the copy carries
+   * the flag exactly as the stored request does.
    *
    * A CAST'S COMMAND LINE IS UNTOUCHED: no `export`, no flag, and the engine's
    * default is the book it has always written.
    *
-   * A TRANSLATE-DESCENDED EXPORT MUST NOT GET IT ON EITHER OF ITS STAGES, and
-   * gets it on neither. The translate stage is a `TranslateRequest` and returned
-   * above; the vlm stage feeding it is handed here with `export` deliberately
-   * taken off (`withoutExport`, in `pump()`'s stage list), because `translate`
-   * reads the very stamps this flag withholds (FINAL_NEEDS_STAMPS,
-   * src/translate/book.ts) and would refuse an edition by name. That job's tidy
-   * runs as a third stage, after the translation, over the finished book.
+   * A TRANSLATED EXPORT GETS IT LIKE ANY OTHER, WHICH IT COULD NOT BEFORE. That
+   * job used to be three runs — render, translate, then `epub-final` to tidy what
+   * came back — because `translate` reads the very stamps this flag withholds
+   * (FINAL_NEEDS_STAMPS, src/translate/book.ts), so the edition could only be made
+   * AFTER the translation, from a finished book. Records are substituted at the
+   * assembly, upstream of everything `--final` decides, so the edition and the
+   * translation are made by one run and the tidy stage is gone.
    */
   if (request.export === true) args.push('--final');
   /*
@@ -710,25 +774,21 @@ function metaFlagsFor(record: Record<string, string>): string[] {
   return flags;
 }
 
-/**
- * The same Generate, with the fact that it is an export taken off it.
+/*
+ * `withoutExport` USED TO LIVE HERE and went with the first stage of a
+ * translate-descended export.
  *
- * ONE CALLER AND ONE REASON: the first stage of a translate-descended export,
- * whose product is not the export. `export` is read in exactly two places — the
- * settle, which files the finished book in the tray, and `argsFor`, which asks
- * the engine for the EDITION — and this stage must be invisible to the second
- * without being invisible to the first. The stage's own copy loses the flag; the
- * stored request, which is what the settle reads, never sees this function.
+ * That job was three runs: render the book into a nameless EPUB, translate it,
+ * then tidy the translation into an edition. The middle run reads the very stamps
+ * an edition withholds (FINAL_NEEDS_STAMPS, src/translate/book.ts), so the FIRST
+ * run had to be handed a copy of the request with `export` taken off it — visible
+ * to the settle that files the product, invisible to the `argsFor` that would have
+ * asked the engine for an edition it was about to hand the translator.
  *
- * A DELETE RATHER THAN `export: undefined`, so the object handed to `argsFor` is
- * shaped exactly like the Generate of a book nobody is exporting. The two behave
- * identically today, and one of them stops being a guess the moment anything
- * starts asking whether a key is present.
+ * One run makes both now: the records go into the blocks at the assembly, upstream
+ * of everything `--final` decides, so the stored request reaches `argsFor` exactly
+ * as it was stored and there is nothing left to hide from anybody.
  */
-function withoutExport(request: GenerateRequest): GenerateRequest {
-  const { export: _terminal, ...rest } = request;
-  return rest;
-}
 
 /**
  * The endpoint this job will actually read through, or null when the run does
@@ -785,41 +845,18 @@ async function pump(): Promise<void> {
   }
 
   /*
-   * ── THE JOB THAT IS TWO RUNS, DECIDED ONCE AND HELD HERE ──────────────────
-   *
-   * A Generate from a position standing under a translation is `vlm-convert`
-   * into a temporary EPUB and then `translate` out of it into the row's own
-   * file (docs/TRANSLATION-STEPS.md §3). ONE QUEUE ROW, ONE PROGRESS BAR, ONE
-   * SETTLE — because it is one thing the user asked for, and a shelf that grew
-   * a second row halfway through would be this app's bookkeeping surfacing as
-   * an event. The two stages share the rotation below, the cancel, and the
-   * landing.
-   *
-   * `planConversion` decided all of it — which language, which bank, which row
-   * it lands in — for `overlayPath`'s reason, which is the rule for everything
-   * about a Generate: it is the state of the book the user chose when they
-   * pressed the button, and re-resolving any of it at spawn would let a pointer
-   * move made while the job waited silently produce something else.
-   */
-  const piped = request.kind !== 'read'
-    && request.kind !== 'translate'
-    && request.thenTranslate !== undefined
-    ? { request, then: request.thenTranslate }
-    : null;
-
-  /*
    * ── THE JOB THAT LANDS IN THE TRAY INSTEAD OF THE WORKSHOP ────────────────
    *
-   * Everything below this line — the server wait, the intermediate, the two
-   * stages, the cancel, the progress — is the same for an export as for any other
-   * rendering, because an export IS a rendering (`planExport`). What it changes is
-   * the two ends: which file the rotation moves aside, and what the settle records.
+   * Everything below this line — the server wait, the spawn, the cancel, the
+   * progress — is the same for an export as for any other rendering, because an
+   * export IS a rendering (`planExport`). What it changes is the two ends: which
+   * file the rotation moves aside, and what the settle records.
    *
-   * DECIDED ONCE, HERE, for `piped`'s reason: the narrowing that reaches
-   * `request.export` is only available on a `GenerateRequest`, and three separate
-   * places re-deriving it is three places for one of them to go on treating an
-   * export as a generate — which would rotate the project's cast book aside to
-   * make room for a file that is not going anywhere near it.
+   * DECIDED ONCE, HERE, because the narrowing that reaches `request.export` is
+   * only available on a `GenerateRequest`, and three separate places re-deriving
+   * it is three places for one of them to go on treating an export as a generate —
+   * which would rotate the project's cast book aside to make room for a file that
+   * is not going anywhere near it.
    */
   const exporting = request.kind !== 'read'
     && request.kind !== 'translate'
@@ -846,12 +883,13 @@ async function pump(): Promise<void> {
    * one job in this app that puts a page in front of a model; every other job
    * either uses a model this app does not own or uses none at all.
    *
-   * A GENERATE READS NOTHING. `argsFor` passes `--reuse-readings` on every
+   * A RENDERING READS NOTHING. `argsFor` passes `--reuse-readings` on every
    * conversion, without a switch anywhere that could turn it off, so the engine
    * replays the completed bank: it loads no model, opens no socket, and leaves
    * the bank byte for byte as it found it (`readings.ts`, `openReadingsBank`).
-   * A translation's model is Ollama's, which this app does not start. A
-   * two-stage Generate is those two facts in sequence.
+   * That is as true of a TRANSLATED rendering as of any other — the translation's
+   * words come out of a file on disk, not out of a model. A translation's own
+   * model is Ollama's, which this app does not start.
    *
    * This used to be worded as a list of exceptions — translate, and the piped
    * two-stage job — which meant a plain Generate still stood up twenty
@@ -889,59 +927,27 @@ async function pump(): Promise<void> {
   }
 
   /*
-   * ── THE INTERMEDIATE GOES IN THE OS TEMP DIRECTORY, NEVER IN `generated/` ──
+   * ── THE TWO INTERMEDIATES THAT USED TO BE HERE, AND WHY THEY ARE GONE ──────
    *
-   * The first stage of a two-stage Generate writes a whole EPUB that nobody
-   * asked for: it exists so the second stage has something to read, and it is
-   * deleted at the settle whichever way the job goes. DEBRIS DOES NOT GO WHERE
-   * PRODUCTS LIVE. `generated/` is the layer this app treats as an origin —
-   * rotated aside rather than overwritten, catalogued, offered on Home, unpacked
-   * into working trees — and dropping a nameless half-book into it would put a
-   * file the user never ordered into the one directory they are shown.
+   * A Generate standing under a translation wrote a whole EPUB nobody asked for
+   * into the OS temp directory, so that the second stage had something to read;
+   * a translate-descended EXPORT wrote a second one, because the tidy that makes
+   * an edition refuses an `--out` equal to its `--epub`. Both existed because a
+   * translation was a FILE and the only way to get a translated book carrying
+   * this position's decisions was to make the book and give it away.
    *
-   * NAMED FOR THE JOB rather than for the book, because the book already has a
-   * name and this is not it: two jobs about one book must not collide in a
-   * directory that belongs to every program on the machine, and a person who
-   * finds one of these while a run is going should see something that is
-   * obviously a run in progress. Under a `foundry` subdirectory for the same
-   * reason `env-downloader.ts` puts its downloads in one — a temp folder is
-   * shared, and files loose in it belong to nobody.
-   *
-   * MADE BEFORE THE ROTATION, deliberately: a temp directory this app cannot
-   * create is a job that fails having touched nothing at all, and there is no
-   * rotation to put back.
+   * A translated book is CAST now — one `vlm-convert`, the records substituted
+   * into the blocks as it writes, the edition rules applied by the same run — so
+   * there is no half-book to name, no directory this app does not own to put it
+   * in, and no stage between the engine and the product. What is left is the
+   * ONE intermediate that has nothing to do with translation: the file a run
+   * writes when a metadata record is going on afterwards, because both metadata
+   * commands refuse to write over their own input.
    */
-  const intermediate = piped === null
-    ? null
-    : path.join(os.tmpdir(), 'foundry', `${next.id}.epub`);
   /*
-   * ── AND A TRANSLATED **EXPORT** NEEDS A SECOND ONE ────────────────────────
+   * ── AN EXPORT CARRIES THE RECORD THE PERSON TYPED ─────────────────────────
    *
-   * A translate-descended export is three runs, not two, and the third is the
-   * tidy: `epub-final` turning the translated book into the edition that lands
-   * in `final/`. It has to be a separate stage AFTER the translation rather than
-   * `--final` on the first, and the reason is a hard dependency rather than a
-   * preference — `translate` reads the stamps an edition withholds
-   * (FINAL_NEEDS_STAMPS, src/translate/book.ts), so a first stage that wrote the
-   * edition would hand the translator a book it refuses by name.
-   *
-   * So the translation aims here instead of at the row's own file, and the tidy
-   * lands the destination. Named for the job beside the first intermediate, for
-   * the same reasons — and given a name of its OWN rather than being written
-   * over the first, because `epub-final` refuses an `--out` equal to its
-   * `--epub` and a tidy in place is exactly that refusal.
-   *
-   * NULL FOR EVERY OTHER JOB, including a translated Generate: `generated/` is
-   * the workbench, so what lands there is the cast with its marks intact and
-   * there is nothing to tidy.
-   */
-  const untidied = piped === null || !exporting
-    ? null
-    : path.join(os.tmpdir(), 'foundry', `${next.id}.untidied.epub`);
-  /*
-   * ── AND AN EXPORT CARRIES THE RECORD THE PERSON TYPED ─────────────────────
-   *
-   * A metadata edit is a step now, and the reason it had to become one is exactly
+   * A metadata edit is a step, and the reason it had to become one is exactly
    * this: an export is cast fresh from the bank, the corrections went into the
    * OPF of a working tree, and the working tree is not one of a cast's inputs —
    * so a title corrected in the dialog was silently ABSENT from the book that
@@ -955,15 +961,14 @@ async function pump(): Promise<void> {
    * somebody typed a fortnight later; teaching it one would put the ledger inside
    * the engine. `epub-meta` and `pdf-meta` already do exactly this to a finished
    * file, are already how the dialog writes, and are the same two commands whose
-   * refusals the user has already seen. It is the `epub-final` tidy's arrangement,
-   * one stage further on, for the same reason it was chosen there.
+   * refusals the user has already seen.
    *
-   * ── Which makes ANOTHER intermediate, and it is not avoidable ─────────────
+   * ── Which makes AN intermediate, and it is not avoidable ──────────────────
    *
    * Both commands refuse to write over their input, and both are right to:
    * `pdf-meta` re-emits the whole document through pdf-lib, so an `--out` equal to
-   * `--pdf` would destroy the file being read while it was being read. So whatever
-   * ran last aims here and the metadata stage lands the destination — which also
+   * `--pdf` would destroy the file being read while it was being read. So the
+   * engine aims here and the metadata stage lands the destination — which also
    * means a run that gets this far and then cannot stamp the record leaves NO file
    * in the tray, rather than one the user would reasonably believe carries their
    * corrections.
@@ -987,19 +992,18 @@ async function pump(): Promise<void> {
     }
     : null;
   /*
-   * The file the last engine stage writes when a record is going on afterwards —
-   * named for the job beside the other intermediates, under the same `foundry`
-   * subdirectory, and with the product's own extension because both metadata
-   * commands read the format they are given.
+   * The file the engine writes when a record is going on afterwards — named for
+   * the job under a `foundry` subdirectory of the OS temp directory, because a
+   * temp folder is shared and files loose in it belong to nobody, and with the
+   * product's own extension because both metadata commands read the format they
+   * are given.
    */
   const unstamped = record === null || record.flags.length === 0
     ? null
     : path.join(os.tmpdir(), 'foundry', `${next.id}.unstamped${path.extname(next.outputPath)}`);
-  if (intermediate !== null || unstamped !== null) {
+  if (unstamped !== null) {
     try {
-      // Either name gives the same directory — they are made beside each other on
-      // purpose — so whichever this job has is the one asked for.
-      await fsp.mkdir(path.dirname(intermediate ?? unstamped!), { recursive: true });
+      await fsp.mkdir(path.dirname(unstamped), { recursive: true });
     } catch (err) {
       next.state = 'failed';
       next.error = `The temporary folder for this job could not be made: ${(err as Error).message}`;
@@ -1030,23 +1034,20 @@ async function pump(): Promise<void> {
    * (`restoreRotation`), so the invariant is flat: A RUN THAT PRODUCES NOTHING
    * LEAVES THE CATALOGUE EXACTLY AS IT WAS.
    *
-   * A TRANSLATION ROTATES HERE TOO, and it is the same sentence rather than a
-   * second mechanism. It used to rotate in `planTranslation`, which is where
-   * conversions rotated before this block existed — so the invariant above was
-   * true of every job in this app except the one that runs for four hours from a
-   * row a person routinely queues, looks at, and removes. A held translation
-   * removed from the shelf had already moved the previous edition into an archive
-   * folder and rewritten the chain to point there, for a run that never spawned.
-   * There is no restore path from a plan, because a plan has nowhere to put one:
-   * `remove` deletes the request and the row, and nothing anywhere remembered
-   * that a file had been moved for it. Rotating HERE gives it the settle paths
-   * below for free, and gives `remove` nothing to undo because nothing has
-   * happened yet.
+   * NEITHER OF THE TWO JOBS THAT WRITE INTO `readings/` ROTATES, and that is now
+   * one rule rather than a reading's exception. A reading fills its BANK and a
+   * translation fills its RECORDS; both live beside each other in a directory this
+   * block has no business in, both are named per step so nothing is ever
+   * overwritten, and both have the engine's own replace-on-success rule underneath
+   * them (docs/BANK-LIFECYCLE.md §2). Rotating on their basename would move a file
+   * out of `readings/` on the strength of a name that means something else there.
    *
-   * A READING NEVER ROTATES: its `outputPath` is the BANK it fills, which lives
-   * in `readings/` and is not a generated document at all. Rotating on its
-   * basename would move a file out of a directory this block has no business in.
-   * The bank's own replace-on-success rule is the engine's (BANK-LIFECYCLE §2).
+   * THE TRANSLATION USED TO ROTATE, and losing that is losing nothing: what it
+   * rotated was the EPUB it was about to overwrite, and it does not write an EPUB
+   * any more. The self-overwrite case went with it — a re-translation into the
+   * language a document already was named one path twice, so the run read the copy
+   * the rotation had moved aside — because a records file is never also the book
+   * being read.
    *
    * A refusal here fails the job with its own sentence. Both plans ask the same
    * question while the dialog is still on screen, so this is reached only when a
@@ -1066,7 +1067,7 @@ async function pump(): Promise<void> {
   let rotation: Rotation | null = null;
   let filedRotation: FinalRotation | null = null;
   let rotatedIn: string | null = null;
-  if (request.kind !== 'read') {
+  if (request.kind !== 'read' && request.kind !== 'translate') {
     const projectDir = projectDirOf(request.outputPath);
     if (projectDir !== null) {
       rotatedIn = projectDir;
@@ -1089,107 +1090,70 @@ async function pump(): Promise<void> {
   }
 
   /*
-   * ── AND A RE-TRANSLATION READS THE COPY THAT WAS JUST MOVED ───────────────
+   * ── A BRANCH'S RECORDS START AS A COPY OF ITS PARENT'S ────────────────────
    *
-   * Translating the English edition into English again names one path twice: the
-   * output is composed from the project's stem and the language, so asking for a
-   * language a document already is lands on that document. Nothing refuses that —
-   * the user asked for "do that again", which is sensible, and a refusal would
-   * have been a sentence about this app's own filing (`planTranslation`).
+   * Here, and not at plan time, because this is the first moment the job is a
+   * commitment rather than a row somebody can still remove: a held translation
+   * that is deleted from the shelf must leave `readings/` exactly as it found it,
+   * and a file seeded at the plan would sit there named by no step, invisible to
+   * the sweep, forever.
    *
-   * The rotation is what makes it work: the previous edition is moved aside a few
-   * lines above, so by the time the engine starts the path the request names is
-   * empty and the bytes the run needs are in `generated/archived-<stamp>/`. The
-   * substitution therefore CANNOT be made at plan time any more — the archived
-   * path does not exist until the rotation does — so it is made here, after the
-   * rotation and before `argsFor`, which is the last moment anything can still
-   * change what the command line says.
+   * WHY A BRANCH WANTS ITS PARENT'S ANSWERS AT ALL: translating from a save made
+   * under a translation branches, and a branch owns its own file — but an EMPTY
+   * one would make that first run a full re-translation of a book that is already
+   * translated. The rows are keyed by the blocks' own text, so the parent's
+   * answers are exactly as true in the branch as they were at home: the stricken
+   * blocks are never looked up, and only text somebody edited since is re-asked.
    *
-   * THE STORED REQUEST IS LEFT ALONE, and a copy is spawned instead. The request
-   * is what the shelf's row and every admission gate are about — `inputPath` is
-   * the path main admitted and `queue:enqueue-translate` re-checked, and a path
-   * inside an archive folder was never "opened" by anybody. A retry, a restore, or
-   * anything else that reads the request back must see the file a person could
-   * name; only the child process sees the archived one, and only for the length of
-   * this spawn.
+   * AN EXISTING FILE IS NEVER OVERWRITTEN. A retried job has its own answers in
+   * there by now and they are newer than the seed; a replace of a row that already
+   * has records carries no seed at all.
+   *
+   * IT COVERS EVERY TRANSLATION, WHICH IS THE FIX. This copy used to sit inside
+   * the stage loop of a two-stage Generate, so it ran for a branch ordered by
+   * standing on a save and pressing Generate and NEVER for one ordered from the
+   * Translate dialog — which set no seed in the first place. A dialog-ordered
+   * branch therefore started empty and paid full model price for a book whose
+   * translation was one row up. One rule, one spawn, both doors.
    */
-  const spawned: EngineRequest = rotation !== null
-    && request.kind === 'translate'
-    && samePath(request.inputPath, request.outputPath)
-    ? { ...request, inputPath: rotation.movedTo }
-    : request;
+  if (request.kind === 'translate'
+    && request.seedRecords !== undefined
+    && !existsSync(request.recordsPath)
+    && existsSync(request.seedRecords)) {
+    try {
+      await fsp.mkdir(path.dirname(request.recordsPath), { recursive: true });
+      copyFileSync(request.seedRecords, request.recordsPath);
+    } catch (err) {
+      console.error(`[job] could not seed ${request.recordsPath} from ${request.seedRecords}:`, err);
+    }
+  }
 
   /*
-   * ── THE RUNS THIS JOB IS, IN ORDER ────────────────────────────────────────
+   * ── THE ONE RUN THIS JOB IS ───────────────────────────────────────────────
    *
-   * One for everything this app has ever queued, and two for a Generate standing
-   * under a translation: `vlm-convert` into the temp EPUB, then `translate` out
-   * of it into the file the row is about.
+   * It was one for everything this app queued except a Generate standing under a
+   * translation, which was two: `vlm-convert` into a temp EPUB, then `translate`
+   * out of it. A translated book is cast by the first of those alone now, so the
+   * stage list, the loop that walked it and the `handle` reassigned between its
+   * spawns are gone with it.
    *
-   * THE SECOND STAGE IS A `TranslateRequest` AND GOES THROUGH `argsFor`, which is
-   * the whole reason it is composed rather than spelled. The translate command
-   * line has seven flags that were each learned once and expensively — `--bank`
-   * most of all — and a second place assembling one is a second place to forget
-   * one. `translationStage` is pure and lives in shared/, so the composition is
-   * covered by a test rather than by this file being read carefully.
+   * AIMED AT THE INTERMEDIATE WHEN A RECORD IS GOING ON AFTER IT. `unstamped` is
+   * non-null only for an export whose ancestry recorded metadata (see it, above,
+   * for the whole argument), and both metadata commands refuse to write over their
+   * own input. Everything else about this spawn is the request as it was stored —
+   * the stored one is what the row, the rotation and the landing are about, and
+   * only the child process sees this substitution.
+   *
+   * The `read` and `translate` arms are unreachable — neither is ever an export
+   * and neither has a record to carry — and they are written out because the
+   * alternative is a cast asserting that to the compiler, which is a promise
+   * rather than a fact.
    */
-  const stages: EngineRequest[] = piped === null || intermediate === null
-    /*
-     * ONE RUN — AIMED AT THE INTERMEDIATE WHEN A RECORD IS GOING ON AFTER IT.
-     * `unstamped` is non-null only for an export whose ancestry recorded metadata
-     * (see it, above, for the whole argument), and both metadata commands refuse
-     * to write over their own input. Everything else about this stage is the
-     * request as it was stored — the stored one is what the row, the rotation and
-     * the landing are about, and only the child process sees this substitution.
-     */
-    // The `read` arm is unreachable — a reading is never an export and never has
-    // a record to carry — and it is written out because the alternative is a cast
-    // asserting that to the compiler, which is a promise rather than a fact.
-    ? [unstamped === null || spawned.kind === 'read' ? spawned : { ...spawned, outputPath: unstamped }]
-    : [
-      // Stage one writes to the temp file and is otherwise the Generate that was
-      // planned: same pixels, same bank, same overlay, same format. The stored
-      // request keeps its own `outputPath`, which is the file the row, the
-      // rotation and the landing are all about — see the note above `spawned`,
-      // which is the same rule about the same map.
-      //
-      // AND IT IS NOT AN EXPORT, whatever the job is. `export` is what makes
-      // `argsFor` ask the engine for the EDITION, and this stage's product is not
-      // a product at all: it is the book the translator reads, and the translator
-      // needs the stamps an edition does not write. The flag is dropped for this
-      // one spawn and nowhere else — `exporting` above is resolved from the
-      // stored request, so the rotation, the landing and the tidy below all still
-      // know exactly what this job is.
-      { ...withoutExport(piped.request), outputPath: intermediate },
-      /*
-       * Stage two writes the row's own file — UNLESS a tidy is coming, in which
-       * case it writes the second intermediate and `epub-final` writes the file.
-       * The translation is the same run either way; all that moves is where it
-       * puts the book.
-       */
-      translationStage(piped.then, intermediate, untidied ?? piped.request.outputPath),
-    ];
-
-  /*
-   * ── THE THIRD RUN: THE EDITION, MADE FROM WHAT THE TRANSLATOR WROTE ───────
-   *
-   * `foundry epub-final` over the translated book, into the file the row is
-   * about. It is the same tidy `--final` does at assembly, done to a book that
-   * already exists, which is the only order that works here (see `untidied`).
-   *
-   * NOT AN `EngineRequest`, deliberately: the three request shapes are what this
-   * app QUEUES, each with a row, a landing and a settle, and this is a step
-   * inside one job rather than a job. A fourth shape would have to be threaded
-   * through the plans, the shelf and every settle path to be used in one place.
-   * The command line is four flags and it is spelled here, beside the intermediate
-   * it reads.
-   */
-  const tidy: string[] | null = untidied === null || piped === null
-    ? null
-    // The tidy stops being the last run when a record is going on after it, and
-    // then it writes the intermediate the stamping reads. Whichever of the two is
-    // last is the one that writes the file the row is about — see `unstamped`.
-    : ['epub-final', '--epub', untidied, '--out', unstamped ?? piped.request.outputPath];
+  const spawned: EngineRequest = unstamped === null
+    || request.kind === 'read'
+    || request.kind === 'translate'
+    ? request
+    : { ...request, outputPath: unstamped };
 
   /*
    * ── THE LAST RUN: THE RECORD THE PERSON TYPED, PUT ON WHAT WAS MADE ───────
@@ -1200,11 +1164,12 @@ async function pump(): Promise<void> {
    * to a book that has just been assembled out of a bank that never knew the
    * title had been corrected.
    *
-   * SPELLED HERE for the tidy's reason, and it is the same argument: this is a
-   * step inside one job rather than a job, and a fourth request shape would have
-   * to be threaded through the plans, the shelf and every settle path to be used
-   * in one place. The flags are `metaFlagsFor`'s, which is one line and refuses to
-   * put an empty value on a command line.
+   * SPELLED HERE RATHER THAN MADE A REQUEST SHAPE: the three shapes are what this
+   * app QUEUES, each with a row, a landing and a settle, and this is a step inside
+   * one job rather than a job. A fourth would have to be threaded through the
+   * plans, the shelf and every settle path to be used in one place. The flags are
+   * `metaFlagsFor`'s, which is one line and refuses to put an empty value on a
+   * command line.
    *
    * NULL FOR EVERY JOB THAT IS NOT AN EXPORT WITH SOMETHING TO SAY, which is
    * nearly all of them.
@@ -1245,89 +1210,31 @@ async function pump(): Promise<void> {
    * "--out and --format contradict each other" means nothing without the pair,
    * and the paths this app composes are exactly the ones nobody typed and
    * therefore nobody can check. One line, at the start, in the terminal that is
-   * already open — and one PER STAGE, because two runs under one row is exactly
-   * the case where a single line would leave somebody reading the wrong command.
+   * already open — and one PER RUN, because a job that is a spawn followed by a
+   * metadata stamp is exactly the case where a single line would leave somebody
+   * reading the wrong command.
    */
-  const args = argsFor(stages[0]!);
+  const args = argsFor(spawned);
   console.log(`[job] ${next.kind} ${args.join(' ')}`);
   let handle = runEngine(args, watch);
   /*
-   * THE CANCEL FOLLOWS THE LIVE CHILD, which is the whole of what a two-stage
-   * job costs this file. `handle` is reassigned between stages and the closure
-   * reads it, so the ✕ kills whichever engine is actually running rather than a
-   * child that has already exited — and `running` stays set across the gap
-   * between the two, so no second `pump()` can slip a job in beside this one and
-   * put two engines on one GPU.
+   * THE CANCEL FOLLOWS THE LIVE CHILD. `handle` is reassigned before the metadata
+   * stamp and the closure reads it, so the ✕ kills whichever engine is actually
+   * running rather than a child that has already exited — and `running` stays set
+   * across the gap between them, so no second `pump()` can slip a job in beside
+   * this one and put two engines on one GPU.
    */
   running = { id: next.id, cancel: () => handle.cancel() };
   starting = false;
 
   let result = await handle.done;
-  for (let at = 1; at < stages.length && result.code === 0; at += 1) {
-    /*
-     * THE ROW SAYS WHICH STAGE IT IS ON, once, and then the engine's own lines
-     * take the message back over — the same arrangement the `Starting …` line
-     * has always had. The BAR needs nothing: the engine's progress lines carry a
-     * phase, and `translate` counts blocks rather than pages, so the shelf
-     * already draws the second stage as the different quantity it is.
-     */
-    next.message = 'Translating what was just rendered…';
-    next.note = null;
-    changed();
-    /*
-     * A BRANCH'S BANK STARTS AS A COPY OF ITS PARENT'S — here, not at plan time,
-     * because this is the first moment the job is a commitment rather than a row
-     * somebody can still remove (`ThenTranslate.seedBank` says why the debris
-     * matters). The bank is question-keyed by the blocks' own text, so the
-     * parent's answers are exactly as true here: the stricken blocks are never
-     * looked up, and only text edited since the translation is re-asked. An
-     * existing bank is never overwritten — a retried job has its own answers in
-     * there by now, and they are newer than the seed.
-     */
-    const stage = stages[at]!;
-    if (stage.kind === 'translate' && stage.seedBank !== undefined
-      && !existsSync(stage.bankPath) && existsSync(stage.seedBank)) {
-      try {
-        copyFileSync(stage.seedBank, stage.bankPath);
-      } catch (err) {
-        console.error(`[job] could not seed ${stage.bankPath} from ${stage.seedBank}:`, err);
-      }
-    }
-    const stageArgs = argsFor(stages[at]!);
-    console.log(`[job] ${next.kind} ${stageArgs.join(' ')}`);
-    handle = runEngine(stageArgs, watch);
-    result = await handle.done;
-  }
-  /*
-   * ── AND THE TIDY, WHICH IS THE LAST THING THAT HAPPENS ────────────────────
-   *
-   * Only for a translate-descended export, only when everything before it
-   * succeeded, and it is what actually writes the file the row is about: every
-   * stage before this one wrote into the temp directory. `handle` is reassigned
-   * exactly as it is between the other stages, so the ✕ still kills the child
-   * that is running and `running` stays set until the last one has exited.
-   *
-   * A FAILURE HERE FAILS THE JOB, with the engine's own words, because it is the
-   * stage that produces the product: a run that translated four hundred blocks
-   * and then could not write the edition has not made the thing that was asked
-   * for, and reporting it as a success would file a row in the tray pointing at a
-   * file that is not there.
-   */
-  if (tidy !== null && result.code === 0) {
-    next.message = 'Finishing the edition…';
-    next.note = null;
-    changed();
-    console.log(`[job] ${next.kind} ${tidy.join(' ')}`);
-    handle = runEngine(tidy, watch);
-    result = await handle.done;
-  }
   /*
    * ── AND THE RECORD, WHICH IS NOW THE LAST THING THAT HAPPENS ──────────────
    *
-   * Only for an export whose ancestry recorded metadata, only when everything
-   * before it succeeded, and — like the tidy it follows — it is what actually
-   * writes the file the row is about. `handle` is reassigned exactly as it is
-   * between the other stages, so the ✕ still kills the child that is running.
+   * Only for an export whose ancestry recorded metadata, only when the run before
+   * it succeeded, and it is what actually writes the file the row is about — the
+   * engine wrote into the temp directory. `handle` is reassigned, so the ✕ still
+   * kills the child that is running.
    *
    * A FAILURE HERE FAILS THE JOB, in the engine's own words, and that is the
    * conservative answer rather than the harsh one. The alternative is filing a
@@ -1347,15 +1254,17 @@ async function pump(): Promise<void> {
   next.finishedAt = Date.now();
 
   /*
-   * THE INTERMEDIATES GO NOW, whichever way this ended. A run that failed at
-   * block 400 leaves a whole EPUB in the temp directory, and the next one writes
-   * a fresh one under its own job id — so keeping it would be hoarding half-books
+   * THE INTERMEDIATE GOES NOW, whichever way this ended. A run that failed while
+   * writing leaves a whole book in the temp directory, and the next one writes a
+   * fresh one under its own job id — so keeping it would be hoarding half-books
    * nobody can name against a directory this app does not own.
    *
-   * ALL THREE OF THEM, on one rule rather than three: the untidied translation
-   * and the unstamped product are the same kind of debris as the untranslated
-   * cast, made by the stages in between, and a second copy of this paragraph is a
-   * second place to forget one.
+   * THERE USED TO BE THREE OF THEM: the untranslated cast a two-stage Generate
+   * made for its translator, the untidied translation an export made for its
+   * edition, and this one. Both of the others were the cost of a translation being
+   * a FILE; a translated book is cast by the run that assembles it now, so the
+   * only scratch file left is the one the metadata stamp reads, and it exists
+   * because both metadata commands refuse to write over their own input.
    *
    * BEST EFFORT, AND NEVER A THROW. A leftover temp file is a console line; the
    * job it belonged to succeeded or failed on its own merits, and reporting three
@@ -1364,12 +1273,11 @@ async function pump(): Promise<void> {
    * already-absent file — the ordinary case when the run never got that far — is
    * silence rather than an error.
    */
-  for (const scratch of [intermediate, untidied, unstamped]) {
-    if (scratch === null) continue;
+  if (unstamped !== null) {
     try {
-      await fsp.rm(scratch, { force: true });
+      await fsp.rm(unstamped, { force: true });
     } catch (err) {
-      console.error(`[job] the intermediate ${scratch} could not be removed: ${(err as Error).message}`);
+      console.error(`[job] the intermediate ${unstamped} could not be removed: ${(err as Error).message}`);
     }
   }
 
@@ -1442,12 +1350,54 @@ async function pump(): Promise<void> {
       return;
     }
     /*
+     * ── A TRANSLATION LANDED, AND WHAT IT LEFT IS ANSWERS ────────────────────
+     *
+     * The same shape as the reading above it, which is the shape it should always
+     * have had: this run produced no document at all. It wrote
+     * `readings/<key>.<tag>[.<id8>].records.jsonl` — one row per flowing block —
+     * and the step that keeps what those hours cost names THAT file as its payload
+     * (`recordTranslation`, electron/projects.ts), exactly as a read step names its
+     * bank.
+     *
+     * IT USED TO GO THROUGH `recordGenerated`, because the product was an EPUB in
+     * `generated/` and that function is where a finished document is catalogued.
+     * Nothing about a records translation fits there: there is no document to put
+     * on a type's chain, nothing to promote to the project's live PDF, and the file
+     * is not in `generated/` at all — the landing would have refused it by name.
+     *
+     * THE ONE FACT THE JOB HANDS OVER is the one nothing on disk can answer
+     * afterwards: which language was asked for. Reading it back out of a filename
+     * is what this codebase's oldest house rule forbids, so the job that asked says
+     * which. WHETHER THIS WAS A CHAIN IS NOT HANDED OVER, deliberately: it is a
+     * fact about the row this step hangs from, the landing is holding the ledger,
+     * and this request's `--from` is also where a person's typed guess about an
+     * untranslated book's language goes (`recordTranslation` argues it in full).
+     *
+     * AND THEN THE BOOK, WITHOUT BEING ASKED. A records file is not a thing a
+     * person reads, so the row would have nothing to show until somebody ordered a
+     * rendering by file format — which is the exact gap the automatic cast after a
+     * reading was built to close, one action later. It is the same cast: free,
+     * offline, seconds, and fired and forgotten so that a translation that landed
+     * is never reported as a failure because the book after it could not be planned.
+     */
+    if (request.kind === 'translate') {
+      await recordTranslation(next.outputPath, {
+        parentStep: next.parentStep ?? null,
+        language: request.to,
+        ...(request.stepId !== undefined ? { stepId: request.stepId } : {}),
+      });
+      next.message = `Translated ${path.basename(next.inputPath)} — the book follows.`;
+      changed();
+      await ensureTranslateCast(next.outputPath);
+      void pump();
+      return;
+    }
+    /*
      * ── AN EXPORT IS FILED AND NOTHING ELSE HAPPENS TO IT ─────────────────────
      *
-     * `recordGenerated` below does four things to a finished rendering: it puts a
-     * step on that type's chain, it lands a ledger step when the run was a
-     * translation, it destroys whatever the swap displaced, and it can promote the
-     * result to the project's live PDF. Every one of those is about a document
+     * `recordGenerated` below does three things to a finished rendering: it puts a
+     * step on that type's chain, it can promote the result to the project's live
+     * PDF, and it announces the library. Every one of those is about a document
      * OTHER WORK WILL BE MADE FROM, and an export is the one rendering in this app
      * that nothing is ever made from — the user's ruling, verbatim: "it wont go
      * into the working files as a step because it isnt the base for new steps. its
@@ -1468,16 +1418,17 @@ async function pump(): Promise<void> {
       return;
     }
     /*
-     * ── A SAVE'S OWN BOOK IS FILED NOWHERE, AND THAT IS THE POINT ────────────
+     * ── A STEP'S OWN BOOK IS FILED NOWHERE, AND THAT IS THE POINT ────────────
      *
      * It is a RENDERING of a payload that is already a step — the snapshot in
-     * `curations/` — so it is free to make again and there is nothing here for a
-     * catalogue to own. Cataloguing it would do active harm rather than merely
-     * being redundant: `castBook` (electron/projects.ts) picks the newest `origin`
-     * sitting directly in `generated/` as the project's flowing book, so the first
-     * Apply would quietly make a save's private book into what the READ row
-     * shows — the exact confusion the per-save cast was built to end. Home's
-     * document rows would grow one entry per Apply beside it.
+     * `curations/` for a save, the records in `readings/` for a translation — so it
+     * is free to make again and there is nothing here for a catalogue to own.
+     * Cataloguing it would do active harm rather than merely being redundant:
+     * `castBook` (electron/projects.ts) picks the newest `origin` sitting directly
+     * in `generated/` as the project's flowing book, so the first Apply would
+     * quietly make a save's private book into what the READ row shows — the exact
+     * confusion the per-step cast was built to end. Home's document rows would grow
+     * one entry per Apply beside it.
      *
      * Which leaves the file's disposal, and it is not left to chance: the step
      * delete composes the same name and sweeps it, along with any working tree
@@ -1487,8 +1438,8 @@ async function pump(): Promise<void> {
      * already exists, and minting a second one for the rendering would put a
      * filename where an action belongs.
      */
-    if (request.kind !== 'translate' && request.forStep !== undefined) {
-      next.message = 'The book as of that save is ready.';
+    if (request.forStep !== undefined) {
+      next.message = 'The book at that step is ready.';
       changed();
       void pump();
       return;
@@ -1502,83 +1453,38 @@ async function pump(): Promise<void> {
      * write is a named console line, because losing a catalogue entry is not a
      * reason to report three hours of GPU as a failure.
      *
+     * ONE ARGUMENT LIGHTER THAN IT WAS, and the whole of the difference is that a
+     * translation does not come through here any more. This call used to carry the
+     * language, the bank and the step id, because the run that produced a
+     * translation ended in `generated/` and its landing was a ledger step; a
+     * records translation lands where its answers land (`recordTranslation`), and
+     * what reaches this function from a translated position is the BOOK cast from
+     * those records — which carries `forStep` and returns above, uncatalogued.
+     *
      * The REQUEST's kind, not the job row's: `JobKind` also admits `env-install`,
      * which never reaches this branch but which the compiler cannot know that
      * about, and a cast here would be a promise made to the type system rather
-     * than a fact. The request is the narrower shape and it is the same decision.
+     * than a fact. The request is the narrower shape — narrowed by the two arms
+     * above, which return — and it is the same decision.
+     *
+     * ── A BOOK MADE OF A TRANSLATION'S WORDS IS FILED AS A TRANSLATION ────────
+     *
+     * `records` is the whole test, and it has to be here rather than implied. The
+     * roles are not four names for one thing: `castBook` (electron/projects.ts)
+     * picks the newest `cast` sitting directly in `generated/` as THE PROJECT'S
+     * FLOWING BOOK, which is what the read row and every save row resolve to. So a
+     * Hungarian book filed as a cast would quietly become what the German rows
+     * show — the exact confusion the per-step cast was built to end, arrived at
+     * from the other side.
+     *
+     * The old two-stage pipeline said this same sentence about its own second
+     * stage (`piped !== null ? 'translation'`). There is no second stage now; what
+     * makes a rendering a translation is that the words in its blocks came out of
+     * a records file, and that is one field on the request.
      */
     const live = await recordGenerated(
       next.outputPath,
-      /*
-       * A TWO-STAGE GENERATE PRODUCED A TRANSLATION, and the role says so.
-       *
-       * What is on disk is an EPUB of this book in another language, made by the
-       * same `translate` command a translation job runs — so it is catalogued as
-       * one, and it lands a ledger step as one. Filing it as a `cast` because the
-       * job's `kind` happens to say `epub` would leave the row that the whole
-       * pipeline exists to refresh untouched, and would put a second EPUB in the
-       * chain claiming to be the model's reading of the pages.
-       */
-      request.kind === 'translate' || piped !== null
-        ? 'translation'
-        : generatedRoleFor(request.kind),
-      {
-        /*
-         * WHICH STEP THIS IS FILED AGAINST, and a two-stage Generate is the one
-         * job in this app where that is NOT the position at the press.
-         *
-         * `Job.parentStep` is where the user was standing, and for a re-render of
-         * a translation that is the translation itself — so filing it there would
-         * append a translation whose parent is a translation: a second row beside
-         * the one they asked to refresh, and a payload nobody wanted. The pipeline
-         * settled it at plan time with the same ancestry walk that chose the
-         * overlay and the bank (`RenderPipeline.landsUnder`), and the answer is
-         * the translation's own parent when you are standing on it and the save
-         * itself when you are standing on a save made under it. `reRunTarget` then
-         * does the rest: a replace of that row, or a branch beside it.
-         */
-        parentStep: piped?.then.parent ?? next.parentStep ?? null,
-        /*
-         * THE LANGUAGE, HANDED OVER RATHER THAN LEFT IN THE FILENAME.
-         *
-         * The output is called `<book> (en).epub` and the tag is legible in those
-         * parentheses, which is exactly why it is passed here instead: reading a
-         * fact about a book out of the characters in its name is what this
-         * codebase's oldest house rule forbids, and `migrateLedger` would rather
-         * leave an old translation unlabelled than do it. This job asked for a
-         * language; it says which.
-         *
-         * AND THE BANK IT FILLED, AND THE STEP BOTH FILES ARE NAMED AFTER, for the
-         * same reason twice over. The bank is where the per-block answers went
-         * (`--bank`, a few lines up in `argsFor`) and nothing on disk relates it to
-         * the EPUB afterwards — a rendering from this row, and every re-translation
-         * of it, has to be told. The step id was minted at the plan and written
-         * into both filenames since (`bankForTranslation`), so a landing that
-         * minted its own would leave them named after a row nobody created; it is
-         * spent only if this lands as an append.
-         */
-        ...(request.kind === 'translate'
-          ? {
-            language: request.to,
-            bank: request.bankPath,
-            ...(request.stepId !== undefined ? { stepId: request.stepId } : {}),
-          }
-          : {}),
-        /*
-         * AND THE SAME THREE FACTS OFF THE PIPELINE, because the second stage was
-         * a translation and left exactly what one leaves. They are the paths the
-         * engine was actually handed a moment ago — `--to`, `--bank` and the id
-         * both files were named after — so the row records what the run did rather
-         * than what something composed for it afterwards.
-         */
-        ...(piped !== null
-          ? {
-            language: piped.then.to,
-            bank: piped.then.bank,
-            ...(piped.then.stepId !== undefined ? { stepId: piped.then.stepId } : {}),
-          }
-          : {}),
-      },
+      request.records !== undefined ? 'translation' : generatedRoleFor(request.kind),
     );
     /*
      * WHERE THE FINISHED ROW POINTS, when the catalogue made a live copy of what
@@ -1708,25 +1614,29 @@ export async function ensureCast(readFrom: string): Promise<void> {
 }
 
 /**
- * MAKE SURE THIS SAVE HAS ITS OWN BOOK — the same door, for one step.
+ * MAKE SURE THIS STEP HAS ITS OWN BOOK — the one door for both landings that cast
+ * one, called by the commit in main the instant a `curate` step lands and by this
+ * file's own settle the instant a `translate` step does.
  *
- * Called by the commit in main, the instant a `curate` step lands, so that
- * standing on that row shows the book AS IT WAS THEN rather than the project's
- * one cast wearing today's marks (docs/WORKBENCH.md §9).
+ * A SAVE'S BOOK exists so that standing on that row shows the book AS IT WAS THEN
+ * rather than the project's one cast wearing today's marks (docs/WORKBENCH.md §9).
+ * A TRANSLATION'S BOOK exists because the run wrote no book at all: what it left is
+ * per-block answers, and until they are cast the row has nothing a pane can show.
  *
- * KEYED BY PROJECT **AND** STEP, which is the one line that differs from the
- * caster above and the reason this is not a parameter on it. That set answers
+ * KEYED BY PROJECT **AND** STEP, which is the one line that differs from
+ * `ensureCast` above and the reason this is not a parameter on it. That set answers
  * "this project is already having its flowing book planned", and it is exactly
  * right there: there is one such book and a second planner would be a second row
- * for it. There are as many per-save books as there are saves, and two commits in
+ * for it. There are as many per-step books as there are steps, and two commits in
  * one project are two different files — a project-keyed guard would silently drop
- * the second one, which is a save with no book of its own and no way to notice.
+ * the second one, which is a step with no book of its own and no way to notice.
  *
- * FIRE AND FORGET, and here it matters more than it does above: the caller is a
- * commit. A save must land whatever the caster does, so this is awaited by
- * nobody, and every way it can fail is a console line.
+ * FIRE AND FORGET, and here it matters more than it does above: the callers are a
+ * commit and a landing. A save must land whatever the caster does and a translation
+ * must be recorded whatever the caster does, so no way this can fail is allowed to
+ * reach either of them, and every one of them is a console line.
  */
-export async function ensureCurateCast(readFrom: string, step: LedgerStep): Promise<void> {
+export async function ensureStepCast(readFrom: string, step: LedgerStep): Promise<void> {
   const project = (projectDirOf(readFrom) ?? path.resolve(readFrom)).toLowerCase();
   // NUL-joined for the reason every composite key in this app is: it is the one
   // byte that cannot appear in a path or a uuid, so no pair of them can run
@@ -1735,12 +1645,60 @@ export async function ensureCurateCast(readFrom: string, step: LedgerStep): Prom
   if (casting.has(key)) return;
   casting.add(key);
   try {
-    await castCurateStep(readFrom, step);
+    await castStepBook(readFrom, step);
   } finally {
     casting.delete(key);
   }
 }
 
+/**
+ * A TRANSLATION LANDED, SO ITS BOOK CAN EXIST — the same door, named by the file
+ * the run wrote rather than by a step the caller is holding.
+ *
+ * The settle has the records path and nothing else: the step was minted by
+ * `recordTranslation` a moment earlier, inside a manifest write this file
+ * deliberately does not reach into. So the row is looked up by the payload it
+ * names, which is the same whole-project-relative-path rule every other lookup in
+ * this app obeys — and emphatically not by reading the `<id8>` back out of the
+ * filename, which is what the house rule forbids.
+ *
+ * NOTHING HAPPENS FOR A LANDING WHOSE ROW COULD NOT BE WRITTEN (a console line of
+ * its own, in `recordTranslation`), and that is the honest answer rather than a
+ * fallback: a book cast for a step that does not exist is a file no screen in this
+ * app would ever mention and no delete would ever sweep.
+ */
+export async function ensureTranslateCast(recordsPath: string): Promise<void> {
+  const dir = projectDirOf(recordsPath);
+  if (dir === null) {
+    console.error(
+      `[job] ${path.basename(recordsPath)} finished outside any project, so no book was cast from it.`,
+    );
+    return;
+  }
+  try {
+    const view = await readStepLedger(dir);
+    const relative = path.relative(dir, path.resolve(recordsPath)).split(path.sep).join('/');
+    const step = view?.ledger.steps.find(
+      (row) => row.action === 'translate' && row.payload === relative,
+    );
+    if (step === undefined) {
+      console.warn(
+        `[job] the translation of ${path.basename(dir)} landed, but no step in that project's history `
+        + 'names those answers, so no book was cast from them.',
+      );
+      return;
+    }
+    // The records file rather than the directory: every plan resolves the pixels
+    // out of `archive/` for itself and only needs to be told WHICH project, and a
+    // real file inside one is what the resolution is written to take.
+    await ensureStepCast(recordsPath, step);
+  } catch (err) {
+    console.error(
+      `[job] the translation of ${path.basename(dir)} landed, but its history could not be read `
+      + `(${err instanceof Error ? err.message : String(err)}), so no book was cast from it.`,
+    );
+  }
+}
 /**
  * A READING LANDED, SO THE BOOK EXISTS — cast it, now, without being asked.
  *
@@ -1796,11 +1754,11 @@ export async function ensureCurateCast(readFrom: string, step: LedgerStep): Prom
 async function castFlowingBook(readFrom: string): Promise<void> {
   try {
     const plan = await planConversion(readFrom, 'epub');
-    if (plan.thenTranslate !== undefined) {
+    if (plan.records !== undefined) {
       console.warn(
         `[job] the flowing book for ${path.basename(readFrom)} was not cast automatically: the `
-        + 'project\'s position stands under a translation, and a cast that had to run the '
-        + 'translator is not a free rendering. Generate it from the step you want.',
+        + 'project\'s position stands under a translation, so this plan is about the translated '
+        + 'book rather than about the one the reading just made. Stand on the reading for that.',
       );
       return;
     }
@@ -1829,9 +1787,9 @@ async function castFlowingBook(readFrom: string): Promise<void> {
 }
 
 /**
- * A SAVE LANDED, SO THAT SAVE'S BOOK CAN EXIST — cast it, without being asked.
+ * A STEP LANDED, SO THAT STEP'S BOOK CAN EXIST — cast it, without being asked.
  *
- * ── The gap this closes, in the user's terms ────────────────────────────────
+ * ── The two gaps this closes, in the user's terms ───────────────────────────
  *
  * A curate row showed the project's ONE cast, so every save in a book's history
  * showed the same document: the live tree wearing today's marks. Clicking a save
@@ -1840,23 +1798,29 @@ async function castFlowingBook(readFrom: string): Promise<void> {
  * landing casts its own book, and standing on an older save shows the book as of
  * that save.
  *
+ * A translate row is the same gap arrived at from the other side. The run writes
+ * per-block ANSWERS and no book at all, so without this the row a person just
+ * created would have nothing on screen behind it until they went and ordered a
+ * rendering by file format — which is exactly the state the automatic cast after a
+ * reading was built to end, one action later.
+ *
  * ── The same three arguments `castFlowingBook` makes, unchanged ─────────────
  *
- * It costs nothing (a `--reuse-readings` pass over a completed bank: no model, no
- * socket, seconds); it is therefore not held and does not wait for the reading
- * server; and it cannot loop, because a conversion landing enqueues nothing and
- * this is called from a commit rather than from a settle.
+ * It costs nothing (a `--reuse-readings` pass over a completed bank, with the
+ * translation's words read out of a file: no model, no socket, seconds); it is
+ * therefore not held and does not wait for the reading server; and it cannot loop,
+ * because a conversion landing enqueues nothing and this is called from a commit
+ * or from the settle of a job that is not a conversion.
  *
- * ── Every refusal is a console line, never a failed save ────────────────────
+ * ── Every refusal is a console line, never a failed save or a lost translation ─
  *
- * That is the whole of the error handling and it is deliberate. The commit has
- * already happened: the snapshot is on disk and the row is in the ledger, which
- * is the thing the user pressed the button for. A save that reported failure
- * because a rendering could not be planned would be this app calling somebody's
- * work lost over a file it can make again for nothing — and the row still shows
- * the project's cast, which is exactly what it showed before this existed.
+ * That is the whole of the error handling and it is deliberate. The thing the user
+ * pressed the button for has already happened: the snapshot is on disk, or the
+ * records are, and the row is in the ledger. Reporting failure because a rendering
+ * could not be planned would be this app calling somebody's work lost over a file
+ * it can make again for nothing.
  */
-async function castCurateStep(readFrom: string, step: LedgerStep): Promise<void> {
+async function castStepBook(readFrom: string, step: LedgerStep): Promise<void> {
   try {
     const plan = await planConversionForStep(readFrom, step);
     enqueue(
@@ -1869,30 +1833,36 @@ async function castCurateStep(readFrom: string, step: LedgerStep): Promise<void>
          * THE SNAPSHOT, AND NOT THE LIVE OVERLAY. `planConversionForStep` is the
          * whole of that decision and its header is the argument; carried here the
          * way every other plan's answers are, so that a correction made while this
-         * job waits cannot change the book a save is about.
+         * job waits cannot change the book a step is about.
          */
         overlayPath: plan.overlayPath,
         /*
-         * WHICH SAVE THIS IS THE BOOK OF. It stops the landing cataloguing the
+         * AND THE TRANSLATION'S OWN WORDS, when this step is one or stands under
+         * one. The plan composed both or neither, so a book cast in a language it
+         * does not hold is not a state this call can construct.
+         */
+        ...(plan.records !== undefined ? { records: plan.records } : {}),
+        ...(plan.language !== undefined ? { language: plan.language } : {}),
+        /*
+         * WHICH STEP THIS IS THE BOOK OF. It stops the landing cataloguing the
          * file as one of the project's documents — see `GenerateRequest.forStep`,
          * where the reason is that `castBook` must go on meaning the project's one
          * flowing book however many saves have been pressed.
          */
         forStep: step.id,
       },
-      // The save this book is of. Nothing downstream spends it; the shelf's row
+      // The step this book is of. Nothing downstream spends it; the shelf's row
       // says which step a job was started from, and this one genuinely was.
       step.id,
     );
   } catch (err) {
     console.error(
-      `[job] “${step.label}” was saved, but the book as of that save could not be planned: `
-      + `${err instanceof Error ? err.message : String(err)}. The save itself is recorded, and `
-      + 'that row goes on showing the book this project last cast.',
+      `[job] “${step.label}” landed, but the book at that step could not be planned: `
+      + `${err instanceof Error ? err.message : String(err)}. The step itself is recorded, and `
+      + 'that row goes on showing whatever it showed before.',
     );
   }
 }
-
 /**
  * The position of the project a job is about to write into.
  *

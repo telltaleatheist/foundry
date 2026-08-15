@@ -1086,33 +1086,66 @@ const castAsked = new Set<string>();
  * seconds of arithmetic. Settling for the photograph is the app declining to make
  * the one format everything after this step works on.
  *
- * ── What identifies a fallback, without re-deriving main's own resolution ───
+ * ── The two fallbacks, and how each is identified ───────────────────────────
  *
- * Two facts, both read off the same catalogue the resolution read: the position
- * is NOT a row that shows its own payload (so it is a read or a curate, not the
- * import and not a translation), and what came back is a PDF. The flowing book is
- * never a PDF, so those two together are the fallback and nothing else is. The
- * bank has to be marked complete as well — the same test every Generate asks
- * (`readingIsComplete`) — because a resume is a reading, and a reading is hours
- * of a model spent by a click on a history row.
+ * A READ OR A SAVE THAT CAME BACK AS A PDF. Two facts, both read off the same
+ * catalogue the resolution read: the position is NOT a book of its own (so it is a
+ * read or a curate, not the import and not a translation), and what came back is a
+ * PDF. The flowing book is never a PDF, so those two together are the fallback and
+ * nothing else is.
+ *
+ * A TRANSLATION THAT CAME BACK AS NOTHING AT ALL, which is the same shape one
+ * action later. A translate step retains its records and the book is cast from
+ * them, so between the landing and the cast — and after any cast that failed —
+ * there is no document at that position and the resolution honestly answers null.
+ * Asking for the book is exactly what the ruling above says to do about it, and it
+ * is the same free run: the records are on disk and the bank is complete.
+ *
+ * THE BANK HAS TO BE MARKED COMPLETE FOR EITHER — the same test every rendering
+ * asks (`readingIsComplete`) — because a resume is a reading, and a reading is
+ * hours of a model spent by a click on a history row.
  */
-async function towardTheFlowingBook(resolved: string): Promise<void> {
-  if (path.extname(resolved).toLowerCase() !== '.pdf') return;
-  // The document came out of `documentAtPosition`, so its project is already
-  // proven; this only names the folder it was proven in.
-  const dir = projectDirOf(resolved);
-  if (dir === null || castAsked.has(dir.toLowerCase())) return;
+async function towardTheFlowingBook(projectDir: string, resolved: string | null): Promise<void> {
+  const dir = resolved === null ? projectDirOf(projectDir) : projectDirOf(resolved);
+  if (dir === null) return;
+  if (resolved !== null && path.extname(resolved).toLowerCase() !== '.pdf') return;
   try {
     const manifest = await readManifest(dir);
     const view = positionView(ledgerOf(manifest));
-    if (view.step === null || view.own || view.reading === null) return;
+    if (view.step === null || view.reading === null) return;
+    /*
+     * A ROW THAT IS A BOOK OF ITS OWN reaches this function in exactly one state:
+     * a translation whose records have landed and whose book has not been cast
+     * yet. The import is the other such row and is never it — the scan is on disk
+     * by definition, so that position always resolves.
+     */
+    if (view.own && (resolved !== null || view.step.action !== 'translate')) return;
     if (!await readingIsComplete(dir, manifest)) return;
-    castAsked.add(dir.toLowerCase());
-    await queue.ensureCast(resolved);
+    /*
+     * ONE ASK PER PROJECT for the project's own book, and one per STEP for a
+     * translation's, because there is one of the first and as many of the second
+     * as there are translate rows. Keyed with the step id so that asking for the
+     * Hungarian book does not silence the ask for the English one.
+     */
+    const asked = view.own ? `${dir.toLowerCase()}\u0000${view.step.id}` : dir.toLowerCase();
+    if (castAsked.has(asked)) return;
+    castAsked.add(asked);
+    /*
+     * A step's own book is asked for by its STEP; the project's is asked for by
+     * any path inside the project, and `resolved` is only sometimes one. A read
+     * row in a project with no cast and no live PDF resolves to NOTHING — which is
+     * the fallback at its most complete, and the case where making the book
+     * matters most — so the directory stands in for the document that is not
+     * there. Both callers resolve the pixels out of `archive/` for themselves and
+     * only need to be told which project this is.
+     */
+    if (view.own) await queue.ensureStepCast(dir, view.step);
+    else await queue.ensureCast(resolved ?? dir);
   } catch (err) {
     // Never thrown at the caller: it asked which document is at the position and
-    // it has a correct answer. This is the app trying to improve on that answer,
-    // and a catalogue it could not read is a line in the terminal.
+    // it has a correct answer, or an honest absence. This is the app trying to
+    // improve on that answer, and a catalogue it could not read is a line in the
+    // terminal.
     console.error(
       `[ledger] the flowing book for ${path.basename(dir)} could not be asked for: `
       + `${err instanceof Error ? err.message : String(err)}`,
@@ -2652,7 +2685,7 @@ function registerIpc(): void {
     const view = await commitOverlay(pdf);
     let landed: LedgerStep | null = null;
     for (const step of view.ledger.steps) if (step.action === 'curate') landed = step;
-    if (landed !== null) void queue.ensureCurateCast(pdf, landed);
+    if (landed !== null) void queue.ensureStepCast(pdf, landed);
     return view;
   });
   /**
@@ -2802,10 +2835,17 @@ function registerIpc(): void {
   ipcMain.handle('ledger:document-at', async (_event, projectDir: string) => {
     const resolved = await documentAtPosition(projectDir);
     if (resolved !== null) openable.add(path.resolve(resolved));
-    // Fire and forget, deliberately — see `towardTheFlowingBook`. The answer is
-    // the document that exists NOW; a pane held blank while a rendering runs
-    // would be this handler waiting for a job the caller never asked for.
-    if (resolved !== null) void towardTheFlowingBook(resolved);
+    /*
+     * Fire and forget, deliberately — see `towardTheFlowingBook`. The answer is
+     * the document that exists NOW; a pane held blank while a rendering runs
+     * would be this handler waiting for a job the caller never asked for.
+     *
+     * ASKED EVEN WHEN THE ANSWER WAS NULL, which it did not used to be. A null is
+     * not always "this position names no document": standing on a translation
+     * whose book has not been cast yet, it means the document is one free run
+     * away, and that is the case this whole function exists for.
+     */
+    void towardTheFlowingBook(projectDir, resolved);
     return resolved;
   });
   ipcMain.handle('ledger:describe-delete', async (_event, projectDir: string, stepId: string) => {
@@ -2886,7 +2926,10 @@ function registerIpc(): void {
     if (admitted(request.inputPath) === null) {
       throw new Error(`${request.inputPath} was never opened in this app.`);
     }
-    return queue.enqueueTranslate(request, await parentStepFor(request.outputPath));
+    // The RECORDS file, which is what a translation writes now: the position is
+    // resolved from the project that file belongs to, exactly as it used to be
+    // resolved from the project the output EPUB belonged to.
+    return queue.enqueueTranslate(request, await parentStepFor(request.recordsPath));
   });
   ipcMain.handle('queue:start', () => queue.start());
   ipcMain.handle('queue:remove', (_event, id: string) => { queue.remove(id); });

@@ -1,76 +1,81 @@
 /**
- * The render pipeline — what Generate MEANS, standing anywhere in the history.
+ * The render pipeline — what a RENDERING MEANS, standing anywhere in the history.
  *
- * ── The approximation this file replaces ────────────────────────────────────
+ * ── The approximation this file replaced ────────────────────────────────────
  *
- * Until now the position affected a Generate through exactly one thing: which
- * `--overlay` the engine was handed (`planConversion` → `overlayForPosition`).
+ * Until this existed the position affected a rendering through exactly one thing:
+ * which `--overlay` the engine was handed (`planConversion` → `overlayForPosition`).
  * Standing on a translation, `curationInEffect` walked past it to the nearest
  * curated ancestor and rendered THE BOOK IT WAS TRANSLATED FROM — the state the
  * translation was taken of, which `shared/ledger.ts` called "the honest
  * approximation" and which is a German book for somebody who clicked the row
  * labelled *Translated (Hungarian)*.
  *
- * The fix is not a second rendering path. A translation bank is keyed by
- * `sha256(model, to, from, instructions, masked source text)` and carries no
- * page and no order (`src/translate/bank.ts`), so nothing can ever render FROM
- * one: there is no position in it for an overlay to apply to. What the user's
- * walkthrough needs is a PIPELINE — render the curated book out of the readings
- * bank (free, `--reuse-readings`), then translate that rendering through the
- * translation bank (cache hits, near-free) — and THE POSITION'S ANCESTRY IS THE
- * PIPELINE DESCRIPTION. That is what this module reads off it.
+ * ── And the two-stage pipeline that replaced IT, which is also gone ─────────
+ *
+ * The first fix was a PIPELINE: render the curated book out of the readings bank
+ * into a nameless EPUB in the OS temp directory, then hand that file to
+ * `translate`, which read it and wrote the real one — plus, for an export, a third
+ * run to tidy the result into an edition. Three spawns, two intermediates, and a
+ * whole class of failure between them, all of it because a translation WAS A FILE
+ * and the only way to get a translated book carrying this position's strikes was
+ * to make the book and give it away.
+ *
+ * A translation is a RECORDS FILE now (docs/WORKBENCH.md §10): one row per flowing
+ * block, keyed by the block's own position in the reading bank. So a translated
+ * book is CAST rather than converted — one `vlm-convert` over the same bank,
+ * through the same reflow, the same curation, the same chapters and the same
+ * edition rules as the source, with the records' words in the blocks. What is left
+ * of this module is the one question that survived all three designs: WHICH
+ * translation, if any, is this position about — and that is still read off the
+ * ancestry, which is still the whole of what a position means.
  *
  * ── Why it is pure, and why it is here rather than in `workspace.ts` ────────
  *
- * `shared/ledger.ts`'s reason, one layer up: this decides how many engine runs a
- * button press becomes and which file each of them writes, and a decision like
- * that belongs somewhere a test can reach without an Electron main process. It
- * is also asked from BOTH sides — main composes the plan with it, and the
- * Generate dialog asks (through `translationInEffect`) whether this position is
- * one where only an EPUB can be offered — and a rule spelled on both sides of an
- * IPC boundary is a rule that drifts.
+ * `shared/ledger.ts`'s reason, one layer up: this decides which files a button
+ * press turns into a command line, and a decision like that belongs somewhere a
+ * test can reach without an Electron main process. It is also asked from BOTH
+ * sides — main composes the plan with it, and the Export dialog asks (through
+ * `translationInEffect`) which products can be offered from where somebody stands
+ * — and a rule spelled on both sides of an IPC boundary is a rule that drifts.
  *
- * ── The table, which is the contract (docs/TRANSLATION-STEPS.md §3) ─────────
+ * ── The table, which is the contract ────────────────────────────────────────
  *
- *   standing on            pipeline
+ *   standing on            rendering
  *   ─────────────────────  ────────────────────────────────────────────────
- *   import                 vlm-convert — unchanged
- *   read                   vlm-convert + the live overlay — unchanged
- *   curate (no translate)  vlm-convert + that snapshot — unchanged
- *   translate              vlm-convert (ancestor curation) → TRANSLATE
- *   curate under translate vlm-convert (THIS snapshot) → TRANSLATE
+ *   import                 vlm-convert
+ *   read                   vlm-convert + the live overlay
+ *   curate (no translate)  vlm-convert + that snapshot
+ *   translate              vlm-convert + ancestor curation + THAT ROW'S RECORDS
+ *   curate under translate vlm-convert + THIS snapshot + the ancestral records
  *
  * The first three rows are `curationInEffect` exactly as it already answers, and
  * that is deliberate rather than lucky: the walk stops at a `read`, so a position
- * with no translation above it cannot reach this file's new behaviour at all. The
- * two new rows are the same walk asked one more question.
+ * with no translation above it cannot reach this file's answer at all. The two
+ * translated rows are the same walk asked one more question — and the last of them
+ * is now free, where the pipeline made it a held job that could spend model time.
  */
 
 import {
-  StepLedgerError,
-  ancestry,
   curationInEffect,
   positionOf,
   readingInEffect,
   translationInEffect,
 } from './ledger';
-import type { LedgerStep, ProjectLedger, ThenTranslate, TranslateRequest } from './types';
+import type { LedgerStep, ProjectLedger } from './types';
 
 /**
  * The model a translation is asked of when nobody chose one — the engine's own
  * default (`DEFAULT_TRANSLATE_MODEL`, src/translate/run.ts).
  *
- * ── Why it moved out of the Translate dialog ────────────────────────────────
+ * ── Why it lives in shared/ rather than in the Translate dialog ─────────────
  *
- * It was a constant in `translate-dialog.component.ts`, where it was the value
- * the field opens on, and that was the whole population of askers. It is not any
- * more: a Generate standing on a translation runs the translate stage with NO
- * DIALOG IN FRONT OF IT — the row is the picker, there is no form to open on
- * anything — so the plan needs the same answer the dialog would have given. Two
- * copies of a model id is two answers the day somebody bumps one of them, and
- * the way that failure presents is a re-render quietly asking a different model
- * than the translation was made with, filling the same bank with answers in a
- * second voice.
+ * It was a constant in `translate-dialog.component.ts`, where it is the value the
+ * field opens on, and that was the whole population of askers for as long as a
+ * dialog was the only door to a translation. Two copies of a model id is two
+ * answers the day somebody bumps one of them, and the way that failure presents is
+ * a re-translation quietly asking a different model than the first run did, filling
+ * one records file with answers in two voices.
  */
 export const DEFAULT_TRANSLATE_MODEL = 'qwen3:32b';
 
@@ -78,18 +83,17 @@ export const DEFAULT_TRANSLATE_MODEL = 'qwen3:32b';
 export const DEFAULT_OLLAMA_ENDPOINT = 'http://localhost:11434';
 
 /**
- * What a Generate at the position is made of: one vlm stage, and sometimes a
- * translate stage after it.
+ * What a rendering at the position is made of: one run of `vlm-convert`, and the
+ * three answers the ancestry decides about it.
  *
  * Every field is a STEP rather than a path, because this module knows nothing
  * about project directories (`shared/ledger.ts`'s rule, and the reason both of
- * them are testable). Main turns the steps into the three paths the engine is
- * handed.
+ * them are testable). Main turns the steps into the paths the engine is handed.
  */
 export interface RenderPipeline {
   /**
-   * The curation snapshot the vlm stage renders with, or null when the answer is
-   * the live overlay.
+   * The curation snapshot the run renders with, or null when the answer is the
+   * live overlay.
    *
    * `curationInEffect`, unchanged and un-second-guessed. Standing on a `curate`
    * gives that snapshot — including one made UNDER a translation, which is the
@@ -99,165 +103,98 @@ export interface RenderPipeline {
    */
   curation: LedgerStep | null;
   /**
-   * The reading whose bank the vlm stage replays, or null for a project with no
-   * reading on the path (a position standing on the import, most of all).
+   * The reading whose bank the run replays, or null for a project with no reading
+   * on the path (a position standing on the import, most of all).
    */
   reading: LedgerStep | null;
   /**
-   * The translation the second stage produces again, or null for a Generate that
-   * is one run of `vlm-convert` and nothing else.
+   * The translation whose words go into the blocks, or null for a rendering of the
+   * book in its own language.
    *
-   * It supplies `--to` (`params.language`) and `--bank` (`params.bank`, with
-   * `translationBankOf`'s legacy fallback applied by the caller that knows the
-   * project key). NOT its payload: where this run WRITES is decided by
-   * `translationTarget` against `landsUnder` below, which is the same question
-   * asked the same way for a translation ordered from the Translate dialog.
+   * It supplies `--language` (`params.language`) and `--records` (its payload,
+   * with `translationRecordsOf`'s legacy answer applied by the caller). NOT a
+   * second run: the records are read by the same `vlm-convert` that assembles the
+   * book, at the one point where a block's words are written.
+   *
+   * ── A CHAIN IS FOUND AS ONE ROW, AND THAT IS THE WHOLE OF IT ───────────────
+   *
+   * `translationInEffect` answers the NEAREST translate step above the position,
+   * so standing on the Hungarian row of a German → English → Hungarian chain
+   * answers Hungarian and never English. That is exactly right and needs no walk of
+   * its own: the Hungarian records already hold Hungarian for every block they
+   * answer, because the chain was resolved when they were WRITTEN (the run read the
+   * English records as its source, `--source-records`). Materialisation reads one
+   * file per book, however many languages it passed through on the way.
+   *
+   * This is what the one-hop refusal used to sit in front of, and the refusal was
+   * honest about the design it guarded: rendering a chained row over EPUBs would
+   * have meant `vlm-convert → translate → translate`, two intermediates and a bank
+   * chain nothing in this app named — and rendering it in one hop was worse, since
+   * that row's bank held English keyed to HUNGARIAN source text, so every block
+   * would have missed and the run would have silently re-translated the whole book
+   * out of the German. Neither hazard exists over records: there is no second
+   * spawn to chain, and a records file is keyed by POSITION, so the only question
+   * at materialisation is which file to read.
    */
   translate: LedgerStep | null;
+}
+
+/**
+ * The ancestry, read as a rendering.
+ *
+ * ── The refusal that used to be here ────────────────────────────────────────
+ *
+ * A translation MADE FROM ANOTHER TRANSLATION was refused at this point, with a
+ * sentence, and the sentence was true of the pipeline it defended (see
+ * `RenderPipeline.translate`). The user reversed the deferral on 2026-08-15 and
+ * named the case in their own words — *"if they click the english translation and
+ * then click translate to hungarian, it translates from english to hungarian, thus
+ * creating a chain of translations: german to english to hungarian"* — and the
+ * records design makes the chain the ordinary thing rather than the exception: the
+ * chain is resolved once, when the records are written, and every reader afterwards
+ * sees one file of answers about one book.
+ *
+ * So there is nothing to refuse here any more, and a function that cannot throw is
+ * a function the Export dialog can ask without a `try` around a computed.
+ */
+export function renderPipeline(
+  ledger: ProjectLedger,
   /**
-   * The step the translated EPUB is filed against — and it is NOT always the
-   * position, which is the one surprising line in this file.
+   * THE STEP THIS RENDERING IS ABOUT, when it is about one rather than about the
+   * position — a save's own book, a translation's own book.
    *
-   * ── Why re-rendering a translation is filed under its PARENT ────────────────
-   *
-   * A translation lands a ledger step (`recordGenerated`), and which step is
-   * decided by `reRunTarget`: same action, same parent, same language is the row
-   * that already exists, and it REPLACES. Standing on the Hungarian translation
-   * and pressing Generate is the user asking for that row again — so the landing
-   * has to ask the question the row itself would answer, which means filing it
-   * against the row's own parent. Filing it against the POSITION instead would
-   * make it a translation whose parent is a translation: a second row, beside the
-   * one the user was standing on, for a run they asked for to refresh it.
-   *
-   * ── And why a curate under a translation is filed against ITSELF ────────────
-   *
-   * Because it is a different book. The pipeline applies THAT snapshot's strikes
-   * before the translate stage sees a word, so its EPUB is not the file the
-   * translate step's payload holds — and quietly writing it there would make the
-   * translation's own row describe a book with ten paragraphs missing that
-   * nothing in the ledger admits to removing. It is a different parent, so it is
-   * a different question, so `translationTarget` mints it a branch: its own EPUB
-   * and its own bank, exactly as translating from that save through the Translate
-   * dialog would have. Doing it twice replaces, because the second run asks the
-   * same question from the same parent — which is precisely the behaviour the
-   * user's walkthrough describes ("click that entry and Generate re-renders with
-   * the stricken items removed", and it does not accumulate rows).
-   *
-   * Null when `translate` is null: a rendering is not a step and has nothing to
-   * be filed against.
+   * Both of those are cast by a LANDING rather than by a person pressing a button,
+   * and the pointer at that moment is wherever they happen to be standing. Asking
+   * the position there would answer with somebody else's chain: the live
+   * corrections under a step-shaped name, or the wrong language's records in a book
+   * named for this one. Null and absent both mean the position.
    */
-  landsUnder: string | null;
-}
-
-/**
- * The ancestry, read as a pipeline — or a refusal naming what it will not do.
- *
- * ── The one hop, stated rather than discovered ──────────────────────────────
- *
- * A translation MADE FROM ANOTHER TRANSLATION is refused here, at plan time, with
- * a sentence. The model permits that chain — translate to Hungarian, stand on it,
- * translate that to English, and the ledger records both honestly — and this pass
- * does not pretend to run it. Rendering the English row would mean `vlm-convert →
- * translate → translate`: three spawns, two intermediates, and a bank chain
- * nothing in this app names. Rendering it the way this file otherwise would —
- * scan to English in one hop — is worse than refusing, because that row's bank
- * holds English keyed to HUNGARIAN source text, so every block would miss, the
- * run would silently re-translate the whole book out of the German, and the row
- * would end up holding a book it does not describe. DEFERRED BY DESIGN
- * (docs/TRANSLATION-STEPS.md §3, "One hop"), and named out loud so the person who
- * meets it knows it is a bound rather than a bug: they can stand on the Hungarian
- * row and generate that.
- *
- * ── Why the test is the PARENT and not "a translate anywhere above" ─────────
- *
- * §3 words the bound as "a translate step whose ancestry holds another translate
- * step", and taken literally that refuses the user's own walkthrough on its
- * second press. Strike some blocks while standing on the Hungarian translation,
- * commit — the save hangs UNDER the translation, which is what `recordCuration`
- * has always done — and generate: that lands a translate step whose ancestry is
- * import → read → Hungarian → save → this. Two translate steps on one chain, and
- * the row the walkthrough exists to make would refuse to render itself.
- *
- * It is not a chain, and the reason is what a curation step's payload IS. A
- * curation freezes the LIVE OVERLAY, which is corrections to the SCAN's blocks
- * bound to the reading's generation — §1's discovery, that curation stays keyed
- * to the reading, where the blocks actually live. So a translation made from a
- * curation is a translation of the curated SCAN however far down the list that
- * curation was committed, and rendering it is exactly one vlm run plus one
- * translate run. What genuinely stacks is a translation made from a TRANSLATION,
- * with no curation in between to re-base it on the pages — and since every step's
- * parent is an import, a read, a curate or a translate, "the nearest thing above
- * that could re-base this" is simply the parent.
- *
- * The refusal is a `StepLedgerError` for the reason every refusal in this app is
- * its own class: main hands the message to the dialog verbatim, and a caller has
- * to be able to tell a rule from a filesystem accident.
- */
-export function renderPipeline(ledger: ProjectLedger): RenderPipeline {
-  const standing = positionOf(ledger);
-  const translate = translationInEffect(ledger);
-  const base: RenderPipeline = {
-    curation: curationInEffect(ledger),
-    reading: readingInEffect(ledger),
-    translate: null,
-    landsUnder: null,
-  };
-  if (translate === null || standing === null) return base;
-
-  const chain = ancestry(ledger, translate.id);
-  const from = chain[chain.length - 2];
-  if (from !== undefined && from.action === 'translate') {
-    throw new StepLedgerError(
-      `“${translate.label}” was made from “${from.label}”, and Foundry renders one translation deep. `
-      + `Stand on “${from.label}” and generate that one instead.`,
-    );
-  }
-
+  at: LedgerStep | null = null,
+): RenderPipeline {
+  // Resolved once and handed to all three, rather than left for each of them to
+  // ask the position again: a plan is one answer about one place, and three walks
+  // that could each answer about a different one is the bug `planRendering`'s
+  // single manifest read exists to prevent, one layer down.
+  const standing = at ?? positionOf(ledger);
   return {
-    ...base,
-    translate,
-    // The position's parent when the position IS the translation — see
-    // `landsUnder`, which is where the whole of this line's reasoning lives.
-    landsUnder: standing.id === translate.id ? standing.parent : standing.id,
+    curation: curationInEffect(ledger, standing),
+    reading: readingInEffect(ledger, standing),
+    translate: translationInEffect(ledger, standing),
   };
 }
 
-/**
- * The second stage as the request it is — the same shape a translation ordered
- * from the Translate dialog becomes, so `argsFor` composes ONE command line.
+/*
+ * `translationStage` USED TO LIVE HERE and went with the second spawn.
  *
- * ── Why this exists rather than a second arm in `argsFor` ───────────────────
+ * It turned a `ThenTranslate` into the `TranslateRequest` the queue's `argsFor`
+ * knew how to spell, and its argument was a good one: the translate command line
+ * has seven flags that were each learned once and expensively (`--bank` most of
+ * all, after a 456-block book was killed at block 152 having written nothing), so
+ * a second place assembling one is a second place to forget one.
  *
- * The translate command line has seven flags and two conditionals, and every one
- * of them was learned the expensive way (`--bank` is on that list because a
- * 456-block book was killed at block 152 having written nothing). A second place
- * spelling it is a second place to forget one, and the way that failure presents
- * is a pipeline whose translate stage banks nothing and re-asks the model for the
- * whole book on the next run. So the stage becomes a `TranslateRequest` and goes
- * through the one function that has always known how to spell one.
- *
- * `from` is the intermediate the vlm stage just wrote — in the OS temp directory,
- * never in `generated/`, because debris does not go where products live. It is
- * the caller's to compose and the caller's to delete.
+ * There is no second place any more. A translated book is cast by `vlm-convert`
+ * with `--records`, and the one remaining `translate` command line is composed by
+ * `argsFor` from a request the Translate dialog filled in — which is where it was
+ * before a Generate could run the translator, and where the flags have always been
+ * spelled exactly once.
  */
-export function translationStage(
-  then: ThenTranslate,
-  from: string,
-  outputPath: string,
-): TranslateRequest {
-  return {
-    kind: 'translate',
-    inputPath: from,
-    outputPath,
-    to: then.to,
-    model: then.model,
-    ollama: then.ollama,
-    bankPath: then.bank,
-    // Carried so the spawn can copy the parent's answers into a branch's empty
-    // bank (`ThenTranslate.seedBank`). Not a flag: `argsFor` never sees it.
-    ...(then.seedBank !== undefined ? { seedBank: then.seedBank } : {}),
-    ...(then.instructions !== undefined && then.instructions.trim().length > 0
-      ? { instructions: then.instructions }
-      : {}),
-  };
-}
