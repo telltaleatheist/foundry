@@ -1,12 +1,14 @@
 # Next work — a skeleton to flesh out
 
-Draft, 2026-08-15. Four pieces, green-lit by the user but **not yet designed to
-the depth `STEP-LEDGER.md` was** before it was built. The open questions at the
-end of each section are the conversation still to have. Do not hand this to a
-build agent as it stands.
+Draft, 2026-08-15. Assumes the step ledger as built (`docs/STEP-LEDGER.md`,
+commits `e7cba53`, `f46e06d`, `e53435c`, `444a941`).
 
-Assumes the step ledger as built (`docs/STEP-LEDGER.md`, commits `e7cba53`,
-`f46e06d`, `e53435c`, `444a941`).
+**§1, §2, §4 and §5 are superseded** — designed to build depth, open questions
+resolved, in `docs/BANK-LIFECYCLE.md` (banks swap on success, the queue names
+the cost, one bank path per step) and `docs/TRANSLATION-STEPS.md` (the
+translation bank is question-keyed, so curation stays on the reading and a
+translate-descended Generate is a two-stage replay). The sections are kept
+below as the record of what the questions were; the answers live there.
 
 ---
 
