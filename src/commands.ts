@@ -559,6 +559,22 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
    * carries no answer for — is not refused here either, and must not be: it goes
    * on to render, discovers the hole and names the page. That is the truer
    * sentence about that run, and it is one a person can act on.
+   *
+   * AND `--reuse-readings` OVER A BANK NO RUN COMPLETED IN STILL REACHES THIS
+   * REFUSAL, which is worth stating because the case changed underneath it. That
+   * run used to be a genuine read — `openReadingsBank` answered `resume` and the
+   * missing pages went to a model — so demanding a backend for it was exactly
+   * right. It is now a refusal: the flag reads nothing in any state of the bank,
+   * and a bank with no marker is told so by name (`readings.ts`). So this check
+   * no longer stops a run that would have been fine; it stops a run that was
+   * about to be stopped anyway, one sentence earlier, and off macOS with no
+   * endpoint configured that sentence is about the machine rather than about the
+   * bank. Left alone deliberately: the alternative is standing aside for every
+   * `--reuse-readings` whether or not it can replay, which is this check
+   * guessing at what `openReadingsBank` will decide instead of asking the marker
+   * — the exact second opinion `replaysCompletedBank` exists to avoid. The app
+   * cannot reach it at all, because `planConversion` refuses an unfinished
+   * reading before a job is queued (app/electron/workspace.ts).
    */
   const readingsPath = optionalString(args, 'readings');
   const replaying = replaysCompletedBank({

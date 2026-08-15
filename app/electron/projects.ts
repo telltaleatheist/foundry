@@ -3445,7 +3445,18 @@ async function readingState(
   manifest: ProjectManifest,
 ): Promise<ProjectSummary['reading']> {
   const recorded = manifest.reading !== null && manifest.reading.readAt > 0;
-  const banked = path.join(dir, READINGS, `${manifest.key}.jsonl`);
+  /*
+   * THE POSITION'S BANK, ASKED FOR RATHER THAN COMPOSED. This line spelled
+   * `readings/<key>.jsonl` out of the project key — the exact composition
+   * `readingBank`'s header forbids and for its exact reason: a re-read of a
+   * different page range branches into a bank of its own, so a project can hold
+   * two readings, and while this composed the first one's path a position
+   * standing on a BRANCH that never finished answered "done" out of the original
+   * reading's marker. The dialog it opens is the one with the Generate button in
+   * it, so the composition was an offer to render a book from a bank the plan was
+   * never going to name.
+   */
+  const banked = readingBank(dir, manifest);
   const done = recorded
     // `completionMarkerFor` rather than the name composed a second time here: two
     // spellings of one file is two answers the day either of them changes.

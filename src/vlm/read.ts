@@ -115,6 +115,13 @@ export function renderPath(dir: string, page: number): string {
  * `openReadingsBank` refuses `--reuse-readings` over an empty bank in its own
  * words, and "there is nothing to reuse" is a truer sentence about that run than
  * anything about backends.
+ *
+ * FALSE FOR `--reuse-readings` OVER AN UNMARKED BANK, and that is now a
+ * statement about a run that is going to be REFUSED rather than one that is going
+ * to read: `openReadingsBank` throws over a bank no run completed in, instead of
+ * quietly resuming it. This function is unchanged by that — it answers what the
+ * marker says, which is what its one caller asks — and `runVlmConvert` carries
+ * the paragraph about which of the two refusals a person meets first.
  */
 export function replaysCompletedBank(opts: {
   readingsPath?: string;
@@ -279,6 +286,15 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
    * This is what makes a second format free. Generating a text file out of a
    * bank that already produced an EPUB is arithmetic over answers on disk, and
    * anything that made it phone a GPU would have made the whole split pointless.
+   *
+   * THE TEST IS EXHAUSTIVE NOW, AND IT WAS NOT. `--reuse-readings` used to come
+   * back as `resume` when the bank carried no completion marker, and this line
+   * read that as "not a replay" — correctly, because a resume reads — so the one
+   * flag the app passes on every rendering quietly loaded a model on the MLX
+   * route and posted every unbanked page on the endpoint route. `readings.ts`
+   * refuses that request outright now, so a reuse request that gets this far is
+   * `reuse` and nothing else, and the only thing this line still decides is what
+   * an ordinary read does.
    */
   const replaying = bank?.action === 'reuse';
 

@@ -253,14 +253,16 @@ test('COMPLETED + --reuse-readings: the answers are replayed, and it says BY REQ
   assert.match(outcome.sentence, /reusing 5 banked page answer\(s\) BY REQUEST \(--reuse-readings\)/);
 });
 
-test('REUSE REQUESTED with no marker resumes — there is no completed run to replay', () => {
+test('REUSE REQUESTED with no marker is REFUSED — there is no completed run to replay', () => {
   const readingsPath = runDir([7, 8]);
-  const outcome = openReadingsBank({ readingsPath, freshRequested: false, reuseRequested: true });
 
-  assert.equal(outcome.action, 'resume');
-  assert.equal(outcome.readings.size, 2);
-  assert.equal(outcome.pendingPath, null);
-  assert.match(outcome.sentence, /no run has completed here — resuming the interrupted run, 2 page/);
+  // It used to answer `resume`, and a resume READS: the flag the app puts on
+  // every generate turned a button labelled with a file format into a run that
+  // loaded a vision model. The refusal is the flag's promise being kept.
+  assert.throws(
+    () => openReadingsBank({ readingsPath, freshRequested: false, reuseRequested: true }),
+    /no run has completed in .*: it banks 2 page answer\(s\)/,
+  );
 });
 
 test('PENDING EXISTS, same ask: it is resumed, and the pages in it are not paid for twice', () => {

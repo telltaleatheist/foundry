@@ -225,6 +225,52 @@ export async function planConversion(
    * the dialog can say to somebody's face while the card is still open.
    */
   const pipeline = renderPipeline(ledgerOf(manifest));
+  /*
+   * ── THE READING HAS TO BE FINISHED, AND THIS IS EVERY GENERATE ─────────────
+   *
+   * A Generate is a RENDERING: it replays a bank somebody already paid for and
+   * writes a document out of it, and the flag that makes that true is
+   * `--reuse-readings`, which `argsFor` puts on every conversion with no switch
+   * anywhere that could turn it off. That flag only means "read nothing" over a
+   * bank the engine marked complete. Over one it did not — a reading killed at
+   * page 9 of 17, a bank adopted from an older layout, a branch read that never
+   * finished — the engine has nothing to replay, and until this refusal existed
+   * it resumed instead: the pages missing from the bank went to a vision model,
+   * because somebody pressed a button labelled with a file format.
+   *
+   * THIS TEST USED TO EXIST AND ONLY FOR TRANSLATIONS. `translateStage` asked it,
+   * and `translateStage` runs only when the position stands under a translate
+   * step — so the two commonest positions in the app, standing on the reading and
+   * standing on a save, were planned with nothing checking the marker at all. It
+   * is hoisted here because the fact it is about belongs to the PLAN and not to
+   * one stage of it: every plan below names a bank, and this is the sentence
+   * about that bank.
+   *
+   * ASKED OF THE BANK THIS PLAN WILL ACTUALLY NAME. `readingIsComplete` resolves
+   * `readingBank(dir, manifest)` — the position's own read step and its own
+   * payload, `readings/<key>.<id8>.jsonl` for a branch — rather than composing a
+   * path from the project key. Composing it is how a branch read that never
+   * finished passed a test about the ORIGINAL reading's marker and rendered
+   * somebody else's pages (`readingBank`'s own header).
+   *
+   * NAMED BY THE ROW, never by the file: `pipeline.reading` is the step this
+   * position renders from, and its label is what the user sees in the Steps list.
+   * A project with no reading at all is a different sentence, because "your
+   * reading did not finish" is a false thing to say to somebody who has not read
+   * the book yet.
+   */
+  if (!await readingIsComplete(dir, manifest)) {
+    throw new ProjectError(
+      pipeline.reading === null
+        ? 'This book has not been read yet, so there is nothing to generate from — a Generate '
+          + 'renders the pages a reading already banked rather than reading them. Run OCR on it '
+          + 'first, and every format after that is free.'
+        : `“${pipeline.reading.label}” carries no completion marker, so that reading was interrupted `
+          + 'and generating would mean reading the pages that are missing from it. Run OCR again — it '
+          + 'picks up where it stopped, and pays only for what is missing — and this generates from '
+          + 'the finished reading afterwards, for nothing.',
+    );
+  }
   const staged = pipeline.translate === null
     ? null
     : await translateStage(dir, manifest, pipeline.translate, pipeline.landsUnder, kind);
@@ -392,12 +438,17 @@ export async function planConversion(
  * rule forbids. There is nothing to put after `--to`, and guessing from the
  * parentheses in its name is the one thing this app will not do.
  *
- * A READING WITH NO COMPLETION MARKER. The vlm stage runs `--reuse-readings` over
- * a finished bank, which is what makes it free and offline — `replaysCompletedBank`
- * (src/vlm/read.ts) is TRUE BY CONSTRUCTION because of this refusal, which is what
- * lets the queue skip the reading server for the whole job. Without the marker the
- * engine would treat the bank as a book to resume, and a person who pressed
- * Generate would be buying three hours of GPU they did not ask for.
+ * A READING WITH NO COMPLETION MARKER — AND IT IS NO LONGER ASKED HERE. It was,
+ * and being asked here was the defect: this function runs only for a position
+ * standing under a translation, so the rule "a Generate replays a finished
+ * reading" was enforced for the one Generate in five that translates and for none
+ * of the others. It is `planConversion`'s now, above the pipeline's stages, where
+ * every plan passes. Nothing is weakened by the move — the same function
+ * (`readingIsComplete`) asks the same question of the same bank, one call earlier
+ * — and `replaysCompletedBank` (src/vlm/read.ts) stays TRUE BY CONSTRUCTION for
+ * this stage's vlm run, which is what lets the queue skip the reading server for
+ * the whole job. There is deliberately no second test here: two tests of one fact
+ * are two answers the day either of them moves.
  */
 async function translateStage(
   dir: string,
@@ -419,13 +470,6 @@ async function translateStage(
       `“${translate.label}” does not say which language it was made into, so there is nothing to ask the `
       + 'model for. It was recorded before Foundry kept that, and the way to get a fresh edition is to '
       + 'translate again from the step it was made from.',
-    );
-  }
-  if (!await readingIsComplete(dir, manifest)) {
-    throw new ProjectError(
-      `The reading behind “${translate.label}” carries no completion marker, and generating a translation `
-      + 'replays that reading rather than paying for it again. Read the pages once more and this row '
-      + 'regenerates from the finished bank, for nothing.',
     );
   }
   const planned = await bankForTranslation(dir, language, landsUnder);

@@ -637,7 +637,13 @@ export interface ReadingsBankRequest {
    * half-finished replacement and start it over.
    */
   freshRequested: boolean;
-  /** `--reuse-readings`: answer out of the bank even though a run completed. */
+  /**
+   * `--reuse-readings`: answer out of the bank even though a run completed here.
+   *
+   * IT IS ONLY EVER ABOUT A COMPLETED BANK. Over anything else — an empty bank,
+   * an interrupted one — it is refused rather than softened into a read, because
+   * the flag's one guarantee to its caller is that this run costs nothing.
+   */
   reuseRequested: boolean;
   /**
    * What this run was asked for — written to the sidecar, and compared with the
@@ -667,6 +673,9 @@ function describeAsk(skipPages: readonly number[], language: string | null): str
  *                               exactly where it is until the new one lands.
  *   completed + --reuse       → replay the bank. The deliberate free reconvert:
  *                               iterate on the assembler over known-good answers.
+ *   banked, no marker,        → REFUSED. The flag says "read nothing", and the
+ *   + --reuse                   only way to honour it over an unfinished reading
+ *                               is to read the pages that are missing from it.
  *   banked + --fresh          → PENDING, marker or no marker. The explicit form,
  *                               for a caller whose own records know the
  *                               conversion finished — a bank written before
@@ -685,9 +694,26 @@ function describeAsk(skipPages: readonly number[], language: string | null): str
  * It reads nothing, so it has nothing to protect the bank from, and a pending
  * beside it belongs to an attempt that is none of its business.
  *
- * `--reuse-readings` against an EMPTY bank throws. There is nothing to reuse, and
- * silently reading the whole book instead would spend hours of GPU on an
- * instruction that said not to.
+ * `--reuse-readings` OVER A BANK NO RUN COMPLETED IN THROWS, and so does the same
+ * flag over an EMPTY one. Both are the same refusal wearing different numbers:
+ * there is no finished reading here, and the only way to answer the request would
+ * be to read pages.
+ *
+ * IT USED TO ANSWER THE UNMARKED CASE WITH A RESUME, four lines under a paragraph
+ * of this comment promising it read nothing, and the cost of that was measured in
+ * GPU-hours somebody did not order. `--reuse-readings` is what the app passes on
+ * EVERY generate — it is the whole of what makes a second format free — so a bank
+ * whose marker had not been written yet, or was swept, or belonged to a reading
+ * that was interrupted, turned a button labelled with a file format into a run
+ * that loaded a vision model and read the book. Nothing in this file said so; the
+ * sentence it printed even admitted it ("the rest are read now") to a log nobody
+ * had open, because the person had pressed PDF and gone to make coffee.
+ *
+ * So the flag now has exactly two outcomes — replay everything, or refuse — and
+ * neither of them reads a page. The way out of the refusal is the same run
+ * without the flag: an unmarked bank is a debt, dropping the flag pays off only
+ * the pages missing from it, and the marker that lands at the end is what makes
+ * every rendering after it free.
  */
 export function openReadingsBank(request: ReadingsBankRequest): ReadingsBankOutcome {
   if (request.freshRequested && request.reuseRequested) {
@@ -711,15 +737,27 @@ export function openReadingsBank(request: ReadingsBankRequest): ReadingsBankOutc
   }
 
   if (request.reuseRequested) {
+    if (completed === null) {
+      /*
+       * A HALF-READ BANK IS NOT A REUSABLE ONE, and this refusal is the whole of
+       * the flag's promise being kept. This arm used to answer `resume` — the
+       * right thing to do about an unmarked bank and the wrong thing to do about
+       * a request that said not to read — so the caller that asked for a
+       * rendering was handed a reading, and paid for it in GPU.
+       */
+      throw new VlmReadingsError(
+        `--reuse-readings was passed but no run has completed in ${readingsPath}: it banks ${banked} `
+        + 'page answer(s) and carries no completion marker beside it, so whatever is missing from it '
+        + 'has never been read. Run the same command without --reuse-readings to read the missing '
+        + 'pages — this flag replays a finished reading and reads nothing.',
+      );
+    }
     return {
-      action: completed !== null ? 'reuse' : 'resume',
+      action: 'reuse',
       readings: existing,
       pendingPath: null,
-      sentence: completed !== null
-        ? `vlm-convert: reusing ${banked} banked page answer(s) BY REQUEST (--reuse-readings) from the `
-          + `conversion that completed ${completed.completedAt}; no page is read from the model.`
-        : `vlm-convert: --reuse-readings, and no run has completed here — resuming the interrupted run, `
-          + `${banked} page(s) already read and banked in ${readingsPath}, the rest are read now.`,
+      sentence: `vlm-convert: reusing ${banked} banked page answer(s) BY REQUEST (--reuse-readings) `
+        + `from the conversion that completed ${completed.completedAt}; no page is read from the model.`,
     };
   }
 
