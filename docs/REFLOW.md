@@ -36,6 +36,25 @@ from it instead of replaying it.
 
 ## 2. What this pass is NOT — the scope fence
 
+> **THE FENCE BELOW IS ABOUT THIS PHASE ONLY. DO NOT CARRY IT FORWARD.**
+> (Ruling, 2026-08-15, after phase A landed.) Phase A was a HOIST: it moved
+> code that turns pages into a book out of the emitter and into a pass,
+> claiming to change nothing. When that is the claim, running the old code
+> and the new code over one bank and diffing the output is simply what
+> checking the claim means — it compares **this program before and after the
+> refactor**, never one step against another, and never two points in a
+> book's history.
+>
+> **Every phase after A is meant to change the output.** The flowing
+> surface, the ops, the transforms, Generate producing a final document —
+> the entire point is that standing on different steps yields different
+> documents. Holding any of that to "the bytes did not move" would forbid
+> the work. The user, plainly: *"we dont need to do byte identical
+> comparisons… basically no step will be byte identical to any other step."*
+>
+> So: no fixture-diffing, no golden files, no before/after byte comparisons
+> from phase B onward. Build the change, run the five gates, use the app.
+
 **It is a hoist, not a behaviour change.** This is the single most important
 sentence in the spec, because it is what makes the work verifiable.
 
