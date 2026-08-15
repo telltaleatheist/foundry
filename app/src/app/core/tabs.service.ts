@@ -236,7 +236,11 @@ export const MAX_PANES = 5;
  * A set rather than a chain of comparisons because the list has grown twice
  * now, and each time the test lived inline it was one `||` away from a kind
  * that finishes and is never seen. What is NOT here is deliberate: `txt` has no
- * tab to open into, and `env-install` made no document at all.
+ * tab to open into, `env-install` made no document at all, and `read` made no
+ * document EITHER — its product is the bank, which is not a thing anybody looks
+ * at. What you look at is what you generate from it, and generating is one of
+ * the three kinds above, which is exactly why they open themselves: somebody
+ * asks for an EPUB precisely because they want to read it.
  */
 const OPENS_ITSELF: ReadonlySet<JobKind> = new Set<JobKind>(['epub', 'pdf', 'translate']);
 

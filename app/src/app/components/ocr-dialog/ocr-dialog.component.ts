@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 
 import { qualify } from '@shared/documents';
 import { fold } from '@shared/original';
-import type { ConversionKind, JobRequest } from '@shared/types';
+import type { JobRequest } from '@shared/types';
 
 import { ProjectsService } from '../../core/projects.service';
 import { QueueService } from '../../core/queue.service';
@@ -12,27 +12,33 @@ import { UiService } from '../../core/ui.service';
 import { api } from '../../core/foundry';
 
 /**
- * OCR / Convert — configure ONE conversion and put it in the queue.
+ * OCR — read the pages, and stop there.
  *
- * This is the old slide-out panel's body in a modal, trimmed to the choices that
- * are genuinely per-job. Three things it used to ask are gone:
+ * ── The question that left ──────────────────────────────────────────────────
  *
- *   **The endpoint URL.** Settings owns which backend reads the pages, the
- *   engine reads that same settings.json for itself, and a second field here was
- *   a second opinion about a decision with one owner.
+ * This dialog used to ask for an OUTPUT FORMAT, and a conversion was one act:
+ * read three hundred pages with a vision model AND write an EPUB, chosen
+ * together, spent together. That made the format a decision somebody had to
+ * commit to before a single page had been read — and it made "actually, could I
+ * have that as plain text too?" a question whose honest answer was another three
+ * hours of GPU unless you happened to know that `--reuse-readings` existed.
  *
- *   **The output path.** A conversion writes into the managed workspace and
- *   OPENS IN THE APP when it is done (electron/workspace.ts); the file gets a
- *   home when the user presses Save a copy, by which time they have read some of
- *   it and know what to call it. Asking up front asked them to name a thing they
- *   had not seen.
+ * They are two acts. THE PRODUCT OF THIS ONE IS THE READING: a bank of the
+ * model's answers, page by page, in the project, which is the expensive
+ * irreplaceable thing everything else is made from. What the book eventually
+ * BECOMES is chosen afterwards, from the Generate dialog, as many times as
+ * somebody likes, for nothing.
  *
- *   **"Bank page answers".** Always on. There is no version of "read three
- *   hundred pages again because the window closed" that anyone wants, and the
- *   engine decides for itself whether a bank is a resume or a re-read.
+ * So what is left here is the two questions that are genuinely about reading —
+ * which pages are not part of the book, and what language they are in — and the
+ * source. Three things it stopped asking earlier are still gone: the endpoint
+ * (Settings owns the backend), the output path (nothing writes one now), and
+ * "bank page answers" (always on; the bank IS the job).
  *
- * It ENQUEUES and nothing else. The run is main's (electron/job-queue.ts), so
- * dismissing this dialog does not touch a job that is already moving.
+ * It ENQUEUES AND NOTHING ELSE, and the row it makes is HELD: reading is the
+ * expensive job, the hold is what makes a batch possible, and Start is what
+ * commits to it. The run is main's (electron/job-queue.ts), so dismissing this
+ * dialog does not touch a job that is already moving.
  */
 @Component({
   selector: 'app-ocr-dialog',
@@ -48,7 +54,7 @@ import { api } from '../../core/foundry';
     -->
     <div class="card" role="dialog" aria-modal="true" aria-label="OCR and convert">
       <header class="head">
-        <span class="title">OCR / Convert</span>
+        <span class="title">OCR — read the pages</span>
         <button class="x" (click)="ui.closeOcr()" title="Close">✕</button>
       </header>
 
@@ -81,49 +87,19 @@ import { api } from '../../core/foundry';
             }
           </label>
 
-          <label class="field">
-            <span class="label">Output</span>
-            <select [ngModel]="kind()" (ngModelChange)="kind.set($event)" name="kind">
-              <option value="epub">EPUB</option>
-              <option value="txt">Plain text</option>
-              <option value="pdf">PDF, as real text</option>
-            </select>
-          </label>
-
           <!--
-            Said here rather than discovered afterwards: plain text is the same
-            conversion and the same reading of the pages, but it is not a book
-            this app can open, and finding that out from a completed job with no
-            Open button on it would read as something having gone wrong.
+            NO OUTPUT FORMAT. What this job makes is the reading, and what the
+            book becomes is a separate decision made afterwards from a bank that
+            is already paid for. Saying so here, once, because everybody arriving
+            at this dialog before today was asked for a format and will look for
+            the field.
           -->
-          @if (kind() === 'txt') {
-            <p class="note">
-              Plain text is the same book with the markup taken off — headings, paragraphs,
-              and footnotes as [1] at the end of each chapter. Pictures do not survive it,
-              and Foundry cannot open a text file in a tab: the queue will show you where
-              it was written.
-            </p>
-          }
-
-          <!--
-            Said here because this one CHANGES HOW THE BOOK LOOKS and the other
-            two do not hide that. The pages keep their layout, so at a glance it
-            reads as the same book — and then the paper is clean, the type is
-            crisp, and the scanner's grey is gone. Somebody expecting their scan
-            back needs to know before they order it that the photograph is not
-            what comes out.
-          -->
-          @if (kind() === 'pdf') {
-            <p class="note">
-              Your book reprinted as real text, page for page: same page size, same layout,
-              every line set where it was printed — but as type rather than as a photograph.
-              It stays crisp at any zoom, copies as words, and is a fraction of the size.
-              Pictures are cut out of the scan and kept. Nothing is rebuilt into chapters, and
-              the running heads and page numbers stay, because they are on the page. A page the
-              model could not read keeps its photograph so nothing is lost. Your original scan
-              is never touched.
-            </p>
-          }
+          <p class="note">
+            This reads every page with the vision model and banks what it says. Nothing is
+            written as a book yet — once the pages are read you can generate an EPUB, plain
+            text or a real-text PDF from the same reading, as often as you like, without
+            reading anything again.
+          </p>
 
           <label class="field">
             <span class="label">Language <em>declared, not detected</em></span>
@@ -140,30 +116,6 @@ import { api } from '../../core/foundry';
                becomes a narrator saying "fourteen". Foundry converts books to
                be READ: markers are kept and linked to their notes, which is
                part of what converting to EPUB means here. -->
-          @if (kind() === 'epub') {
-            <p class="note">
-              The book is written into Foundry's workspace and opens here when it is done.
-              Save a copy from the tab once you have looked at it.
-            </p>
-          } @else if (kind() === 'pdf') {
-            <!--
-              Opens automatically like a finished book does. It used to be that
-              looking at it was the only way to tell an invisible layer had
-              worked; now the reprint is the visible thing, and looking at it
-              beside the scan is how somebody judges whether the model read the
-              page. Both stay in the project, side by side.
-            -->
-            <p class="note">
-              The PDF is written into Foundry's workspace and opens here when it is done —
-              your scan stays in the project beside it, so you can compare the two, and
-              Save a copy puts the file somewhere of your own.
-            </p>
-          } @else {
-            <p class="note">
-              The file is written into Foundry's workspace. Use ↗ on the finished job to
-              show it in the file manager.
-            </p>
-          }
 
           @if (problem(); as reason) {
             <p class="problem">{{ reason }}</p>
@@ -200,7 +152,7 @@ import { api } from '../../core/foundry';
         </footer>
       } @else {
         <div class="body empty">
-          <p>Open a PDF first — a conversion is a thing you do to a document you have in front of you.</p>
+          <p>Open a PDF first — reading the pages is a thing you do to a document you have in front of you.</p>
         </div>
         <footer class="foot">
           <button class="ghost" (click)="ui.closeOcr()">Close</button>
@@ -402,8 +354,6 @@ export class OcrDialogComponent {
     return qualify(this.baseName(filePath), document?.kind ?? null, folder);
   }
 
-  /** EPUB unless asked otherwise — it is the format this app can also read. */
-  protected readonly kind = signal<ConversionKind>('epub');
   protected readonly skipPages = signal('');
   protected readonly language = signal('en');
   protected readonly problem = signal<string | null>(null);
@@ -436,35 +386,24 @@ export class OcrDialogComponent {
     this.busy.set(true);
     this.problem.set(null);
     try {
-      // Main names both files. The renderer no longer has an opinion about where
-      // a conversion goes, which is the whole point of the workspace — but the
-      // KIND has to travel with the request, because it decides the extension
-      // and the engine refuses an output whose name disagrees with its format.
-      const kind = this.kind();
-      const plan = await api.workspace.plan(input, kind);
+      // Main names the bank. There is no output file to name and no format to
+      // carry — the whole of what this job produces is the reading, and where
+      // that goes is the project's business rather than a field on this form.
+      const plan = await api.workspace.planReading(input);
       const request: JobRequest = {
+        kind: 'read',
         /*
          * THE PLAN'S SOURCE, not the document the user picked.
          *
          * They pointed at "the PDF", meaning the one this app shows them —
-         * which after a real-text conversion is type on blank paper with no
+         * which after a real-text rendering is type on blank paper with no
          * pixels in it at all. Main resolves what that book's PAGES actually
-         * are (`planConversion`: the immutable `archive/` original) and the job
+         * are (`planReading`: the immutable `archive/` original) and the job
          * reads those. The person asking never has to know there is more than
          * one copy, which is the whole of the working-copy model.
          */
         inputPath: plan.sourcePath,
-        outputPath: plan.outputPath,
-        kind,
         readingsPath: plan.readingsPath,
-        /*
-         * AND THE BLOCK EDITOR'S CORRECTIONS, if there are any by the time this
-         * job actually starts. The path is carried, not the decision: main tests
-         * for the file as it spawns the engine (electron/job-queue.ts), because a
-         * queued batch waits hours and the hours are exactly when somebody sits
-         * with the block editor open.
-         */
-        overlayPath: plan.overlayPath,
       };
       const skip = this.skipPages().trim();
       if (skip.length > 0) request.skipPages = skip;
@@ -474,13 +413,14 @@ export class OcrDialogComponent {
       const outcome = await this.queue.enqueue(request);
       /*
        * A REFUSAL IS NOT A SUCCESS, so it does not get the success behaviour.
-       * Main dedupes on the output path, and a second Add of the same book and
-       * format changes nothing — closing the dialog and moving focus away would
-       * be this app performing a result it did not produce. It stays put and
-       * says so, in the form the dialog already uses for a problem.
+       * Main dedupes on what a job produces — for a reading that is the bank —
+       * so a second Add of the same book changes nothing, and closing the dialog
+       * and moving focus away would be this app performing a result it did not
+       * produce. It stays put and says so, in the form the dialog already uses
+       * for a problem.
        */
       if (outcome === 'already') {
-        this.added.set(`${this.baseName(input)} · ${kind} is already in the queue — nothing was added.`);
+        this.added.set(`${this.baseName(input)} is already waiting to be read — nothing was added.`);
         return;
       }
       this.ui.shelfExpanded.set(true);
@@ -504,7 +444,7 @@ export class OcrDialogComponent {
        * is silently replaced by a closing card.
        */
       this.ui.announce(
-        `Added ${this.baseName(input)} · ${kind}. Press Start on the queue to run it.`);
+        `Added ${this.baseName(input)} to be read. Press Start on the queue to run it.`);
       this.ui.focusShelf();
       this.ui.closeOcr();
     } catch (err) {

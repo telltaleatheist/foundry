@@ -30,11 +30,20 @@
  *
  * `--readings` is passed on EVERY job, always, at
  * `<project>/readings/<key>.jsonl`. Not a checkbox: there is no version of "read
- * three hundred pages again because the window closed" that anyone wants. The
- * engine decides for itself whether a bank beside a completion marker is a
- * resume or a re-read (README §Reading the pages somewhere else, and only once)
- * — it archives and re-reads a completed one. This app does not second-guess
- * that and has no flag that could.
+ * three hundred pages again because the window closed" that anyone wants.
+ *
+ * WHAT CHANGED IS WHICH JOB IT IS THE PRODUCT OF. There are two plans below
+ * because there are two jobs: `planReading` names the bank an OCR run FILLS, and
+ * `planConversion` names the file a rendering writes out of a bank that already
+ * exists. They were one function while reading and writing were one act, and
+ * that is precisely what made the output format a question somebody had to
+ * answer before a single page had been read.
+ *
+ * A rendering passes `--reuse-readings` with it (electron/job-queue.ts), which
+ * is the flag that keeps it free. Without it the engine treats a completed bank
+ * beside its marker as a book to read AGAIN — its own rule, and the right one
+ * for a command line, but the wrong answer to somebody pressing a button
+ * labelled with a file format.
  *
  * The bank living IN the project also fixes something the flat layout got wrong
  * by accident: the engine writes its completion marker as `completed.json`
@@ -53,10 +62,49 @@ import {
   rotateGenerated,
   translationFileFor,
 } from './projects';
-import type { ConversionKind, WorkspacePlan } from '../shared/types';
+import type { ConversionKind, ReadingPlan, WorkspacePlan } from '../shared/types';
 
 /**
- * Where this PDF's conversion goes, and where its answers are banked.
+ * Where this book's ANSWERS go — everything an OCR job needs, and no more.
+ *
+ * ── Why this is not `planConversion` with a field left out ──────────────────
+ *
+ * The two jobs want different things and the difference is the whole point of
+ * splitting the front door. A reading has no output file, so there is no name to
+ * compose and no `generated/` predecessor to rotate aside; it has no format, so
+ * there is no extension for a `--format` to contradict. What it has is a source
+ * of pixels and a bank to fill.
+ *
+ * IT STILL RESOLVES THE PIXELS ITSELF, which is the one thing both plans share
+ * and the reason neither of them takes the user's word for the input. Somebody
+ * points at "the PDF", meaning the one this app shows them — and after a
+ * real-text rendering that document is type on blank paper with no photograph in
+ * it at all. Reading THAT would be reading a reprint of a reading. So the source
+ * is `archive/`, always, and the person asking never has to know there is more
+ * than one copy.
+ *
+ * The directories are made here rather than by the engine, because the engine is
+ * handed a path and a path whose parent does not exist is a run that dies after
+ * the last page.
+ */
+export async function planReading(inputPath: string): Promise<ReadingPlan> {
+  const { dir, key } = await importDocument(inputPath, 'pdf');
+  const sourcePath = await archiveOriginal(dir) ?? inputPath;
+  await fsp.mkdir(path.join(dir, 'readings'), { recursive: true });
+  return {
+    key,
+    sourcePath,
+    readingsPath: path.join(dir, 'readings', `${key}.jsonl`),
+  };
+}
+
+/**
+ * Where this PDF's RENDERING goes, and which answers it is made from.
+ *
+ * It used to be the plan for the whole conversion — read the pages and write the
+ * book, one act. The reading moved out (`planReading`); what is left is the
+ * cheap half: a name for the file, the bank to build it from, and the curation to
+ * apply on the way.
  *
  * The directories are created HERE rather than by the engine, because the engine
  * is handed two paths and a path whose parent does not exist is a run that dies

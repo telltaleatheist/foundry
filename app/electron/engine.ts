@@ -227,7 +227,22 @@ export function parseProgressLine(line: string): JobProgress | null {
     return { phase: 'translate', page: Number(block[1]), total: Number(block[2]) };
   }
 
-  if (!trimmed.startsWith('vlm-convert:')) return null;
+  /*
+   * `vlm-read:` AND `vlm-convert:`, the same shape under two names.
+   *
+   * Reading the pages left `vlm-convert` and became a command of its own, and the
+   * lines it writes are the ones this function was built for — they ARE the page
+   * counts; the conversion is what stopped emitting them. Gated on the prefix at
+   * all (rather than matching any `page n/m`) for the reason the gate has always
+   * existed: the engine says a great many things with numbers in them, and a bar
+   * that read `attempt 2/3` as progress would jump to 67% because an answer was
+   * retried.
+   *
+   * `vlm-convert:` stays because a rendering still counts its pages as it writes
+   * them, and because dropping it would silently un-bar every conversion the day
+   * this file changed.
+   */
+  if (!trimmed.startsWith('vlm-read:') && !trimmed.startsWith('vlm-convert:')) return null;
 
   const viaEndpoint = /\bpage\s+\d+\s+\((\d+)\/(\d+)\)/.exec(trimmed);
   if (viaEndpoint) {

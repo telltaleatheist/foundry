@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive } from '@angular/router';
 
+import { ProjectsService } from '../../core/projects.service';
 import { TabsService } from '../../core/tabs.service';
 import { UiService } from '../../core/ui.service';
 
@@ -57,14 +58,40 @@ import { UiService } from '../../core/ui.service';
           <span class="rail-label">Documents</span>
         </button>
 
+        <!--
+          THE TWO HALVES OF WHAT USED TO BE ONE BUTTON, side by side and in the
+          order they happen. OCR reads the pages and costs hours; Generate turns
+          what was read into a document and costs nothing. They were one item
+          called "OCR / Convert" while they were one job, and separating them on
+          the dock is most of what teaches the difference.
+
+          OCR LIGHTS UP when the book in front of you has never been read — the
+          same accent this rail uses for "this is active", used here for "this is
+          the step you are waiting on". It is the one place in the dock that
+          points at what to do next rather than at what is currently on.
+        -->
         <button
           class="rail-item"
           [class.active]="ui.ocrOpen()"
-          title="OCR / Convert"
+          [class.waiting]="ocrWaiting()"
+          [title]="ocrWaiting()
+            ? 'These pages have not been read yet — this is the step everything else needs'
+            : 'Read this book\\'s pages with the vision model'"
           (click)="convert()"
         >
           <span class="rail-icon">⌦</span>
-          <span class="rail-label">OCR / Convert</span>
+          <span class="rail-label">OCR</span>
+        </button>
+
+        <button
+          class="rail-item"
+          [class.active]="ui.generateOpen()"
+          [disabled]="!canGenerate()"
+          title="Build an EPUB, plain text or a real-text PDF from what was read"
+          (click)="generate()"
+        >
+          <span class="rail-icon">⎘</span>
+          <span class="rail-label">Generate</span>
         </button>
 
         <!-- Translate. Disabled rather than hidden away from a book, on the
@@ -255,6 +282,27 @@ import { UiService } from '../../core/ui.service';
       background: var(--accent-soft);
       color: var(--accent);
     }
+
+    /*
+      WAITING, which is not the same as ACTIVE and must not look identical.
+      Active means "this panel is open right now"; waiting means "this is the
+      step your book needs next". The SAME accent — this app has one word for
+      attention, and inventing a second colour for a second kind of it is how a
+      palette stops meaning anything — but drawn as an outline rather than a
+      fill, so a dock showing both still says which is which. It pulses once as
+      it arrives and then holds: a permanently animating dock is a dock people
+      learn to look away from.
+    */
+    .rail-item.waiting:not(.active) {
+      color: var(--accent);
+      box-shadow: inset 0 0 0 1px var(--accent);
+      animation: notice 900ms cubic-bezier(0, 0, 0.2, 1) 1;
+    }
+    @keyframes notice {
+      0% { box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 0 var(--accent-soft); }
+      60% { box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 7px transparent; }
+      100% { box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 0 transparent; }
+    }
     .rail-item.active .rail-icon { transform: scale(1.1); }
 
     .rail-icon { font-size: 19px; line-height: 1; transition: transform 150ms ease; }
@@ -268,6 +316,7 @@ import { UiService } from '../../core/ui.service';
 export class ToolRailComponent {
   protected readonly ui = inject(UiService);
   protected readonly tabs = inject(TabsService);
+  private readonly projects = inject(ProjectsService);
   private readonly router = inject(Router);
 
   /** Lit when the panel is actually on screen, which needs both halves of it. */
@@ -346,12 +395,48 @@ export class ToolRailComponent {
   }
 
   /**
-   * A conversion is a thing you do to the document in front of you, so opening
-   * the dialog from Settings takes you back to the documents first.
+   * Reading the pages is a thing you do to the document in front of you, so
+   * opening the dialog from Settings takes you back to the documents first.
    */
   protected convert(): void {
     void this.router.navigateByUrl('/');
     this.ui.openOcr();
+  }
+
+  /**
+   * THE STEP THIS BOOK IS WAITING ON, lit on the dock.
+   *
+   * True only for a PDF whose project has no completed reading. Everything else
+   * in this app is built on that bank — the block editor, every rendering, the
+   * chapter detection — so a scan that has not been read is a scan where exactly
+   * one thing is worth pressing, and the dock says which.
+   *
+   * From the project RECORD (`ProjectSummary.reading`, derived once by main when
+   * the library was listed), never from probing the disk here: this method runs
+   * on every repaint of the dock.
+   */
+  protected ocrWaiting(): boolean {
+    const tab = this.tabs.activeDocument();
+    if (tab === null || tab.kind !== 'pdf') return false;
+    return this.projects.projectFor(tab.path)?.reading.needed === true;
+  }
+
+  /**
+   * Generate needs a PDF in front of you and nothing else.
+   *
+   * NOT gated on the reading existing, deliberately. The dialog is the thing
+   * that knows how to say "these pages have not been read" and offer to read
+   * them — a dead button on the dock would leave somebody with nowhere to find
+   * out why, which is the shape of every disabled control in this rail's
+   * comments.
+   */
+  protected canGenerate(): boolean {
+    return this.tabs.activeDocument()?.kind === 'pdf';
+  }
+
+  protected generate(): void {
+    void this.router.navigateByUrl('/');
+    this.ui.openGenerate();
   }
 
   /**

@@ -155,7 +155,17 @@ import { api } from '../../core/foundry';
                   @case ('queued') { <span class="sub">{{ job.message ?? 'Queued' }}</span> }
                   @case ('done') {
                     <span class="sub ok" [title]="job.message ?? ''">
-                      @if (job.kind === 'env-install') { Installed } @else { Done · {{ baseName(job.outputPath) }} }
+                      <!--
+                        A READING NAMES WHAT IT DID, not what it wrote. Its
+                        product is the bank — \`readings/<key>.jsonl\` — and
+                        "Done · Kershaw-a1b2c3d4.jsonl" would be this app showing
+                        somebody a filename from its own bookkeeping instead of
+                        telling them their book has been read. The engine's own
+                        last line is the tooltip either way.
+                      -->
+                      @if (job.kind === 'env-install') { Installed }
+                      @else if (job.kind === 'read') { Read · ready to generate }
+                      @else { Done · {{ baseName(job.outputPath) }} }
                     </span>
                   }
                   @case ('cancelled') { <span class="sub">Cancelled</span> }

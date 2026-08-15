@@ -136,6 +136,11 @@ const FINAL = 'final';
 const HISTORY = 'history';
 /** The sixth: the block editor's corrections, one pair per reading. See `overlaysDir`. */
 const OVERLAYS = 'overlays';
+/**
+ * And the bank of the model's answers — hours of GPU, the thing every rendering
+ * is made from, and the product of the one job in this app that costs anything.
+ */
+const READINGS = 'readings';
 
 /**
  * `<libraryDir>/projects` — under the user's library, not under userData.
@@ -360,6 +365,8 @@ function readReading(value: unknown): ProjectReading | null {
   return {
     generation,
     passes: typeof row['passes'] === 'number' && Number.isInteger(row['passes']) ? row['passes'] : 0,
+    readAt: typeof row['readAt'] === 'number' ? row['readAt'] : 0,
+    pages: typeof row['pages'] === 'number' ? row['pages'] : 0,
   };
 }
 
@@ -1313,10 +1320,65 @@ export async function readingGeneration(dir: string): Promise<string> {
       return manifest.reading.generation;
     }
     const minted = randomUUID();
-    manifest.reading = { generation: minted, passes };
+    // The completion facts do NOT carry over. A pass count that has moved means
+    // the bank on disk is a different bank, so what the old one held and when it
+    // landed are facts about a reading that is now in `archived-<stamp>/`.
+    manifest.reading = { generation: minted, passes, readAt: 0, pages: 0 };
     await writeManifest(dir, manifest);
     return minted;
   });
+}
+
+/**
+ * A reading FINISHED — the one moment anything can honestly say a bank is done.
+ *
+ * WHERE THE GENERATION IS MINTED NOW, and it is the natural place rather than a
+ * new one: this calls `readingGeneration`, which mints when the pass count has
+ * moved and returns the existing id when it has not. So a first read mints, a
+ * re-read (which archived the previous bank) mints again and correctly orphans
+ * the curation that was about the old blocks, and a RESUMED read — which appends
+ * to the same bank without archiving anything — keeps the id, so an overlay
+ * somebody made against the pages already read survives the run finishing.
+ *
+ * FIRST-TOUCH MINTING STAYS as the fallback, because it has to: a bank filled by
+ * `foundry vlm-read` from a terminal, or one adopted from the old flat layout,
+ * is complete and this app never saw it happen. Opening the block editor on one
+ * of those mints an id the same way, from the same function, with the same rule.
+ *
+ * A failure is a console line and never a throw. This runs after a job that may
+ * have taken three hours, and a catalogue row that could not be written is not a
+ * reason to report those hours as a failure — the bank is on disk either way, and
+ * the completion marker beside it is what a listing falls back to.
+ */
+export async function recordReading(readingsPath: string): Promise<void> {
+  const resolved = path.resolve(readingsPath);
+  const dir = projectDirOf(resolved);
+  if (dir === null) {
+    console.error(`[projects] ${resolved} is outside any project, so no reading was recorded.`);
+    return;
+  }
+  try {
+    // Before the manifest edit, and deliberately outside it: this mints or keeps
+    // the generation through its own `withManifest`, and a nested one would wait
+    // on a chain it is already inside.
+    const generation = await readingGeneration(dir);
+    const pages = await countLines(resolved);
+    await withManifest(dir, async (manifest) => {
+      manifest.reading = {
+        generation,
+        passes: manifest.reading?.passes ?? 0,
+        readAt: Date.now(),
+        pages,
+      };
+      await writeManifest(dir, manifest);
+    });
+  } catch (err) {
+    console.error(
+      `[projects] ${path.basename(dir)} could not record its reading (${(err as Error).message}). `
+      + 'The bank is on disk and the engine\'s completion marker is beside it, which is what the '
+      + 'library screen falls back to.',
+    );
+  }
 }
 
 /**
@@ -1335,7 +1397,7 @@ export async function readingGeneration(dir: string): Promise<string> {
  * whether an overlay is still about the right blocks.
  */
 async function countArchivedBanks(dir: string): Promise<number> {
-  const readings = path.join(dir, 'readings');
+  const readings = path.join(dir, READINGS);
   let key: string;
   try {
     key = (await readManifest(dir)).key;
@@ -1574,6 +1636,10 @@ async function summarise(dir: string, name: string): Promise<ProjectSummary> {
       createdAt: 0,
       openedAt: 0,
       documents: [],
+      // Nothing can be said about the reading of a project whose catalogue will
+      // not parse, and "OCR this" is a suggestion — lighting it here would be
+      // offering a next step for a folder this app cannot describe.
+      reading: { done: false, needed: false, pages: 0 },
       filed: false,
       problem: (err as Error).message,
     };
@@ -1697,8 +1763,51 @@ async function summarise(dir: string, name: string): Promise<ProjectSummary> {
     createdAt: manifest.createdAt,
     openedAt: openedAt > 0 ? openedAt : manifest.createdAt,
     documents,
+    reading: await readingState(dir, manifest),
     filed: manifest.final.length > 0,
     problem: null,
+  };
+}
+
+/**
+ * Has this book been read, and does it still need to be?
+ *
+ * ── Two sources, and neither is enough on its own ───────────────────────────
+ *
+ * THE CATALOGUE says when a reading landed, because `recordReading` wrote it
+ * there when the job finished. It is the cheap answer and the one with a page
+ * count in it. It is also blind to every bank this app did not fill: a `foundry
+ * vlm-read` run from a terminal, a project folder copied from another machine, a
+ * library adopted from the old flat layout.
+ *
+ * THE ENGINE'S MARKER — `readings/<key>.completed.json` — is the other half. It
+ * is the engine's own statement that it read every page it was asked for, it
+ * sits beside the bank, and it is written by whatever ran the reading and
+ * wherever it ran. One `exists` per project, which is what makes this affordable
+ * on a screen that redraws whenever it comes back.
+ *
+ * NOT `countBankPages`. That streams every `.jsonl` under `readings/` counting
+ * newlines, which is right for a delete confirmation somebody opened on purpose
+ * and wrong for a library listing — it would make Home slower the more books a
+ * person owned, which is the opposite of what a library is for.
+ *
+ * ── And `needed` is narrower than "not done" ────────────────────────────────
+ *
+ * A project started from an EPUB has no pages to photograph and never wanted
+ * this step. Lighting OCR on it would be the app naming a next step that does
+ * not exist for that book.
+ */
+async function readingState(
+  dir: string,
+  manifest: ProjectManifest,
+): Promise<ProjectSummary['reading']> {
+  const recorded = manifest.reading !== null && manifest.reading.readAt > 0;
+  const done = recorded
+    || await exists(path.join(dir, READINGS, `${manifest.key}.completed.json`));
+  return {
+    done,
+    needed: !done && manifest.archive?.kind === 'pdf',
+    pages: recorded ? manifest.reading?.pages ?? 0 : 0,
   };
 }
 

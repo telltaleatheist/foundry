@@ -40,6 +40,7 @@ const api: FoundryApi = {
   },
 
   workspace: {
+    planReading: (inputPath) => ipcRenderer.invoke('workspace:plan-reading', inputPath),
     plan: (inputPath, kind) => ipcRenderer.invoke('workspace:plan', inputPath, kind),
     planTranslation: (inputPath, targetLanguage) =>
       ipcRenderer.invoke('workspace:plan-translation', inputPath, targetLanguage),

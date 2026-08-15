@@ -82,7 +82,7 @@ import { UiService } from '../../core/ui.service';
 
         <div class="actions">
           <button class="primary" (click)="tabs.openViaDialog()">Open a document…</button>
-          <button class="ghost" (click)="ui.openOcr()">OCR / Convert…</button>
+          <button class="ghost" (click)="ui.openOcr()">OCR…</button>
           <button class="ghost" (click)="settings()">Settings</button>
         </div>
       </div>
@@ -129,6 +129,28 @@ import { UiService } from '../../core/ui.service';
                   }
                   <span class="when">{{ project.openedAt > 0 ? when(project.openedAt) : '' }}</span>
                 </button>
+                <!--
+                  THE STEP THIS BOOK IS WAITING ON, and the only one there ever
+                  is. A scan whose pages have never been read cannot be turned
+                  into anything — every rendering, the block editor and the
+                  chapter detection are all built on the bank — so the row says
+                  so and the button IS the step rather than a badge beside it.
+
+                  It is on the row rather than only in the dock because this is
+                  the screen where somebody surveys a library: five books, two of
+                  them unread, is a fact you should be able to see without
+                  opening each one.
+
+                  It goes when the reading lands and nothing brings it back
+                  short of the bank going away.
+                -->
+                @if (project.reading.needed && projects.originalOf(project) !== null) {
+                  <button
+                    class="ocr"
+                    (click)="readPages(project)"
+                    title="These pages have not been read yet — this is the step everything else needs"
+                  >OCR</button>
+                }
                 <button class="x" (click)="reveal(project)" title="Show this project's folder">⌕</button>
                 <button
                   class="x danger"
@@ -248,6 +270,33 @@ import { UiService } from '../../core/ui.service';
       background: var(--accent-soft); color: var(--accent);
     }
     .tag.gone { background: var(--error-soft); color: var(--error); }
+
+    /*
+      THE WAITING STEP, in the accent — this app's one word for attention, used
+      here for "do this next" rather than for "this is on".
+
+      It is a filled pill and not an outline, unlike the dock's version of the
+      same idea, because the contexts are opposite: on the dock it sits among
+      other items that are sometimes active and has to be told apart from them,
+      and here it is the only coloured thing on a row of grey text. Both are the
+      same accent, which is what makes them read as one idea.
+
+      It does not pulse. A library of twenty books with three unread would be
+      three animations running forever on a screen somebody is reading.
+    */
+    .ocr {
+      flex: 0 0 auto;
+      margin-right: 2px;
+      padding: 3px 10px;
+      border: none; border-radius: 999px;
+      background: var(--accent); color: var(--text-inverse);
+      font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+      cursor: pointer;
+      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  transform 100ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .ocr:hover { background: var(--accent-hover); }
+    .ocr:active { background: var(--accent-active); transform: scale(0.96); }
 
     /* Primary / secondary / ghost, one shape apart: 32px tall, 6px radius, the
        label at 13px/500. */
@@ -407,6 +456,23 @@ export class HomeComponent {
     const original = this.projects.originalOf(project);
     if (original === null) return `${project.dir}\nNothing in this project is still on the disk.`;
     return `Open ${original.label}\n${project.dir}`;
+  }
+
+  /**
+   * "Read this book's pages" — the row's own next step.
+   *
+   * IT OPENS THE BOOK FIRST, and that is not a detour. The OCR dialog converts
+   * the document in front of you: it lists the open PDFs and defaults to the
+   * focused one, because reading pages is something you do to a book you are
+   * looking at. Opening the dialog over a library screen with nothing open would
+   * put "Open a PDF first" in front of somebody who had just pointed at a
+   * specific book — so the row opens it, and the dialog then finds it there.
+   */
+  protected readPages(project: ProjectSummary): void {
+    const original = this.projects.originalOf(project);
+    if (original === null) return;
+    void this.tabs.openFile(original.path, original.managed);
+    this.ui.openOcr();
   }
 
   /** The folder itself, in Explorer/Finder. The one way out of this app. */

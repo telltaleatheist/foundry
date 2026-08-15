@@ -10,8 +10,17 @@ import { Injectable, signal } from '@angular/core';
  */
 @Injectable({ providedIn: 'root' })
 export class UiService {
-  /** The OCR / Convert dialog. */
+  /** The OCR dialog — read the pages, and nothing else. */
   readonly ocrOpen = signal(false);
+  /**
+   * The Generate dialog — turn a reading into a document.
+   *
+   * The other half of what OCR used to be. They are separate because they cost
+   * different things: reading is hours of GPU and is held for a Start button,
+   * generating is arithmetic over a bank that is already paid for and runs the
+   * moment it is asked for.
+   */
+  readonly generateOpen = signal(false);
   /** The Translate dialog. */
   readonly translateOpen = signal(false);
   /** The Metadata dialog — the book's own record, not the app's idea of it. */
@@ -95,6 +104,7 @@ export class UiService {
    */
   private readonly dialogs = [
     this.ocrOpen,
+    this.generateOpen,
     this.translateOpen,
     this.metadataOpen,
     this.confirmOpen,
@@ -110,6 +120,14 @@ export class UiService {
 
   closeOcr(): void {
     this.ocrOpen.set(false);
+  }
+
+  openGenerate(): void {
+    this.only(this.generateOpen);
+  }
+
+  closeGenerate(): void {
+    this.generateOpen.set(false);
   }
 
   openTranslate(): void {

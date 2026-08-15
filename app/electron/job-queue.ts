@@ -16,12 +16,12 @@
  * happens beside it: the shelf says "Starting the reading server…", and a
  * server that will not start fails THAT job with the guest's own log tail.
  *
- * ── Nothing an engine runs starts until the user says so ─────────────────────
+ * ── Nothing EXPENSIVE starts until the user says so ──────────────────────────
  *
- * An engine job is enqueued HELD. It sits in the list, in order, visible, and
- * does nothing until `start()` releases it. `pump()` only ever claims a `queued`
- * job, so the gate is the state itself rather than a flag anything has to
- * remember to check.
+ * A READING is enqueued HELD. It sits in the list, in order, visible, and does
+ * nothing until `start()` releases it. `pump()` only ever claims a `queued` job,
+ * so the gate is the state itself rather than a flag anything has to remember to
+ * check.
  *
  * THE POINT IS THE BATCH. Enqueueing used to pump immediately, which made the
  * moment of configuring the moment of commitment: the first conversion was
@@ -30,6 +30,17 @@
  * releases everything held AT THAT MOMENT and nothing else — a job added after
  * the press is held again, because Start means "run what is here" and a button
  * that silently also armed the future would make the next enqueue a surprise.
+ *
+ * A RENDERING IS NOT HELD, and the exception is the rule stated properly. The
+ * hold exists so that hours of GPU are never spent by the act of configuring
+ * them. A `vlm-convert --reuse-readings` over a finished bank spends no GPU at
+ * all: it is arithmetic over answers already on the disk, it is offline, it
+ * takes seconds, and it can be asked for again as often as somebody likes. There
+ * is nothing to commit to, so there is nothing for Start to mean — and a person
+ * who pressed Generate and then had to find this shelf and press another button
+ * would be confirming a decision they had already made. It is still QUEUED
+ * rather than run beside whatever is going: one engine at a time is a fact about
+ * the machine, and it holds however cheap the job is.
  *
  * ── Environment installs share this queue, and are NOT held ──────────────────
  *
@@ -57,7 +68,7 @@ import { readAppSettings } from './app-settings';
 import { parseProgressLine, runEngine } from './engine';
 import { ENV_SPECS } from './env-catalog';
 import { destFor, installEnv } from './env-install';
-import { generatedRoleFor, recordGenerated } from './projects';
+import { generatedRoleFor, recordGenerated, recordReading } from './projects';
 import { readSettings } from './settings';
 import { ensureServer, isLocalVllmEndpoint, noteQueueBusy, noteQueueIdle } from './vllm-server';
 import type { EnvInstallRequest, Job, JobRequest, TranslateRequest } from '../shared/types';
@@ -110,22 +121,52 @@ function changed(): void {
  * PDF is two different files and therefore two honest rows.
  */
 export function enqueue(request: JobRequest): Job {
-  const already = pendingFor(request.outputPath);
+  /*
+   * WHAT THIS JOB PRODUCES, which for a reading is the BANK.
+   *
+   * `outputPath` is the identity a row is deduped on and the thing Reveal shows,
+   * and a reading has no document to point at — so it points at what it actually
+   * makes. That is not a placeholder: `readings/<key>.jsonl` is the expensive,
+   * irreplaceable product of the run, it is the file a second Add would collide
+   * over, and it is the one a person asking "where did that go?" should be shown.
+   */
+  const outputPath = request.kind === 'read' ? request.readingsPath : request.outputPath;
+  const already = pendingFor(outputPath);
   if (already) return already;
 
   const job: Job = {
     id: randomUUID(),
     inputPath: request.inputPath,
-    outputPath: request.outputPath,
+    outputPath,
     kind: request.kind,
-    state: 'held',
+    /*
+     * ── THE HOLD IS FOR THE EXPENSIVE ONE ONLY ──────────────────────────────
+     *
+     * A reading is held, for every reason the hold was built for: it is hours of
+     * GPU against a file the user picked in a dialog they may have picked wrong,
+     * and holding is what makes a BATCH possible — queue four books, look them
+     * over, press Start once.
+     *
+     * A RENDERING RUNS THE MOMENT IT IS ASKED FOR, and making it wait would be
+     * the hold applied to the thing it was never about. It is arithmetic over
+     * answers already on the disk: seconds, offline, no model, no server, and
+     * repeatable as often as somebody likes. There is nothing to commit to and
+     * nothing to review — and a person who pressed Generate and then had to find
+     * a shelf and press Start would be pressing a second button to confirm a
+     * decision they made by pressing the first.
+     *
+     * It still goes THROUGH the queue and still waits behind whatever is
+     * running. That is the machine being busy rather than the person being
+     * asked, which is the distinction `held` and `queued` have always drawn.
+     */
+    state: request.kind === 'read' ? 'held' : 'queued',
     progress: null,
     createdAt: Date.now(),
   };
   jobs.push(job);
   requests.set(job.id, request);
   changed();
-  // No pump: a held job is not for the machine to find. `start()` releases it.
+  if (job.state === 'queued') void pump();
   return job;
 }
 
@@ -396,11 +437,45 @@ function argsFor(request: EngineRequest): string[] {
     }
     return args;
   }
+  /*
+   * ── READING THE PAGES ────────────────────────────────────────────────────
+   *
+   * `foundry vlm-read --pdf X --readings Y`. It fills the bank, drops the
+   * completion marker beside it, and writes no document at all.
+   *
+   * NO `--out` AND NO `--format`, which is the whole of the split on the command
+   * line: this run has no opinion about what the book will eventually be, and it
+   * cannot be given one. The person who ordered it may generate an EPUB tonight
+   * and plain text next week, and neither of those decisions is a fact about the
+   * reading — so neither can be asked for while it is being configured.
+   */
+  if (request.kind === 'read') {
+    const args = ['vlm-read', '--pdf', request.inputPath, '--readings', request.readingsPath];
+    if (request.skipPages && request.skipPages.trim().length > 0) {
+      args.push('--skip-pages', request.skipPages.trim());
+    }
+    if (request.language && request.language.trim().length > 0) {
+      args.push('--language', request.language.trim());
+    }
+    return args;
+  }
+
+  /*
+   * ── RENDERING THE BOOK ───────────────────────────────────────────────────
+   *
+   * `--reuse-readings` IS THE FLAG THAT MAKES THIS FREE, and it is passed on
+   * every generate without a switch anywhere that could turn it off. The bank is
+   * complete — nothing reaches this branch until a reading has landed — and
+   * without the flag the engine would treat a completed bank beside a marker as
+   * a book to read AGAIN, which is three hours of GPU in answer to somebody
+   * pressing a button labelled with a file format.
+   */
   const args = [
     'vlm-convert',
     '--pdf', request.inputPath,
     '--out', request.outputPath,
     '--readings', request.readingsPath,
+    '--reuse-readings',
   ];
   /*
    * THE CURATION, when there is one — and the existence test is the whole of the
@@ -430,13 +505,14 @@ function argsFor(request: EngineRequest): string[] {
   // The extension `planConversion` chose already agrees with it; the engine
   // refuses the pair outright if it ever stops agreeing.
   if (request.kind !== 'epub') args.push('--format', request.kind);
-  if (request.skipPages && request.skipPages.trim().length > 0) {
-    args.push('--skip-pages', request.skipPages.trim());
-  }
-  if (request.stripNoteMarkers === true) args.push('--strip-note-markers');
-  if (request.language && request.language.trim().length > 0) {
-    args.push('--language', request.language.trim());
-  }
+  /*
+   * NOTHING ELSE. `--skip-pages` and `--language` used to be here and are gone
+   * from this branch: both are statements about READING the book, they were
+   * answered when the pages were read, and a rendering that could be handed a
+   * different page-skip from the reading it renders would be a rendering of a
+   * book nobody read. `--strip-note-markers` went with them — it is BookForge's
+   * narration flag and this app has never exposed it (see the OCR dialog).
+   */
   return args;
 }
 
@@ -582,6 +658,27 @@ async function pump(): Promise<void> {
 
   if (result.code === 0) {
     next.state = 'done';
+    /*
+     * A READING LANDED, which is the moment the whole front door turns on.
+     *
+     * `recordReading` stamps the catalogue: when it finished, how many pages the
+     * bank holds, and — through the same passes rule that has always governed it
+     * — the reading GENERATION every overlay and its undo ledger are bound to.
+     * That is why the mint belongs here rather than at the first correction: this
+     * is the only moment anything in this app can honestly say a bank is a
+     * different bank from the one that was there before.
+     *
+     * It also puts the light out on Home. A project with a scan and no reading
+     * shows OCR as its waiting next step; from this line on, that project has
+     * been read.
+     */
+    if (request.kind === 'read') {
+      await recordReading(next.outputPath);
+      next.message = `Read ${path.basename(next.inputPath)} — the answers are banked.`;
+      changed();
+      void pump();
+      return;
+    }
     /*
      * The catalogue learns about the origin HERE, when it exists.
      *

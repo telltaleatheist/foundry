@@ -5,6 +5,7 @@ import { Router, RouterOutlet } from '@angular/router';
 
 import { InspectorComponent } from './components/inspector/inspector.component';
 import { ConfirmDialogComponent } from './components/confirm-dialog/confirm-dialog.component';
+import { GenerateDialogComponent } from './components/generate-dialog/generate-dialog.component';
 import { OcrDialogComponent } from './components/ocr-dialog/ocr-dialog.component';
 import { OpenDocumentsComponent } from './components/open-documents/open-documents.component';
 import { MetadataDialogComponent } from './components/metadata-dialog/metadata-dialog.component';
@@ -63,7 +64,8 @@ import { api } from './core/foundry';
   selector: 'app-root',
   imports: [
     RouterOutlet, ToolRailComponent, OpenDocumentsComponent, InspectorComponent,
-    QueueShelfComponent, OcrDialogComponent, TranslateDialogComponent, MetadataDialogComponent,
+    QueueShelfComponent, OcrDialogComponent, GenerateDialogComponent, TranslateDialogComponent,
+    MetadataDialogComponent,
     ConfirmDialogComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -86,6 +88,10 @@ import { api } from './core/foundry';
 
       @if (ui.ocrOpen()) {
         <app-ocr-dialog />
+      }
+
+      @if (ui.generateOpen()) {
+        <app-generate-dialog />
       }
 
       @if (ui.translateOpen()) {
@@ -267,6 +273,11 @@ export class App {
     if (event.key === 'Escape' && this.ui.ocrOpen()) {
       event.preventDefault();
       this.ui.closeOcr();
+      return;
+    }
+    if (event.key === 'Escape' && this.ui.generateOpen()) {
+      event.preventDefault();
+      this.ui.closeGenerate();
       return;
     }
     if (event.key === 'Escape' && this.ui.translateOpen()) {

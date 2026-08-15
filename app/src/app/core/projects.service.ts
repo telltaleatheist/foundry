@@ -1,9 +1,10 @@
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, effect, inject, signal } from '@angular/core';
 
 import { fold, originalOf } from '@shared/original';
 import type { ProjectDocument, ProjectSummary } from '@shared/types';
 
 import { ConfirmService } from './confirm.service';
+import { QueueService } from './queue.service';
 import { api } from './foundry';
 
 /**
@@ -24,6 +25,7 @@ import { api } from './foundry';
 @Injectable({ providedIn: 'root' })
 export class ProjectsService {
   private readonly confirm = inject(ConfirmService);
+  private readonly queue = inject(QueueService);
   private readonly all = signal<ProjectSummary[]>([]);
 
   readonly items = this.all.asReadonly();
@@ -41,6 +43,40 @@ export class ProjectsService {
    */
   constructor() {
     void this.refresh();
+
+    /*
+     * AND AGAIN WHENEVER A JOB LANDS, which is the reason this class's own
+     * header said somebody would eventually have to notice.
+     *
+     * The rule used to be "Home refreshes when it appears", and that was enough
+     * while the list only said what a project CONTAINED — you went to Home to
+     * see it, and going to Home re-read it. It stopped being enough when a row
+     * started saying what a project NEEDS: the OCR light is on until the pages
+     * are read, and the moment it goes out is a job finishing, which happens
+     * while the user is looking at the book rather than at the library. A light
+     * that stayed on until somebody navigated away and back would be the app
+     * asking for a step it had already taken.
+     *
+     * WATCHING THE MIRROR rather than being told by whatever enqueued the job:
+     * the job outlives the dialog that started it, outlives a trip to Settings,
+     * and (because main owns the queue) outlives a reload of this window. The
+     * only fact that matters is that a row has stopped moving.
+     *
+     * Ids are remembered so that the effect's other dependencies — a progress
+     * count arriving twenty times a minute — cannot turn this into a directory
+     * listing per page read.
+     */
+    const settled = new Set<string>();
+    effect(() => {
+      let landed = false;
+      for (const job of this.queue.jobs()) {
+        if (job.state === 'running' || job.state === 'queued' || job.state === 'held') continue;
+        if (settled.has(job.id)) continue;
+        settled.add(job.id);
+        landed = true;
+      }
+      if (landed) void this.refresh();
+    });
   }
 
   async refresh(): Promise<void> {

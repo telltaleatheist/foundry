@@ -98,7 +98,7 @@ import {
 } from './recents';
 import { readSettings, writeSettings } from './settings';
 import * as vllm from './vllm-server';
-import { planConversion, planTranslation } from './workspace';
+import { planConversion, planReading, planTranslation } from './workspace';
 import { detectEnvTooling, listDistros } from './wsl';
 import { fold, isBook } from '../shared/original';
 import type { OverlayFile } from '../shared/overlay';
@@ -1042,6 +1042,13 @@ function registerIpc(): void {
   });
 
   // ── Projects ─────────────────────────────────────────────────────────────
+  /*
+   * TWO PLANS, because there are two jobs. `plan-reading` names the bank an OCR
+   * run will fill and nothing else; `plan` names the file a rendering will write
+   * and rotates the one it replaces. Splitting them is what stops an OCR job
+   * having to invent a format in order to be planned.
+   */
+  ipcMain.handle('workspace:plan-reading', (_event, inputPath: string) => planReading(inputPath));
   ipcMain.handle(
     'workspace:plan',
     (_event, inputPath: string, kind: ConversionKind) => planConversion(inputPath, kind),

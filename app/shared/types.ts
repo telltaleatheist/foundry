@@ -29,7 +29,24 @@
  * holds a GPU for hours and two at once is two runs that each take twice as
  * long.
  */
-export type JobKind = ConversionKind | 'env-install' | 'translate';
+/**
+ * The five things the queue can be holding.
+ *
+ * `read` IS THE ONE THAT COSTS ANYTHING, and separating it out is the change the
+ * whole front door turned on. A conversion used to be one act: read three
+ * hundred pages with a vision model AND write an EPUB, chosen together in one
+ * dialog, so asking for the same book as plain text afterwards meant either
+ * re-reading it or knowing that `--reuse-readings` existed.
+ *
+ * They are two acts and they have nothing in common. READING is hours of GPU
+ * against pages nobody has seen, it is resumable, it is batched, and its product
+ * is the BANK. GENERATING is arithmetic over answers that are already on the
+ * disk — seconds, offline, free, and repeatable as often as somebody likes. The
+ * queue holds both because both spawn the engine; everything else about them
+ * differs, starting with the fact that one waits for a person to press Start and
+ * the other must never.
+ */
+export type JobKind = ConversionKind | 'read' | 'env-install' | 'translate';
 
 /**
  * What the OCR panel can ask for. An env install is never enqueued this way.
@@ -53,14 +70,19 @@ export type ConversionKind = 'epub' | 'txt' | 'pdf';
 /**
  * Where a job is, and `held` is the one that needed adding.
  *
- * NOTHING AN ENGINE RUNS STARTS BY BEING ENQUEUED. A conversion is hours of GPU
+ * NOTHING EXPENSIVE STARTS BY BEING ENQUEUED. Reading a book is hours of GPU
  * against a file the user picked in a dialog they may well have picked wrong, and
  * the old queue began the first one the instant the dialog closed — so the moment
  * of commitment was the moment of configuring, and building a BATCH was
  * impossible: by the time the second book was chosen the first was already
  * reading. `held` is a job that is configured, ordered, visible and doing
- * nothing, and `queued` now means what it always said it meant: waiting for the
+ * nothing, and `queued` means what it always said it meant: waiting for the
  * machine rather than waiting for the person.
+ *
+ * WHICH IS WHY A RENDERING IS NEVER HELD. It spends no GPU — it is built from a
+ * bank that already exists — so there is nothing for a person to commit to, and
+ * a hold there would be the mechanism applied to the case it was never about.
+ * See `enqueue` in electron/job-queue.ts.
  *
  * `held` is deliberately NOT a terminal state and never becomes one. A held job
  * that is no longer wanted is REMOVED — it never ran, so there is nothing to
@@ -96,11 +118,51 @@ export interface JobProgress {
  * from a text box, because a conversion opens in the app when it is done and is
  * copied out on Save As (electron/workspace.ts).
  */
-export interface JobRequest {
+export type JobRequest = ReadRequest | GenerateRequest;
+
+/**
+ * READ THE PAGES. `foundry vlm-read --pdf X --readings Y`.
+ *
+ * THE PRODUCT IS THE BANK and there is no output file at all, which is the whole
+ * shape of the change. This job fills `readings/<key>.jsonl` and drops the
+ * completion marker beside it, and that is the expensive, irreplaceable thing a
+ * project is built on; what a person eventually reads is generated from it
+ * afterwards, for nothing, as often as they like.
+ *
+ * A SEPARATE SHAPE from the generate request rather than more optional fields on
+ * one, because nothing they carry is the same field: this has no output, no
+ * format and no overlay — a curation cannot exist before the blocks it is about
+ * do. It is the pattern `TranslateRequest` already follows, and it is what keeps
+ * `argsFor` honest: a request cannot carry a flag the command it becomes does
+ * not have.
+ */
+export interface ReadRequest {
+  kind: 'read';
+  /** The pixels: `WorkspacePlan.sourcePath`, which is the archived original. */
+  inputPath: string;
+  /** `--readings`. The product of this job, not an input to it. */
+  readingsPath: string;
+  /** `--skip-pages`, verbatim: "3,17,19-24". Pages that are not part of the book. */
+  skipPages?: string;
+  /** `--language`: the BCP-47 tag, declared and never detected. */
+  language?: string;
+}
+
+/**
+ * RENDER THE BOOK. `foundry vlm-convert --reuse-readings --format <kind>`.
+ *
+ * OFFLINE, AGAINST A BANK THAT IS ALREADY COMPLETE. No model, no server, no GPU
+ * and no pages read — the answers exist and this is the pass that turns them into
+ * a document. That is why it does not wait for Start: the hold exists so that
+ * hours of GPU are never spent by the act of configuring them, and there are no
+ * hours here to spend.
+ */
+export interface GenerateRequest {
+  kind: ConversionKind;
+  /** The book's pages. Still passed: some renderings measure them. */
   inputPath: string;
   /** From `WorkspacePlan.outputPath`. The managed workspace, always. */
   outputPath: string;
-  kind: ConversionKind;
   /** `--readings`, from `WorkspacePlan.readingsPath`. Always passed; see workspace.ts. */
   readingsPath: string;
   /**
@@ -114,12 +176,14 @@ export interface JobRequest {
    * would turn "nobody has curated this book" into a failed conversion.
    */
   overlayPath?: string;
-  /** `--skip-pages`, verbatim: "3,17,19-24". */
-  skipPages?: string;
-  /** `--strip-note-markers`: drop footnote reference numbers. For a narration build. */
-  stripNoteMarkers?: boolean;
-  /** `--language`: the BCP-47 tag written as `dc:language`. Declared, never detected. */
-  language?: string;
+  /*
+   * NO `--skip-pages` AND NO `--language` HERE, and their absence is the split
+   * doing its work. Both are statements about READING the book — which pages are
+   * not part of it, and what language the pages are in — so they are answered
+   * once, in the OCR dialog, and are facts about the bank from then on. A
+   * rendering that could be given a different page-skip from the reading it
+   * renders would be a rendering of a book that was never read.
+   */
 }
 
 /**
@@ -461,7 +525,14 @@ export interface WorkspacePlan {
    * user edits is unpacked or copied from it.
    */
   outputPath: string;
-  /** `<libraryDir>/projects/<key>/readings/<key>.jsonl`. Passed on every job. */
+  /**
+   * `<libraryDir>/projects/<key>/readings/<key>.jsonl`.
+   *
+   * THE PRODUCT OF A READ AND AN INPUT TO EVERY GENERATE. Passed on every job of
+   * either kind, and keyed by the BOOK rather than by any format, which is what
+   * makes generating the same book as EPUB and as text two renderings of one
+   * reading instead of two readings.
+   */
   readingsPath: string;
   /**
    * `<libraryDir>/projects/<key>/overlays/<key>.json` — the curation, if there is
@@ -474,6 +545,23 @@ export interface WorkspacePlan {
    * spent the wait striking two hundred running heads.
    */
   overlayPath: string;
+}
+
+/**
+ * What an OCR job needs, which is a shorter answer than a rendering's.
+ *
+ * NO OUTPUT PATH, because there is no output: the bank is the product. And no
+ * rotation either — `planConversion` moves the previous `generated/` file aside
+ * before a rendering overwrites it, and a reading writes nothing there to
+ * collide with. What the engine does about a bank that already exists is the
+ * engine's own rule (resume, or archive and re-read) and this app has never had
+ * a flag that could second-guess it.
+ */
+export interface ReadingPlan {
+  key: string;
+  /** The pixels — `archive/`, which nothing in this app ever writes. */
+  sourcePath: string;
+  readingsPath: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -725,6 +813,22 @@ export interface ProjectReading {
   generation: string;
   /** Archived banks under `readings/` when this generation was minted. */
   passes: number;
+  /**
+   * When a reading of this book COMPLETED, or 0 for one that never has.
+   *
+   * THE FACT THE WHOLE FRONT DOOR TURNS ON. A project with a PDF and no reading
+   * is a project whose next step is known — and the app says so, on its row,
+   * lit, until it is done. Written by `recordReading` when the OCR job lands,
+   * which is the only moment anything can honestly claim a bank is finished.
+   *
+   * It is not the only evidence and it is not allowed to be: a bank filled by a
+   * `foundry vlm-read` run from a terminal is just as complete and this app
+   * never saw it happen. The engine's own completion marker beside the bank is
+   * the other half, and `summarise` accepts either.
+   */
+  readAt: number;
+  /** Page answers in the bank when it completed. For the row's own sentence. */
+  pages: number;
 }
 
 /**
@@ -943,6 +1047,25 @@ export interface DocumentDeletion {
   missing: boolean;
 }
 
+/**
+ * What a listing says about a project's reading — three facts and no probing.
+ *
+ * DERIVED FROM THE RECORD, not from counting the bank on every render. Home is
+ * redrawn every time it comes back on screen and a library is dozens of folders;
+ * streaming every `.jsonl` in all of them to count newlines would make the
+ * library screen slower the more books somebody has. The manifest says when a
+ * reading landed and how big it was, and one `exists` per project catches the
+ * bank this app did not fill itself.
+ */
+export interface ProjectReadingState {
+  /** A completed reading exists. */
+  done: boolean;
+  /** True when this book HAS pages to read and nobody has read them. */
+  needed: boolean;
+  /** Pages in the completed bank, or 0 when nothing recorded one. */
+  pages: number;
+}
+
 /** A project row on Home, with the documents it expands to. */
 export interface ProjectSummary {
   key: string;
@@ -953,6 +1076,19 @@ export interface ProjectSummary {
   /** The newest open of anything inside it, or `createdAt` if never opened. */
   openedAt: number;
   documents: ProjectDocument[];
+  /**
+   * Whether the model has read this book's pages, and how many.
+   *
+   * ON EVERY ROW because it decides what the row OFFERS. A project whose pages
+   * have never been read cannot generate anything — there are no answers to
+   * render — so its next step is OCR and Home lights it. Once a reading exists
+   * the light goes out and stays out; nothing but losing the bank brings it back.
+   *
+   * `needed` is false for a project started from an EPUB as well as for one
+   * already read: a book that arrived as a book has no pages to photograph and
+   * never wanted this step at all.
+   */
+  reading: ProjectReadingState;
   /** True once anything has been filed into `final/`. */
   filed: boolean;
   /**

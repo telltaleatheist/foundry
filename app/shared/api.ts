@@ -36,6 +36,7 @@ import type {
   PdfBlocksOutcome,
   PdfMetadataFields,
   ProjectSummary,
+  ReadingPlan,
   RecentDocument,
   RelabelledBlock,
   ServerStatus,
@@ -187,6 +188,15 @@ export interface FoundryApi {
    * than copying a file, because by then the book may have been edited.
    */
   workspace: {
+    /**
+     * Where an OCR job's answers go. No output file: the BANK is the product.
+     *
+     * Separate from `plan` below because a reading has no format and therefore
+     * no output name to compose, and because `plan` rotates the `generated/`
+     * file its rendering is about to replace — which a reading has no business
+     * doing, since it writes nothing there.
+     */
+    planReading(inputPath: string): Promise<ReadingPlan>;
     /** The kind decides the output's EXTENSION, not just its `--format`. */
     plan(inputPath: string, kind: ConversionKind): Promise<WorkspacePlan>;
     /**
