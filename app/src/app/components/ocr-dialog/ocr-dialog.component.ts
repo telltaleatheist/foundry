@@ -2,8 +2,10 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } 
 import { FormsModule } from '@angular/forms';
 
 import { qualify } from '@shared/documents';
+import { reReadAhead } from '@shared/reread';
 import type { JobRequest } from '@shared/types';
 
+import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';
 import { QueueService } from '../../core/queue.service';
 import { TabsService } from '../../core/tabs.service';
@@ -145,7 +147,20 @@ import { api } from '../../core/foundry';
           A refusal — the same job already queued — keeps the card, because
           nothing happened and moving on would be performing a result.
         -->
+        <!--
+          THE BRANCH'S ONE LINE, and it is here — against the button, inside the
+          footer — rather than up in the body with the fields. It is not a fact
+          about the form; it is a fact about what pressing that button will do,
+          and a person reads the thing nearest what they are about to press.
+
+          No line at all for a replace: that one is a question, and it is asked in
+          main's own box the moment Add is pressed. No line for a book nobody has
+          read, because there is nothing to say.
+        -->
         <footer class="foot">
+          @if (branchNote(); as fact) {
+            <p class="beside">{{ fact }}</p>
+          }
           <button class="ghost" (click)="ui.closeOcr()">Cancel</button>
           <button class="primary" [disabled]="busy()" (click)="add()">
             {{ busy() ? 'Working…' : 'Add to queue' }}
@@ -235,9 +250,16 @@ import { api } from '../../core/foundry';
     .added { margin: 0; font-size: 12px; color: var(--warn); }
 
     .foot {
-      display: flex; justify-content: flex-end; gap: 8px;
+      display: flex; align-items: center; justify-content: flex-end; gap: 8px;
       padding: 12px 16px 16px;
       border-top: 1px solid var(--border-subtle);
+    }
+    /* The statement beside the buttons. It takes the free width so the buttons
+       stay where they have always been — a footer whose Add moves left when a
+       sentence appears is a button that has to be found again. */
+    .beside {
+      flex: 1; margin: 0; min-width: 0;
+      font-size: 11px; line-height: 1.4; color: var(--text-tertiary);
     }
     .primary, .ghost {
       display: inline-flex; align-items: center; justify-content: center;
@@ -271,6 +293,15 @@ export class OcrDialogComponent {
   private readonly tabs = inject(TabsService);
   private readonly queue = inject(QueueService);
   private readonly projects = inject(ProjectsService);
+  /**
+   * This window's mirror of the step ledger — the whole reason the cost of a
+   * re-read can be named without an IPC round trip.
+   *
+   * The Steps accordion reads it exactly this way (`inspector.component.ts`):
+   * `ensure` the focused project, then `historyFor` it, which is null until main
+   * has answered and null forever for a document that is not in a project.
+   */
+  private readonly ledger = inject(LedgerService);
 
   /**
    * The PDF this conversion is OF: the focused pane's document, when it is one.
@@ -374,6 +405,46 @@ export class OcrDialogComponent {
   /** The workspace plan is a hash of the whole PDF; a 400 MB scan is not instant. */
   protected readonly busy = signal(false);
 
+  /**
+   * What pressing Add would do to the reading this project already has.
+   *
+   * ── Why it is a computed and not a question asked inside `add()` ────────────
+   *
+   * Because one of its three answers is a LINE ON THIS CARD rather than a dialog,
+   * and that line has to move as the form does: type a page range into Skip pages
+   * and a replace becomes a branch, at that keystroke, because the ask is what
+   * decides which reading this is (`reRunTarget`). A fact composed once when the
+   * card opened would go on saying "this will be a second reading" after somebody
+   * cleared the box.
+   *
+   * IT IS ALSO WHAT `add()` ASKS, so the sentence beside the button and the box
+   * that goes up are one decision rather than two that could disagree.
+   */
+  private readonly ahead = computed(() => {
+    const input = this.source();
+    if (input === null) return null;
+    const dir = this.projects.projectFor(input)?.dir ?? null;
+    return reReadAhead(this.ledger.historyFor(dir)?.ledger ?? null, {
+      skipPages: this.skipPages(),
+      language: this.language(),
+    });
+  });
+
+  /**
+   * The one line of fact a branch gets, and nothing for the other two answers.
+   *
+   * A STATEMENT, NOT A QUESTION, and that is the ruling rather than a shortcut
+   * (`BANK-LIFECYCLE.md` §3.2). A re-read with different pages destroys nothing
+   * and stales nothing — it costs GPU, and the queue is where expense happens, so
+   * putting the row there is already the deliberate act and Start is a second one.
+   * What it is owed is the fact that it will not replace what is there, because a
+   * person asking for a different page range may genuinely believe it will.
+   */
+  protected readonly branchNote = computed(() => {
+    const ahead = this.ahead();
+    return ahead?.kind === 'branch' ? ahead.sentence : null;
+  });
+
   constructor() {
     // A stale complaint about the last document, cleared when the source
     // changes. Nothing else resets: skip-pages and the language are the user's
@@ -385,6 +456,20 @@ export class OcrDialogComponent {
       // names a different book is a sentence about something else.
       this.added.set(null);
     });
+
+    /*
+     * THE HISTORY IS ASKED FOR WHEN THE CARD LANDS ON A BOOK, on the accordion's
+     * own terms: `ensure` is a no-op for a project already held or already in
+     * flight, so this is safe from a repaint, and everything after the first read
+     * arrives through `projects:changed`. Without it a person who opened a scan
+     * from Home and pressed OCR straight away would be asked nothing at all,
+     * because this window would never have read the ledger that holds the reading
+     * they are about to replace.
+     */
+    effect(() => {
+      const input = this.source();
+      this.ledger.ensure(input === null ? null : this.projects.projectFor(input)?.dir ?? null);
+    });
   }
 
   protected openDocument(): void {
@@ -394,6 +479,30 @@ export class OcrDialogComponent {
   protected async add(): Promise<void> {
     const input = this.source();
     if (input === null || !api) return;
+
+    /*
+     * THE COST IS NAMED BEFORE THE JOB EXISTS, and before the plan too.
+     *
+     * Before the PLAN because `planReading` is not a query: it imports the
+     * document if it is not in the library yet, makes `readings/`, and mints the
+     * step id the bank will be named after. A person who says "no, leave the
+     * reading as it is" should not have had a project folder rearranged to ask
+     * them.
+     *
+     * ── Captured here, and never asked again (`BANK-LIFECYCLE.md` §3.3) ────────
+     *
+     * The sentence names the cost as of THIS MOMENT. The job may then sit held
+     * behind another for an hour, and the ledger can move under it — a save
+     * committed, a translation landing — so what is finally replaced and staled is
+     * decided at landing by `recordLanding`, against the ledger as it stands then.
+     * The race is accepted deliberately and the alternative was considered: a
+     * second box at spawn time is a dialog interrupting somebody who already
+     * answered, in front of a run that is about to start. Worst case here is a
+     * stale sentence. It is the same rule `Job.parentStep` follows — captured at
+     * enqueue, on purpose.
+     */
+    const ahead = this.ahead();
+    if (ahead?.kind === 'replace' && !await api.confirmReRead(ahead.message)) return;
 
     this.busy.set(true);
     this.problem.set(null);

@@ -29,6 +29,7 @@ const api: FoundryApi = {
   reveal: (target) => ipcRenderer.invoke('shell:reveal', target),
   confirmClose: (warning) => ipcRenderer.invoke('document:confirm-close', warning),
   confirmUnlinkedNote: (note) => ipcRenderer.invoke('document:confirm-unlinked-note', note),
+  confirmReRead: (prompt) => ipcRenderer.invoke('reading:confirm-re-read', prompt),
   confirmHeadingEcho: (echo) => ipcRenderer.invoke('document:confirm-heading-echo', echo),
   confirmNavEcho: (echo) => ipcRenderer.invoke('document:confirm-nav-echo', echo),
 

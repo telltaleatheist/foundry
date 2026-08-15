@@ -113,6 +113,8 @@ import { detectEnvTooling, listDistros } from './wsl';
 import { fold, isBook } from '../shared/original';
 import type { OverlayFile } from '../shared/overlay';
 import type { ReadAsk } from '../shared/ledger';
+import { RE_READ_CANCEL, RE_READ_PROCEED } from '../shared/reread';
+import type { ReReadPrompt } from '../shared/reread';
 import type { MenuAction } from '../shared/api';
 import type {
   BackendSettingsPatch,
@@ -1318,6 +1320,51 @@ function registerIpc(): void {
     return answer;
   });
 
+  /**
+   * "Read this book again?" — the queue confirm, `BANK-LIFECYCLE.md` §3.
+   *
+   * MAIN'S NATIVE BOX, like `confirmClose` and like every other question this app
+   * asks: main owns the dialogs, the box is modal to the window, and the answer is
+   * read back BY LABEL rather than by index (`ANSWERS` above says why at length —
+   * an index means different things in boxes of different shapes, and the way that
+   * goes wrong is silent).
+   *
+   * ONE BOX FOR THE WHOLE QUESTION. The replaced reading and every step that goes
+   * stale with it are one cost and are asked about once; a second box listing the
+   * casualties would be this app arguing with an answer it already has, which is
+   * the rule `closeShowing` established for a closing document.
+   *
+   * THE SENTENCES ARE THE RENDERER'S, and this is the only dialog here where that
+   * is true. They are read off the step ledger, the renderer already mirrors it,
+   * and the composition is a pure shared function held down by tests
+   * (`reReadAhead`, shared/reread.ts) — so main asking the disk again would be a
+   * round trip for a decision that is already made and already checked. What stays
+   * main's is what has always been main's: the box, the buttons, and what a press
+   * of one of them means.
+   *
+   * ANYTHING UNRECOGNISED IS A NO. A yes here spends hours of GPU and replaces a
+   * bank; a box the window manager dismissed is not somebody agreeing to that.
+   */
+  ipcMain.handle('reading:confirm-re-read', async (_event, prompt: ReReadPrompt): Promise<boolean> => {
+    const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
+    // Not `ClosingQuestion`, which is named for the dialog it was written for. The
+    // literal's own inferred `buttons: string[]` is what makes the read-back below
+    // total, which is the property that interface exists to promise.
+    const options = {
+      type: 'question' as const,
+      buttons: [RE_READ_PROCEED, RE_READ_CANCEL],
+      defaultId: 1,
+      cancelId: 1,
+      title: 'Read this book again?',
+      message: prompt.message,
+      detail: prompt.detail,
+    };
+    const result = win
+      ? await dialog.showMessageBox(win, options)
+      : await dialog.showMessageBox(options);
+    return options.buttons[result.response] === RE_READ_PROCEED;
+  });
+
   /*
    * ── The page and the contents are two statements ─────────────────────────
    *
@@ -1439,10 +1486,12 @@ function registerIpc(): void {
     const readable = await exportWorkingCopy(source);
     openable.add(path.resolve(readable));
     const plan = await planTranslation(readable, targetLanguage);
-    // A re-translation reads the copy the run is about to replace, which the
-    // rotation has just moved aside (`planTranslation`). That path was never
-    // "opened" by anybody, so the queue's own admission check would refuse the
-    // job main itself composed — admit it here, where it is known to be ours.
+    // `plan.sourcePath` is the export admitted two lines up — planning moved
+    // nothing since the rotation went to spawn time (`pump()`), and the
+    // moved-aside path a self-overwriting re-translation reads exists only on
+    // the spawn-time copy of the request, past every admission gate, never in
+    // the renderer's hands. Re-adding the same path is harmless and kept so a
+    // future plan that returns a different source is admitted the day it does.
     openable.add(path.resolve(plan.sourcePath));
     return { ...plan, inputPath: plan.sourcePath };
   });

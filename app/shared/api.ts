@@ -8,6 +8,7 @@
  * renderer's `window.foundry` is typed as it.
  */
 import type { ReadAsk } from './ledger';
+import type { ReReadPrompt } from './reread';
 import type {
   BackendSettingsPatch,
   CloseAnswer,
@@ -142,6 +143,31 @@ export interface FoundryApi {
    * pre-empt.
    */
   confirmUnlinkedNote(note: UnlinkedNote): Promise<UnlinkedNoteAnswer>;
+  /**
+   * "Read this book again?" — the cost of a re-read, named before the job exists.
+   *
+   * MAIN'S NATIVE BOX, like every other dialog here, and for this one's own
+   * reason on top of the usual: the question is modal to the WINDOW because the
+   * next thing that happens if it is answered yes is an enqueue, and an in-app
+   * card the user can click behind would let them press Add twice.
+   *
+   * THE SENTENCES ARRIVE COMPOSED, which is the one place this differs from
+   * `confirmClose`. The facts they are made of live in the ledger, and the
+   * renderer is the side already holding a mirror of it (`ledger.service.ts`) —
+   * so asking main to name the cost would be an IPC round trip for a decision
+   * that is pure and shared. The composition is `reReadAhead` in shared/reread.ts,
+   * where it is tested; main owns the box, the two buttons and the reading of the
+   * answer by label.
+   *
+   * True means read it again. Anything else — the other button, a box the window
+   * manager dismissed — is a no, because the yes spends three hours of GPU and
+   * doing nothing is the outcome that is never wrong.
+   *
+   * ADVISORY, and deliberately so: see `BANK-LIFECYCLE.md` §3.3. The cost is named
+   * as of the moment of asking, and the actual replace-or-branch decision is made
+   * at landing against the ledger as it stands then.
+   */
+  confirmReRead(prompt: ReReadPrompt): Promise<boolean>;
 
   /**
    * "You renamed the contents entry — should the page's heading change too?"
