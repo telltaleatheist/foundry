@@ -198,7 +198,7 @@ verifies and commits; five gates before any report (`bun test`; root
 `bunx tsc --noEmit`; from `app/`: `tsconfig.electron.json`,
 `tsconfig.app.json`, `bunx ng build`); long WHY comments in the codebase's
 voice; escape backticks as \` in Angular template prose; never a raw control
-byte (write ` `); never match basenames across directories; pure logic
+byte (write `\u0000`); never match basenames across directories; pure logic
 in `app/shared/` for bun tests. Read the docs named at the top before
 writing a line.
 
