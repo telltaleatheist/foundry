@@ -73,6 +73,20 @@ So the reflow joins on what the bank says, or does not join at all:
   the flowing page, joins it, and the ledger records labour like any other
   decision. Machine passes are conservative; judgment is recorded, never
   guessed.
+
+  > **Know what this costs in a caseless script.** `continuesTextually` ends
+  > in `first !== first.toUpperCase()`, which is true of a lowercase letter
+  > and false of a digit, a quotation mark, and **every character in a script
+  > that has no case at all** — Chinese, Japanese, Arabic, Hebrew. Those
+  > books reach the ink test today for every single page turn, so deleting it
+  > means a CJK book joins nothing automatically and every page turn is a
+  > manual join. That is the honest price of the ruling and it is accepted;
+  > it is written down here so that when somebody imports a Japanese book and
+  > finds three hundred seams, it reads as a known cost with a known fix
+  > rather than a defect. A later bank-only signal for caseless scripts is
+  > possible — the model can be asked whether a page's first block continues
+  > the last — but it is a reading-time question, not a reflow-time one, and
+  > nothing may fall back to ink while it does not exist.
 - Dehyphenation stays as built (`BookLexicon`, bank-pure). Running-head and
   page-furniture suppression stays. `consumeMarkdown` sub-splits stay.
 - **Pagination is erased as structure; provenance is kept as metadata.**
@@ -85,6 +99,46 @@ So the reflow joins on what the bank says, or does not join at all:
 - The flowing base is a REGENERABLE projection (bank + join ops → base), not
   a payload. The read step stays the payload-bearing row; the base is
   rebuilt deterministically whenever needed and may be cached.
+
+**Three things a second trace of the emitter found (2026-08-15), which make
+the case for this pass better than the original argument did:**
+
+1. **The join already loses provenance.** `appendToParagraph`
+   (`dots-book.ts:1712`) re-opens a closed `</p>` with a regex, does
+   character arithmetic on rendered markup to resolve the hyphen, splices the
+   pagebreak span into the seam, and re-closes it — and the continuation
+   block never reaches `stamp()`. So the second half of a cross-page
+   paragraph is emitted with no `data-bf-id`, no `data-bf-cat` and no
+   `data-bf-page` of its own: invisible to the picker and to `epub-final`'s
+   cut machinery. The `[(page, order, part), …]` provenance list is not a new
+   burden this pass takes on. It closes a hole that is open today.
+2. **The prologue is already written twice.** `detectChapters`
+   (`dots-book.ts:2005`) is a hand-copied replay of `buildDotsBook`'s first
+   passes, existing only so `vlm-blocks` can seed the picker's chapters
+   without emitting a book — and a test asserts the two agree (*"the seed and
+   the render agree"*, `blocks-dump.test.ts:211`). Two implementations of one
+   prologue, kept in step by hand. The reflow pass is what both should call;
+   `detectChapters` should BECOME its output rather than a second copy of it.
+3. **The two-source fork already exists in code.** `convert.ts:556` forks the
+   PDF route out before any book rule runs, and its own comment says why —
+   chapters, page-turn joins, dehyphenation, note linking and running-head
+   suppression are "every rule that turns pages into a BOOK. None of them
+   runs here, because none of them is about the page, and this format's whole
+   claim is that it reprints what the page printed." That is §1's diagram,
+   written in the engine before this document existed. The reflow is not a
+   new fork; it is the other branch of that one, given a name and a value.
+
+**Two ordering facts the build must respect**: `suppressRunningHeads` reads
+type sizes and line heights, so it runs BEFORE dehyphenation and reflow
+rewrite any text; and `DotsBlock` object identity is load-bearing —
+`measureTypeSizes` and the typography report key `Map<DotsBlock, …>`, which
+is why `applyOverlay` returns the same object when nothing changed. A pass
+that copies blocks freely will silently lose typography.
+
+**There are no golden fixtures anywhere in `test/`** — every assertion is
+inline over hand-built blocks. So "same bank → same base, byte for byte" has
+to be written as a new contract test; there is no snapshot to regenerate and
+nothing to diff against by accident.
 
 **Chapters are proposed by the machine and owned by the user.** Detection
 seeds the markers (today's `proposeSections`); the user approves or redefines
