@@ -145,6 +145,16 @@ This is the step model as built (`STEP-LEDGER.md`), completed:
   positions produce reflowed formats (epub/txt). Translate-descended
   positions produce the translation. No step picker — the row is the picker,
   as ruled.
+
+  > **"Facsimile" here means the bank rendered back onto pages**, which is
+  > today's `vlm-convert --format pdf` — the dialog's "PDF, as real text",
+  > the same pages reprinted as type, with a page the model could not read
+  > keeping its photograph. It does NOT mean a copy of the scan's images:
+  > that already exists, it is the origin row, and re-exporting it is a file
+  > copy rather than a production. The engine has no `facsimile` command and
+  > does not need one. Named here because the word invites the other reading
+  > and somebody would otherwise build a page-image exporter nobody asked
+  > for.
 - **Generate's output is FINAL**: ops executed, deleted blocks really absent
   (not marked — the `data-bf-cut`-marks-survive-Save gap closes here),
   orphaned footnotes and nav entries tidied (`epub-final`'s logic runs as
@@ -262,6 +272,23 @@ benefits from C. E needs B+C+D. F is independent of everything after 0.
   user, 2026-08-15.
 - PDF: facsimile only, for now — user, 2026-08-15.
 - Generate = the final document, from any selected step — user, 2026-08-15.
+- **Generate is deterministic and NEVER touches a model** — user, 2026-08-15:
+  *"generate should be a deterministic step using the materials we already
+  have. OCR and translate are advanced steps that use AI models — not
+  deterministic."* Reading and translating are the only two actions in this
+  program allowed to spend a model. Everything else is arithmetic over
+  answers already on the disk, and that includes standing up the reading
+  server: a job that will never post a page must not wait for one. Three
+  separate paths broke this rule and were closed the day it was stated —
+  the queue starting vLLM for every conversion, `--reuse-readings`
+  degrading into a resume over an unmarked bank, and the app never checking
+  for that marker outside the translate path.
+- **Standing on a step SHOWS that step** — user, 2026-08-15: *"when i click
+  one of the steps, it should visually show me that step's results."*
+  `STEP-LEDGER.md` promised the pointer repaints the open panes and only the
+  frozen-curation half was ever built, so a read row was inert. Phase B is
+  what a read row eventually shows (the flowing base); the pointer driving
+  the pane is separate from that and is owed regardless.
 - Snapshots display themselves and lock; everything else edits live —
   landed (`f03a50c`).
 - The queue is where expense happens; held when model time is possible —
