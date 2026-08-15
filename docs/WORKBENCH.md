@@ -330,6 +330,68 @@ silently — the next cast repairs it.
 
 ---
 
+## 6b. Unit A3 — the vocabulary grows the two entries A2 found missing
+
+A2 left two gestures working-tree-only, reported not fudged: a chapter
+relabel and a footnote cut. Settled with the user 2026-08-15; both designs
+follow from rulings already on the books.
+
+### Chapter relabels — the title was never missing
+
+The chapter op already exists end to end: the overlay's `chapters` spine
+carries markers with titles, the Chapters section edits it, and the reflow
+consumes exactly it (`FlowBookOptions.overlay` — "Only the CHAPTERS are
+read here"). The gesture recorded nothing because a marker wants a title
+the relabel does not supply — but it does: **the block is the title.**
+
+- Relabelling a block to "Chapter opening" on the book writes a chapter
+  marker into the overlay's `chapters` spine at the block's source key,
+  title defaulting to the block's own text (whitespace collapsed). That is
+  "machine proposes, user owns" verbatim: the Chapters section renames it
+  afterwards if the heading is not the name.
+- Relabelling it back to anything else removes the marker.
+- It is NOT a category amendment — there is no `chapter` category in the
+  bank's vocabulary, and that dead end is why `bankCategory()` returns null
+  today. The gesture forks: bank categories go to category amendments,
+  chapter goes to the spine.
+- If the scan-side picker also offers "chapter" and also records nothing,
+  both surfaces route through the same fork — one behaviour, two panes.
+- Undo replays through the same door; a frozen save refuses the gesture
+  before anything is written, like every other decision.
+- No engine change, no format change. The next cast divides where the
+  marker says because the reflow already obeys the spine.
+
+### Footnote cuts — the target key grows a note ordinal
+
+`splitNotes` cuts one banked Footnote block into several notes, so five
+notes can share one `data-bf-src`; "cut note 3" is unsayable in a
+vocabulary whose smallest unit is the block. Three pieces:
+
+1. **Engine stamps identity**: each emitted `<aside>` already carries
+   `data-bf-src`; it also gets `data-bf-note="<n>"`, the note's ordinal
+   within its source block. Ordinal, not the printed number — the printed
+   number can be null and is display, not identity; the ordinal is
+   deterministic from the same bank.
+2. **The overlay says it**: targets gain an optional `note` dimension
+   (`page:order[:part]` + note ordinal) in `app/shared/overlay.ts` AND in
+   the engine's overlay reader — the same file crosses the seam via
+   `--overlay`, so both sides must speak it and old files without the
+   field must parse untouched. At cast time the engine marks a cut note
+   the way block cuts are marked today; when phase C makes cuts real at
+   materialization, note cuts come along free because they live in the
+   same decision set.
+3. **The mirror routes through it** (the A2 pattern exactly): a
+   `set-note-cut` success amends the overlay at the note target; undo
+   un-mirrors through the same replay bucket; a pre-provenance book (no
+   stamps) skips silently and its next cast repairs it.
+
+Both gestures then reach **Apply changes** with no further work — the
+button already answers "does the project hold decisions no step keeps."
+When both land, DERIVED-BOOK §3's op table gains its two rows: `cut note`
+(per-note, source-level) and the chapter marker's book-side gesture.
+
+---
+
 ## 7. Order, gates, house rules
 
 Units E and R2 run in parallel (disjoint fences, contracts in §5). Unit R1
