@@ -838,11 +838,23 @@ rulings absorb the findings so no agent re-litigates them:
    language-neutral), and a record's `parts` key carries the `#note`
    dimension the overlay grammar already has. A note strike then drops
    its record at materialization like a block strike drops a block.
-3. **Chains stay refused this wave.** §5 said translate-of-translate
-   "falls out for free"; it does not — the one-hop refusal
-   (`pipeline.ts:207-214`), `landsUnder`, and a composed key are real
-   design work. Records make chains POSSIBLE; building them is
-   deferred and recorded here, not silently dropped.
+3. **Chains are WANTED — ruled by the user 2026-08-15, reversing an
+   earlier same-day deferral.** *"if they click the english translation
+   and then click translate to hungarian, it translates from english to
+   hungarian, thus creating a chain of translations: german to english
+   to hungarian."* The survey's finding stands (this is real work, not
+   free): the one-hop refusal (`pipeline.ts:207-214`) comes OUT in D2,
+   `landsUnder` generalizes, and the chain's design is records-native —
+   a translate whose parent chain contains a translate step consumes
+   the PARENT'S RECORD TEXT as its source: per block, source text =
+   the parent step's newest record for that key (fall back to the
+   original block where the parent has none), from-language = the
+   parent's `params.language`, and the question key hashes the masked
+   PARENT text — so an edit to the English record re-asks exactly the
+   Hungarian blocks it feeds, and nothing else. The step's `parent`
+   already records the chain; `documentAtPosition`/`SHOWS_ITS_PAYLOAD`
+   already show a translate step's own product. Labels name both ends
+   where ambiguous ("Translate (English → Hungarian)").
 4. **The EPUB-shaped jobs move into materialization.** A records-mode
    translate produces no EPUB, so `dc:language`/`xml:lang` retagging
    and nav relabelling move to the cast/export: the emitter substitutes
@@ -939,3 +951,75 @@ per-read-branch overlay files (`overlays/<key>.<id8>.json` keyed to the
 read step), `locateOverlay`/`overlayFileFor` ask the position's read
 step, archive-on-mismatch becomes the rare case (a re-read) instead of
 the every-hop case.
+
+---
+
+## 11. The continuous book, and chapters as lines you can hold
+(user-ruled 2026-08-15; execute with the D waves)
+
+The user, verbatim, in two rulings:
+
+> "Instead of splitting chapters the way we currently do, let's have
+> the whole book flow from start to finish, and chapters can be dotted
+> lines with titles that show where they separate. The user can grab
+> the chapter line and drag it up or down, or they can double click it
+> and change what it says. That dotted line is the definitive chapter
+> info for the book. The user can also click to add a chapter break
+> anywhere they want."
+
+> "This logic already exists in mupdf in Bookforge, kind of. A chapter
+> marker that's a green dotted line."
+
+**This REVERSES an earlier decision** (recorded in the session notes as
+"no dotted-line rendering (old BookForge way, rejected)"): the
+BookForge-style marker is now the wanted UI. What does NOT change: the
+overlay's `chapters` spine stays the one record ("that dotted line is
+the definitive chapter info" — the line IS the spine, drawn); the
+machine still proposes and the user still owns; the EDITION still
+splits into real chapter documents at materialization — a continuous
+scroll is how the WORKBENCH displays the book, not how a reader
+receives it.
+
+### The design
+
+- **The workbench shows one flow.** The Book tab renders the whole
+  book start to finish in one scroll. Where a chapter begins, a dotted
+  line with the chapter's title sits between the blocks — a marker
+  drawn FROM the overlay's chapters spine, not a document boundary.
+- **Three gestures, all ops on the spine** (set/move/remove — the §3
+  vocabulary, already first-class): drag the line up or down to move
+  the break (drop lands it before the block it sits above); double-
+  click the line to edit its title in place; click in the gutter
+  between two blocks (affordance on hover) to add a break there. All
+  three mirror through the same overlay door the Chapters section
+  uses today (`setChapters`/`mirrorChapterMarks`), Apply changes
+  commits them, undo covers them.
+- **The inspector's Chapters section survives as the list view** —
+  same spine, two projections. Rename/remove work in either place;
+  the accordion's "jump to chapter" becomes a scroll-to.
+
+### The unit — Unit K (fence: renderer `epub-view`/`click-reporter`
+consumers, `tabs.service.ts` chapter arms; engine only if the
+single-flow cast option is chosen)
+
+Two implementation routes; the builder verifies and picks, recording
+why:
+
+1. **Viewer-side stacking (recommended):** the cast stays a normal
+   multi-document EPUB; the epub view renders the spine's documents
+   stacked in one scroll and draws marker lines at chapter starts from
+   the overlay spine. No engine change; exports untouched; the cast
+   file remains exactly what translate/export consume.
+2. **Single-flow cast:** the engine gains a workbench cast mode that
+   emits one document with marker elements. Rejected unless (1) proves
+   infeasible (iframe-per-chapter machinery may resist stacking) —
+   it forks the cast format and every consumer would need to know.
+
+Marker styling: the dotted line, green, title inline — the BookForge
+look the user named. Draggable region generous (the whole line, not a
+handle). A marker mid-drag shows where it will land. No filenames, no
+chapter numbers invented — the title is the spine's title.
+
+Sequencing: Unit K needs no records machinery — it can run alongside
+D2 (disjoint fences if D2 stays out of epub-view/click-reporter's
+chapter arms; verify before launching together).
