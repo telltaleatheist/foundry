@@ -3,6 +3,7 @@ import {
 } from '@angular/core';
 
 import { typeLabel } from '@shared/documents';
+import { fold } from '@shared/original';
 import type { Job } from '@shared/types';
 
 import { ProjectsService } from '../../core/projects.service';
@@ -130,7 +131,7 @@ import { api } from '../../core/foundry';
                       model read them right is a thing you look at.
 
                       A TRANSLATION OPENS for the same reason as a conversion:
-                      what it made is an EPUB, and the tab that reads one already
+                      what it made is a book, and the tab that reads one already
                       exists.
                     -->
                     @if (job.kind === 'epub' || job.kind === 'pdf' || job.kind === 'translate') {
@@ -173,11 +174,12 @@ import { api } from '../../core/foundry';
                         Kershaw-a1b2c3d4.jsonl" would be this app showing
                         somebody a filename out of its own bookkeeping instead of
                         telling them their book had been read. THE SAME IS TRUE
-                        OF EVERY OTHER KIND: what a rendering produced is an
-                        EPUB, and the file it landed in has the project's stem on
-                        it, which the row above already answers for. The engine's
-                        own last line is the tooltip either way, and both paths
-                        are on the name.
+                        OF EVERY OTHER KIND: what a rendering produced is the
+                        book — or, when it was filed as an export, an EPUB — and
+                        the file it landed in has the project's stem on it, which
+                        the row above already answers for. The engine's own last
+                        line is the tooltip either way, and both paths are on the
+                        name.
                       -->
                       <!--
                         AND "READY TO GENERATE" NAMED A BUTTON THAT NO LONGER
@@ -513,14 +515,47 @@ export class QueueShelfComponent {
   }
 
   /**
-   * WHAT THIS JOB MADE, in the same three words the rest of the app uses for a
-   * document. A translation is an EPUB and says the more useful of the two
-   * things it is; an install made no document at all and never reaches here.
+   * WHAT THIS JOB MADE, in the same few words the rest of the app uses for a
+   * document. A translation is a book and says the more useful of the two things
+   * it is; an install made no document at all and never reaches here.
+   *
+   * ── "EPUB" MEANS FINISHED, AND THE CAST BOOK IS NOT FINISHED ───────────────
+   *
+   * The user: *"im thinking we shouldnt call the working files 'epub' until we
+   * export."* The word belongs to the two places a finished article is named —
+   * the export modal's card and an export's row — and everywhere else the
+   * evolving thing you read, curate and translate is the Book
+   * (docs/WORKBENCH.md §6c, Naming). This shelf was calling both of them EPUB,
+   * and the one it says most often is the automatic cast: a reading lands, the
+   * book is cast from it without anybody asking, and the row that announced it
+   * read "Done · EPUB".
+   *
+   * THE TWO ARE TOLD APART BY ASKING THE CATALOGUE, never by reading the output
+   * path for a directory name. An export is a `ProjectFinal` row the moment it
+   * lands (electron/job-queue.ts), so "is this file one of the project's exports"
+   * is a question the library listing already answers — and it is the same
+   * question the left nav asks to decide whether to draw a row for it. Whole
+   * paths, folded, never a last segment: a project holds several copies of one
+   * book's name at once, which is this codebase's oldest house rule.
+   *
+   * A JOB WHOSE OUTPUT NO PROJECT CLAIMS — or one whose landing this window has
+   * not been told about yet — reads as the book, which is the safer of the two
+   * wrong answers: it under-claims rather than announcing a finished article that
+   * may not have been filed.
    */
   protected made(job: Job): string {
     if (job.kind === 'translate') return 'translation';
+    if (job.kind === 'epub' && !this.filed(job)) return 'the book';
     if (job.kind === 'epub' || job.kind === 'pdf' || job.kind === 'txt') return typeLabel(job.kind);
     return 'done';
+  }
+
+  /** Whether what this job wrote was filed as one of its project's exports. */
+  private filed(job: Job): boolean {
+    const project = this.projects.projectFor(job.outputPath);
+    if (project === null) return false;
+    const at = fold(job.outputPath);
+    return project.exports.some((row) => fold(`${project.dir}/${row.file}`) === at);
   }
 
   /**

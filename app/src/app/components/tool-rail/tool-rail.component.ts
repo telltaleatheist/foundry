@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive } from '@angular/router';
 
+import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';
 import { TabsService } from '../../core/tabs.service';
 import { UiService } from '../../core/ui.service';
@@ -106,8 +107,8 @@ import { UiService } from '../../core/ui.service';
 
         <!-- Translate. Disabled rather than hidden away from a book, on this
              dock's usual principle: a translation is a thing you do to a book
-             Foundry cast, and somebody looking at a scan should be able to see
-             that the tool exists and is not applicable yet. -->
+             Foundry cast, and somebody standing on the scan should be able to
+             see that the tool exists and is not applicable from there. -->
         <button
           class="rail-item"
           [class.active]="ui.translateOpen()"
@@ -119,11 +120,13 @@ import { UiService } from '../../core/ui.service';
           <span class="rail-label">Translate</span>
         </button>
 
-        <!-- Metadata. Enabled for a scan as well as a book, unlike everything
-             else here that needs a converted EPUB: a PDF has an Info dictionary
-             and correcting it is exactly as useful as correcting a package. It
-             does NOT rename any file — see the dialog for why that is a
-             decision rather than an omission. -->
+        <!-- Metadata. Enabled standing on the scan as well as on the book,
+             unlike everything else here that needs a book to have been cast: a
+             scan has an Info dictionary and correcting it is exactly as useful
+             as correcting a package. Which of the two it edits is the
+             position's answer, not the pane's. It does NOT rename any file —
+             see the dialog for why that is a decision rather than an
+             omission. -->
         <button
           class="rail-item"
           [class.active]="ui.metadataOpen()"
@@ -319,7 +322,37 @@ export class ToolRailComponent {
   protected readonly ui = inject(UiService);
   protected readonly tabs = inject(TabsService);
   private readonly projects = inject(ProjectsService);
+  private readonly ledger = inject(LedgerService);
   private readonly router = inject(Router);
+
+  /**
+   * THE DOCUMENT THE POSITION IS SHOWING, for the project the user is in.
+   *
+   * ── What the tab is still allowed to decide, and what it is not ────────────
+   *
+   * Every button here used to ask the same question — "what is the focused tab,
+   * and what kind of file is it" — and that was the second selector
+   * docs/WORKBENCH.md §6c abolished: the tab said one thing, the ledger said
+   * another, and Translate ran against whichever the button happened to read. The
+   * tab now decides ONE fact, the only one it is authoritative about — which
+   * project the user is in — and what is standing there is the position's answer.
+   *
+   * `undefined` FOR A LOOSE FILE, told apart from a project whose position names
+   * no document (`null`), because the two want opposite things from a caller: a
+   * loose file has no ledger and keeps file keying, while a project with nothing
+   * resolved yet has a position and simply has not answered.
+   *
+   * The ledger holding is read and never asked for here — the library sidebar
+   * `ensure`s every open project on every repaint (open-documents), which is a
+   * cheaper place to own that than a dock that repaints on every keystroke.
+   */
+  private shownAt(): string | null | undefined {
+    const tab = this.tabs.activeDocument();
+    if (tab === null) return undefined;
+    const project = this.projects.projectFor(tab.path);
+    if (project === null) return undefined;
+    return this.tabs.documentShownFor(project.dir);
+  }
 
   /** Lit when the panel is actually on screen, which needs both halves of it. */
   protected readonly documentsUp = computed(() =>
@@ -364,10 +397,16 @@ export class ToolRailComponent {
   /**
    * THE STEP THIS BOOK IS WAITING ON, lit on the dock.
    *
-   * True only for a PDF whose project has no completed reading. Everything else
-   * in this app is built on that bank — the block editor, every rendering, the
-   * chapter detection — so a scan that has not been read is a scan where exactly
-   * one thing is worth pressing, and the dock says which.
+   * True for a project with no completed reading. Everything else in this app is
+   * built on that bank — the block editor, every rendering, the chapter detection
+   * — so a book whose pages have not been read is a book where exactly one thing
+   * is worth pressing, and the dock says which.
+   *
+   * THE KIND OF THE FOCUSED TAB IS NO LONGER ASKED, and nothing is lost by it: a
+   * project that still needs reading has no book to be looking at, so the test was
+   * answering a question the project record had already settled. What it did do
+   * was make the light a fact about a PANE rather than about the book, which is
+   * the keying docs/WORKBENCH.md §6c retired.
    *
    * From the project RECORD (`ProjectSummary.reading`, derived once by main when
    * the library was listed), never from probing the disk here: this method runs
@@ -375,7 +414,7 @@ export class ToolRailComponent {
    */
   protected ocrWaiting(): boolean {
     const tab = this.tabs.activeDocument();
-    if (tab === null || tab.kind !== 'pdf') return false;
+    if (tab === null) return false;
     return this.projects.projectFor(tab.path)?.reading.needed === true;
   }
 
@@ -401,12 +440,29 @@ export class ToolRailComponent {
    * call's own refusal names the case precisely (the book nobody has read; the
    * reading that was interrupted). The dialog puts that sentence on screen. A
    * shut door explains itself, which is this rail's rule everywhere else.
+   *
+   * ── AND IT IS DEAD ON THE IMPORT ROW ────────────────────────────────────────
+   *
+   * The reading is necessary and is no longer sufficient. Standing on the import
+   * is standing BEFORE the reading everything is arithmetic over — the user has
+   * deliberately stepped back to the untouched scan — and an export from there
+   * would quietly make the book they had just stepped away from
+   * (docs/WORKBENCH.md §6c: "Translate on … the import row = disabled. Same rule
+   * for Export and Metadata"). The dialog says the same thing in a sentence for
+   * whoever arrives by the menu instead of by this button.
+   *
+   * A HISTORY THIS WINDOW HAS NOT READ ANSWERS NULL, AND NULL IS NOT THE IMPORT.
+   * The button stays live and main's own refusal is the backstop, on this rail's
+   * standing preference for a door that opens onto an explanation over one that is
+   * shut on a guess.
    */
   protected canExport(): boolean {
     const tab = this.tabs.activeDocument();
     if (tab === null) return false;
     const project = this.projects.projectFor(tab.path);
-    return project === null || project.reading.done;
+    if (project === null) return true;
+    if (!project.reading.done) return false;
+    return this.ledger.standingIn(project.dir)?.action !== 'import';
   }
 
   protected openExport(): void {
@@ -415,14 +471,25 @@ export class ToolRailComponent {
   }
 
   /**
-   * Enabled over a book, on the same test the dialog itself applies.
+   * Enabled where the position is standing on a BOOK, on the same test the dialog
+   * itself applies.
    *
-   * A PDF has no blocks to translate — the categories a translation replaces
-   * are stamped when foundry BUILDS the EPUB — so the button is dead over a
-   * scan rather than opening a dialog whose only message is "not this file".
+   * The scan has no blocks to translate — the categories a translation replaces
+   * are stamped when foundry builds the book — so the button is dead standing on
+   * the import rather than opening a dialog whose only message is "not from
+   * here". What changed is what "a book is in front of you" MEANS: it was the kind
+   * of the focused tab, and it is now the document the position is showing
+   * (docs/WORKBENCH.md §6c), so the button and the translation it would queue can
+   * no longer be about two different documents.
+   *
+   * A LOOSE BOOK KEEPS TAB KEYING, having no ledger to key off instead.
    */
   protected canTranslate(): boolean {
-    return this.tabs.activeDocument()?.kind === 'epub';
+    const tab = this.tabs.activeDocument();
+    if (tab === null) return false;
+    const shown = this.shownAt();
+    if (shown === undefined) return tab.kind === 'epub';
+    return shown !== null && shown.toLowerCase().endsWith('.epub');
   }
 
   protected translate(): void {

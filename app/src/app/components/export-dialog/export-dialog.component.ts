@@ -91,7 +91,7 @@ import { api } from '../../core/foundry';
             <input type="text" [value]="optionFor(input)" readonly [title]="input">
           </label>
 
-          @if (readingDone()) {
+          @if (canMake()) {
             <!--
               THE THREE FORMATS AS CARDS rather than a select, because this is the
               whole question the dialog asks and a drop-down would hide two thirds
@@ -183,6 +183,19 @@ import { api } from '../../core/foundry';
             @if (problem(); as reason) {
               <p class="problem">{{ reason }}</p>
             }
+          } @else if (readingDone()) {
+            <!--
+              READ, BUT STANDING ON THE SCAN. Not an error and not a missing
+              step: the user is looking at the pages the book was read from, and
+              the honest answer is where to stand rather than a button that
+              would quietly export the book they stepped back from.
+            -->
+            <p class="unread">You are standing on the scan.</p>
+            <p class="note">
+              An export is made from the book, so stand on the book in the library first — it
+              hangs under the scan, along with everything you have done to it — and this offers
+              all three formats from wherever you are standing.
+            </p>
           } @else {
             <!--
               The whole of the no-reading state. Two options, because there is no
@@ -198,13 +211,19 @@ import { api } from '../../core/foundry';
           }
         </div>
 
+        <!--
+          NO PRIMARY WHERE THERE IS NOTHING TO PRESS. Standing on the scan the
+          only thing this card can offer is a sentence and a way out; a dead
+          Export button beside it would be the app inviting a gesture it has
+          just explained it will not take.
+        -->
         <footer class="foot">
           <button class="ghost" (click)="ui.closeExport()">Cancel</button>
-          @if (readingDone()) {
+          @if (canMake()) {
             <button class="primary" [disabled]="busy()" (click)="run()">
               {{ busy() ? 'Starting…' : 'Export' }}
             </button>
-          } @else {
+          } @else if (!readingDone()) {
             <button class="primary" (click)="ui.openOcr()">Read the pages…</button>
           }
         </footer>
@@ -391,6 +410,38 @@ export class ExportDialogComponent {
    */
   protected readonly readingDone = computed(() => this.project()?.reading.done === true);
   protected readonly pages = computed(() => this.project()?.reading.pages ?? 0);
+
+  /**
+   * WHETHER THE POSITION IS STANDING ON THE SCAN, which is the one place in a
+   * read project where there is nothing to export.
+   *
+   * ── Why the gate is the position and the input is still the original ────────
+   *
+   * These look contradictory and are not. `source()` above hands main the
+   * project's ORIGINAL because that is the question main's planner answers — it
+   * resolves the archived original regardless of what it is given, and it reads
+   * the POSITION for itself to decide whether a translate stage belongs in the
+   * plan (`renderPipeline`). So the input has never been the thing that decides
+   * WHICH book comes out; the position has.
+   *
+   * What was missing was the honest refusal at the top of the import chain. An
+   * export is arithmetic over the bank a reading produced, and standing on the
+   * import is standing BEFORE that reading: the user has deliberately stepped
+   * back to the untouched scan, and an Export button live there would quietly
+   * make the book they had just stepped away from (docs/WORKBENCH.md §6c — every
+   * action keys off the position, "on the import row = disabled").
+   *
+   * FROM THE LEDGER MIRROR, like `epubOnly` beside it. A project whose history
+   * this window has not read yet answers null, and null is not the import — the
+   * dialog stays open and main's own refusal is the backstop, which is this file's
+   * rule everywhere: a shut door explains itself, and a door shut on a guess does
+   * not.
+   */
+  protected readonly onImport = computed(() =>
+    this.ledger.standingIn(this.project()?.dir ?? null)?.action === 'import');
+
+  /** Reading done, and standing somewhere an export can be made from. */
+  protected readonly canMake = computed(() => this.readingDone() && !this.onImport());
 
   /**
    * Whether a curation exists to apply — said out loud, because it is the

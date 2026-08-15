@@ -1,12 +1,14 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
+import { fold } from '@shared/original';
 import {
   DEFAULT_OLLAMA_ENDPOINT as DEFAULT_OLLAMA,
   DEFAULT_TRANSLATE_MODEL as DEFAULT_MODEL,
 } from '@shared/pipeline';
 import type { TranslateRequest } from '@shared/types';
 
+import { ProjectsService } from '../../core/projects.service';
 import { QueueService } from '../../core/queue.service';
 import { TabsService } from '../../core/tabs.service';
 import { UiService } from '../../core/ui.service';
@@ -36,11 +38,11 @@ import { api } from '../../core/foundry';
  * job that is already moving. What it asks for is different, though, and the
  * differences are the interesting part.
  *
- *   **The source is an EPUB, not a PDF.** A translation replaces the text
+ *   **The source is the BOOK, not the scan.** A translation replaces the text
  *   inside the categories foundry stamped when it built the book, so the input
- *   is a book this app already made. Pointed at a PDF, the engine would have
- *   nothing to work on — so the dialog says to open a book rather than offering
- *   to translate a scan.
+ *   is a book this app already made. Pointed at the scan, the engine would have
+ *   nothing to work on — so the dialog says where to stand rather than offering
+ *   to translate photographs of pages.
  *
  *   **The Ollama endpoint IS a field here**, unlike the reading backend in the
  *   OCR dialog. That one is owned by the settings screen and a second control
@@ -153,15 +155,22 @@ import { api } from '../../core/foundry';
           </button>
         </footer>
       } @else {
+        <!--
+          THE EMPTY STATE SPEAKS IN POSITIONS NOW, because the source is a
+          position rather than a tab (docs/WORKBENCH.md §6c). Standing on the
+          scan with the book open in front of you used to be the trap this
+          dialog walked into silently; it is the one sentence it says instead.
+        -->
         <div class="body empty">
           <p>
-            Open an EPUB first. Translation replaces the text inside the categories Foundry
-            stamps when it converts a book, so it works on a book Foundry made — not on a scan.
+            Stand on the book to translate it. Translation replaces the text inside the
+            categories Foundry stamps when it builds a book, so it works on a book Foundry
+            made — not on the scan it was read from.
           </p>
         </div>
         <footer class="foot">
           <button class="ghost" (click)="ui.closeTranslate()">Close</button>
-          <button class="primary" (click)="openDocument()">Open EPUB…</button>
+          <button class="primary" (click)="openDocument()">Open a book…</button>
         </footer>
       }
     </div>
@@ -270,31 +279,73 @@ export class TranslateDialogComponent {
   protected readonly ui = inject(UiService);
   private readonly tabs = inject(TabsService);
   private readonly queue = inject(QueueService);
+  private readonly projects = inject(ProjectsService);
 
   /**
-   * The book this translation is OF: the focused pane's document, when it is a
-   * book. (Its HTML editor counts as the book — one document, two faces.)
+   * The book this translation is OF — THE POSITION'S DOCUMENT, in a project.
    *
-   * The path is the file on disk the tab was opened from — which for a
-   * conversion is already the managed workspace copy, and for a book the user
-   * opened themselves is their own file. Either is safe to name here: the
-   * engine never writes to its input, and the OUTPUT is placed by main.
+   * ── It used to be the focused tab, and that was the confusion ───────────────
+   *
+   * "the focused pane's document, when it is a book" was one of the two selectors
+   * this app had while pretending to have one, and it is the one the user was
+   * bitten by: *"i could have a document open, the epub, but have the pdf import
+   * step selected, and id never know that i just ran translate against the
+   * original pdf rather than the generated epub because i had the wrong step
+   * selected, since the right document was open."* The ruling is
+   * docs/WORKBENCH.md §6c — every action keys off the position, and the open tab
+   * stops being an input to anything.
+   *
+   * SO THE TAB NAMES THE PROJECT AND NOTHING ELSE. What the position is showing is
+   * `TabsService.documentShownFor`, which is main's own answer to "which document
+   * belongs on screen here" — the same answer the panes obey — so this dialog and
+   * the pane behind it cannot come to disagree about which book is being
+   * translated. Standing on the import answers the scan, which is not a book, so
+   * the dialog goes to its empty state and says where to stand.
+   *
+   * A LOOSE BOOK KEEPS FILE KEYING. It belongs to no project, so it has no ledger
+   * and no position to key off — the rule for every loose row in this app.
+   *
+   * The path is a file on disk: for a cast book the managed workspace copy, for a
+   * book the user opened themselves their own file. Either is safe to name here —
+   * the engine never writes to its input, and the OUTPUT is placed by main.
    */
   protected readonly source = computed(() => {
     const tab = this.tabs.activeDocument();
-    return tab !== null && tab.kind === 'epub' ? tab.path : null;
+    if (tab === null) return null;
+    const project = this.projects.projectFor(tab.path);
+    if (project === null) return tab.kind === 'epub' ? tab.path : null;
+    const shown = this.tabs.documentShownFor(project.dir);
+    /*
+     * A BOOK AND NOT A SCAN, tested on the position's answer rather than on a tab
+     * kind, because the position is the thing being asked about. `.epub` is what
+     * "this is the flowing book" spells on disk — the same test `showDocument`
+     * makes when it decides which kind of tab a position wants — and the word is
+     * never put on screen for it (§6c Naming: the working document is the Book).
+     */
+    return shown !== null && shown.toLowerCase().endsWith('.epub') ? shown : null;
   });
 
   /**
    * What that book is CALLED, which is a different question from where it is.
    *
-   * Read off the tab rather than worked out here, because the tab is where this
-   * app decides what a document is named (`Tab.title`) — its `dc:title` for a
-   * book that has been unpacked, its project's title otherwise — and a dialog
-   * that named it a second way would be a second opinion about the book on
-   * screen behind it.
+   * FROM THE TAB SHOWING IT, still — the tab is where this app decides what a
+   * document is named (`Tab.title`): its `dc:title` once the book has been
+   * unpacked, its project's title otherwise, and a dialog that named it a second
+   * way would be a second opinion about the book on screen behind it. What changed
+   * is WHICH tab: the one showing the position's document, which after the focus
+   * mirror is very nearly always the focused one anyway.
+   *
+   * `nameFor` is the fallback for the gap in between — a position whose book this
+   * window has not opened a tab for — and it is the same one every other surface
+   * falls back to, rather than an empty box above a form.
    */
-  protected readonly name = computed(() => this.tabs.activeDocument()?.title ?? '');
+  protected readonly name = computed(() => {
+    const input = this.source();
+    if (input === null) return '';
+    const at = fold(input);
+    const showing = this.tabs.tabs().find((tab) => fold(tab.path) === at);
+    return showing?.title ?? this.projects.nameFor(input);
+  });
 
   protected readonly to = signal('en');
   protected readonly from = signal('');

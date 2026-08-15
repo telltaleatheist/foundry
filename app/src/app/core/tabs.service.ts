@@ -848,12 +848,30 @@ export class TabsService {
             // The resolved document goes with the picture it belonged to, for the
             // same reason: a reopen baselines afresh rather than measuring against
             // what a session nobody is in was showing.
-            this.documentShown.delete(key);
+            this.forgetShown(key);
           }
         }
         for (const move of moves) {
           this.showing.set(move.key, move.now);
-          if (move.was === null) continue;
+          if (move.was === null) {
+            /*
+             * THE FIRST SIGHTING STILL MOVES NOTHING, AND IT NO LONGER LEAVES THE
+             * DOCUMENT UNKNOWN.
+             *
+             * It used to `continue` outright, which was right while the resolved
+             * document was bookkeeping for `followDocuments` alone. It is not any
+             * more: the rail and the dialogs ask what document the position is
+             * showing before they decide what a button does (docs/WORKBENCH.md
+             * §6c), and a project met a moment ago answered "I do not know" —
+             * which is how Translate came to sit dead over a book that was
+             * plainly on screen. Nothing here is put on screen by asking; it
+             * records what the position resolves to, exactly as the sweep does on
+             * every announce, so that the first question a button asks has an
+             * answer.
+             */
+            void this.baselineShown(move.dir, move.key);
+            continue;
+          }
           void this.showPosition(move);
         }
       });
@@ -901,6 +919,10 @@ export class TabsService {
      * the position effect's own first-sighting rule said about the document
      * instead of the picture: a window that has just met a project has no
      * difference to act on.
+     *
+     * A BASELINE IS NOT A NO-OP ANY MORE, THOUGH — see the position effect above,
+     * which now asks for the document at a position it is meeting for the first
+     * time instead of leaving it unknown until something announces.
      */
     effect(() => {
       this.projects.items();
@@ -917,8 +939,169 @@ export class TabsService {
    * one arrives hundreds of milliseconds later over IPC. A picture carrying a
    * field that is empty at the moment it is compared would be an invitation to
    * compare it.
+   *
+   * ── A SIGNAL NOW, BECAUSE THE DIALOGS READ IT ────────────────────────────────
+   *
+   * It was a plain `Map`: bookkeeping for `followDocuments`, written and read in
+   * one file, and nothing on screen depended on it. There is one selection now
+   * (docs/WORKBENCH.md §6c) — "every action keys off the position, never the open
+   * tab" — so Translate, Export and Metadata all ask what document the position is
+   * showing, and a `Map` cannot tell a template that the answer moved. A dialog
+   * standing open while a job casts the book, or while the user clicks a row in
+   * the library behind it, would go on describing the document from before.
+   *
+   * The map inside is replaced rather than mutated on every write, which is what
+   * makes the signal's equality check mean anything at all.
    */
-  private readonly documentShown = new Map<string, string | null>();
+  private readonly documentShown = signal<ReadonlyMap<string, string | null>>(new Map());
+
+  /**
+   * The document this project's panes are pointed at, for a surface that acts on
+   * the position rather than on whatever tab happens to be focused.
+   *
+   * NULL IS THREE STATES AND THEY ARE DELIBERATELY ONE HERE: nothing has read this
+   * project's history yet, the position names no document of its own, or there is
+   * no project. Every caller wants the same thing from all three — fall back to
+   * what it can see for itself — and a surface that told them apart would be a
+   * surface with three empty states for one absence.
+   */
+  documentShownFor(projectDir: string | null): string | null {
+    if (projectDir === null) return null;
+    return this.documentShown().get(fold(projectDir)) ?? null;
+  }
+
+  /** Main's latest answer about this project's position, kept where it is read. */
+  private rememberShown(key: string, target: string | null): void {
+    this.documentShown.update((map) => new Map(map).set(key, target));
+  }
+
+  /** This project has no tabs left; its answer goes with them. */
+  private forgetShown(key: string): void {
+    this.documentShown.update((map) => {
+      if (!map.has(key)) return map;
+      const next = new Map(map);
+      next.delete(key);
+      return next;
+    });
+  }
+
+  /**
+   * THE FOCUS MIRROR: a document the user has just focused moves the position onto
+   * the step that document IS.
+   *
+   * ── The confusion it exists to end ──────────────────────────────────────────
+   *
+   * The app had two selectors pretending to be one. The library selected a file,
+   * the ledger selected a step, and the actions keyed off a mix — so the user's
+   * own report: *"i could have a document open, the epub, but have the pdf import
+   * step selected, and id never know that i just ran translate against the
+   * original pdf rather than the generated epub because i had the wrong step
+   * selected, since the right document was open."* Clicking a library row already
+   * moved the position and put its document on screen; this is the other
+   * direction, and with both of them there is one selection
+   * (docs/WORKBENCH.md §6c).
+   *
+   * ── THE GUARD, WHICH IS THE WHOLE OF THE CARE HERE ──────────────────────────
+   *
+   * A document that is ALREADY the one the position is showing moves nothing. A
+   * book resolves to the NEWEST step of its chain — the only step you can act from
+   * — so without this, somebody standing on an older save and clicking into the
+   * pane to read it would be silently walked forward to the newest one, and the
+   * next thing they exported would be a book they had deliberately stepped back
+   * from. Standing still is not a gesture.
+   *
+   * ── Only user gestures reach this ───────────────────────────────────────────
+   *
+   * The strip's own click, a pointerdown in a pane, Ctrl+Tab and Ctrl+1…5, and
+   * nothing else. It is emphatically NOT inside `activateInPane` or `reveal`,
+   * because `showPosition` reaches both of those on its way to satisfying a click
+   * on a library row: a mirror there would answer main's own answer with a
+   * question about it, and a position that had just been moved to an older step
+   * would move itself back the instant the pane obeyed.
+   *
+   * A LOOSE FILE HAS NO LEDGER AND NO POSITION, so it is a no-op — its actions go
+   * on taking the file, which is the ruling for loose rows everywhere.
+   *
+   * FIRE AND FORGET, AND A FAILURE IS NEVER IN THE WAY. Focus has already happened
+   * by the time this is called; a refusal from main (a catalogue that will not
+   * parse) belongs on the notice strip, not in front of a person who was trying to
+   * look at a document.
+   */
+  async standForTab(tabId: string): Promise<void> {
+    if (!api) return;
+    const tab = this.byId(tabId);
+    if (tab === null) return;
+    // An editor is a face of its book, exactly as `activeDocument` reads it: one
+    // document, two faces, and the position is about the document.
+    const subject = tab.kind === 'editor' ? this.byId(tab.sourceTabId) : tab;
+    if (subject === null) return;
+    const dir = this.projectDirOf(subject);
+    if (dir === null) return;
+    const key = fold(dir);
+    const known = this.documentShown().get(key);
+    /*
+     * THE FIRST FOCUS IN A PROJECT ASKS, RATHER THAN ASSUMING THE GUARD CANNOT
+     * ANSWER — and this is the case the guard would otherwise miss entirely.
+     *
+     * Nothing writes `documentShown` for a project until the position MOVES
+     * (`showPosition`) or main announces (`followDocuments`), so a project opened
+     * from Home and clicked into straight away has no memory of what it is
+     * showing. Treating that silence as "not the same document" is exactly the
+     * yank this guard exists to prevent: somebody who left the pointer on an
+     * older save, reopened the book and clicked into the page would be walked
+     * forward to the newest step by the act of looking at it.
+     *
+     * One extra round trip, once per project per session, for the same question
+     * `followDocuments` asks on every announce — and the answer is kept, because
+     * it is the same fact those two record.
+     */
+    const shown = known !== undefined ? known : await this.rememberedShown(dir, key);
+    if (shown !== null && fold(shown) === fold(subject.path)) return;
+    try {
+      /*
+       * `adopt` AND NOT A SECOND READ. Main hands back the ledger AND the rows it
+       * composed for it — the same whole answer `go` returns, for the same reason
+       * — and `LedgerService.adopt` is the door already built for a history that
+       * arrived from somewhere other than that class. A `refresh` here would be a
+       * second round trip describing a moment later than the one that was acted
+       * on, which is the failure `go`'s own comment is about.
+       */
+      this.ledger.adopt(dir, await api.ledger.standFor(dir, subject.path));
+    } catch (err) {
+      this.notice.set(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /**
+   * What main says is at this project's position, asked once and kept.
+   *
+   * The answer is null for every refusal (`LedgerService.documentAt` says why),
+   * and null here means "no document of its own" — which the guard reads as "not
+   * the one in front of me", so the mirror goes ahead and lets main decide. That
+   * is the right way round: main is the side that knows, and a renderer guessing
+   * at a catalogue it could not read is how somebody ends up standing somewhere
+   * they did not ask to be.
+   */
+  private async rememberedShown(projectDir: string, key: string): Promise<string | null> {
+    const at = await this.ledger.documentAt(projectDir);
+    this.rememberShown(key, at);
+    return at;
+  }
+
+  /**
+   * A project this window has just met, asked once what its position is showing.
+   *
+   * IT NEVER OVERWRITES AN ANSWER THAT IS ALREADY IN HAND. A first sighting and a
+   * gesture can both fire in the same frame — the pointerdown that opened the
+   * project's tab is one of them — and this is the older question of the two, so
+   * landing last must not replace a newer answer with a staler one.
+   */
+  private async baselineShown(projectDir: string, key: string): Promise<void> {
+    if (this.documentShown().has(key)) return;
+    const at = await this.ledger.documentAt(projectDir);
+    if (this.documentShown().has(key)) return;
+    this.rememberShown(key, at);
+  }
 
   /** True while a sweep is in flight, so two announces do not walk it twice. */
   private following = false;
@@ -952,8 +1135,8 @@ export class TabsService {
         if (now === undefined) continue;
         const target = await this.ledger.documentAt(dir);
         if (this.showing.get(key) !== now) continue;
-        const was = this.documentShown.get(key);
-        this.documentShown.set(key, target);
+        const was = this.documentShown().get(key);
+        this.rememberShown(key, target);
         if (was === undefined || was === target) continue;
         await this.showPosition({ key, dir, was: now, now }, target);
       }
@@ -1067,7 +1250,7 @@ export class TabsService {
      * document that changed under a position that did not move; recording it
      * anywhere else would be recording an intention rather than what happened.
      */
-    this.documentShown.set(move.key, target);
+    this.rememberShown(move.key, target);
     const swapped = await this.showDocument(move, target);
     const readingMoved = (move.was?.view.reading?.id ?? null) !== (view.reading?.id ?? null);
     const curationMoved = (move.was?.view.curation?.id ?? null) !== (view.curation?.id ?? null);
@@ -1747,10 +1930,20 @@ export class TabsService {
     if (this.columns().some((pane) => pane.id === paneId)) this.focused.set(paneId);
   }
 
-  /** Ctrl+1…5. Out of range is a no-op rather than a clamp — 4 means the fourth. */
+  /**
+   * Ctrl+1…5. Out of range is a no-op rather than a clamp — 4 means the fourth.
+   *
+   * IT MIRRORS THE FOCUS ONTO THE POSITION, and it mirrors HERE rather than at the
+   * call site because the chord IS this method: `app.ts`'s key handler is its only
+   * caller, and nothing in this file reaches it. A pane is focused by the position
+   * effect through `this.focused.set` directly, which is the seam that keeps a
+   * programmatic reveal out of this door.
+   */
   focusPaneAt(index: number): void {
     const pane = this.columns()[index];
-    if (pane) this.focused.set(pane.id);
+    if (!pane) return;
+    this.focused.set(pane.id);
+    if (pane.activeTabId !== null) void this.standForTab(pane.activeTabId);
   }
 
   /**
@@ -2094,13 +2287,21 @@ export class TabsService {
    * column, then round. A column holding one document has nowhere to go and the
    * chord does nothing, which is honest — the other four columns' documents are
    * not this column's to riffle through.
+   *
+   * AND IT MOVES THE POSITION WITH IT, on `focusPaneAt`'s reasoning: the chord is
+   * this method, `app.ts` is its only caller, and stepping from the scan to the
+   * book with a keystroke is the same statement as clicking the tab. The mirror is
+   * outside `activateInPane` on purpose — that one is also how a library click
+   * lands its document (see `standForTab`).
    */
   nextTab(): void {
     const pane = this.focusedPane();
     if (!pane || pane.tabIds.length === 0) return;
     const at = pane.activeTabId === null ? -1 : pane.tabIds.indexOf(pane.activeTabId);
     const next = pane.tabIds[(at + 1) % pane.tabIds.length];
-    if (next !== undefined) this.activateInPane(pane.id, next);
+    if (next === undefined) return;
+    this.activateInPane(pane.id, next);
+    void this.standForTab(next);
   }
 
   /**

@@ -2,8 +2,10 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } 
 import { FormsModule } from '@angular/forms';
 
 import { qualify } from '@shared/documents';
+import { fold } from '@shared/original';
 import type { DocumentMetadata } from '@shared/types';
 
+import { ProjectsService } from '../../core/projects.service';
 import { TabsService, type Tab } from '../../core/tabs.service';
 import { UiService } from '../../core/ui.service';
 import { api } from '../../core/foundry';
@@ -307,16 +309,50 @@ import { api } from '../../core/foundry';
 export class MetadataDialogComponent {
   protected readonly ui = inject(UiService);
   private readonly tabs = inject(TabsService);
+  private readonly projects = inject(ProjectsService);
 
   /**
-   * The document this record belongs to: the focused pane's, when it is a book
-   * or a scan. (An HTML editor counts as the book it edits — one document, two
-   * faces, exactly as the Translate dialog treats it.)
+   * The document this record belongs to — THE ONE THE POSITION IS SHOWING, in a
+   * project.
+   *
+   * ── One selection, and this dialog was one of the two ───────────────────────
+   *
+   * It was "the focused pane's document", which is the tab keying that
+   * docs/WORKBENCH.md §6c retired: *"every action keys off the position, never the
+   * open tab."* A project holds a scan and the book cast from it, the six fields
+   * are a `dc:` package for one and an Info dictionary for the other, and which of
+   * them you were editing used to depend on which pane you last clicked in rather
+   * than on where you were standing. Standing on the import edits the scan's
+   * record; standing on the book — or on any save above it — edits the book's.
+   *
+   * IT ANSWERS A TAB AND NOT A PATH, because writing a record is not the only
+   * thing this dialog does with it: the name in the field is the tab's, and the
+   * write has to reach the document the app has OPEN so the pane re-reads it. The
+   * position's document is matched against the open tabs by whole path, folded —
+   * never by last segment, because a project holds `archive/`, `working/` and
+   * `generated/` copies of one book at once.
+   *
+   * WITH A FALLBACK TO THE FOCUSED TAB, for the gap where the position has no
+   * document of its own or has not resolved one yet (a project nothing has read a
+   * history for, a book still being cast). The alternative is an empty dialog over
+   * a document that is plainly on screen, which is the app refusing to do
+   * something it can obviously do.
+   *
+   * A LOOSE FILE IS UNCHANGED: no project, no ledger, no position — its actions go
+   * on taking the file.
    */
   protected readonly source = computed(() => {
     const tab = this.tabs.activeDocument();
     if (tab === null) return null;
-    return tab.kind === 'epub' || tab.kind === 'pdf' ? tab : null;
+    const mine = tab.kind === 'epub' || tab.kind === 'pdf' ? tab : null;
+    const project = this.projects.projectFor(tab.path);
+    if (project === null) return mine;
+    const shown = this.tabs.documentShownFor(project.dir);
+    if (shown === null) return mine;
+    const at = fold(shown);
+    return this.tabs.tabs().find((candidate) =>
+      (candidate.kind === 'epub' || candidate.kind === 'pdf') && fold(candidate.path) === at)
+      ?? mine;
   });
 
   /**

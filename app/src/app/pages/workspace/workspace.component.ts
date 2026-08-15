@@ -47,6 +47,23 @@ import { TabsService, type Pane, type Tab } from '../../core/tabs.service';
  * it runs; and a drag that begins in a pane also means that pane, where a click
  * that never completes would have said nothing.
  *
+ * ── AND FOCUSING A DOCUMENT MOVES THE POSITION ONTO IT ───────────────────────
+ *
+ * There is ONE selection (docs/WORKBENCH.md §6c). Clicking a row in the library
+ * moves the position and puts its document on screen; the two gestures in this
+ * file that put a document in front of somebody — a click on a tab, a pointerdown
+ * in a pane — move the position back, through `TabsService.standForTab`, so that
+ * the pointer and the pane can never describe two different things. Without it a
+ * person reads the book, presses Translate and translates the scan.
+ *
+ * THE CALL IS HERE AND NOT IN `activateInPane`, deliberately. That method is also
+ * how the position's OWN answer lands in a strip: a library click moves the
+ * pointer, the pane obeys by activating a tab, and a mirror inside it would answer
+ * main's answer with a question about it. The gesture is what mirrors, so the
+ * gesture is where the call lives. The mirror is fire-and-forget and its guard is
+ * in the service — standing on an older step and clicking into its document must
+ * not walk anybody forward to the newest one.
+ *
  * ── Taking a dropped row ─────────────────────────────────────────────────────
  *
  * A row dragged out of the list — or a tab dragged out of a strip — lands here,
@@ -106,7 +123,7 @@ import { TabsService, type Pane, type Tab } from '../../core/tabs.service';
             <section
               class="pane"
               [style.flex]="pane.flex + ' 1 0'"
-              (pointerdown)="tabs.focusPane(pane.id)"
+              (pointerdown)="focusPane(pane)"
             >
               <!--
                 THE STRIP. Absent entirely for a column with nothing in it —
@@ -138,7 +155,7 @@ import { TabsService, type Pane, type Tab } from '../../core/tabs.service';
                       [class.before]="before()?.paneId === pane.id && before()?.tabId === tab.id"
                       [attr.aria-selected]="tab.id === pane.activeTabId"
                       [title]="tabTitle(tab)"
-                      (click)="tabs.activateInPane(pane.id, tab.id)"
+                      (click)="activate(pane, tab)"
                       (auxclick)="onAux($event, tab)"
                       (contextmenu)="onTabMenu($event, pane, tab)"
                       (dragstart)="onTabDragStart($event, tab)"
@@ -493,6 +510,34 @@ export class WorkspaceComponent {
   }
 
   // ── The tabs themselves ──────────────────────────────────────────────────
+
+  /**
+   * The strip's click: bring this tab to the front, and stand where it stands.
+   *
+   * TWO CALLS AND NOT ONE, because they are two facts. Which tab is on top is this
+   * window's business; which step the project is standing on is the ledger's, and
+   * the second is the one every action in the app now keys off.
+   */
+  protected activate(pane: Pane, tab: Tab): void {
+    this.tabs.activateInPane(pane.id, tab.id);
+    void this.tabs.standForTab(tab.id);
+  }
+
+  /**
+   * A pointerdown anywhere in a pane: the focus, and the position with it.
+   *
+   * IT MIRRORS EVEN WHEN THE PANE WAS ALREADY FOCUSED, and that is on purpose —
+   * `focusPane` short-circuits an unchanged focus because setting a signal to what
+   * it already holds is a repaint for nothing, but the POSITION can be somewhere
+   * else entirely while this pane sat focused (a job landed, a row was clicked in
+   * the library). Clicking into the document you are looking at is the plainest
+   * way there is to say "this one", and the guard in `standForTab` makes it free
+   * in the case where it already is.
+   */
+  protected focusPane(pane: Pane): void {
+    this.tabs.focusPane(pane.id);
+    if (pane.activeTabId !== null) void this.tabs.standForTab(pane.activeTabId);
+  }
 
   protected close(event: MouseEvent, tab: Tab): void {
     // Without this the click also lands on the tab and activates the document
