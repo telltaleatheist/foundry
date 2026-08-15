@@ -1148,7 +1148,19 @@ async function destroyPayload(dir: string, payload: string): Promise<void> {
   await fsp.rm(target, { force: true, recursive: false });
 }
 
-/** The steps and the flat list the accordion draws, in one answer. */
+/**
+ * The steps and the flat list the accordion draws, in one answer.
+ *
+ * EVERY CALL THAT CHANGES A LEDGER ANSWERS WITH THIS, and that is a correction
+ * rather than a convenience. Three of them used to hand back a bare
+ * `ProjectLedger` — the pointer move, the delete and the commit — and the rows
+ * are MAIN'S TO COMPOSE (`chronological`, and the "from …" annotation is the one
+ * concession this design makes to the tree), so the renderer had to ask again
+ * after every one of them. A second round trip is a second answer, composed a
+ * moment later, about a catalogue that may have moved: the window either drew a
+ * list from before its own gesture or painted twice. What a caller gets back now
+ * is the whole answer to what it just did.
+ */
 export interface LedgerView {
   ledger: ProjectLedger;
   /**
@@ -1189,7 +1201,7 @@ export async function readStepLedger(dir: string): Promise<LedgerView> {
  * the app drew, so an id that is not there means the two are looking at different
  * ledgers, and the honest answer is to say so.
  */
-export async function goToStep(dir: string, stepId: string): Promise<ProjectLedger> {
+export async function goToStep(dir: string, stepId: string): Promise<LedgerView> {
   const resolved = deletableProjectDir(dir);
   const ledger = await withManifest(resolved, async (manifest) => {
     const standing = stepOf(ledgerOf(manifest), stepId);
@@ -1202,7 +1214,10 @@ export async function goToStep(dir: string, stepId: string): Promise<ProjectLedg
   // derived from what the ledger calls current. Both hear about it the one way
   // anything in this app hears that a project moved.
   announceProjects();
-  return ledger;
+  // The rows are the same rows — a pointer move changes no step and no order —
+  // and they are composed again anyway, because a caller that had to know which
+  // of these answers is worth redrawing would be a caller deriving the list.
+  return { ledger, rows: chronological(ledger) };
 }
 
 /**
@@ -1220,13 +1235,21 @@ export async function goToStep(dir: string, stepId: string): Promise<ProjectLedg
  * through the one that was about their curation.
  */
 export async function describeStepDelete(dir: string, stepId: string): Promise<StepDeletion> {
-  const manifest = await readManifest(deletableProjectDir(dir));
+  const resolved = deletableProjectDir(dir);
+  const manifest = await readManifest(resolved);
   const ledger = ledgerOf(manifest);
   const named = stepOf(ledger, stepId);
   // Run for its REFUSAL as much as for its list: this is the one place that can
   // say no before the user has agreed to anything.
-  deleteSubtree(ledger, stepId);
+  const deletion = deleteSubtree(ledger, stepId);
+  const destroyed = orphanedPayloads(deletion);
+  const sweeps = await planStepSweep(resolved, destroyed, manifest);
+  // The other refusal that must land before the card is drawn, for its own
+  // reason: a book this window is reading cannot be unlinked on Windows, so a
+  // card that ignored it would be a question whose yes main declines to act on.
+  refuseOpenPayload(sweeps, named.label);
   return {
+    belongings: sweptBelongings(sweeps),
     stepId: named.id,
     label: named.label,
     casualties: subtree(ledger, stepId).map((step): StepCasualty => ({
@@ -1235,7 +1258,127 @@ export async function describeStepDelete(dir: string, stepId: string): Promise<S
       cost: deleteCost(step),
       stale: step.stale === true,
     })),
+    files: destroyed.map((payload) => path.join(resolved, ...payload.split('/'))),
   };
+}
+
+/**
+ * Refuse while this window is still reading one of the doomed payloads.
+ *
+ * ── WHICH MODEL WON, and it is the document delete's ────────────────────────
+ *
+ * There were two in the app and they did not agree. The PROJECT delete refuses in
+ * main by asking `openBookIn` — it looks at what is open and says no. The DOCUMENT
+ * delete refuses in main too, by a narrower test (`workingTreeHeld`, the count the
+ * epub reader holds from open to close), AND the renderer closes the file's own
+ * tab between the confirm and the call. The step delete had neither, so deleting a
+ * translate step whose EPUB was open left a tab serving a working copy that had
+ * just been erased: every image a 404, every save a failure, and nothing on screen
+ * saying why.
+ *
+ * THE DOCUMENT DELETE'S MODEL IS THE ONE ADOPTED HERE, whole: main refuses, and
+ * the renderer closes first so the refusal is almost never reached. The narrower
+ * test is the right one for the same reason it is right there — a step delete
+ * takes ONE payload out of a project, and refusing it because some other book in
+ * the same folder happens to be open would make the ✕ useless exactly when it is
+ * wanted (throw away the English translation while reading the scan). The project
+ * delete keeps `openBookIn` because it erases the folder, which is a different
+ * act and says so in its own sentence.
+ */
+function refuseOpenPayload(sweeps: readonly Sweep[], label: string): void {
+  for (const sweep of sweeps) {
+    if (sweep.treeRoot === null || !workingTreeHeld(sweep.treeRoot)) continue;
+    throw new ProjectError(
+      `“${label}” cannot be deleted while the book it made is open in Foundry — erasing the `
+      + 'working copy out from under a tab that is reading it would leave that tab showing files '
+      + 'that no longer exist, and would leave half an unpacked book on disk. Close the book '
+      + 'first, then delete the step.',
+    );
+  }
+}
+
+/**
+ * Everything on disk that goes with the payloads a step delete destroys.
+ *
+ * ── The state this was leaving behind ───────────────────────────────────────
+ *
+ * A step delete used to unlink the payload and nothing else, and a payload is not
+ * the only file that belongs to it. Deleting a translation whose EPUB had been
+ * unpacked left `working/<tree>/` — a whole book's markup — in the folder, a
+ * `working.trees` row whose `from` named a file that no longer existed, and
+ * `history/<tree>.json`, an undo ledger for a book that is gone. None of it is
+ * reachable from anything in the app afterwards: the row it hung off is off the
+ * ledger, so it is bytes nothing will ever mention again, which is precisely the
+ * outcome `deleteDocument` was written to avoid.
+ *
+ * `planSweep` IS THAT ANSWER AND IT IS REUSED RATHER THAN RESTATED. It is the one
+ * place that knows what belongs to a file alone — the tree, the ledgers live and
+ * archived, the rotated predecessors — and its docstring is the argument for each.
+ * Two functions deciding that would be two answers to "what is this file's", and
+ * the delete card and the delete would eventually describe different things.
+ *
+ * ONE SWEEP PER PAYLOAD, over `orphanedPayloads` rather than the removed steps:
+ * a file another step still names is still on disk and still has a working tree
+ * serving it. See that function for the re-read that leaves two steps naming one
+ * bank.
+ */
+async function planStepSweep(
+  dir: string,
+  payloads: readonly string[],
+  manifest: ProjectManifest,
+): Promise<Sweep[]> {
+  const sweeps: Sweep[] = [];
+  for (const payload of payloads) {
+    sweeps.push(await planSweep(dir, path.join(dir, ...payload.split('/')), manifest));
+  }
+  return sweeps;
+}
+
+/**
+ * What the sweep will take besides the payloads, as one sentence — or null.
+ *
+ * A CONFIRM MAY NOT DESTROY SOMETHING IT DID NOT NAME. Everything in here is
+ * genuinely going: the unpacked working copy of a book, the undo history written
+ * against it, the versions earlier runs rotated aside. Every one of them belongs
+ * to a payload above and to nothing else (`planSweep` is the argument for each),
+ * so leaving them would leave bytes nothing in the app can reach — and taking
+ * them silently would be the app erasing an afternoon's markup while asking about
+ * a row in a list.
+ *
+ * NULL FOR THE ORDINARY CASE, which is most of them: a curation snapshot is one
+ * file, and a reading nobody re-read has nothing beside it. A sentence that
+ * appeared every time and usually said "and nothing else" is a line people learn
+ * to skip.
+ */
+function sweptBelongings(sweeps: readonly Sweep[]): string | null {
+  let trees = 0;
+  let histories = 0;
+  let versions = 0;
+  for (const sweep of sweeps) {
+    if (sweep.treeRoot !== null) trees += 1;
+    histories += sweep.histories;
+    versions += sweep.archivedVersions;
+  }
+  const parts: string[] = [];
+  if (trees > 0) {
+    parts.push(trees === 1
+      ? 'the unpacked working copy of that book'
+      : `${trees} unpacked working copies`);
+  }
+  if (histories > 0) {
+    parts.push(histories === 1 ? 'its undo history' : `${histories} undo histories`);
+  }
+  if (versions > 0) {
+    parts.push(versions === 1
+      ? 'one earlier version an earlier run rotated aside'
+      : `${versions} earlier versions earlier runs rotated aside`);
+  }
+  if (parts.length === 0) return null;
+  const said = parts.length === 1
+    ? parts[0]!
+    : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  return `It also takes ${said}. Those belong to the files above and nothing else in this project `
+    + 'names them.';
 }
 
 /** The two names a refusal about one step has to be able to say out loud. */
@@ -1324,16 +1467,37 @@ export async function deletableStep(dir: string, stepId: string): Promise<StepSu
  * could leave the two records disagreeing about what this project has. The window
  * that does remain is the one below — rows written, files not yet unlinked — and
  * it falls the survivable way on purpose.
+ *
+ * ── AND THE PAYLOAD'S OWN BELONGINGS GO WITH IT ─────────────────────────────
+ *
+ * `planStepSweep` is the rest of the delete, and its comment is the argument: a
+ * translation's EPUB has a working tree unpacked from it and an undo ledger named
+ * after that tree, and a delete that took the row and the file and left those
+ * behind left a directory of somebody's markup that nothing in the app can reach.
+ * The tree's manifest row goes in the same transaction as the ledger surgery, for
+ * the reason the chains do — a row naming a directory that is not there is the
+ * exact state `rotateGenerated` is careful never to leave.
  */
-export async function deleteStep(dir: string, stepId: string): Promise<ProjectLedger> {
+export async function deleteStep(dir: string, stepId: string): Promise<LedgerView> {
   const resolved = deletableProjectDir(dir);
-  const { ledger, orphans } = await withManifest(resolved, async (manifest) => {
+  const { ledger, orphans, sweeps } = await withManifest(resolved, async (manifest) => {
     const deletion = deleteSubtree(ledgerOf(manifest), stepId);
     const destroyed = orphanedPayloads(deletion);
+    const planned = await planStepSweep(resolved, destroyed, manifest);
+    // PROVED AGAIN INSIDE THE TRANSACTION, never trusted from `describeStepDelete`:
+    // a book can be opened between the question and the answer, and this is the
+    // call that unlinks a working tree.
+    refuseOpenPayload(planned, stepOf(ledgerOf(manifest), stepId).label);
+
     manifest.ledger = deletion.ledger;
     manifest.documents = chainsWithout(manifest.documents, destroyed);
+    // The trees are keyed by the origin they were unpacked FROM, which is a
+    // project-relative path spelled exactly as a payload is — so this compares
+    // whole paths and never a basename.
+    const unpacked = new Set(destroyed);
+    manifest.working.trees = manifest.working.trees.filter((row) => !unpacked.has(row.from));
     await writeManifest(resolved, manifest);
-    return { ledger: deletion.ledger, orphans: destroyed };
+    return { ledger: deletion.ledger, orphans: destroyed, sweeps: planned };
   });
   for (const payload of orphans) {
     try {
@@ -1346,8 +1510,25 @@ export async function deleteStep(dir: string, stepId: string): Promise<ProjectLe
       );
     }
   }
+  // `force: true` throughout and no throw, for `deleteDocument`'s reason and this
+  // function's own: by the time this runs the delete has happened as far as the
+  // catalogue is concerned, and failing the call would tell the user their delete
+  // did not work while leaving it done.
+  for (const sweep of sweeps) {
+    for (const target of sweep.files) await fsp.rm(target, { force: true });
+    for (const target of sweep.dirs) await fsp.rm(target, { recursive: true, force: true });
+    // An `archived-<stamp>/` folder that held nothing but this payload's past goes
+    // with it. Emptiness is the test rather than "we emptied it", because one
+    // rotation folder can hold several documents stamped in the same second.
+    for (const archive of sweep.archives) {
+      try {
+        const left = await fsp.readdir(archive);
+        if (left.length === 0) await fsp.rmdir(archive);
+      } catch { /* already gone, or not ours to force */ }
+    }
+  }
   announceProjects();
-  return ledger;
+  return { ledger, rows: chronological(ledger) };
 }
 
 /**
@@ -1363,12 +1544,18 @@ export async function deleteStep(dir: string, stepId: string): Promise<ProjectLe
  * happens the instant the user presses Save, so there is no gap between the
  * gesture and the recording for a pointer move to slip through, and the position
  * now IS the position they pressed it from.
+ *
+ * AND THE POSITION IS STILL THAT ONE AFTERWARDS. A save is retained beside where
+ * you are standing rather than under it (`RETAINED_BESIDE_YOU`, shared/ledger.ts),
+ * so nothing here has to remember not to move the pointer: `appendStep` already
+ * knows what a curate step does to it, which is the point of putting the rule in
+ * the ledger rather than at this call site.
  */
 export async function recordCuration(
   dir: string,
   payload: string,
   params: LedgerParams,
-): Promise<ProjectLedger> {
+): Promise<LedgerView> {
   const resolved = deletableProjectDir(dir);
   const ledger = await withManifest(resolved, async (manifest) => {
     const landing = await landStep(manifest, {
@@ -1389,7 +1576,7 @@ export async function recordCuration(
     return landing.ledger;
   });
   announceProjects();
-  return ledger;
+  return { ledger, rows: chronological(ledger) };
 }
 
 /**

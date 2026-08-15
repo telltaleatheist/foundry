@@ -16,12 +16,22 @@
  *
  * That leaves exactly one hole, and it is on this side of the boundary. The
  * block editor writes through `overlay.save`, which writes the LIVE file. So a
- * person standing on a save is being shown a book rendered from a frozen
- * snapshot while every gesture they make lands somewhere else — they would be
- * editing one thing and looking at another, and the first they would know of it
- * is a Generate that does not contain the strike they just made. The fix is not
- * a cleverer write path; it is that THE EDITOR IS READ-ONLY WHERE THE TWO
- * DIVERGE, and this function is the one place that decides where that is.
+ * person standing on a save is being shown one set of corrections while every
+ * gesture they make lands in another — they would be editing one thing and
+ * looking at another, and the first they would know of it is a Generate that does
+ * not contain the strike they just made. The fix is not a cleverer write path; it
+ * is that THE EDITOR IS READ-ONLY WHERE THE TWO DIVERGE, and this function is the
+ * one place that decides where that is.
+ *
+ * ── And what it is showing while it refuses ─────────────────────────────────
+ *
+ * The snapshot, not the live overlay. `OverlayLoad.frozen` carries the curation
+ * in effect across to the renderer FOR DISPLAY — the whole point of clicking an
+ * old save is to see the book as it was then, and an editor that drew the live
+ * outlines over a frozen rendering was honest about being read-only and wrong
+ * about what it was read-only ABOUT. That does not soften this gate; it sharpens
+ * what it has to say, which is that what is on the page is the save and what a
+ * correction would touch is somewhere else.
  *
  * ── Why it is `curationInEffect` and not `position.action === 'curate'` ─────
  *
@@ -87,10 +97,10 @@ export function curationLock(ledger: ProjectLedger): CurationLock | null {
     snapshot,
     back,
     why: `You are standing on “${snapshot.label}” — a copy of these corrections frozen at the moment `
-      + 'it was saved, which nothing made afterwards is allowed to change. Everything Foundry renders '
-      + 'from here is made with that save, so correcting is off: a strike made now would be written '
-      + 'into the live corrections instead, and you would be editing one book while looking at '
-      + `another. ${wayBack}`,
+      + 'it was saved, which nothing made afterwards is allowed to change. What is marked up on '
+      + 'these pages is that save, and everything Foundry renders from here is made with it, so '
+      + 'correcting is off: a strike made now would be written into your live corrections instead, '
+      + `which are a different set of decisions from the ones you are looking at. ${wayBack}`,
   };
 }
 

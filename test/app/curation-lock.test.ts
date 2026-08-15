@@ -31,6 +31,14 @@
  *   THE WAY OUT IS NAMED. An editor that has quietly stopped responding to the
  *   Delete key with no account of itself is the failure this sentence exists to
  *   prevent, so the explanation names the save and names the row to click.
+ *
+ *   AND PRESSING SAVE DOES NOT LOCK THE EDITOR. This is the one the build got
+ *   wrong: the pointer used to follow every appended step, so freezing a copy of
+ *   somebody's corrections stood them on the frozen copy and took correcting away
+ *   as the reward for saving — punishing the exact gesture the whole restore-point
+ *   idea depends on people making often, and for nothing, since the live overlay
+ *   is byte for byte the file that was just frozen. Standing on a save is a
+ *   deliberate act: you click the row.
  */
 
 import { describe, test } from 'node:test';
@@ -56,8 +64,10 @@ function step(over: Partial<LedgerStep> & Pick<LedgerStep, 'id' | 'parent' | 'ac
 /**
  * import → read → save → a translation made from the save.
  *
- * The pointer is left wherever the caller puts it; `appendStep` moves it onto the
- * newest, so a test that wants an earlier row says so.
+ * The pointer is left wherever the caller puts it. `appendStep` moves it onto the
+ * newest for every action BUT a save — a save is retained beside where you are
+ * standing — so this ends up on the translation, and a test that wants any other
+ * row says so.
  */
 function saved(): ProjectLedger {
   let ledger = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100));
@@ -146,9 +156,75 @@ describe('standing where a rendering is frozen holds the editor', () => {
       id: 's4', parent: 's2', action: 'curate', payload: 'curations/two.json', createdAt: 500,
       params: { generation: GENERATION, amendments: 41 },
     }));
-    const lock = curationLock(ledger);
+    // Stood on by hand, because making it did not stand anybody on it.
+    const lock = curationLock({ ...ledger, position: 's4' });
     assert.equal(lock?.snapshot.id, 's4');
     assert.equal(lock?.back?.id, 's1');
+  });
+});
+
+describe('pressing Save leaves the editor exactly as it was', () => {
+  /**
+   * The bug this whole rule is the fix for, written as the gesture that hit it:
+   * correcting a scan, pressing Save, and finding the Delete key dead.
+   */
+  test('freezing a copy while standing on the reading does not stand you on it', () => {
+    let ledger = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100));
+    ledger = appendStep(ledger, step({ id: 's1', parent: 's0', action: 'read', createdAt: 200 }));
+    assert.equal(standingOn(ledger)?.id, 's1');
+
+    ledger = appendStep(ledger, step({
+      id: 's2', parent: 's1', action: 'curate', payload: 'curations/one.json', createdAt: 300,
+      params: { generation: GENERATION, amendments: 23 },
+    }));
+    assert.equal(standingOn(ledger)?.id, 's1');
+    assert.equal(curationLock(ledger), null);
+    assert.equal(editingIsHeld(ledger), false);
+  });
+
+  test('a second save from the same place is still a save, and still leaves you there', () => {
+    // Somebody who saves often is the person this design is for, and every one of
+    // those presses has to be free. Two saves, two rows, and the editor never went
+    // read-only in between.
+    let ledger = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100));
+    ledger = appendStep(ledger, step({ id: 's1', parent: 's0', action: 'read', createdAt: 200 }));
+    for (const [id, at] of [['s2', 300], ['s3', 400]] as const) {
+      ledger = appendStep(ledger, step({
+        id, parent: 's1', action: 'curate', payload: `curations/${id}.json`, createdAt: at,
+        params: { generation: GENERATION, amendments: 4 },
+      }));
+      assert.equal(curationLock(ledger), null);
+    }
+    assert.deepEqual(ledger.steps.map((row) => row.id), ['s0', 's1', 's2', 's3']);
+    assert.equal(standingOn(ledger)?.id, 's1');
+  });
+
+  test('a project with NO pointer written down does not acquire one by saving', () => {
+    /*
+     * THE BACK DOOR THIS RULE HAD TO CLOSE. An absent pointer means THE NEWEST
+     * STEP, and appending is exactly what makes a save the newest — so a ledger
+     * that never wrote its position down would have had the pointer follow the
+     * save anyway, silently, through the field that exists to spare the manifest a
+     * line. The position is written out on a save for precisely this.
+     */
+    let ledger = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100));
+    ledger = { ...ledger, position: undefined };
+    ledger = appendStep(ledger, step({ id: 's1', parent: 's0', action: 'read', createdAt: 200 }));
+    ledger = { ...ledger, position: undefined };
+    ledger = appendStep(ledger, step({
+      id: 's2', parent: 's1', action: 'curate', payload: 'curations/one.json', createdAt: 300,
+      params: { generation: GENERATION, amendments: 1 },
+    }));
+    assert.equal(ledger.position, 's1');
+    assert.equal(standingOn(ledger)?.id, 's1');
+    assert.equal(curationLock(ledger), null);
+  });
+
+  test('standing on the save is still one click away, and still locks', () => {
+    // The point is not that a save can never be stood on — it is that standing
+    // there is a deliberate act rather than the consequence of saving.
+    const lock = curationLock({ ...saved(), position: 's2' });
+    assert.equal(lock?.snapshot.id, 's2');
   });
 });
 
@@ -175,7 +251,8 @@ describe('the explanation names the save, the way out, and no filenames', () => 
       id: 's1', parent: 's0', action: 'curate', payload: 'curations/one.json', createdAt: 200,
       params: { amendments: 2 },
     }));
-    const lock = curationLock(ledger);
+    // Stood on deliberately: making the save left the pointer on the import.
+    const lock = curationLock({ ...ledger, position: 's1' });
     assert.equal(lock?.back?.id, 's0');
     assert.match(lock!.why, /Imported/);
   });

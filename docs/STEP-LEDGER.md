@@ -89,6 +89,18 @@ overlay keeps going; the snapshot never changes again.
   people making often, and doing it for nothing, since the live overlay is
   byte-identical to the snapshot at that moment and is the editable one. Standing
   on a frozen save stays a deliberate act: you click the row.
+- **Standing on a save SHOWS that save** (ruling, 2026-08-15). The block editor
+  used to render the pages from the snapshot while drawing the *live* overlay's
+  outlines, read-only, with a banner admitting it — honest, and the wrong
+  picture: the whole point of clicking an old save is to see the book as it was
+  then. `locateOverlay` already computes `rendering` (the snapshot in effect)
+  separately from `file` (always the live overlay, so an edit can never rewrite a
+  save), and that distinction is load-bearing and stays exactly as it is. What
+  changed is that `rendering` now crosses IPC as `OverlayLoad.frozen`, **for
+  display only**: it is a `FrozenCuration`, a type the write path will not accept,
+  so the display copy cannot become a write however it is passed around. The
+  read-only gate (`curation-lock.ts`) is unchanged; it just now refuses edits to a
+  book the user can actually see.
 - Generation binding: a snapshot records the reading generation it was made
   under, same as the live overlay does today. The existing archive-on-mismatch
   machinery stays for the live overlay; committed snapshots are already
@@ -164,6 +176,18 @@ english translate step?"). Rules:
 - Deletion is a real destruction of payload files plus manifest surgery, behind
   main-process IPC with the same describe/confirm split the document delete
   uses.
+- **A payload's belongings go with it** (2026-08-15). `planSweep` — the document
+  delete's own answer to "what belongs to this file alone" — is reused, so a
+  deleted translation takes the working tree unpacked from it, that tree's
+  manifest row, its undo histories and the versions earlier runs rotated aside.
+  All of it is named in the confirm first: a card may not destroy something it
+  did not mention.
+- **A step delete refuses an open book**, on the *document* delete's model rather
+  than the project delete's: main refuses while the working tree is held
+  (`workingTreeHeld` — the narrow test on this payload's own tree, not
+  `openBookIn`, because throwing away the English translation while reading the
+  scan is the ordinary case), and the renderer closes the doomed tabs between the
+  confirm and the call, since only the renderer can.
 
 ## Storage
 

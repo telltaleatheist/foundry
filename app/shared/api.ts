@@ -438,6 +438,14 @@ export interface FoundryApi {
      * The corrections as they stand, and one sentence about how that went. A
      * clean overlay with a notice means a file was found and could not be used —
      * it has been archived aside, and the sentence names where it went.
+     *
+     * TWO CURATIONS COME BACK AND ONLY ONE OF THEM MAY BE WRITTEN. `file` is the
+     * live overlay, which is where every correction goes; `frozen` is the
+     * committed snapshot a rendering at the position is made with, handed over so
+     * the editor can DRAW the save somebody is standing on rather than drawing the
+     * live outlines over a book that renders frozen. It is a type the write path
+     * will not accept, so "display only" is enforced by the compiler rather than
+     * by remembering. See `OverlayLoad.frozen`.
      */
     load(pdfPath: string): Promise<OverlayLoad>;
     /**
@@ -476,11 +484,23 @@ export interface FoundryApi {
      * would put a row reading "Saved corrections" between the reading and the
      * translation for a book nobody has curated.
      *
-     * Resolves with the whole updated ledger, so the caller repaints the history
+     * A SAVE IS NOT A NAME, which is why this takes a path and nothing else. The
+     * row reads "Saved corrections (23)", composed by `labelFor` from the count in
+     * the app's own voice, exactly as every other step is named by its action —
+     * asking for a title would put one row of somebody's history in a different
+     * register from the rest, and it would be the row they left blank.
+     *
+     * AND IT DOES NOT MOVE THE POSITION. Every other action stands you on what it
+     * just made; a save retains what you have and leaves you holding it, so the
+     * block editor is still live the moment after you press it. See
+     * `RETAINED_BESIDE_YOU` in shared/ledger.ts for why the alternative punished
+     * the one gesture this whole feature depends on people making often.
+     *
+     * Resolves with the ledger AND the rows, so the caller repaints the history
      * from the answer rather than asking for it again and drawing a list from
      * before its own commit.
      */
-    commit(pdfPath: string): Promise<ProjectLedger>;
+    commit(pdfPath: string): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
   };
 
   /**
@@ -511,10 +531,14 @@ export interface FoundryApi {
    *
    * ── And why the ordering never crosses the boundary ───────────────────────
    *
-   * `read` answers with the rows already composed. The chronological order and the
-   * "from …" annotation are the whole of this design's concession to the tree, and
-   * a renderer deriving them would be a second implementation of the one rule that
-   * decides whether the flat list is misleading about what was made from what.
+   * EVERY ONE OF THESE ANSWERS WITH THE ROWS ALREADY COMPOSED. The chronological
+   * order and the "from …" annotation are the whole of this design's concession to
+   * the tree, and a renderer deriving them would be a second implementation of the
+   * one rule that decides whether the flat list is misleading about what was made
+   * from what. Three of these used to hand back a bare ledger, which left the
+   * renderer making a second `read` after every pointer move and every delete —
+   * two round trips for one gesture, and the second answer describes a catalogue a
+   * moment later than the first.
    */
   ledger: {
     /**
@@ -527,7 +551,8 @@ export interface FoundryApi {
      */
     read(projectDir: string): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
     /**
-     * Stand on a different step. Answers with the ledger as it now stands.
+     * Stand on a different step. Answers with the ledger and rows as they now
+     * stand — the same rows, since a pointer move changes no step and no order.
      *
      * FREE, INSTANT AND UNCONFIRMED — one line of the manifest, no job, no
      * rendering, no file written. That is the promise every history panel makes
@@ -539,7 +564,7 @@ export interface FoundryApi {
      * different ledgers, and standing somewhere plausible instead would show
      * somebody a book they did not ask for.
      */
-    go(projectDir: string, stepId: string): Promise<ProjectLedger>;
+    go(projectDir: string, stepId: string): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
     /**
      * What deleting this step would take — the facts for the confirm card.
      *
@@ -556,21 +581,29 @@ export interface FoundryApi {
      * IT ALSO PROVES THE DELETE IS ALLOWED, so a card is never put on screen for
      * something the delete would refuse a click later. The origin rejects here:
      * deleting the import is deleting the project, and `projects.delete` does
-     * that with its own ceremony.
+     * that with its own ceremony. So does a book this window still has open,
+     * which is why the answer carries `files` — the caller closes those tabs
+     * between the yes and the delete, exactly as the document delete does.
      */
     describeDelete(projectDir: string, stepId: string): Promise<StepDeletion>;
     /**
      * Do it: the step and its whole subtree off the ledger, their payloads off
-     * the disk. Answers with the ledger that is left.
+     * the disk. Answers with the ledger and the rows that are left.
      *
      * ASKING IS THE CALLER'S JOB; PROVING IS STILL MAIN'S. This runs the same
      * refusals `describeDelete` ran, because a renderer that skipped the question
-     * must meet the same answer — including the origin's, which rejects by name.
+     * must meet the same answer — including the origin's, which rejects by name,
+     * and the open book's, which does not lift until the tab is closed.
+     *
+     * IT TAKES THE PAYLOAD'S BELONGINGS TOO — the working tree unpacked from it,
+     * the undo ledgers named after that tree, the versions earlier runs rotated
+     * aside. A delete that left those behind left a directory of somebody's markup
+     * that nothing in the app could ever reach again.
      *
      * It really deletes. Nothing is rotated aside and there is no copy anywhere
      * else; a payload that survives is one another step still names.
      */
-    delete(projectDir: string, stepId: string): Promise<ProjectLedger>;
+    delete(projectDir: string, stepId: string): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
   };
 
   /**

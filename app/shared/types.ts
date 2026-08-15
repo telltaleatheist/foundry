@@ -1631,8 +1631,34 @@ export interface PdfDetectedChapter {
  * silently empty.
  */
 export interface OverlayLoad {
-  /** The file as it stands, or an empty one bound to the current reading. */
+  /**
+   * THE LIVE FILE as it stands, or an empty one bound to the current reading —
+   * and the only thing in this answer anything is allowed to write.
+   */
   file: OverlayFileWire;
+  /**
+   * The frozen curation a rendering at the position is made with, FOR DISPLAY,
+   * or null when the live file is that curation.
+   *
+   * ── Why the answer carries two curations rather than resolving to one ───────
+   *
+   * `locateOverlay` has kept these apart on the disk side since the day snapshots
+   * existed: `file` is where a correction goes and `rendering` is what a Generate
+   * reads, because resolving one to the other would mean the next strike anybody
+   * made while standing on a save silently rewrote that save. What was missing is
+   * that `rendering` never crossed IPC, so the block editor drew the LIVE
+   * outlines over a book that renders frozen — read-only and honest about it, and
+   * showing the wrong corrections. The entire point of clicking an old save is to
+   * see the book as it was then.
+   *
+   * NULL IS THE ORDINARY ANSWER, and it is null for every project nobody has
+   * pressed Save in and for every position that is not standing on a save. It is
+   * also null for a snapshot this app would not read — one bound to an earlier
+   * reading, or one that will not parse — because outlines drawn from a curation
+   * about different blocks are the one failure worse than showing none, and
+   * `notice` says which happened.
+   */
+  frozen: FrozenOverlayWire | null;
   notice: string | null;
 }
 
@@ -1655,6 +1681,22 @@ export interface OverlayFileWire {
   }[];
   /** Absent means the engine decides. See `OverlayFile.chapters`. */
   chapters?: { at: { page: number; order: number; part?: number }; title: string }[];
+  /**
+   * A phantom, carried across the wire for the reason `OverlayFile.frozen`
+   * carries it: it makes a `FrozenOverlayWire` unassignable here, so the frozen
+   * curation the renderer is handed for DISPLAY cannot be passed to
+   * `overlay.save` — which takes this type — however it is passed around in
+   * between. Nothing ever sets it and nothing ever reads it.
+   */
+  frozen?: never;
+}
+
+/**
+ * A committed snapshot as it crosses IPC — the same bytes, marked as the copy
+ * that may be shown and not written. See `OverlayLoad.frozen`.
+ */
+export interface FrozenOverlayWire extends Omit<OverlayFileWire, 'frozen'> {
+  frozen: true;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1900,4 +1942,43 @@ export interface StepDeletion {
    * not a surprise is the one where they read the list first.
    */
   casualties: StepCasualty[];
+  /**
+   * The payload files this delete would actually destroy, as absolute paths, so
+   * the window can let go of any it has open BEFORE main is asked to unlink them.
+   *
+   * ── Why the renderer is told, when main refuses anyway ──────────────────────
+   *
+   * The document delete settled this shape and the step delete follows it: MAIN
+   * REFUSES an open book (`deleteDocument` throws while the working tree is held)
+   * and the RENDERER CLOSES THE TAB between the confirm and the call, because
+   * only the renderer can. Main cannot close a tab — tabs are the window's — and
+   * without the close, deleting a translation whose EPUB is open would meet
+   * main's refusal one line after the user said yes, which is a dialog that asks
+   * a question and then declines to act on the answer.
+   *
+   * ABSOLUTE, because that is what a tab's path is, and matching a tab by
+   * anything less than a whole path is the basename matching this codebase has
+   * already paid for twice. Only the files that are genuinely being destroyed are
+   * listed: a payload some surviving step still names stays on disk, and closing
+   * the book showing it would be shutting a document nothing happened to.
+   */
+  files: string[];
+  /**
+   * What ELSE goes with those payloads, in a sentence, or null when it is only
+   * the files themselves.
+   *
+   * ── Because a confirm may not destroy something it did not name ─────────────
+   *
+   * A payload does not travel alone. A translation's EPUB has a working copy
+   * unpacked from it, an undo history named after that copy, and however many
+   * versions earlier runs rotated aside; a reading's bank has its own archived
+   * predecessors. All of it is swept, because a delete that left it would leave
+   * bytes nothing in the app can ever reach again — and all of it therefore has to
+   * be said out loud first, in the same card, before somebody agrees.
+   *
+   * A SENTENCE RATHER THAN THREE COUNTS, for `StepCasualty.cost`'s reason: main
+   * is the only side that knows what is on the disk, and a renderer composing this
+   * from numbers would arrive at "and 3 other items" within a month.
+   */
+  belongings: string | null;
 }

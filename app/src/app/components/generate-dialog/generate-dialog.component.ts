@@ -330,9 +330,13 @@ export class GenerateDialogComponent {
   protected readonly curated = computed(() => {
     const tab = this.tabs.activeDocument();
     if (tab === null || tab.kind !== 'pdf') return false;
-    const view = this.tabs.blocksFor(tab.id);
-    return (view?.overlay?.amendments.length ?? 0) > 0
-      || view?.overlay?.chapters !== undefined;
+    // THE CURATION THIS POSITION RENDERS WITH, not the live one — which is the
+    // same file main will hand the engine as `--overlay` (`renderingOverlay`).
+    // Standing on a save, the live overlay is not what this Generate applies, and
+    // a sentence composed from it would be describing a different book than the
+    // one about to be made.
+    const shown = this.tabs.curationShown(tab.id);
+    return (shown?.amendments.length ?? 0) > 0 || shown?.chapters !== undefined;
   });
 
   protected readonly choices: readonly { kind: ConversionKind; label: string; blurb: string }[] = [

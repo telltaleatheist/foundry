@@ -38,6 +38,7 @@ import {
   overlayText,
   parseOverlay,
   parseTargetKey,
+  frozenCuration,
   setChapters,
   targetKey,
   type OverlayFile,
@@ -357,4 +358,69 @@ test('an overlay that names no reading at all is refused by name', () => {
   const fate = overlayFate('', GENERATION);
   assert.equal(fate.use, false);
   assert.ok(!fate.use && fate.why.includes('unrecorded'));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE OTHER CURATION: a frozen save, shown but never written
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Two curations are on screen at once the moment somebody presses Save: the LIVE
+// overlay, which is where a correction goes, and a committed SNAPSHOT, which is
+// what a rendering at the position is made with. Standing on the save, the block
+// editor draws the snapshot — the whole reason to click an old save is to see the
+// book as it was then — while every write still lands in the live file.
+//
+// The danger in handing a second curation to the renderer is that it becomes a
+// write. `FrozenCuration` is the answer: it carries a field `OverlayFile` declares
+// as `never`, so the compiler refuses it everywhere a curation is written, and the
+// `@ts-expect-error` lines below are that refusal asserted rather than assumed.
+// They are checked by `tsc --noEmit` from the repo root, which compiles `test/`.
+
+test('a frozen curation says the same thing as the file it was copied from', () => {
+  const file = parseOverlay(overlayOf({
+    amendments: [{ at: { page: 7, order: 14 }, strike: true }],
+    chapters: [{ at: { page: 1, order: 0 }, title: 'One' }],
+  }), 'curations/one.json');
+  const shown = frozenCuration(file);
+
+  assert.equal(shown.frozen, true);
+  assert.equal(shown.generation, GENERATION);
+  // The decisions a page is outlined from are the same decisions either way —
+  // which is what makes drawing the snapshot a change of WHICH curation rather
+  // than a second way of reading one.
+  assert.deepEqual([...decisionsOf(shown)], [...decisionsOf(file)]);
+  assert.deepEqual(shown.chapters, file.chapters);
+});
+
+test('a spine nobody stated stays absent rather than becoming an empty one', () => {
+  // ABSENT and EMPTY are different claims about a book — "the engine decides"
+  // against "this book does not divide" — and a copy that flattened them would
+  // make every save of an uncurated spine assert the second one.
+  const shown = frozenCuration(emptyOverlay(GENERATION));
+  assert.equal('chapters' in shown, false);
+  assert.deepEqual(shown.amendments, []);
+});
+
+test('nothing can write what it was handed to display', () => {
+  const shown = frozenCuration(parseOverlay(overlayOf({
+    amendments: [{ at: { page: 7, order: 14 }, strike: true }],
+  }), 'curations/one.json'));
+
+  /*
+   * THE ASSERTION IS THE SUPPRESSION ITSELF. `@ts-expect-error` fails the build
+   * when the line it guards COMPILES, so each of these three is a test that the
+   * refusal is still there — the day somebody widens one of these signatures to
+   * `CurationContent` for convenience, this file stops building and says which
+   * door was left open. The calls are made for real underneath, because they are
+   * pure functions over a copy and nothing on disk hears about them; what would
+   * be a bug is only ever a call to `overlay.save` with the result.
+   */
+  // @ts-expect-error a frozen curation is not a file this app may amend
+  const amended = amendOverlay(shown, { page: 7, order: 15 }, 'strike', 'true');
+  assert.equal(amended.amendments.length, 2);
+  // @ts-expect-error nor one whose spine may be rewritten
+  const respined = setChapters(shown, []);
+  assert.deepEqual(respined.chapters, []);
+  // @ts-expect-error nor one that may be printed back out as a curation file
+  assert.match(overlayText(shown), /"overlay": 1/);
 });

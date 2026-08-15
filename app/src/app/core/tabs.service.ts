@@ -12,6 +12,8 @@ import {
   decisionsOf,
   parseTargetKey,
   setChapters,
+  type CurationContent,
+  type FrozenCuration,
   type OverlayChapter,
   type OverlayDecision,
   type OverlayField,
@@ -588,7 +590,61 @@ export class TabsService {
         }
       });
     });
+
+    /**
+     * THE POINTER MOVED, so the pages redraw with the curation that position
+     * renders with — the frozen save, or the live overlay again.
+     *
+     * ── Why a pointer move needs anything at all ────────────────────────────
+     *
+     * Standing on a save means every rendering from here is made with that
+     * snapshot, and the whole reason to click the row is to SEE it. The blocks
+     * themselves do not move — they are the model's answer over the bank, and the
+     * bank is the same bank — so this asks for the curation and nothing else: one
+     * file read, no engine, no re-measure of five hundred pages. That is what
+     * keeps the click as free as the panel promises, while still showing the book
+     * as it was.
+     *
+     * ONE READ PER ACTUAL MOVE, which is what `positionShown` is for. The effect
+     * runs whenever anything in any held ledger changes — a job landing in another
+     * book, a title being noticed — and re-reading a curation on every one of those
+     * would put an IPC call behind events that have nothing to do with this tab.
+     *
+     * ONLY TABS IN THE MODE. A scan nobody has opened the block editor on has no
+     * curation on screen to be wrong.
+     */
+    effect(() => {
+      const moved: { id: string; path: string; at: string }[] = [];
+      for (const tab of this.all()) {
+        if (tab.kind !== 'pdf' || !tab.blockView) continue;
+        const at = this.positionOfTab(tab.id);
+        if (this.positionShown.get(tab.id) === at) continue;
+        moved.push({ id: tab.id, path: tab.path, at });
+      }
+      untracked(() => {
+        for (const tab of moved) {
+          this.positionShown.set(tab.id, tab.at);
+          void this.refreshCuration(tab.id, tab.path);
+        }
+      });
+    });
   }
+
+  /**
+   * The step this tab's project is standing on, as a string this can compare —
+   * `''` for a document in no project and for a ledger nobody has read yet.
+   *
+   * The two are ONE ANSWER on purpose. Neither has a position to draw a frozen
+   * curation from, and a tab that moves between them has nothing to re-read.
+   */
+  private positionOfTab(tabId: string): string {
+    const tab = this.byId(tabId);
+    if (tab === null) return '';
+    return this.ledger.standingIn(this.projectDirOf(tab))?.id ?? '';
+  }
+
+  /** The position each block-view tab's curation on screen was read for. */
+  private readonly positionShown = new Map<string, string>();
 
   /**
    * What to call a document at this path — the book, and the file only as a last
@@ -1183,6 +1239,33 @@ export class TabsService {
    * the thing they just told the app to destroy, is the app arguing with an
    * answer it already has.
    */
+  /**
+   * Close every tab showing one of these files — the window letting go of what is
+   * about to be erased.
+   *
+   * ── Why it is the paths and not a tab id ────────────────────────────────────
+   *
+   * A step delete names PAYLOADS, not tabs: main is destroying `generated/<book>
+   * (en).epub` and knows nothing about which panes this window has open, and only
+   * this side can close one. So the caller hands over the list main gave it and
+   * this matches whole paths, folded — never a basename, because a project holds
+   * `archive/Book.pdf`, `working/Book.pdf` and `generated/Book.pdf` at once and
+   * closing by last segment would shut the scan for a delete aimed at a reprint.
+   *
+   * WITHOUT ASKING. Every caller has already put a confirm on screen naming
+   * exactly these losses, and a second dialog about unsaved changes in a document
+   * that is being destroyed is a question with no useful answer.
+   *
+   * A COPY OF THE LIST FIRST, because closing mutates the very signal this reads.
+   */
+  async closeShowing(files: readonly string[]): Promise<void> {
+    const doomed = new Set(files.map((file) => fold(file)));
+    const ids = this.all()
+      .filter((tab) => doomed.has(fold(tab.path)))
+      .map((tab) => tab.id);
+    for (const id of ids) await this.close(id, false);
+  }
+
   async close(id: string, ask = true): Promise<void> {
     const doomed = this.all().find((candidate) => candidate.id === id);
     if (!doomed) return;
@@ -1466,25 +1549,46 @@ export class TabsService {
      * `ensure` is silent and idempotent: a project already held is a no-op.
      */
     this.ledger.ensure(this.projects.projectFor(pdfPath)?.dir ?? null);
-    this.setBlockView(tabId, { pages: [], detected: [], overlay: null, problem: null, loading: true });
+    this.setBlockView(tabId, {
+      pages: [], detected: [], overlay: null, frozen: null, problem: null, loading: true,
+    });
     try {
       const blocks = await api.overlay.blocks(pdfPath);
       if (!this.stillInBlockView(tabId)) return;
       if (!blocks.ok) {
         this.setBlockView(tabId, {
-          pages: [], detected: [], overlay: null, problem: blocks.reason, loading: false,
+          pages: [], detected: [], overlay: null, frozen: null, problem: blocks.reason, loading: false,
         });
         return;
       }
+      /*
+       * THE POSITION THIS LOAD IS ABOUT, read BEFORE the call and not after it.
+       * Somebody who clicks a save row while the mode is still coming up has moved
+       * the pointer under this load, and recording where they ended up would tell
+       * the effect below that the pre-move curation on screen is the one they
+       * asked for. Recorded as it was asked, the effect sees the mismatch and
+       * re-reads — which is the same recovery a move at any other moment gets.
+       */
+      const at = this.positionOfTab(tabId);
       const loaded: OverlayLoad = await api.overlay.load(pdfPath);
       if (!this.stillInBlockView(tabId)) return;
       this.setBlockView(tabId, {
         pages: blocks.pages,
         detected: blocks.chapters,
         overlay: loaded.file as OverlayFile,
+        /*
+         * THE SAVE THIS POSITION RENDERS WITH, drawn instead of the live outlines
+         * when there is one. Main decides which — `locateOverlay.rendering` is the
+         * same answer the engine's `--overlay` gets — so the pages and a Generate
+         * from here can never be about two different curations.
+         */
+        frozen: loaded.frozen as FrozenCuration | null,
         problem: null,
         loading: false,
       });
+      // So the effect that watches for a pointer move does not immediately ask
+      // again for a curation that has just arrived.
+      this.positionShown.set(tabId, at);
       if (loaded.notice !== null) this.notice.set(loaded.notice);
       /*
        * AND THE UNDO HISTORY, from the same pair of files. `restoreLedger` is
@@ -1502,6 +1606,7 @@ export class TabsService {
         pages: [],
         detected: [],
         overlay: null,
+        frozen: null,
         problem: err instanceof Error ? err.message : String(err),
         loading: false,
       });
@@ -1537,7 +1642,7 @@ export class TabsService {
       ...state,
       elements,
       byKey,
-      decisions: state.overlay === null ? new Map() : decisionsOf(state.overlay),
+      decisions: decisionsShown(state),
     }));
   }
 
@@ -1552,8 +1657,59 @@ export class TabsService {
     this.blockViews.update((map) => {
       const view = map.get(tabId);
       if (view === undefined) return map;
-      return new Map(map).set(tabId, { ...view, overlay: file, decisions: decisionsOf(file) });
+      const next = { ...view, overlay: file };
+      // `decisionsShown` and not `decisionsOf(file)`, so that a gesture cannot
+      // repaint the pages with the live curation while a frozen one is what this
+      // position renders. It cannot happen — every gesture is refused at the three
+      // doors while a save is in effect — and the derivation is asked the one way
+      // anyway, because "it cannot happen" is how it eventually does.
+      return new Map(map).set(tabId, { ...next, decisions: decisionsShown(next) });
     });
+  }
+
+  /**
+   * The frozen save if the position is standing on one, and the live overlay
+   * otherwise — the ONE overlay read this window makes on a pointer move.
+   *
+   * ── Why this is not `loadBlockView` ─────────────────────────────────────────
+   *
+   * Clicking a row in the history is meant to be instant, and the effect that
+   * calls this fires on every one of them. Reloading the whole mode would put a
+   * spawn of the engine and a re-measure of five hundred pages behind the one
+   * gesture in this app that genuinely costs nothing — see the delete's own effect
+   * for why THAT one is allowed to. The blocks do not move when the pointer moves:
+   * they are the model's answer over the bank, and what changes is which
+   * corrections are drawn over them. So this re-reads the curation and nothing
+   * else, which is a few kilobytes off a disk.
+   */
+  private async refreshCuration(tabId: string, pdfPath: string): Promise<void> {
+    if (!api) return;
+    try {
+      const loaded = await api.overlay.load(pdfPath);
+      if (!this.stillInBlockView(tabId)) return;
+      this.blockViews.update((map) => {
+        const view = map.get(tabId);
+        if (view === undefined) return map;
+        const next: BlockView = {
+          ...view,
+          overlay: loaded.file as OverlayFile,
+          frozen: loaded.frozen as FrozenCuration | null,
+        };
+        return new Map(map).set(tabId, { ...next, decisions: decisionsShown(next) });
+      });
+      // Main's sentence, and it is the only account of a snapshot it would not
+      // draw: standing on a save whose reading has moved shows the plain blocks,
+      // and a mode that did that silently would look like a save that lost its
+      // corrections.
+      if (loaded.notice !== null) this.notice.set(loaded.notice);
+    } catch (err) {
+      // The position moved and the corrections could not be re-read, so what is on
+      // screen is now about a step nobody is standing on. Said out loud rather
+      // than left: the pages still draw, and the sentence is why they are wrong.
+      if (this.stillInBlockView(tabId)) {
+        this.notice.set(err instanceof Error ? err.message : String(err));
+      }
+    }
   }
 
   private forgetBlockView(tabId: string): void {
@@ -1562,6 +1718,10 @@ export class TabsService {
       next.delete(tabId);
       return next;
     });
+    // The mode is gone, so there is no curation on screen and no position it was
+    // read for. Left behind, the entry would tell the effect that a tab reopened
+    // on the same id is already showing a curation it has never read.
+    this.positionShown.delete(tabId);
     this.forgetFrameState(tabId);
   }
 
@@ -1676,22 +1836,25 @@ export class TabsService {
       return;
     }
     try {
-      // The whole updated ledger comes back, so the row appears from the answer
-      // rather than from a second question asked of a catalogue that has moved on.
-      await this.ledger.adopt(dir, await api.overlay.commit(tab.path));
+      // The whole updated history comes back — ledger and rows — so the new row
+      // appears from the answer rather than from a second question asked of a
+      // catalogue that has moved on.
+      this.ledger.adopt(dir, await api.overlay.commit(tab.path));
       /*
-       * IT SAYS THAT CORRECTING HAS STOPPED, because it has, and finding that out
-       * by pressing Delete and being refused would make a successful Save read as
-       * a fault. Main moves the pointer onto the step a run just made — that is
-       * `appendStep`'s rule and it is right, because what you just made is what
-       * the panes should be showing — and the pointer now standing on a frozen
-       * save is exactly the state the editor must not write in. The way back is
-       * one click, and this names it.
+       * IT SAYS THAT NOTHING HAS BEEN TAKEN AWAY, because the thing people expect
+       * of a Save in this app is the thing it deliberately does not do.
+       *
+       * This sentence used to explain that correcting had just stopped, which was
+       * true and was the bug: the pointer followed the snapshot, so pressing Save
+       * made the editor read-only that instant. A save retains what you have and
+       * leaves you holding it (`RETAINED_BESIDE_YOU`, shared/ledger.ts), so the
+       * live corrections are still live and still exactly what they were — and
+       * what is worth saying is that the copy is now a row you can come back to.
        */
       this.notice.set(
         'Saved. That copy of your corrections is in this book’s history now and nothing later can '
-        + 'change it — which is why correcting is off while you are standing on it. Click the '
-        + 'reading in Steps to carry on where you left off; the save stays exactly as it is.',
+        + 'change it. Carry on correcting — you are still on your live corrections, and this save '
+        + 'stays exactly as it is until you click its row in Steps to stand on it.',
       );
     } catch (err) {
       this.notice.set(err instanceof Error ? err.message : String(err));
@@ -1845,11 +2008,28 @@ export class TabsService {
    */
   chaptersFor(tabId: string): { chapters: readonly OverlayChapter[]; confirmed: boolean } {
     const view = this.blocksFor(tabId);
-    if (view === null || view.overlay === null) return { chapters: [], confirmed: false };
-    if (view.overlay.chapters !== undefined) {
-      return { chapters: view.overlay.chapters, confirmed: true };
-    }
+    if (view === null) return { chapters: [], confirmed: false };
+    // THE SPINE OF WHAT IS ON SCREEN, which is the frozen save when the position
+    // stands on one. A save is as much a statement about where the book divides as
+    // it is about which paragraphs are struck, and a Chapters section that kept
+    // showing the live list beside frozen outlines would be half of one curation
+    // and half of another.
+    const shown = shownCuration(view);
+    if (shown === null) return { chapters: [], confirmed: false };
+    if (shown.chapters !== undefined) return { chapters: shown.chapters, confirmed: true };
     return { chapters: seedChapters(view.detected), confirmed: false };
+  }
+
+  /**
+   * The curation this document is SHOWING — for a surface that has to say whether
+   * there is one, without being able to write it.
+   *
+   * `CurationContent` rather than `OverlayFile`, so a caller cannot pass what it
+   * was given here to anything that writes: the answer may be a frozen save.
+   */
+  curationShown(tabId: string | null): CurationContent | null {
+    const view = this.blocksFor(tabId);
+    return view === null ? null : shownCuration(view);
   }
 
   /** "The book divides here" — a chapter added at the one selected block. */
@@ -3691,9 +3871,33 @@ export interface BlockView {
   byKey: ReadonlyMap<string, BlockElement>;
   /** Where the ENGINE would divide the book. What the chapter list seeds from. */
   detected: readonly PdfDetectedChapter[];
-  /** The curation, or null while it is being read (or could not be). */
+  /**
+   * THE LIVE CURATION — the write target, and null while it is being read (or
+   * could not be).
+   *
+   * It is the live file whatever the position is, exactly as `locateOverlay.file`
+   * is on the disk side: this is where a correction goes, and resolving it to a
+   * snapshot while somebody stands on one would mean the next strike rewrote a
+   * save. What is DRAWN is `shown` below.
+   */
   overlay: OverlayFile | null;
-  /** Every amendment by target — derived once per change, read once per outline. */
+  /**
+   * The frozen save the position renders with, when it is standing on one — the
+   * thing the outlines, the tallies and the chapter list are made of.
+   *
+   * NULL IS THE ORDINARY ANSWER and means the live overlay is what is being
+   * rendered, which is every project nobody has pressed Save in and every position
+   * that is not standing where a save is in effect.
+   *
+   * ITS TYPE IS NOT WRITABLE. `FrozenCuration` is not assignable to `OverlayFile`,
+   * so `amendOverlay`, `setChapters` and `overlay.save` all refuse it at compile
+   * time — the display copy cannot become a write however it is passed around.
+   */
+  frozen: FrozenCuration | null;
+  /**
+   * Every amendment by target — derived once per change, read once per outline,
+   * and derived from WHAT IS BEING SHOWN rather than from what would be written.
+   */
   decisions: ReadonlyMap<string, OverlayDecision>;
   /** Why there is nothing to correct, when that happens. Never swallowed. */
   problem: string | null;
@@ -3754,6 +3958,35 @@ function elementsOfPage(page: PdfBlockPage): BlockElement[] {
     });
   }
   return elements.sort((a, b) => a.order - b.order);
+}
+
+/**
+ * THE CURATION THE PAGES ARE DRAWN FROM: the frozen save when the position stands
+ * on one, and the live overlay otherwise.
+ *
+ * ── The wrong picture this replaces ─────────────────────────────────────────
+ *
+ * Standing on a save used to draw the LIVE outlines, read-only, with a banner
+ * admitting it. That is honest and it is the wrong book: everything Foundry
+ * renders from that position is made with the snapshot, and the entire reason to
+ * click an old save is to see what it looks like. So a person comparing two saves
+ * saw one set of corrections twice, and the only way to find out what a save
+ * actually contained was to export from it.
+ *
+ * `frozen` WINS WHEREVER IT EXISTS, and every derivation that describes what is on
+ * the page — the outlines, the category tallies, the chapter rows — goes through
+ * here rather than reaching for `overlay`. That is what stops half the panel
+ * showing one curation and half showing the other, which is a harder thing to
+ * notice than showing the wrong one outright.
+ */
+function shownCuration(view: Pick<BlockView, 'overlay' | 'frozen'>): CurationContent | null {
+  return view.frozen ?? view.overlay;
+}
+
+/** The same answer as a decision map, for a view being built or amended. */
+function decisionsShown(view: Pick<BlockView, 'overlay' | 'frozen'>): Map<string, OverlayDecision> {
+  const shown = shownCuration(view);
+  return shown === null ? new Map() : decisionsOf(shown);
 }
 
 /**

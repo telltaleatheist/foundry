@@ -209,12 +209,11 @@ export class LedgerService {
    * looking like one. One line of the manifest; no job, no rendering, no
    * confirmation and no spinner.
    *
-   * THE ANSWER IS PAINTED WITHOUT A SECOND READ, and that is allowed here for a
-   * reason worth stating rather than as an optimisation: `go` changes the POSITION
-   * and nothing else, so the steps and their order are the ones main already sent,
-   * and the "from …" annotations are still the ones main composed. Nothing is
-   * re-derived. `projects:changed` follows and replaces the whole holding anyway,
-   * so a disagreement could only last one turn of the loop.
+   * THE WHOLE ANSWER IS PAINTED AND NOTHING IS ASKED AGAIN. Main hands back the
+   * ledger AND the rows it composed for it, which is what makes this one round
+   * trip: the rows are main's to compose (`chronological`), and a renderer that
+   * had only the ledger would have to ask a second time and paint an answer
+   * describing a catalogue a moment later than the one it acted on.
    *
    * A refusal throws with main's sentence: the caller clicked a row this app drew,
    * so an id main does not hold means the two are looking at different ledgers,
@@ -223,8 +222,7 @@ export class LedgerService {
    */
   async go(projectDir: string, stepId: string): Promise<void> {
     if (!api) return;
-    const ledger = await api.ledger.go(projectDir, stepId);
-    this.paint(projectDir, ledger);
+    this.paint(projectDir, await api.ledger.go(projectDir, stepId));
   }
 
   /**
@@ -241,7 +239,23 @@ export class LedgerService {
    * Resolves true when it ran, false for a cancel — a cancel is silence. A refusal
    * throws with main's own sentence, which the caller shows as written.
    */
-  async remove(projectDir: string, stepId: string): Promise<boolean> {
+  async remove(
+    projectDir: string,
+    stepId: string,
+    /**
+     * Let go of the books this delete is about to erase — the document delete's
+     * shape, and its reason (`ProjectsService.removeDocument`).
+     *
+     * BETWEEN THE YES AND THE DELETE, which is why it is a callback rather than
+     * two lines around this call. Closing first would shut a book the user is
+     * about to decline to delete; closing after would hand main a working tree
+     * this window still has files open in, and on Windows the remove fails part
+     * way and leaves half an unpacked book behind. Main refuses that case by name
+     * — this is what keeps the refusal from being the ordinary outcome of saying
+     * yes.
+     */
+    closeThem?: (files: readonly string[]) => void | Promise<void>,
+  ): Promise<boolean> {
     if (!api) return false;
     const deletion = await api.ledger.describeDelete(projectDir, stepId);
     const casualties = deletion.casualties;
@@ -265,47 +279,48 @@ export class LedgerService {
         // "Are you sure?" over a list of four teaches somebody to click through the
         // one that was about their curation.
         ...casualties.map((one) => one.cost),
+        // WHAT GOES WITH THEM, when anything does. A payload does not travel
+        // alone — a translation's EPUB has a working copy unpacked from it and an
+        // undo history written against that — and all of it is swept, so all of it
+        // is named here first. Main composes the sentence, because main is the
+        // only side that knows what is actually on the disk.
+        ...(deletion.belongings === null ? [] : [deletion.belongings]),
         'It really deletes: nothing is moved aside and there is no copy anywhere else.',
       ],
       confirm: casualties.length > 1 ? `Delete these ${casualties.length} steps` : 'Delete this step',
     });
     if (!answered) return false;
-    await api.ledger.delete(projectDir, stepId);
+    // AWAITED, or the callback does not do the job it exists for: closing a tab
+    // flushes a pending edit and tells main to let go of the unpack, both of which
+    // take a turn of the loop, and a fire-and-forget close would hand the delete a
+    // window that has not finished letting go.
+    await closeThem?.(deletion.files);
     /*
-     * ASKED AGAIN RATHER THAN PAINTED FROM THE ANSWER, which is the opposite of
-     * what `go` does and is right for the opposite reason. A delete CHANGES THE
-     * SHAPE of the list — steps are gone — and rows are main's to compose, so the
-     * answer's ledger against the rows this window is holding would draw rows for
-     * steps that no longer exist, complete with ✕ buttons for them. One round
-     * trip, and what appears is the list as it now is.
+     * PAINTED FROM THE ANSWER, because the answer is the whole answer: main hands
+     * back the ledger AND the rows it composed for what is left. This used to ask
+     * again, and had to — a delete CHANGES THE SHAPE of the list, and rows are
+     * main's to compose, so the answer's ledger against the rows this window was
+     * holding would have drawn rows for steps that no longer exist, complete with
+     * ✕ buttons for them.
      */
-    await this.refresh(projectDir);
+    this.paint(projectDir, await api.ledger.delete(projectDir, stepId));
     this.destroyedSeq += 1;
     this.payloadsDestroyed.set({ dir: projectDir, seq: this.destroyedSeq });
     return true;
   }
 
   /**
-   * A ledger that arrived from somewhere other than this class — the answer to a
+   * A history that arrived from somewhere other than this class — the answer to a
    * curation commit, which `TabsService` makes because it is the side holding the
    * document's path.
    *
-   * PAINTED AND THEN RE-READ, and both halves earn their place. The paint is what
-   * makes the new POSITION take effect in the same turn as the gesture — a commit
-   * moves the pointer onto the step it just made, and that is what decides whether
-   * the block editor may still be written to, so a window that learned it one
-   * round trip later would have an editor that was briefly live over a book being
-   * rendered frozen. The read is what makes the ROW appear, because a commit mints
-   * a step and rows are main's to compose.
-   *
-   * The rows are one turn behind the ledger in between, and that is the safe
-   * direction to be wrong in: a list missing its newest row for a few milliseconds
-   * costs nothing, and an editor that is live for the same few milliseconds is the
-   * failure this whole design exists to prevent.
+   * ONE ANSWER, PAINTED WHOLE. It used to paint and then re-read, because a commit
+   * mints a step and the ROWS are main's to compose, so the ledger alone would
+   * have left the accordion a turn behind its own new row. Main now hands back
+   * both, and the gesture and what is on screen are the same statement.
    */
-  async adopt(projectDir: string, ledger: ProjectLedger): Promise<void> {
-    this.paint(projectDir, ledger);
-    await this.refresh(projectDir);
+  adopt(projectDir: string, history: StepHistory): void {
+    this.paint(projectDir, history);
   }
 
   // ── Keeping the map ──────────────────────────────────────────────────────
@@ -314,12 +329,22 @@ export class LedgerService {
     return projectDir === null ? null : this.held().get(fold(projectDir)) ?? null;
   }
 
-  /** The steps main already sent, standing somewhere new. See `go`. */
-  private paint(projectDir: string, ledger: ProjectLedger): void {
+  /**
+   * Main's answer to something this window just did, put where the accordion
+   * reads it.
+   *
+   * IT REPLACES A `problem` TOO. A holding that was a refusal a moment ago and has
+   * just answered a `go` or a commit is a project this window can read after all —
+   * leaving the sentence up beside a list that is demonstrably being served would
+   * be the accordion arguing with itself.
+   *
+   * The unfolded directory is kept as main spells it, which is what every call
+   * back to main is made with. The argument is already that spelling: every caller
+   * has it from the project summary main sent.
+   */
+  private paint(projectDir: string, history: StepHistory): void {
     const key = fold(projectDir);
-    const holding = this.held().get(key);
-    if (holding === undefined || holding.history === null) return;
-    this.put(key, { dir: holding.dir, history: { ledger, rows: holding.history.rows }, problem: null });
+    this.put(key, { dir: this.held().get(key)?.dir ?? projectDir, history, problem: null });
   }
 
   private put(key: string, holding: Holding): void {

@@ -299,6 +299,58 @@ describe('the pointer and the shape of the chain', () => {
     assert.equal(positionOf(ledger)!.id, 's3');
   });
 
+  /*
+   * ── A SAVE IS THE ONE ACTION THAT LEAVES YOU WHERE YOU WERE ────────────────
+   *
+   * Every other action makes a NEW state of the book and standing you on it is
+   * the only sane answer — an act that produced nothing visible is an act that
+   * looks like it failed. A save makes no new state: it retains the one you are
+   * in. The pointer following it made the block editor read-only the instant
+   * somebody pressed Save (`curationInEffect` → `curationLock`), which took
+   * correcting away as the reward for keeping a copy of it, and took it away for
+   * nothing — at that instant the live overlay is byte for byte the file just
+   * frozen, and the live one is the editable one.
+   */
+  test('a save is retained beside the position rather than under it', () => {
+    const ledger = appendStep({ ...branched(), position: 's1' }, step({
+      id: 'save', parent: 's1', action: 'curate', payload: 'curations/one.json', createdAt: 500,
+      params: { generation: GENERATION, amendments: 23 },
+    }));
+    assert.equal(ledger.position, 's1');
+    assert.equal(positionOf(ledger)!.id, 's1');
+    // The row is there and is clickable; nobody was moved onto it.
+    assert.deepEqual(ledger.steps.map((row) => row.id), ['s0', 's1', 's2', 's3', 'save']);
+  });
+
+  test('the position is WRITTEN OUT by a save, not left to mean "the newest"', () => {
+    // An absent pointer means the newest step and appending makes this step the
+    // newest, so a ledger that never recorded a position would have had the
+    // pointer follow the save anyway — the same bug arriving through the field
+    // that exists to spare the manifest a line.
+    const before: ProjectLedger = { steps: branched().steps };
+    assert.equal(before.position, undefined);
+    assert.equal(positionOf(before)!.id, 's3');
+    const after = appendStep(before, step({
+      id: 'save', parent: 's3', action: 'curate', payload: 'curations/one.json', createdAt: 500,
+      params: { generation: GENERATION, amendments: 2 },
+    }));
+    assert.equal(after.position, 's3');
+  });
+
+  test('every other action still stands you on what it just made', () => {
+    // The rule is a table and not a mood: read and translate are unchanged, and a
+    // save that had quietly taught them its habit would be worse than the bug.
+    const read = appendStep({ ...branched(), position: 's0' }, step({
+      id: 'r2', parent: 's0', action: 'read', payload: 'readings/book.jsonl', createdAt: 500,
+    }));
+    assert.equal(read.position, 'r2');
+    const translated = appendStep({ ...branched(), position: 's1' }, step({
+      id: 'de', parent: 's1', action: 'translate', payload: 'generated/Book (de).epub',
+      createdAt: 500, params: { language: 'German' },
+    }));
+    assert.equal(translated.position, 'de');
+  });
+
   test('ancestry runs origin-first and follows parents, not array order', () => {
     const ledger = branched();
     assert.deepEqual(ancestry(ledger, 's3').map((row) => row.id), ['s0', 's1', 's3']);
@@ -1411,6 +1463,46 @@ describe('curationInEffect says which overlay a rendering at the position is mad
       createdAt: 600, params: { language: 'Hungarian' },
     }));
     assert.equal(curationInEffect({ ...ledger, position: 'hu' }), null);
+  });
+
+  /*
+   * ── A GENERATE IMMEDIATELY AFTER A SAVE RENDERS WHAT WAS SAVED ─────────────
+   *
+   * This is the property the "a commit does not move the pointer" ruling had to
+   * not break, and it holds for a reason worth writing down rather than by luck.
+   * Pressing Save leaves the pointer on the reading, so `curationInEffect` answers
+   * null and `renderingOverlay` hands the engine the LIVE overlay — which is the
+   * file `commitOverlay` had just copied byte for byte to make the snapshot. The
+   * two are the same corrections; Foundry renders the one that is still being
+   * edited, which is also the one the person is looking at.
+   *
+   * Standing on the save afterwards renders the snapshot instead, which is the
+   * same corrections again until somebody edits — and from then on the snapshot is
+   * the only thing that still has them, which is the entire point of freezing one.
+   */
+  test('a Generate straight after a Save renders the live overlay it was copied from', () => {
+    const ledger = appendStep({ ...curated(), position: 'read' }, step({
+      id: 'save2', parent: 'read', action: 'curate', payload: 'curations/two.json', createdAt: 500,
+      params: { generation: GENERATION, amendments: 41 },
+    }));
+    assert.equal(ledger.position, 'read');
+    assert.equal(curationInEffect(ledger), null);
+    // And the save is one click away, rendering the copy that was frozen.
+    assert.equal(curationInEffect({ ...ledger, position: 'save2' })?.payload, 'curations/two.json');
+  });
+
+  test('a curation landing records the step and leaves the pointer alone', () => {
+    // The whole path `recordCuration` takes, end to end: `landStep` → `recordLanding`
+    // → `appendStep`. A rule that lived at the call site would be skipped here.
+    const landed = recordLanding({ ...curated(), position: 'read' }, {
+      action: 'curate', parent: 'read', payload: 'curations/two.json',
+      params: { generation: GENERATION, amendments: 41 }, createdAt: 500, id: 'save2',
+    });
+    assert.equal(landed.replaced, false);
+    assert.equal(landed.step.label, 'Saved corrections (41)');
+    assert.equal(landed.step.retention, 'irreplaceable');
+    assert.equal(landed.ledger.position, 'read');
+    assert.equal(curationInEffect(landed.ledger), null);
   });
 
   test('a project nobody has ever saved in behaves exactly as it always did', () => {

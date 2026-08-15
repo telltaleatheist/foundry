@@ -68,13 +68,16 @@ import {
   readingGeneration,
   recordCuration,
   renderingOverlay,
+  type LedgerView,
 } from './projects';
 import {
   OverlayError,
   emptyOverlay,
+  frozenCuration,
   overlayFate,
   overlayText,
   parseOverlay,
+  type FrozenCuration,
   type OverlayFile,
 } from '../shared/overlay';
 import { readJson } from '../shared/json';
@@ -84,7 +87,6 @@ import type {
   LedgerRow,
   LedgerStacks,
   OverlayLoad,
-  ProjectLedger,
 } from '../shared/types';
 
 /** The ledger schema this module writes and the only one it reads. */
@@ -304,7 +306,88 @@ async function setAside(where: OverlayLocation, why: string): Promise<string> {
  * looks like before its first correction.
  */
 export async function loadOverlayFile(pdfPath: string): Promise<OverlayLoad> {
-  return readOverlay(await locateOverlay(pdfPath));
+  const where = await locateOverlay(pdfPath);
+  const live = await readOverlay(where);
+  const shown = await readCuration(where);
+  return {
+    file: live.file,
+    frozen: shown.frozen,
+    // THE LIVE FILE'S NOTICE WINS. Both sentences are about this book's
+    // corrections and only one strip draws them, and the live one is the file the
+    // user is about to edit — a snapshot that could not be shown is a row they can
+    // click away from, while an archived live overlay is their working state gone.
+    notice: live.notice ?? shown.notice,
+  };
+}
+
+/**
+ * The frozen curation the position renders with, or null and a reason.
+ *
+ * ── Why the snapshot is READ AGAIN rather than trusted for being retained ────
+ *
+ * A committed snapshot is bound to a reading generation exactly as the live
+ * overlay is (`commitOverlay` stamps main's own), and for the same reason: its
+ * amendments name blocks as `(page, order)`, and a book read again renumbers
+ * every one of them. A stale save drawn over a fresh bank would outline a
+ * paragraph nobody struck and mark a chapter nobody chose, WITH NOTHING ON SCREEN
+ * SAYING SO — the failure this whole module was built around, arriving through the
+ * one file that was supposed to be safe because it never changes. It never
+ * changes; the pages under it did.
+ *
+ * SO IT IS SHOWN OR IT IS EXPLAINED, and never quietly. The step stays where it
+ * is, the row stays clickable, and the sentence says the reading moved — which is
+ * the same thing the dimmed row says on hover, reaching the same person in the
+ * place they are actually looking.
+ *
+ * AND IT IS NEVER ARCHIVED ASIDE, which is the one thing this does differently
+ * from every other unusable curation in this file. `setAside` exists for the LIVE
+ * pair, whose whole purpose is to be current; a snapshot is a retained payload
+ * named by a step, and moving it would leave that step pointing at nothing. It is
+ * deleted when its step is deleted and at no other moment.
+ */
+async function readCuration(where: OverlayLocation): Promise<{
+  frozen: FrozenCuration | null;
+  notice: string | null;
+}> {
+  // The live file IS the rendering for almost every project and every position:
+  // nobody has pressed Save, or the pointer is not standing where a save is in
+  // effect. Compared by the whole path, never by a basename.
+  if (key(where.rendering) === key(where.file)) return { frozen: null, notice: null };
+
+  let text: string;
+  try {
+    text = await fsp.readFile(where.rendering, 'utf8');
+  } catch (err) {
+    return {
+      frozen: null,
+      notice: `You are standing on a saved copy of this book's corrections and Foundry could not `
+        + `read it (${(err as Error).message}). The pages are showing the blocks as the model read `
+        + 'them, with no corrections marked on them. Nothing has been changed or deleted.',
+    };
+  }
+
+  let file: OverlayFile;
+  try {
+    file = parseOverlay(text, where.rendering);
+  } catch (err) {
+    return {
+      frozen: null,
+      notice: `You are standing on a saved copy of this book's corrections that Foundry cannot use `
+        + `— ${(err as Error).message}. It has been left exactly where it is; the pages are showing `
+        + 'the blocks with no corrections marked on them.',
+    };
+  }
+
+  const fate = overlayFate(file.generation, where.generation);
+  if (!fate.use) {
+    return {
+      frozen: null,
+      notice: `You are standing on a saved copy of this book's corrections that Foundry will not `
+        + `draw — ${fate.why}. It is kept exactly as it was; showing it over these pages would mark `
+        + 'up paragraphs nobody chose.',
+    };
+  }
+  return { frozen: frozenCuration(file), notice: null };
 }
 
 /**
@@ -434,7 +517,13 @@ export async function saveOverlayFile(pdfPath: string, file: OverlayFile): Promi
  * file goes on being the working state, edited continuously, still the thing
  * `Ctrl+Z` walks back; the snapshot is a retained payload with a step of its own,
  * clickable in the history, renderable, and restorable. It is the difference
- * between a document that autosaves and a document you can name a version of.
+ * between a document that autosaves and a document that keeps restore points.
+ *
+ * A STEP IS NOT NAMED BY THE PERSON WHO MAKES IT, which is why this takes a path
+ * and nothing else. `labelFor` composes "Saved corrections (23)" from the count,
+ * in the app's own voice, exactly as every other row in the history is named by
+ * its action — a typed-in name would be the one row of somebody's history in a
+ * different register, and it would be the row they left blank.
  *
  * ── The live overlay is NOT cleared, moved or touched ───────────────────────
  *
@@ -461,8 +550,16 @@ export async function saveOverlayFile(pdfPath: string, file: OverlayFile): Promi
  * ABSENT `chapters` means nobody has touched them; an empty ARRAY means somebody
  * said this book has no divisions, which is a decision and is preserved as one
  * (see `OverlayFile.chapters`).
+ *
+ * ── AND IT DOES NOT MOVE THE POINTER ────────────────────────────────────────
+ *
+ * `RETAINED_BESIDE_YOU` in shared/ledger.ts is where that is settled and why. The
+ * short of it: a save does not make a new state of the book, it retains the one
+ * you are already in — and moving the pointer onto the snapshot made the editor
+ * read-only the instant somebody pressed Save, for nothing, since the live
+ * overlay is byte for byte the file just frozen and is the editable one.
  */
-export async function commitOverlay(pdfPath: string): Promise<ProjectLedger> {
+export async function commitOverlay(pdfPath: string): Promise<LedgerView> {
   const where = await locateOverlay(pdfPath);
   const { file } = await readOverlay(where);
 

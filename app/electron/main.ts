@@ -1975,6 +1975,15 @@ function registerIpc(): void {
    * than destroying it (the retention rule: user labour is never destroyed by a
    * re-run). That is the designed outcome, not a race.
    */
+  /*
+   * THE OTHER REFUSAL IS NOT HERE, AND THAT IS DELIBERATE. A book this window has
+   * open cannot have its working tree unlinked, and `describeStepDelete` and
+   * `deleteStep` both refuse that case themselves (electron/projects.ts,
+   * `refuseOpenPayload`) — because deciding it needs the sweep, which needs the
+   * manifest, which is that module's. It is the document delete's model rather
+   * than the project delete's: the narrow test on the tree this step's own payload
+   * serves, plus the renderer closing the tab between the confirm and the call.
+   */
   const refuseBusyStepDelete = async (projectDir: string, stepId: string): Promise<void> => {
     // `deletableStep` proves the directory, names the step, AND runs the refusal
     // that never lifts — the origin is not a deletable step at any hour — so this

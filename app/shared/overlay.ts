@@ -157,7 +157,27 @@ export interface OverlayChapter {
   title: string;
 }
 
-export interface OverlayFile {
+/**
+ * WHAT A CURATION SAYS, with nothing in it about whether it may be written.
+ *
+ * ── The two curations on screen at once, and why the type has to tell them apart ─
+ *
+ * There are two of these in a project the moment somebody presses Save: the LIVE
+ * overlay, which is where a correction goes, and a frozen SNAPSHOT, which is what
+ * a rendering at the position is made with. Standing on a save, the block editor
+ * draws the snapshot — the whole point of clicking an old save is to see the book
+ * as it was then — while the live file remains the only thing any write may
+ * touch. Both are a curation; they say the same KIND of thing; and exactly one of
+ * them is a legal argument to `overlay.save`.
+ *
+ * So this is the shape everything that DISPLAYS a curation takes — `decisionsOf`,
+ * the chapter list, the tallies — and `OverlayFile` and `FrozenCuration` are the
+ * two things that are one, distinguished by a field that carries no data. A
+ * display function that took `OverlayFile` would force the frozen one to be cast
+ * back to a writable file to be drawn, and a cast is exactly what this
+ * distinction exists to make unnecessary.
+ */
+export interface CurationContent {
   overlay: typeof OVERLAY_VERSION;
   /**
    * The app's binding of this file to the reading it annotates, carried by the
@@ -197,6 +217,50 @@ export interface OverlayFile {
    * backwards is not a thing to guess about.
    */
   chapters?: OverlayChapter[];
+}
+
+/**
+ * The LIVE curation — the working file, and the only thing anything writes.
+ *
+ * `frozen?: never` is a phantom field: it holds nothing, is never written to
+ * disk, and exists so that a `FrozenCuration` is NOT ASSIGNABLE HERE. Structural
+ * typing would otherwise make the two interchangeable — a snapshot has every
+ * field a live overlay has — and `overlay.save(path, snapshot)`, `amendOverlay`
+ * and `setChapters` would all typecheck against the one object in this app that
+ * must never change again. The brief was to make writing a display copy
+ * inexpressible rather than merely discouraged, and one impossible field is what
+ * makes the compiler enforce it at every call site at once.
+ */
+export interface OverlayFile extends CurationContent {
+  frozen?: never;
+}
+
+/**
+ * A curation the app is SHOWING and cannot be asked to write — a committed
+ * snapshot, handed to the block editor for display when the position stands on
+ * one.
+ *
+ * The flag is `true` rather than absent so the two types are mutually exclusive
+ * in both directions: a live overlay cannot be passed where a snapshot is
+ * expected either, which is what stops a display path from quietly falling back
+ * to the working file and drawing corrections nobody is standing on.
+ */
+export interface FrozenCuration extends CurationContent {
+  frozen: true;
+}
+
+/**
+ * A curation read off disk, marked as the frozen one — the ONE place the flag is
+ * set, so nothing else has to know it is the mechanism.
+ */
+export function frozenCuration(content: CurationContent): FrozenCuration {
+  return {
+    overlay: content.overlay,
+    generation: content.generation,
+    amendments: content.amendments,
+    ...(content.chapters === undefined ? {} : { chapters: content.chapters }),
+    frozen: true,
+  };
 }
 
 /** An overlay with nothing decided. The state every scan starts in. */
@@ -472,7 +536,7 @@ function readCount(value: unknown, where: string, least: number): number {
  * A part-less amendment is NOT spread over the element's parts here. It stays
  * under its own key, and `decisionFor` is what asks both.
  */
-export function decisionsOf(file: OverlayFile): Map<string, OverlayDecision> {
+export function decisionsOf(file: CurationContent): Map<string, OverlayDecision> {
   const map = new Map<string, OverlayDecision>();
   for (const amendment of file.amendments) {
     const key = targetKey(amendment.at);

@@ -136,6 +136,43 @@ export const PARAMS_OF: Readonly<Record<StepAction, readonly (keyof LedgerParams
 };
 
 /**
+ * ACTIONS THAT LEAVE YOU WHERE YOU WERE — a step retained BESIDE the position
+ * rather than under it.
+ *
+ * ── The gesture this table exists to stop being punished ────────────────────
+ *
+ * Every other action moves the pointer onto what it just made, and that is
+ * right for all of them: a reading and a translation are new states of the book,
+ * and a person who queued one and then found the panes still showing the old one
+ * would have watched an action produce nothing visible. A SAVE IS NOT ONE OF
+ * THOSE. It does not make a new state; it retains the state you are already in
+ * and hands it back to you unchanged.
+ *
+ * Moving the pointer onto a snapshot made the block editor read-only THE INSTANT
+ * SOMEBODY PRESSED SAVE (`curationInEffect` → `curationLock`), which punished the
+ * one gesture the whole restore-point idea depends on people making often — and
+ * punished it for nothing, because at that instant the live overlay is byte for
+ * byte the file that was just frozen, and the live one is the editable one. The
+ * user pressed Save and the app took correcting away.
+ *
+ * Standing on a frozen save stays a deliberate act: you click the row. What
+ * changes is only that the app never does it FOR you as the reward for saving.
+ *
+ * ── A TABLE, and the same shape as `RETENTION_OF` for the same reason ───────
+ *
+ * Two functions decide where the pointer lands — the append and the swap in
+ * `recordLanding` — and a third would arrive the day another action is added.
+ * A rule re-derived at a call site is a rule that drifts, and the way this one
+ * drifts is that `overlay:commit` grows an `if` nothing else knows about.
+ */
+export const RETAINED_BESIDE_YOU: Readonly<Record<StepAction, boolean>> = {
+  import: false,
+  read: false,
+  curate: true,
+  translate: false,
+};
+
+/**
  * Params the RUN MINTED rather than params the run was ASKED FOR.
  *
  * ── The bug this table is the fix for ───────────────────────────────────────
@@ -673,16 +710,20 @@ export function subtree(ledger: ProjectLedger, id: string): LedgerStep[] {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * A step, added — and the pointer moved onto it.
+ * A step, added — and the pointer moved onto it, unless the step is one that is
+ * retained beside you.
  *
  * IMMUTABLE, returning a new ledger, because the caller is `withManifest` in the
  * main process and a half-applied mutation on a throw is a manifest that
  * disagrees with the disk. Nothing here edits what it was given.
  *
- * THE POINTER FOLLOWS, always. A person who stepped back to the reading and
- * translated is now standing on the translation — that is what they just made,
- * and it is what the viewers should be showing. Leaving the pointer where it was
- * would mean the act of translating produced nothing visible.
+ * THE POINTER FOLLOWS FOR EVERY ACTION BUT ONE. A person who stepped back to the
+ * reading and translated is now standing on the translation — that is what they
+ * just made, and it is what the viewers should be showing. Leaving the pointer
+ * where it was would mean the act of translating produced nothing visible. A
+ * curation save is the exception and `RETAINED_BESIDE_YOU` is where that is said
+ * once, in general, rather than as a special case at the one call site that
+ * happens to make one today.
  */
 export function appendStep(ledger: ProjectLedger, step: LedgerStep): ProjectLedger {
   if (ledger.steps.some((existing) => existing.id === step.id)) {
@@ -714,9 +755,31 @@ export function appendStep(ledger: ProjectLedger, step: LedgerStep): ProjectLedg
 
   return {
     ...ledger,
-    position: step.id,
+    position: pointerAfter(ledger, step),
     steps: [...ledger.steps, createdAt === step.createdAt ? step : { ...step, createdAt }],
   };
+}
+
+/**
+ * Where the pointer stands once this step exists — the table, applied.
+ *
+ * IT IS WRITTEN OUT EVEN WHEN IT DOES NOT MOVE, and that is the whole subtlety of
+ * a retained step. An absent pointer does not mean "no pointer": it means THE
+ * NEWEST STEP (`positionOf`), and appending is exactly the operation that makes
+ * this step the newest. So a project with no pointer that froze a save would have
+ * had the pointer follow the save anyway, silently, through the very field that
+ * exists to spare the manifest a line — the bug this whole rule is about,
+ * arriving by the back door. Recording the position the user is actually standing
+ * on is what makes "it did not move" true rather than merely intended.
+ *
+ * The fallback is the new step itself, for a ledger that had nothing in it to
+ * stand on. No action that is retained beside you can be the first step in a
+ * project — a save is made FROM a reading — so this is the honest answer to a
+ * question that cannot be asked rather than a case being handled.
+ */
+function pointerAfter(ledger: ProjectLedger, step: LedgerStep): string {
+  if (!RETAINED_BESIDE_YOU[step.action]) return step.id;
+  return positionOf(ledger)?.id ?? step.id;
 }
 
 /** What the user is about to do, before it has an id or a payload. */
@@ -950,7 +1013,12 @@ export function recordLanding(ledger: ProjectLedger, run: LandedRun): Landing {
   else swapped.params = params;
   const replaced: ProjectLedger = {
     ...ledger,
-    position: target.id,
+    // The same rule the append obeys, asked the same way. A re-run of an action
+    // that is retained beside you cannot happen — `reRunTarget` never returns an
+    // irreplaceable step, which is every action in that table — so this changes
+    // nothing today and is written this way so that the two places the pointer is
+    // decided cannot come to disagree about what an action does to it.
+    position: pointerAfter(ledger, swapped),
     steps: ledger.steps.map((step) => (step.id === target.id ? swapped : step)),
   };
   const marked = markStale(replaced, target.id);

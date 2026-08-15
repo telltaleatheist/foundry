@@ -1282,7 +1282,19 @@ export class InspectorComponent {
    */
   protected async discard(dir: string, row: StepRow): Promise<void> {
     try {
-      await this.ledger.remove(dir, row.step.id);
+      /*
+       * THE BOOKS THIS IS ABOUT TO ERASE ARE CLOSED FIRST, between the confirm and
+       * the delete — the document delete's shape and its reason. Main refuses to
+       * unlink a working tree this window is still reading (it cannot be done on
+       * Windows and would leave half an unpacked book behind), so without this,
+       * deleting a translation whose EPUB is open would meet a refusal one line
+       * after the user said yes. Main cannot do it: tabs are the renderer's.
+       *
+       * WITHOUT ASKING, and returned rather than voided so the delete waits for
+       * this window to let go: the delete's own card is the question and it has
+       * already been answered yes.
+       */
+      await this.ledger.remove(dir, row.step.id, (files) => this.tabs.closeShowing(files));
     } catch (err) {
       this.tabs.notice.set(err instanceof Error ? err.message : String(err));
     }
