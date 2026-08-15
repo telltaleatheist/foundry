@@ -121,6 +121,7 @@ import {
   type VlmNavItem,
   type VlmResource,
 } from './epub.js';
+import { chapterStarts, emptyOverlay, type Overlay } from './overlay.js';
 import { packageVlmText, type VlmOutputFormat } from './text-out.js';
 import {
   bodyTypeSize,
@@ -648,7 +649,41 @@ export function proposeChapters(
  * centered heading first on its page. A page that is a title page is not also a
  * chapter.
  */
-export function proposeSections(pages: readonly DotsParsedPage[]): DotsChapterProposal[] {
+export function proposeSections(
+  pages: readonly DotsParsedPage[],
+  overlay: Overlay = emptyOverlay(),
+): DotsChapterProposal[] {
+  /*
+   * A LAID-OUT SPINE SUPERSEDES EVERY RULE BELOW, and it does so by returning
+   * before any of them runs.
+   *
+   * Not by overruling them one at a time: the classifier does not name a page, no
+   * heading is promoted, no running head is demoted and no section is closed
+   * because another one had to end. That is what "definitive" has to mean for the
+   * finished book to be predictable — a spine assembled out of detection PLUS
+   * corrections is a spine whose contents shifts when the detection improves, and
+   * the person who laid it out would have no way to know why. Removing an entry
+   * from the list is the demotion; adding one is the promotion; there is nothing
+   * else to reconcile.
+   *
+   * `kind` is null on every one of them, and `why` says `listed`. A kind is what
+   * the CLASSIFIER concluded a page was, and nothing classified anything here —
+   * the block a chapter starts at renders as an ordinary block at the top of its
+   * section, which is the other half of the same decision: what a book prints and
+   * what its contents calls a chapter are two facts, and the list supplies the
+   * second without touching the first.
+   */
+  if (overlay.chapters !== undefined) {
+    const flat = pages.flatMap((p) => p.blocks);
+    return chapterStarts(overlay.chapters, flat).map(({ index, title }) => ({
+      index,
+      page: flat[index].page,
+      text: flat[index].text,
+      why: ['listed'],
+      kind: null,
+      label: title,
+    }));
+  }
   // Does anything follow? Computed backwards once, because a part opens
   // something and the last divider-shaped page in a book is a colophon.
   const bodyAfter = new Array<boolean>(pages.length).fill(false);
@@ -704,7 +739,8 @@ export function proposeSections(pages: readonly DotsParsedPage[]): DotsChapterPr
     }
   }
 
-  const chapters = proposeChapters(pages.flatMap((p) => p.blocks), spokenFor);
+  const flat = pages.flatMap((p) => p.blocks);
+  const chapters = proposeChapters(flat, spokenFor);
   const starts = new Map<number, DotsChapterProposal>();
   for (const close of closes) {
     // An unnamed section, opened only because the named one had to end. It
@@ -713,6 +749,7 @@ export function proposeSections(pages: readonly DotsParsedPage[]): DotsChapterPr
   }
   // A real proposal at the same index wins: it knows what it is.
   for (const proposal of [...chapters, ...named]) starts.set(proposal.index, proposal);
+
   return [...starts.values()].sort((a, b) => a.index - b.index);
 }
 
@@ -1934,6 +1971,77 @@ export function openingHeadings(
   return openers;
 }
 
+/** Where the rules would divide a book, and what they would call each division. */
+export interface DetectedChapter {
+  page: number;
+  order: number;
+  part: number;
+  /** The name this section would carry in the contents. */
+  title: string;
+}
+
+/**
+ * THE SPINE THIS ENGINE WOULD BUILD, worked out without building the book.
+ *
+ * It exists so that an app can seed a chapter list with EXACTLY what a run
+ * without one would do — the seed and the render must never disagree, or the
+ * first thing a person does after opening the editor is silently change their
+ * book. So this is not a second implementation of the rules; it is the same
+ * prologue `buildDotsBook` runs, in the same order, over pages it is handed:
+ * the mistagged running heads come out, the two-line headings are joined, the
+ * text is dehyphenated and reflowed, the sections are proposed, and the openings
+ * the book printed twice are folded away. Every one of those changes the answer,
+ * and a shortcut past any of them is a seed that is wrong on exactly the books
+ * the passes exist for.
+ *
+ * IT MUTATES THE PAGES, like the passes it is made of. Hand it pages nothing
+ * else is going to render from — `blocks-dump.ts` parses the bank a second time
+ * for it, which is arithmetic over answers that are already in memory.
+ *
+ * The leading span is not in the list. A book whose first block is not a chapter
+ * start has front matter in front of it, and front matter is what is left over
+ * rather than a chapter somebody named.
+ */
+export function detectChapters(pages: readonly DotsParsedPage[]): DetectedChapter[] {
+  suppressRunningHeads(pages);
+  mergeAdjacentHeadings(pages);
+  const blocks = pages.flatMap((p) => p.blocks);
+  if (blocks.length === 0) return [];
+
+  const lexicon = new BookLexicon(blocks.map((b) => b.text));
+  for (const block of blocks) {
+    if (block.text.includes('-\n')) block.text = lexicon.dehyphenate(block.text);
+  }
+  reflowWrappedProse(blocks);
+
+  const proposals = proposeSections(pages);
+  const opens: (DotsChapterProposal | null)[] = [...proposals];
+  const starts = proposals.map((p) => p.index);
+  if (starts.length === 0 || starts[0] !== 0) {
+    starts.unshift(0);
+    opens.unshift(null);
+  }
+  foldDuplicateSections(blocks, starts, opens);
+
+  const detected: DetectedChapter[] = [];
+  for (const [i, start] of starts.entries()) {
+    const proposal = opens[i];
+    if (proposal === null) continue;
+    const block = blocks[start];
+    if (block === undefined) continue;
+    const span = blocks.slice(start, starts[i + 1] ?? blocks.length);
+    // The label in the order `buildDotsBook` settles it: the classifier's
+    // composed name, then the section's own first heading, then the honest name
+    // for the kind, then the position. `sectionName` is the first two, and it is
+    // the same function the fold above compares nav entries with.
+    const title = sectionName(span, proposal)
+      || KIND_LABEL[proposal.kind ?? 'chapter']
+      || `Chapter ${i + 1}`;
+    detected.push({ page: block.page, order: block.order, part: block.part, title });
+  }
+  return detected;
+}
+
 export interface DotsBookOptions {
   metadata: VlmEpubMetadata;
   /** In page order. */
@@ -1950,6 +2058,18 @@ export interface DotsBookOptions {
    * rather than a second pipeline.
    */
   format?: VlmOutputFormat;
+  /**
+   * A person's decisions — `overlay.ts`. By the time the pages reach here the
+   * strikes, the categories and the text corrections have ALREADY been applied
+   * to them (`convert.ts` applies them once, at the parse).
+   *
+   * What is left for this file is the other list: the CHAPTERS, which are about
+   * the book rather than about any block, and which can only be read where the
+   * book decides where it divides (`proposeSections`). Absent, or present with
+   * no chapter list in it, means the book is assembled exactly as it was before
+   * overlays existed.
+   */
+  overlay?: Overlay;
 }
 
 export interface DotsBookResult {
@@ -2064,7 +2184,7 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
   const typography = deriveTypography(blocks, measured);
 
   const column = bodyColumn(blocks, blocks[0].pageWidth);
-  const proposals = proposeSections(opts.pages);
+  const proposals = proposeSections(opts.pages, opts.overlay ?? emptyOverlay());
 
   // The leading span, when the book does not open on a section start. It has no
   // proposal behind it and therefore no kind: nothing said what it is.
@@ -2087,7 +2207,16 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
    * `writeProposals` documents it as; the fold is a decision taken after it,
    * and it is recorded as one in `foldedSections`.
    */
-  const folded = foldDuplicateSections(blocks, starts, opens);
+  /*
+   * NOT WHEN THE SPINE WAS LAID OUT. The fold is a rule about a book whose
+   * sections were inferred — it catches the opening the printer set twice and the
+   * proposal that came with it — and a listed spine has no inferred sections in
+   * it at all. Folding one away would be this file deleting a chapter somebody
+   * wrote down, which is the one thing a definitive list must be safe from.
+   */
+  const folded = opts.overlay?.chapters !== undefined
+    ? []
+    : foldDuplicateSections(blocks, starts, opens);
   const spans = starts.map((start, i) => [start, starts[i + 1] ?? blocks.length] as const);
 
   const documents: VlmDocument[] = [];

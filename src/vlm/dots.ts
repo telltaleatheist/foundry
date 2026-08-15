@@ -151,6 +151,21 @@ const MODEL_CATEGORIES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Every category a block can END UP as, which is the model's eleven and the one
+ * this file synthesises.
+ *
+ * Named as a list rather than left implicit in the union because something
+ * outside this file now has to CHECK a category it was handed: `overlay.ts`
+ * takes a category from a person and must refuse a spelling nothing renders,
+ * naming what it would have accepted. A union type cannot be enumerated at
+ * runtime, so the list is written once, here, beside the type it enumerates.
+ */
+export const DOTS_CATEGORIES: readonly DotsCategory[] = [
+  'Caption', 'Footnote', 'Formula', 'List-item', 'Page-footer', 'Page-header',
+  'Picture', 'Quote', 'Section-header', 'Table', 'Text', 'Title',
+];
+
+/**
  * Page furniture: out of the book, and KEPT as evidence.
  *
  * The folio and the running head are not sentences anybody wrote to be read,
@@ -182,6 +197,27 @@ export interface DotsBlock {
    * and a stable sort is what keeps them in the order the split made them.
    */
   order: number;
+  /**
+   * Which piece of that answer element this block is: 0 for an element that
+   * arrived whole, and the index within the split for the sub-blocks
+   * `consumeMarkdown` cuts one into.
+   *
+   * `page` and `order` name what the MODEL answered, and for most blocks that
+   * is already an identity. It stops being one the moment a Text block holding
+   * `# The Lost Empire` over two paragraphs becomes three blocks that all share
+   * the parent's `order` — they were one answer element, and the sort that keeps
+   * them in order is the only thing telling them apart. This number tells them
+   * apart by name.
+   *
+   * IT EXISTS FOR THE OVERLAY (`overlay.ts`), which is a file of amendments a
+   * person wrote about particular blocks and which outlives the run that made
+   * them. `(page, order, part)` is stable across re-renders because all three
+   * are: the model's answer is banked and replayed verbatim, and the split is
+   * deterministic over it. A box or a text hash is not — the dehyphenation pass
+   * and the reflow both rewrite text before a renderer sees it, so an amendment
+   * keyed to what a block SAYS would come loose from the block it was about.
+   */
+  part: number;
   category: DotsCategory;
   /** Scaled into the render's pixel frame. */
   box: DotsBox;
@@ -285,6 +321,7 @@ export function parseDotsPage(answer: string, opts: DotsParseOptions): DotsParse
     const block: DotsBlock = {
       page,
       order: index,
+      part: 0,
       category: category as DotsCategory,
       box,
       text,
@@ -338,13 +375,23 @@ const MD_QUOTE = /^>\s?(.*)$/;
  * nothing consumes them. The sub-blocks keep the parent's box, because the
  * parent's box is the only measurement there is — and the alignment rules below
  * are about a block's place on the page, which every part of it shares.
+ *
+ * They differ in `part`, and this is where that field is earned: the sub-blocks
+ * are numbered in the order this function makes them, and it is a pure fold over
+ * the parent's text, so the same answer splits into the same numbers on every
+ * run. That is what lets an overlay amendment written today still be about the
+ * same sub-block a year from now (`overlay.ts`).
  */
 export function consumeMarkdown(block: DotsBlock): DotsBlock[] {
   const out: DotsBlock[] = [];
   const plain: string[] = [];
   const quote: string[] = [];
 
-  const sub = (category: DotsCategory, text: string): DotsBlock => ({ ...block, category, text });
+  // `out.length` is the index this sub-block is about to land at: every call
+  // below is the argument of a `push`, so the number it reads is the part the
+  // block becomes.
+  const sub = (category: DotsCategory, text: string): DotsBlock =>
+    ({ ...block, category, text, part: out.length });
   const flushPlain = (): void => {
     if (plain.length === 0) return;
     out.push(sub(block.category, plain.join('\n')));

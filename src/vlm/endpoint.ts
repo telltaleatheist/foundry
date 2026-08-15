@@ -49,6 +49,19 @@ export interface EndpointPageResult {
   tokens: number;
   finishReason: string | null;
   seconds: number;
+  /**
+   * THE SERVER'S WHOLE ANSWER, decoded and otherwise untouched.
+   *
+   * The four fields above are what this program reads out of it, and they used
+   * to be all that survived this function. Everything else the server said went
+   * on the floor here: the prompt/completion token split, the model id it
+   * actually served under, the response id that identifies the request in its
+   * own logs, and whatever a particular build adds. A page costs GPU-minutes, so
+   * getting any of that back means reading the page again — which is the one
+   * thing the bank exists to prevent. It is carried up to `convert.ts` and
+   * banked verbatim beside the parsed fields (`readings.ts`).
+   */
+  response: unknown;
 }
 
 export interface EndpointRequest {
@@ -127,11 +140,18 @@ async function readOnePage(
     );
   }
 
-  const payload = await response.json() as {
+  /*
+   * Decoded ONCE and read twice: `payload` is the record that gets banked and
+   * `answer` is the same object seen through the few fields this program needs.
+   * Parsing it a second time into a narrower shape would be the moment the two
+   * could disagree about what the server said.
+   */
+  const payload: unknown = await response.json();
+  const answer = payload as {
     choices?: { message?: { content?: string }; finish_reason?: string }[];
     usage?: { completion_tokens?: number };
   };
-  const choice = payload.choices?.[0];
+  const choice = answer.choices?.[0];
   if (!choice || typeof choice.message?.content !== 'string') {
     throw new VlmEndpointError(
       `page ${page.number}: the server's answer carries no message content. `
@@ -142,8 +162,9 @@ async function readOnePage(
   return {
     number: page.number,
     text: choice.message.content.trim(),
-    tokens: payload.usage?.completion_tokens ?? 0,
+    tokens: answer.usage?.completion_tokens ?? 0,
     finishReason: choice.finish_reason ?? null,
     seconds: (Date.now() - started) / 1000,
+    response: payload,
   };
 }

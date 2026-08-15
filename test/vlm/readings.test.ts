@@ -268,3 +268,115 @@ test('a completed conversion re-ordered twice archives twice and never replays',
   assert.equal(VlmReadings.open(path.join(first.archivedTo!, 'readings.jsonl')).size, 3);
   assert.equal(VlmReadings.open(path.join(second.archivedTo!, 'readings.jsonl')).size, 3);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The record shape
+//
+// EVERYTHING THE MODEL RETURNED IS KEPT, and so is everything needed to
+// interpret it. A page costs GPU-minutes, so a field the run knew and did not
+// write down is a field that can only be got back by paying for the page again;
+// and a bank that already exists on disk, written before those fields did, must
+// keep opening and keep rendering books.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('a reading round-trips with the whole server payload and the geometry beside it', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-readings-shape-'));
+  const readingsPath = path.join(dir, 'readings.jsonl');
+  const payload = {
+    id: 'chatcmpl-7f3',
+    object: 'chat.completion',
+    created: 1_770_000_000,
+    model: 'rednote-hilab/dots.ocr',
+    choices: [{
+      index: 0,
+      message: { role: 'assistant', content: '[{"bbox":[1,2,3,4],"category":"Text","text":"x"}]' },
+      finish_reason: 'stop',
+      logprobs: null,
+    }],
+    usage: { prompt_tokens: 1289, completion_tokens: 412, total_tokens: 1701 },
+  };
+
+  VlmReadings.open(readingsPath).append({
+    page: 7,
+    text: '[{"bbox":[1,2,3,4],"category":"Text","text":"x"}]',
+    tokens: 412,
+    finishReason: 'stop',
+    seconds: 3.5,
+    response: payload,
+    render: { width: 1300, height: 2112 },
+    maxPixels: 11_289_600,
+    model: 'dots-ocr',
+  });
+
+  const reopened = VlmReadings.open(readingsPath).get(7)!;
+  // The parsed-out fields are what the pipeline reads and they have not moved.
+  assert.equal(reopened.text, '[{"bbox":[1,2,3,4],"category":"Text","text":"x"}]');
+  assert.equal(reopened.tokens, 412);
+  assert.equal(reopened.finishReason, 'stop');
+  // And the whole payload is there, untrimmed and un-normalised — the prompt
+  // token count, the model the server actually served, the response id. None of
+  // it is recoverable later without reading the page again.
+  assert.deepEqual(reopened.response, payload);
+  assert.deepEqual(reopened.render, { width: 1300, height: 2112 });
+  assert.equal(reopened.maxPixels, 11_289_600);
+  assert.equal(reopened.model, 'dots-ocr');
+});
+
+test('the geometry is a PAIR: half of it reads as none of it', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-readings-geometry-'));
+  const readingsPath = path.join(dir, 'readings.jsonl');
+  const readings = VlmReadings.open(readingsPath);
+  readings.append({
+    page: 1, text: 'a', tokens: 1, finishReason: 'stop', seconds: 1,
+    render: { width: 1300, height: 2112 }, maxPixels: 2_000_000,
+  });
+  // A render with no budget is a scale that would be quietly wrong, which is the
+  // one failure that is invisible in the text and wrong in every picture crop.
+  readings.append({
+    page: 2, text: 'b', tokens: 1, finishReason: 'stop', seconds: 1,
+    render: { width: 1300, height: 2112 },
+  });
+  readings.append({ page: 3, text: 'c', tokens: 1, finishReason: 'stop', seconds: 1 });
+
+  const reopened = VlmReadings.open(readingsPath);
+  assert.deepEqual(reopened.geometry(1), {
+    render: { width: 1300, height: 2112 }, maxPixels: 2_000_000,
+  });
+  assert.equal(reopened.geometry(2), null);
+  assert.equal(reopened.geometry(3), null);
+});
+
+test('a bank written before any of those fields existed still opens, whole', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-readings-legacy-'));
+  const readingsPath = path.join(dir, 'readings.jsonl');
+  // The old shape, byte for byte: five fields and nothing else.
+  fs.writeFileSync(
+    readingsPath,
+    '{"page":1,"text":"old","tokens":9,"finishReason":"stop","seconds":2.5}\n'
+    + '{"page":2,"text":"older","tokens":8,"finishReason":null,"seconds":1.5}\n',
+  );
+  const readings = VlmReadings.open(readingsPath);
+  assert.equal(readings.size, 2);
+  assert.equal(readings.get(1)!.text, 'old');
+  assert.equal(readings.get(2)!.finishReason, null);
+  // Absence means "this run did not record it", never "there was none", and
+  // nothing is invented to fill the gap.
+  assert.equal(readings.get(1)!.response, undefined);
+  assert.equal(readings.get(1)!.render, undefined);
+  assert.equal(readings.geometry(1), null);
+});
+
+test('a record whose new fields are the wrong type is not believed, and the old ones still are', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-readings-junk-'));
+  const readingsPath = path.join(dir, 'readings.jsonl');
+  fs.writeFileSync(
+    readingsPath,
+    '{"page":1,"text":"t","tokens":1,"finishReason":"stop","seconds":1,'
+    + '"render":{"width":1300},"maxPixels":"lots","model":7}\n',
+  );
+  const reading = VlmReadings.open(readingsPath).get(1)!;
+  assert.equal(reading.text, 't');
+  assert.equal(reading.render, undefined);
+  assert.equal(reading.maxPixels, undefined);
+  assert.equal(reading.model, undefined);
+});

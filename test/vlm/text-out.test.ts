@@ -50,6 +50,7 @@ function block(overrides: Partial<DotsBlock> = {}): DotsBlock {
   return {
     page: 1,
     order: 0,
+    part: 0,
     category: 'Text',
     box: { x1: 200, y1: 300, x2: 1100, y2: 700 },
     text: 'body',

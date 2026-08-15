@@ -61,6 +61,7 @@ import {
   type DotsPageImages,
 } from '../../src/vlm/dots-book.js';
 import { requireVlmModel } from '../../src/vlm/models.js';
+import { applyOverlay, parseOverlay, type Overlay } from '../../src/vlm/overlay.js';
 import { unzipMap } from '../export/unzip.js';
 import { checkXml } from '../export/xmlcheck.js';
 
@@ -194,6 +195,7 @@ function block(overrides: Partial<DotsBlock> = {}): DotsBlock {
   return {
     page: 1,
     order: 0,
+    part: 0,
     category: 'Text',
     box: { x1: 200, y1: 300, x2: 1100, y2: 700 },
     text: 'body',
@@ -2071,4 +2073,134 @@ test('epub-final FINDS the cover foundry wrote', async () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ── the curation, in the finished book ──────────────────────────────────────
+//
+// `overlay.ts` owns the schema and its own test file owns the semantics. What
+// is asserted here is the thing only the renderers can answer: that a corrected
+// block is treated as a block and not as a special case, and that a laid-out
+// spine is the book's spine.
+
+/** An overlay from its literal shape, so the tests read like the app's file. */
+function curation(shape: Record<string, unknown>): Overlay {
+  return parseOverlay(JSON.stringify({ overlay: 1, amendments: [], ...shape }), 'overlay.json');
+}
+
+test('a corrected block renders EXACTLY as the same words from the model would', () => {
+  /*
+   * The claim `--overlay` makes about text: a correction goes in where the
+   * model's own text would have gone, so everything downstream treats it
+   * identically. The cheapest possible proof is two chapters that must be the
+   * same bytes — one built from a block the model got right, one from a block
+   * the model got wrong and a person fixed.
+   */
+  const words = 'The **Führer** and his *Reich*, note ¹⁴';
+  const [corrected] = applyOverlay(
+    [block({ text: 'Tbe Fuhrer aud his Reicb, note 14' })],
+    curation({ amendments: [{ at: { page: 1, order: 0 }, text: words }] }),
+  );
+  const native = block({ text: words });
+  const fixed = buildChapterBody([corrected], chapterOptions()).xhtml;
+  assert.equal(fixed, buildChapterBody([native], chapterOptions()).xhtml);
+  // And it really did go through the emphasis and the superscript rules.
+  assert.match(fixed, /<strong>Führer<\/strong>/);
+  assert.match(fixed, /<em>Reich<\/em>/);
+  assert.match(fixed, /<sup>14<\/sup>/);
+});
+
+/**
+ * Two chapters the rules find on their own, with a page of prose between them.
+ *
+ * The blocks carry their true `order` — the place they stood in the model's
+ * answer for their page — because that is half of the identity every amendment
+ * and every chapter location is keyed to.
+ */
+function spineBook() {
+  const prose = (text: string): DotsBlock => block({ order: 1, text: `${text} ${'word '.repeat(30)}` });
+  return [
+    page(1, [block({ category: 'Title', text: 'CHAPTER I' }), prose('The first chapter opens.')]),
+    // The only block on its page, so it is element 0 of that page's answer.
+    page(2, [{ ...prose('The middle of the first chapter.'), order: 0 }]),
+    page(3, [block({ category: 'Title', text: 'CHAPTER II' }), prose('The second chapter opens.')]),
+  ];
+}
+
+const SPINE_META = { title: 'A Book', language: 'en', identifier: 'urn:x:1' };
+
+test('with no chapter list the book divides where the rules say', async () => {
+  const built = await buildDotsBook({
+    metadata: SPINE_META, pages: spineBook(), images: blindImages, stripNoteMarkers: false,
+  });
+  assert.deepEqual(built.chapters.map((c) => [c.label, c.firstPage]), [
+    ['CHAPTER I', 1],
+    ['CHAPTER II', 3],
+  ]);
+});
+
+test('a laid-out spine IS the book: it divides there, and the contents says that', async () => {
+  const built = await buildDotsBook({
+    metadata: SPINE_META,
+    pages: spineBook(),
+    images: blindImages,
+    stripNoteMarkers: false,
+    overlay: curation({
+      chapters: [{ at: { page: 2, order: 0 }, title: 'Chapter 4 — The Windmill' }],
+    }),
+  });
+  // The heading on page 3 that every rule would have split at does not open a
+  // section: removing an entry from the list is the demotion.
+  assert.deepEqual(built.chapters.map((c) => [c.label, c.firstPage, c.lastPage]), [
+    ['CHAPTER I', 1, 1],
+    ['Chapter 4 — The Windmill', 2, 3],
+  ]);
+  const entries = unzipMap(built.bytes);
+  const nav = entries.get('EPUB/nav.xhtml')!.text();
+  assert.match(nav, /Chapter 4 — The Windmill/);
+  assert.doesNotMatch(nav, /CHAPTER II/);
+  // The blocks are untouched by any of it: CHAPTER II is still printed where
+  // the printer printed it, inside the section it now belongs to.
+  assert.match(entries.get('EPUB/text/c0002.xhtml')!.text(), /CHAPTER II/);
+});
+
+test('an empty chapter list is one section, and it is not the same as no list', async () => {
+  const built = await buildDotsBook({
+    metadata: SPINE_META,
+    pages: spineBook(),
+    images: blindImages,
+    stripNoteMarkers: false,
+    overlay: curation({ chapters: [] }),
+  });
+  assert.equal(built.chapters.length, 1);
+  assert.deepEqual([built.chapters[0].firstPage, built.chapters[0].lastPage], [1, 3]);
+  // Everything is still in the book, in order.
+  const only = unzipMap(built.bytes).get('EPUB/text/c0001.xhtml')!.text();
+  assert.ok(only.indexOf('CHAPTER I') < only.indexOf('CHAPTER II'));
+});
+
+test('correcting an opener\'s words edits the BOOK and never the contents', async () => {
+  const pages = spineBook();
+  const overlay = curation({
+    chapters: [{ at: { page: 3, order: 0 }, title: 'II — The Trial' }],
+    amendments: [{ at: { page: 3, order: 0 }, text: 'CHAPTER TWO' }],
+  });
+  const built = await buildDotsBook({
+    metadata: SPINE_META,
+    pages: pages.map((p) => ({ ...p, blocks: applyOverlay(p.blocks, overlay) })),
+    images: blindImages,
+    stripNoteMarkers: false,
+    overlay,
+  });
+  // The leading span is the front matter — everything before the first listed
+  // chapter — and it is labelled the way a detected book labels a section that
+  // opened without a proposal behind it: off its own first heading.
+  assert.deepEqual(built.chapters.map((c) => c.label), ['CHAPTER I', 'II — The Trial']);
+  const chapter = unzipMap(built.bytes).get('EPUB/text/c0002.xhtml')!.text();
+  const body = chapter.slice(chapter.indexOf('<body>'));
+  // The page says what the person says it says; the contents says what the
+  // person called the chapter. Two facts, and neither one derived the other.
+  assert.match(body, /CHAPTER TWO/);
+  assert.doesNotMatch(body, /II — The Trial/);
+  // The correction touched the opener and nothing beside it.
+  assert.match(body, /The second chapter opens\./);
 });

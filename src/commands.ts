@@ -37,6 +37,7 @@ import { epubStamp } from './epub/stamp.js';
 import { pdfMeta, PDF_META_FIELDS, type PdfMetaField } from './pdf/meta.js';
 import { probeEndpoint, probeLocalPython, probeVllmLocal, probeWslVllm } from './backend/probe.js';
 import { loadSettings, settingsPath, type FoundrySettings } from './backend/settings.js';
+import { dumpBlocks } from './vlm/blocks-dump.js';
 import { vlmConvert } from './vlm/convert.js';
 import { DEFAULT_VLM_CONCURRENCY } from './vlm/endpoint.js';
 import { DEFAULT_VLM_MODEL_ID, VLM_MODELS } from './vlm/models.js';
@@ -172,6 +173,18 @@ const VLM_SKIP_PAGES: OptionSpec = {
   describe: 'Pages that are not part of the book: never rendered, never read, never in the EPUB.',
 };
 
+/**
+ * The curation, which is a file rather than a flag because there is no number of
+ * flags that could carry it: it is one line per block somebody decided
+ * something about.
+ */
+const VLM_OVERLAY: OptionSpec = {
+  name: 'overlay',
+  type: 'string',
+  placeholder: '<file.json>',
+  describe: 'Decisions to apply: struck blocks, categories, corrected text, and the book\'s chapters.',
+};
+
 const VLM_CHAPTERS: OptionSpec = {
   name: 'chapters',
   type: 'string',
@@ -183,6 +196,22 @@ const VLM_STRIP_MARKERS: OptionSpec = {
   name: 'strip-note-markers',
   type: 'boolean',
   describe: 'Remove footnote reference numbers from the prose. For a narration build.',
+};
+
+// ── vlm-blocks ───────────────────────────────────────────────────────────────
+
+const VB_READINGS: OptionSpec = {
+  name: 'readings',
+  type: 'string',
+  placeholder: '<file.jsonl>',
+  describe: 'The bank of page answers to read the blocks out of. Read, never written.',
+};
+
+const VB_PDF_IN: OptionSpec = {
+  name: 'pdf',
+  type: 'string',
+  placeholder: '<file.pdf>',
+  describe: 'Only for a bank that recorded no render sizes: the pages are measured again. Never written to.',
 };
 
 // ── translate ────────────────────────────────────────────────────────────────
@@ -510,6 +539,7 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
     ...(freshReadings ? { freshReadings: true } : {}),
     ...(reuseReadings ? { reuseReadings: true } : {}),
     ...(skipPages !== undefined ? { skipPages: parsePageList(skipPages, '--skip-pages') } : {}),
+    ...(optionalString(args, 'overlay') ? { overlayPath: optionalString(args, 'overlay')! } : {}),
     ...(optionalString(args, 'chapters') ? { chaptersPath: optionalString(args, 'chapters')! } : {}),
     stripNoteMarkers: flag(args, 'strip-note-markers'),
     language: optionalString(args, 'language') ?? 'en',
@@ -550,6 +580,37 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
       + report.unreadable.map((p) => p.number).join(', '),
     );
   }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// vlm-blocks
+// ═════════════════════════════════════════════════════════════════════════════
+
+async function runVlmBlocks(args: ParsedArgs): Promise<void> {
+  const settings: FoundrySettings = loadSettings();
+  const endpointFromSettings =
+    settings.backend?.mode === 'endpoint' ? settings.backend.endpointUrl : undefined;
+  const python = fromFlagOrSettings(args, 'python', settings.backend?.python, 'backend.python');
+
+  const dump = await dumpBlocks({
+    readingsPath: requireString(args, 'readings', 'the bank of page answers to read the blocks out of'),
+    ...(optionalString(args, 'pdf') ? { pdfPath: optionalString(args, 'pdf')! } : {}),
+    modelId: optionalString(args, 'vlm-model') ?? DEFAULT_VLM_MODEL_ID,
+    ...(python !== undefined ? { python } : {}),
+    /*
+     * The one thing this flag decides is which pixel budget an OLD bank's boxes
+     * were measured in, and it decides it exactly as vlm-convert does — nothing
+     * is contacted. A bank written by this version records the budget beside
+     * every answer and the flag is never consulted at all.
+     */
+    viaEndpoint: optionalString(args, 'vlm-endpoint') !== undefined || endpointFromSettings !== undefined,
+    log,
+  });
+
+  // The blocks ARE the result, so they go to stdout, as versioned JSON — this
+  // command exists to be spawned. Fields are added, never renamed, without a
+  // version bump, exactly as for epub-meta --json.
+  process.stdout.write(`${JSON.stringify(dump, null, 2)}\n`);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1098,7 +1159,8 @@ export const COMMANDS: readonly Command[] = [
   {
     name: 'vlm-convert',
     summary: 'A vision model reads the pages: PDF in, EPUB, plain text or a real-text PDF out.',
-    usage: '--pdf <file.pdf> --out <book.epub> [--format <epub|txt|pdf>] [--vlm-model <id>] [--python <path>]',
+    usage: '--pdf <file.pdf> --out <book.epub> [--format <epub|txt|pdf>] [--vlm-model <id>]'
+      + ' [--python <path>] [--overlay <file.json>]',
     detail: [
       'A document vision model reads each page picture and hands back marked-up',
       'text, and foundry assembles those answers into an EPUB. No Tesseract, no',
@@ -1180,6 +1242,48 @@ export const COMMANDS: readonly Command[] = [
       'is rendered. A paragraph is never joined across the hole: page 8 followed',
       'by page 12 is not a page turn, and the sentence a join would build there',
       'is one nobody wrote.',
+      '',
+      '--overlay APPLIES WHAT A PERSON DECIDED ABOUT THE BLOCKS, out of a file the',
+      'run reads and never writes. The readings bank is what the model said; the',
+      'overlay is what somebody said about it, and the two are separate files',
+      'because a banked answer that has been hand-edited is no longer evidence of',
+      'anything. It carries two lists, because there are two kinds of decision.',
+      '',
+      'AMENDMENTS ARE ABOUT BLOCKS. Each names one by (page, order, part) — the',
+      'page, the element\'s place in the model\'s answer, and which piece of it a',
+      'markdown split cut out — and strikes it out of the book, renders it as a',
+      'different category, or replaces what it says. Struck blocks are gone from',
+      'EVERY format, including the facsimile PDF, where a struck Picture is not',
+      'cut out of the scan at all. Corrected text goes in where the model\'s text',
+      'would have gone, so emphasis, footnote markers, dehyphenation and reflow',
+      'all treat it identically — and it never re-splits the block, because the',
+      'split is what makes the part numbers every amendment is keyed to. The run',
+      'says how many blocks were struck, reclassified and rewritten.',
+      '',
+      'THE CHAPTERS ARE ABOUT THE BOOK, and the list is definitive. Leave it out',
+      'and the chapters are worked out exactly as they always were. Give it and',
+      'the book divides at those locations and no others, with those names in the',
+      'contents and no others: no heading is promoted, no running head demoted, no',
+      'page classified. Removing an entry IS the demotion. An EMPTY list is a',
+      'statement too — the book has no divisions and comes out as one section —',
+      'and blocks before the first entry are front matter, exactly as in a book',
+      'that does not open on a chapter. A chapter\'s opener stays an ordinary',
+      'block at the top of its section: what the page prints and what the contents',
+      'calls the chapter are two facts, and correcting the first with a text',
+      'amendment never touches the second.',
+      '',
+      'A MALFORMED OVERLAY STOPS THE RUN BEFORE A PAGE RENDERS, and every refusal',
+      'names the amendment or the chapter: an unknown category, a page or order',
+      'that is not a whole number, a field this program does not read, an',
+      'amendment that decides nothing, a chapter with no title, chapters out of',
+      'reading order or two at one location. That is the opposite of how',
+      '--readings treats a torn last line, and deliberately: a bank is appended to',
+      'by a process that can be killed, and an overlay is written whole by',
+      'whatever curates the blocks, so anything wrong with it is a bug in the',
+      'writer rather than the normal cost of an interrupted run. Use `foundry',
+      'vlm-blocks` to get the blocks, their ids and the spine this engine would',
+      'build, to write one against. A prose dialect is refused: it names no',
+      'blocks to amend.',
       '',
       'Pages are rendered by PyMuPDF at 200 dpi. That is the resolution the models',
       'were measured at and it is not a setting (ARCHITECTURE §5).',
@@ -1268,9 +1372,70 @@ export const COMMANDS: readonly Command[] = [
       PDF_IN, OUT_PATH, VLM_FORMAT, VLM_MODEL, VLM_PYTHON, VLM_RENDERS, VLM_LANGUAGE,
       VLM_ENDPOINT, VLM_ENDPOINT_MODEL, VLM_CONCURRENCY, VLM_READINGS,
       VLM_FRESH_READINGS, VLM_REUSE_READINGS, VLM_SKIP_PAGES,
-      VLM_CHAPTERS, VLM_STRIP_MARKERS,
+      VLM_OVERLAY, VLM_CHAPTERS, VLM_STRIP_MARKERS,
     ],
     run: runVlmConvert,
+  },
+  {
+    name: 'vlm-blocks',
+    summary: 'Print the blocks of a banked reading as JSON: page, order, part, category, box, text.',
+    usage: '--readings <file.jsonl> [--pdf <file.pdf>] [--vlm-model <id>] [--python <path>]',
+    detail: [
+      'The blocks a conversion would build its book out of, as data on stdout,',
+      'for something with a screen to draw. It reads a --readings bank and parses',
+      'each banked answer exactly as vlm-convert does; NO PAGE IS READ FROM A',
+      'MODEL, nothing is written, no completion marker is dropped and no bank is',
+      'archived, so it is safe to run over a bank in the middle of somebody\'s',
+      'conversion.',
+      '',
+      'WHAT IT IS FOR: writing an overlay. Every block comes back with the three',
+      'numbers that name it — page, order and part — which are the same three',
+      '`vlm-convert --overlay` amendments are keyed to, and with the box it',
+      'occupies in the page render, which is what puts an outline round it on a',
+      'picture of the page. The blocks and the ids are the ones the renderers see:',
+      'this is the same parse, not a second one written to look like it.',
+      '',
+      'IT ALSO REPORTS THE SPINE THIS ENGINE WOULD BUILD — where a run with no',
+      'overlay would divide the book, and what it would call each division, as',
+      'locations an overlay\'s "chapters" list can name verbatim. That is so an',
+      'editor can open with the engine\'s own answer in front of somebody instead',
+      'of an empty list, and so that saving it back unchanged renders the',
+      'identical book. It is the same prologue the EPUB route runs — the mistagged',
+      'running heads out, the two-line headings joined, the text dehyphenated and',
+      'reflowed, the doubled openings folded — because a seed that took a shortcut',
+      'past any of those would be wrong on exactly the books those passes exist',
+      'for.',
+      '',
+      'A BOX ONLY MEANS SOMETHING IN A FRAME, and the frame is the render size and',
+      'the pixel budget together. A bank written by this version records both',
+      'beside every answer, and then this command needs nothing else — no PDF, no',
+      'rasteriser, no Python. A bank written before it does not, so --pdf is asked',
+      'for and the pages are rasterised again at 200 dpi to measure them; the',
+      'renders are thrown away as they are made. Each page in the output says',
+      'which of the two it got its geometry from.',
+      '',
+      'FURNITURE IS INCLUDED. The page header and footer are blocks a person can',
+      'strike or reclassify like any other, and a page drawn with holes in it',
+      'where the folio was is a page whose outlines do not match the paper. They',
+      'arrive in the model\'s own answer order, with the rest.',
+      '',
+      'THESE ARE THE PAGE\'S BLOCKS, NOT THE BOOK\'S. The passes that turn pages',
+      'into a book — suppressing running heads the model mistagged, merging a',
+      'heading printed on two lines, rejoining a paragraph across a page turn,',
+      'dehyphenating against the book\'s own lexicon — have not run and should',
+      'not: they act on the book, and a person curating blocks is looking at the',
+      'page.',
+      '',
+      'A page whose answer cannot be parsed is REPORTED AND SKIPPED, by number,',
+      'in an "unreadable" list beside the pages — the same promise vlm-convert',
+      'makes, for the same reason: one bad page must not cost somebody the other',
+      'two hundred and ninety-nine.',
+      '',
+      'The output is versioned JSON. Machine-consumed: fields are added, never',
+      'renamed, without a version bump.',
+    ].join('\n'),
+    options: [VB_READINGS, VB_PDF_IN, VLM_MODEL, VLM_PYTHON, VLM_ENDPOINT],
+    run: runVlmBlocks,
   },
   {
     name: 'translate',

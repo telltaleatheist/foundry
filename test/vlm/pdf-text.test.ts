@@ -52,6 +52,8 @@ import {
 } from 'pdf-lib';
 
 import { vlmConvert } from '../../src/vlm/convert.js';
+import { parseDotsPage, type DotsBlock } from '../../src/vlm/dots.js';
+import { applyOverlay, parseOverlay } from '../../src/vlm/overlay.js';
 import {
   boxToDisplay,
   buildTextPdf,
@@ -1388,4 +1390,51 @@ test('a tagged running head AND a bare-number folio both reach the page', async 
   assert.ok(Math.abs(drawn[0].x - 150 * 0.36) < 1e-6, 'the head folio left its corner');
   assert.equal(drawn[0].chars, '108'.length);
   assert.ok(drawn[0].y > drawn[drawn.length - 1].y, 'the head folio is not above the foot folio');
+});
+
+// ── the curation, on the facsimile route ────────────────────────────────────
+
+test('a struck Picture is never cut out of the scan', async () => {
+  /*
+   * The one promise `--overlay` makes that is specific to this route. Every
+   * other format writes text, so a struck block simply is not written; here a
+   * Picture is a REGION OF THE SCAN that gets cut out with a subprocess and
+   * embedded, and a strike that only reached the text would leave the figure in
+   * the file. It does not have to be handled here, and that is the point: the
+   * overlay is applied once, at the parse, so the blocks this route is handed
+   * are already the blocks the person kept.
+   */
+  const { crop, asked } = cropper();
+  const parsed = parseDotsPage(JSON.stringify([
+    { bbox: [165, 240, 1128, 700], category: 'Text', text: 'A paragraph of the page.' },
+    { bbox: [200, 800, 1100, 1500], category: 'Picture', text: '' },
+  ]), { page: 1, render: RENDER, maxPixels: 11289600 });
+
+  const overlay = parseOverlay(JSON.stringify({
+    overlay: 1,
+    amendments: [{ at: { page: 1, order: 1 }, strike: true }],
+  }), 'overlay.json');
+
+  // Exactly what `convert.ts` hands this file, on both sides of the strike.
+  const asPage = (blocks: readonly DotsBlock[]): PdfTextPage => ({
+    page: 1,
+    render: RENDER,
+    blocks: blocks.map((b) => ({ box: b.box, category: b.category, text: b.text })),
+  });
+
+  const kept = await buildTextPdf({
+    pdfBytes: await scanOf(1), dpi: 200, crop, pages: [asPage(parsed.blocks)],
+  });
+  assert.equal(kept.pictures, 1);
+  assert.equal(asked.length, 1);
+
+  asked.length = 0;
+  const struck = await buildTextPdf({
+    pdfBytes: await scanOf(1),
+    dpi: 200,
+    crop,
+    pages: [asPage(applyOverlay(parsed.blocks, overlay))],
+  });
+  assert.equal(struck.pictures, 0);
+  assert.deepEqual(asked, []);
 });

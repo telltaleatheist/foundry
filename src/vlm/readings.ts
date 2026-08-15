@@ -37,12 +37,76 @@ import * as path from 'node:path';
 import { ensureDir } from '../fsdirs.js';
 import { VERSION } from '../version.js';
 
+/**
+ * One page's answer, and everything that was true about the asking.
+ *
+ * The first five fields are what the pipeline reads and have not moved. The rest
+ * exist because of a rule this file learned late: EVERYTHING THE MODEL RETURNED
+ * IS KEPT, and so is everything needed to interpret it. The bank is the record
+ * of the expensive half of a conversion, and a record that only holds the fields
+ * today's code happens to read is a record that has to be paid for again the
+ * first time somebody asks a question nobody thought of.
+ *
+ * Every added field is OPTIONAL, and that is not politeness — banks written
+ * before them exist on disk right now, they cost hours of GPU, and they must
+ * keep opening and keep rendering books. Absence means "this run did not record
+ * it", never "there was none".
+ */
 export interface VlmReading {
   page: number;
   text: string;
   tokens: number;
   finishReason: string | null;
   seconds: number;
+  /**
+   * The server's whole decoded answer, verbatim and untrimmed.
+   *
+   * `text` above is `choices[0].message.content` with the whitespace taken off
+   * — the one field the dialects read — and everything else the server said
+   * about the answer used to be dropped on the floor at the seam in
+   * `endpoint.ts`: the full usage split, the model id the server actually
+   * served, the response id, the logprobs a server was asked for, whatever a
+   * particular vLLM build adds. None of it can be recovered later, because the
+   * page would have to be read again to get it, and reading the page again is
+   * the one thing this file exists to avoid. So the body is banked as it
+   * arrived, beside the fields parsed out of it, and nothing normalises what is
+   * inside it.
+   *
+   * ABSENT ON THE MLX ROUTE, and that is an absence with nothing behind it: the
+   * helper's page event carries `number, width, height, renderSeconds, seconds,
+   * chars, tokens, finishReason, skipped, text` (see `vlm_page.py`), and every
+   * one of those is already a field here. There is no residue to keep.
+   */
+  response?: unknown;
+  /**
+   * The page render the model was shown, in pixels, at the run's pinned dpi.
+   *
+   * The boxes in a geometric answer are in a frame derived from this and
+   * `maxPixels`, so without the pair the answer cannot be turned back into
+   * blocks from the bank ALONE — which is exactly what a curation surface wants
+   * to do, and what re-deriving the geometry costs a PDF and a rasteriser to do
+   * instead (`blocks-dump.ts`).
+   */
+  render?: { width: number; height: number };
+  /** The processor's pixel budget this page's boxes were measured in. */
+  maxPixels?: number;
+  /**
+   * The model that answered, as `models.ts` names it.
+   *
+   * The registry id rather than the repo or the name a server was started with,
+   * because the id is what determines the DIALECT the answer has to be parsed in
+   * and the budget it was measured under. A bank whose pages do not say which
+   * dialect they are written in is a bank that can only be read by the command
+   * line that made it.
+   */
+  model?: string;
+}
+
+/** A banked render size, or something that is not one. Both numbers or nothing. */
+function isRenderSize(value: unknown): value is { width: number; height: number } {
+  if (typeof value !== 'object' || value === null) return false;
+  const size = value as { width?: unknown; height?: unknown };
+  return typeof size.width === 'number' && typeof size.height === 'number';
 }
 
 export class VlmReadingsError extends Error {
@@ -89,12 +153,25 @@ export class VlmReadings {
           `${readings.filePath}, line ${index + 1} carries no page and text. This file is not a readings file.`,
         );
       }
+      /*
+       * The two required fields are checked above and everything else is taken
+       * as it lies. A line written before `response`, `render`, `maxPixels` and
+       * `model` existed is a complete record of the answer it banked — those
+       * fields are things a run KNEW and did not write down, not things a page
+       * failed to have — so a bank that predates them opens, resumes and
+       * re-renders exactly as it always did. Nothing is invented to fill a gap:
+       * an absent render is absent, and whatever wants one goes and derives it.
+       */
       readings.byPage.set(record.page, {
         page: record.page,
         text: record.text,
         tokens: record.tokens ?? 0,
         finishReason: record.finishReason ?? null,
         seconds: record.seconds ?? 0,
+        ...(record.response !== undefined ? { response: record.response } : {}),
+        ...(isRenderSize(record.render) ? { render: record.render } : {}),
+        ...(typeof record.maxPixels === 'number' ? { maxPixels: record.maxPixels } : {}),
+        ...(typeof record.model === 'string' ? { model: record.model } : {}),
       });
     }
     return readings;
@@ -102,6 +179,23 @@ export class VlmReadings {
 
   get size(): number {
     return this.byPage.size;
+  }
+
+  /**
+   * The banked geometry for a page, or null where the run that wrote it did not
+   * record any.
+   *
+   * A pair, because half of it is useless: the boxes were measured in a frame
+   * `smartResize` computes from BOTH the render and the budget, and a render
+   * paired with a guessed budget is a scale that is quietly a few per cent wrong
+   * — the one failure `dots.ts` says is invisible in the text and wrong in every
+   * picture crop. So a record carrying one and not the other reads as carrying
+   * neither, and whatever wanted it goes and derives both from the PDF.
+   */
+  geometry(page: number): { render: { width: number; height: number }; maxPixels: number } | null {
+    const reading = this.byPage.get(page);
+    if (reading?.render === undefined || reading.maxPixels === undefined) return null;
+    return { render: reading.render, maxPixels: reading.maxPixels };
   }
 
   has(page: number): boolean {

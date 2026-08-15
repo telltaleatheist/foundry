@@ -46,6 +46,7 @@ function typed(overrides: {
   return {
     page: overrides.page ?? 1,
     order: 0,
+    part: 0,
     category: overrides.category ?? 'Text',
     box: { x1: 200, y1: 300, x2: 200 + width, y2: 300 + overrides.px * lines },
     text: overrides.text ?? Array.from({ length: lines }, (_, i) => `line ${i + 1}`).join('\n'),

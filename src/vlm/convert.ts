@@ -49,6 +49,7 @@ import {
 import { DEFAULT_VLM_CONCURRENCY, readPagesFromEndpoint } from './endpoint.js';
 import { buildVlmEpub, type VlmChapter, type VlmEpubMetadata, type VlmPageBlocks } from './epub.js';
 import { requireVlmModel, type VlmModelDef } from './models.js';
+import { applyOverlay, emptyOverlay, loadOverlay, overlayTally, type Overlay } from './overlay.js';
 import { buildTextPdf } from './pdf-text.js';
 import { openReadingsBank, writeCompletionMarker } from './readings.js';
 import { formatConflict, type VlmOutputFormat } from './text-out.js';
@@ -123,6 +124,18 @@ export interface VlmConvertOptions {
    * tomorrow resumes off the same answers.
    */
   skipPages?: readonly number[];
+  /**
+   * A file of amendments a person made about the blocks — `--overlay`, and
+   * `overlay.ts` has the schema and the reasoning.
+   *
+   * The bank says what the model read and this says what somebody decided about
+   * it: blocks struck out of the book, blocks reclassified, words corrected, and
+   * the chapters the book divides into. Absent is an empty overlay and a run
+   * that behaves exactly as it did before overlays existed. Geometric dialects
+   * only — an amendment names a block by its place in the model's answer, and a
+   * dialect that answers with prose has no blocks to name.
+   */
+  overlayPath?: string;
   /** Where the chapter proposals are written. Geometric dialects only. */
   chaptersPath?: string;
   /** Remove footnote reference numbers — for a narration build. */
@@ -260,6 +273,53 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
   }
 
   /*
+   * THE CURATION, READ BEFORE A PAGE RENDERS.
+   *
+   * A malformed overlay is refused here rather than forty minutes later, which
+   * matters more than it does for most inputs: the file exists because somebody
+   * spent an evening striking blocks in an app, and the run they then ordered
+   * either applies that evening or it does not. It is never half applied and
+   * never silently skipped.
+   *
+   * A dialect with no geometry is refused outright rather than handed an overlay
+   * it cannot use. An amendment names a block by where it stood in the model's
+   * answer, and a prose dialect answers with a stream of text: there is nothing
+   * for `(page, order, part)` to point at, so obeying the flag is impossible and
+   * ignoring it would be this program dropping an instruction on the floor
+   * (ARCHITECTURE §8).
+   */
+  if (opts.overlayPath !== undefined && !geometric) {
+    throw new Error(
+      `--overlay names the blocks a person struck, reclassified or corrected and the chapters they `
+      + `laid out, and `
+      + `${model.id} answers in the ${model.dialect} dialect, which is prose: it reports what a page `
+      + 'says and never which element of its answer said it, so there is no block for an amendment '
+      + 'to be about. Use a dialect that answers with geometry — dots-ocr does, and it is the '
+      + 'default.',
+    );
+  }
+  const overlay: Overlay = opts.overlayPath !== undefined
+    ? loadOverlay(opts.overlayPath)
+    : emptyOverlay();
+  if (opts.overlayPath !== undefined) {
+    /*
+     * WHETHER THE SPINE IS THIS BOOK'S OR THIS PROGRAM'S, said before anything
+     * else happens. It is the loudest thing an overlay can do — a laid-out list
+     * supersedes every chapter rule in the assembler — and a run whose contents
+     * came out of a file rather than out of the book has to say so, or the next
+     * person to wonder why a heading did not open a chapter has nothing to read.
+     */
+    const spine = overlay.chapters === undefined
+      ? 'no chapter list, so the chapters are worked out as usual'
+      : `${overlay.chapters.length} chapter(s) laid out, and the book divides there and nowhere else`;
+    opts.log(
+      `vlm-convert: overlay ${path.resolve(opts.overlayPath)} — ${overlay.amendments.length} `
+      + `amendment(s), applied to the blocks as each page is parsed; ${spine}. The readings bank is `
+      + 'not touched: what the model said and what a person decided about it are two files.',
+    );
+  }
+
+  /*
    * The pixel budget, and the one number the two routes disagree about.
    *
    * A geometric dialect answers in the frame its processor resized the page to,
@@ -338,12 +398,26 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       onLoaded: (seconds) => opts.log(`vlm-convert: model resident in ${seconds.toFixed(1)}s`),
       onPage: (page, total) => {
         if (page.skipped) return;
+        /*
+         * Banked with the geometry the model was actually shown, not with what
+         * a later run would work out. The render size is this page's own — a
+         * book's pages are not all one size, and the JSTOR cover page in front
+         * of the Kershaw article is 1653 px wide in front of sixteen 1300 px
+         * ones — and the budget is the one THIS run scaled by. Together they are
+         * what makes the answer re-parsable out of the bank without the PDF.
+         *
+         * No `response` on this route: the helper's page event holds nothing
+         * that is not already a field here (`VlmReading.response`).
+         */
         readings?.append({
           page: page.number,
           text: page.text,
           tokens: page.tokens,
           finishReason: page.finishReason,
           seconds: page.seconds,
+          render: { width: page.width, height: page.height },
+          ...(maxPixels !== undefined ? { maxPixels } : {}),
+          model: model.id,
         });
         opts.log(
           `vlm-convert: page ${page.number}/${total} — ${page.width}x${page.height}, `
@@ -380,6 +454,11 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       }
     }
 
+    // Every page as the rasteriser measured it, by number. Read when an answer
+    // is banked and again when one is parsed, so that the geometry recorded
+    // beside an answer is the geometry that answer was produced under.
+    const sizes = new Map(run.pages.map((page) => [page.number, page]));
+
     if (viaEndpoint) {
       const wanted = run.pages.filter((p) => !answers.has(p.number));
       const concurrency = opts.concurrency ?? DEFAULT_VLM_CONCURRENCY;
@@ -397,12 +476,21 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
         pages: wanted.map((p) => ({ number: p.number, imagePath: renderPath(rendersDir, p.number) })),
         onPage: (page) => {
           done += 1;
+          // The whole of the server's answer, and the geometry it was an answer
+          // ABOUT. `sizes` is the render pass's own measurement of this page —
+          // the same numbers the parser is handed below, so the bank and the
+          // book cannot disagree about the frame a box was measured in.
+          const render = sizes.get(page.number);
           readings?.append({
             page: page.number,
             text: page.text,
             tokens: page.tokens,
             finishReason: page.finishReason,
             seconds: page.seconds,
+            response: page.response,
+            ...(render !== undefined ? { render: { width: render.width, height: render.height } } : {}),
+            ...(maxPixels !== undefined ? { maxPixels } : {}),
+            model: model.id,
           });
           if (page.finishReason === 'length') {
             refuse(page.number, `it hit the ${model.maxTokens}-token cap, so the model was still`
@@ -427,6 +515,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     const geometryPages: DotsParsedPage[] = [];
     const prosePages: VlmPageBlocks[] = [];
     let droppedFurniture = 0;
+    const amended = { struck: 0, reclassified: 0, corrected: 0 };
 
     for (const page of run.pages) {
       const answer = answers.get(page.number);
@@ -446,11 +535,43 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
           render: { width: page.width, height: page.height },
           maxPixels: maxPixels!,
         });
+        /*
+         * THE ONE PLACE THE CURATION IS APPLIED, and it is one line after the
+         * one place the blocks are made.
+         *
+         * Every route out of this function — the EPUB, the text file, the
+         * facsimile PDF — is downstream of here, so a block somebody struck is
+         * gone from all three by construction rather than by three renderers
+         * each remembering to check. That is what keeps the promise cheap: the
+         * Picture crop in `pdf-text.ts` never sees a struck figure and so cannot
+         * cut one out of the scan, and nothing in `dots-book.ts` counts, joins
+         * or measures a block that is not in the book.
+         *
+         * The furniture is amended too, and separately, because it is a second
+         * list of the same page's blocks. What an amendment does NOT do is move
+         * a block between the two: the partition was made from the model's own
+         * answer and `suppressRunningHeads` reads the furniture list as the
+         * book's evidence about its own running heads. Reclassifying a block to
+         * Page-header states how it should be RENDERED, and the routes that drop
+         * furniture read the category, so it is dropped — the block simply stays
+         * in the list it was parsed into while that happens.
+         */
+        const curated: DotsParsedPage = {
+          ...parsed,
+          blocks: applyOverlay(parsed.blocks, overlay),
+          furniture: applyOverlay(parsed.furniture, overlay),
+        };
+        for (const list of [parsed.blocks, parsed.furniture]) {
+          const tally = overlayTally(list, overlay);
+          amended.struck += tally.struck;
+          amended.reclassified += tally.reclassified;
+          amended.corrected += tally.corrected;
+        }
         // Not dropped on the PDF route, so not counted as dropped. That route
         // reprints the folio and the running head — they are what the page
         // printed, and its claim is about the page (`pdf-text.ts`).
-        if (format !== 'pdf') droppedFurniture += parsed.furniture.length;
-        geometryPages.push(parsed);
+        if (format !== 'pdf') droppedFurniture += curated.furniture.length;
+        geometryPages.push(curated);
       } catch (err) {
         if (!(err instanceof DotsPageError)) throw err;
         refuse(page.number, err.message.replace(/^page \d+: /, ''));
@@ -460,6 +581,23 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     const skipped = [...unreadable.values()].sort((a, b) => a.number - b.number);
     for (const page of skipped) {
       opts.log(`vlm-convert: page ${page.number} SKIPPED — ${page.reason}`);
+    }
+
+    /*
+     * What the curation DID, counted and said — the same promise the suppressed
+     * running heads and the folded sections make one file over. These blocks
+     * were removed on somebody's instruction rather than on a rule, which makes
+     * the number more trustworthy and not less interesting: a run that struck
+     * four hundred blocks off a three-hundred-page book is an overlay pointed at
+     * the wrong bank, and nothing else in the output would say so.
+     */
+    if (opts.overlayPath !== undefined) {
+      opts.log(
+        `vlm-convert: the overlay struck ${amended.struck} block(s) out of the book, rendered `
+        + `${amended.reclassified} as a category the model did not give them, and replaced the words `
+        + `of ${amended.corrected}; the readings they came from are unchanged, so a run without `
+        + '--overlay puts every one of them back',
+      );
     }
 
     if (geometric) checkPixelBudget(geometryPages, run.pages, maxPixels!, opts.log);
@@ -516,7 +654,6 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
        * printed. The blocks go down where the model put them, in the order it
        * answered in, furniture and all.
        */
-      const renders = new Map(run.pages.map((page) => [page.number, page]));
       blocks = geometryPages.reduce((sum, p) => sum + p.blocks.length + p.furniture.length, 0);
       const furniture = geometryPages.reduce((sum, p) => sum + p.furniture.length, 0);
       categories = countCategories(geometryPages);
@@ -530,7 +667,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
         dpi: VLM_DPI,
         crop: (requests) => cropRenders(requests, pdfPath, rendersDir, opts.python),
         pages: geometryPages.map((page) => {
-          const render = renders.get(page.page)!;
+          const render = sizes.get(page.page)!;
           return {
             page: page.page,
             render: { width: render.width, height: render.height },
@@ -650,6 +787,10 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
         metadata,
         pages: geometryPages,
         format,
+        // The strikes and the categories are already in these pages; what the
+        // assembler still needs the overlay for is `chapter`, which is a
+        // decision about the spine rather than about a block (`proposeSections`).
+        overlay,
         stripNoteMarkers: opts.stripNoteMarkers === true,
         images: openPageImages(
           (page) => path.join(rendersDir, `page-${String(page).padStart(4, '0')}.pgm`),
