@@ -76,3 +76,16 @@ describe('loadSettings', () => {
     expect(() => loadSettings()).toThrow(needle);
   });
 });
+
+describe('what PowerShell writes', () => {
+  test('a settings file with a UTF-8 BOM on it still parses', () => {
+    /*
+     * `Set-Content -Encoding utf8` and `>` both put U+FEFF on the front of the
+     * file, and JSON.parse refuses one — so a settings file written by a setup
+     * script on the one shell that ships with Windows used to read as "not
+     * valid JSON". See src/bom.ts.
+     */
+    withSettingsFile(`\uFEFF${JSON.stringify({ backend: { mode: 'endpoint', endpointUrl: 'http://host:8000/v1' } })}`);
+    expect(loadSettings().backend?.endpointUrl).toBe('http://host:8000/v1');
+  });
+});

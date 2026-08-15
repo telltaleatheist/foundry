@@ -499,3 +499,31 @@ test('chapter and title are no longer amendment fields at all', () => {
     /a field called "title"/,
   );
 });
+
+test('an overlay a PowerShell redirect wrote — BOM and all — still parses', () => {
+  /*
+   * `Set-Content -Encoding utf8` and `>` put U+FEFF on the front of the file,
+   * and JSON.parse refuses one. This file is written by the app, so it will
+   * usually be clean; it is also the one file in this program a person is most
+   * likely to hand-edit or a script most likely to copy, and "is not JSON" is a
+   * true sentence pointing at an invisible cause. See src/bom.ts.
+   */
+  const shape = { overlay: 1, amendments: [{ at: { page: 7, order: 14 }, strike: true }] };
+  const parsed = parseOverlay(`\uFEFF${JSON.stringify(shape)}`, 'curation.json');
+  assert.equal(parsed.amendments.length, 1);
+  assert.equal(parsed.amendments[0].strike, true);
+
+  // And off disk, which is how it actually arrives.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-overlay-bom-'));
+  const file = path.join(dir, 'curation.json');
+  fs.writeFileSync(file, `\uFEFF${JSON.stringify(shape)}`, 'utf8');
+  assert.equal(loadOverlay(file).amendments.length, 1);
+
+  // The mark is stripped at the door and nowhere else: a U+FEFF inside a
+  // block's text is a zero-width no-break space, which is somebody's content.
+  const inside = parseOverlay(
+    JSON.stringify({ overlay: 1, amendments: [{ at: { page: 1, order: 0 }, text: 'a\uFEFFb' }] }),
+    'curation.json',
+  );
+  assert.equal(inside.amendments[0].text, 'a\uFEFFb');
+});

@@ -27,8 +27,15 @@ import * as path from 'node:path';
 
 import type { VlmPage, VlmRunOptions, VlmRunResult } from '../../src/vlm/bridge.js';
 import type { VlmEndpointOptions } from '../../src/vlm/endpoint.js';
+import { findCommand, runCommand } from '../../src/commands.js';
+import { vlmConvert } from '../../src/vlm/convert.js';
 import { requireVlmModel } from '../../src/vlm/models.js';
-import { readPagesIntoBank, vlmRead, type VlmBridge } from '../../src/vlm/read.js';
+import {
+  readPagesIntoBank,
+  replaysCompletedBank,
+  vlmRead,
+  type VlmBridge,
+} from '../../src/vlm/read.js';
 import {
   readCompletionMarker,
   VlmReadings,
@@ -448,4 +455,199 @@ test('a replay of a bank with a hole in it reports the hole rather than paying f
   // the scan of it, a book leaves it out and the run names it either way.
   assert.equal(phase.answers.has(2), false);
   assert.equal(VlmReadings.open(readingsPath).size, 2);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The backend a replay does not need
+//
+// A rendering out of a finished bank loads no model and opens no socket, so
+// refusing it for want of a reading backend refuses a job over a thing it will
+// never touch. On a fresh Windows install — no settings.json, no endpoint named
+// — that made "generate a second format from a reading I already paid for"
+// impossible while costing nobody a second of GPU.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('a replay of a completed bank is known to need no backend, without touching anything', () => {
+  const readingsPath = bankOf([1, 2]);
+  const before = fs.readdirSync(path.dirname(readingsPath)).sort();
+
+  // No marker yet: an interrupted bank is a debt, and paying it needs a reader.
+  assert.equal(replaysCompletedBank({ readingsPath, reuseReadings: true }), false);
+
+  markComplete(readingsPath, 2, path.join(path.dirname(readingsPath), 'book.epub'));
+  assert.equal(replaysCompletedBank({ readingsPath, reuseReadings: true }), true);
+  // Only with the flag. Without it, a completed bank means "read the book
+  // again", which is the rule `readings.ts` exists to keep.
+  assert.equal(replaysCompletedBank({ readingsPath }), false);
+  assert.equal(replaysCompletedBank({ reuseReadings: true }), false);
+
+  // ASKED WITHOUT DOING: nothing archived, nothing written, nothing opened.
+  assert.deepEqual(fs.readdirSync(path.dirname(readingsPath)).sort(), before.concat(
+    path.basename(`${readingsPath.replace(/\.jsonl$/, '')}.completed.json`),
+  ).sort());
+});
+
+/**
+ * Run a command the way the CLI does, with the config directory pointed at an
+ * empty temp folder — a machine where nobody has ever named an endpoint.
+ */
+async function runWithNoSettings(argv: readonly string[]): Promise<Error> {
+  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-noconfig-'));
+  const previous = process.env['FOUNDRY_CONFIG_DIR'];
+  process.env['FOUNDRY_CONFIG_DIR'] = configDir;
+  try {
+    await runCommand(findCommand('vlm-convert')!, argv);
+    throw new Error('the command returned, and this one cannot: there is no PDF');
+  } catch (err) {
+    return err as Error;
+  } finally {
+    if (previous === undefined) delete process.env['FOUNDRY_CONFIG_DIR'];
+    else process.env['FOUNDRY_CONFIG_DIR'] = previous;
+    fs.rmSync(configDir, { recursive: true, force: true });
+  }
+}
+
+test('generating from a completed bank does not refuse over a backend it will not use', async () => {
+  const readingsPath = bankOf([1, 2, 3]);
+  markComplete(readingsPath, 3, path.join(path.dirname(readingsPath), 'book.epub'));
+  const dir = path.dirname(readingsPath);
+
+  const err = await runWithNoSettings([
+    '--pdf', path.join(dir, 'absent.pdf'),
+    '--out', path.join(dir, 'book.txt'),
+    '--format', 'txt',
+    '--readings', readingsPath,
+    '--reuse-readings',
+  ]);
+
+  // It got past the argv layer and died on the one thing actually missing.
+  assert.doesNotMatch(err.message, /no reading backend/);
+  assert.match(err.message, /no such PDF/);
+});
+
+test('a replay whose bank has a hole still gets to the hole, rather than to a backend', async () => {
+  /*
+   * The hole is the truer sentence about that run, and a refusal about backends
+   * would hide it behind a machine setting. This asserts the half that lives in
+   * the argv layer — the run is not turned away — and the phase test above
+   * ('a replay of a bank with a hole in it') asserts the other half: that the
+   * missing page is named and never quietly re-read.
+   */
+  const readingsPath = bankOf([1, 3]);
+  markComplete(readingsPath, 3, path.join(path.dirname(readingsPath), 'book.epub'));
+  const dir = path.dirname(readingsPath);
+
+  const err = await runWithNoSettings([
+    '--pdf', path.join(dir, 'absent.pdf'),
+    '--out', path.join(dir, 'book.epub'),
+    '--readings', readingsPath,
+    '--reuse-readings',
+  ]);
+  assert.doesNotMatch(err.message, /no reading backend/);
+  assert.match(err.message, /no such PDF/);
+});
+
+test('a run that MUST read is still refused for want of a backend', async () => {
+  // The check did not go away — it moved behind the question of whether this
+  // run reads anything. On Apple silicon the local path is the backend, so
+  // there is nothing to refuse and the assertion is about the other platforms.
+  if (process.platform === 'darwin') return;
+  const readingsPath = bankOf([]);
+  const dir = path.dirname(readingsPath);
+
+  const err = await runWithNoSettings([
+    '--pdf', path.join(dir, 'absent.pdf'),
+    '--out', path.join(dir, 'book.epub'),
+    '--readings', readingsPath,
+  ]);
+  assert.match(err.message, /no reading backend for this run/);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The whole of a generation, offline
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A blank page render, small: `inkExtentIn` clamps to the raster it is given. */
+function writeBlankPgm(dir: string, page: number): void {
+  fs.mkdirSync(dir, { recursive: true });
+  const header = Buffer.from('P5\n8 8\n255\n', 'ascii');
+  const pixels = Buffer.alloc(64, 0xff);
+  fs.writeFileSync(
+    path.join(dir, `page-${String(page).padStart(4, '0')}.pgm`),
+    Buffer.concat([header, pixels]),
+  );
+}
+
+test('a whole format is generated out of a finished bank with no backend of any kind', async () => {
+  /*
+   * The end of the promise, end to end: a bank read through a SERVER, rendered
+   * on a machine that names no server and has no local model — which is every
+   * fresh Windows install, and the exact case the app's Generate button spawns.
+   *
+   * The budget is the point of the geometry assertion. An answer's boxes only
+   * mean anything inside the frame the processor resized the page to, and that
+   * frame comes from the budget the READING was made under — 11,289,600 here,
+   * the model's own cap, because a server used it. This run would have chosen
+   * the MLX cap, which puts the same page in a 1092x1792 frame and scales every
+   * box by 1.19 instead of 1.01: a book whose text is perfect and whose every
+   * figure is cropped wrong. The bank records what it was read under, and that
+   * is what wins.
+   */
+  const readingsPath = bankOf([1, 2]);
+  const dir = path.dirname(readingsPath);
+  markComplete(readingsPath, 2, path.join(dir, 'book.epub'));
+  const pdfPath = withPdf(readingsPath);
+  const outPath = path.join(dir, 'book.txt');
+  const before = fs.readFileSync(readingsPath);
+
+  const watched = watch(2);
+  const rendersDir = path.join(dir, 'renders');
+  const bridge: VlmBridge = {
+    readPages: async (o) => {
+      // The renders a real run leaves behind, which the page-turn join reads.
+      if (o.grayscale === true && o.rendersDir !== undefined) {
+        for (let page = 1; page <= 2; page += 1) writeBlankPgm(o.rendersDir, page);
+      }
+      return watched.bridge.readPages(o);
+    },
+    fromEndpoint: watched.bridge.fromEndpoint,
+  };
+
+  const lines: string[] = [];
+  const report = await vlmConvert({
+    pdfPath,
+    outPath,
+    format: 'txt',
+    modelId: 'dots-ocr',
+    language: 'en',
+    readingsPath,
+    reuseReadings: true,
+    rendersDir,
+    bridge,
+    log: (line) => lines.push(line),
+  });
+
+  // A book came out, made of what the model said.
+  assert.equal(report.format, 'txt');
+  assert.ok(report.blocks > 0);
+  const text = fs.readFileSync(outPath, 'utf8');
+  assert.match(text, /page 1 of the book/);
+  assert.match(text, /page 2 of the book/);
+
+  // No model, no server, and the bank exactly as it was found.
+  assert.equal(watched.rendered[0].renderOnly, true);
+  assert.deepEqual(watched.posted, []);
+  assert.equal(report.inferredPages, 0);
+  assert.deepEqual(fs.readFileSync(readingsPath), before);
+  assert.deepEqual(fs.readdirSync(dir).filter((e) => e.startsWith('archived-')), []);
+
+  // THE FRAME IS THE READING'S, not this invocation's.
+  const frame = lines.find((l) => l.includes('frame, scaled by'));
+  assert.ok(frame !== undefined, lines.join('\n'));
+  assert.match(frame, /1288x2100 frame/);
+  assert.match(frame, /scaled by 1\.0093/);
+  assert.ok(
+    lines.some((l) => l.includes('read under a pixel budget this run would not have chosen')),
+    'the run did not say whose budget it used',
+  );
 });

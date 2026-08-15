@@ -19,6 +19,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { stripBom } from '../bom.js';
+
 /** How the reading backend is picked. */
 export const BACKEND_MODES = ['auto', 'endpoint', 'mlx'] as const;
 export type BackendMode = (typeof BACKEND_MODES)[number];
@@ -98,7 +100,10 @@ export function loadSettings(): FoundrySettings {
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    // A settings file is the one JSON in this program most likely to have been
+    // written by a setup script rather than by the app, and on Windows that
+    // means PowerShell, and that means a BOM (`bom.ts`).
+    parsed = JSON.parse(stripBom(raw));
   } catch (err) {
     throw new SettingsError(`settings.json is not valid JSON (${file}): ${(err as Error).message}`);
   }

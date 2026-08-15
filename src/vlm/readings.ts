@@ -34,6 +34,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { stripBom } from '../bom.js';
 import { ensureDir } from '../fsdirs.js';
 import { VERSION } from '../version.js';
 
@@ -133,7 +134,11 @@ export class VlmReadings {
   static open(filePath: string): VlmReadings {
     const readings = new VlmReadings(path.resolve(filePath));
     if (!fs.existsSync(readings.filePath)) return readings;
-    const lines = fs.readFileSync(readings.filePath, 'utf8').split('\n');
+    // The mark comes off the front of the FILE, not the front of a record: a
+    // bank a script copied through PowerShell arrives with one, and it would
+    // make the first line — a perfectly good answer that cost GPU-minutes —
+    // read as "this file is not a readings file" (`bom.ts`).
+    const lines = stripBom(fs.readFileSync(readings.filePath, 'utf8')).split('\n');
     for (const [index, line] of lines.entries()) {
       if (line.trim().length === 0) continue;
       const last = lines.slice(index + 1).every((rest) => rest.trim().length === 0);
@@ -304,7 +309,7 @@ export function readCompletionMarker(readingsPath: string): VlmCompletion | null
   if (!fs.existsSync(markerPath)) return null;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+    parsed = JSON.parse(stripBom(fs.readFileSync(markerPath, 'utf8')));
   } catch (err) {
     throw new VlmReadingsError(
       `${markerPath} is not JSON (${err instanceof Error ? err.message : String(err)}). `

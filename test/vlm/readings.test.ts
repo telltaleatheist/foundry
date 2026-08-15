@@ -380,3 +380,38 @@ test('a record whose new fields are the wrong type is not believed, and the old 
   assert.equal(reading.maxPixels, undefined);
   assert.equal(reading.model, undefined);
 });
+
+test('a bank and a marker a shell rewrote — BOM and all — still read', () => {
+  /*
+   * A bank is GPU-hours on disk. PowerShell's `>` and `Set-Content -Encoding
+   * utf8` both put U+FEFF on the front of a file, and JSON.parse refuses one —
+   * so a bank somebody copied through the one shell that ships with Windows
+   * would have condemned its own first line as "not a readings file", and a
+   * marker beside it would have read as a file this program did not write. See
+   * src/bom.ts.
+   */
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-readings-bom-'));
+  const readingsPath = path.join(dir, 'readings.jsonl');
+  fs.writeFileSync(
+    readingsPath,
+    '\uFEFF{"page":1,"text":"first","tokens":9,"finishReason":"stop","seconds":1}\n'
+    + '{"page":2,"text":"second","tokens":9,"finishReason":"stop","seconds":1}\n',
+    'utf8',
+  );
+  const readings = VlmReadings.open(readingsPath);
+  assert.equal(readings.size, 2);
+  // The FIRST line is the one at risk, and it is a page that cost real GPU.
+  assert.equal(readings.get(1)!.text, 'first');
+
+  fs.writeFileSync(
+    completionMarkerPath(readingsPath),
+    `\uFEFF${JSON.stringify({
+      completedAt: '2026-01-01T00:00:00.000Z',
+      outPath: null,
+      pages: 2,
+      foundryVersion: VERSION,
+    })}`,
+    'utf8',
+  );
+  assert.equal(readCompletionMarker(readingsPath)?.pages, 2);
+});

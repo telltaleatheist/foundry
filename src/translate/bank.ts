@@ -89,6 +89,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { stripBom } from '../bom.js';
 import { ensureDir } from '../fsdirs.js';
 
 /** Something is wrong with the bank itself — the file, or the flags about it. */
@@ -187,7 +188,9 @@ export class TranslationBank {
   static open(filePath: string): TranslationBank {
     const bank = new TranslationBank(path.resolve(filePath));
     if (!fs.existsSync(bank.filePath)) return bank;
-    const lines = fs.readFileSync(bank.filePath, 'utf8').split('\n');
+    // Same door and the same mark as the readings bank: a BOM a shell put on
+    // the front of the file must not condemn the first answer in it (`bom.ts`).
+    const lines = stripBom(fs.readFileSync(bank.filePath, 'utf8')).split('\n');
     for (const [index, line] of lines.entries()) {
       if (line.trim().length === 0) continue;
       const last = lines.slice(index + 1).every((rest) => rest.trim().length === 0);

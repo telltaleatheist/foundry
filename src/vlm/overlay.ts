@@ -55,6 +55,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { stripBom } from '../bom.js';
 import { DOTS_CATEGORIES, type DotsBlock, type DotsCategory } from './dots.js';
 
 export class VlmOverlayError extends Error {
@@ -214,7 +215,11 @@ export function loadOverlay(filePath: string): Overlay {
 export function parseOverlay(text: string, name: string): Overlay {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    // The mark comes off here rather than in `loadOverlay`, so that a caller
+    // handing this function a string it read some other way gets the same
+    // tolerance. See `bom.ts` for why a file this program's own app wrote can
+    // still arrive with one.
+    parsed = JSON.parse(stripBom(text));
   } catch (err) {
     throw new VlmOverlayError(
       `${name} is not JSON (${err instanceof Error ? err.message : String(err)}). `

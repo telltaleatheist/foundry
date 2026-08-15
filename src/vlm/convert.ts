@@ -57,7 +57,7 @@ import { buildVlmEpub, type VlmChapter, type VlmEpubMetadata, type VlmPageBlocks
 import { requireVlmModel, type VlmModelDef } from './models.js';
 import { applyOverlay, emptyOverlay, loadOverlay, overlayTally, type Overlay } from './overlay.js';
 import { buildTextPdf } from './pdf-text.js';
-import { pixelBudget, readPagesIntoBank, VLM_DPI } from './read.js';
+import { pixelBudget, readPagesIntoBank, VLM_DPI, type VlmBridge } from './read.js';
 import { readCompletionMarker, writeCompletionMarker } from './readings.js';
 import { formatConflict, type VlmOutputFormat } from './text-out.js';
 
@@ -139,6 +139,8 @@ export interface VlmConvertOptions {
   /** Remove footnote reference numbers — for a narration build. */
   stripNoteMarkers?: boolean;
   log: (message: string) => void;
+  /** The subprocess and the socket, swappable — see `ReadPhaseOptions.bridge`. */
+  bridge?: VlmBridge;
 }
 
 export interface VlmConvertReport {
@@ -327,7 +329,8 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
 
   opts.log(
     `vlm-convert: ${model.id} (${viaEndpoint ? opts.endpoint : model.repo}), pages rendered at `
-    + `${VLM_DPI} dpi${maxPixels !== undefined ? `, ${maxPixels.toLocaleString('en-US')} pixel budget` : ''}`,
+    + `${VLM_DPI} dpi${maxPixels === undefined ? '' : `, ${maxPixels.toLocaleString('en-US')} pixel `
+      + 'budget for any page this run reads'}`,
   );
 
   // The renders survive the run when the dialect measures them — the ink of a
@@ -364,12 +367,50 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       ...(opts.readingsPath !== undefined ? { readingsPath: opts.readingsPath } : {}),
       ...(opts.freshReadings === true ? { freshReadings: true } : {}),
       ...(opts.reuseReadings === true ? { reuseReadings: true } : {}),
+      ...(opts.bridge !== undefined ? { bridge: opts.bridge } : {}),
       log: opts.log,
     });
     const { run, answers, unreadable, sizes } = phase;
     const refuse = (number: number, reason: string): void => {
       if (!unreadable.has(number)) unreadable.set(number, { number, reason });
     };
+
+    /*
+     * THE BUDGET AN ANSWER WAS PRODUCED UNDER BEATS THE BUDGET THIS RUN WOULD
+     * HAVE USED, page by page.
+     *
+     * A geometric answer's boxes only mean anything inside the frame the
+     * processor resized the page to, and that frame is `smartResize(render,
+     * budget)`. The budget is not a property of this invocation — it is a
+     * property of the READING, and the two now come apart routinely: a book read
+     * through a vLLM server was measured under the model's own cap, and the run
+     * that renders it into a second format tomorrow may name no server at all
+     * and would otherwise scale every box by the MLX cap instead. That is the
+     * failure `dots.ts` calls invisible: the text is perfect, every picture is
+     * cropped wrong and every indent test is flipped.
+     *
+     * So the bank's own record wins wherever it has one (`VlmReading.maxPixels`,
+     * written beside every answer), and this run's budget is the fallback for a
+     * page read before that field existed. A run whose pages disagree with it
+     * SAYS SO — it is the one line that explains a book whose figures came out
+     * right on a machine where nobody expected them to.
+     */
+    const budgetFor = (page: number): number =>
+      phase.readings?.get(page)?.maxPixels ?? maxPixels!;
+    if (geometric) {
+      const banked = run.pages
+        .map((page) => phase.readings?.get(page.number)?.maxPixels)
+        .filter((budget): budget is number => budget !== undefined && budget !== maxPixels);
+      if (banked.length > 0) {
+        const distinct = [...new Set(banked)].map((n) => n.toLocaleString('en-US')).join(', ');
+        opts.log(
+          `vlm-convert: ${banked.length} page(s) were read under a pixel budget this run would not `
+          + `have chosen (${distinct}, against ${maxPixels?.toLocaleString('en-US') ?? 'none'}), and `
+          + 'their boxes are scaled by the budget the bank records rather than by this run\'s. A '
+          + 'reading is interpretable only in the frame it was made in.',
+        );
+      }
+    }
 
     // ── parse ──────────────────────────────────────────────────────────────
     const parseStarted = Date.now();
@@ -394,7 +435,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
         const parsed = parseDotsPage(answer, {
           page: page.number,
           render: { width: page.width, height: page.height },
-          maxPixels: maxPixels!,
+          maxPixels: budgetFor(page.number),
         });
         /*
          * THE ONE PLACE THE CURATION IS APPLIED, and it is one line after the
@@ -461,7 +502,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       );
     }
 
-    if (geometric) checkPixelBudget(geometryPages, run.pages, maxPixels!, opts.log);
+    if (geometric) checkPixelBudget(geometryPages, run.pages, budgetFor, opts.log);
 
     const parseSeconds = (Date.now() - parseStarted) / 1000;
 
@@ -994,7 +1035,7 @@ async function cropRenders(
 function checkPixelBudget(
   pages: readonly DotsParsedPage[],
   rendered: readonly VlmPage[],
-  maxPixels: number,
+  budgetFor: (page: number) => number,
   log: (message: string) => void,
 ): void {
   // PER PAGE, because a book's pages are not all one size — the Kershaw article
@@ -1005,23 +1046,24 @@ function checkPixelBudget(
   for (const page of pages) {
     const size = sizes.get(page.page);
     if (!size || page.rawExtent.x <= 0) continue;
-    ratios.push(page.rawExtent.x / smartResize(size.height, size.width, maxPixels).width);
+    ratios.push(page.rawExtent.x / smartResize(size.height, size.width, budgetFor(page.page)).width);
   }
   if (ratios.length === 0) return;
   ratios.sort((a, b) => a - b);
   const median = ratios[Math.floor(ratios.length / 2)];
 
   const first = rendered[0];
-  const frame = smartResize(first.height, first.width, maxPixels);
+  const budget = budgetFor(first.number);
+  const frame = smartResize(first.height, first.width, budget);
   log(
     `vlm-convert: page 1's boxes measured in a ${frame.width}x${frame.height} frame, scaled by `
-    + `${renderScale({ width: first.width, height: first.height }, maxPixels).toFixed(4)} into its `
+    + `${renderScale({ width: first.width, height: first.height }, budget).toFixed(4)} into its `
     + `${first.width}x${first.height} render; boxes fill ${(median * 100).toFixed(0)}% of the frame `
     + 'on a median page',
   );
   if (median > 1.02) {
     throw new Error(
-      `the model's boxes overflow the frame a ${maxPixels}-pixel budget puts the pages in, by `
+      `the model's boxes overflow the frame a ${budget}-pixel budget puts the pages in, by `
       + `${((median - 1) * 100).toFixed(0)}% on a median page. The budget this run scaled with is `
       + 'not the one the processor used, so every box in the book is wrong by that ratio.',
     );

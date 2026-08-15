@@ -46,6 +46,7 @@ import { DEFAULT_VLM_CONCURRENCY, readPagesFromEndpoint } from './endpoint.js';
 import { requireVlmModel, type VlmModelDef } from './models.js';
 import {
   openReadingsBank,
+  readCompletionMarker,
   writeCompletionMarker,
   type ReadingsBankAction,
   type VlmCompletion,
@@ -87,6 +88,39 @@ export function pixelBudget(model: VlmModelDef, viaEndpoint: boolean): number | 
 
 export function renderPath(dir: string, page: number): string {
   return path.join(dir, `page-${String(page).padStart(4, '0')}.png`);
+}
+
+/**
+ * Will this run answer entirely out of a completed bank — that is, is it a
+ * RENDERING of work already done rather than an order to do the work?
+ *
+ * Asked before anything happens and WITHOUT DOING ANYTHING: it reads the
+ * completion marker and nothing else. `openReadingsBank` answers the same
+ * question later and acts on the answer — it archives, it opens the file — so
+ * asking IT twice would archive twice. This is the question without the
+ * consequences, and it exists for one caller: the argv layer, which has to
+ * decide whether a run needs a reading backend at all before it can refuse over
+ * the absence of one (`runVlmConvert` in `commands.ts`).
+ *
+ * TRUE ONLY FOR `--reuse-readings` OVER A MARKED BANK, which is exactly the case
+ * `readings.ts` calls `reuse` and describes as "no page is read from the model".
+ * A resume is false even when its bank happens to be complete: nothing knows how
+ * many pages the book has until the PDF is opened, so a resume is a run that
+ * intends to read whatever is missing, and it needs a backend for it. Being
+ * wrong in that direction costs a refusal somebody can act on; being wrong in
+ * the other costs a run that dies inside Python with the wrong sentence.
+ *
+ * A bank with no answers in it is still true here, and deliberately:
+ * `openReadingsBank` refuses `--reuse-readings` over an empty bank in its own
+ * words, and "there is nothing to reuse" is a truer sentence about that run than
+ * anything about backends.
+ */
+export function replaysCompletedBank(opts: {
+  readingsPath?: string;
+  reuseReadings?: boolean;
+}): boolean {
+  if (opts.reuseReadings !== true || opts.readingsPath === undefined) return false;
+  return readCompletionMarker(opts.readingsPath) !== null;
 }
 
 /** The two ways a page reaches this program, injectable so a replay can be watched. */

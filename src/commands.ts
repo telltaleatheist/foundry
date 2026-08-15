@@ -39,7 +39,7 @@ import { probeEndpoint, probeLocalPython, probeVllmLocal, probeWslVllm } from '.
 import { loadSettings, settingsPath, type FoundrySettings } from './backend/settings.js';
 import { dumpBlocks } from './vlm/blocks-dump.js';
 import { vlmConvert } from './vlm/convert.js';
-import { vlmRead } from './vlm/read.js';
+import { replaysCompletedBank, vlmRead } from './vlm/read.js';
 import { DEFAULT_VLM_CONCURRENCY } from './vlm/endpoint.js';
 import { DEFAULT_VLM_MODEL_ID, VLM_MODELS } from './vlm/models.js';
 import { parsePageList } from './vlm/pages.js';
@@ -536,12 +536,36 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
   const python = fromFlagOrSettings(args, 'python', settings.backend?.python, 'backend.python');
 
   /*
-   * Refused HERE, before a page renders: off macOS the only reading path is an
-   * endpoint, and letting the run proceed without one ends in "no Python with
-   * MLX was found" — a true sentence that points a Windows user at entirely
-   * the wrong problem.
+   * Refused before a page renders: off macOS the only reading path is an
+   * endpoint, and letting a run that must read proceed without one ends in "no
+   * Python with MLX was found" — a true sentence that points a Windows user at
+   * entirely the wrong problem.
+   *
+   * ASKED ONLY OF A RUN THAT WILL ACTUALLY READ, and that condition is the whole
+   * of this comment. `--reuse-readings` over a bank a run completed is a
+   * RENDERING: it loads no model, opens no socket and leaves the bank byte for
+   * byte as it found it (`read.ts`). Demanding a reading backend for it refused
+   * a job over a thing it was never going to touch — and on a fresh Windows
+   * install, where settings.json names no endpoint yet, that made generating a
+   * second format out of a finished reading impossible while costing nobody a
+   * second of GPU. The check now asks whether this run is that, and stands aside
+   * when it is.
+   *
+   * IT STAYS WHERE IT IS IN `runVlmRead`. A read genuinely needs a backend
+   * before it does anything at all, so there the refusal is the first true
+   * sentence about the run rather than a guess about one.
+   *
+   * A replay that turns out to have a HOLE in it — a page the completed bank
+   * carries no answer for — is not refused here either, and must not be: it goes
+   * on to render, discovers the hole and names the page. That is the truer
+   * sentence about that run, and it is one a person can act on.
    */
-  if (endpoint === undefined && process.platform !== 'darwin') {
+  const readingsPath = optionalString(args, 'readings');
+  const replaying = replaysCompletedBank({
+    ...(readingsPath !== undefined ? { readingsPath } : {}),
+    reuseReadings,
+  });
+  if (!replaying && endpoint === undefined && process.platform !== 'darwin') {
     throw new Error(
       'no reading backend for this run: the local MLX path is Apple silicon only, and no endpoint '
       + 'was named. Pass --vlm-endpoint <url> (e.g. a vLLM server), or set backend.mode to '
@@ -560,7 +584,7 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
     ...(endpoint !== undefined ? { endpoint } : {}),
     ...(endpointModel !== undefined ? { endpointModel } : {}),
     ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
-    ...(optionalString(args, 'readings') ? { readingsPath: optionalString(args, 'readings')! } : {}),
+    ...(readingsPath !== undefined ? { readingsPath } : {}),
     ...(freshReadings ? { freshReadings: true } : {}),
     ...(reuseReadings ? { reuseReadings: true } : {}),
     ...(skipPages !== undefined ? { skipPages: parsePageList(skipPages, '--skip-pages') } : {}),
