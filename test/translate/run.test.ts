@@ -341,9 +341,20 @@ test('a server that stops answering ends the run instead of retrying the book', 
   try {
     const server = fakeOllama();
     let calls = 0;
+    /*
+     * THE UNLOAD IS NOT AN ATTEMPT, and is counted separately for that reason.
+     * Every run now ends by asking the server to drop the weights — see
+     * `translateEpub` — and on the failing path that request is the whole point:
+     * a run that died at block 12 must not leave the model pinned to the card
+     * for five minutes on behalf of work that produced nothing. It carries
+     * `keep_alive` and no messages, so it is told apart by its body rather than
+     * by its position in the sequence.
+     */
+    let unloaded = 0;
     const dying = {
       ...server,
       post: async (url: string, body: string) => {
+        if (body.includes('"keep_alive"')) { unloaded += 1; return { status: 200, body: '{}' }; }
         calls += 1;
         if (calls > 2) return { status: 500, body: 'model runner has crashed' };
         return server.post(url, body);
@@ -356,6 +367,7 @@ test('a server that stops answering ends the run instead of retrying the book', 
       /answered 500/,
     );
     assert.equal(calls, 3, 'it stops at the first server failure, it does not retry it');
+    assert.equal(unloaded, 1, 'a failed run still gives the card back');
   } finally {
     clean();
   }

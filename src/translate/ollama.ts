@@ -182,6 +182,52 @@ export function chatBody(model: string, system: string, user: string): string {
 }
 
 /**
+ * Give the weights back when the run is over.
+ *
+ * ── Why this exists, and why it is not the caller's business ────────────────
+ *
+ * Ollama holds a model in VRAM after it answers, on a five-minute idle timer
+ * that EVERY request resets. That is the right default for a chat window and
+ * the wrong one for this app: a book is thousands of requests over hours, and
+ * when the last one lands, twenty gigabytes stay pinned for five more minutes
+ * with nothing to answer. On a one-GPU machine — the machine this app is for —
+ * that is the reading server's memory, held by a job that finished, and the
+ * next thing the user asks for waits or fails for want of it.
+ *
+ * `keep_alive: 0` is Ollama's own door for this: a request that carries it
+ * unloads the model when it completes instead of arming the timer. Sent with
+ * no messages, it does no generation at all — it exists purely to say "we are
+ * done with you".
+ *
+ * ── Best effort, and never a failure ────────────────────────────────────────
+ *
+ * This CANNOT throw. It runs after the book has been written, and a run that
+ * produced everything it was asked for must not be reported as failed because
+ * the server did not acknowledge a courtesy. A server that has already gone
+ * away has, by definition, released the memory this was asking it to release.
+ * The return value says what happened so the caller can log it; nothing more
+ * depends on it.
+ *
+ * It is also deliberately NOT sent for a remote endpoint by any rule in here —
+ * ownership is the caller's question (see the header: a server somebody else
+ * runs is theirs), and the caller is the one that knows whose machine this is.
+ */
+export async function unloadModel(
+  transport: Transport,
+  endpoint: string,
+  model: string,
+): Promise<boolean> {
+  const url = `${normaliseEndpoint(endpoint)}/api/chat`;
+  const body = JSON.stringify({ model, messages: [], keep_alive: 0, stream: false });
+  try {
+    const response = await transport.post(url, body);
+    return response.status === 200;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Ask the server for one block's translation.
  *
  * Every failure here is a failure of the SERVER — unreachable, an error status,

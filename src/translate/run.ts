@@ -144,7 +144,7 @@ import {
   checkMarkers, maskBlock, MarkerError, restoreMarkers, stripMarkers,
   type MarkerCounter, type MaskedBlock,
 } from './markers.js';
-import { chat, fetchTransport, requireModel, type Transport } from './ollama.js';
+import { chat, fetchTransport, requireModel, unloadModel, type Transport } from './ollama.js';
 import {
   openTranslationRecords, swapPendingRecordsIntoPlace, TranslationRecords,
 } from './records.js';
@@ -351,6 +351,19 @@ export interface TranslateOptions {
   concurrency?: number;
   /** The HTTP boundary. Injected by tests; the real one is `fetchTransport()`. */
   transport?: Transport;
+  /**
+   * Leave the model resident when the run ends.
+   *
+   * The default is to unload it (see `translateEpub`): one book is thousands of
+   * requests, and when the last one lands the weights are twenty gigabytes held
+   * against nothing, on the card the reading server needs next.
+   *
+   * This is the escape hatch for the case where that is wrong — an Ollama this
+   * machine does not own, serving somebody else at the same time, where one
+   * book finishing is not a reason to empty the GPU under them. Ownership is
+   * not something this module can work out for itself, so it is asked for.
+   */
+  keepModel?: boolean;
   log: (message: string) => void;
 }
 
@@ -978,7 +991,60 @@ function planChunks(
   }));
 }
 
+/**
+ * Translate a book, and GIVE THE WEIGHTS BACK when it is over.
+ *
+ * ── Why this wrapper exists ────────────────────────────────────────────────
+ *
+ * Everything about translating is in `runTranslation` below. This is here for
+ * one sentence: when the run ends, for ANY reason, the model stops occupying
+ * the GPU.
+ *
+ * Ollama keeps a model resident for five minutes after its last request, and
+ * every request resets that clock. For a chat window that is exactly right. For
+ * this program it means a book that finished at block 2,400 leaves twenty
+ * gigabytes pinned behind it, on the same card the reading server wants, and
+ * the next thing the user asks for either waits for a timer nobody can see or
+ * fails for want of memory. The user reported precisely this: *"the translation
+ * ai isnt being brought down when translation completes."*
+ *
+ * ── `finally`, and the three ways a run can end ────────────────────────────
+ *
+ * A finished run, a failed run, and a killed one all end with the model loaded,
+ * and the failed ones are the WORST case — a run that died at block 12 of 2,400
+ * has just claimed the card for five minutes on behalf of work that produced
+ * nothing. So the release is in a `finally` rather than after the return, and
+ * it is best-effort by construction (`unloadModel` cannot throw): a run that
+ * wrote everything it was asked for is not going to be reported as failed
+ * because the server would not take a courtesy call.
+ *
+ * ── Only a server we asked to load it ──────────────────────────────────────
+ *
+ * Skipped when the run never got as far as proving the model, because there is
+ * then nothing of ours resident to unload — and skipped when the caller says
+ * the endpoint is not this machine's to manage (`--keep-model`), since a shared
+ * Ollama serving three people is not something one book's end should empty.
+ */
 export async function translateEpub(opts: TranslateOptions): Promise<TranslateReport> {
+  const model = opts.model ?? DEFAULT_TRANSLATE_MODEL;
+  const endpoint = opts.endpoint ?? DEFAULT_OLLAMA_ENDPOINT;
+  const transport = opts.transport ?? fetchTransport();
+  try {
+    return await runTranslation(opts);
+  } finally {
+    if (opts.keepModel !== true) {
+      const released = await unloadModel(transport, endpoint, model);
+      opts.log(
+        released
+          ? `translate: asked ollama to unload "${model}" — the card is free for the next job.`
+          : `translate: ollama did not acknowledge unloading "${model}". If it is still resident it `
+            + 'will fall out on its own idle timer; nothing about the book depends on this.',
+      );
+    }
+  }
+}
+
+async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> {
   const started = Date.now();
 
   /*

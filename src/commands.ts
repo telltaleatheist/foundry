@@ -363,6 +363,22 @@ const TR_FRESH_BANK: OptionSpec = {
 };
 
 /**
+ * The GPU is given back by default, and this is how to say don't.
+ *
+ * See `translateEpub`: a finished run asks Ollama to unload the model, because
+ * a book is thousands of requests and the five-minute idle timer would other-
+ * wise hold twenty gigabytes against nothing on the card the reading server
+ * wants next. That is right for the machine this app runs on and wrong for an
+ * Ollama somebody else is also using, which is a fact only the person typing
+ * the command knows.
+ */
+const TR_KEEP_MODEL: OptionSpec = {
+  name: 'keep-model',
+  type: 'boolean',
+  describe: 'Leave the model loaded when the run ends (for an Ollama shared with other work).',
+};
+
+/**
  * ── RECORDS, NOT A BOOK, AND THIS IS THE SWITCH ─────────────────────────────
  *
  * Without it this command writes a SECOND EPUB: the same container, the same
@@ -1074,6 +1090,7 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
     to,
     ...(bankPath !== undefined ? { bankPath } : {}),
     ...(freshBank ? { freshBank: true } : {}),
+    ...(flag(args, 'keep-model') ? { keepModel: true } : {}),
     ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
     ...(optionalString(args, 'from') !== undefined ? { from: optionalString(args, 'from')! } : {}),
     ...(optionalString(args, 'model') !== undefined ? { model: optionalString(args, 'model')! } : {}),
@@ -2194,7 +2211,7 @@ export const COMMANDS: readonly Command[] = [
     ].join('\n'),
     options: [
       TR_EPUB_IN, TR_TO, TR_FROM, TR_OUT, TR_MODEL, TR_OLLAMA, TR_INSTRUCTIONS,
-      TR_BANK, TR_FRESH_BANK, TR_CONCURRENCY,
+      TR_BANK, TR_FRESH_BANK, TR_CONCURRENCY, TR_KEEP_MODEL,
       TR_RECORDS, TR_SOURCE_RECORDS, TR_GENERATION,
     ],
     run: runTranslate,
