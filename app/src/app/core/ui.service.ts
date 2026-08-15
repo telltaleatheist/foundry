@@ -13,14 +13,32 @@ export class UiService {
   /** The OCR dialog — read the pages, and nothing else. */
   readonly ocrOpen = signal(false);
   /**
-   * The Generate dialog — turn a reading into a document.
+   * The Export dialog — turn a reading into a document you can take away.
    *
    * The other half of what OCR used to be. They are separate because they cost
    * different things: reading is hours of GPU and is held for a Start button,
-   * generating is arithmetic over a bank that is already paid for and runs the
+   * exporting is arithmetic over a bank that is already paid for and runs the
    * moment it is asked for.
+   *
+   * IT WAS CALLED GENERATE, and the rename is a ruling rather than a coat of
+   * paint (docs/WORKBENCH.md §6). A generate produced a file into the working
+   * directories and left the user to work out what it was FOR; an export is
+   * terminal — it is the finished thing, it lands in the project's `final/`, and
+   * it is never anybody's parent. Renaming the button without moving the landing
+   * would have been the same confusion with better spelling.
    */
-  readonly generateOpen = signal(false);
+  readonly exportOpen = signal(false);
+  /**
+   * THE OLD NAMES, still answering, and they are a SEAM rather than kindness.
+   *
+   * The shell mounts this dialog and routes Escape to it (`app.ts`), and that
+   * file belongs to the unit that rebuilds the pane chrome — so it still says
+   * `generateOpen` and `closeGenerate`. Aliasing the signal itself, rather than
+   * keeping a second one in step, is what makes the two names impossible to
+   * disagree: there is one piece of state and two words for it. Both words go
+   * when app.ts is next opened.
+   */
+  readonly generateOpen = this.exportOpen;
   /** The Translate dialog. */
   readonly translateOpen = signal(false);
   /** The Metadata dialog — the book's own record, not the app's idea of it. */
@@ -104,7 +122,7 @@ export class UiService {
    */
   private readonly dialogs = [
     this.ocrOpen,
-    this.generateOpen,
+    this.exportOpen,
     this.translateOpen,
     this.metadataOpen,
     this.confirmOpen,
@@ -122,12 +140,21 @@ export class UiService {
     this.ocrOpen.set(false);
   }
 
+  openExport(): void {
+    this.only(this.exportOpen);
+  }
+
+  closeExport(): void {
+    this.exportOpen.set(false);
+  }
+
+  /** The old names — see `generateOpen` above. Both are one line for app.ts. */
   openGenerate(): void {
-    this.only(this.generateOpen);
+    this.openExport();
   }
 
   closeGenerate(): void {
-    this.generateOpen.set(false);
+    this.closeExport();
   }
 
   openTranslate(): void {

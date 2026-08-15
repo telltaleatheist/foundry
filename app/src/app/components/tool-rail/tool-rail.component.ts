@@ -60,10 +60,10 @@ import { UiService } from '../../core/ui.service';
 
         <!--
           THE TWO HALVES OF WHAT USED TO BE ONE BUTTON, side by side and in the
-          order they happen. OCR reads the pages and costs hours; Generate turns
-          what was read into a document and costs nothing. They were one item
-          called "OCR / Convert" while they were one job, and separating them on
-          the dock is most of what teaches the difference.
+          order they happen. OCR reads the pages and costs hours; Export turns
+          what was read into a document you can take away, and costs nothing.
+          They were one item called "OCR / Convert" while they were one job, and
+          separating them on the dock is most of what teaches the difference.
 
           OCR LIGHTS UP when the book in front of you has never been read — the
           same accent this rail uses for "this is active", used here for "this is
@@ -83,21 +83,31 @@ import { UiService } from '../../core/ui.service';
           <span class="rail-label">OCR</span>
         </button>
 
+        <!--
+          EXPORT, WHICH THIS SLOT USED TO CALL GENERATE. Same place, same glyph,
+          same dialog reworked: what changed is what comes out the other end. A
+          generate wrote a file into the working directories and left it there
+          among the steps; an export is the finished article, filed under the
+          project and never the base for anything else (docs/WORKBENCH.md §3).
+          The glyph stays because it was always right for this — one document
+          coming off another — and moving it would cost every user who has
+          learned where the button is, for nothing.
+        -->
         <button
           class="rail-item"
-          [class.active]="ui.generateOpen()"
-          [disabled]="!canGenerate()"
-          title="Build an EPUB, plain text or a real-text PDF from what was read"
-          (click)="generate()"
+          [class.active]="ui.exportOpen()"
+          [disabled]="!canExport()"
+          title="Make the finished book: an EPUB, plain text, or the pages reprinted as real type"
+          (click)="openExport()"
         >
           <span class="rail-icon">⎘</span>
-          <span class="rail-label">Generate</span>
+          <span class="rail-label">Export</span>
         </button>
 
-        <!-- Translate. Disabled rather than hidden away from a book, on the
-             same principle as Edit HTML below: a translation is a thing you do
-             to a book Foundry converted, and somebody looking at a scan should
-             be able to see that the tool exists and is not applicable yet. -->
+        <!-- Translate. Disabled rather than hidden away from a book, on this
+             dock's usual principle: a translation is a thing you do to a book
+             Foundry cast, and somebody looking at a scan should be able to see
+             that the tool exists and is not applicable yet. -->
         <button
           class="rail-item"
           [class.active]="ui.translateOpen()"
@@ -126,9 +136,9 @@ import { UiService } from '../../core/ui.service';
         </button>
 
         <!-- Select mode. Disabled rather than hidden away from a book, like
-             Translate and Edit HTML: the curation pass is the point of the
-             whole app, and somebody looking at a scan should be able to see
-             that the tool exists and is waiting for a cast book. -->
+             Translate above: the curation pass is the point of the whole app,
+             and somebody looking at a scan should be able to see that the tool
+             exists and is waiting for a cast book. -->
         <button
           class="rail-item"
           [class.active]="selecting()"
@@ -140,43 +150,33 @@ import { UiService } from '../../core/ui.service';
           <span class="rail-label">Select</span>
         </button>
 
-        <!-- Block view: select mode for a SCAN. A separate item rather than a
-             second meaning for Select, because they act on different documents
-             and a person should be able to see which of the two the thing in
-             front of them has. Disabled over a book, exactly as Select is
-             disabled over a scan — the pair reads as one idea in two places. -->
-        <button
-          class="rail-item"
-          [class.active]="blocking()"
-          [disabled]="!canBlock()"
-          [title]="canBlock()
-            ? 'Outline what the model read off this scan: strike, relabel, mark the chapters'
-            : 'There is nothing to correct until the pages have been read — press OCR first'"
-          (click)="toggleBlocks()"
-        >
-          <span class="rail-icon">▦</span>
-          <span class="rail-label">Blocks</span>
-        </button>
+        <!--
+          ── TWO ITEMS ARE NOT ON THIS DOCK, and the machinery behind both stays ──
 
-        <!-- The split editor's discoverable half: the same toggle as the
-             button in the book's own toolbar, surfaced where a person who has
-             never opened it will look. Disabled rather than hidden when the
-             active tab is not a book — a tool that vanishes teaches nobody
-             it exists. -->
-        <button
-          class="rail-item"
-          [class.active]="editingActive()"
-          [disabled]="!canEdit()"
-          title="Edit the book's HTML in a split view"
-          (click)="toggleEdit()"
-        >
-          <span class="rail-icon">&lt;/&gt;</span>
-          <span class="rail-label">Edit HTML</span>
-        </button>
-        <!-- The PDF conversion is an output format inside the OCR dialog rather
-             than a rail button of its own: the rail names TOOLS, and picking
-             between an EPUB, plain text and a real-text PDF is one decision
-             about one run, made where the rest of that run is described. -->
+          BLOCKS put an editing surface over the SCAN — outline what the model
+          read off the photograph, strike it, relabel it. The user asked what it
+          was for, which is the answer: the document a reader ends up with is the
+          flowing one, and corrections made in the coordinates of a page are
+          corrections in a frame that document has already thrown away. The PDF
+          branch produces the facsimile and stops (docs/DERIVED-BOOK.md §1). The
+          outlines still light where standing on a step calls for them — a fact
+          about where you are, not a mode you switch on.
+
+          EDIT HTML opened a textarea over a chapter of a derived document.
+          Nothing it wrote had anywhere to be written DOWN: not the bank, not the
+          ledger, and the next cast of the book was free to erase it. A tool that
+          takes an edit and then loses it is worse than no tool, and the offer is
+          what goes — the editor tab and its toggle are untouched until phase E
+          retires them with the flowing surface in place to take the job.
+
+          Both are the shape the inspector's Block section already documented for
+          itself: withdraw the control the moment the thing it does is withdrawn,
+          rather than leaving it on screen to invite a gesture and refuse it.
+        -->
+        <!-- The PDF is an output FORMAT inside a dialog rather than a rail
+             button of its own: the rail names TOOLS, and picking between an
+             EPUB, plain text and a reprint of the pages is one decision about
+             one act, made where the rest of that act is described. -->
       </div>
 
       <div class="rail-foot">
@@ -326,20 +326,8 @@ export class ToolRailComponent {
     this.ui.documentsShown() && this.tabs.tabs().length > 0);
 
   /**
-   * Editable means an unpacked book is in front of the user right now.
+   * Selectable means an unpacked book is in front of the user right now.
    *
-   * `activeDocument` and not `active`: with the editor pane focused, the tab in
-   * front of the user IS the editor, and a rail that greyed out its own toggle
-   * the moment you clicked into the thing it opened would be a rail you could
-   * not press twice.
-   */
-  protected canEdit(): boolean {
-    const tab = this.tabs.activeDocument();
-    return tab !== null && tab.kind === 'epub' && tab.book !== null;
-  }
-
-  /**
-   * Selectable is the same test as editable, and for the same reason it reads
    * `activeDocument()` rather than `active()`: with the HTML editor pane focused
    * the tab in front of the user is the editor, and a rail that greyed out the
    * book's own mode the moment you clicked into its source would be a rail you
@@ -357,48 +345,6 @@ export class ToolRailComponent {
   protected toggleSelect(): void {
     const tab = this.tabs.activeDocument();
     if (tab && tab.kind === 'epub' && tab.book !== null) void this.tabs.toggleSelectMode(tab.id);
-  }
-
-  /**
-   * Blocks needs a SCAN THAT HAS BEEN READ, which is the mirror of Select
-   * needing an unpacked book.
-   *
-   * IT USED TO BE `kind === 'pdf'` AND NOTHING ELSE, on the reasoning that
-   * whether the model had read a document was a question only main could answer
-   * and asking it per repaint would be an IPC call per frame. That reasoning
-   * expired: the project listing is a live mirror now — main pushes
-   * `projects:changed` whenever a reading lands — so the answer is already in
-   * this window, in the same signal the OCR light reads.
-   *
-   * The button is still ENABLED for a scan whose project is unknown, which is
-   * the pre-import window and the case where the mode's own sentence is the
-   * useful one ("this file is not in the library yet"). A dead button says
-   * nothing at all, and this rail's rule is that a shut door explains itself.
-   */
-  protected canBlock(): boolean {
-    const tab = this.tabs.activeDocument();
-    if (tab === null || tab.kind !== 'pdf') return false;
-    const project = this.projects.projectFor(tab.path);
-    return project === null || project.reading.done;
-  }
-
-  protected blocking(): boolean {
-    return this.tabs.activeDocument()?.blockView === true;
-  }
-
-  protected toggleBlocks(): void {
-    const tab = this.tabs.activeDocument();
-    if (tab && tab.kind === 'pdf') void this.tabs.toggleBlockView(tab.id);
-  }
-
-  protected editingActive(): boolean {
-    const tab = this.tabs.activeDocument();
-    return tab !== null && tab.kind === 'epub' && this.tabs.editorFor(tab.id) !== null;
-  }
-
-  protected toggleEdit(): void {
-    const tab = this.tabs.activeDocument();
-    if (tab && tab.kind === 'epub' && tab.book !== null) void this.tabs.toggleEditor(tab.id);
   }
 
   protected home(): void {
@@ -434,21 +380,38 @@ export class ToolRailComponent {
   }
 
   /**
-   * Generate needs a PDF in front of you and nothing else.
+   * Export needs a PROJECT in front of you, and not a particular file type.
    *
-   * NOT gated on the reading existing, deliberately. The dialog is the thing
-   * that knows how to say "these pages have not been read" and offer to read
-   * them — a dead button on the dock would leave somebody with nowhere to find
-   * out why, which is the shape of every disabled control in this rail's
-   * comments.
+   * IT USED TO BE `kind === 'pdf'`, which was true while the only thing anybody
+   * stood on was the scan. It is false now: standing on the reading shows the
+   * flowing book, and that document is exactly the one somebody wants an EPUB
+   * of. Asking about the KIND of file in the pane was always asking the wrong
+   * question — what can be exported is a fact about the project behind the
+   * document (docs/DERIVED-BOOK.md §7, "anything that threads 'this is a PDF'
+   * through the renderer is building the wrong thing").
+   *
+   * SO THE TEST IS THE READING, off the project record main derived once when it
+   * listed the library — the same signal the OCR light reads, so the dock cannot
+   * say "read this" and "export this" about one book at the same time. There is
+   * nothing to export before a reading lands: every format this app makes is
+   * arithmetic over that bank.
+   *
+   * AND IT STAYS LIVE FOR A DOCUMENT WHOSE PROJECT THIS WINDOW HAS NOT LISTED —
+   * the pre-import window, where a dead button explains nothing and the plan
+   * call's own refusal names the case precisely (the book nobody has read; the
+   * reading that was interrupted). The dialog puts that sentence on screen. A
+   * shut door explains itself, which is this rail's rule everywhere else.
    */
-  protected canGenerate(): boolean {
-    return this.tabs.activeDocument()?.kind === 'pdf';
+  protected canExport(): boolean {
+    const tab = this.tabs.activeDocument();
+    if (tab === null) return false;
+    const project = this.projects.projectFor(tab.path);
+    return project === null || project.reading.done;
   }
 
-  protected generate(): void {
+  protected openExport(): void {
     void this.router.navigateByUrl('/');
-    this.ui.openGenerate();
+    this.ui.openExport();
   }
 
   /**

@@ -147,18 +147,21 @@ import { api } from '../../core/foundry';
           (click)="tabs.toggleThumbnails(tab().id)"
         >Thumbnails</button>
         <!--
-          The scan's select mode. In the toolbar as well as on the dock for the
-          reason the book's Edit HTML is in both: the dock is where somebody who
-          has never met the feature finds it, and the toolbar is where the hand
-          already is once they have.
+          ── THE BLOCKS BUTTON IS NOT OFFERED, and the layer still draws ──
+
+          It turned this pane into an editing surface: outline what the model
+          read off the scan, strike it, relabel it, mark the chapters. The user
+          asked what it was for, which is the answer — a scan is a photograph of
+          pages, and editing what the book SAYS on a photograph of it means every
+          correction is made in per-page coordinates that the flowing document
+          the reader will actually get has already thrown away. The PDF's job is
+          to produce the facsimile and stop (docs/DERIVED-BOOK.md §1).
+
+          The machinery is untouched and still runs: standing on a step that
+          wants outlines lights them from the position, which is a fact about
+          where you are rather than a mode you switched on. What is gone is the
+          switch that offered the scan as somewhere to work.
         -->
-        <button
-          class="ghost"
-          [class.on]="tab().blockView"
-          [disabled]="doc() === null"
-          title="Outline what the model read: click to select, Delete to strike"
-          (click)="tabs.toggleBlockView(tab().id)"
-        >Blocks</button>
 
         <span class="counter">{{ current() }} / {{ shells().length }}</span>
 
@@ -190,15 +193,19 @@ import { api } from '../../core/foundry';
         </div>
 
         <!--
-          The same primary button, same corner, as the EPUB tab's Save — a
-          conversion's output lives in the workspace until this puts a copy
-          somewhere the user chose. "Save a copy" and not "Save" because that is
-          literally what happens: nothing in this app edits a PDF, so there is
-          no state to flush, only a finished file to place.
+          ── SAVE A COPY IS NOT ON THIS ROW ANY MORE ──
+
+          It dropped a copy of whatever file the pane happened to be pointed at
+          into a folder of the user's choosing — no record of it in the project,
+          nothing to say which step of the ledger it was a picture of, and one
+          more copy of a scan for somebody to find in six months and wonder about.
+          Getting a document out is Export, on the dock: it names a PRODUCT, it
+          is made from the position you are standing on, and the result is filed
+          under the project where it can be found again.
+
+          The save-as call on the service stays — the close-with-corrections
+          dialog is still allowed to offer somewhere to put them.
         -->
-        <button class="primary" [disabled]="doc() === null" (click)="tabs.saveAs(tab().id)">
-          {{ tab().savedPath === null ? 'Save a copy…' : 'Saved' }}
-        </button>
       </header>
 
       @if (problem(); as reason) {
@@ -591,8 +598,11 @@ import { api } from '../../core/foundry';
     .problem p { margin: 0; font-size: 13px; max-width: 70ch; white-space: pre-wrap; }
 
     /* One button shape across the row — 26px tall, 4px radius — so the toolbar
-       reads as a strip of controls rather than a line of separate widgets. */
-    .ghost, .icon, .primary {
+       reads as a strip of controls rather than a line of separate widgets.
+       There is no accented button here now: nothing on this row is the thing
+       you came to press, and the one control that was (Save a copy) is on the
+       dock as Export. */
+    .ghost, .icon {
       display: inline-flex; align-items: center; justify-content: center;
       height: 26px; padding: 0 10px;
       border-radius: var(--radius-sm);
@@ -613,13 +623,6 @@ import { api } from '../../core/foundry';
     .ghost.on { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
     .icon { min-width: 26px; padding: 0 6px; }
     .icon.wide { min-width: 34px; }
-    .primary {
-      border: none;
-      background: var(--accent); color: var(--text-inverse);
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.1);
-    }
-    .primary:hover:not(:disabled) { background: var(--accent-hover); }
-    .primary:active:not(:disabled) { background: var(--accent-active); transform: scale(0.98); }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
   `],
 })

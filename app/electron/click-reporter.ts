@@ -65,8 +65,13 @@
  *   The disk copy, read-member and every repack see none of this: a book's own
  *   markup — scripts and all — round-trips through open/edit/save untouched.
  *
- * The script itself is written to do nothing else: no fetch, no DOM mutation,
- * no capability beyond naming an element by its position in document order.
+ * The script itself is written to do nothing else: no fetch, no network of any
+ * kind, and nothing it can say that is not a fact about this document — which
+ * block was clicked, what the curator did to the ones they picked, and how far
+ * down the chapter the reader is (the scroll channel, near the bottom). That
+ * last one is here for the same reason everything else is: the origin is opaque,
+ * so nobody outside can read a scroll offset any more than they can measure a
+ * paragraph.
  */
 
 import { BLOCK_CATEGORIES, UNKNOWN_CATEGORY_COLOUR, categoryRgb } from '../shared/categories';
@@ -903,6 +908,19 @@ export const REPORTER_SOURCE = `(function () {
     if (!data) return;
     if (data.type === 'foundry:select-mode') { setMode(data.on === true); return; }
     /*
+     * PUT THE READER BACK, and it is deliberately ABOVE the mode gate below.
+     *
+     * The frame is re-served for an edit whether or not anybody is curating —
+     * an editor flush writes a chapter and the <iframe> is pointed at a new
+     * revision of it — so a restore that needed select mode would leave the
+     * ordinary reading case exactly as broken as it was. Nothing about putting
+     * a document back where it already was is a power select mode confers.
+     */
+    if (data.type === 'foundry:scroll-restore') {
+      restoreScroll(data.x, data.y);
+      return;
+    }
+    /*
      * EVERYTHING ELSE THE PARENT CAN ASK FOR NEEDS THE MODE ON. These are the
      * inspector's gestures — relabel the selected block, strike a whole
      * category — and with the mode off there is no selection, no stylesheet and
@@ -1114,13 +1132,92 @@ export const REPORTER_SOURCE = `(function () {
     if (text) document.execCommand('insertText', false, text.replace(/\\s+/g, ' '));
   }, true);
 
+  // ═══ where the reader is ═══════════════════════════════════════════════════
+  //
+  // THE FRAME IS RELOADED FOR THINGS THE READER NEVER ASKED FOR. A word edit has
+  // no attribute to flip, so the chapter is written and re-served; a refused
+  // write is corrected by re-serving the truth over the guess; the stamping pass
+  // re-serves the whole document. Every one of those lands the page at offset
+  // zero, and somebody who struck a footnote two hundred lines down is suddenly
+  // reading the chapter heading — which is the complaint in the user's own
+  // words. The cost is not cosmetic: a curation pass over a long chapter becomes
+  // a scroll back to the place after every single gesture.
+  //
+  // THE POSITION CANNOT BE READ FROM OUT THERE. The origin is opaque, so the
+  // shell can no more touch this document's scrollTop than it can hit-test a
+  // paragraph — the same wall the marquee, the key handler and the selection are
+  // all on the wrong side of. So the frame SAYS where it is, and the shell says
+  // where to go back to after the reload it caused.
+  //
+  // IT REPORTS WITH THE MODE OFF, deliberately. A reload after an editor flush
+  // moves the page whether or not anybody is curating, and a channel that only
+  // worked in select mode would fix half of one complaint and leave the other
+  // half to be rediscovered.
+
+  /** Trailing edge, so what is reported is where the reader STOPPED, not passed. */
+  var SCROLL_REPORT_MS = 150;
+  var scrollTimer = null;
+
+  function reportScroll() {
+    scrollTimer = null;
+    post({ type: 'foundry:scroll-report', x: scrollLeft(), y: scrollTop() });
+  }
+
+  window.addEventListener('scroll', function () {
+    // Throttled and not debounced: a message per scroll event is sixty a second
+    // through postMessage for a gesture whose answer only has to be roughly
+    // right, and the shell only ever reads the LAST one anyway.
+    if (scrollTimer !== null) return;
+    scrollTimer = setTimeout(reportScroll, SCROLL_REPORT_MS);
+  }, true);
+
+  /**
+   * Go back to where the reader was — after the layout has settled, not before.
+   *
+   * A CHAPTER'S HEIGHT IS NOT SETTLED WHEN THIS SCRIPT RUNS. The reporter is
+   * appended at the end of <body>, so it executes with the images above it still
+   * arriving, and a scrollTo issued at that moment is CLAMPED against a document
+   * that has not finished growing — the reader lands somewhere above where they
+   * were, which looks exactly like the bug this exists to fix. So the scroll is
+   * applied once the document says it is complete, and again on the following
+   * frame: a late image is a second growth spurt, and the second call costs
+   * nothing at all when nothing moved.
+   *
+   * The numbers are checked here as well as in the shell. They arrive over the
+   * same channel as everything else, and a NaN would scroll this book to the top
+   * as surely as no message at all.
+   */
+  function restoreScroll(x, y) {
+    if (typeof x !== 'number' || typeof y !== 'number') return;
+    if (!isFinite(x) || !isFinite(y) || x < 0 || y < 0) return;
+    var apply = function () {
+      window.scrollTo(x, y);
+      requestAnimationFrame(function () { window.scrollTo(x, y); });
+    };
+    if (document.readyState === 'complete') requestAnimationFrame(apply);
+    else window.addEventListener('load', function () { requestAnimationFrame(apply); }, { once: true });
+  }
+
   // The frame is going away — a chapter change, a reload after an edit
   // elsewhere. Best effort, and the only chance a half-typed edit gets.
-  window.addEventListener('pagehide', function () { commitEdit(); });
+  //
+  // AND THE LAST CHANCE TO SAY WHERE THE READER WAS. A throttled report is up to
+  // 150 ms behind the scrollbar, which is a paragraph or two on a fast flick;
+  // the pending one is cancelled and sent now so the position the shell restores
+  // is the one the page actually had when it went away. Best effort in the
+  // honest sense — a document being torn down may not get its message out — and
+  // the throttled reports are what makes that acceptable rather than fatal.
+  window.addEventListener('pagehide', function () {
+    commitEdit();
+    if (scrollTimer !== null) clearTimeout(scrollTimer);
+    reportScroll();
+  });
 
   // The handshake. A frame reloads for reasons the parent did not ask for, and
   // it comes back with the mode off; saying so is what lets the parent turn it
   // straight back on without watching for load events it cannot always trust.
+  // It is also the shell's cue to hand back the scroll position: this message is
+  // the one moment both sides agree a new document exists.
   post({ type: 'foundry:reporter-ready' });
 })();
 `;

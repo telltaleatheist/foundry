@@ -36,9 +36,20 @@ import { TabsService, type Tab } from '../../core/tabs.service';
  * now (app-html-editor), which the pane rules place beside the book — so the
  * source can be widened without narrowing the page it is there to fix, and the
  * book can be read with the editor closed without the tab remembering a mode.
- * The button below is a toggle over that tab: press it again and the editor
- * closes. All the writing, debouncing and flushing moved with it; what stays
- * here is the book.
+ * All the writing, debouncing and flushing moved with it; what stays here is the
+ * book. NOTHING IN THIS TOOLBAR OPENS IT any more, and the comment in the
+ * template says why; the editor tab itself is unchanged and phase E is what
+ * finally takes it away.
+ *
+ * ── Where the reader is ─────────────────────────────────────────────────────
+ *
+ * A chapter is re-served on every path that writes to it, and a re-served
+ * <iframe> starts at the top. This component remembers the frame's last reported
+ * scroll position and hands it back after a reload of the SAME chapter, which is
+ * the whole of the fix for "i delete a footnote and the next thing i know, im
+ * looking at the chapter header". Both ends of the channel are documented in
+ * electron/click-reporter.ts; this side is `onFrameMessage` and `restoreScroll`
+ * below.
  *
  * The chapter comes out of the main process through `foundry-file://epub/…`
  * (electron/main.ts) into an iframe with `sandbox="allow-scripts"` — and ONLY
@@ -81,12 +92,23 @@ import { TabsService, type Tab } from '../../core/tabs.service';
                  this row is gone, and with five columns open a person needs to
                  read the title off the pane rather than count along the list. -->
             <span class="doc-title" [title]="tab().title">{{ tab().title }}</span>
-            <!-- A toggle over the editor TAB: on while one is open for this
-                 book anywhere in the workspace, and pressing it again closes
-                 that tab. It opens in a pane of its own, beside this one. -->
-            <button class="ghost" [class.on]="editing()" (click)="toggleEditor()">
-              {{ editing() ? 'Done editing' : 'Edit HTML' }}
-            </button>
+            <!--
+              ── Edit HTML IS NOT OFFERED HERE, and the machinery is untouched ──
+
+              The toggle sat in this row and on the dock, and what it opened was
+              a textarea over somebody's chapter — a freeform byte editor for a
+              document that is DERIVED from the readings bank. Every keystroke in
+              it was a change with nothing to write itself down as: the bank did
+              not hear it, the ledger did not hear it, and the next cast of the
+              book was entitled to erase it. Offering the gesture and then losing
+              it is worse than not offering it, which is the same reason the
+              inspector's Block section is drawn nowhere.
+
+              The editor tab, the toggle behind it and click-to-source all still
+              work; phase E retires them properly, with the flowing surface in
+              place to take the job (docs/DERIVED-BOOK.md §6). This withdraws the
+              offer, not the code.
+            -->
             <!--
               SELECT MODE SAYS SO IN WORDS, because it is a mode: the outlines
               in the page are the only other sign it is on, and a person who
@@ -107,9 +129,22 @@ import { TabsService, type Tab } from '../../core/tabs.service';
               @else if (tab().modified) { Edits are in the workspace copy }
               @else if (tab().savedPath) { Saved }
             </span>
-            <button class="primary" (click)="tabs.save(tab().id)">
-              {{ tab().savedPath === null ? 'Save…' : 'Save' }}
-            </button>
+            <!--
+              ── SAVING IS NOT A BUTTON ON THIS ROW ANY MORE ──
+
+              It put a copy of the working tree somewhere the user chose, which
+              made every pane a second door out of the app — one that files a
+              book at whatever state its working copy happens to be in, with no
+              record anywhere that it happened. Getting a finished document out
+              is Export, on the dock: it renders the position you are standing on
+              through the whole ledger and files the result under the project,
+              where it can be found again tomorrow. A save button beside it would
+              be a quieter way to get a worse copy of the same thing.
+
+              The save and save-as calls on the service stay: closing a book with
+              unsaved corrections still asks, and still needs somewhere to put
+              them.
+            -->
           </header>
 
           <div class="panes">
@@ -152,9 +187,9 @@ import { TabsService, type Tab } from '../../core/tabs.service';
       border-bottom: 1px solid var(--border-subtle);
       flex-shrink: 0;
     }
-    /* Capped at a share of the row rather than allowed to flex: the buttons
-       beside it are the reason the row exists, and a long title must not push
-       Save off the end of a narrow column. */
+    /* Capped at a share of the row rather than allowed to flex: the mode line
+       beside it is the reason the row exists, and a long title must not push
+       "Select — Delete cuts it" off the end of a narrow column. */
     .doc-title {
       flex: 0 1 auto;
       max-width: 40%;
@@ -187,30 +222,9 @@ import { TabsService, type Tab } from '../../core/tabs.service';
     .problem h1 { margin: 0; font-size: 16px; font-weight: 600; color: var(--error); }
     .problem p { margin: 0; font-size: 13px; max-width: 60ch; white-space: pre-wrap; }
 
-    .ghost, .primary {
-      display: inline-flex; align-items: center; justify-content: center;
-      height: 26px; padding: 0 10px;
-      border-radius: var(--radius-sm);
-      font-size: 12px; font-weight: 500; line-height: 1;
-      cursor: pointer;
-      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1),
-                  border-color 100ms cubic-bezier(0, 0, 0.2, 1),
-                  color 100ms cubic-bezier(0, 0, 0.2, 1);
-    }
-    .ghost {
-      background: var(--bg-input);
-      border: 1px solid var(--border-default);
-      color: var(--text-primary);
-    }
-    .ghost:hover { background: var(--bg-hover); border-color: var(--border-strong); }
-    .ghost.on { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
-    .primary {
-      border: none;
-      background: var(--accent); color: var(--text-inverse);
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.1);
-    }
-    .primary:hover { background: var(--accent-hover); }
-    .primary:active { transform: scale(0.98); }
+    /* The button shapes that were here went with the buttons. This row names the
+       document and says what mode it is in; every control that used to sit on it
+       is on the dock, where the app keeps its tools. */
   `],
 })
 export class EpubViewComponent implements OnDestroy {
@@ -219,8 +233,6 @@ export class EpubViewComponent implements OnDestroy {
   protected readonly tabs = inject(TabsService);
   private readonly sanitizer = inject(DomSanitizer);
 
-  /** True while an HTML editor tab is open on this book, in whatever pane. */
-  protected readonly editing = computed(() => this.tabs.editorFor(this.tab().id) !== null);
   /** The editor's flush, said in the book's toolbar because it is the book being written. */
   protected readonly writing = computed(() => this.tabs.writingTo() === this.tab().id);
 
@@ -287,6 +299,20 @@ export class EpubViewComponent implements OnDestroy {
       this.tabs.reportSelection(this.tab().id, [], null);
       this.tabs.reportEditing(this.tab().id, false);
       this.pushSelectMode();
+      this.restoreScroll();
+      return;
+    }
+    /*
+     * WHERE THE READER IS, kept against the chapter that reported it.
+     *
+     * Held on the component and not on the service, unlike the selection: five
+     * panes each own one frame, and where somebody is in a chapter is not a fact
+     * any other surface has a use for. It dies with the component, which is
+     * correct — a pane that was closed is not owed its scrollbar back.
+     */
+    if (data.type === 'foundry:scroll-report') {
+      const at = scrollAt(data.x, data.y);
+      if (at !== null) this.frameScroll = at;
       return;
     }
     if (data.type === 'foundry:block-selected') {
@@ -367,6 +393,74 @@ export class EpubViewComponent implements OnDestroy {
     );
   }
 
+  /**
+   * Which chapter, in which tab, the frame is currently holding — and where the
+   * reader had got to in it.
+   *
+   * ONE POSITION AND NOT A MAP, and that is the ruling rather than a shortcut: a
+   * chapter opened fresh legitimately starts at the top, so a position kept for
+   * a chapter the reader has since left is a position nothing is ever allowed to
+   * use. Keeping one is what makes the test below a comparison rather than a
+   * cache-invalidation problem.
+   */
+  private frameChapter: string | null = null;
+  private frameScroll: { x: number; y: number } | null = null;
+
+  /**
+   * The tab AND the chapter: one pane can be handed a different tab's document.
+   *
+   * Joined on a NUL rather than on a separator either half could contain — an
+   * href is a path and a path is allowed to hold anything a filesystem is. Same
+   * escape, same reason, as the source key in pdf-view.
+   */
+  private chapterKey(): string {
+    return `${this.tab().id}\u0000${this.tab().chapterHref ?? ''}`;
+  }
+
+  /**
+   * Put the reader back after a RELOAD, and never after a navigation.
+   *
+   * ── The complaint this answers ──────────────────────────────────────────────
+   *
+   * "i delete a footnote and the next thing i know, im looking at the chapter
+   * header." Striking a block paints in the frame and posts the write behind it;
+   * a refusal reloads the frame to put the truth back, the stamping pass reloads
+   * it, and an editor flush bumps the revision and reloads it. Every one of those
+   * is a fresh document at offset zero, and a curation pass over a long chapter
+   * becomes a scroll back to the place after every gesture.
+   *
+   * ── Why it is fixed HERE, at the handshake ─────────────────────────────────
+   *
+   * Because `foundry:reporter-ready` is the ONE event every reload path passes
+   * through — the frame posts it at the end of its own execution whatever caused
+   * it to run. Fixing the strike path, the refusal path and the flush path each
+   * where they sit would be three fixes and a fourth reload nobody thought of;
+   * this is one, and it covers the paths that do not exist yet.
+   *
+   * A DIFFERENT CHAPTER IS NOT A RELOAD. Clicking through to the next chapter is
+   * a request to read it from its beginning, and handing that document somebody
+   * else's offset would be the same defect wearing the opposite sign. So the key
+   * carries the chapter, and a key that moved drops the position instead of
+   * spending it.
+   */
+  private restoreScroll(): void {
+    const chapter = this.chapterKey();
+    const reloaded = this.frameChapter === chapter;
+    this.frameChapter = chapter;
+    const at = this.frameScroll;
+    if (!reloaded || at === null) {
+      this.frameScroll = null;
+      return;
+    }
+    // The frame decides WHEN — it is the only side that can see whether its own
+    // images have finished arriving, and a scroll issued into a document that is
+    // still growing is clamped short of where the reader was.
+    this.frame()?.nativeElement.contentWindow?.postMessage(
+      { type: 'foundry:scroll-restore', x: at.x, y: at.y },
+      '*',
+    );
+  }
+
   constructor() {
     window.addEventListener('message', this.onFrameMessage);
 
@@ -395,10 +489,6 @@ export class EpubViewComponent implements OnDestroy {
 
   ngOnDestroy(): void {
     window.removeEventListener('message', this.onFrameMessage);
-  }
-
-  protected toggleEditor(): void {
-    void this.tabs.toggleEditor(this.tab().id);
   }
 
   protected readonly chapterUrl = computed<SafeResourceUrl | null>(() => {
@@ -441,7 +531,29 @@ interface FrameMessage {
   counts?: unknown;
   struck?: unknown;
   reason?: unknown;
+  x?: unknown;
+  y?: unknown;
 }
+
+/**
+ * A scroll offset out of the frame, or null if it is not one.
+ *
+ * CHECKED LIKE EVERY OTHER FIELD ON THIS CHANNEL, and for a reason that is not
+ * only hygiene: this number is handed straight back to the same document as a
+ * scrollTo, so a NaN is a book that answers a delete by jumping to the top —
+ * which is precisely the failure the whole channel exists to remove. The cap is
+ * far past the height of any chapter a reader will ever meet and refuses a
+ * message that is arithmetic rather than a position.
+ */
+function scrollAt(x: unknown, y: unknown): { x: number; y: number } | null {
+  if (typeof x !== 'number' || typeof y !== 'number') return null;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  if (x < 0 || y < 0 || x > MAX_SCROLL || y > MAX_SCROLL) return null;
+  return { x, y };
+}
+
+/** As far down a chapter as a position may claim to be, in CSS pixels. */
+const MAX_SCROLL = 10_000_000;
 
 /**
  * The shape of a `data-bf-id`, checked before it is handed to an IPC call that
