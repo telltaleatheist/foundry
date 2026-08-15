@@ -14,6 +14,14 @@ build/
 # set has to be reproducible.
 .bun/
 
+# EXCEPT under app/, which npm manages: `app/package-lock.json` is that half's
+# real lockfile. `app/bun.lock` is a byproduct of the gates — they run
+# `bunx tsc` and `bunx ng build` from that directory, and bun writes a lockfile
+# wherever it resolves. Ignored rather than deleted, because the next gate run
+# would only write it again, and an untracked 190 kB artifact sitting in the
+# way of `git add -A` is how a build's scratch ends up in somebody's history.
+app/bun.lock
+
 # Python bytecode (the VLM sidecar is Python; CPython drops these next to the source)
 __pycache__/
 *.pyc

@@ -154,6 +154,16 @@ one at a time, or accept a narrower claim and say so.
   ledger the `chapters` field, which would otherwise have archived a
   book's whole undo history aside on next open.
 
+**D2 is IN FLIGHT as of `caefbfd`**, and its work is UNCOMMITTED IN THE
+WORKING TREE — agents never commit, so a dirty tree here is the normal
+state of a running unit, not damage. The files it holds:
+`app/shared/{types,ledger,pipeline}.ts`,
+`app/electron/{job-queue,main,projects,workspace}.ts`, and the
+translate / export / queue-shelf dialogs. If a session ends before it
+reports: `git stash list` is empty, nothing is lost that was committed,
+and the choice is to let the agent finish or `git checkout --` those
+paths and relaunch from this spec. Do NOT commit them unverified.
+
 - **Unit D2 — the app switches to records.** Planning, ledger, sweep and
   seeding move to record files; **and CHAINS**: the one-hop refusal
   (`pipeline.ts:207-214`) comes out, `landsUnder` generalizes, a
