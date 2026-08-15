@@ -42,6 +42,22 @@
  * rather than run beside whatever is going: one engine at a time is a fact about
  * the machine, and it holds however cheap the job is.
  *
+ * ── One job in here starts another, and only this one ────────────────────────
+ *
+ * A READING THAT LANDS CASTS THE BOOK (`castFlowingBook`). Everything else in this
+ * queue arrives from a person pressing something; this arrives from the previous
+ * job finishing, because the product of a reading is a bank and a bank is not a
+ * thing anybody can look at. The user: "from that bank, we create an html page of
+ * the document - a proto epub. that's the step that appears automatically the
+ * moment i OCR something."
+ *
+ * IT IS THE ONLY ONE, and that has to stay true: a conversion landing that
+ * enqueued anything would be a cast casting a cast, forever. The guard is
+ * structural rather than a flag — the `read` arm of the settle is the only caller
+ * and it returns before any conversion landing runs — and `enqueue`'s dedup on the
+ * output path is the second line, so two readings landing near each other join one
+ * cast rather than racing two.
+ *
  * ── Environment installs share this queue, and are NOT held ──────────────────
  *
  * An `env-install` row is not a conversion, but it belongs here rather than
@@ -71,15 +87,21 @@ import { ENV_SPECS } from './env-catalog';
 import { destFor, installEnv } from './env-install';
 import {
   generatedRoleFor,
+  positionStepId,
   projectDirOf,
+  recordFinal,
   recordGenerated,
   recordReading,
+  restoreFinalRotation,
   restoreRotation,
+  rotateFinal,
   rotateGenerated,
+  type FinalRotation,
   type Rotation,
 } from './projects';
 import { readSettings } from './settings';
 import { ensureServer, isLocalVllmEndpoint, noteQueueBusy, noteQueueIdle } from './vllm-server';
+import { planConversion } from './workspace';
 import { translationStage } from '../shared/pipeline';
 import type { EnvInstallRequest, Job, JobRequest, TranslateRequest } from '../shared/types';
 
@@ -676,6 +698,24 @@ async function pump(): Promise<void> {
     ? { request, then: request.thenTranslate }
     : null;
 
+  /*
+   * ── THE JOB THAT LANDS IN THE TRAY INSTEAD OF THE WORKSHOP ────────────────
+   *
+   * Everything below this line — the server wait, the intermediate, the two
+   * stages, the cancel, the progress — is the same for an export as for any other
+   * rendering, because an export IS a rendering (`planExport`). What it changes is
+   * the two ends: which file the rotation moves aside, and what the settle records.
+   *
+   * DECIDED ONCE, HERE, for `piped`'s reason: the narrowing that reaches
+   * `request.export` is only available on a `GenerateRequest`, and three separate
+   * places re-deriving it is three places for one of them to go on treating an
+   * export as a generate — which would rotate the project's cast book aside to
+   * make room for a file that is not going anywhere near it.
+   */
+  const exporting = request.kind !== 'read'
+    && request.kind !== 'translate'
+    && request.export === true;
+
   starting = true;
   next.state = 'running';
   next.startedAt = Date.now();
@@ -820,15 +860,30 @@ async function pump(): Promise<void> {
    * question while the dialog is still on screen, so this is reached only when a
    * tab was opened on the previous output in between — which is the case only the
    * second answer can authorize.
+   *
+   * AN EXPORT ROTATES ITS OWN FOLDER, and getting this wrong would be the worst
+   * outcome in the file. `rotateGenerated` takes a BASENAME and looks for it in
+   * `generated/` — and an export of the book is called `<stem>.epub`, which is
+   * exactly the name the project's cast book already has one folder over. Handed
+   * to the wrong rotation, asking for a copy of your book would file the book
+   * itself into an archive folder and unpack nothing in its place. So the layer
+   * decides the rotation, off the one flag that was resolved above, and `final/`
+   * gets its own pair (`rotateFinal` / `restoreFinalRotation`) rather than a
+   * parameter on this one — the two put back different things.
    */
   let rotation: Rotation | null = null;
+  let filedRotation: FinalRotation | null = null;
   let rotatedIn: string | null = null;
   if (request.kind !== 'read') {
     const projectDir = projectDirOf(request.outputPath);
     if (projectDir !== null) {
       rotatedIn = projectDir;
       try {
-        rotation = await rotateGenerated(projectDir, path.basename(request.outputPath));
+        if (exporting) {
+          filedRotation = await rotateFinal(projectDir, path.basename(request.outputPath));
+        } else {
+          rotation = await rotateGenerated(projectDir, path.basename(request.outputPath));
+        }
       } catch (err) {
         next.state = 'failed';
         next.error = err instanceof Error ? err.message : String(err);
@@ -1069,6 +1124,33 @@ async function pump(): Promise<void> {
       );
       next.message = `Read ${path.basename(next.inputPath)} — the answers are banked.`;
       changed();
+      await castFlowingBook(next.inputPath);
+      void pump();
+      return;
+    }
+    /*
+     * ── AN EXPORT IS FILED AND NOTHING ELSE HAPPENS TO IT ─────────────────────
+     *
+     * `recordGenerated` below does four things to a finished rendering: it puts a
+     * step on that type's chain, it lands a ledger step when the run was a
+     * translation, it destroys whatever the swap displaced, and it can promote the
+     * result to the project's live PDF. Every one of those is about a document
+     * OTHER WORK WILL BE MADE FROM, and an export is the one rendering in this app
+     * that nothing is ever made from — the user's ruling, verbatim: "it wont go
+     * into the working files as a step because it isnt the base for new steps. its
+     * a terminal step. so its an export."
+     *
+     * So the landing is one row in the tray. `recordFinal` never throws and
+     * announces the library itself, which is what puts the export under its project
+     * in the left nav; the tab opens itself from the shelf exactly as a Generate's
+     * does (`OPENS_ITSELF`), because somebody who asked for a book wants to look at
+     * it. No documents row, no ledger step, no live-PDF refresh, and no rotation to
+     * undo beyond the one `rotateFinal` already made.
+     */
+    if (exporting) {
+      await recordFinal(next.outputPath);
+      next.message = `Wrote ${path.basename(next.outputPath)}`;
+      changed();
       void pump();
       return;
     }
@@ -1180,10 +1262,12 @@ async function pump(): Promise<void> {
     // Nothing was written, so nothing moved: the previous output comes home and
     // the chain points back at it. See `restoreRotation` for what "nothing" has
     // to include — the file, the working tree, and both of their catalogue rows.
-    if (rotation !== null && rotatedIn !== null) await restoreRotation(rotatedIn, rotation);
+    // The tray obeys the same invariant through its own receipt: a cancelled
+    // export leaves the document somebody filed earlier exactly where it was.
+    await putBack(rotatedIn, rotation, filedRotation);
   } else {
     next.state = 'failed';
-    if (rotation !== null && rotatedIn !== null) await restoreRotation(rotatedIn, rotation);
+    await putBack(rotatedIn, rotation, filedRotation);
     // foundry's own stderr is the message a user needs — it names the missing
     // Python, the model it could not load, the page it choked on. Never
     // paraphrased, and never replaced with an exit code.
@@ -1210,6 +1294,132 @@ async function pump(): Promise<void> {
   }
   changed();
   void pump();
+}
+
+/**
+ * Whichever rotation this job made, undone — because the run wrote nothing.
+ *
+ * ONE CALL AT BOTH SETTLES, and the two receipts are deliberately separate types
+ * rather than one with a layer field on it. What a `generated/` rotation has to
+ * put back is a file, a working tree, a step's location in a chain and that tree's
+ * catalogue row; what a `final/` one has to put back is a file and a row. A shape
+ * that carried both would be half-empty at every call site and would invite a
+ * restore that reached for a working tree an export never had.
+ *
+ * At most one of them is ever non-null: `pump()` chooses the rotation by the same
+ * flag that chooses the landing, so this reads as "put back whatever happened".
+ */
+async function putBack(
+  dir: string | null,
+  rotation: Rotation | null,
+  filed: FinalRotation | null,
+): Promise<void> {
+  if (dir === null) return;
+  if (rotation !== null) await restoreRotation(dir, rotation);
+  if (filed !== null) await restoreFinalRotation(dir, filed);
+}
+
+/**
+ * A READING LANDED, SO THE BOOK EXISTS — cast it, now, without being asked.
+ *
+ * ── The gap this closes ─────────────────────────────────────────────────────
+ *
+ * A reading's product is a BANK: hours of GPU, and nothing anybody can look at. So
+ * the moment OCR finished, a person had a project whose only readable document was
+ * the photograph they started with, and the flowing book they had actually paid for
+ * did not exist until they found a dialog and asked for it by file format. The
+ * user's account of what should happen is the whole specification: "from that bank,
+ * we create an html page of the document - a proto epub. that's the step that
+ * appears automatically the moment i OCR something."
+ *
+ * ── Why this costs almost nothing, which is what makes it automatic ─────────
+ *
+ * The cast is `vlm-convert --format epub --reuse-readings` over a bank that was
+ * marked complete one line ago. It loads no model, opens no socket, reads no page
+ * and takes seconds — so it is not held (the hold exists so that hours of GPU are
+ * never spent by the act of configuring them, and there are no hours here), and it
+ * does not wait for the reading server (`endpointFor` answers only for a `read`).
+ * Both of those fall out of rules that already existed; nothing here argues for an
+ * exception.
+ *
+ * ── THE LOOP GUARD, AND WHERE IT ACTUALLY LIVES ────────────────────────────
+ *
+ * A conversion landing must never enqueue anything, or a cast would cast a cast
+ * forever. That is guaranteed structurally rather than by a flag: this is called
+ * from the `read` arm of the settle and from nowhere else, and the `read` arm
+ * returns before any conversion landing is reached. The second guard is
+ * `enqueue`'s own dedup — a job already waiting or running to write this exact
+ * file returns that row instead of a second one — so a re-read that lands while
+ * the first cast is still queued joins it rather than racing it.
+ *
+ * ── Every refusal is a console line, never a failed reading ────────────────
+ *
+ * The plan can decline: a book whose previous cast is open in a tab (the rotation
+ * would move a working tree out from under a reader), a bank whose marker did not
+ * survive, a project directory that has gone. NONE of those is a reason to report
+ * a three-hour reading as anything but the success it was — the bank is on disk,
+ * it is complete, and the book can be asked for at any time for nothing. So the
+ * reading lands, the reason is named in full in the terminal, and the person is
+ * left with exactly what they paid for.
+ *
+ * A PIPED PLAN IS DECLINED TOO, and that one is a guard rather than an error. The
+ * position is the reading this landing just recorded — `recordReading` moves the
+ * pointer onto it — whose ancestry is the import, so `renderPipeline` finds no
+ * translation and there is no second stage to compose. If one ever appeared here
+ * it would mean the pointer is somewhere this function did not expect, and a
+ * two-stage job would be HELD and would sit in the shelf waiting for a Start that
+ * nobody knows to press — a translation of the book, run automatically, behind a
+ * button labelled OCR. Skipping says so out loud instead.
+ */
+async function castFlowingBook(readFrom: string): Promise<void> {
+  try {
+    const plan = await planConversion(readFrom, 'epub');
+    if (plan.thenTranslate !== undefined) {
+      console.warn(
+        `[job] the flowing book for ${path.basename(readFrom)} was not cast automatically: the `
+        + 'project\'s position stands under a translation, and a cast that had to run the '
+        + 'translator is not a free rendering. Generate it from the step you want.',
+      );
+      return;
+    }
+    enqueue(
+      {
+        kind: 'epub',
+        inputPath: plan.sourcePath,
+        outputPath: plan.outputPath,
+        readingsPath: plan.readingsPath,
+        overlayPath: plan.overlayPath,
+      },
+      // The reading this cast is made from, which `recordReading` has just left
+      // the pointer standing on. Nothing downstream spends it — `recordGenerated`
+      // reads `parentStep` only for a translation — but the shelf's row says which
+      // step a job was started from, and "from nowhere" would be untrue of the one
+      // job in this app that is started by another job landing.
+      await parentOf(plan.outputPath),
+    );
+  } catch (err) {
+    console.error(
+      `[job] the reading of ${path.basename(readFrom)} landed, but the flowing book could not be `
+      + `planned: ${err instanceof Error ? err.message : String(err)}. The bank is complete, so `
+      + 'generating an EPUB from it is free whenever it is asked for.',
+    );
+  }
+}
+
+/**
+ * The position of the project a job is about to write into.
+ *
+ * Main's `parentStepFor` said one folder over, for the same reason and about the
+ * same field (`Job.parentStep`). It is spelled again here rather than exported
+ * because the two callers reach it from opposite directions — main resolves it
+ * between a renderer's press and a synchronous enqueue, this resolves it between
+ * one job's settle and the next job's enqueue — and both are two lines over
+ * `projectDirOf` and `positionStepId`. A shared helper would be a module boundary
+ * drawn around a `??`.
+ */
+async function parentOf(target: string): Promise<string | null> {
+  const dir = projectDirOf(target);
+  return dir === null ? null : positionStepId(dir);
 }
 
 /**

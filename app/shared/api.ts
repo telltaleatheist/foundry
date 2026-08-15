@@ -73,6 +73,24 @@ import type {
  * undos a chord meant — a text box's, the rendered frame's, or the book's.
  */
 export type MenuAction =
+  /**
+   * The File menu's one materialising verb, and what it replaced.
+   *
+   * There were two items here — Save and Save As — and the user ruled them out of
+   * the app entirely: "there will be no 'save a copy' or 'save' buttons along the
+   * top of panels. those buttons are reserved for the export modal that pops up
+   * when you click the export button on the nav rail." A Save that wrote the
+   * working tree back over a file the user chose was the right verb for an app
+   * whose document was a file; the document is a projection of a bank now, and
+   * what a person wants out of it is a FINISHED thing — a book, a reprint, a text
+   * — which is the export modal's question and nobody else's.
+   *
+   * `save` and `save-as` survive in this union because the renderer's own service
+   * still carries out both (the close-with-unsaved-changes dialog is one caller),
+   * and a menu that no longer sends them is a menu that stopped offering the
+   * gesture rather than a service that lost it.
+   */
+  | 'export'
   | 'save'
   | 'save-as'
   | 'close-tab'
@@ -246,6 +264,34 @@ export interface FoundryApi {
     planReading(inputPath: string, asked?: ReadAsk): Promise<ReadingPlan>;
     /** The kind decides the output's EXTENSION, not just its `--format`. */
     plan(inputPath: string, kind: ConversionKind): Promise<WorkspacePlan>;
+    /**
+     * The same rendering, aimed at `final/` — where a TERMINAL document goes.
+     *
+     * ── Why this is a second plan and not a flag on the one above ───────────────
+     *
+     * The two compose from the same machinery and differ in one field, which is
+     * exactly the argument for one function with an argument — and the argument
+     * against is what the two plans DO on the way. `plan` reserves a slot in
+     * `generated/`: it refuses when the book it would replace is open in a tab,
+     * because a rotation there moves a working tree out from under a reader. An
+     * export replaces nothing anybody is working from — `final/` is the tray, not
+     * the workshop — so it asks none of that, and a caller that had to remember to
+     * pass the right flag to skip a refusal is a caller that will one day pass the
+     * wrong one.
+     *
+     * EVERYTHING ELSE IS IDENTICAL, deliberately: the same completed-bank refusal
+     * said in the same words, the same curation resolved from the same position,
+     * and the same translate stage when the position stands under a translation —
+     * so exporting the Hungarian from a save made under it produces the Hungarian
+     * with that save's cuts applied, which is the whole promise of generating from
+     * a row. The answer is a `WorkspacePlan` like any other; only `outputPath`
+     * says where it landed.
+     *
+     * The caller sets `GenerateRequest.export` on the request it builds from this.
+     * That flag is what the queue's landing reads, and it is the renderer's to set
+     * because the renderer is what knows which of the two buttons was pressed.
+     */
+    planExport(inputPath: string, kind: ConversionKind): Promise<WorkspacePlan>;
     /**
      * Where a translation of this book goes: `<the book's name> (<lang>).epub`,
      * in the same project as the book it was made from.

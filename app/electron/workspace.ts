@@ -13,7 +13,7 @@
  * module that decides where anything lives. What is left here is the two
  * questions a JOB asks, and the answers are three paths inside one folder.
  *
- * ── Into `generated/`, always ────────────────────────────────────────────────
+ * ── Into `generated/`, unless it is terminal ─────────────────────────────────
  *
  * What the engine writes is an ORIGIN, not a working copy: it is the record of
  * what the model actually read, every curation decision downstream is measured
@@ -21,6 +21,14 @@
  * a conversion writes into `generated/` and nothing ever writes there again —
  * a second run of the same book rotates the first aside rather than replacing
  * it (electron/projects.ts, `rotateGenerated`).
+ *
+ * AN EXPORT IS THE EXCEPTION AND IT PROVES THE SENTENCE. `planExport` runs the
+ * identical rendering and aims it at `final/`, because what comes out is not an
+ * origin: nothing is ever made from it, no working tree is unpacked from it, and
+ * no step in anybody's history points at it. The user's ruling is what draws the
+ * line — "it wont go into the working files as a step because it isnt the base for
+ * new steps. its a terminal step. so its an export." Two plans, one composition,
+ * and the layer is the whole of the difference.
  *
  * The FILE is named for the book and not for its role:
  * `Working Towards The Fuhrer. Kershaw, Ian. (1993).epub`, beside the `.pdf` of
@@ -203,6 +211,72 @@ export async function planConversion(
    */
   kind: ConversionKind = 'epub',
 ): Promise<WorkspacePlan> {
+  return planRendering(inputPath, kind, GENERATED);
+}
+
+/**
+ * Where this book's EXPORT goes — the same rendering, aimed at `final/`.
+ *
+ * ── One run, two landings, and which of them this is ────────────────────────
+ *
+ * An export IS a Generate. Same bank, same curation, same `--format`, same
+ * translate stage when the position stands under a translation — everything that
+ * reaches a command line is identical, which is why it is composed by the same
+ * function above rather than by a second copy of that composition. The user's
+ * ruling is about what happens AFTERWARDS: "it wont go into the working files as a
+ * step because it isnt the base for new steps. its a terminal step. so its an
+ * export." So the file lands in the project's tray instead of in the layer this
+ * app treats as an origin, and the queue records a `ProjectFinal` row rather than a
+ * step on a chain (`GenerateRequest.export`).
+ *
+ * ── What `final/` does not owe, and why that is not laxity ──────────────────
+ *
+ * `generated/` is rotated aside rather than replaced, catalogued as a chain,
+ * unpacked into working trees, and REFUSED while a tab is reading one of those
+ * trees. Only the first of those follows an export into the tray, and it follows it
+ * for its own reason (`rotateFinal`): the name is composed from the book, so
+ * exporting twice writes one path twice, and a second run silently overwriting the
+ * first is the failure the rotation exists to prevent wherever a name is composed
+ * rather than chosen. The refusal does NOT follow, because there is no working tree
+ * hanging off a filed document for a rename to pull out from under anybody — and a
+ * refusal here would stop somebody exporting the book they are looking at, which is
+ * the most ordinary reason to export at all.
+ *
+ * ── The refusals it DOES keep, verbatim ─────────────────────────────────────
+ *
+ * The reading has to be finished, said in the same words about the same bank: an
+ * export that quietly resumed a half-read book would put a vision model behind a
+ * button labelled with a file format, which is the rule this whole layer is built
+ * around (`--reuse-readings`, docs/DERIVED-BOOK.md §7). And a position standing
+ * under a translation can only be exported as an EPUB, because there is no version
+ * of `vlm-convert --format pdf` that reprints the scan's own pages in Hungarian.
+ */
+export async function planExport(
+  inputPath: string,
+  kind: ConversionKind = 'epub',
+): Promise<WorkspacePlan> {
+  return planRendering(inputPath, kind, FINAL);
+}
+
+/**
+ * The two layers a rendering can be aimed at, spelled once.
+ *
+ * `electron/projects.ts` owns these names for the catalogue's purposes and keeps
+ * its own constants; these are the two this module composes INTO, and they are
+ * here rather than imported because a plan naming a third layer would be a plan
+ * writing somewhere no landing knows how to record.
+ */
+const GENERATED = 'generated';
+const FINAL = 'final';
+
+/** The layer a rendering writes into. See `planConversion` and `planExport`. */
+type RenderingLayer = typeof GENERATED | typeof FINAL;
+
+async function planRendering(
+  inputPath: string,
+  kind: ConversionKind,
+  layer: RenderingLayer,
+): Promise<WorkspacePlan> {
   const { dir } = await importDocument(inputPath, 'pdf');
   /*
    * ── ONE READING OF THE CATALOGUE, AND EVERY ANSWER BELOW COMES OUT OF IT ───
@@ -273,13 +347,23 @@ export async function planConversion(
   }
   const staged = pipeline.translate === null
     ? null
-    : await translateStage(dir, manifest, pipeline.translate, pipeline.landsUnder, kind);
+    : await translateStage(dir, manifest, pipeline.translate, pipeline.landsUnder, kind, layer);
+  /*
+   * THE NAME IS THE BOOK'S EITHER WAY, and the layer is the only thing the export
+   * changes about it.
+   *
+   * A staged plan takes its name from `translationTarget` — `<book> (hu).epub`, or
+   * `<book> (hu).<id8>.epub` for a branch — because the product of standing on a
+   * translation and asking for it again IS that translation. That decision belongs
+   * to the ledger and is the same decision wherever the file lands, so the basename
+   * is lifted off it and joined to whichever layer was asked for. For a generated
+   * rendering that reconstructs exactly the path the stage composed; for an export
+   * it puts the same book, under the same name, in the tray.
+   */
   const file = staged === null
     ? generatedFileFor(stem, kind)
     : path.basename(staged.outputPath);
-  const outputPath = staged === null
-    ? path.join(dir, 'generated', file)
-    : staged.outputPath;
+  const outputPath = path.join(dir, layer, file);
   /*
    * THE SOURCE IS THE APP'S TO CHOOSE, and that is the whole correction here.
    *
@@ -319,10 +403,21 @@ export async function planConversion(
    * refused at spawn is a job worth not queueing. It is asked AGAIN at the
    * rotation itself, because a tab can be opened in between and only the second
    * answer authorizes anything.
+   *
+   * AND AN EXPORT DOES NOT ASK IT, because the sentence it would say is not true of
+   * the tray. `rotationRefusal` is about a working TREE: it refuses when the book
+   * in `generated/` that a rerun would move aside has been unpacked and is being
+   * read in a tab, because the rename takes the chapters out from under that
+   * reader. Nothing is ever unpacked from `final/` — a filed EPUB opened in a tab
+   * was unpacked under its own name into `working/` and the tab reads that tree —
+   * so there is no reader to protect, and asking anyway would refuse the most
+   * ordinary export there is: the book somebody is looking at, again.
    */
-  const blocked = await rotationRefusal(dir, file);
-  if (blocked !== null) throw new Error(blocked);
-  await fsp.mkdir(path.join(dir, 'generated'), { recursive: true });
+  if (layer === GENERATED) {
+    const blocked = await rotationRefusal(dir, file);
+    if (blocked !== null) throw new Error(blocked);
+  }
+  await fsp.mkdir(path.join(dir, layer), { recursive: true });
   await fsp.mkdir(path.join(dir, 'readings'), { recursive: true });
   return {
     key,
@@ -456,6 +551,14 @@ async function translateStage(
   translate: LedgerStep,
   landsUnder: string | null,
   kind: ConversionKind,
+  /**
+   * Which landing this stage is composing for — and the ONE thing it changes here
+   * is which bank the answers go into.
+   *
+   * See the note above `seed` below. Everything else about the stage is identical,
+   * which is the whole reason `planExport` reuses it.
+   */
+  layer: RenderingLayer,
 ): Promise<{ outputPath: string; thenTranslate: ThenTranslate }> {
   if (kind !== 'epub') {
     throw new ProjectError(
@@ -485,12 +588,40 @@ async function translateStage(
   const seed = planned.stepId !== translate.id
     ? translationBankOf(translate, manifest.key)
     : null;
+  /*
+   * ── AN EXPORT FILLS THE ANCESTRAL BANK RATHER THAN MINTING ONE ─────────────
+   *
+   * The paragraph above is about a branch that will BECOME A ROW: `planned.stepId`
+   * is minted here, the landing spends it, and the bank ends up named after a step
+   * that exists. An export lands no step at all — that is the whole of what makes
+   * it an export — so a branch bank composed for it would be
+   * `readings/<key>.<tag>.<id8>.jsonl` named after a row nobody will ever create:
+   * invisible to every listing, unreachable by the sweep that clears a deleted
+   * step's banks (`orphanedBanks`), and permanent.
+   *
+   * So an export aims `--bank` at the translation it descends FROM. That is safe
+   * for the reason the seeding was safe in the first place: the bank is keyed by
+   * the whole question — model, languages, instructions, the block's own text — so
+   * answers written from a curated descendant are exactly as true in the parent's
+   * bank as they were going to be in a copy of it. Struck blocks are never asked,
+   * edited text asks a new question and gets a new key, and nothing already in
+   * there is touched. What the export gains is every unchanged block for free; what
+   * the project gains is one bank per translation instead of one per export.
+   *
+   * `seedBank` goes with it, because there is nothing left to seed: the file it
+   * would have copied FROM is now the file being written TO.
+   */
+  const bankPath = layer === FINAL && seed !== null
+    ? path.join(dir, ...seed.split('/'))
+    : planned.bankPath;
   return {
     outputPath: planned.outputPath,
     thenTranslate: {
       to: language,
-      bank: planned.bankPath,
-      ...(seed !== null ? { seedBank: path.join(dir, ...seed.split('/')) } : {}),
+      bank: bankPath,
+      ...(seed !== null && layer !== FINAL
+        ? { seedBank: path.join(dir, ...seed.split('/')) }
+        : {}),
       /*
        * NOBODY CHOSE THESE, BECAUSE THERE IS NO DIALOG HERE. The row is the
        * picker (docs/TRANSLATION-STEPS.md §3) — Generate asks for a format and

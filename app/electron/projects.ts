@@ -100,6 +100,7 @@ import type {
   LedgerStep,
   ProjectDocument,
   ProjectDocumentKind,
+  ProjectFinal,
   ProjectGenerated,
   ProjectGeneratedRole,
   ProjectLedger,
@@ -1878,34 +1879,64 @@ export async function bankForPosition(dir: string): Promise<string> {
  * Nothing is walked and nothing is composed — the step's own payload, resolved
  * against the project directory.
  *
- * A READ OR A SAVE SHOWS THE DOCUMENT PRODUCED FROM IT, which is the project's
- * live copy: the reprint once one has been generated, the scan's own copy until
- * then. That is a rendering rather than a payload (renderings are deliberately not
- * steps — STEP-LEDGER.md "Decided" #4), so it is answered by asking the project
- * what it holds.
+ * A READ OR A SAVE SHOWS THE BOOK CAST FROM THAT READING — the flowing document,
+ * which is `generated/<stem>.epub`. That is a rendering rather than a payload
+ * (renderings are deliberately not steps — STEP-LEDGER.md "Decided" #4), so it is
+ * answered by asking the project what it holds.
  *
- * ── The live copy and not `generated/`, deliberately ────────────────────────
+ * ── This is the seam moving, exactly where it was said it would ─────────────
  *
- * `generated/<stem>.pdf` is the reprint's origin and this app never writes one;
- * `working/<stem>.pdf` is the copy it edits, the copy the documents panel opens,
- * and — after a reprint lands — a copy of that very file (`refreshLivePdf`).
- * Pointing a pane at `generated/` would put the viewer on a layer the working-copy
- * model says nothing edits, and would open a second document with the same
- * basename as the one already on screen: the exact collision shared/documents.ts
- * exists to describe. Aiming at the live copy means an edit made to it can never
- * be stranded behind a file the app decided to show instead.
+ * It used to answer the live PDF — `working/<stem>.pdf` — and that was the honest
+ * answer while the PDF was the only surface anything could edit. It stopped being
+ * honest the moment a reading landed with a book beside it: the user clicked the
+ * OCR row expecting the thing the reading MADE and got the photograph it was made
+ * from. Their own words for the whole shape of it: "from that bank, we create an
+ * html page of the document - a proto epub. that's the step that appears
+ * automatically the moment i OCR something. i can now either click back to step 1,
+ * which shows the original pdf, or i can click the ocr step, which shows the PDF
+ * in html/epub form."
  *
- * ── The limitation, named rather than engineered around ─────────────────────
+ * The proto-epub is not a new artefact this had to wait for. It is
+ * `vlm-convert --format epub` over the bank — deterministic, every block stamped,
+ * already the thing select mode strikes and relabels — and the queue now casts one
+ * the instant a reading lands (electron/job-queue.ts). This function is where that
+ * cast becomes what a row SHOWS. The PDF keeps the import row and nothing else:
+ * facsimile and stop (docs/DERIVED-BOOK.md §1).
  *
- * NOTHING RECORDS WHICH READING A REPRINT WAS MADE FROM. Renderings are not steps
- * and are not going to become steps, so a project with two `read` rows (a re-read
- * asking for a different page range branches — `MINTED_BY_THE_RUN`) has one live
- * PDF and two rows that would both claim it. Both get it. That is wrong for at
- * most one of them, it is visibly the same pages either way, and the alternative —
- * provenance bookkeeping for a file that phase B stops producing — is machinery
- * with a shorter life than the comment describing it (docs/DERIVED-BOOK.md §6:
- * a read row becomes the reflowed HTML document, and this function is the seam
- * where that answer changes).
+ * ── `generated/` and not a working copy, which is the opposite of the old rule ─
+ *
+ * A PDF has a live copy in `working/` and an EPUB does not: a book's working copy
+ * is the TREE unpacked from its origin, made on open by the epub reader, and the
+ * file a pane is pointed at is the origin the tree comes from
+ * (`liveCopyOf` already says this for the import row). So aiming at `generated/`
+ * here is aiming at the same layer every EPUB in this app is opened from, not at a
+ * layer nothing edits — and there is no second document with the same basename to
+ * collide with, because the book and the scan differ by extension.
+ *
+ * ── Two limitations, named rather than engineered around ────────────────────
+ *
+ * NOTHING RECORDS WHICH READING A CAST WAS MADE FROM. Renderings are not steps and
+ * are not going to become steps, so a project with two `read` rows (a re-read
+ * asking for a different page range branches — `MINTED_BY_THE_RUN`) has one cast
+ * book and two rows that would both claim it. Both get it — the newest cast, which
+ * is the one the newest reading left. That is wrong for at most one of them, and
+ * the alternative is provenance bookkeeping for a file phase B replaces
+ * (docs/DERIVED-BOOK.md §6).
+ *
+ * AND A CURATE ROW SHOWS THE CAST, NOT A RE-CAST OF ITSELF. Striking a paragraph
+ * marks the working tree; nothing re-runs the engine at a save, so what a save row
+ * shows is the same book its reading cast, wearing the marks the tree already
+ * carries. Re-casting at a curate landing is deferred and recorded as deferred
+ * (docs/WORKBENCH.md §3), so this is the truth about today rather than a gap.
+ *
+ * ── The fallback is the old answer, and it is not a legacy branch ───────────
+ *
+ * The cast is a queued job: it is planned the moment the reading lands and it
+ * takes seconds, but there is a window where the row exists and the book does not,
+ * and there are projects on disk read before anything cast automatically. Both get
+ * the live PDF, which is what this function has always answered — the pages are
+ * the same pages, and a pane showing the scan is the app doing its job while the
+ * book is on its way.
  *
  * ── Null is an ordinary answer ──────────────────────────────────────────────
  *
@@ -1943,8 +1974,50 @@ export async function documentAtPosition(dir: string): Promise<string | null> {
   // A read or a save: the document produced from the reading this branch of the
   // story is about. No reading, nothing produced, nothing to show.
   if (view.reading === null) return null;
+  const cast = castBook(manifest);
+  const flowing = cast === null ? null : await onDisk(resolved, cast);
+  if (flowing !== null) return flowing;
   const live = await reconcileLivePdf(resolved, manifest);
   return live === null ? null : onDisk(resolved, `${WORKING}/${live.file}`);
+}
+
+/**
+ * The flowing book this project holds — `generated/<stem>.epub`, project-relative
+ * — or null for a project that has none.
+ *
+ * ── What "the cast" is, among four things that share a chain ────────────────
+ *
+ * The EPUB's chain can hold four kinds of row and only one of them is the book the
+ * reading made. A `translate` step is the book in another language. An `origin`
+ * marked `irreplaceable` is a book the USER imported, which no reading produced
+ * and which a read row must never claim. And a rotated predecessor is still in the
+ * chain, at the path it was moved to (`rotateGenerated`) — it is a previous cast,
+ * it is on disk, and it is not what a person standing on the reading means.
+ *
+ * So the test is all three of those said out loud: an `origin` row, not
+ * irreplaceable, and sitting DIRECTLY in `generated/` rather than in an archive
+ * folder under it. The last clause is the house rule doing real work — a rotated
+ * cast's payload is `generated/archived-<stamp>/<name>.epub`, which starts with
+ * `generated/` and is emphatically not the live one, so the segment count is
+ * checked rather than the prefix alone.
+ *
+ * NEWEST WINS where a chain somehow holds two, by `appliedAt` and not by array
+ * order: `recordStep` appends, which makes the array chronological in every
+ * ordinary life of a project, and `summarise` sorts the same way for the same
+ * reason — a chain read out of a catalogue somebody edited or a migration composed
+ * is not guaranteed to be.
+ */
+function castBook(manifest: ProjectManifest): string | null {
+  const live = stepsOf(manifest, 'epub').filter(
+    (step) => step.kind === 'origin'
+      && step.retention !== 'irreplaceable'
+      && step.file.startsWith(`${GENERATED}/`)
+      && !step.file.slice(GENERATED.length + 1).includes('/'),
+  );
+  return live.reduce<ProjectStep | null>(
+    (newest, step) => (newest === null || step.appliedAt >= newest.appliedAt ? step : newest),
+    null,
+  )?.file ?? null;
 }
 
 /**
@@ -2454,6 +2527,136 @@ export async function restoreRotation(dir: string, rotation: Rotation): Promise<
 }
 
 /**
+ * A rotation of a FILED document, and everything needed to put it back.
+ *
+ * The `generated/` receipt one folder over (`Rotation`) and deliberately not the
+ * same shape: an origin can have a working tree unpacked from it and a step in a
+ * type's chain, and both of those have to travel in the receipt. A filed document
+ * has neither — nothing is ever made from an export — so what a restore owes is
+ * the file and the catalogue row that named it.
+ */
+export interface FinalRotation {
+  /** `<stem>.epub` — the name in `final/` that was moved out of the way. */
+  file: string;
+  /** Where it went: `final/archived-<stamp>/<file>`. */
+  movedTo: string;
+  /** The row the rotation struck out of `manifest.final`, if there was one. */
+  row: ProjectFinal | null;
+}
+
+/**
+ * Move a filed document aside, if there is one, so an export can take its name.
+ *
+ * ── Why `final/` rotates at all, when it is the user's own tray ─────────────
+ *
+ * Because the name is composed rather than chosen. An export is called after the
+ * BOOK — `<stem>.epub` — like everything else in a project, so exporting the same
+ * format twice names one path twice, and the second run would write over the first
+ * with nothing anywhere saying it had. That is the exact failure `rotateGenerated`
+ * exists to prevent one folder over, and the fact that a person could have gone and
+ * renamed the file themselves is not a reason for this app to destroy it while they
+ * did not.
+ *
+ * AT THE MOMENT THE ENGINE IS ABOUT TO WRITE, never at the plan — the whole of
+ * `restoreRotation`'s argument, applied to the same window: a run that fails, is
+ * cancelled, or is removed from the shelf must leave the tray exactly as it found
+ * it, and the only way that is true is if the rotation is undoable and undone.
+ *
+ * ── And there is no open-file refusal here, which is the difference ─────────
+ *
+ * `rotateGenerated` refuses when the book it would move has a working tree open in
+ * a tab, because moving that tree is what breaks a reader mid-chapter. An export
+ * has no tree: a filed EPUB opened in a tab was unpacked into `working/` under its
+ * own name and the tab reads the tree, not this file; a filed PDF's bytes were read
+ * once. So there is nothing being read out from under anybody, and a refusal here
+ * would stop somebody re-exporting the book they are looking at — which is the most
+ * ordinary reason to export twice.
+ */
+export async function rotateFinal(dir: string, file: string): Promise<FinalRotation | null> {
+  const target = path.join(dir, FINAL, file);
+  if (!await exists(target)) return null;
+
+  let movedTo: string | null = null;
+  let row: ProjectFinal | null = null;
+  await withManifest(dir, async (manifest) => {
+    const archive = stampedArchive(path.join(dir, FINAL));
+    if (await exists(archive)) {
+      // `rotateGenerated`'s rule, for its reason: two runs' outputs under one
+      // folder name is two exports filed as one.
+      throw new ProjectError(
+        `${archive} already exists, so the ${file} you filed earlier cannot be moved aside without `
+        + "mixing two exports into one folder. Move it away and run again.",
+      );
+    }
+    await fsp.mkdir(archive, { recursive: true });
+    movedTo = path.join(archive, file);
+    await fsp.rename(target, movedTo);
+    /*
+     * THE ROW GOES, rather than being rewritten to point into the archive.
+     *
+     * This is where a filed document parts company with a generated one. A rotated
+     * ORIGIN stays in its chain at its new path, because the chain is a history and
+     * an earlier version of the book is exactly what "step back" reaches for. The
+     * `final` list is not a history — it is what the project currently offers, one
+     * row per file the user can open — so a row pointing into an archive folder
+     * would put a stamped directory name in the left nav for a document nobody
+     * asked to keep. The bytes are still there; the claim that they are on offer
+     * is what the rotation withdraws.
+     */
+    row = manifest.final.find((entry) => entry.file === file) ?? null;
+    manifest.final = manifest.final.filter((entry) => entry.file !== file);
+    await writeManifest(dir, manifest);
+  });
+  // A document left the tray, which is a listing that has changed even though
+  // nothing has been made yet.
+  announceProjects();
+  return movedTo === null ? null : { file, movedTo, row };
+}
+
+/**
+ * Put a filed document back, because the export it was moved for never wrote.
+ *
+ * `restoreRotation`'s invariant, said about the other folder: AN EXPORT THAT FAILS
+ * OR IS CANCELLED LEAVES THE TRAY EXACTLY AS IT WAS. Nothing is deleted, the empty
+ * archive folder goes only if it IS empty (a stamp is per second, and a sibling
+ * rotated in the same instant is somebody else's record), and a failure here is a
+ * console line rather than a throw — it runs on the way out of a job that has
+ * already failed, and the failure worth reporting is the one the user asked about.
+ */
+export async function restoreFinalRotation(dir: string, rotation: FinalRotation): Promise<void> {
+  try {
+    const back = path.join(dir, FINAL, rotation.file);
+    if (await exists(back)) {
+      // Something is in the live slot, which can only be the export this rotation
+      // made room for — so the run DID write, and putting the old copy over it
+      // would destroy the new one.
+      return;
+    }
+    if (await exists(rotation.movedTo)) await fsp.rename(rotation.movedTo, back);
+
+    const row = rotation.row;
+    if (row !== null) {
+      await withManifest(dir, async (manifest) => {
+        if (manifest.final.some((entry) => entry.file === row.file)) return;
+        manifest.final = [...manifest.final, row];
+        await writeManifest(dir, manifest);
+      });
+    }
+
+    try {
+      const archive = path.dirname(rotation.movedTo);
+      if ((await fsp.readdir(archive)).length === 0) await fsp.rmdir(archive);
+    } catch { /* somebody else's rotation shares the folder, or it is already gone */ }
+    announceProjects();
+  } catch (err) {
+    console.error(
+      `[projects] ${rotation.file} was moved aside for an export that did not write, and could not be `
+      + `put back (${(err as Error).message}). It is in ${rotation.movedTo}; nothing was deleted.`,
+    );
+  }
+}
+
+/**
  * The bank a translation wrote, as a step param — or nothing, said as nothing.
  *
  * PROJECT-RELATIVE WITH FORWARD SLASHES, which is what `LedgerStep.payload` is and
@@ -2735,13 +2938,35 @@ async function refreshLivePdf(
 }
 
 /**
- * Note that the user filed a copy into the project's own `final/`.
+ * Note that a finished document is sitting in the project's own `final/`.
  *
  * Only when it landed THERE. Save As to a USB stick or to somebody's Desktop is
  * the user's business and is already in recents; the catalogue records the
  * project's own filing tray so Home can say a book has been filed at all.
  * Silent about anything else, and never fatal — a save that happened must not
  * report a failure because a catalogue line did not.
+ *
+ * ── AND IT IS NOW THE WHOLE LANDING OF AN EXPORT ────────────────────────────
+ *
+ * This used to have one caller: a person pressing Save As and choosing the folder
+ * the dialog opened in. The queue is the second, and it is the reason the tray has
+ * a name in the model at all — an export is a run of the engine that lands here
+ * INSTEAD of going through `recordGenerated` (docs/WORKBENCH.md §3). Nothing about
+ * this function had to change to take it, which is the point rather than luck: a
+ * row in `manifest.final` says "this file exists, it is finished, and it is yours",
+ * and that sentence is equally true whichever gesture put the bytes there.
+ *
+ * WHAT IT DELIBERATELY STILL DOES NOT DO is everything a generated origin gets. No
+ * step on a type's chain, because an export is not a version of the project's EPUB
+ * — it is a copy somebody asked for. No ledger step, because nothing is ever made
+ * from it: "it wont go into the working files as a step because it isnt the base
+ * for new steps. its a terminal step." No live-PDF refresh, because a facsimile
+ * exported to the tray is not the document this app works on. One row, and stop.
+ *
+ * ONE ROW PER NAME, replaced rather than appended: exporting the same format twice
+ * writes the same path twice (the predecessor having been rotated aside first —
+ * `rotateFinal`), and two rows for one file is a left nav that offers a document it
+ * cannot tell apart from itself.
  */
 export async function recordFinal(destination: string): Promise<void> {
   const resolved = path.resolve(destination);
@@ -3456,6 +3681,10 @@ async function summarise(dir: string, name: string): Promise<ProjectSummary> {
       // offering a next step for a folder this app cannot describe.
       reading: { done: false, needed: false, pages: 0 },
       filed: false,
+      // Nothing can be listed out of a catalogue that will not parse, and guessing
+      // at a tray by reading the directory would offer files this app cannot say
+      // it made. The row offers Reveal, which is the honest door into a folder.
+      exports: [],
       problem: (err as Error).message,
     };
   }
@@ -3580,8 +3809,43 @@ async function summarise(dir: string, name: string): Promise<ProjectSummary> {
     documents,
     reading: await readingState(dir, manifest),
     filed: manifest.final.length > 0,
+    exports: await filedDocuments(dir, manifest),
     problem: null,
   };
+}
+
+/**
+ * What this project has FINISHED — the rows the left nav lists under it.
+ *
+ * ── Why the paths come out project-relative ─────────────────────────────────
+ *
+ * `manifest.final` stores a bare NAME, because the folder is implied by the field
+ * it is in. That is right for a catalogue and wrong for something crossing a wire:
+ * a project holds `archive/Book.pdf`, `working/Book.pdf`, `generated/Book.pdf` and
+ * now `final/Book.pdf`, and a renderer handed four bare names would have to compose
+ * the layer back on — which is the same thing as matching by basename, one process
+ * further out. So the layer travels WITH the name and the renderer joins it to the
+ * project directory it already has.
+ *
+ * ── Why a row whose file has gone is not listed ─────────────────────────────
+ *
+ * `final/` is the user's own tray. They may move a book onto a reader, hand it to
+ * somebody, or delete it, and none of those is this app's business to prevent or to
+ * notice — but a nav row that opens nothing is the app asking somebody to click a
+ * thing it knows is not there. `documents` above already pays one `exists` per row
+ * for the same reason; exports are few, and the stat is what makes the list true.
+ *
+ * NEWEST FIRST, because the export somebody is looking for is nearly always the one
+ * they just made.
+ */
+async function filedDocuments(dir: string, manifest: ProjectManifest): Promise<ProjectFinal[]> {
+  const rows = [...manifest.final].sort((a, b) => b.madeAt - a.madeAt);
+  const listed: ProjectFinal[] = [];
+  for (const row of rows) {
+    if (!await exists(path.join(dir, FINAL, row.file))) continue;
+    listed.push({ ...row, file: `${FINAL}/${row.file}` });
+  }
+  return listed;
 }
 
 /**

@@ -225,6 +225,37 @@ export interface GenerateRequest {
    * `Job.parentStep`, one layer down.
    */
   thenTranslate?: ThenTranslate;
+  /**
+   * THIS RENDERING IS TERMINAL — it lands in `final/` and nothing is ever made
+   * from it.
+   *
+   * ── Why one flag rather than a fourth request shape ─────────────────────────
+   *
+   * An export is the SAME RUN as a Generate in every respect that reaches a
+   * command line: the same bank, the same curation, the same `--format`, the same
+   * translate stage when the position stands under a translation. `planExport`
+   * composes it with `planConversion`'s own machinery and changes exactly one
+   * thing — where `outputPath` points. A separate request shape would be four
+   * fields copied out of `GenerateRequest` and one place for `argsFor` to forget a
+   * flag, which is the argument `ReadRequest` and `TranslateRequest` make in the
+   * other direction: they are separate because nothing they carry is the same
+   * field, and everything this carries is.
+   *
+   * WHAT IT CHANGES IS THE LANDING, and that is the whole of it. A Generate's
+   * output is an ORIGIN: catalogued on its type's chain, rotated aside rather than
+   * replaced, unpacked into a working tree, and — for a translation — a row in the
+   * step ledger. An export is none of those. The user's ruling is the reason:
+   * "it wont go into the working files as a step because it isnt the base for new
+   * steps. its a terminal step. so its an export." So the queue records a
+   * `ProjectFinal` row and stops — no documents row, no ledger step, no live-PDF
+   * refresh — and the left nav lists it under the project as a thing that was
+   * made rather than as a step in the making.
+   *
+   * Absent rather than `false` for every job this app has ever run, because a
+   * flag that is only ever true or missing says what it means at the one place it
+   * is read and leaves the ordinary case looking ordinary.
+   */
+  export?: true;
 }
 
 /**
@@ -1388,6 +1419,33 @@ export interface ProjectSummary {
   reading: ProjectReadingState;
   /** True once anything has been filed into `final/`. */
   filed: boolean;
+  /**
+   * The terminal documents this project has produced — what the left nav lists,
+   * indented under the project row.
+   *
+   * ── Why a listing carries these and `documents` does not ────────────────────
+   *
+   * `documents` is one row per file TYPE, and every row in it is a base for
+   * further work: the scan, the flowing book, the reprint. An export is the other
+   * thing — "it wont go into the working files as a step because it isnt the base
+   * for new steps. its a terminal step. so its an export." Folding exports into
+   * `documents` would put three EPUBs on a row that promises to hold one, and
+   * would offer a step chain for a file that has no history because nothing was
+   * ever done TO it.
+   *
+   * `file` is PROJECT-RELATIVE with forward slashes — `final/<the book's name>.epub`
+   * — and never a bare name, because this codebase's oldest house rule is that a
+   * project holds `archive/Book.pdf`, `working/Book.pdf` and `generated/Book.pdf`
+   * at once and nothing may ever match the last segment. The renderer joins it to
+   * `dir` and opens that; it never has to know a layer name, and it never puts one
+   * on screen — an export is labelled by what it IS and when it was made.
+   *
+   * Newest first, because that is the order somebody looks for the thing they just
+   * exported. Rows whose file has left the disk are not listed: `final/` is the
+   * user's own tray and they may tidy it by hand, and a row that opens nothing is
+   * worse than no row at all.
+   */
+  exports: ProjectFinal[];
   /**
    * Set when `project.json` could not be read. The row is still listed — Home
    * is the only door back to a book — but it offers Reveal and nothing else,

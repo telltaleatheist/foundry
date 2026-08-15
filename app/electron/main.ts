@@ -110,10 +110,10 @@ import {
 } from './recents';
 import { readSettings, writeSettings } from './settings';
 import * as vllm from './vllm-server';
-import { planConversion, planReading, planTranslation } from './workspace';
+import { planConversion, planExport, planReading, planTranslation } from './workspace';
 import { detectEnvTooling, listDistros } from './wsl';
 import { fold, isBook } from '../shared/original';
-import type { OverlayFile } from '../shared/overlay';
+import { OverlayError, type OverlayFile } from '../shared/overlay';
 import type { ReadAsk } from '../shared/ledger';
 import { RE_READ_CANCEL, RE_READ_PROCEED } from '../shared/reread';
 import type { ReReadPrompt } from '../shared/reread';
@@ -882,18 +882,36 @@ function buildMenu(): void {
           click: () => { void promptForDocument(); },
         },
         {
-          // Save writes the book to the file the user already chose, and falls
-          // back to the picker when there is not one yet — the behaviour every
-          // editor has, and the reason the chapter editor can have a Save button
-          // that does not ask a question every time.
-          label: 'Save',
+          /**
+           * ── ONE MATERIALISING VERB, WHERE THERE WERE TWO SAVES ──────────────
+           *
+           * This was Save and Save As. Save wrote the book back to the file the
+           * user had already chosen and Save As asked for a new one — the pair
+           * every editor has, and the right pair for an app whose document IS a
+           * file. It is not that app any more. What a pane shows is a projection of
+           * a bank, and there is no version of "write this back" that means
+           * anything about a projection: the durable thing is the bank and the
+           * ledger, both of which are written the moment anything changes.
+           *
+           * So the gesture people actually want from here is the one they always
+           * meant by Save — GIVE ME THE FINISHED THING — and the user ruled where
+           * it lives: "there will be no 'save a copy' or 'save' buttons along the
+           * top of panels. those buttons are reserved for the export modal that
+           * pops up when you click the export button on the nav rail." One item,
+           * one modal, and it asks the only question that is left: which format.
+           *
+           * IT KEEPS CTRL+S, deliberately. The chord is where a person's hand goes
+           * when they want their work out of an app, it is now free, and pointing
+           * it anywhere else would leave the most-pressed shortcut in software
+           * doing nothing in a document application.
+           *
+           * MAIN CANNOT OPEN THE MODAL — which pane, which project and which step
+           * are renderer state — so it says `export` and the renderer routes it,
+           * exactly as `save` was routed before it.
+           */
+          label: 'Export…',
           accelerator: 'CmdOrCtrl+S',
-          click: () => sendMenuAction('save'),
-        },
-        {
-          label: 'Save As…',
-          accelerator: 'CmdOrCtrl+Shift+S',
-          click: () => sendMenuAction('save-as'),
+          click: () => sendMenuAction('export'),
         },
         {
           label: 'Close tab',
@@ -1463,6 +1481,28 @@ function registerIpc(): void {
   ipcMain.handle(
     'workspace:plan',
     (_event, inputPath: string, kind: ConversionKind) => planConversion(inputPath, kind),
+  );
+  /*
+   * THREE PLANS NOW, and the third one is the same rendering with a different
+   * destination. An export is a Generate that lands in the project's tray rather
+   * than in the layer this app treats as an origin — nothing is ever made from it,
+   * so it gets no chain, no working tree and no step (docs/WORKBENCH.md §3). The
+   * split is at the plan rather than at the enqueue because `final/` and
+   * `generated/` are refused on different grounds: only the second one can have a
+   * book unpacked out of it and being read in a tab. See `planExport`.
+   *
+   * NO ALLOW-LIST CHECK, exactly as `workspace:plan` has none, and the reason is
+   * the same: `planConversion` and `planExport` do not read the path they are
+   * given. They resolve which PROJECT it belongs to and then compose every path
+   * they return out of the project's own catalogue — the pixels come from
+   * `archive/`, the bank from the position's read step — so a renderer naming a
+   * file it never opened gets a plan about somebody's project or an error, and no
+   * bytes. The translation plan is the one that checks, because it is the one that
+   * reads the input to export a working copy of it.
+   */
+  ipcMain.handle(
+    'workspace:plan-export',
+    (_event, inputPath: string, kind: ConversionKind) => planExport(inputPath, kind),
   );
   /*
    * A translation reads a file the renderer already has open, so the input is
@@ -2199,9 +2239,44 @@ function registerIpc(): void {
    * happens when that generation has moved: the files are archived aside, never
    * deleted, and the notice says where they went.
    */
+  /**
+   * ── AN UNREAD BOOK IS A STATE, NOT AN EXCEPTION ────────────────────────────
+   *
+   * `locateOverlay` THROWS for every book it cannot place: one outside the library,
+   * one whose project has no reading, one whose bank is not on disk. That is the
+   * right shape for a function with several callers, some of which are about to
+   * write files — and it was the wrong thing for this handler to let through. The
+   * renderer asks for blocks whenever a position wants outlines, so a book nobody
+   * has read yet threw an `OverlayError` across the IPC boundary and into the
+   * console as an unhandled rejection, once per repaint, saying nothing anybody
+   * could act on about a state that is completely ordinary.
+   *
+   * `readPdfBlocks` ALREADY HAS THE ANSWER SHAPE. It refuses softly — `{ ok: false,
+   * reason }` — precisely because "this engine build has no blocks command" and
+   * "this book has never been read" are sentences a person should meet in the pane
+   * rather than as a broken tab, and the renderer already draws that shape. So the
+   * refusal from one line earlier joins the refusals from one line later, in the
+   * same shape, and the console goes quiet.
+   *
+   * `locateOverlay` ITSELF IS UNTOUCHED: the commit path and the undo ledger both
+   * rely on the throw, and turning a refusal into a value there would mean a
+   * caller that meant to write a file quietly writing nothing. What is soft is
+   * this door, which only ever draws.
+   *
+   * ANYTHING THAT IS NOT AN `OverlayError` STILL REJECTS. A disk that will not read
+   * or a catalogue that will not parse is not a state of the book, and swallowing
+   * it here would turn a real fault into an empty pane with a plausible sentence
+   * under it.
+   */
   ipcMain.handle('overlay:blocks', async (_event, filePath: string) => {
     const pdf = admittedPdf(filePath);
-    const where = await locateOverlay(pdf);
+    let where;
+    try {
+      where = await locateOverlay(pdf);
+    } catch (err) {
+      if (err instanceof OverlayError) return { ok: false, reason: err.message };
+      throw err;
+    }
     /*
      * THE ARCHIVED ORIGINAL, not the document the tab is showing. The engine
      * needs a PDF only to re-measure a bank that recorded no render sizes, and
