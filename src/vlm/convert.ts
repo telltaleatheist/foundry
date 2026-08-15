@@ -144,6 +144,16 @@ export interface VlmConvertOptions {
   chaptersPath?: string;
   /** Remove footnote reference numbers — for a narration build. */
   stripNoteMarkers?: boolean;
+  /**
+   * Write the EDITION instead of the working book — `--final`, and
+   * `DotsBookOptions.final` in `dots-book.ts` is where the whole distinction is
+   * argued.
+   *
+   * It is a flag of the ASSEMBLY and not of the file: it changes what the
+   * documents say, which is why it cannot be a pass over the finished EPUB — the
+   * plain-text route never becomes one.
+   */
+  final?: boolean;
   log: (message: string) => void;
   /** The subprocess and the socket, swappable — see `ReadPhaseOptions.bridge`. */
   bridge?: VlmBridge;
@@ -576,6 +586,19 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
        * page, and this format's whole claim is that it reprints what the page
        * printed. The blocks go down where the model put them, in the order it
        * answered in, furniture and all.
+       *
+       * `--final` IS ACCEPTED HERE AND DOES NOTHING, and the asymmetry is
+       * recorded rather than repaired. An edition differs from a cast in what
+       * happens to NOTES and to the stamps the picker addresses elements by, and
+       * this route has neither: it forks before notes exist — a footnote is text
+       * at the bottom of a printed page here, not an `<aside>` anybody could
+       * strike — and it writes no `data-bf-*` at all, because a PDF page has no
+       * attributes to write them on. Block strikes DO reach it, because they
+       * were applied at the parse (`applyOverlay`, above) and never got as far as
+       * either branch. A NOTE strike does not, and page-faithful is what a
+       * facsimile is for: docs/WORKBENCH.md §8 rules it a known asymmetry.
+       * Refusing the flag instead would make an export of a facsimile fail over
+       * a difference that does not exist on this route.
        */
       blocks = geometryPages.reduce((sum, p) => sum + p.blocks.length + p.furniture.length, 0);
       const furniture = geometryPages.reduce((sum, p) => sum + p.furniture.length, 0);
@@ -715,6 +738,11 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
         // decision about the spine rather than about a block (`proposeSections`).
         overlay,
         stripNoteMarkers: opts.stripNoteMarkers === true,
+        // Spread rather than passed as `false`, so a cast hands the assembler the
+        // same options object it has always been handed. See
+        // `DotsBookOptions.final` for what the edition is and why it is decided
+        // here rather than over the finished file.
+        ...(opts.final === true ? { final: true } : {}),
         images: openPageImages((requests) => cropRenders(requests, pdfPath, rendersDir, opts.python)),
       });
       bytes = built.bytes;
@@ -853,6 +881,16 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
           : `vlm-convert: pages named — ${named.join(', ')}`,
       );
     } else {
+      /*
+       * The prose dialects, where `--final` is again accepted and again does
+       * nothing — for the facsimile's reason rather than as a second decision.
+       * A dialect that answers with markdown names no blocks, so it takes no
+       * `--overlay` in the first place (refused above by name), and there is no
+       * strike anywhere to remove; `buildVlmEpub` writes `data-bf-page` and
+       * nothing else, so there is no editing attribute to withhold either. The
+       * edition and the cast are the same file here, and saying so is cheaper
+       * than a flag threaded into a builder that would ignore it.
+       */
       blocks = prosePages.reduce((sum, p) => sum + p.blocks.length, 0);
       opts.log(
         `vlm-convert: ${blocks} blocks parsed in ${parseSeconds.toFixed(2)}s, `

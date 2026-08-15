@@ -216,14 +216,25 @@ function collectFiles(root: string, dir: string, into: string[]): void {
 const CUT_ATTRIBUTE = 'data-bf-cut';
 
 /**
- * The two attributes that mean nothing outside this program, as they appear in
- * a start tag.
+ * The attributes that mean nothing outside this program, as they appear in a
+ * start tag.
  *
  * `data-bf-page` and `data-bf-cat` are NOT in here and never will be: page
  * provenance is what makes a scan citable, it is invisible to a reader, and it
  * is what every later pass — a translation, a text export, a picker — reads.
+ *
+ * IT WAS TWO AND IT IS FOUR, and the two that were added are the two that were
+ * born after this command was written. `data-bf-src` names the banked answers an
+ * element's words came from and `data-bf-note` says which note of its block an
+ * aside is; both exist so that a decision made on the flowing page can be
+ * written back against the model's own answer, both are addressed to this
+ * program alone, and both were shipping to readers inside every edition this
+ * command produced. The list is not "the marks a curator leaves" — it is
+ * everything foundry writes for its own use, and anything else added for that
+ * purpose belongs here on the day it is added.
  */
-const EDITING_ATTRIBUTES = /\s+data-bf-(?:cut|id)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s/>]*))?/gi;
+const EDITING_ATTRIBUTES =
+  /\s+data-bf-(?:cut|id|src|note)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s/>]*))?/gi;
 
 interface DocPlan {
   path: string;

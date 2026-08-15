@@ -1626,6 +1626,56 @@ export async function repackEpub(id: string, destination: string): Promise<numbe
 }
 
 /**
+ * The attribute that says a book is FOUNDRY'S — the model's own category,
+ * stamped on every block either by the conversion that cast the book or by
+ * `foundry epub-stamp` over one that came from a publisher.
+ *
+ * IT IS THE ENGINE'S OWN TEST, spelled the same way (`bookFromMembers`,
+ * src/translate/book.ts, admits a book when any spine document contains this
+ * string) and that is the whole reason it is this attribute rather than
+ * `data-bf-id`, which a person reading the markup would reach for first. The two
+ * are written together and nothing produces one without the other, so they agree
+ * about every book that exists — but the app is deciding here whether to hand a
+ * book to a command that will make its OWN admission decision, and two spellings
+ * of one question is one place for the answers to differ.
+ */
+const STAMP_ATTRIBUTE = 'data-bf-cat';
+
+/**
+ * Is this open book one of ours?
+ *
+ * ASKED OF THE WORKING TREE, which is the copy that is true right now: a book
+ * stamped in select mode an hour ago is stamped in the tree and not in whatever
+ * file it was imported from. The allow-list is the same one every other reader
+ * here uses, so this walks the members the book declares rather than whatever
+ * happens to be lying in the directory.
+ *
+ * IT STOPS AT THE FIRST DOCUMENT THAT ANSWERS YES, which for a foundry book is
+ * the first document: every block of every chapter carries the stamp. The whole
+ * walk is only paid by a book that is NOT ours, where the answer is the same
+ * whichever member is read last.
+ *
+ * A member that cannot be read is not an answer and is skipped. The question is
+ * "does this book carry foundry's stamps", and a chapter that would not open is
+ * a different problem which the reader itself will report the moment anybody
+ * looks at it.
+ */
+export async function isFoundryBook(id: string): Promise<boolean> {
+  const book = unpacked.get(id);
+  if (!book) throw new EpubError('That book is not open in this app any more.');
+  for (const member of book.files) {
+    if (!/\.x?html?$/i.test(member)) continue;
+    try {
+      const source = await fs.promises.readFile(path.join(book.root, ...member.split('/')), 'utf8');
+      if (source.includes(STAMP_ATTRIBUTE)) return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
+/**
  * Write the working tree out where the ENGINE can read it, before a job runs.
  *
  * The export half of "zipping happens in exactly two places" — and it does NOT

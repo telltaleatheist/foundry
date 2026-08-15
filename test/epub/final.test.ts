@@ -125,6 +125,12 @@ test('the editing attributes are stripped and the page provenance is kept', asyn
     for (const source of [run.chapter, run.nav, run.opf]) {
       assert.doesNotMatch(source, /data-bf-cut/);
       assert.doesNotMatch(source, /data-bf-id/);
+      // The two that were born after this command was written: which banked
+      // answers an element's words came from, and which note of its block an
+      // aside is. Both are addressed to foundry alone and both used to ship
+      // inside every edition — see `EDITING_ATTRIBUTES`.
+      assert.doesNotMatch(source, /data-bf-src/);
+      assert.doesNotMatch(source, /data-bf-note/);
     }
     // KEPT: the page, the category and the pagebreak spans. Page provenance is
     // what makes a scan citable and is what every later pass reads.
@@ -446,7 +452,9 @@ test('a missing --epub or --out is refused by name', async () => {
 
 test('the help says what is kept, what is stripped, and what is never removed', () => {
   assert.match(command.detail, /--epub TAKES A DIRECTORY AS WELL AS A FILE/);
-  assert.match(command.detail, /TWO ATTRIBUTES ARE STRIPPED AND TWO ARE KEPT/);
+  // FOUR since `data-bf-src` and `data-bf-note` joined the strip: they are
+  // foundry's own plumbing and were shipping inside every edition.
+  assert.match(command.detail, /FOUR ATTRIBUTES ARE STRIPPED AND TWO ARE KEPT/);
   assert.match(command.detail, /A PAGE MARKER IS RE-HOMED RATHER THAN LOST/);
   assert.match(command.detail, /THE FILE IS WRITTEN ANYWAY/);
   // The rule that keeps this command honest: it tidies what THIS run orphaned.

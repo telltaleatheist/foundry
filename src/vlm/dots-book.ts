@@ -88,6 +88,13 @@
  * addresses when a person says "cut this one" — see `stampId` for why every
  * other id in a cast book is unfit for that, and why the number counts elements
  * rather than blocks.
+ *
+ * ALL OF WHICH DESCRIBES THE CAST BOOK, WHICH IS A WORKBENCH. There is a second
+ * thing this file writes, from the same blocks and the same overlay, and it is
+ * the book somebody would hand to a library: no editing attributes, no struck
+ * notes, reference numbers to notes that are gone demoted back to the digit the
+ * page printed. `DotsBookOptions.final` is the flag and carries the argument in
+ * full; it is off unless an export asked for it.
  */
 import {
   alignmentClass,
@@ -1479,6 +1486,15 @@ export interface DotsChapterOptions {
    * always did.
    */
   overlay?: Overlay;
+  /**
+   * Write an EDITION rather than the working book — `vlm-convert --final`, and
+   * `DotsBookOptions.final` carries the whole argument.
+   *
+   * Absent and false are the same thing and are the default everywhere, because
+   * the cast book is what this emitter has always written and every test in the
+   * suite pins it.
+   */
+  final?: boolean;
 }
 
 export interface DotsChapterBody {
@@ -1516,6 +1532,16 @@ interface ChapterNote {
   ordinal: number;
   /** The id of the FIRST prose marker that linked here — where the backlink aims. */
   refId: string | null;
+  /**
+   * Did a person strike this note? — `overlay.ts`'s `noteStruck`, asked once,
+   * where the notes are gathered.
+   *
+   * Read by three places that must not disagree: the reference marker in the
+   * prose, the aside's own mark, and whether the chapter has a footnotes section
+   * at all. See the note above the gathering for why it cannot be asked at the
+   * aside any more.
+   */
+  struck: boolean;
 }
 
 const LEADING_SUPERSCRIPT = /^[⁰¹²³⁴⁵⁶⁷⁸⁹]+/;
@@ -1556,6 +1582,23 @@ export function buildChapterBody(
    * through the WHOLE book because it mints element ids, so it is the caller's
    * running number and not a fact about this chapter.
    */
+  /*
+   * `struck` IS DECIDED HERE AND NOT AT THE ASIDE, and the move is the whole of
+   * what makes `--final` possible.
+   *
+   * `noteStruck` used to be asked once per `<aside>`, at the bottom of this
+   * function, because a mark on the aside was all anybody wanted from it. An
+   * EDITION needs the same answer three hundred lines earlier: the reference
+   * marker in the prose is written before the notes are, and a marker that must
+   * not link to a note it will never find has to know that while the paragraph
+   * is being built. So the question is asked once, where the notes are gathered,
+   * and every later reader — the marker, the aside, the section — reads the same
+   * boolean.
+   *
+   * The cast path is unchanged by the move: the same overlay is asked the same
+   * question about the same (block, ordinal) and gets the same answer, one pass
+   * earlier.
+   */
   const notes: ChapterNote[] = collectNotes(blocks).map((note, index) => ({
     block: note.source,
     text: note.text,
@@ -1563,6 +1606,7 @@ export function buildChapterBody(
     seq: opts.firstNote + index,
     ordinal: note.ordinal,
     refId: null,
+    struck: opts.overlay !== undefined && noteStruck(opts.overlay, note.source, note.ordinal),
   }));
 
   /*
@@ -1582,6 +1626,20 @@ export function buildChapterBody(
       noteref: page === undefined ? undefined : (printed) => {
         const note = noteFor(page, printed);
         if (note === null) return null;
+        /*
+         * A STRUCK NOTE'S REFERENCE KEEPS ITS NUMBER AND LOSES ITS LINK, in the
+         * edition only — `null` here is the same answer the emitter already
+         * gives a marker it could not match, and `dotsInline` writes the plain
+         * `<sup>n</sup>` for it. The number is printed on the page and this
+         * program does not delete what the scan shows; the link is the part that
+         * would be a promise about a note this file is about to not write.
+         *
+         * It is exactly `epub-final`'s demotion (`src/epub/final.ts`, "the
+         * mirror case"), done at the source instead of over the finished
+         * markup — which is what the plain-text route needs, since a pass over
+         * the EPUB cannot reach the txt export at all.
+         */
+        if (opts.final === true && note.struck) return null;
         // Only the FIRST reference carries an id: ids are unique, and the
         // backlink can only aim one place. A second marker for the same note
         // still links forward.
@@ -1630,6 +1688,18 @@ export function buildChapterBody(
    * element's words came from. A block that is its own single part passes
    * `sourceOf` of itself, which is the ordinary case and every case but a
    * page-turn join.
+   *
+   * TWO OF THE FOUR ARE NOT WRITTEN INTO AN EDITION. `data-bf-id` and
+   * `data-bf-src` are the picker's plumbing — a name for an element this app can
+   * address and the banked answers its words came from — and neither means
+   * anything to a reader or to any program but this one. `data-bf-page` and
+   * `data-bf-cat` stay under `--final`, which is `epub-final`'s ruling
+   * unchanged (`src/epub/final.ts`): page provenance is what makes a scan
+   * citable, it is invisible in a reader, and every later pass reads it.
+   *
+   * THE COUNTER STILL RUNS in final mode, on purpose. It costs a map write, and
+   * the alternative is a second numbering rule that only ever applies to the
+   * edition — so an id that is never written is still an id nothing else took.
    */
   const stamp = (
     block: DotsBlock,
@@ -1638,8 +1708,8 @@ export function buildChapterBody(
   ): string => {
     const n = opts.elementNumbers.get(block.page) ?? 1;
     opts.elementNumbers.set(block.page, n + 1);
-    return ` data-bf-page="${block.page}" data-bf-cat="${attribute}"${stampId(block.page, n)}`
-      + stampSrc(src);
+    const editing = opts.final === true ? '' : `${stampId(block.page, n)}${stampSrc(src)}`;
+    return ` data-bf-page="${block.page}" data-bf-cat="${attribute}"${editing}`;
   };
 
   /** Every part of a flow block, named as a decision would name it. */
@@ -1800,10 +1870,27 @@ export function buildChapterBody(
   }
   closeList();
 
-  if (notes.length > 0) {
+  /*
+   * WHICH NOTES THE FILE ACTUALLY GETS — everything in the cast, and everything
+   * that survived the curation in an edition.
+   *
+   * A CHAPTER WHOSE EVERY NOTE WAS STRUCK WRITES NO SECTION AT ALL, which is
+   * the reason this is a list rather than a test inside the loop: a
+   * `<section class="footnotes">` holding nothing but its `<hr/>` is a rule with
+   * white space under it, and a reader sees it. `epub-final` removes exactly
+   * that section for exactly that reason; this is the same removal one stage
+   * earlier, where the plain-text route can also see it.
+   *
+   * `notes.length` REMAINS WHAT THIS CHAPTER REPORTS (see the return), because
+   * that number is the book's running note counter and not a count of asides: a
+   * chapter that minted five ids and wrote three must still hand the next
+   * chapter a `firstNote` past all five, or two chapters share an `fn` id.
+   */
+  const emitted = opts.final === true ? notes.filter((note) => !note.struck) : notes;
+  if (emitted.length > 0) {
     out.push('<section class="footnotes" epub:type="footnotes">');
     out.push('<hr/>');
-    for (const note of notes) {
+    for (const note of emitted) {
       /*
        * An <aside epub:type="footnote"> rather than a <p>: that is the element
        * reading systems recognise for pop-up notes, and it costs nothing to a
@@ -1854,12 +1941,21 @@ export function buildChapterBody(
        * the edition by `foundry epub-final` — marks, not removal, because a note
        * that vanished here would renumber every note after it behind the person
        * who struck one.
+       *
+       * NONE OF THE THREE REACHES AN EDITION, and the cut mark cannot: a struck
+       * note has no aside under `--final`, so the only notes this loop sees
+       * there are the ones nobody struck. It is still written as a condition
+       * rather than as a constant, because "the mark says what the overlay says"
+       * is the rule, and a `false` spelled into the markup would be a second
+       * statement of it that could stop being true.
        */
-      const cut = opts.overlay !== undefined && noteStruck(opts.overlay, note.block, note.ordinal);
+      const editing = opts.final === true
+        ? ''
+        : ` data-bf-note="${note.ordinal}"${note.struck ? ' data-bf-cut="1"' : ''}`;
       out.push(
         `<aside class="footnote" epub:type="footnote" role="doc-footnote" id="fn${note.seq}"`
         + `${sized(note.block)}${stamp(note.block, sourceOfBlock(note.block))}`
-        + ` data-bf-note="${note.ordinal}"${cut ? ' data-bf-cut="1"' : ''}>`
+        + `${editing}>`
         + `${number}${inline(rest)}</aside>`,
       );
     }
@@ -2691,6 +2787,36 @@ export interface DotsBookOptions {
    * overlays existed.
    */
   overlay?: Overlay;
+  /**
+   * ── THE CAST AND THE EDITION ARE TWO DIFFERENT BOOKS ────────────────────────
+   *
+   * Off, which is what every caller but an export passes, and the whole of what
+   * off means is that this file writes what it has always written, byte for
+   * byte. The flag is `vlm-convert --final`, and `src/commands.ts` carries the
+   * distinction in full at its declaration.
+   *
+   * In one sentence: `generated/` is a WORKBENCH and keeps its marks, and
+   * anything that lands in `final/` is an EDITION. A struck note in the cast is
+   * an aside wearing `data-bf-cut="1"` — visible, struck through on the flowing
+   * page, brought back by pressing Delete on it again — because the person
+   * curating has to see what they decided. In the edition it is not there at
+   * all, its reference number keeps the digit the page printed and loses its
+   * link, a chapter that lost every note loses its footnotes section too, and
+   * the attributes that exist so this app can address an element
+   * (`data-bf-id`, `data-bf-src`, `data-bf-note`, `data-bf-cut`) are not
+   * written. `data-bf-page` and `data-bf-cat` stay — `epub-final`'s ruling
+   * unchanged, because page provenance is what makes a scan citable.
+   *
+   * WHY IT IS HERE AND NOT A PASS OVER THE FINISHED FILE. `epub-final` already
+   * does all of this to an EPUB and keeps doing it — that is the route for a
+   * book that has already been built (the app's Save-As and the
+   * translate-descended export both run it). But `--format txt` never becomes an
+   * EPUB: it is the same documents tag-stripped (`packageVlmText`), so a struck
+   * note removed from the zip afterwards is still a paragraph of text in the
+   * plain-text export. Removal at assembly is the only place that fixes both
+   * formats at once, and it is upstream of the format fork by construction.
+   */
+  final?: boolean;
 }
 
 export interface DotsBookResult {
@@ -2821,6 +2947,9 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
       // which had no existence until `splitNotes` ran. See
       // `DotsChapterOptions.overlay`.
       ...(opts.overlay !== undefined ? { overlay: opts.overlay } : {}),
+      // Spread the same way, so a run that did not ask for an edition hands the
+      // chapter builder the exact options object it always did.
+      ...(opts.final === true ? { final: true } : {}),
     });
     notes += body.notes;
     crops.push(...body.crops);

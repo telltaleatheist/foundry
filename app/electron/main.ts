@@ -11,6 +11,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { createReadStream, promises as fsp } from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { Readable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
@@ -33,6 +34,7 @@ import { cancelSetup, setupWslEnv } from './backend-setup';
 import { injectReporter, REPORTER_ID, REPORTER_MEMBER, REPORTER_SOURCE, sanitizeChapter } from './click-reporter';
 import {
   engineInfo,
+  finalizeEpub,
   readEpubMetadata,
   readPdfBlocks,
   readPdfMetadata,
@@ -46,6 +48,7 @@ import {
   closeAllEpubs,
   closeEpub,
   exportWorkingCopy,
+  isFoundryBook,
   navEchoForBlock,
   openBookIn,
   openEpub,
@@ -2234,8 +2237,42 @@ function registerIpc(): void {
    * from the tree is packing from the thing the editor actually wrote to, and it
    * is one of only two places in this app that writes a zip.
    *
+   * ── AND WHAT IT WRITES IS AN EDITION, WHEN THE BOOK IS ONE OF OURS ─────────
+   *
+   * This is the app's second door onto `final/` and it used to be the worse one.
+   * The queue's exports go through the engine, which tidies what it writes; Save
+   * As zipped the working tree VERBATIM — every `data-bf-cut` a curator left on a
+   * footnote, every `data-bf-id` and `data-bf-src` the picker addresses elements
+   * by — and then recorded the result as a filed book. Two doors onto one tray,
+   * producing two different kinds of file, and the difference was invisible until
+   * somebody opened the one they saved by hand.
+   *
+   * So a foundry book is repacked to a temp file and `epub-final` writes the
+   * destination out of it. THE ZIP STILL HAPPENS HERE and not in the engine,
+   * although `epub-final --epub` takes a directory and would read the tree
+   * directly: a directory has no compression to preserve, so every member would
+   * come back STORED and the edition of a scanned book would be several times the
+   * size of the book it was made from. `repackEpub` is what knows the order the
+   * archive had and how its members were compressed.
+   *
+   * A BOOK THAT IS NOT OURS IS REPACKED VERBATIM, exactly as before. A loose EPUB
+   * from a publisher carries none of foundry's marks — the engine refuses it by
+   * name, and rightly, because there is nothing of ours in it to strip and an
+   * "edition" of it would be a copy of somebody's book under a new name.
+   *
+   * THE TEST IS THE BOOK AND NOT THE DESTINATION, which decides the one case that
+   * is not Save As: a loose EPUB somebody opened from their own disk, STAMPED in
+   * select mode, and then saved in place with the grant `epub:open` handed out
+   * for it. That file gets the edition too, and it should — what leaves this app
+   * is a book, and the marks are the app's own working notes about it. Nothing is
+   * lost by writing them out of it: the workbench is the unpacked tree in the
+   * project, which keeps every mark and every stamp, and is where the next edit
+   * and the next save both come from.
+   *
    * A failure REJECTS across IPC rather than resolving quietly: a save that did
-   * not happen must not clear the dot.
+   * not happen must not clear the dot. That now includes a tidy that refused —
+   * the file at the destination would be missing or half-written, and reporting a
+   * save for it would be the app saying a book is filed when it is not.
    */
   ipcMain.handle('epub:save', async (_event, id: string, destination: string) => {
     if (!saveGrants.get(id)?.has(grantKey(destination))) {
@@ -2244,7 +2281,33 @@ function registerIpc(): void {
         + 'from the save dialog, or be the file the book was opened from.',
       );
     }
-    await repackEpub(id, destination);
+    if (await isFoundryBook(id)) {
+      /*
+       * NAMED FOR THIS SAVE AND NOT FOR THE BOOK, in the OS temp directory under
+       * `foundry/` — the queue's intermediates' rule, for the queue's reasons: two
+       * saves must not collide in a directory that belongs to every program on the
+       * machine, and debris does not go where products live. It is removed
+       * whichever way this ends, best effort, because a leftover scratch file is a
+       * console line and never a reason to fail a save that succeeded.
+       */
+      const scratch = path.join(os.tmpdir(), 'foundry', `save-${randomUUID()}.epub`);
+      await fsp.mkdir(path.dirname(scratch), { recursive: true });
+      try {
+        await repackEpub(id, scratch);
+        const tidied = await finalizeEpub(scratch, destination);
+        if (!tidied.ok) {
+          throw new Error(
+            `The book could not be finished into an edition, so nothing was saved.\n${tidied.reason}`,
+          );
+        }
+      } finally {
+        await fsp.rm(scratch, { force: true }).catch((err: Error) => {
+          console.error(`[save] the scratch copy ${scratch} could not be removed: ${err.message}`);
+        });
+      }
+    } else {
+      await repackEpub(id, destination);
+    }
     openable.add(path.resolve(destination));
     rememberRecent(destination, 'epub', path.basename(destination), isManaged(destination));
     // Noted only when it landed in the project's own `final/`. A save to a USB

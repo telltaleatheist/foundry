@@ -339,6 +339,59 @@ export async function stampEpub(target: string, outPath?: string): Promise<Stamp
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// epub-final
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** What `foundry epub-final` did, or the sentence saying why it would not. */
+export interface FinalOutcome {
+  ok: boolean;
+  /** The engine's own words, when it refused. Never paraphrased. */
+  reason: string | null;
+}
+
+/**
+ * Turn a book into the EDITION: `foundry epub-final --epub <book> --out <file>`.
+ *
+ * WHAT THE COMMAND IS FOR, in one line, because this app now has two doors onto
+ * it: `generated/` is a workbench and keeps a curator's marks, and anything that
+ * lands in `final/` is an edition — struck elements really removed, the notes and
+ * contents entries they orphaned tidied, the reference numbers they left dangling
+ * demoted back to the digit the page printed, and foundry's editing attributes
+ * stripped. The fresh-cast route asks the engine for the same thing one stage
+ * earlier (`vlm-convert --final`); this is the route for a book that already
+ * exists.
+ *
+ * `--out` MAY NEVER BE `--epub`. The command refuses it — a tidy in place cannot
+ * be run twice, because the second run would have nothing left to read — so every
+ * caller here writes through a path of its own and the input survives untouched.
+ *
+ * NEVER THROWS, on `stampEpub`'s rule: this is one step of a save or of a queued
+ * job, and both have a place to put a sentence. What the CALLER must not do is
+ * treat a refusal as a success — a save that did not write the edition has not
+ * saved, and `epub:save` rejects across IPC for exactly that reason.
+ */
+export async function finalizeEpub(epubPath: string, outPath: string): Promise<FinalOutcome> {
+  const run = runEngine(['epub-final', '--epub', epubPath, '--out', outPath]);
+  // A whole book's markup, parsed, tidied and rezipped. The same two minutes
+  // `stampEpub` allows for the same work over the same book, and for the same
+  // reason: past that, nothing is happening and a modal is waiting on it.
+  const timer = setTimeout(() => run.cancel(), 120_000);
+  const result = await run.done.finally(() => clearTimeout(timer));
+
+  if (result.code !== 0) {
+    const said = result.stderr.trim() || result.stdout.trim();
+    const unknown = result.code === 2 && /unknown command/i.test(said);
+    return {
+      ok: false,
+      reason: unknown
+        ? `epub-final is not in this engine build (${engineCommand().source}).`
+        : said || `The engine exited ${result.code} with nothing to say.`,
+    };
+  }
+  return { ok: true, reason: null };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // doctor
 // ─────────────────────────────────────────────────────────────────────────────
 

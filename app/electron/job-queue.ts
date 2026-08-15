@@ -103,7 +103,9 @@ import { readSettings } from './settings';
 import { ensureServer, isLocalVllmEndpoint, noteQueueBusy, noteQueueIdle } from './vllm-server';
 import { planConversion } from './workspace';
 import { translationStage } from '../shared/pipeline';
-import type { EnvInstallRequest, Job, JobRequest, TranslateRequest } from '../shared/types';
+import type {
+  EnvInstallRequest, GenerateRequest, Job, JobRequest, TranslateRequest,
+} from '../shared/types';
 
 /**
  * The two things that become an engine child.
@@ -611,6 +613,36 @@ function argsFor(request: EngineRequest): string[] {
   // refuses the pair outright if it ever stops agreeing.
   if (request.kind !== 'epub') args.push('--format', request.kind);
   /*
+   * ── AN EXPORT ASKS FOR THE EDITION, AND A GENERATE NEVER DOES ─────────────
+   *
+   * `generated/` is the workbench and `final/` is where a finished book is filed
+   * (docs/WORKBENCH.md §8), and the two want different documents out of the same
+   * bank. The cast keeps its marks because the person curating has to see what
+   * they struck: a struck footnote is still in the book wearing `data-bf-cut`,
+   * and every element still carries the attributes select mode addresses it by.
+   * The edition has none of that — the struck note is not written, its reference
+   * numbers keep the digit the page printed and lose their link, and the editing
+   * attributes are not emitted at all.
+   *
+   * ONE FLAG, DECIDED OFF THE ONE FIELD THAT SAYS WHERE THE FILE IS GOING —
+   * `export`, the same field `pump()` resolves into `exporting` for the rotation
+   * and the landing, asked here of the REQUEST THIS FUNCTION WAS HANDED rather
+   * than of the one the shelf is about. The two are the same object for a
+   * one-stage job and deliberately different for a piped one.
+   *
+   * A CAST'S COMMAND LINE IS UNTOUCHED: no `export`, no flag, and the engine's
+   * default is the book it has always written.
+   *
+   * A TRANSLATE-DESCENDED EXPORT MUST NOT GET IT ON EITHER OF ITS STAGES, and
+   * gets it on neither. The translate stage is a `TranslateRequest` and returned
+   * above; the vlm stage feeding it is handed here with `export` deliberately
+   * taken off (`withoutExport`, in `pump()`'s stage list), because `translate`
+   * reads the very stamps this flag withholds (FINAL_NEEDS_STAMPS,
+   * src/translate/book.ts) and would refuse an edition by name. That job's tidy
+   * runs as a third stage, after the translation, over the finished book.
+   */
+  if (request.export === true) args.push('--final');
+  /*
    * NOTHING ELSE. `--skip-pages` and `--language` used to be here and are gone
    * from this branch: both are statements about READING the book, they were
    * answered when the pages were read, and a rendering that could be handed a
@@ -619,6 +651,26 @@ function argsFor(request: EngineRequest): string[] {
    * narration flag and this app has never exposed it (see the OCR dialog).
    */
   return args;
+}
+
+/**
+ * The same Generate, with the fact that it is an export taken off it.
+ *
+ * ONE CALLER AND ONE REASON: the first stage of a translate-descended export,
+ * whose product is not the export. `export` is read in exactly two places — the
+ * settle, which files the finished book in the tray, and `argsFor`, which asks
+ * the engine for the EDITION — and this stage must be invisible to the second
+ * without being invisible to the first. The stage's own copy loses the flag; the
+ * stored request, which is what the settle reads, never sees this function.
+ *
+ * A DELETE RATHER THAN `export: undefined`, so the object handed to `argsFor` is
+ * shaped exactly like the Generate of a book nobody is exporting. The two behave
+ * identically today, and one of them stops being a guess the moment anything
+ * starts asking whether a key is present.
+ */
+function withoutExport(request: GenerateRequest): GenerateRequest {
+  const { export: _terminal, ...rest } = request;
+  return rest;
 }
 
 /**
@@ -805,6 +857,30 @@ async function pump(): Promise<void> {
   const intermediate = piped === null
     ? null
     : path.join(os.tmpdir(), 'foundry', `${next.id}.epub`);
+  /*
+   * ── AND A TRANSLATED **EXPORT** NEEDS A SECOND ONE ────────────────────────
+   *
+   * A translate-descended export is three runs, not two, and the third is the
+   * tidy: `epub-final` turning the translated book into the edition that lands
+   * in `final/`. It has to be a separate stage AFTER the translation rather than
+   * `--final` on the first, and the reason is a hard dependency rather than a
+   * preference — `translate` reads the stamps an edition withholds
+   * (FINAL_NEEDS_STAMPS, src/translate/book.ts), so a first stage that wrote the
+   * edition would hand the translator a book it refuses by name.
+   *
+   * So the translation aims here instead of at the row's own file, and the tidy
+   * lands the destination. Named for the job beside the first intermediate, for
+   * the same reasons — and given a name of its OWN rather than being written
+   * over the first, because `epub-final` refuses an `--out` equal to its
+   * `--epub` and a tidy in place is exactly that refusal.
+   *
+   * NULL FOR EVERY OTHER JOB, including a translated Generate: `generated/` is
+   * the workbench, so what lands there is the cast with its marks intact and
+   * there is nothing to tidy.
+   */
+  const untidied = piped === null || !exporting
+    ? null
+    : path.join(os.tmpdir(), 'foundry', `${next.id}.untidied.epub`);
   if (intermediate !== null) {
     try {
       await fsp.mkdir(path.dirname(intermediate), { recursive: true });
@@ -949,9 +1025,41 @@ async function pump(): Promise<void> {
       // request keeps its own `outputPath`, which is the file the row, the
       // rotation and the landing are all about — see the note above `spawned`,
       // which is the same rule about the same map.
-      { ...piped.request, outputPath: intermediate },
-      translationStage(piped.then, intermediate, piped.request.outputPath),
+      //
+      // AND IT IS NOT AN EXPORT, whatever the job is. `export` is what makes
+      // `argsFor` ask the engine for the EDITION, and this stage's product is not
+      // a product at all: it is the book the translator reads, and the translator
+      // needs the stamps an edition does not write. The flag is dropped for this
+      // one spawn and nowhere else — `exporting` above is resolved from the
+      // stored request, so the rotation, the landing and the tidy below all still
+      // know exactly what this job is.
+      { ...withoutExport(piped.request), outputPath: intermediate },
+      /*
+       * Stage two writes the row's own file — UNLESS a tidy is coming, in which
+       * case it writes the second intermediate and `epub-final` writes the file.
+       * The translation is the same run either way; all that moves is where it
+       * puts the book.
+       */
+      translationStage(piped.then, intermediate, untidied ?? piped.request.outputPath),
     ];
+
+  /*
+   * ── THE THIRD RUN: THE EDITION, MADE FROM WHAT THE TRANSLATOR WROTE ───────
+   *
+   * `foundry epub-final` over the translated book, into the file the row is
+   * about. It is the same tidy `--final` does at assembly, done to a book that
+   * already exists, which is the only order that works here (see `untidied`).
+   *
+   * NOT AN `EngineRequest`, deliberately: the three request shapes are what this
+   * app QUEUES, each with a row, a landing and a settle, and this is a step
+   * inside one job rather than a job. A fourth shape would have to be threaded
+   * through the plans, the shelf and every settle path to be used in one place.
+   * The command line is four flags and it is spelled here, beside the intermediate
+   * it reads.
+   */
+  const tidy: string[] | null = untidied === null || piped === null
+    ? null
+    : ['epub-final', '--epub', untidied, '--out', piped.request.outputPath];
 
   const watch = (line: string): void => {
     next.message = line;
@@ -1036,14 +1144,41 @@ async function pump(): Promise<void> {
     handle = runEngine(stageArgs, watch);
     result = await handle.done;
   }
+  /*
+   * ── AND THE TIDY, WHICH IS THE LAST THING THAT HAPPENS ────────────────────
+   *
+   * Only for a translate-descended export, only when everything before it
+   * succeeded, and it is what actually writes the file the row is about: every
+   * stage before this one wrote into the temp directory. `handle` is reassigned
+   * exactly as it is between the other stages, so the ✕ still kills the child
+   * that is running and `running` stays set until the last one has exited.
+   *
+   * A FAILURE HERE FAILS THE JOB, with the engine's own words, because it is the
+   * stage that produces the product: a run that translated four hundred blocks
+   * and then could not write the edition has not made the thing that was asked
+   * for, and reporting it as a success would file a row in the tray pointing at a
+   * file that is not there.
+   */
+  if (tidy !== null && result.code === 0) {
+    next.message = 'Finishing the edition…';
+    next.note = null;
+    changed();
+    console.log(`[job] ${next.kind} ${tidy.join(' ')}`);
+    handle = runEngine(tidy, watch);
+    result = await handle.done;
+  }
   running = null;
   next.finishedAt = Date.now();
 
   /*
-   * THE INTERMEDIATE GOES NOW, whichever way this ended. A run that failed at
+   * THE INTERMEDIATES GO NOW, whichever way this ended. A run that failed at
    * block 400 leaves a whole EPUB in the temp directory, and the next one writes
    * a fresh one under its own job id — so keeping it would be hoarding half-books
    * nobody can name against a directory this app does not own.
+   *
+   * BOTH OF THEM, on one rule rather than two: the untidied translation is the
+   * same kind of debris as the untranslated cast, made by the stage in between,
+   * and a second copy of this paragraph is a second place to forget one.
    *
    * BEST EFFORT, AND NEVER A THROW. A leftover temp file is a console line; the
    * job it belonged to succeeded or failed on its own merits, and reporting three
@@ -1052,11 +1187,12 @@ async function pump(): Promise<void> {
    * already-absent file — the ordinary case when the run never got that far — is
    * silence rather than an error.
    */
-  if (intermediate !== null) {
+  for (const scratch of [intermediate, untidied]) {
+    if (scratch === null) continue;
     try {
-      await fsp.rm(intermediate, { force: true });
+      await fsp.rm(scratch, { force: true });
     } catch (err) {
-      console.error(`[job] the intermediate ${intermediate} could not be removed: ${(err as Error).message}`);
+      console.error(`[job] the intermediate ${scratch} could not be removed: ${(err as Error).message}`);
     }
   }
 

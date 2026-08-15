@@ -199,6 +199,46 @@ const VLM_STRIP_MARKERS: OptionSpec = {
   describe: 'Remove footnote reference numbers from the prose. For a narration build.',
 };
 
+/**
+ * ── THE CAST AND THE EDITION ARE TWO DIFFERENT BOOKS, AND THIS IS THE SWITCH ──
+ *
+ * Without it this command writes the CAST: the working book, which is a
+ * workbench. Everything a person struck at the parse is already gone from it —
+ * `applyOverlay` drops those blocks before either format fork — but a struck
+ * FOOTNOTE is still there, wearing `data-bf-cut="1"`, and so is every attribute
+ * that exists so an app can address an element: `data-bf-id`, `data-bf-src`,
+ * `data-bf-note`. That is deliberate and it is not a compromise. A struck note
+ * cannot be removed from the working book without renumbering every note after
+ * it behind the person who struck one, and a curator has to be able to SEE what
+ * they decided, strike it through, and press Delete again to bring it back.
+ *
+ * With it this command writes the EDITION: the file somebody would hand to a
+ * library. A struck note's `<aside>` is never written; the reference numbers
+ * that pointed at it keep the digit the page printed and lose their link (no
+ * link beats a wrong one, which is this program's rule for an unmatched marker
+ * everywhere else); a chapter that lost every note loses its footnotes section,
+ * because a rule with white space under it is something a reader sees; and the
+ * four editing attributes are not written. `data-bf-page` and `data-bf-cat`
+ * STAY — page provenance is what makes a scan citable, it is invisible in a
+ * reader, and every later pass reads it.
+ *
+ * WHY IT IS A FLAG OF THE CONVERSION RATHER THAN A COMMAND OF ITS OWN.
+ * `foundry epub-final` is the command of its own, it does all of this to a book
+ * that already exists, and it is not going anywhere: it is what an app runs when
+ * it has an EPUB in its hands. But `--format txt` never becomes an EPUB — it is
+ * the same assembled documents with their tags stripped — so a note removed from
+ * a zip afterwards is still a paragraph of text in the plain-text export. The
+ * only place that fixes every format at once is the assembly, and that is here.
+ *
+ * DEFAULT OFF, and the default is what everything except an export passes: a
+ * cast written today is byte-for-byte the cast written yesterday.
+ */
+const VLM_FINAL: OptionSpec = {
+  name: 'final',
+  type: 'boolean',
+  describe: 'Write the edition rather than the working book: struck notes gone, no editing stamps.',
+};
+
 // ── vlm-read ─────────────────────────────────────────────────────────────────
 
 /**
@@ -607,6 +647,9 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
     ...(optionalString(args, 'overlay') ? { overlayPath: optionalString(args, 'overlay')! } : {}),
     ...(optionalString(args, 'chapters') ? { chaptersPath: optionalString(args, 'chapters')! } : {}),
     stripNoteMarkers: flag(args, 'strip-note-markers'),
+    // Passed only when it was asked for, so a cast's options are the ones they
+    // have always been — see VLM_FINAL for what the edition is.
+    ...(flag(args, 'final') ? { final: true } : {}),
     language: optionalString(args, 'language') ?? 'en',
     log,
   });
@@ -1503,6 +1546,27 @@ export const COMMANDS: readonly Command[] = [
       'build, to write one against. A prose dialect is refused: it names no',
       'blocks to amend.',
       '',
+      '--final WRITES THE EDITION RATHER THAN THE WORKING BOOK. Without it the',
+      'book that comes out is a workbench: the blocks somebody struck are already',
+      'gone, but a struck FOOTNOTE is still in it carrying data-bf-cut="1", and',
+      'so are the attributes an editor addresses elements by (data-bf-id,',
+      'data-bf-src, data-bf-note). That is what a curator has to see. With it, a',
+      'struck note is not written at all, every reference number that pointed at',
+      'it keeps the digit the page printed and loses its link, a chapter left with',
+      'no notes loses its footnotes section, and none of the four editing',
+      'attributes is written. data-bf-page and data-bf-cat STAY, which is',
+      '`epub-final`\'s ruling unchanged: page provenance is what makes a scan',
+      'citable and it is invisible to a reader.',
+      '',
+      'It is a flag of the ASSEMBLY, which is why it exists beside `foundry',
+      'epub-final` rather than instead of it. That command tidies a book that has',
+      'already been built and is what an app runs when it is holding an EPUB.',
+      'This flag reaches --format txt, which never becomes an EPUB — the same',
+      'documents with their tags stripped — so a note removed from a zip is still',
+      'a paragraph of text in the plain-text export. --format pdf accepts the flag',
+      'and is unchanged by it: that route forks before notes exist and writes no',
+      'data-bf attributes, so its cast and its edition are the same file.',
+      '',
       'Pages are rendered by PyMuPDF at 200 dpi. That is the resolution the models',
       'were measured at and it is not a setting (ARCHITECTURE §5).',
       '',
@@ -1590,7 +1654,7 @@ export const COMMANDS: readonly Command[] = [
       PDF_IN, OUT_PATH, VLM_FORMAT, VLM_MODEL, VLM_PYTHON, VLM_RENDERS, VLM_LANGUAGE,
       VLM_ENDPOINT, VLM_ENDPOINT_MODEL, VLM_CONCURRENCY, VLM_READINGS,
       VLM_FRESH_READINGS, VLM_REUSE_READINGS, VLM_SKIP_PAGES,
-      VLM_OVERLAY, VLM_CHAPTERS, VLM_STRIP_MARKERS,
+      VLM_OVERLAY, VLM_CHAPTERS, VLM_STRIP_MARKERS, VLM_FINAL,
     ],
     run: runVlmConvert,
   },
@@ -1935,10 +1999,13 @@ export const COMMANDS: readonly Command[] = [
       '    surviving block on the same page. If nothing on the page survives the',
       '    page really is gone, and the run says which page by number.',
       '',
-      'TWO ATTRIBUTES ARE STRIPPED AND TWO ARE KEPT. data-bf-cut and data-bf-id',
-      'mean nothing outside this program and go. data-bf-page, data-bf-cat and the',
-      'pagebreak spans STAY: page provenance is what makes a scan citable, it is',
-      'invisible to a reader, and it is what every later pass reads.',
+      'FOUR ATTRIBUTES ARE STRIPPED AND TWO ARE KEPT. data-bf-cut, data-bf-id,',
+      'data-bf-src and data-bf-note mean nothing outside this program and go — the',
+      'mark a curator left, the name an editor addresses an element by, the banked',
+      'answers its words came from, and which note of its block an aside is.',
+      'data-bf-page, data-bf-cat and the pagebreak spans STAY: page provenance is',
+      'what makes a scan citable, it is invisible to a reader, and it is what every',
+      'later pass reads.',
       '',
       'THE INTEGRITY REPORT IS PRINTED ON EVERY RUN, because "as exact as',
       'possible" is a claim and a claim nobody can check is a claim nobody should',
