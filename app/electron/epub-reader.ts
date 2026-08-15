@@ -1997,19 +1997,49 @@ export async function openEpub(filePath: string): Promise<EpubBook> {
   }
 
   /*
-   * The <title> of every spine document the nav does not name, read BEFORE the
-   * sidebar is assembled rather than inside it.
+   * THE COVER, NAMED BY THE BOOK RATHER THAN GUESSED AT.
+   *
+   * EPUB 2's `<guide>` is the one declaration that lives in the package document,
+   * and plenty of books still carry it. It is read first because it costs a regex
+   * over a string already in memory.
+   */
+  const covers = new Set<string>();
+  for (const match of opf.matchAll(/<reference\b([^>]*)\/?>/gi)) {
+    const tag = match[1] ?? '';
+    if ((attribute(tag, 'type') ?? '').split(/\s+/).includes('cover')) {
+      const href = attribute(tag, 'href');
+      if (href !== null) covers.add(joinHref(opfHref, decodeEntities(href)).split('#')[0]!);
+    }
+  }
+
+  /*
+   * What every spine document the nav does not name has to say for itself: its
+   * own `<title>`, and whether it declares itself the cover.
+   *
+   * ── One read, two questions, and why they are asked together ────────────────
    *
    * Members come off disk now, which makes reading one an await, and an await
    * cannot happen inside the `flatMap` below without turning the chapter list
-   * into a list of promises. Only the documents that actually need a fallback
-   * label are read, so a book with a complete table of contents reads none.
+   * into a list of promises. Only the documents the nav is silent about are read,
+   * so a book with a complete table of contents reads none — and a cover is
+   * ALWAYS one of those, because no engine puts the cover in the table of
+   * contents (`packageVlmEpub`, src/vlm/epub.ts: *"the nav is built from
+   * `documents` and the cover is not one of them"*). So the one loop that was
+   * already reading exactly the right files can answer both.
+   *
+   * `epub:type="cover"` IS THE DECLARATION AND NOT A HEURISTIC. This app's own
+   * casts wrap the picture in `<div epub:type="cover">`; the alternative tests —
+   * "it is the first spine item", "its name contains cover" — are guesses about
+   * somebody's book, and a guess that fires wrongly deletes a chapter from the
+   * contents.
    */
-  const fallbackTitles = new Map<string, string | null>();
+  const ownTitles = new Map<string, string | null>();
   for (const item of spine) {
     const named = (entriesByFile.get(item.href) ?? []).some((row) => row.fragment === null);
     if (named) continue;
-    fallbackTitles.set(item.href, documentTitle(await text(item.href) ?? ''));
+    const body = await text(item.href) ?? '';
+    if (/\bepub:type\s*=\s*"[^"]*\bcover\b/i.test(body)) covers.add(item.href);
+    ownTitles.set(item.href, documentTitle(body));
   }
 
   // ── The registry ─────────────────────────────────────────────────────────
@@ -2030,16 +2060,35 @@ export async function openEpub(filePath: string): Promise<EpubBook> {
   // one level under their spine item; a book from before that engine change has
   // none and renders exactly as it always did.
   const chapters: EpubChapter[] = spine.flatMap((item) => {
+    // Declared furniture. It is in the spine, it opens the book, and it is not
+    // one of the book's divisions.
+    if (covers.has(item.href)) return [];
     const entries = entriesByFile.get(item.href) ?? [];
     const named = entries.find((entry) => entry.fragment === null);
-    const fromDocument = named ? null : (fallbackTitles.get(item.href) ?? null);
+    const fromDocument = named ? null : (ownTitles.get(item.href) ?? null);
     const depth = named?.depth ?? 0;
-    const rows: EpubChapter[] = [{
-      href: item.href,
-      label: named?.label ?? fromDocument ?? item.href.split('/').pop() ?? item.href,
-      depth,
-      url: memberUrl(id, item.href),
-    }];
+    /*
+     * TWO SOURCES IN ORDER OF AUTHORITY, AND THEN NOTHING.
+     *
+     * The book's own table of contents, then the document's own `<title>`. Both
+     * are the BOOK saying what this section is called; neither is this app
+     * making something up.
+     *
+     * WHAT USED TO BE HERE WAS A THIRD RUNG, and it was the filename —
+     * `item.href.split('/').pop()`, i.e. `c0001.xhtml` on a panel whose whole
+     * discipline is that a person never sees one. *"no fallbacks. i hate
+     * fallbacks. fallbacks are bugs. theyre unexpected code paths… we fix things
+     * at the root, and we error if theres a problem."* A section neither the
+     * contents nor the document itself will name is not a section: nothing here
+     * knows what it is, and the honest list is one that does not claim to. It is
+     * dropped rather than invented, and dropping it strands nothing — the
+     * flowing book draws every spine document at once (docs/WORKBENCH.md §11),
+     * so these rows are for jumping and never for reaching.
+     */
+    const label = named?.label ?? fromDocument;
+    const rows: EpubChapter[] = label === null || label === undefined || label.length === 0
+      ? []
+      : [{ href: item.href, label, depth, url: memberUrl(id, item.href) }];
     for (const entry of entries) {
       if (entry.fragment === null) continue;
       rows.push({
@@ -2074,6 +2123,10 @@ export async function openEpub(filePath: string): Promise<EpubBook> {
       : (await projectTitle(projectDir) ?? label),
     author: author !== null && author.length > 0 ? author : null,
     chapters,
+    // The spine, whole and in order, cover and all — see `EpubBook.members`. The
+    // contents list above is allowed to be shorter than this and nothing about
+    // what the reader can see depends on it.
+    members: spine.map((item) => ({ href: item.href, url: memberUrl(id, item.href) })),
     // The navigation document, named so the renderer's undo stack can snapshot
     // it. A contents rename writes a member the renderer otherwise has no name
     // for — every other edit in the app is addressed by a chapter href it

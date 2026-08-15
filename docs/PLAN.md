@@ -313,20 +313,77 @@ explain it away.
    are free actions available without entering any mode. Unit K built
    the drag and the double-click rename correctly; what it got wrong
    is that adding was ambient instead of asked for.
-6. **A translation lands in the inspector's Contents but not in the
-   left nav's tree.** User: *"i thought we worked that logic out
-   already. why would it be showing up on the right side/contents
-   instead of the tree?"* — and the ruling that governs is §2's tree,
-   where a translation is a step under the thing it was made from.
-   **DIAGNOSE BEFORE BUILDING**: the tree already draws stranded steps
-   defensively (`open-documents.component.ts:817-829`), so a translate
-   step present in the ledger should be drawn even with a broken
-   parent link. That points at the step not being in the ledger the
-   tree is READING — either `recordTranslation` (D2, `projects.ts`)
-   not landing a row, or the renderer's history not reloading when a
-   translate job settles, which would show exactly this: a book on
-   screen and no row for it until reopen. Check which before touching
-   anything; the fixes are different and only one is right.
+6. ~~**A translation lands in the inspector's Contents but not in the
+   left nav's tree.**~~ FIXED in wave 4d, and BOTH recorded guesses
+   were wrong — worth keeping as an argument for the diagnose-first
+   rule rather than as a wrong turn to be tidied away. The translate
+   step WAS in the ledger and WAS drawn. What was also drawn, one line
+   under it, was a second row for the same book: the cast. See 4d.1.
+
+### Wave 4d — THE THIRD SITTING (user, 2026-08-15, after 4c)
+
+The user asked, before any of this was built, that the understanding
+be stated back first: *"can you explain what you think i want fixed so
+i know we're on the same page"* — and then answered each item. Their
+answer to two of the five is one sentence, and it is now a rule of
+this repo as much as §1's are:
+
+> *"no fallbacks. i hate fallbacks. fallbacks are bugs. theyre
+> unexpected code paths. that is a cardinal rule… we fix things at the
+> root, and we error if theres a problem."*
+
+Read it against the four defects below and it is the whole diagnosis:
+every one of them was a second-choice branch, reached for on
+emptiness, doing something plausible and wrong.
+
+1. ~~**"EPUB — a copy you opened"**~~ FIXED. A per-step cast is
+   uncatalogued on purpose, so the tree — which took `documents` as
+   its list of paths a step already speaks for — drew the translation's
+   cast in its loose-file branch, labelled by container format. Both
+   halves were false: nobody opened it, and *"the user should never
+   see 'epub' — not until they actually export an epub directly
+   themselves. it's deceptive."* Root fix: `ProjectSummary.renderings`
+   carries the cast names, composed by the side that knows how they
+   are composed, and the tree speaks for them.
+   **Answered on the record: no, steps are NOT zipped EPUB snapshots.**
+   The ledger holds the archived PDF, a `.jsonl` bank and a `.jsonl`
+   records file. The storage was already right; the naming lied about it.
+2. ~~**Contents and Chapters were two panels for one question.**~~
+   FIXED — *"correct. should be the same unit: chapters."* Contents
+   drew the cast's nav, which is minted FROM the chapter lines, so the
+   panel offered the record and its own photocopy and let a person
+   rename the photocopy. One section now. Which list it draws is asked
+   of the document (`BookSpine.banked`), never inferred from a list
+   coming back empty: a book Foundry read has a marker spine, a book
+   somebody imported whole has only its own table of contents.
+3. ~~**Two identical "Contents" rows, the first one an image.**~~
+   FIXED. It was the COVER, and the row said the book's title because
+   the cover document's `<title>` is the book's title. Under it sat a
+   three-rung fallback chain ending in the FILENAME on a panel whose
+   whole discipline is that a filename never appears. Now: the cover is
+   excluded by its own `epub:type="cover"` declaration (and by an EPUB 2
+   `<guide>` reference), and a document neither the nav nor its own
+   `<title>` will name gets no row at all. Which forced the other half —
+   `EpubBook.members` — because the flowing book was drawn by walking
+   the contents list, so an unnamed document would have stopped being
+   RENDERED. A table of contents may not decide which pages exist.
+4. ~~**"Undo history restored: 13 actions…, from C:\…\ad6dcb.json"**~~
+   FIXED. The app congratulating itself about a success nobody asked
+   about, at the moment a book opened, by naming an absolute path. Both
+   copies of it (`history.ts`, `overlays.ts`) are silent now. The
+   FAILURE notices keep their paths: there the file is the actionable
+   half of the sentence.
+
+Left standing, and said out loud rather than quietly done:
+
+- **The cover is cut from the first page the book CONTAINS, not page
+  1** — which is why the user saw page 2: page 1 carried no blocks.
+  That is `buildDotsBook`'s documented rule and it is working. Their
+  note — *"we can put the book COVER ART as the first page if we want,
+  but i didnt ask for that"* — is a standing question about whether
+  casts should have covers at all, not a bug report. Nothing changed.
+- **Chapter rename from the inspector still throws** (4b item 3). Not
+  touched this sitting.
 
 ### Wave 5
 

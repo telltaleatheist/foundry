@@ -1685,6 +1685,39 @@ export interface ProjectSummary {
    */
   exports: ProjectFinal[];
   /**
+   * THE BOOKS THE STEPS CAST FOR THEMSELVES — project-relative, forward slashes,
+   * one per step that renders one, in ledger order.
+   *
+   * ── The bug this exists to end ──────────────────────────────────────────────
+   *
+   * A per-step cast is a RENDERING: free, remade from the step's own snapshot at
+   * any time, and deliberately NOT a row in `documents` (`castForCurateStep`,
+   * electron/projects.ts, holds the whole argument — a cast filed as a
+   * `generated/` origin would become the project's newest book, so a read row
+   * would start showing whichever save was pressed last).
+   *
+   * The library tree took `documents` as its list of "paths a step already speaks
+   * for", and a cast is not in it. So opening a translation — which shows a cast —
+   * put a SECOND row in the tree beside the step that made it, in the branch meant
+   * for files somebody went and opened by hand, wearing the only name that branch
+   * had for it: *"EPUB - a copy you open… this doesnt make any sense… the naming
+   * scheme is wrong, the organizing is wrong, the user should never see 'epub' -
+   * not until they actually export an epub directly themselves. it's deceptive."*
+   *
+   * Both halves of that row were false. Nobody opened it — standing on the step
+   * did — and it is not an EPUB in any sense the reader is owed, it is the
+   * rendering of a step whose payload is a `.jsonl` of records. The tree could
+   * neither of those things because it had no way to know the file belonged to a
+   * step, so this is that way: the names, composed by the side that knows how they
+   * are composed, so the renderer never spells one and never guesses.
+   *
+   * NAMES AND NOT A PROMISE THAT THE FILE IS THERE. A cast is made on demand and
+   * swept with its step; `summarise` stats nothing for this, because the question
+   * it answers is "would a step show this path", which is true whether or not the
+   * rendering has been made yet.
+   */
+  renderings: string[];
+  /**
    * Set when `project.json` could not be read. The row is still listed — Home
    * is the only door back to a book — but it offers Reveal and nothing else,
    * because guessing at the contents of a catalogue that will not parse is how
@@ -2107,6 +2140,30 @@ export interface EpubBook {
   title: string;
   author: string | null;
   chapters: EpubChapter[];
+  /**
+   * EVERY DOCUMENT OF THE SPINE, IN READING ORDER — what the book RENDERS, as
+   * distinct from `chapters`, which is what its contents LISTS.
+   *
+   * ── Why these had to come apart ─────────────────────────────────────────────
+   *
+   * They were one field, and the flowing book was drawn by walking `chapters`.
+   * That worked for exactly as long as `chapters` was guaranteed to name every
+   * spine document — which it was, because a document neither the nav nor its own
+   * `<title>` would name got a row anyway, labelled with its FILENAME. Take that
+   * invented row away (and it had to go: *"no fallbacks. i hate fallbacks…"*, and
+   * a filename is the one thing this app's copy never shows) and the document
+   * stops being drawn at all. A contents list quietly deciding which pages of
+   * somebody's book exist is a far worse bug than the one being fixed.
+   *
+   * So the spine is carried in its own right. The reader draws THIS, complete and
+   * in order, and the contents list is free to be an honest account of the
+   * divisions the book actually declares — including declaring none.
+   *
+   * `url` rides along because composing one is main's (`memberUrl` mints it
+   * against the id of this unpacking) and a renderer spelling the scheme itself
+   * would be a second implementation of the protocol handler's contract.
+   */
+  members: { href: string; url: string }[];
   /**
    * The navigation document's member path, or null for a book that has none.
    *

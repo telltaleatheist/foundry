@@ -2804,6 +2804,34 @@ function castForTranslateStep(
   return `${GENERATED}/${translationCastFile(manifest.stem, language, step.id)}`;
 }
 
+/**
+ * Every book this project's steps cast for themselves — `ProjectSummary.renderings`.
+ *
+ * ONE PLACE ASKS THE TWO COMPOSERS ABOVE, and it is deliberately not a third
+ * account of which actions render. `documentAtPosition` reads the same pair in
+ * the same order to decide what a row SHOWS, and the two agreeing is the whole
+ * value of this: the library draws no loose row for a file precisely when the
+ * position would open that file, which is the one condition under which the row
+ * would have been a lie.
+ *
+ * A TRANSLATE STEP WITH NO LANGUAGE CONTRIBUTES NOTHING, exactly as it does
+ * there. Its cast has no name to compose, so it has no rendering — and a row for
+ * it in the tree, should somebody open its payload, is then the honest answer.
+ */
+function renderingsOf(manifest: ProjectManifest): string[] {
+  const out: string[] = [];
+  for (const step of ledgerOf(manifest).steps) {
+    if (step.action === 'curate') {
+      out.push(castForCurateStep(manifest, step));
+      continue;
+    }
+    if (step.action !== 'translate') continue;
+    const language = step.params?.language ?? '';
+    if (language.length > 0) out.push(castForTranslateStep(manifest, step, language));
+  }
+  return out;
+}
+
 function castBook(manifest: ProjectManifest): string | null {
   const live = stepsOf(manifest, 'epub').filter(
     (step) => step.kind === 'origin'
@@ -4514,6 +4542,8 @@ async function summarise(dir: string, name: string): Promise<ProjectSummary> {
       // at a tray by reading the directory would offer files this app cannot say
       // it made. The row offers Reveal, which is the honest door into a folder.
       exports: [],
+      // No ledger was read, so no step is claiming anything.
+      renderings: [],
       problem: (err as Error).message,
     };
   }
@@ -4639,6 +4669,7 @@ async function summarise(dir: string, name: string): Promise<ProjectSummary> {
     reading: await readingState(dir, manifest),
     filed: manifest.final.length > 0,
     exports: await filedDocuments(dir, manifest),
+    renderings: renderingsOf(manifest),
     problem: null,
   };
 }

@@ -772,13 +772,11 @@ export async function loadOverlayLedger(pdfPath: string): Promise<LedgerLoad> {
     return { actions: empty(), notice: await setAside(where, fate.why) };
   }
 
-  const actions = history.done.length + history.undone.length;
-  return {
-    actions: { done: history.done, undone: history.undone },
-    notice: actions === 0 ? null
-      : `Block corrections history restored: ${describe(history.done.length, 'action')} to undo and `
-        + `${describe(history.undone.length, 'action')} to redo, from ${where.ledger}.`,
-  };
+  // Silent, for `loadLedger`'s reasons (electron/history.ts): a history that
+  // loaded is Ctrl+Z working, which is not news, and the sentence said it by
+  // naming a file. The failures above keep their paths because a failure is
+  // about a file and this is not.
+  return { actions: { done: history.done, undone: history.undone }, notice: null };
 }
 
 export async function saveOverlayLedger(pdfPath: string, stacks: LedgerStacks): Promise<void> {
@@ -799,11 +797,6 @@ export async function saveOverlayLedger(pdfPath: string, stacks: LedgerStacks): 
 
 function empty(): LedgerStacks {
   return { done: [], undone: [] };
-}
-
-/** "1 action" / "3 actions" — the count is the whole point of the sentence. */
-function describe(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? '' : 's'}`;
 }
 
 /**

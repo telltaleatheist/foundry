@@ -259,17 +259,25 @@ export async function loadLedger(bookId: string): Promise<LedgerLoad> {
     };
   }
 
-  const actions = history.done.length + history.undone.length;
-  return {
-    actions: { done: history.done, undone: history.undone },
-    notice: actions === 0 ? null : `Undo history restored: ${describe(history.done.length, 'action')} `
-      + `to undo and ${describe(history.undone.length, 'action')} to redo, from ${file}.`,
-  };
-}
-
-/** "1 action" / "3 actions" — the count is the whole point of the sentence. */
-function describe(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+  /*
+   * THE HAPPY PATH IS SILENT, and the notice it used to carry was the app
+   * congratulating itself.
+   *
+   * *"is this message necessary? Undo history restored: 13 actions to undo and 0
+   * actions to redo, from C:\…\history\generated-Working-Towards-The-Fu-ad6dcb.json"*
+   * — no. It announced a SUCCESS the user had not asked about, at the moment they
+   * opened a book, and it announced it by naming a file: an absolute path in
+   * user-facing copy, which is the one thing every other sentence in this app is
+   * careful never to be. The feature it was reporting is that Ctrl+Z works. The
+   * way to report that is that Ctrl+Z works.
+   *
+   * The three notices ABOVE stay, and the difference is not squeamishness about
+   * paths. Each of them is a FAILURE with a file at the middle of it — one this
+   * app has refused to write over, or has moved somewhere the user may want to go
+   * and look — so the path is not decoration, it is the actionable half of the
+   * sentence. Nothing is actionable about a history that loaded.
+   */
+  return { actions: { done: history.done, undone: history.undone }, notice: null };
 }
 
 /**

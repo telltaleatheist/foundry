@@ -85,6 +85,12 @@ import { UiService } from '../../core/ui.service';
  * row is left meaning exactly what it says: something inside the project folder
  * that the project does not claim. An archived copy, a file reached by hand.
  *
+ * AND A STEP'S OWN RENDERING IS NOT ONE OF THOSE, which took a second reading of
+ * "the catalogue's own files" to get right — a per-step cast is uncatalogued on
+ * purpose, so for a while a translation drew both its step and a loose row
+ * calling the cast an EPUB somebody had opened. `ProjectSummary.renderings` is
+ * the missing half of the sentence; see the set it feeds, below.
+ *
  * ── A STEP NODE IS NOT A TAB, and does not wear a tab's marks ────────────────
  *
  * No ✕ — the root is the single exception, and what its ✕ closes is the BOOK
@@ -888,7 +894,30 @@ export class OpenDocumentsComponent {
        * it, so repeating it is two thirds of a row spent on what the reader can
        * already see.
        */
-      const catalogue = new Set(project.documents.map((document) => fold(document.path)));
+      /*
+       * WHAT THE TREE ALREADY SPEAKS FOR — the catalogue, AND the books the steps
+       * cast for themselves.
+       *
+       * The catalogue alone was wrong and the way it was wrong was visible:
+       * *"under that - 'epub - a copy you open…' is this the OCR record/OCR bank?
+       * … the naming scheme is wrong, the organizing is wrong, the user should
+       * never see 'epub'… it's deceptive."* A per-step cast is not catalogued on
+       * purpose (`ProjectSummary.renderings` holds the whole argument), so
+       * standing on a translation — which opens its cast — produced a row down
+       * here saying somebody had opened a file by hand, named by its container
+       * format, one line under the step that had actually made it.
+       *
+       * So the set is both, joined against the project's own directory in the
+       * project's own separator, whole path against whole path. `renderings`
+       * arrives project-relative for the same reason `exports` does, which is
+       * this codebase's oldest house rule: a project holds `archive/Book.pdf`,
+       * `working/Book.pdf` and `generated/Book.pdf` at once and nothing may ever
+       * be matched by its last segment.
+       */
+      const catalogue = new Set([
+        ...project.documents.map((document) => fold(document.path)),
+        ...project.renderings.map((made) => fold(joinIn(project.dir, made))),
+      ]);
       const extras: Row[] = [];
       for (const row of mine) {
         if (claimed.has(row.key)) continue;

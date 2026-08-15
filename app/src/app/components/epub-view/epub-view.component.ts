@@ -13,7 +13,7 @@ import {
 } from '@angular/core';
 import { DomSanitizer, type SafeResourceUrl } from '@angular/platform-browser';
 
-import { TabsService, membersOf, type Tab } from '../../core/tabs.service';
+import { TabsService, type Tab } from '../../core/tabs.service';
 
 /**
  * The book — the whole of it, in one scroll, with the chapter lines on it.
@@ -326,24 +326,33 @@ export class EpubViewComponent implements OnDestroy {
   /**
    * The book's documents in reading order, once each.
    *
-   * `EpubBook.chapters` is the SPINE with the navigation's labels laid over it,
-   * plus one row per section header the engine anchored — those carry a
-   * `#fragment` and name a document that is already in the list. `membersOf`
-   * folds them, so this is exactly the reading order and nothing is drawn twice.
+   * ── THE SPINE DECIDES WHAT IS DRAWN; THE CONTENTS ONLY NAMES IT ─────────────
+   *
+   * This walked `EpubBook.chapters` and stacked whatever it found there, on the
+   * old guarantee that the contents named every spine document. It does not any
+   * more — a document neither the nav nor its own `<title>` will name gets no
+   * row, because the row it used to get was invented out of the filename — so
+   * walking the contents would silently stop rendering those pages. A table of
+   * contents is not allowed to decide which pages of somebody's book exist.
+   *
+   * So the list is `members`, complete and in order, and the contents supplies
+   * the LABEL where it has one. A member with no name has no tooltip on its
+   * frame, which is a small honest nothing; the alternative was the filename
+   * again, one layer down, where it would have been harder to find.
    */
   private readonly documents = computed<readonly { member: string; label: string; base: string }[]>(() => {
     const book = this.tab().book;
     if (book === null) return [];
-    const rows = new Map<string, { label: string; base: string }>();
+    const named = new Map<string, string>();
     for (const chapter of book.chapters) {
       const member = chapter.href.split('#')[0] ?? chapter.href;
-      if (rows.has(member)) continue;
-      rows.set(member, { label: chapter.label, base: chapter.url.split('#')[0] ?? chapter.url });
+      if (!named.has(member)) named.set(member, chapter.label);
     }
-    return membersOf(book).flatMap((member) => {
-      const row = rows.get(member);
-      return row === undefined ? [] : [{ member, label: row.label, base: row.base }];
-    });
+    return book.members.map((member) => ({
+      member: member.href,
+      label: named.get(member.href) ?? '',
+      base: member.url,
+    }));
   });
 
   /** What each frame is showing, at the height it last said it was. */

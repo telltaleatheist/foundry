@@ -162,72 +162,100 @@ import { TabsService, type BlockElement, type ChapterMark } from '../../core/tab
           panel.
         -->
         @if (subject(); as panel) {
-        <!-- ── Contents ─────────────────────────────────────────────────── -->
-        @if (book(); as current) {
-        <section class="accordion" [class.shut]="!contentsOpen()">
-          <button class="head" (click)="contentsOpen.set(!contentsOpen())">
-            <span class="twist">{{ contentsOpen() ? '▾' : '▸' }}</span>
-            <span class="label">Contents</span>
-            <span class="count">{{ current.book.chapters.length }}</span>
-          </button>
-          @if (contentsOpen()) {
-            <div class="body">
-              <div class="about">
-                <span class="book-title" [title]="current.book.title">{{ current.book.title }}</span>
-                @if (current.book.author) {
-                  <span class="book-author">{{ current.book.author }}</span>
-                }
-              </div>
-              <ul>
-                @for (chapter of current.book.chapters; track chapter.href) {
-                  <li class="entry">
-                    @if (renamingHref() === chapter.href) {
-                      <input
-                        #renameBox
-                        class="rename"
-                        [style.margin-left.px]="4 + chapter.depth * 14"
-                        [value]="renameText()"
-                        (input)="renameText.set(renameBox.value)"
-                        (keydown.enter)="commitRename(chapter)"
-                        (keydown.escape)="cancelRename()"
-                        (blur)="cancelRename()"
-                        [attr.aria-label]="'Rename ' + chapter.label"
-                      >
-                    } @else {
-                      <button
-                        class="chapter"
-                        [class.active]="current.chapterHref === chapter.href"
-                        [style.padding-left.px]="10 + chapter.depth * 14"
-                        [title]="chapter.label"
-                        (click)="show(chapter)"
-                        (dblclick)="startRename(chapter)"
-                      >{{ chapter.label }}</button>
-                      <button class="pencil" title="Rename" (click)="startRename(chapter)">✎</button>
-                    }
-                  </li>
-                }
-              </ul>
-            </div>
-          }
-        </section>
-        }
-
         <!--
-          ── The chapters — the LIST VIEW of the same spine the book draws ──
+          ── The chapters — ONE SECTION, because it was one question ────────────
 
-          Drawn for a scan being corrected and for the flowing book alike, and
-          the rows are the same rows: one overlay field, two projections of it.
-          Over the book the lines on the page are the other one, and either
-          surface's rename lands in the same file through the same door.
+          THERE USED TO BE A "CONTENTS" ABOVE THIS ONE and it was the same list
+          twice. It drew the cast EPUB's nav — a table of contents minted out of
+          these very chapters at the moment the book was rendered — while this
+          section drew the chapters themselves. Two rows per division, in two
+          places, one of them read out of a file this app throws away and remakes:
+          *"whats the difference between 'chapters' and 'contents'? should those
+          be one unit?"* — *"correct. should be the same unit: chapters."*
+
+          The user's earlier ruling is what settles which survives: *"that dotted
+          line is the definitive chapter info for the book."* A cast's nav is
+          downstream of the lines, so a panel offering both was offering the
+          record and its own photocopy, and letting a person rename the photocopy.
+
+          WHAT THE ROWS ARE READ OFF IS A PROPERTY OF THE BOOK, asked directly —
+          see \`divisions\`. A book this app has read has a spine of markers, which
+          is the record. A book somebody imported whole has no bank, nothing to
+          key a marker to, and its own table of contents is the only statement of
+          its divisions that exists. That is a choice between two kinds of
+          document, made on which kind it is; it is emphatically not a list
+          reached for because another one came back empty.
         -->
         <section class="accordion" [class.shut]="!chaptersOpen()">
             <button class="head" (click)="chaptersOpen.set(!chaptersOpen())">
               <span class="twist">{{ chaptersOpen() ? '▾' : '▸' }}</span>
               <span class="label">Chapters</span>
-              <span class="count">{{ spine().chapters.length }}</span>
+              <span class="count">{{ chapterCount() }}</span>
             </button>
             @if (chaptersOpen()) {
               <div class="body">
+                <!--
+                  The book's own name, which came up here with the Contents
+                  section and stays: it is the one line in the panel that says
+                  WHICH book all of this is about, and the panel is otherwise a
+                  set of controls with no subject written on them.
+                -->
+                @if (book(); as current) {
+                  <div class="about">
+                    <span class="book-title" [title]="current.book.title">{{ current.book.title }}</span>
+                    @if (current.book.author) {
+                      <span class="book-author">{{ current.book.author }}</span>
+                    }
+                  </div>
+                }
+
+                @if (divisions() === 'book') {
+                  @if (book(); as current) {
+                    <!--
+                      WHOSE LIST THIS IS, in the state where it is not Foundry's.
+                      Saying so matters more here than anywhere: none of the
+                      controls below appear, and a section that silently dropped
+                      its buttons would read as broken rather than as inapplicable.
+                    -->
+                    <p class="hint">
+                      These are the book's own chapters, as it lists them. Nothing here has read
+                      this book, so Foundry has no chapters of its own to offer — read it and the
+                      list becomes one you can move, rename and cut.
+                    </p>
+                    <ul>
+                      @for (chapter of current.book.chapters; track chapter.href) {
+                        <li class="entry">
+                          @if (renamingHref() === chapter.href) {
+                            <input
+                              #renameBox
+                              class="rename"
+                              [style.margin-left.px]="4 + chapter.depth * 14"
+                              [value]="renameText()"
+                              (input)="renameText.set(renameBox.value)"
+                              (keydown.enter)="commitRename(chapter)"
+                              (keydown.escape)="cancelRename()"
+                              (blur)="cancelRename()"
+                              [attr.aria-label]="'Rename ' + chapter.label"
+                            >
+                          } @else {
+                            <button
+                              class="chapter"
+                              [class.active]="current.chapterHref === chapter.href"
+                              [style.padding-left.px]="10 + chapter.depth * 14"
+                              [title]="chapter.label"
+                              (click)="show(chapter)"
+                              (dblclick)="startRename(chapter)"
+                            ><span class="ch-title">{{ chapter.label }}</span></button>
+                            <button class="pencil" title="Rename" (click)="startRename(chapter)">✎</button>
+                          }
+                        </li>
+                      }
+                      @if (current.book.chapters.length === 0) {
+                        <li class="none">This book lists no chapters of its own.</li>
+                      }
+                    </ul>
+                  }
+                } @else {
                 <!--
                   WHOSE LIST THIS IS, said before anything is clicked. Until
                   somebody edits it these rows are Foundry's own answer, and the
@@ -334,6 +362,7 @@ import { TabsService, type BlockElement, type ChapterMark } from '../../core/tab
                     On the book, a chapter is the green dotted line. Drag one to move it,
                     double-click it to rename it, or drop it on the ✕ to remove it.
                   </p>
+                }
                 }
               </div>
             }
@@ -803,7 +832,6 @@ export class InspectorComponent {
    * panel that says nothing. They are still collapsible, because sixty chapters
    * and eleven categories do not both fit on a laptop.
    */
-  protected readonly contentsOpen = signal(true);
   protected readonly categoryOpen = signal(true);
   protected readonly chaptersOpen = signal(true);
   protected readonly blockOpen = signal(true);
@@ -1012,6 +1040,38 @@ export class InspectorComponent {
   // directly. A book's names a banked answer, which the service has already
   // resolved to a document and an element for the lines' sake — so the panel
   // reads that resolution rather than doing its own.
+
+  /**
+   * WHOSE ACCOUNT OF THE DIVISIONS THIS SECTION IS DRAWING — asked of the
+   * document, not of a list's length.
+   *
+   *   `scan`    — a PDF in block view. The rows are the curation's chapters and
+   *               the block a person has selected is where a new one goes.
+   *   `foundry` — a book this app read. The rows are the marker spine, which the
+   *               user ruled is the definitive record, and every control applies.
+   *   `book`    — a book somebody imported whole. There is no bank, so there is
+   *               nothing to key a marker to and no marker list to draw; what the
+   *               book says about itself is the only account there is.
+   *
+   * `null` COVERS TWO STATES AND MUST: no document, and a book whose overlay has
+   * not come back yet. Drawing the book's own contents in the second would flash
+   * the wrong list over every Foundry book on open, which is exactly the bug
+   * `BookSpine.banked` exists to make impossible.
+   */
+  protected readonly divisions = computed<'scan' | 'foundry' | 'book' | null>(() => {
+    const panel = this.subject();
+    if (panel === null) return null;
+    if (panel.kind === 'pdf') return 'scan';
+    const spine = this.tabs.bookSpineFor(panel.id);
+    if (spine === null) return null;
+    return spine.banked ? 'foundry' : 'book';
+  });
+
+  /** The number beside the section head, off whichever list is being drawn. */
+  protected readonly chapterCount = computed<number>(() =>
+    (this.divisions() === 'book'
+      ? this.book()?.book.chapters.length ?? 0
+      : this.spine().chapters.length));
 
   /** The spine as it stands, and whose it is. */
   protected readonly spine = computed(() => {
@@ -1242,7 +1302,14 @@ export class InspectorComponent {
     void this.tabs.setBlockText(panel.id, block.key, '');
   }
 
-  // ── Contents ─────────────────────────────────────────────────────────────
+  // ── A book's own chapters — the `divisions() === 'book'` rows ─────────────
+  //
+  // These three used to serve a Contents section of their own. That section is
+  // gone (see the template's Chapters block) and they are not: for a book this
+  // app never read, the book's table of contents IS its chapter list, and these
+  // are how a row of it is jumped to and renamed. Both gestures address a nav
+  // entry by href, which is the only name such a book has for a division —
+  // there is no banked answer under it to key a marker to.
 
   protected show(chapter: EpubChapter): void {
     const tab = this.book();

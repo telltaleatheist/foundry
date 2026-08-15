@@ -507,6 +507,27 @@ export interface BookSpine {
   confirmed: boolean;
   editable: boolean;
   /**
+   * Whether this app has an account of where this book divides AT ALL — stated
+   * by the reader, or detected over a bank it read.
+   *
+   * ── Why a boolean, when an empty list is right there ────────────────────────
+   *
+   * Because the two states it tells apart look identical in `chapters` and are
+   * not remotely the same fact. A book Foundry read that genuinely has one
+   * section has no chapters; a book somebody imported whole — no bank, nothing
+   * to key a marker to — has no chapters EITHER, and about that one this app
+   * knows nothing rather than knowing there are none.
+   *
+   * The inspector needs the difference because it decides which list a person
+   * is looking at, and *"no fallbacks. i hate fallbacks. fallbacks are bugs.
+   * theyre unexpected code paths."* Choosing the book's own table of contents
+   * because the marker list came back empty would be exactly that: a second
+   * source reached for on emptiness, which would also silently swap the list
+   * under a Foundry book that divides nowhere. This is the question asked
+   * directly, so the answer is a choice and not a rescue.
+   */
+  banked: boolean;
+  /**
    * The recorded manual JOINS, resolved to the elements that continue — one
    * entry per `join: true` decision whose continuation block this cast renders.
    *
@@ -519,6 +540,17 @@ export interface BookSpine {
    */
   joins: readonly { member: string; blockId: string }[];
 }
+
+/**
+ * The `bookSpineKeys` entry for a book no project claims.
+ *
+ * It opens with the same separator every real key is built out of, so it cannot
+ * be spelled by a uuid and two counters however they fall — and it is written as
+ * an ESCAPE and never as the byte itself, which is this codebase's rule for the
+ * whole control range: a file carrying a raw NUL reads fine through every tool
+ * that handles it right up until the one that does not.
+ */
+const UNBANKED = '\u0000unbanked';
 
 /** Something the shell wants said to one tab's frame. See `frameCommand`. */
 export interface FrameCommand {
@@ -3739,10 +3771,24 @@ export class TabsService {
     const tab = this.byId(tabId);
     if (!api || tab === null || tab.kind !== 'epub' || tab.book === null) return;
     if (this.projectDirOf(tab) === null) {
-      // A book opened from the user's own disk: no bank, no curation, nothing to
-      // key a chapter to. It still reads, and it draws no lines.
-      this.bookSpineKeys.delete(tabId);
-      this.putBookSpine(tabId, null);
+      /*
+       * A book opened from the user's own disk: no bank, no curation, nothing to
+       * key a chapter to. It still reads, and it draws no lines.
+       *
+       * AN ANSWER RATHER THAN AN ABSENCE, which is the change `BookSpine.banked`
+       * is for. A held spine of nothing says "this app has no chapters for this
+       * book"; a missing entry says "nobody has asked yet", and they arrive one
+       * after the other on every book that opens. The inspector picks which list
+       * to draw off this, so conflating them would flash the book's own contents
+       * over every Foundry book for as long as its overlay took to read.
+       */
+      // Keyed like every other answer so that a repaint calling this again does
+      // not write an equal-but-new object into the signal on every frame.
+      if (this.bookSpineKeys.get(tabId) === UNBANKED) return;
+      this.bookSpineKeys.set(tabId, UNBANKED);
+      this.putBookSpine(tabId, {
+        chapters: [], marks: [], joins: [], confirmed: false, banked: false, editable: false,
+      });
       return;
     }
     const held = this.heldByASave(tabId);
@@ -3773,7 +3819,9 @@ export class TabsService {
     const frozen = loaded.frozen as FrozenCuration | null;
     const shown: CurationContent = frozen ?? file;
     const confirmed = shown.chapters !== undefined;
-    const chapters = shown.chapters ?? (await this.spineOf(tab, file)) ?? [];
+    // Asked and recorded rather than inferred from the length — see `BookSpine.banked`.
+    const detected = shown.chapters ?? await this.spineOf(tab, file);
+    const chapters = detected ?? [];
     const index = await this.sourceIndexOf(tab);
     /*
      * The joins the shown curation records, resolved through the same index the
@@ -3792,6 +3840,7 @@ export class TabsService {
     this.putBookSpine(tabId, {
       chapters,
       confirmed,
+      banked: detected !== null,
       editable: held === null,
       joins,
       marks: chapters.map((one) => {
@@ -7479,23 +7528,16 @@ function memberOf(href: string): string {
 /**
  * The book's documents, in reading order, once each.
  *
- * `EpubBook.chapters` IS THE SPINE with the navigation's labels laid over it
- * (electron/epub-reader.ts says so where it builds the list), plus one extra row
- * per section header the engine anchored — those carry a `#fragment` and name
- * the document they are inside. Folding on the member is therefore the spine
- * itself, and the ORDER is the order a reader meets them, which is the order the
- * flowing book stacks them in.
+ * IT READS `members` AND NOT `chapters`, and that is the whole of this function
+ * now. It used to fold the chapter rows down to their member files, on the
+ * argument that the contents list WAS the spine with labels laid over it — true
+ * only while a document the book would not name got a row of its own anyway,
+ * carrying its filename. `EpubBook.members` says why that row had to go and why
+ * the spine is now carried in its own right; the short version is that a table of
+ * contents must never be the thing that decides which pages exist.
  */
 export function membersOf(book: EpubBook): readonly string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const chapter of book.chapters) {
-    const member = memberOf(chapter.href);
-    if (seen.has(member)) continue;
-    seen.add(member);
-    out.push(member);
-  }
-  return out;
+  return book.members.map((member) => member.href);
 }
 
 function baseName(filePath: string): string {
