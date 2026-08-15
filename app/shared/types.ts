@@ -771,6 +771,21 @@ export interface ProjectManifest {
    * that there is nothing for a generation to bind.
    */
   reading: ProjectReading | null;
+  /**
+   * The step ledger — every retained payload this project holds, and the pointer.
+   *
+   * OPTIONAL, AND A MANIFEST WITHOUT ONE IS NOT A BROKEN MANIFEST. Every project
+   * on every disk predates this field, and `migrateLedger` (shared/ledger.ts)
+   * builds one from `archive`, `reading` and the per-type chains on read. So
+   * absent means "not migrated yet", which is the ordinary state of the whole
+   * library the first time this ships, and not a hole to refuse.
+   *
+   * THE LEDGER IS THE TRUTH AND `documents` IS A VIEW OF IT. Both are written,
+   * and they must never be two opinions: the per-type rows are derived from the
+   * ledger (`currentStandard`), which is the arrangement that keeps "the PDF" and
+   * "what was actually done to this book" from disagreeing.
+   */
+  ledger?: ProjectLedger;
 }
 
 /**
@@ -1619,4 +1634,178 @@ export interface OverlayFileWire {
   }[];
   /** Absent means the engine decides. See `OverlayFile.chapters`. */
   chapters?: { at: { page: number; order: number; part?: number }; title: string }[];
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// THE STEP LEDGER — a project's whole history, as a tree that reads as a list
+// ═════════════════════════════════════════════════════════════════════════════
+
+/*
+ * TWO THINGS IN THIS APP ARE CALLED A LEDGER AND THEY ARE NOT RELATED. The one
+ * above — `LedgerRow`, `LedgerAction`, `LedgerStacks` — is the block editor's
+ * UNDO history: keystroke-grained, capped, thrown away when the working copy is
+ * rebuilt. This one is the project's STEP history: a handful of rows, each the
+ * retained payload of one completed action, kept forever. Nothing crosses
+ * between them, and the names here all begin with `Step` or `Ledger…Step` so
+ * that a reader who lands on one can tell which ledger they are in.
+ *
+ * The logic lives in `shared/ledger.ts`; only the shapes live here, because
+ * these cross IPC and the preload must be able to name them without pulling a
+ * module with a runtime in it across the boundary.
+ */
+
+/**
+ * The four things that mint a step. Everything else a project does is free.
+ *
+ * IT IS A SHORT LIST BECAUSE A STEP IS A RETAINED PAYLOAD, not an event. The
+ * queue is where expense happens, a step is what one expensive job left behind,
+ * and everything else — rendering an EPUB, a PDF, a text file; moving the
+ * pointer; opening a tab — is a rendering of a payload that already exists and
+ * costs nothing to make again.
+ *
+ * `curate` IS THE ODD ONE OUT AND EARNS ITS PLACE ANYWAY. It spends no GPU and
+ * needs no queue job — it is the user pressing Save in the block editor, which
+ * freezes the live overlay as a snapshot. It is here because the retention rule
+ * is about what it costs to GET SOMETHING BACK, not what it cost to make, and a
+ * person's judgement about four hundred blocks is the one thing in a project
+ * that nothing can reproduce.
+ *
+ * NO `generate`, deliberately. A rendering is reproducible from its step's
+ * payload at any time, and minting a step for one would put a filename where an
+ * action belongs. If "what did I export and when" is ever wanted, it is an
+ * export log — a separate thing, and not this.
+ */
+export type StepAction = 'import' | 'read' | 'curate' | 'translate';
+
+/**
+ * What was ASKED FOR, and what the run recorded about the answer.
+ *
+ * ── Why one flat bag rather than a union per action ─────────────────────────
+ *
+ * The typed alternative is a discriminated union — `{action: 'read'; params:
+ * {generation, pages}} | {action: 'translate'; params: {language}}` — and it
+ * would be better typing for exactly one caller and worse for every other
+ * reader of a step. A union on `action` makes `LedgerStep` a union, which makes
+ * `LedgerStep[]` a union array, which makes every function that does not care
+ * about params at all (staleness, the subtree, the chronological list, the
+ * delete confirm) narrow a discriminant to reach a field it never touches.
+ *
+ * SO THE ACTION-SPECIFICITY IS ENFORCED WHERE IT MATTERS INSTEAD: `parseLedger`
+ * refuses a params field the action has no use for, BY NAME — a read that
+ * carries a `language` is a step something wrote wrong, and it is refused
+ * rather than typed out of existence. Which field belongs to which action is
+ * `PARAMS_OF` in shared/ledger.ts, one table, checked on read.
+ *
+ * EVERY FIELD IS OPTIONAL, and that is not laziness either. A project migrated
+ * from a catalogue that predates all of this has a reading whose generation
+ * nobody wrote down and a translation whose language is only visible in a
+ * filename. Requiring the fields would force the migration to invent them, and
+ * a migration that writes fiction into somebody's project is worse than one
+ * that admits what the old catalogue did not say.
+ */
+export interface LedgerParams {
+  /**
+   * `read`, `curate` — which pass over the pages this is about.
+   *
+   * See `ProjectReading.generation`. A re-read mints a new one, which is
+   * precisely why it is EXCLUDED from the re-run comparison: two readings of
+   * one book are the same question asked twice, and comparing the answers'
+   * generations would make every re-read a new branch — the rule inverted.
+   */
+  generation?: string;
+  /** `read` — page answers in the bank when it completed. */
+  pages?: number;
+  /** `curate` — how many decisions the snapshot froze. For the row's sentence. */
+  amendments?: number;
+  /** `translate` — the language translated INTO, as the dialog named it. */
+  language?: string;
+}
+
+/**
+ * One retained payload, and what it was made from.
+ *
+ * THE PARENT IS THE WHOLE DESIGN. Photoshop's history truncates: act from an
+ * earlier state and everything after it is gone. This one appends — a step
+ * records which step it was made FROM, so translating from the reading a second
+ * time adds a second translation rather than erasing the first. Structurally
+ * that is a tree; the UI draws it as a flat chronological list with one quiet
+ * "from …" annotation where the chain jumps, and that annotation is the entire
+ * concession to the tree.
+ */
+export interface LedgerStep {
+  /** Unique within this project's ledger, and never reused after a delete. */
+  id: string;
+  /** The step this was made from. Null for the origin, and only the origin. */
+  parent: string | null;
+  action: StepAction;
+  /**
+   * PROJECT-RELATIVE, forward slashes: `archive/Book.pdf`, `readings/<key>.jsonl`,
+   * `curations/<uuid>.json`. Never absolute, never a basename.
+   *
+   * The house rule about never matching files by basename across directories is
+   * why: a project holds several files of one name in different layers, and a
+   * path that had lost its layer would let a delete take the wrong one.
+   */
+  payload: string;
+  params?: LedgerParams;
+  /**
+   * What it would cost to get this payload back. See `ProjectStep.retention`.
+   *
+   * A FUNCTION OF THE ACTION, and written down anyway. The sweep and the delete
+   * confirm ask this question without knowing the action vocabulary, and one
+   * answer recorded by the code that knew beats the same rule re-derived at
+   * four call sites. `parseLedger` refuses a row whose retention disagrees with
+   * its action — a stored file calling a reading `regenerable` would be a file
+   * authorising a sweep to delete hours of GPU.
+   */
+  retention: StepRetention;
+  createdAt: number;
+  /**
+   * What the row says, in the app's own voice: "Read (17 pages)", "Saved
+   * corrections (23)", "Translated (Hungarian)". Never a filename.
+   */
+  label: string;
+  /**
+   * Set when an ancestor's payload was replaced by a re-run.
+   *
+   * A DISPLAY STATE AND NOT A DELETION. A translation made from a reading that
+   * has since been replaced still has its own bank, and that bank is still a
+   * true record of what was translated — so the row stays clickable, dimmed,
+   * with the reason on hover. Absent is the ordinary state; the field is only
+   * ever written as `true`.
+   */
+  stale?: boolean;
+}
+
+/**
+ * A project's steps and the pointer standing in them.
+ *
+ * ORDER IS PART OF THE VALUE. `steps` is in creation order and `parseLedger`
+ * refuses a file where it is not, because that order IS the chronological list
+ * the UI draws and the thing "the row immediately above" means.
+ */
+export interface ProjectLedger {
+  /**
+   * Which step the user is standing on. ABSENT MEANS THE NEWEST, which is the
+   * state a project spends nearly all its life in — a pointer written on every
+   * append would be a manifest rewritten for a fact already implied by the
+   * array.
+   */
+  position?: string;
+  steps: LedgerStep[];
+}
+
+/**
+ * One row of the Steps accordion: the step, and the one word about its parent.
+ *
+ * `from` IS NULL FOR ALMOST EVERY ROW and that is the design working. It is
+ * only set when the step's parent is not the row immediately above it — the
+ * moment somebody stepped back and acted from an earlier state — so a project
+ * that was worked straight through draws as a plain list with no annotations at
+ * all, and the one book where somebody branched shows exactly where.
+ */
+export interface StepRow {
+  step: LedgerStep;
+  /** The parent's label, when the chain jumps. Null when it does not. */
+  from: string | null;
 }
