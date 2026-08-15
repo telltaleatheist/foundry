@@ -84,6 +84,7 @@ import {
   type ProjectInventory,
   isManaged,
   listProjects,
+  noteProjectTitle,
   projectsDir,
   promoteStrandedReprints,
   recordFinal,
@@ -467,11 +468,26 @@ async function openDocument(candidate: string): Promise<string | null> {
    * document IS open and readable, and what has been lost is a folder to put its
    * conversions in — which the next conversion would make anyway.
    */
-  void importDocument(resolved, kind).then((imported) => {
+  void importDocument(resolved, kind).then(async (imported) => {
     // A stamping refusal is a NOTICE, not a failure, and this call is the
     // background one — the tab's own `epub:open` import carries the same
     // sentence to the notice strip, where somebody will read it.
     if (imported.notice !== null) console.warn(`[projects] ${imported.notice}`);
+    /*
+     * The PDF's own idea of its title, noted the way a cast EPUB's `dc:title`
+     * is when it is first opened (epub-reader.ts) — because for a project that
+     * is only ever a PDF, this import is the ONLY moment anything asks. Behind
+     * the same not-awaited import, for the same reason: it is a spawn, and a
+     * display name is not worth making a drop feel missed over. Scans mostly
+     * answer with nothing, and nothing is noted — the row keeps its spoken
+     * stem until a conversion produces a book that knows its own name.
+     */
+    if (kind === 'pdf') {
+      const meta = await readPdfMetadata(resolved);
+      if (meta.ok && meta.metadata.kind === 'pdf' && meta.metadata.fields.title !== null) {
+        await noteProjectTitle(imported.dir, meta.metadata.fields.title);
+      }
+    }
   }).catch((err: Error) => {
     console.error(`[projects] ${resolved} could not be imported into a project: ${err.message}`);
   });

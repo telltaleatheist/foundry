@@ -102,6 +102,7 @@ import type {
   ProjectWorkingTree,
 } from '../shared/types';
 import { WHY_HANDMADE, WHY_IMPORTED, WHY_MODEL_PASS } from '../shared/types';
+import { spokenStem } from '../shared/documents';
 import { STEP_LABELS, migrateToSteps, readTypeRecords } from '../shared/steps';
 import { GENERATED_ROLE_FOR } from '../shared/documents';
 
@@ -295,9 +296,17 @@ export async function readManifest(dir: string): Promise<ProjectManifest> {
     throw new ProjectError(`${file} is not an object, so it is not a project catalogue.`);
   }
   const row = parsed as Record<string, unknown>;
-  if (row['version'] !== MANIFEST_VERSION) {
+  /*
+   * VERSION 1 IS ADMITTED, NOT JUST VERSION 2. The migration lives two screens
+   * down (`readDocuments` builds type records from a v1 file's flat lists), and
+   * this gate once refused v1 before that code could run — which locked the
+   * user's own library behind "catalogue unreadable" while the function built
+   * to open it sat unreachable below. The gate's job is to refuse shapes this
+   * app does NOT know, and it knows exactly two.
+   */
+  if (row['version'] !== MANIFEST_VERSION && row['version'] !== 1) {
     throw new ProjectError(
-      `${file} is version ${String(row['version'])} and this app writes version ${MANIFEST_VERSION}. `
+      `${file} is version ${String(row['version'])} and this app reads versions 1 and ${MANIFEST_VERSION}. `
       + 'Refusing to read a catalogue whose shape it does not know.',
     );
   }
@@ -308,11 +317,19 @@ export async function readManifest(dir: string): Promise<ProjectManifest> {
   const working = typeof row['working'] === 'object' && row['working'] !== null
     ? row['working'] as Record<string, unknown>
     : {};
+  const stem = typeof row['stem'] === 'string' && row['stem'].length > 0 ? row['stem'] : key;
+  const title = typeof row['title'] === 'string' && row['title'].length > 0 ? row['title'] : stem;
   return {
     version: MANIFEST_VERSION,
     key,
-    title: typeof row['title'] === 'string' && row['title'].length > 0 ? row['title'] : key,
-    stem: typeof row['stem'] === 'string' && row['stem'].length > 0 ? row['stem'] : key,
+    /*
+     * A title that still IS the stem is a title nothing ever chose — imports
+     * write the stem as a placeholder and `noteProjectTitle` replaces it the
+     * first time a real one is seen. Only the placeholder is said aloud
+     * (`spokenStem`); a chosen title, even a strange one, is repeated exactly.
+     */
+    title: title === stem ? spokenStem(stem) : title,
+    stem,
     createdAt: typeof row['createdAt'] === 'number' ? row['createdAt'] : 0,
     archive: readArchive(row['archive']),
     documents: readDocuments(row, readArchive(row['archive'])),

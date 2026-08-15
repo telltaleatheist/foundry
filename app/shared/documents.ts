@@ -67,6 +67,21 @@ export function qualify(label: string, kind: ProjectDocument['kind'] | null, fol
 }
 
 /**
+ * A filename stem said aloud: the dashes and underscores become spaces.
+ *
+ * `Working-Towards-The-Fuhrer.-Kershaw-Ian.-1993` is a STEM — a string built to
+ * survive filesystems, not to be read — and Home was printing it as the name of
+ * a book. This is only the fallback voice: a project whose real title has been
+ * seen (`dc:title` from a cast EPUB, the PDF's own metadata at import) keeps
+ * that title untouched, and this never runs on it. The dots stay, because
+ * `Kershaw Ian. 1993` still reads as a citation while `Kershaw Ian 1993`
+ * reads as three loose words.
+ */
+export function spokenStem(stem: string): string {
+  return stem.replace(/[-_]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+}
+
+/**
  * The one sentence for "this run would read and write the same file".
  *
  * MAIN REFUSES AND THE RENDERER WARNS, and they say the same thing because they
