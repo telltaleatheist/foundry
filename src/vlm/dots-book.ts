@@ -122,7 +122,7 @@ import {
   type VlmNavItem,
   type VlmResource,
 } from './epub.js';
-import { chapterStarts, emptyOverlay, type Overlay } from './overlay.js';
+import { chapterStarts, emptyOverlay, noteStruck, type Overlay } from './overlay.js';
 import { packageVlmText, type VlmOutputFormat } from './text-out.js';
 import {
   bodyTypeSize,
@@ -1462,6 +1462,23 @@ export interface DotsChapterOptions {
    * has the whole book to compare against; a chapter has one chapter.
    */
   sizes?: ReadonlyMap<DotsBlock, string>;
+  /**
+   * The curation, for the ONE decision that could not be applied at the parse:
+   * a struck NOTE.
+   *
+   * Everything else a person decided is already in these blocks — `applyOverlay`
+   * ran in `convert.ts`, so a struck block never reached this function and a
+   * reclassified one arrives wearing its new category. A note is the exception
+   * and structurally so: one banked Footnote answer becomes several notes only
+   * when `splitNotes` cuts it up, three lines below, so at the parse there was
+   * no such thing as note 3 to decide anything about. `noteStruck` reads the
+   * `note` targets here, where the aside is being written and the ordinal is in
+   * hand.
+   *
+   * Absent for every caller that has no curation, which renders exactly as it
+   * always did.
+   */
+  overlay?: Overlay;
 }
 
 export interface DotsChapterBody {
@@ -1495,6 +1512,8 @@ interface ChapterNote {
   text: string;
   printed: number | null;
   seq: number;
+  /** Which note of `block` this is, counted from 0 — see `FlowNote.ordinal`. */
+  ordinal: number;
   /** The id of the FIRST prose marker that linked here — where the backlink aims. */
   refId: string | null;
 }
@@ -1542,6 +1561,7 @@ export function buildChapterBody(
     text: note.text,
     printed: note.printed,
     seq: opts.firstNote + index,
+    ordinal: note.ordinal,
     refId: null,
   }));
 
@@ -1805,9 +1825,42 @@ export function buildChapterBody(
         : note.refId !== null
           ? `<a class="fn-back" epub:type="backlink" role="doc-backlink" href="#${note.refId}"><sup>${printed}</sup></a> `
           : `<sup>${printed}</sup> `;
+      /*
+       * `data-bf-note` — WHICH NOTE OF ITS BLOCK THIS IS, and the reason it has
+       * to be written down is `data-bf-src`'s reason one paragraph over.
+       *
+       * The `src` beside it names the banked answer these words came from, and
+       * five asides can carry the SAME ONE: a page printing five notes under a
+       * rule is one box in the model's answer, and `splitNotes` is what makes
+       * five elements out of it. So `src` alone cannot say which note the reader
+       * pointed at, and the app striking a footnote on the flowing page had a
+       * choice between recording a decision that removed all five and recording
+       * nothing. It recorded nothing, and said so.
+       *
+       * This is the missing half. The ordinal is `splitNotes`' own index —
+       * deterministic from the same bank, unchanged by a re-cast — and it is
+       * what an overlay's `note` target points at, so a cut made here comes back
+       * as a decision keyed exactly the way the emitter named it.
+       *
+       * ON EVERY ASIDE AND NOT ONLY THE SPLIT ONES. A block that yielded one
+       * note writes `data-bf-note="0"`, which costs eleven bytes and means the
+       * app never has to decide whether a missing attribute is "one note" or "a
+       * book cast before this existed" — a question with two answers and no way
+       * to tell them apart.
+       *
+       * AND THE CUT MARK, when a person struck this note. It is the same
+       * `data-bf-cut="1"` a struck block wears in the working tree, painted
+       * struck through by select mode, brought back by Delete, and removed from
+       * the edition by `foundry epub-final` — marks, not removal, because a note
+       * that vanished here would renumber every note after it behind the person
+       * who struck one.
+       */
+      const cut = opts.overlay !== undefined && noteStruck(opts.overlay, note.block, note.ordinal);
       out.push(
         `<aside class="footnote" epub:type="footnote" role="doc-footnote" id="fn${note.seq}"`
-        + `${sized(note.block)}${stamp(note.block, sourceOfBlock(note.block))}>${number}${inline(rest)}</aside>`,
+        + `${sized(note.block)}${stamp(note.block, sourceOfBlock(note.block))}`
+        + ` data-bf-note="${note.ordinal}"${cut ? ' data-bf-cut="1"' : ''}>`
+        + `${number}${inline(rest)}</aside>`,
       );
     }
     out.push('</section>');
@@ -2150,6 +2203,24 @@ export interface FlowNote {
   text: string;
   /** The number the BOOK printed on it, or null when it printed none. */
   printed: number | null;
+  /**
+   * WHICH NOTE OF ITS OWN BLOCK THIS IS, counted from 0 — the note's identity,
+   * as a decision spells it.
+   *
+   * `splitNotes` cuts one banked Footnote answer into as many notes as the page
+   * printed under its rule, so `source` alone names all of them and nothing
+   * outside this function could tell the third from the fourth. This index is
+   * that name: it is deterministic from the same bank (the split is a pure
+   * function of the block's text), it is stable across a re-cast, and it is what
+   * `data-bf-note` writes into the book and what an overlay's `note` target
+   * points at.
+   *
+   * NOT `printed`, deliberately. The number on the paper can be missing
+   * altogether, restarts wherever the printer restarted it, and is stripped
+   * outright under `--strip-note-markers`. It is what a READER uses to find a
+   * note and it is useless as a name.
+   */
+  ordinal: number;
 }
 
 /**
@@ -2510,9 +2581,21 @@ export function collectNotes(blocks: readonly FlowBlock[]): FlowNote[] {
   const notes: FlowNote[] = [];
   for (const block of blocks) {
     if (block.category !== 'Footnote') continue;
-    for (const text of splitNotes(block.text)) {
+    /*
+     * THE ORDINAL IS THE SPLIT'S OWN INDEX, which is why it is taken here and
+     * nowhere else. This is the one implementation of the split (the header
+     * above says why it must stay that way), so it is the one place that can
+     * answer "which note of its block is this" — and every reader of a note,
+     * the emitter included, gets the same answer without recomputing it.
+     */
+    for (const [ordinal, text] of splitNotes(block.text).entries()) {
       const lead = LEADING_SUPERSCRIPT.exec(text);
-      notes.push({ source: block.source, text, printed: lead ? printedNumber(lead[0]) : null });
+      notes.push({
+        source: block.source,
+        text,
+        printed: lead ? printedNumber(lead[0]) : null,
+        ordinal,
+      });
     }
   }
   return notes;
@@ -2733,6 +2816,11 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
       split,
       openers: openingHeadings(span, kind),
       ...(typography !== null ? { sizes: typography.sizes } : {}),
+      // The strikes and the categories were applied at the parse; what is left
+      // for the emitter is the one decision that could not be — a struck NOTE,
+      // which had no existence until `splitNotes` ran. See
+      // `DotsChapterOptions.overlay`.
+      ...(opts.overlay !== undefined ? { overlay: opts.overlay } : {}),
     });
     notes += body.notes;
     crops.push(...body.crops);

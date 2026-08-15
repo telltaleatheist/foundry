@@ -2059,12 +2059,19 @@ export interface OverlayFileWire {
   overlay: number;
   generation: string;
   amendments: {
-    at: { page: number; order: number; part?: number };
+    /**
+     * `note` names one note of a Footnote block — the ordinal `splitNotes`
+     * gives it, stamped on the aside as `data-bf-note`. A note target may
+     * carry ONLY `strike`; both readers refuse `category`/`text` on it by
+     * name, because the bank holds one answer for the whole block and a
+     * per-note category would be a decision with nowhere to live.
+     */
+    at: { page: number; order: number; part?: number; note?: number };
     strike?: boolean;
     category?: string;
     text?: string;
   }[];
-  /** Absent means the engine decides. See `OverlayFile.chapters`. */
+  /** Absent means the engine decides. See `OverlayFile.chapters`. A chapter never names a note. */
   chapters?: { at: { page: number; order: number; part?: number }; title: string }[];
   /**
    * A phantom, carried across the wire for the reason `OverlayFile.frozen`

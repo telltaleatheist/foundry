@@ -9,18 +9,19 @@ import {
   amendOverlay,
   chaptersText,
   chaptersOfText,
-  compareTargets,
   decisionFor,
   decisionsOf,
   parseSourceKeys,
   parseTargetKey,
   setChapters,
+  targetKey,
   type CurationContent,
   type FrozenCuration,
   type OverlayChapter,
   type OverlayDecision,
   type OverlayField,
   type OverlayFile,
+  type OverlayTarget,
 } from '@shared/overlay';
 import type {
   EpubBook,
@@ -3023,7 +3024,7 @@ export class TabsService {
   async addChapter(tabId: string, target: string, title: string): Promise<void> {
     const at = parseTargetKey(target);
     const { chapters } = this.chaptersFor(tabId);
-    if (chapters.some((one) => compareTargets(one.at, at) === 0)) {
+    if (chapters.some((one) => atSameBlock(one.at, at))) {
       this.notice.set('A chapter already starts at that block.');
       return;
     }
@@ -3038,7 +3039,7 @@ export class TabsService {
   async removeChapter(tabId: string, target: string): Promise<void> {
     const at = parseTargetKey(target);
     const { chapters } = this.chaptersFor(tabId);
-    const going = chapters.find((one) => compareTargets(one.at, at) === 0);
+    const going = chapters.find((one) => atSameBlock(one.at, at));
     if (going === undefined) return;
     await this.writeChapters(
       tabId,
@@ -3051,7 +3052,7 @@ export class TabsService {
     const at = parseTargetKey(target);
     const { chapters } = this.chaptersFor(tabId);
     const named = title.trim();
-    const current = chapters.find((one) => compareTargets(one.at, at) === 0);
+    const current = chapters.find((one) => atSameBlock(one.at, at));
     if (current === undefined || named.length === 0 || named === current.title) return;
     await this.writeChapters(
       tabId,
@@ -3616,6 +3617,19 @@ export class TabsService {
         return true;
       }
       if (answer === 'keep') continue;
+      /*
+       * THE FIFTH DOOR, and it opened for the reason the fourth one did. Striking
+       * a note is a decision in the live curation now (`mirrorNoteCut` below), so
+       * standing on a save it would be the same silent rewrite of a frozen copy
+       * that `heldByASave` refuses everywhere else — and refused BEFORE the
+       * chapter is touched, so the book and the curation cannot end up saying
+       * different things.
+       *
+       * The other two answers are untouched: leaving the note writes nothing at
+       * all, and putting the reference number back is an undo of the edit that
+       * prompted the question, which a save does not lock.
+       */
+      if (this.refusedByASave(id)) continue;
       const done = await this.blockEdit(
         id,
         (b, book, member) => b.epub.setNoteCut(book, member, note.noteId, true),
@@ -3640,6 +3654,22 @@ export class TabsService {
       // and painting a strike over a footnote main then refused to mark would
       // be a lie with nothing on screen to correct it.
       if (done !== null) this.commandFrame(id, { type: 'foundry:mark-note', noteId: note.noteId, cut: true });
+      /*
+       * AND THE STRIKE, RECORDED AS A DECISION — the half that did not exist
+       * until the note dimension did.
+       *
+       * `done === true` is main saying the mark actually moved; false is a note
+       * that already carried it, which is not a decision this gesture made and
+       * gets no row and no amendment. LAST, and after the paint, for the reason
+       * every mirror in this file is last: the only thing it can say is that the
+       * decision could not be recorded, and that sentence must not be written
+       * over by anything reporting the success the user already saw.
+       */
+      if (done === true) {
+        const current = this.byId(id);
+        const href = current === null ? null : current.chapterHref;
+        if (href !== null) await this.mirrorNoteCut(id, memberOf(href), note.noteId, 'true');
+      }
     }
     return false;
   }
@@ -3759,10 +3789,20 @@ export class TabsService {
      * not record what the user has already watched happen, and that sentence
      * outranks "relabelled 30 blocks".
      *
-     * A move to Chapter Openings records nothing (`bankCategory` answers null and
-     * says why): the spine is a list with titles in it, not a category, and this
-     * gesture carries no title. The book still divides where the user said.
+     * ── AND IT FORKS, because two of these are not the same kind of statement ──
+     *
+     * Ten categories are the model's own answers and become amendments. The
+     * eleventh — Chapter Openings — is a fact about the BOOK, and it goes into the
+     * spine with the block's own words as its name (`mirrorChapterMarks`). Only
+     * the blocks whose relabel actually crosses that line are handed over: main
+     * answers with each block's previous label, so a paragraph that was never a
+     * chapter and is not becoming one has nothing to say about where the book
+     * divides and does not make this door read a file.
      */
+    const marks = changed
+      .filter((one) => category === CHAPTER_CATEGORY || one.was === CHAPTER_CATEGORY)
+      .map((one) => ({ id: one.id, mark: category === CHAPTER_CATEGORY }));
+    if (marks.length > 0) await this.mirrorChapterEdit(id, marks);
     const banked = this.bankCategory(category);
     if (banked === null) return;
     await this.mirrorBlockEdit(id, 'category', changed.map((one) => ({ id: one.id, value: banked })));
@@ -3910,17 +3950,24 @@ export class TabsService {
   // not become two Ctrl+Zs), and it says nothing at all when it cannot be made.
 
   /**
-   * `data-bf-id` -> `data-bf-src` for one chapter, off the working tree.
+   * What one chapter of the working tree says about its own blocks — their
+   * provenance, their note ordinals and their words.
    *
    * ── Why the file and not the frame's message ────────────────────────────────
    *
-   * The reporter now carries a `src` beside every id it posts, and that is the
-   * frame saying what the user pointed at. It cannot be the source of truth here,
-   * for one plain reason: AN UNDO SENDS NO MESSAGE. A Ctrl+Z replays rows that
-   * name blocks by id and nothing else — the gesture that made them may have been
+   * The reporter carries a `src` beside every id it posts, and that is the frame
+   * saying what the user pointed at. It cannot be the source of truth here, for
+   * one plain reason: AN UNDO SENDS NO MESSAGE. A Ctrl+Z replays rows that name
+   * blocks by id and nothing else — the gesture that made them may have been
    * yesterday, in a window that no longer exists — and the mirror has to un-write
    * exactly what the gesture wrote or the curation drifts away from the book by
    * one strike at a time. The chapter file answers both, so both ask it.
+   *
+   * IT IS ALSO WHY THE TITLE OF A CHAPTER MARKER IS READ FROM HERE. A relabel to
+   * Chapter Openings names the block with the block's own words, and undoing the
+   * relabel that took such a marker away has to put those words back — with no
+   * message to carry them and no room in a ledger row to hold them. The file has
+   * them, and the file is already open.
    *
    * CACHED PER CHAPTER, because ids and provenance do not move while a book is
    * open: a cut writes an attribute, an edit writes words, and neither renames
@@ -3928,17 +3975,22 @@ export class TabsService {
    * keystroke. Keyed by book AND member, so a chapter change or a re-cast (a new
    * unpack, a new book id) reads again rather than answering from a document that
    * is no longer on screen.
+   *
+   * A WORD EDIT DOES MOVE the text this holds, and that is the one staleness it
+   * accepts: a marker made from a block whose words were corrected in the same
+   * session is named with the words as this chapter was last read. The Chapters
+   * section renames it, which is what it is for, and the next cast reads again.
    */
-  private readonly blockSources = new Map<string, ReadonlyMap<string, string>>();
+  private readonly chapterFacts = new Map<string, ChapterProvenance>();
 
-  private async sourcesOf(bookId: string, member: string): Promise<ReadonlyMap<string, string>> {
+  private async provenanceOf(bookId: string, member: string): Promise<ChapterProvenance> {
     const key = `${bookId}|${member}`;
-    const held = this.blockSources.get(key);
+    const held = this.chapterFacts.get(key);
     if (held !== undefined) return held;
-    if (!api) return new Map();
+    if (!api) return EMPTY_PROVENANCE;
     try {
-      const found = sourceKeysIn(await api.epub.readMember(bookId, member));
-      this.blockSources.set(key, found);
+      const found = provenanceIn(await api.epub.readMember(bookId, member));
+      this.chapterFacts.set(key, found);
       return found;
     } catch {
       /*
@@ -3949,15 +4001,24 @@ export class TabsService {
        * a sentence about this app's bookkeeping in the strip where refusals go.
        * Nothing is cached, so the next gesture asks again.
        */
-      return new Map();
+      return EMPTY_PROVENANCE;
     }
   }
 
   /** Everything read off one book's chapters, dropped with the book. */
   private forgetSources(bookId: string): void {
-    for (const key of [...this.blockSources.keys()]) {
-      if (key.startsWith(`${bookId}|`)) this.blockSources.delete(key);
+    for (const key of [...this.chapterFacts.keys()]) {
+      if (key.startsWith(`${bookId}|`)) this.chapterFacts.delete(key);
     }
+    /*
+     * AND THE DETECTED SPINES, all of them, because a book going away is the
+     * moment the detection could have changed underneath one. A re-read renumbers
+     * every block on every page, and a seed remembered from before it would put a
+     * person's first chapter marker into a list describing a book that no longer
+     * exists. Throwing the lot costs one question of main the next time a marker
+     * is made, and only for a project that has still never stated a spine.
+     */
+    this.detectedSpines.clear();
   }
 
   /**
@@ -3977,6 +4038,232 @@ export class TabsService {
     if (tab === null || tab.chapterHref === null) return;
     await this.mirrorToCuration(tabId, memberOf(tab.chapterHref), field, moves);
   }
+
+  /** The spine's half of the same lockstep, for the chapter that is on screen. */
+  private async mirrorChapterEdit(
+    tabId: string,
+    marks: readonly { id: string; mark: boolean }[],
+  ): Promise<void> {
+    const tab = this.byId(tabId);
+    if (tab === null || tab.chapterHref === null) return;
+    await this.mirrorChapterMarks(tabId, memberOf(tab.chapterHref), marks);
+  }
+
+  /**
+   * A FOOTNOTE STRUCK BY THE DIALOG, recorded as a decision about that one note.
+   *
+   * ── Why this needs a door of its own ────────────────────────────────────────
+   *
+   * Every other strike in the book arrives naming a `data-bf-id`, because that is
+   * what select mode addresses. This one does not and cannot: the gesture is the
+   * answer to "you deleted this footnote's last reference — should the footnote
+   * go too?", and the only name in hand at that moment is the note's OWN id
+   * (`fn25`), read out of the `href` the edit removed. Main's setter is addressed
+   * the same way, and so is the undo row it writes, so the mirror has to be able
+   * to start from that name too.
+   *
+   * The chapter file answers it. The emitter writes `id="fn25"` and
+   * `data-bf-note` on the same start tag, so one scan of the member gives both
+   * indexes and this is the second of them — the note dialog's name resolved to
+   * the note dimension's target, and from there it is an ordinary strike through
+   * the ordinary door.
+   *
+   * A BOOK CAST BEFORE PROVENANCE IS SKIPPED IN SILENCE, exactly as
+   * `mirrorToCuration` skips one: the note is struck in the working copy, the
+   * user watched it happen, there is no block in the bank this app can honestly
+   * name, and the next cast repairs it.
+   */
+  private async mirrorNoteCut(
+    tabId: string,
+    member: string,
+    noteId: string,
+    value: string,
+  ): Promise<void> {
+    const tab = this.byId(tabId);
+    if (!api || tab === null || tab.kind !== 'epub' || tab.book === null) return;
+    if (this.projectDirOf(tab) === null) return;
+    const sources = await this.provenanceOf(tab.book.id, member);
+    const found = sources.byNote.get(noteId);
+    if (found === undefined || found.note === null) return;
+    const at = parseSourceKeys(found.src)[0];
+    if (at === undefined) return;
+    await this.amendCuration(tabId, 'strike', [{ at: { ...at, note: found.note }, value }]);
+  }
+
+  /**
+   * "THE BOOK DIVIDES HERE" — a relabel to Chapter Openings, written into the
+   * spine instead of into a category.
+   *
+   * ── The fork, and why the gesture had nowhere to go before it ───────────────
+   *
+   * Ten of the eleven categories a block can be relabelled to are the model's own
+   * answers, and a relabel to one of them is an amendment: the bank says Text,
+   * the person says Footnote, and `bankCategory` translates the book's spelling
+   * into the bank's. The eleventh is foundry's. `chapter` is not something a
+   * block IS — dots has no such answer — it is a statement about the BOOK, and
+   * the overlay holds it in a list of its own with a title beside each entry
+   * (`CurationContent.chapters`). So the relabel had no amendment to write and
+   * wrote nothing: the working tree divided where the user said, and the next
+   * cast put the chapter back where the detection wanted it.
+   *
+   * THE TITLE WAS NEVER MISSING. It is the block. A heading relabelled "chapter
+   * opening" is a heading, and its own words are what the contents should call
+   * the section it opens — which is exactly what the scan's own
+   * "Chapter starts here" seeds a marker with, and exactly what the detection
+   * proposes. Machine proposes, user owns: the Chapters section renames it
+   * afterwards when the printed heading is not the name.
+   *
+   * AND RELABELLING IT AWAY TAKES THE MARKER OUT, which is why this door handles
+   * both directions rather than only the interesting one. A person who marked a
+   * paragraph by mistake corrects it by relabelling it back, and a spine that
+   * kept the entry would divide the book at a paragraph nothing on screen calls a
+   * chapter.
+   *
+   * ── What an undo of a removal puts back ─────────────────────────────────────
+   *
+   * The block's words, not the name the marker carried. A ledger row for a
+   * relabel holds two category names and has no room for a title, and there is no
+   * second row to add — one gesture must not become two Ctrl+Zs. So an undo
+   * re-proposes what the gesture itself proposed, which is right for every marker
+   * nobody renamed and loses a rename in the one sequence that can produce it:
+   * mark it here, rename it in the scan's Chapters section, unmark it here, undo.
+   * The row is renameable again the moment it is back.
+   */
+  private async mirrorChapterMarks(
+    tabId: string,
+    member: string,
+    marks: readonly { id: string; mark: boolean }[],
+  ): Promise<void> {
+    const tab = this.byId(tabId);
+    if (!api || tab === null || tab.kind !== 'epub' || tab.book === null) return;
+    if (this.projectDirOf(tab) === null || marks.length === 0) return;
+
+    const sources = await this.provenanceOf(tab.book.id, member);
+    if (sources.byBlock.size === 0) return;
+
+    let file: OverlayFile;
+    try {
+      file = (await api.overlay.load(tab.path)).file as OverlayFile;
+    } catch (err) {
+      this.notice.set(
+        `That change is in your book, but where it divides could not be recorded: ${
+          err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+
+    const seeded = await this.spineOf(tab, file);
+    if (seeded === null) return;
+    const chapters = [...seeded];
+    let touched = 0;
+    for (const one of marks) {
+      const found = sources.byBlock.get(one.id);
+      if (found === undefined) continue;
+      /*
+       * THE FIRST SOURCE PART, and for a heading it is the only one. A block is
+       * joined out of several banked answers only when a paragraph broke over a
+       * page turn, and where such a paragraph is marked as a chapter opening the
+       * book divides in front of the words that OPENED it — the second half of a
+       * paragraph is not a place a chapter starts.
+       */
+      const at = parseSourceKeys(found.src)[0];
+      if (at === undefined) continue;
+      const already = chapters.findIndex((row) => atSameBlock(row.at, at));
+      if (one.mark) {
+        if (already >= 0) continue;
+        // Capped like the scan's own seeding gesture: a contents entry is a line
+        // somebody reads in a list, and a paragraph relabelled by mistake must
+        // not put four hundred words in the navigation.
+        const title = found.text.slice(0, 120);
+        chapters.push({ at, title: title.length > 0 ? title : `Chapter at ${targetKey(at)}` });
+      } else {
+        if (already < 0) continue;
+        chapters.splice(already, 1);
+      }
+      touched += 1;
+    }
+    if (touched === 0) return;
+
+    let next: OverlayFile;
+    try {
+      next = setChapters(file, chapters);
+    } catch (err) {
+      this.notice.set(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    const refused = await this.putOverlay(tabId, next);
+    if (refused !== null) {
+      this.notice.set(
+        `That change is in your book, but where it divides could not be recorded: ${refused}`,
+      );
+      return;
+    }
+    this.repaintCurations(tab);
+  }
+
+  /**
+   * The spine this project holds, seeded from the detection when nobody has
+   * touched it — the book's side of `chaptersFor`.
+   *
+   * ── Why the seed cannot be skipped ──────────────────────────────────────────
+   *
+   * An overlay with no `chapters` field means "the engine works the chapters
+   * out", which is the state every scan arrives in and where most books stay.
+   * Writing one marker into that state would not ADD a chapter — it would state
+   * the whole spine, superseding the detection entirely, and a book that divided
+   * in forty places would come back divided in one. The scan's Chapters section
+   * has always avoided that by seeding the list with the detection's own answer
+   * before the first edit (`chaptersFor`), and this is the same rule for the same
+   * file from the other pane: one behaviour, two surfaces.
+   *
+   * IT COSTS ONE QUESTION OF MAIN, ONCE. The detection is the engine's, so the
+   * answer comes from `overlay:blocks` — the same door the block editor opens
+   * when a scan's outlines are drawn. It is asked only while the field is absent,
+   * which is at most once per project: the first marker writes the list, and from
+   * then on the file answers.
+   *
+   * A REFUSAL IS SAID OUT LOUD AND NOTHING IS WRITTEN. This is the one place in
+   * the mirror where silence would be destructive rather than merely quiet — a
+   * spine written without its seed is forty chapters deleted — so a project whose
+   * detection cannot be read keeps its chapters and the user is told the marker
+   * did not land.
+   */
+  private async spineOf(tab: Tab, file: OverlayFile): Promise<readonly OverlayChapter[] | null> {
+    if (file.chapters !== undefined) return file.chapters;
+    const dir = this.projectDirOf(tab);
+    if (!api || dir === null) return null;
+    const key = fold(dir);
+    const held = this.detectedSpines.get(key);
+    if (held !== undefined) return held;
+    const answer = await api.overlay.blocks(tab.path).catch(
+      (err: unknown) => ({ ok: false as const, reason: err instanceof Error ? err.message : String(err) }),
+    );
+    if (!answer.ok) {
+      // NAMED, because this one is destructive to guess at. Nothing has been
+      // written: the marker is in the book and not in the curation, and the
+      // sentence says why rather than leaving a gesture that quietly half
+      // happened.
+      this.notice.set(
+        'That change is in your book, but where it divides could not be recorded: nothing here yet '
+        + `knows the chapters this book already has, and stating one on its own would throw the rest `
+        + `of them away. ${answer.reason}`,
+      );
+      return null;
+    }
+    const seeded = seedChapters(answer.chapters);
+    this.detectedSpines.set(key, seeded);
+    return seeded;
+  }
+
+  /**
+   * The engine's own chapter detection, per project — asked at most once, and
+   * only while nobody has stated a spine.
+   *
+   * Not dropped with a tab: it is a fact about a bank, it does not change while
+   * the bank does not, and the one gesture that reads it stops needing it the
+   * moment it succeeds.
+   */
+  private readonly detectedSpines = new Map<string, readonly OverlayChapter[]>();
 
   /**
    * Standing on a save, a gesture on the CAST BOOK is refused too — the same
@@ -4047,20 +4334,73 @@ export class TabsService {
     if (this.projectDirOf(tab) === null) return;
     if (moves.length === 0) return;
 
-    const sources = await this.sourcesOf(tab.book.id, member);
-    if (sources.size === 0) return;
+    const sources = await this.provenanceOf(tab.book.id, member);
+    if (sources.byBlock.size === 0) return;
 
+    const edits: { at: OverlayTarget; value: string }[] = [];
+    for (const move of moves) {
+      const found = sources.byBlock.get(move.id);
+      if (found === undefined) continue;
+      /*
+       * A STRUCK ASIDE IS ONE NOTE STRUCK, NOT ITS WHOLE BLOCK — the note
+       * dimension's first job, and the correction of a wrong the previous unit
+       * shipped knowingly.
+       *
+       * A page that printed five notes under one rule is ONE banked Footnote
+       * answer, so pressing Delete on the third `<aside>` used to write
+       * `strike: true` against the block all five came out of: one gesture, four
+       * notes nobody decided anything about gone from every future cast, and
+       * nothing on screen to say so. The emitter names the note now
+       * (`data-bf-note`) and the overlay can hold it (`OverlayTarget.note`), so
+       * the decision is written where the user pointed.
+       *
+       * ONLY THE STRIKE FORKS. A relabel of an aside — say, a run of endnotes
+       * the model called footnotes and a person calls body text — stays a
+       * statement about the whole banked answer, because that is what a category
+       * IS: the five notes are five pieces of one thing the model read, and there
+       * is no per-note category for the bank to hold. The overlay refuses one by
+       * name (`refuseUnlessBlock`), which is the same rule said in the file.
+       *
+       * THE FIRST SOURCE AND NOT ALL OF THEM. A Footnote block is never joined
+       * across a page turn — only prose is — so an aside's `src` names exactly
+       * one answer and the loop below would run once anyway. Taking the first is
+       * what makes that explicit instead of accidental: an ordinal that belongs
+       * to one block cannot be spread over two.
+       */
+      if (field === 'strike' && found.note !== null) {
+        const at = parseSourceKeys(found.src)[0];
+        if (at !== undefined) edits.push({ at: { ...at, note: found.note }, value: move.value });
+        continue;
+      }
+      for (const at of parseSourceKeys(found.src)) edits.push({ at, value: move.value });
+    }
+    await this.amendCuration(tabId, field, edits);
+  }
+
+  /**
+   * The write itself: read the curation fresh, fold every edit into it, write it
+   * once.
+   *
+   * ── Read fresh, always ──────────────────────────────────────────────────────
+   *
+   * Unlike the provenance read, nothing here can be retried by the next
+   * keystroke — a read that failed is a decision that is lost — so this failure
+   * is said out loud. And it is READ rather than held: the scan's block editor
+   * keeps the curation in memory and writes it whole, so if this side wrote from
+   * a copy of its own, two panes of one project would take turns erasing each
+   * other's corrections.
+   */
+  private async amendCuration(
+    tabId: string,
+    field: OverlayField,
+    edits: readonly { at: OverlayTarget; value: string }[],
+  ): Promise<void> {
+    const tab = this.byId(tabId);
+    if (!api || tab === null || edits.length === 0) return;
     let file: OverlayFile;
     try {
       file = (await api.overlay.load(tab.path)).file as OverlayFile;
     } catch (err) {
-      // READ FRESH ON EVERY GESTURE, and this is the failure that has to be said
-      // out loud: unlike the provenance read above, nothing here can be retried
-      // by the next keystroke — the decision is lost. The scan's block editor
-      // holds the curation in memory and writes it whole; if this side wrote from
-      // a copy of its own, two panes of one project would take turns erasing each
-      // other's corrections. So it is read, amended and written, and a read that
-      // failed is a correction that did not happen.
       this.notice.set(
         `That change is in your book, but it could not be recorded as a decision: ${
           err instanceof Error ? err.message : String(err)}`,
@@ -4079,18 +4419,20 @@ export class TabsService {
     let decisions = decisionsOf(file);
 
     let touched = 0;
-    for (const move of moves) {
-      const src = sources.get(move.id);
-      if (src === undefined) continue;
-      for (const at of parseSourceKeys(src)) {
-        const before = fieldValue(decisionFor(decisions, at.page, at.order, at.part ?? 0), field);
-        // Already saying this: not a change, and not a write. The same rule
-        // `amendBlocks` follows over a scan.
-        if (before === move.value) continue;
-        file = amendOverlay(file, at, field, move.value);
-        decisions = decisionsOf(file);
-        touched += 1;
-      }
+    for (const edit of edits) {
+      // Already saying this: not a change, and not a write. The same rule
+      // `amendBlocks` follows over a scan. A block target reads through
+      // `decisionFor`, which puts the part-specific amendment over the
+      // element-wide one; a note target has no such pair — an amendment about
+      // note 3 is the only thing that can be about note 3 — so it is asked of its
+      // own key and nothing else.
+      const stated = edit.at.note === undefined
+        ? fieldValue(decisionFor(decisions, edit.at.page, edit.at.order, edit.at.part ?? 0), field)
+        : fieldValue(decisions.get(targetKey(edit.at)), field);
+      if (stated === edit.value) continue;
+      file = amendOverlay(file, edit.at, field, edit.value);
+      decisions = decisionsOf(file);
+      touched += 1;
     }
     if (touched === 0) return;
 
@@ -4145,12 +4487,12 @@ export class TabsService {
    * bank is never edited. The table is derived from the one list rather than
    * written out, so the two cannot drift.
    *
-   * `chapter` IS NOT IN IT, and that is the one relabel this mirror cannot make.
-   * "The book divides here" is not a category on a scan at all — it is the
-   * overlay's `chapters` list, which carries a TITLE for the contents, and
-   * nothing in a relabel gesture supplies one. So a heading moved into or out of
-   * Chapter Openings changes the book and is not recorded as a decision; the
-   * spine is its own op and owns its own gesture (docs/DERIVED-BOOK.md §3).
+   * `chapter` IS NOT IN IT, and the null it answers is the FORK rather than a
+   * dead end. "The book divides here" is not a category on a scan at all — it is
+   * the overlay's `chapters` list, which carries a title for the contents — so a
+   * relabel into or out of Chapter Openings goes to `mirrorChapterMarks` instead
+   * of becoming an amendment, with the block's own words as the name. This
+   * function's job is only to say which of the two a category is.
    */
   private bankCategory(id: string): string | null {
     return BANK_CATEGORY_OF[id] ?? null;
@@ -4534,8 +4876,14 @@ export class TabsService {
      * few lines above. Only an action that CARRIES one of those rows is refused:
      * a word edit and a renamed heading are the book's markup and nothing else's,
      * and freezing a curation was never a reason to stop typing.
+     *
+     * `note-cut` JOINED THEM when the overlay learned to name one note of a
+     * block. It was the third field this list could safely leave out, because
+     * nothing mirrored it in either direction; it is a decision in the same file
+     * now, so taking it back meets the same door.
      */
-    if (action.rows.some((row) => row.field === 'cut' || row.field === 'category')) {
+    if (action.rows.some((row) =>
+      row.field === 'cut' || row.field === 'category' || row.field === 'note-cut')) {
       const heldBook = this.heldByASave(tab.id);
       if (heldBook !== null) {
         this.notice.set(heldBook);
@@ -4561,6 +4909,10 @@ export class TabsService {
     const labelled = new Map<string, string[]>();
     /** The decisions this replay owes the curation, by field. See the loop. */
     const mirrored = new Map<OverlayField, { id: string; member: string; value: string }[]>();
+    /** The struck footnotes it owes, which are named by the note's own id. */
+    const noteCuts: { noteId: string; member: string; value: string }[] = [];
+    /** And the spine entries, which are not amendments at all. */
+    const chapterMarks: { id: string; member: string; mark: boolean }[] = [];
     // A contents entry put back is a row in the sidebar, which is drawn from
     // `book.chapters` and not from the file — so undoing the write without this
     // would leave the panel showing a label the navigation document no longer
@@ -4604,17 +4956,34 @@ export class TabsService {
        * on screen, and written after the loop so forty rows are one read of each
        * chapter and one write of the curation.
        *
-       * `note-cut` IS NOT IN HERE, and it is not an oversight: it names a
-       * footnote by its own id inside a block, and a curation has no word for one
-       * note of a Footnote answer. See `setNoteCut`'s own path — nothing mirrors
-       * it in either direction, so nothing has to be taken back.
+       * `note-cut` IS IN HERE NOW, and its absence used to be honest rather than
+       * an oversight: it names a footnote by its own id, and a curation had no
+       * word for one note of a Footnote answer, so there was nothing to take
+       * back. The overlay has the word (`OverlayTarget.note`), the emitter writes
+       * the name (`data-bf-note`), and the row's target resolves through the
+       * chapter file exactly as the gesture's did — so an undo of a struck
+       * footnote un-strikes the decision too.
+       *
+       * `chapters` is the fourth bucket and the odd one, because a relabel to or
+       * from Chapter Openings is not an amendment at all: it is an entry in the
+       * spine, and putting it back means the block's own words again. See
+       * `mirrorChapterMarks` for what that costs a marker somebody renamed.
        */
       if (row.field === 'cut') {
         bucket(mirrored, 'strike').push({ id: row.target, member: row.member, value: value === '1' ? 'true' : '' });
+      } else if (row.field === 'note-cut') {
+        noteCuts.push({ noteId: row.target, member: row.member, value: value === '1' ? 'true' : '' });
       } else if (row.field === 'category') {
         const banked = this.bankCategory(value);
         if (banked !== null) {
           bucket(mirrored, 'category').push({ id: row.target, member: row.member, value: banked });
+        }
+        // The row's other side: undoing a relabel INTO Chapter Openings has to
+        // take the marker out, and undoing one OUT of it has to put one back, so
+        // both directions are read off the pair rather than off the value alone.
+        const other = direction === 'undo' ? row.after : row.before;
+        if (value === CHAPTER_CATEGORY || other === CHAPTER_CATEGORY) {
+          chapterMarks.push({ id: row.target, member: row.member, mark: value === CHAPTER_CATEGORY });
         }
       }
       if (row.field === 'cut' || row.field === 'note-cut') bucket(cutIds, value === '1').push(row.target);
@@ -4678,6 +5047,22 @@ export class TabsService {
           moves.filter((one) => one.member === member),
         );
       }
+    }
+    // A note at a time, because each is one amendment about one note and there is
+    // no batch behind them: the dialog asks once per orphaned footnote, so an
+    // action holds one of these or two, never forty.
+    for (const one of noteCuts) {
+      await this.mirrorNoteCut(tab.id, one.member, one.noteId, one.value);
+    }
+    // The spine last of all, grouped per member like the amendments: it is one
+    // list for the whole book, so a batch that touched two chapters is still one
+    // read and one write of the curation per chapter it names.
+    for (const member of new Set(chapterMarks.map((one) => one.member))) {
+      await this.mirrorChapterMarks(
+        tab.id,
+        member,
+        chapterMarks.filter((one) => one.member === member),
+      );
     }
   }
 
@@ -5402,37 +5787,142 @@ const OVERLAY_FIELD_OF: Readonly<Record<string, OverlayField>> = {
 };
 
 /**
- * Every `data-bf-id` in a chapter, with the `data-bf-src` on the same element.
+ * What a cast book says about ONE stamped element, read off its start tag (and,
+ * for `text`, off what stands between its tags).
+ */
+interface BlockProvenance {
+  /** `data-bf-src` verbatim — the banked answers this element's words came from. */
+  src: string;
+  /**
+   * `data-bf-note` — which note of its Footnote block this aside is, counted
+   * from 0. Null for every element that is not a note, which is nearly all of
+   * them, and null too for an aside in a book cast before the emitter wrote it.
+   */
+  note: number | null;
+  /**
+   * The element's own words, tags stripped and whitespace collapsed — what a
+   * chapter marker made from this block is CALLED.
+   *
+   * Read here because it is read from the same file in the same pass, and
+   * because the alternative is worse: the frame could send the text with the
+   * gesture, but an undo sends no message at all and would then have no title to
+   * put back. See `mirrorChapterMarks`.
+   */
+  text: string;
+}
+
+/** One chapter's stamped elements, indexed the two ways the mirror asks for them. */
+interface ChapterProvenance {
+  /** By `data-bf-id` — the name every write in select mode uses. */
+  byBlock: ReadonlyMap<string, BlockProvenance>;
+  /**
+   * By the element's OWN id (`fn25`) — the name a footnote is addressed by once
+   * the reference that pointed at it has been deleted, which is the only name
+   * the note dialog and its undo rows ever have.
+   */
+  byNote: ReadonlyMap<string, BlockProvenance>;
+}
+
+const EMPTY_PROVENANCE: ChapterProvenance = { byBlock: new Map(), byNote: new Map() };
+
+/**
+ * Every stamped element in a chapter, with what the book says about it.
  *
  * ── Read off the START TAGS and nothing else ────────────────────────────────
  *
  * A chapter of a cast book is XHTML this program wrote, and what is wanted from
- * it is two attributes on the same tag. Parsing it as a document would mean
- * handing somebody's book to `DOMParser` on every keystroke of a held Delete;
- * scanning the start tags reads the two names where they were written, ignores
- * everything in between, and cannot be confused by the prose because a `<` in
- * text is `&lt;` in a file that parses as XML at all — which this one must,
- * since the reader renders it.
+ * it is a handful of attributes on the same tag. Parsing it as a document would
+ * mean handing somebody's book to `DOMParser` on every keystroke of a held
+ * Delete; scanning the start tags reads the names where they were written,
+ * ignores everything in between, and cannot be confused by the prose because a
+ * `<` in text is `&lt;` in a file that parses as XML at all — which this one
+ * must, since the reader renders it.
  *
- * ORDER-BLIND WITHIN THE TAG. The emitter writes page, category, id and src in
- * that order today, and `foundry epub-stamp` writes ids into books that were
- * never cast here at all. A scan that depended on the order would be a scan that
- * broke the day either of them changed a line.
+ * ORDER-BLIND WITHIN THE TAG. The emitter writes page, category, id, src and
+ * note in that order today, and `foundry epub-stamp` writes ids into books that
+ * were never cast here at all. A scan that depended on the order would be a scan
+ * that broke the day either of them changed a line.
  *
  * An element with an id and no src is simply absent from the answer: that is the
  * pre-provenance book, and `mirrorToCuration` treats "no entry" and "no
  * attribute" as the one state, which is what they are.
  */
-function sourceKeysIn(xhtml: string): Map<string, string> {
-  const found = new Map<string, string>();
-  for (const [tag] of xhtml.matchAll(/<[a-zA-Z][^>]*>/g)) {
-    const id = /\sdata-bf-id="([^"]*)"/.exec(tag);
-    if (id === null || id[1] === undefined || id[1].length === 0) continue;
+function provenanceIn(xhtml: string): ChapterProvenance {
+  const byBlock = new Map<string, BlockProvenance>();
+  const byNote = new Map<string, BlockProvenance>();
+  for (const match of xhtml.matchAll(/<([a-zA-Z][a-zA-Z0-9:-]*)\b[^>]*>/g)) {
+    const tag = match[0];
+    const name = match[1];
+    if (name === undefined || match.index === undefined) continue;
     const src = /\sdata-bf-src="([^"]*)"/.exec(tag);
     if (src === null || src[1] === undefined || src[1].length === 0) continue;
-    found.set(id[1], src[1]);
+    const blockId = /\sdata-bf-id="([^"]*)"/.exec(tag);
+    const noteId = /\sid="([^"]*)"/.exec(tag);
+    const ordinal = /\sdata-bf-note="(\d+)"/.exec(tag);
+    const record: BlockProvenance = {
+      src: src[1],
+      note: ordinal === null || ordinal[1] === undefined ? null : Number(ordinal[1]),
+      text: elementText(xhtml, name, match.index + tag.length, /\/\s*>$/.test(tag)),
+    };
+    if (blockId !== null && blockId[1] !== undefined && blockId[1].length > 0) {
+      byBlock.set(blockId[1], record);
+    }
+    // ONLY AN ASIDE THAT SAYS WHICH NOTE IT IS goes in the second index. Every
+    // element in a chapter has an `id` of some kind — a heading's anchor, a page
+    // marker's — and a note is the one addressed by it, so the ordinal is what
+    // separates the note index from a map of every anchor in the book.
+    if (record.note !== null && noteId !== null && noteId[1] !== undefined && noteId[1].length > 0) {
+      byNote.set(noteId[1], record);
+    }
   }
-  return found;
+  return { byBlock, byNote };
+}
+
+/**
+ * What one element SAYS — its markup from just past the start tag to its
+ * matching close, with the tags taken out and the whitespace collapsed.
+ *
+ * DEPTH-COUNTED OVER ITS OWN TAG NAME, which is all a well-formed XHTML document
+ * needs: a `<blockquote>` inside a `<blockquote>` must close before the outer
+ * one does, and nothing between them can close either. It is the same walk
+ * main's own surgery makes (`closeTagOffset`, electron/epub-reader.ts), written
+ * again here rather than imported because that module is main's and this file is
+ * the renderer's — and because what is wanted differs: main needs an offset to
+ * splice at, this needs the words.
+ *
+ * The entities are decoded by hand and only the five a book actually carries.
+ * This is a TITLE somebody will read in a contents, not a document being
+ * rebuilt, and `&amp;` standing in the middle of a chapter name is the only
+ * failure mode worth spending five lines to avoid.
+ */
+function elementText(xhtml: string, name: string, from: number, selfClosing: boolean): string {
+  if (selfClosing) return '';
+  const pattern = new RegExp(`</?${name}\\b[^>]*>`, 'gi');
+  pattern.lastIndex = from;
+  let depth = 1;
+  for (let match = pattern.exec(xhtml); match !== null; match = pattern.exec(xhtml)) {
+    if (match[0].startsWith('</')) {
+      depth -= 1;
+      if (depth === 0) return plainWords(xhtml.slice(from, match.index));
+    } else if (!/\/\s*>$/.test(match[0])) {
+      depth += 1;
+    }
+  }
+  // An element the file never closes. The book is malformed and the reader would
+  // have refused it; there is nothing here worth guessing at.
+  return '';
+}
+
+function plainWords(markup: string): string {
+  return markup
+    .replace(/<[^>]*>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&(?:apos|#39);/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /**
@@ -5442,8 +5932,23 @@ function sourceKeysIn(xhtml: string): Map<string, string> {
  * again: those ids ARE the overlay's categories (`OVERLAY_CATEGORIES`), spelled
  * as the model spells them, and a second hand-kept list is a translation waiting
  * to disagree with itself. `chapter` has no entry, which is the whole of why
- * `bankCategory` can answer null — see it for what that costs.
+ * `bankCategory` can answer null — and the null is the fork into the spine.
  */
+/**
+ * `data-bf-cat="chapter"` — the one label in a cast book that is not a category.
+ *
+ * It is BookForge's own, written by the emitter on the headings a section opens
+ * at (`CHAPTER_ATTRIBUTE`, src/vlm/dots-book.ts) and offered by the inspector's
+ * palette as "Chapter opening". dots has no such answer, the bank cannot hold
+ * one, and the relabel that writes it is a statement about the SPINE — which is
+ * why the mirror forks on this exact string and nothing else.
+ *
+ * Written out here rather than looked up: it is a value crossing a seam, and the
+ * comparison is against what the book says, not against what a table of the
+ * app's happens to contain today.
+ */
+const CHAPTER_CATEGORY = 'chapter';
+
 const BANK_CATEGORY_OF: Readonly<Record<string, string>> = Object.fromEntries(
   PDF_BLOCK_CATEGORIES.map((one) => [one.id.toLowerCase(), one.id]),
 );
@@ -5484,15 +5989,54 @@ function replayOverlayRow(file: OverlayFile, row: LedgerRow, value: string): Ove
  *
  * The seed, and it has to be EXACT: saving it back unchanged must render the
  * identical book, or the first thing somebody does after opening the chapter
- * accordion is silently change their own spine. So the part is carried when the
- * engine gave one and nothing is normalised, rounded or re-derived on the way
- * through.
+ * accordion is silently change their own spine.
+ *
+ * ── AND `part: 0` IS DROPPED, which is exactness rather than a departure ──────
+ *
+ * The engine's dump writes a part on every location because a block always has
+ * one, and 0 is what an answer nothing split carries. A chapter list resolves an
+ * absent part AS 0 (`chapterStarts`, src/vlm/overlay.ts), so the two spellings
+ * name the same block and render the same book — and only one of them is the
+ * spelling everything else in this app uses. `BlockElement.key` is `page:order`,
+ * one outline per answer element; `data-bf-src` omits the part wherever the
+ * markdown pass never cut the answer up. Seeding the OTHER spelling meant a
+ * detected chapter and the block under it could not be matched: the scan's
+ * "a chapter already starts at that block" never fired for one, and a marker
+ * made from the flowing book would have been ADDED beside it — two entries at
+ * one location, which the engine's own reader refuses by name and which would
+ * take the whole curation down at the next cast.
+ *
+ * A part that is not 0 is carried through untouched: that names one piece of a
+ * split answer and there is nothing to collapse.
  */
 function seedChapters(detected: readonly PdfDetectedChapter[]): OverlayChapter[] {
   return detected.map((one) => ({
-    at: { page: one.page, order: one.order, ...(one.part === undefined ? {} : { part: one.part }) },
+    at: {
+      page: one.page,
+      order: one.order,
+      ...(one.part === undefined || one.part === 0 ? {} : { part: one.part }),
+    },
     title: one.title,
   }));
+}
+
+/**
+ * Do these two locations name one block, as the ENGINE reads them?
+ *
+ * `compareTargets` cannot answer it, and the difference is not a detail. That
+ * function orders AMENDMENTS as well as chapters, and for an amendment a missing
+ * part means "every piece of this answer" — genuinely not the same target as
+ * "piece 0" — so it sorts the two apart, which is right there and wrong here. A
+ * chapter list has no such distinction: `chapterStarts` looks a location up as
+ * `page:order:(part ?? 0)`, so `30:1` and `30:1:0` are one block and a spine
+ * holding both is a spine the engine refuses.
+ *
+ * Used everywhere a chapter row is matched to a location, so that a list written
+ * by an older build — which seeded `part: 0` — still answers to the block the
+ * user is pointing at instead of quietly gaining a duplicate beside it.
+ */
+function atSameBlock(a: OverlayTarget, b: OverlayTarget): boolean {
+  return a.page === b.page && a.order === b.order && (a.part ?? 0) === (b.part ?? 0);
 }
 
 /**

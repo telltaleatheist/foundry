@@ -158,11 +158,12 @@ live decision set (today's overlay, generalized), snapshotted by a save:
 | op | notes |
 |---|---|
 | delete block / restore block | the strike, as today |
+| cut note / restore note | per-note, source-level: one note of a Footnote block, keyed `page:order[:part]#note` — landed 2026-08-15 (WORKBENCH §6b), because five notes can share one banked answer and a block-grained strike would take them all |
 | edit block text | source-level: invalidates that block's transform records (the source changed → re-asked) |
 | edit transformed text | per-record, per-language: fixing an awkward sentence in the Hungarian touches the Hungarian only |
 | set category | as today |
 | join blocks | the manual paragraph join across a seam (§2) |
-| set/move/remove chapter marker | the user owning the spine (§2) |
+| set/move/remove chapter marker | the user owning the spine (§2). The book-side gesture landed 2026-08-15: relabelling a block to "chapter opening" writes the marker with the block's own words as the title — the Chapters section renames it after, which is this row's "machine proposes, user owns" applied to a name |
 | nav label / heading text | document-level ops, same ledger |
 
 - Deletes, restores, categories, joins, chapters: **source-level, universal**

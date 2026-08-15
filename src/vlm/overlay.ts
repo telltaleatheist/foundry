@@ -73,6 +73,34 @@ export interface OverlayTarget {
   order: number;
   /** One sub-block of that element. Absent means every part of it. */
   part?: number;
+  /**
+   * ONE NOTE OF A FOOTNOTE BLOCK, counted from 0 within the block `splitNotes`
+   * cut it out of. Absent means the block itself, which is every target this
+   * schema held before the field existed.
+   *
+   * ── The one dimension a block name could not reach ─────────────────────────
+   *
+   * A page that prints five numbered notes under one rule is usually one box in
+   * the model's answer, and `splitNotes` (dots-book.ts) is what cuts it into the
+   * five `<aside>`s a reader gets. So five notes share one `(page, order)`, and
+   * "take out note 3" cannot be said with a block target — striking the block
+   * removes all five to remove one. This field is what makes that sayable, and
+   * the ordinal is the split's own index rather than the number the page printed
+   * because a printed number can be absent, can restart mid-chapter and is
+   * display, while the ordinal is a deterministic function of the same banked
+   * text every other component of a target is a function of.
+   *
+   * IT IS NOT READ AT THE PARSE, AND THAT IS STRUCTURAL. `applyOverlay` runs
+   * over the blocks as they came out of the answer, and at that moment the notes
+   * DO NOT EXIST — the split happens when the book is assembled. So `decide`
+   * ignores a note target entirely and `noteStruck` below is what reads it, at
+   * the one place a note is a thing: the emitter, writing the aside.
+   *
+   * A NOTE TARGET CARRIES `strike` AND NOTHING ELSE, refused by name in
+   * `readAmendment`. Its category and its words are facts about the whole banked
+   * answer, and the block already has a target that states them.
+   */
+  note?: number;
 }
 
 /**
@@ -186,7 +214,7 @@ export function emptyOverlay(): Overlay {
 
 /** The fields an amendment may carry, so an unknown one can be named. */
 const AMENDMENT_FIELDS = ['at', 'strike', 'category', 'text'] as const;
-const TARGET_FIELDS = ['page', 'order', 'part'] as const;
+const TARGET_FIELDS = ['page', 'order', 'part', 'note'] as const;
 const OVERLAY_FIELDS = ['overlay', 'generation', 'chapters', 'amendments'] as const;
 const CHAPTER_FIELDS = ['at', 'title'] as const;
 
@@ -314,6 +342,17 @@ function readChapters(entries: readonly unknown[], name: string): OverlayChapter
       }
     }
     const at = readTarget(record['at'], where);
+    // A BOOK DIVIDES AT A BLOCK. A note is one line of the apparatus, gathered
+    // to the end of the chapter the block it annotates sits in, and no edition
+    // opens a chapter on one. `chapterStarts` would find nothing for such a
+    // location and skip it in silence, which is the right answer for a block a
+    // run removed and the wrong one for a spine that was written nonsense.
+    if (at.note !== undefined) {
+      throw new VlmOverlayError(
+        `${where} starts at a note (page ${at.page}, order ${at.order}, note ${at.note}). A chapter `
+        + 'begins at a block; a footnote is not a place a book divides.',
+      );
+    }
     const title = record['title'];
     if (typeof title !== 'string' || title.length === 0) {
       throw new VlmOverlayError(
@@ -376,6 +415,7 @@ function readAmendment(entry: unknown, name: string, index: number): OverlayAmen
         + `renders. The categories are: ${CATEGORY_LIST}. Nothing here guesses what was meant.`,
       );
     }
+    refuseUnlessBlock(at, 'category', where);
     amendment.category = category as DotsCategory;
   }
   if ('text' in record) {
@@ -393,6 +433,7 @@ function readAmendment(entry: unknown, name: string, index: number): OverlayAmen
         + 'the run.',
       );
     }
+    refuseUnlessBlock(at, 'text', where);
     amendment.text = text;
   }
 
@@ -405,6 +446,30 @@ function readAmendment(entry: unknown, name: string, index: number): OverlayAmen
     );
   }
   return amendment;
+}
+
+/**
+ * A NOTE TARGET SAYS ONE THING AND IT IS `strike` — refused at the parse, in the
+ * same words the app's own reader uses (app/shared/overlay.ts).
+ *
+ * TWO READERS OF ONE FILE, and this is where they have to agree. The app writes
+ * the overlay and this program is handed it as `--overlay`; a field the writer
+ * accepted and the reader ignored would be a decision that shows on screen and
+ * is missing from the book, which is the failure the whole strictness of this
+ * module exists to make impossible.
+ *
+ * And the reason those two fields cannot mean anything against a note is
+ * `OverlayTarget.note`'s: the category and the words belong to the banked answer
+ * the split was made from, so a per-note override of either would either
+ * contradict its siblings or renumber them.
+ */
+function refuseUnlessBlock(at: OverlayTarget, field: string, where: string): void {
+  if (at.note === undefined) return;
+  throw new VlmOverlayError(
+    `${where} says "${field}" about note ${at.note} of page ${at.page}, order ${at.order}. A note `
+    + 'can be struck and nothing else — what it is called and what it says are facts about the whole '
+    + 'answer it was cut out of, and that block is nameable on its own.',
+  );
 }
 
 function readTarget(value: unknown, where: string): OverlayTarget {
@@ -428,6 +493,9 @@ function readTarget(value: unknown, where: string): OverlayTarget {
   const target: OverlayTarget = { page, order };
   if ('part' in record) {
     target.part = readCount(record['part'], `${where}'s "at".part`, 0);
+  }
+  if ('note' in record) {
+    target.note = readCount(record['note'], `${where}'s "at".note`, 0);
   }
   return target;
 }
@@ -504,12 +572,60 @@ function decide(overlay: Overlay, block: DotsBlock): Decision {
   const hits = indexOf(overlay).get(`${block.page}:${block.order}`);
   if (hits === undefined) return decision;
   for (const amendment of hits) {
+    /*
+     * AN AMENDMENT ABOUT ONE NOTE IS NOT AN AMENDMENT ABOUT THE BLOCK, and
+     * skipping it here is the load-bearing half of the note dimension. Its only
+     * field is `strike`, and a Footnote answer holding five notes with the third
+     * struck would otherwise lose ALL FIVE at the parse — the exact
+     * all-or-nothing this target was added to escape, arriving as a silent
+     * deletion of four notes nobody decided anything about. `noteStruck` is
+     * where these are read, at the emitter, which is the first moment a note is
+     * a thing that exists.
+     */
+    if (amendment.at.note !== undefined) continue;
     if (amendment.at.part !== undefined && amendment.at.part !== block.part) continue;
     if (amendment.strike !== undefined) decision.strike = amendment.strike;
     if (amendment.category !== undefined) decision.category = amendment.category;
     if (amendment.text !== undefined) decision.text = amendment.text;
   }
   return decision;
+}
+
+/**
+ * IS THIS NOTE STRUCK? — the one reader of the `note` dimension, asked once per
+ * `<aside>` as the book is written.
+ *
+ * ── Why it cannot be answered where every other decision is ─────────────────
+ *
+ * `applyOverlay` is the one place a curation is applied and it runs at the
+ * PARSE, over the blocks exactly as the model answered them. Notes do not exist
+ * there: one Footnote block becomes several notes only when `splitNotes` cuts it
+ * up, which happens while the chapter is being assembled, so the earliest moment
+ * "note 3 of this block" names anything is the moment the emitter is writing it
+ * down. That is the seam, and this function is what crosses it.
+ *
+ * WHAT A STRUCK NOTE GETS IS A MARK AND NOT A REMOVAL, which is the same
+ * treatment every cut in this program has: the aside is written into the book
+ * carrying `data-bf-cut="1"`, drawn struck through by the app, brought back by
+ * pressing Delete on it again, and taken out of the edition — with its reference
+ * markers demoted and its section dropped if it empties — by `foundry
+ * epub-final`, which already owns exactly that pass for blocks. A note deleted
+ * here instead would renumber every later note in the book behind the person who
+ * struck it, and would be the one cut in the program that could not be undone by
+ * the gesture that made it.
+ */
+export function noteStruck(overlay: Overlay, block: DotsBlock, ordinal: number): boolean {
+  const hits = indexOf(overlay).get(`${block.page}:${block.order}`);
+  if (hits === undefined) return false;
+  let struck = false;
+  for (const amendment of hits) {
+    if (amendment.at.note !== ordinal) continue;
+    if (amendment.at.part !== undefined && amendment.at.part !== block.part) continue;
+    // File order, last one wins — `decide`'s rule, for the same reason: an app
+    // that appends is allowed to, and the newest decision is the one that holds.
+    if (amendment.strike !== undefined) struck = amendment.strike;
+  }
+  return struck;
 }
 
 /**

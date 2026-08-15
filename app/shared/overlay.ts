@@ -113,6 +113,37 @@ export interface OverlayTarget {
   order: number;
   /** One sub-block of that element. Absent means every part of it. */
   part?: number;
+  /**
+   * ONE NOTE OF A FOOTNOTE BLOCK, counted from 0 within the block it was cut
+   * out of. Absent — which is every target this file has ever held until now —
+   * means the block itself.
+   *
+   * ── Why the smallest unit stopped being the block ──────────────────────────
+   *
+   * The engine cuts one banked Footnote answer into several notes wherever the
+   * page printed several under one rule (`splitNotes`, src/vlm/dots-book.ts):
+   * five superscript-numbered notes in one box are five `<aside>`s in the book
+   * and ONE `(page, order)` in the bank. So "strike note 3" was unsayable — the
+   * only thing this file could name was the block, and striking that takes all
+   * five out of the reader's book to remove one. That is what the footnote cut
+   * did before this field existed: nothing at all, because there was no honest
+   * decision to write.
+   *
+   * IT IS THE ORDINAL AND NOT THE PRINTED NUMBER. The number the page printed
+   * can be missing, can restart mid-chapter and is display; the ordinal is the
+   * note's index in `splitNotes`' output, which is a deterministic function of
+   * the same banked text every other name in this file is a function of. Same
+   * bank, same book, same ordinal.
+   *
+   * A NOTE TARGET CARRIES `strike` AND NOTHING ELSE, and that is enforced when
+   * the file is read rather than left as a convention — see `readAmendment`.
+   * A category is a statement about what the MODEL's answer is, and there is one
+   * answer behind all five notes; a text override replaces the block's words,
+   * and the split is made from those words, so correcting one note through this
+   * door would renumber the others. Both are decisions about the block, and the
+   * block already has a target.
+   */
+  note?: number;
 }
 
 /**
@@ -279,9 +310,35 @@ export function emptyOverlay(generation: string): OverlayFile {
  * key, and that is deliberate: a row in the undo file has to name a block in a
  * string, the inspector has to hold a set of them, and three different spellings
  * of one name is three places for them to stop agreeing.
+ *
+ * ── THE GRAMMAR, in full, because a fourth dimension has to be unambiguous ────
+ *
+ *   key   := page ":" order [ ":" part ] [ "#" note ]
+ *   page  := a whole number, 1 or more      (the PDF's own page)
+ *   order := a whole number, 0 or more      (the element's place in the answer)
+ *   part  := a whole number, 0 or more      (one piece of a split answer)
+ *   note  := a whole number, 0 or more      (one note of a Footnote block)
+ *
+ * So `7:14`, `7:14:1`, `7:14#2` and `7:14:1#2` are the four shapes, and every
+ * one of them names something different.
+ *
+ * `#` AND NOT A FOURTH COLON, and the reason is the `part`'s own default. A
+ * part-less target means the whole answer element and is the ordinary spelling
+ * — `stampSrc` writes it for every block the markdown pass never cut up — so
+ * `7:14:2` is already taken by "part 2 of element 14" and a colon-separated note
+ * would have to be `page:order:part:note` with the part always written out.
+ * That would give this file two spellings of one block, folding correctly and
+ * reading as two, which is exactly what the canonical writer exists to prevent.
+ * A separator that cannot be a number keeps the note dimension OPTIONAL AND
+ * ORTHOGONAL: strip everything from `#` and what is left is precisely the block
+ * key that was always there, which is what makes an old file parse today the way
+ * it parsed yesterday.
  */
 export function targetKey(at: OverlayTarget): string {
-  return at.part === undefined ? `${at.page}:${at.order}` : `${at.page}:${at.order}:${at.part}`;
+  const block = at.part === undefined
+    ? `${at.page}:${at.order}`
+    : `${at.page}:${at.order}:${at.part}`;
+  return at.note === undefined ? block : `${block}#${at.note}`;
 }
 
 /**
@@ -292,11 +349,20 @@ export function targetKey(at: OverlayTarget): string {
  * against a guessed block is the one outcome worth failing loudly for.
  */
 export function parseTargetKey(key: string): OverlayTarget {
-  const parts = key.split(':');
+  /*
+   * THE NOTE COMES OFF FIRST AND THE REST IS THE KEY THIS FUNCTION ALWAYS READ.
+   * Splitting at `#` before anything else is what makes the grammar's promise
+   * true in code: a string with no `#` in it takes exactly the path it took
+   * before the dimension existed, byte for byte, refusal for refusal.
+   */
+  const hash = key.indexOf('#');
+  const block = hash < 0 ? key : key.slice(0, hash);
+  const noted = hash < 0 ? null : key.slice(hash + 1);
+  const parts = block.split(':');
   if (parts.length < 2 || parts.length > 3) {
     throw new OverlayError(
       `"${key}" does not name a block. A block is "page:order", or "page:order:part" for one piece `
-      + 'of an answer element.',
+      + 'of an answer element, and either of those followed by "#n" for one note of it.',
     );
   }
   const numbers = parts.map((piece) => Number(piece));
@@ -308,6 +374,16 @@ export function parseTargetKey(key: string): OverlayTarget {
   }
   const target: OverlayTarget = { page: numbers[0]!, order: numbers[1]! };
   if (numbers.length === 3) target.part = numbers[2]!;
+  if (noted !== null) {
+    const note = Number(noted);
+    if (noted.length === 0 || !Number.isInteger(note) || note < 0) {
+      throw new OverlayError(
+        `"${key}" is not a note: what follows the "#" is "${noted}", and a note's ordinal within its `
+        + 'block is a whole number of 0 or more.',
+      );
+    }
+    target.note = note;
+  }
   return target;
 }
 
@@ -342,7 +418,17 @@ export function parseSourceKeys(value: string): OverlayTarget[] {
   for (const piece of value.split(/\s+/)) {
     if (piece.length === 0) continue;
     try {
-      targets.push(parseTargetKey(piece));
+      const target = parseTargetKey(piece);
+      /*
+       * A NOTE ORDINAL IS NEVER IN THIS ATTRIBUTE, so one arriving in it is not
+       * a block name and is left alone with everything else this function does
+       * not recognise. The book says which NOTE an element is in a second
+       * attribute (`data-bf-note`), deliberately: `data-bf-src` answers "which
+       * banked answers did these words come from", which is a question about
+       * the block, and every element of one block carries the same value —
+       * putting a per-element ordinal inside it would make that untrue.
+       */
+      if (target.note === undefined) targets.push(target);
     } catch {
       // Deliberately silent, and only here. See above: the book is data.
     }
@@ -357,7 +443,7 @@ export function parseSourceKeys(value: string): OverlayTarget[] {
 const OVERLAY_FIELDS = ['overlay', 'generation', 'amendments', 'chapters'] as const;
 const AMENDMENT_FIELDS = ['at', 'strike', 'category', 'text'] as const;
 const CHAPTER_FIELDS = ['at', 'title'] as const;
-const TARGET_FIELDS = ['page', 'order', 'part'] as const;
+const TARGET_FIELDS = ['page', 'order', 'part', 'note'] as const;
 
 /**
  * The text of an overlay → an overlay, or a refusal that names the amendment.
@@ -446,6 +532,17 @@ function readChapters(value: unknown, name: string): OverlayChapter[] {
       }
     }
     const at = readTarget(record['at'], where);
+    // A BOOK DIVIDES AT A BLOCK. A note is one line of the apparatus at the
+    // bottom of a page, gathered to the end of the chapter it belongs to, and
+    // there is no edition in which one opens a chapter — so a spine entry that
+    // named one is a writer that has confused the two dimensions, and the
+    // engine's `chapterStarts` would silently skip it.
+    if (at.note !== undefined) {
+      throw new OverlayError(
+        `${where} starts at ${targetKey(at)}, which names one note of a block. A chapter begins at a `
+        + 'block, not at a footnote.',
+      );
+    }
     const title = record['title'];
     if (typeof title !== 'string' || title.trim().length === 0) {
       throw new OverlayError(
@@ -495,6 +592,7 @@ function readAmendment(entry: unknown, name: string, index: number): OverlayAmen
         + `renders. The categories are: ${OVERLAY_CATEGORIES.join(', ')}`,
       );
     }
+    refuseUnlessBlock(amendment.at, 'category', where);
     amendment.category = category;
   }
   if ('text' in record) {
@@ -505,6 +603,7 @@ function readAmendment(entry: unknown, name: string, index: number): OverlayAmen
         + 'Removing a block is what "strike" is for; an empty override would be a strike no tally counts',
       );
     }
+    refuseUnlessBlock(amendment.at, 'text', where);
     amendment.text = value;
   }
 
@@ -515,6 +614,30 @@ function readAmendment(entry: unknown, name: string, index: number): OverlayAmen
     );
   }
   return amendment;
+}
+
+/**
+ * A NOTE TARGET SAYS ONE THING AND IT IS `strike` — refused here, at the parse,
+ * so that both processes agree without either of them remembering to check.
+ *
+ * The engine's reader makes the same refusal in the same words (src/vlm/overlay.ts),
+ * because this file crosses the seam: the app writes it and `--overlay` hands it
+ * to a conversion, and a field one side accepted and the other ignored would be a
+ * decision that renders in the app and not in the book. Refused rather than
+ * dropped for the reason nothing in this module is lenient — a `category` written
+ * against `7:14#2` is a curation somebody made that would quietly do nothing.
+ *
+ * WHY THOSE TWO FIELDS CANNOT MEAN ANYTHING HERE is `OverlayTarget.note`'s own
+ * comment: five notes share one banked answer, so its category and its words are
+ * facts about all five, and the block target already states them.
+ */
+function refuseUnlessBlock(at: OverlayTarget, field: string, where: string): void {
+  if (at.note === undefined) return;
+  throw new OverlayError(
+    `${where} says "${field}" about ${targetKey(at)}, which names one note of a block. A note can be `
+    + 'struck and nothing else: what it is called and what it says are facts about the whole answer '
+    + 'it was cut out of, and that block has a target of its own.',
+  );
 }
 
 function readTarget(value: unknown, where: string): OverlayTarget {
@@ -537,6 +660,7 @@ function readTarget(value: unknown, where: string): OverlayTarget {
     order: readCount(record['order'], `${where}'s "at".order`, 0),
   };
   if ('part' in record) target.part = readCount(record['part'], `${where}'s "at".part`, 0);
+  if ('note' in record) target.note = readCount(record['note'], `${where}'s "at".note`, 0);
   return target;
 }
 
@@ -645,6 +769,10 @@ export function amendOverlay(
   if (value.length === 0) delete decision[field];
   else if (field === 'strike') decision.strike = value === 'true' || value === '1';
   else if (field === 'category') {
+    // The writer's half of `refuseUnlessBlock`. The reader refuses such a file
+    // by name; this refuses it before it can be written, so the sentence names
+    // the gesture rather than turning up on the next load of somebody's book.
+    refuseUnlessBlock(target, 'category', 'This overlay');
     if (!isOverlayCategory(value)) {
       throw new OverlayError(
         `"${value}" is not a category anything renders. The categories are: `
@@ -652,7 +780,10 @@ export function amendOverlay(
       );
     }
     decision.category = value;
-  } else decision.text = value;
+  } else {
+    refuseUnlessBlock(target, 'text', 'This overlay');
+    decision.text = value;
+  }
 
   decisions.set(key, decision);
   return { ...file, amendments: amendmentsOf(decisions) };
@@ -723,9 +854,21 @@ export function chaptersOfText(text: string, where: string): OverlayChapter[] | 
   return readChapters(parsed, where);
 }
 
-/** Reading order: the page, then the model's own order, then the part. */
+/**
+ * Reading order: the page, then the model's own order, then the part, then the
+ * note.
+ *
+ * The note comes LAST and the block itself sorts before every note of it, which
+ * is where a footnote actually is in a book — the apparatus follows the prose it
+ * annotates. It matters only for the file's own stable order (`byBlock`); the
+ * spine refuses a note target outright, so no contents entry is ever compared on
+ * this component.
+ */
 export function compareTargets(a: OverlayTarget, b: OverlayTarget): number {
-  return a.page - b.page || a.order - b.order || (a.part ?? -1) - (b.part ?? -1);
+  return a.page - b.page
+    || a.order - b.order
+    || (a.part ?? -1) - (b.part ?? -1)
+    || (a.note ?? -1) - (b.note ?? -1);
 }
 
 /** The decision map back to a canonical amendment list. */
