@@ -72,12 +72,138 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
           <p class="frozen">{{ held.why }}</p>
         }
 
+        <!-- ── Steps ────────────────────────────────────────────────────── -->
+        <!--
+          THE RUNNING ORDER IS FIXED AND THIS IS THE TOP OF IT: Steps, then the
+          book's divisions (Contents for a cast book, Chapters for a scan — one
+          question asked of two kinds of document, so they share the one slot and
+          the slot does not move), then Category, then anything about a single
+          block. Sections that have nothing to say are still absent; what is fixed
+          is that a section never overtakes another one.
+
+          THE PANEL IS FURNITURE AND FURNITURE DOES NOT WALK. Almost everything
+          here is conditional, and when the order was "whatever the guards happen
+          to admit" the same section sat in a different place depending on what
+          was focused and whether a block was picked — so every glance began by
+          re-finding it. Steps is first because it is the section somebody reaches
+          for most while moving through their history, and because it is the one
+          that belongs to the PROJECT rather than to whatever pane is in front:
+          it is the most nearly always-present thing in the panel, which is what
+          makes it the only honest anchor. Keep new sections BELOW these three.
+        -->
+        <!--
+          A LIST AND NOT A TREE, deliberately, and the whole design turns on it.
+          The steps form a parent chain — every one records which step it was made
+          FROM — but nobody wants to reason about a graph of their book; they want
+          to see what they have done and click back to any of it. So the rows are
+          in the order main sends them, which is creation order, and the ONE
+          concession to the tree is the quiet "from Read" that main puts on a row
+          whose parent is not the row above it. No rails, no indentation, no depth.
+
+          NOTHING HERE IS RE-DERIVED. The order and the annotation both arrive
+          composed (\`chronological\`, shared/ledger.ts) precisely so this template
+          cannot become a second implementation of the one rule that decides
+          whether a flat list is misleading about what was made from what.
+        -->
+        @if (projectDir(); as dir) {
+          <section class="accordion" [class.shut]="!stepsOpen()">
+            <button class="head" (click)="stepsOpen.set(!stepsOpen())">
+              <span class="twist">{{ stepsOpen() ? '▾' : '▸' }}</span>
+              <span class="label">Steps</span>
+              <span class="count">{{ stepRows().length }}</span>
+            </button>
+            @if (stepsOpen()) {
+              <div class="body">
+                @if (stepsProblem(); as reason) {
+                  <!-- Main's own sentence about a catalogue it would not read,
+                       drawn where the rows would have been. A section that went
+                       silently empty would be indistinguishable from a book
+                       nothing has happened to. -->
+                  <p class="hint">{{ reason }}</p>
+                } @else {
+                  <p class="hint">
+                    Everything that has been done to this book. Click any step to stand there —
+                    it costs nothing, and nothing after it is thrown away.
+                  </p>
+                }
+
+                <ul>
+                  @for (row of stepRows(); track row.step.id) {
+                    <li
+                      class="step"
+                      [class.current]="row.step.id === standingId()"
+                      [class.stale]="row.step.stale === true"
+                    >
+                      <button class="pick step-pick" [title]="rowTitle(row)" (click)="stand(row)">
+                        <span class="dot"></span>
+                        <span class="what">
+                          <span class="name">{{ row.step.label }}</span>
+                          @if (row.from) {
+                            <!-- The entire concession to the tree. Only on the rows
+                                 where the flat list would otherwise be misleading. -->
+                            <span class="from">from {{ row.from }}</span>
+                          }
+                        </span>
+                        <span class="tally">{{ when(row.step) }}</span>
+                      </button>
+                      <!--
+                        NO ✕ ON THE ORIGIN. Deleting the import is deleting the
+                        project — everything else in the folder was made from it —
+                        and the project's own ✕ does that with its own ceremony and
+                        its own accounting of what it costs. Main refuses it by
+                        name as well; this is so nobody is offered the button.
+                      -->
+                      @if (row.step.parent !== null) {
+                        <button
+                          class="strike"
+                          title="Delete this step, and everything made from it"
+                          (click)="discard(dir, row)"
+                        >✕</button>
+                      }
+                    </li>
+                  }
+                  @if (stepRows().length === 0 && stepsProblem() === null) {
+                    <!-- Two states that look alike and are not: a book whose
+                         history has not arrived yet, and one that genuinely has
+                         none. Saying "nothing has happened to this book" while
+                         the answer is still in flight would be the panel
+                         asserting something it has not been told. -->
+                    <li class="none">
+                      {{ stepsRead() ? 'Nothing has been recorded for this book yet.' : 'Reading this book’s history…' }}
+                    </li>
+                  }
+                </ul>
+
+                <!--
+                  SAVE IS OFFERED WHERE THE STEP WILL APPEAR, which is most of what
+                  teaches what it does: press it and the row shows up two lines
+                  below. It is NOT disabled when there is nothing to freeze — main
+                  refuses that with a sentence saying what to correct first, and a
+                  dead button teaches nobody why it is dead.
+                -->
+                @if (canSave()) {
+                  <div class="acts">
+                    <button
+                      class="act"
+                      title="Keep a copy of these corrections that nothing later can change"
+                      (click)="saveCorrections()"
+                    >Save corrections</button>
+                  </div>
+                }
+              </div>
+            }
+          </section>
+        }
+
         <!--
           EVERYTHING THIS PANEL SAYS ABOUT THE DOCUMENT, which needs one. The
           sections below are about a book that is open and readable or a scan
-          being corrected; Steps, at the bottom, is about the PROJECT, and a scan
-          that has never been in block view has one of those and none of these.
-          The block closes at the brace marked "end of the document's sections".
+          being corrected; Steps, above, is about the PROJECT, and a scan that has
+          never been in block view has one of those and none of these. Which is
+          the whole reason Steps sits outside this block rather than inside it —
+          it must hold the top of the panel in states where nothing down here
+          draws at all. The block closes at the brace marked "end of the
+          document's sections", which is the last thing in the panel.
         -->
         @if (subject(); as panel) {
         <!-- ── Contents ─────────────────────────────────────────────────── -->
@@ -369,111 +495,6 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
           </section>
         }
         } <!-- end of the document's sections -->
-
-        <!-- ── Steps ────────────────────────────────────────────────────── -->
-        <!--
-          A LIST AND NOT A TREE, deliberately, and the whole design turns on it.
-          The steps form a parent chain — every one records which step it was made
-          FROM — but nobody wants to reason about a graph of their book; they want
-          to see what they have done and click back to any of it. So the rows are
-          in the order main sends them, which is creation order, and the ONE
-          concession to the tree is the quiet "from Read" that main puts on a row
-          whose parent is not the row above it. No rails, no indentation, no depth.
-
-          NOTHING HERE IS RE-DERIVED. The order and the annotation both arrive
-          composed (\`chronological\`, shared/ledger.ts) precisely so this template
-          cannot become a second implementation of the one rule that decides
-          whether a flat list is misleading about what was made from what.
-        -->
-        @if (projectDir(); as dir) {
-          <section class="accordion" [class.shut]="!stepsOpen()">
-            <button class="head" (click)="stepsOpen.set(!stepsOpen())">
-              <span class="twist">{{ stepsOpen() ? '▾' : '▸' }}</span>
-              <span class="label">Steps</span>
-              <span class="count">{{ stepRows().length }}</span>
-            </button>
-            @if (stepsOpen()) {
-              <div class="body">
-                @if (stepsProblem(); as reason) {
-                  <!-- Main's own sentence about a catalogue it would not read,
-                       drawn where the rows would have been. A section that went
-                       silently empty would be indistinguishable from a book
-                       nothing has happened to. -->
-                  <p class="hint">{{ reason }}</p>
-                } @else {
-                  <p class="hint">
-                    Everything that has been done to this book. Click any step to stand there —
-                    it costs nothing, and nothing after it is thrown away.
-                  </p>
-                }
-
-                <ul>
-                  @for (row of stepRows(); track row.step.id) {
-                    <li
-                      class="step"
-                      [class.current]="row.step.id === standingId()"
-                      [class.stale]="row.step.stale === true"
-                    >
-                      <button class="pick step-pick" [title]="rowTitle(row)" (click)="stand(row)">
-                        <span class="dot"></span>
-                        <span class="what">
-                          <span class="name">{{ row.step.label }}</span>
-                          @if (row.from) {
-                            <!-- The entire concession to the tree. Only on the rows
-                                 where the flat list would otherwise be misleading. -->
-                            <span class="from">from {{ row.from }}</span>
-                          }
-                        </span>
-                        <span class="tally">{{ when(row.step) }}</span>
-                      </button>
-                      <!--
-                        NO ✕ ON THE ORIGIN. Deleting the import is deleting the
-                        project — everything else in the folder was made from it —
-                        and the project's own ✕ does that with its own ceremony and
-                        its own accounting of what it costs. Main refuses it by
-                        name as well; this is so nobody is offered the button.
-                      -->
-                      @if (row.step.parent !== null) {
-                        <button
-                          class="strike"
-                          title="Delete this step, and everything made from it"
-                          (click)="discard(dir, row)"
-                        >✕</button>
-                      }
-                    </li>
-                  }
-                  @if (stepRows().length === 0 && stepsProblem() === null) {
-                    <!-- Two states that look alike and are not: a book whose
-                         history has not arrived yet, and one that genuinely has
-                         none. Saying "nothing has happened to this book" while
-                         the answer is still in flight would be the panel
-                         asserting something it has not been told. -->
-                    <li class="none">
-                      {{ stepsRead() ? 'Nothing has been recorded for this book yet.' : 'Reading this book’s history…' }}
-                    </li>
-                  }
-                </ul>
-
-                <!--
-                  SAVE IS OFFERED WHERE THE STEP WILL APPEAR, which is most of what
-                  teaches what it does: press it and the row shows up two lines
-                  below. It is NOT disabled when there is nothing to freeze — main
-                  refuses that with a sentence saying what to correct first, and a
-                  dead button teaches nobody why it is dead.
-                -->
-                @if (canSave()) {
-                  <div class="acts">
-                    <button
-                      class="act"
-                      title="Keep a copy of these corrections that nothing later can change"
-                      (click)="saveCorrections()"
-                    >Save corrections</button>
-                  </div>
-                }
-              </div>
-            }
-          </section>
-        }
       </div>
     }
   `,

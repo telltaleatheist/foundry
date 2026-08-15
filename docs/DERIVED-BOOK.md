@@ -337,8 +337,23 @@ benefits from C. E needs B+C+D. F is independent of everything after 0.
   the queue starting vLLM for every conversion, `--reuse-readings`
   degrading into a resume over an unmarked bank, and the app never checking
   for that marker outside the translate path.
+- **A gesture is satisfied, not explained** — user, 2026-08-15: *"i wanted
+  the document to show. instead of showing the document, it gave me an error
+  saying it couldnt show the document… it should be showing me document."*
+  Clicking a step row is an instruction to look at that step, so the app puts
+  the document on screen — opening it, or moving it into a column, if that is
+  what standing there requires. Telling the user to go and open it themselves
+  is the app asking them to do its job, and a sentence explaining why nothing
+  happened is worth less than the thing happening. A notice earns its place
+  only where the state is genuinely unshowable and the app cannot fix it;
+  "your book is not on screen" is never that, because the answer is to put it
+  on screen.
 - **Standing on a step SHOWS that step** — user, 2026-08-15: *"when i click
-  one of the steps, it should visually show me that step's results."*
+  one of the steps, it should visually show me that step's results."* And
+  what it shows is the step's own DOCUMENT — the scan at the import, the
+  reprint at the reading — not the same page with different decoration:
+  *"switching between steps doesnt switch between the original pdf and the
+  rendered facsimile like i expected."*
   `STEP-LEDGER.md` promised the pointer repaints the open panes and only the
   frozen-curation half was ever built, so a read row was inert. Phase B is
   what a read row eventually shows (the flowing base); the pointer driving
