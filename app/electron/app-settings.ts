@@ -19,6 +19,7 @@ import * as path from 'node:path';
 
 import { app } from 'electron';
 
+import { readJson } from '../shared/json';
 import type { EchoStanding, UnlinkedNoteStanding } from '../shared/types';
 
 export interface AppSettings {
@@ -111,7 +112,7 @@ function settingsFile(): string {
 /** Whatever the file holds, as an object; null when absent or unreadable. */
 function readRaw(): Record<string, unknown> | null {
   try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(settingsFile(), 'utf8'));
+    const parsed: unknown = readJson(fs.readFileSync(settingsFile(), 'utf8'));
     return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : null;

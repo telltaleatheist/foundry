@@ -185,6 +185,39 @@ function within(dir: string, filePath: string): boolean {
   return fold(filePath).startsWith(`${fold(dir).replace(/\/+$/, '')}/`);
 }
 
+/**
+ * Where each open book may be saved. See `epub:open` for the two ways in.
+ *
+ * AT MODULE SCOPE rather than inside `registerIpc`, because a grant now has to be
+ * REVOKED from outside the IPC surface: when a document opened from the user's
+ * own disk is relocated onto the project's copy of it, the grant that named their
+ * file has to go with it, or Save would go on writing to a path this app no
+ * longer claims to be showing. See `revokeSaveGrants`.
+ */
+const saveGrants = new Map<string, Set<string>>();
+const grantKey = (destination: string): string => path.resolve(destination).toLowerCase();
+
+/**
+ * Take back every grant naming this destination.
+ *
+ * ── THE APP NEVER SILENTLY WRITES OUTSIDE ITS LIBRARY ──────────────────────
+ *
+ * A book opened from somewhere else grants plain Save to THAT file, deliberately:
+ * it is a copy the user chose, and updating it is what they mean by Save. Then
+ * the import lands and the tab moves onto the project's copy — and the grant
+ * stayed behind, pointing at a path the tab no longer shows. Save would have
+ * repacked the working tree over the user's own EPUB while every label on screen
+ * said the document was the library's.
+ *
+ * So the grant is revoked at the move. The book keeps its edits, its tree and its
+ * history; what it loses is a silent write target, and Save As — main's own
+ * dialog, which grants what the user picks — is the door out.
+ */
+function revokeSaveGrants(destination: string): void {
+  const key = grantKey(destination);
+  for (const grants of saveGrants.values()) grants.delete(key);
+}
+
 function admitted(candidate: string): string | null {
   const resolved = path.resolve(candidate);
   return openable.has(resolved) ? resolved : null;
@@ -515,6 +548,11 @@ async function openDocument(candidate: string): Promise<string | null> {
        */
       forgetRecent(resolved);
       rememberRecent(working, kind, path.basename(working), true);
+      // And the write grant their own file carried goes with it. See
+      // `revokeSaveGrants`: the tab is about to stop showing that path, and a
+      // Save that still wrote to it would be this app editing a document it is
+      // no longer displaying.
+      revokeSaveGrants(resolved);
       for (const win of BrowserWindow.getAllWindows()) {
         win.webContents.send('document:relocated', { from: resolved, to: working });
       }
@@ -1390,7 +1428,7 @@ function registerIpc(): void {
     const { project, document } = await findDocument(filePath);
     const inventory = await inspectProject(project.dir);
 
-    if (isBook(project.documents, document.path)) {
+    if (isBook(project.documents, document.path, project.dir)) {
       // The original's delete IS the project's, so it owes the project's
       // refusals — including the open-book one this file's own delete does not.
       refuseProjectDelete(inventory);
@@ -1470,7 +1508,7 @@ function registerIpc(): void {
     // the question and the answer, and this is the call that unlinks something.
     refuseBusyJob(inventory);
 
-    if (isBook(project.documents, document.path)) {
+    if (isBook(project.documents, document.path, project.dir)) {
       throw new Error(
         `“${document.label}” is the original “${project.title}” is built on, so it cannot be `
         + 'deleted by itself — every other document in the folder was made from it. Delete the '
@@ -1498,8 +1536,6 @@ function registerIpc(): void {
    * Case-folded like recents' samePath: on Windows the same file arrives
    * spelled three ways.
    */
-  const saveGrants = new Map<string, Set<string>>();
-  const grantKey = (destination: string): string => path.resolve(destination).toLowerCase();
   const grantSave = (id: string, destination: string): void => {
     const grants = saveGrants.get(id) ?? new Set<string>();
     grants.add(grantKey(destination));
@@ -1763,10 +1799,37 @@ function registerIpc(): void {
   };
   ipcMain.handle('meta:read-pdf', (_event, filePath: string) =>
     readPdfMetadata(admittedPdf(filePath)));
+  /**
+   * The PDF a metadata WRITE may touch, which is not simply "one that is open".
+   *
+   * ── THE APP NEVER SILENTLY WRITES OUTSIDE ITS LIBRARY ──────────────────────
+   *
+   * `admitted` answers for anything the user has opened, INCLUDING their own
+   * file on their own disk — that is what it is for; it is a read gate. Handing
+   * that answer to `pdf-meta --out` meant that editing the title of a document
+   * in the window between opening it and the background import finishing (or in
+   * any case where the import failed and the tab never moved) re-emitted the
+   * user's own `E:\…` PDF through pdf-lib and renamed the result over it. A
+   * whole-document rewrite of a file this app was only ever asked to LOOK at.
+   *
+   * So a write resolves to the project's working copy or it does not happen. An
+   * unmanaged path is refused with the reason and with what to do about it,
+   * rather than being quietly redirected — a metadata dialog that reported
+   * success against a file the user was not looking at would be its own bug.
+   */
+  const writablePdf = (candidate: string): string => {
+    const resolved = admittedPdf(candidate);
+    if (isManaged(resolved)) return resolved;
+    throw new Error(
+      `"${resolved}" is your own file, outside Foundry's library, and this app does not write to `
+      + 'documents it did not make. Foundry keeps a copy of every document you open — open this '
+      + 'one from Home and edit that, and your original stays exactly as it is.',
+    );
+  };
   ipcMain.handle(
     'meta:write-pdf',
     (_event, filePath: string, patch: Record<string, string | undefined>) =>
-      writePdfMetadata(admittedPdf(filePath), patch),
+      writePdfMetadata(writablePdf(filePath), patch),
   );
 
   /*
@@ -1789,7 +1852,15 @@ function registerIpc(): void {
    */
   ipcMain.handle('overlay:blocks', async (_event, filePath: string) => {
     const pdf = admittedPdf(filePath);
-    return readPdfBlocks(pdf, (await locateOverlay(pdf)).readings);
+    const where = await locateOverlay(pdf);
+    /*
+     * THE ARCHIVED ORIGINAL, not the document the tab is showing. The engine
+     * needs a PDF only to re-measure a bank that recorded no render sizes, and
+     * measuring the WORKING copy would measure a real-text reprint — type on
+     * blank paper, the same page sizes, none of the ink the model was shown. The
+     * boxes would come back plausible and wrong. See `OverlayLocation.source`.
+     */
+    return readPdfBlocks(where.source ?? pdf, where.readings);
   });
   ipcMain.handle('overlay:load', (_event, filePath: string) =>
     loadOverlayFile(admittedPdf(filePath)));

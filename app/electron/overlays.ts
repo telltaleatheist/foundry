@@ -66,6 +66,7 @@ import {
   parseOverlay,
   type OverlayFile,
 } from '../shared/overlay';
+import { readJson } from '../shared/json';
 import type { LedgerAction, LedgerLoad, LedgerRow, LedgerStacks, OverlayLoad } from '../shared/types';
 
 /** The ledger schema this module writes and the only one it reads. */
@@ -97,6 +98,8 @@ export interface OverlayLocation {
    * key comes from the same catalogue.
    */
   readings: string;
+  /** The archived original the bank was read from, or null for a legacy project. */
+  source: string | null;
   generation: string;
   projectDir: string;
   key: string;
@@ -116,19 +119,64 @@ export interface OverlayLocation {
  * sentence says which.
  */
 export async function locateOverlay(pdfPath: string): Promise<OverlayLocation> {
+  /*
+   * TWO REFUSALS, BECAUSE THEY ARE TWO SITUATIONS AND ONE SENTENCE WAS WRONG FOR
+   * BOTH OF THEM.
+   *
+   * This said "Convert it first" for every path outside `projects/`, which is
+   * the answer to a question nobody had asked. A document outside the library is
+   * one the app has not imported — usually because the import is still running
+   * behind the tab that opened, occasionally because it failed — and telling
+   * that person to convert their book sends them to a dialog that will convert
+   * something they already have. What they need to know is that this file is not
+   * in the library yet.
+   *
+   * The other case is the real "not read yet", and it has its own door: the
+   * project exists, the bank does not, and the fix is one press of OCR.
+   */
   const projectDir = projectDirOf(pdfPath);
   if (projectDir === null) {
     throw new OverlayError(
-      `${pdfPath} is not in one of Foundry's projects, so there is no readings bank behind it and `
-      + 'no blocks to correct. Convert it first: the block editor works on what the model read.',
+      `${pdfPath} is not in Foundry's library, so there is nothing behind it to correct yet. `
+      + 'Foundry imports a document it opens from elsewhere and then works on its own copy — if '
+      + 'that has not happened, opening the file again from Home will land on the copy.',
     );
   }
-  const key = (await readManifest(projectDir)).key;
+  const manifest = await readManifest(projectDir);
+  const key = manifest.key;
+  const archived = manifest.archive?.kind === 'pdf' ? manifest.archive.file : null;
+  const readings = path.join(projectDir, 'readings', `${key}.jsonl`);
+  // The pages have not been read. Said as itself rather than as "convert it
+  // first": there is a project, there is a scan in it, and the one step between
+  // this person and a page full of outlined blocks is the one the dock is
+  // already lighting.
+  if (!await exists(readings)) {
+    throw new OverlayError(
+      `${path.basename(pdfPath)} has not been read yet, so there are no blocks to correct. `
+      + 'Press OCR to read its pages — everything else in Foundry is built on what that produces.',
+    );
+  }
   const folder = overlaysDir(projectDir);
   return {
     file: path.join(folder, `${key}.json`),
     ledger: path.join(folder, `${key}.ledger.json`),
-    readings: path.join(projectDir, 'readings', `${key}.jsonl`),
+    readings,
+    /**
+     * THE PDF THE BANK WAS READ FROM, which is not the one the tab is showing.
+     *
+     * `vlm-blocks` only needs a PDF for a bank written before runs recorded the
+     * size they rendered each page at — and then it measures every page again to
+     * put the boxes in a frame. Handed the WORKING PDF it would measure whatever
+     * that is now, and after a real-text rendering that document is type on
+     * blank paper: same page count, same sizes, none of the ink. The boxes would
+     * come back plausible and silently wrong, and the first thing anybody would
+     * do with them is strike a paragraph.
+     *
+     * `archive/` is written once at import and never again, so it is the one
+     * copy that is certainly the pages the model was shown. Null for a legacy
+     * project that has no archive, and then the caller passes what it has.
+     */
+    source: archived === null ? null : path.join(projectDir, 'archive', archived),
     generation: await readingGeneration(projectDir),
     projectDir,
     key,
@@ -393,7 +441,7 @@ function describe(count: number, noun: string): string {
 function parseLedger(text: string): { generation: string; done: LedgerAction[]; undone: LedgerAction[] } {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = readJson(text);
   } catch (err) {
     throw new OverlayError(`it is not JSON (${(err as Error).message})`);
   }

@@ -65,8 +65,17 @@ import type { ServerState, ServerStatus } from '../shared/types';
  */
 const PORT = 8000;
 
-/** The base URL the engine is handed. `/v1` is the OpenAI-compatible prefix. */
-const URL_BASE = `http://localhost:${PORT}/v1`;
+/**
+ * The base URL the engine is handed. `/v1` is the OpenAI-compatible prefix.
+ *
+ * EXPORTED because the installers write it into the engine's settings the moment
+ * the server they just built exists (`env-install.ts`, `backend-setup.ts`). It
+ * is the one place this address is composed, and two spellings of it would be
+ * two answers to "where is the reading server" — one in the file the engine
+ * reads, one in the process this app starts.
+ */
+export const VLLM_URL = `http://localhost:${PORT}/v1`;
+const URL_BASE = VLLM_URL;
 
 /** The document reader. dots.ocr is what foundry's registry expects to talk to. */
 const MODEL = 'rednote-hilab/dots.ocr';

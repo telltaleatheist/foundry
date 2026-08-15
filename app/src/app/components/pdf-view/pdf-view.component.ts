@@ -723,18 +723,31 @@ export class PdfViewComponent implements OnDestroy {
      *
      * `untracked` around the work, and it is not tidiness: opening WRITES the
      * signals it also reads (`doc`, `boxes`), so a tracked call would make the
-     * document it just loaded the reason to load it again, forever. The path is
-     * the only thing this effect is allowed to watch.
+     * document it just loaded the reason to load it again, forever. The source
+     * below is the only thing this effect is allowed to watch.
      *
      * WATCHED THROUGH A COMPUTED, and that part is load-bearing too: reading
      * `this.tab()` here would depend on the whole TAB, and every patch makes a
      * new tab object — so pressing "Thumbnails" or "Text layer" would re-read
      * the file from disk and throw the reader back to page one. The computed
-     * only fires when the string changes.
+     * only fires when what it names changes.
      */
-    const path = computed(() => this.tab().path);
+    /*
+     * WATCHED THROUGH A COMPUTED OF THE PATH **AND THE REVISION**, and the
+     * revision is not decoration.
+     *
+     * A rendering that produces a PDF replaces the project's live PDF AT THE
+     * SAME PATH. With only the path watched, generating a real-text reprint of
+     * the book you were looking at did nothing observable: the file changed
+     * underneath a viewer that had no reason to believe it had. The revision is
+     * what the rest of this app already uses to say "same name, new bytes" — an
+     * <iframe> pointed at a URL it is already showing ignores it too — so this
+     * pane reads it for the same reason the book's does.
+     */
+    const source = computed(() => `${this.tab().revision} ${this.tab().path}`);
     effect(() => {
-      const file = path();
+      void source();
+      const file = untracked(() => this.tab().path);
       untracked(() => { void this.open(file); });
     });
 
@@ -850,6 +863,21 @@ export class PdfViewComponent implements OnDestroy {
   private async open(filePath: string): Promise<void> {
     this.generation += 1;
     const mine = this.generation;
+    /*
+     * WHERE THE READER WAS, kept across the re-open.
+     *
+     * A tab's document is re-read for two reasons and BOTH of them are the same
+     * document: it was relocated onto the project's own copy of itself (the
+     * bytes are identical), or it was generated again under the same name. In
+     * neither case has the person stopped reading page 214 — but the pane threw
+     * them back to page one, because a re-open is a fresh document as far as
+     * everything below here is concerned.
+     *
+     * Restored only when the new document is long enough to have that page,
+     * which is the whole of the safety: a shorter book simply opens where it
+     * always did.
+     */
+    const wasAt = this.current();
     this.teardown();
     this.problem.set(null);
     this.boxes.set([]);
@@ -893,6 +921,13 @@ export class PdfViewComponent implements OnDestroy {
       this.doc.set(doc);
       this.boxes.set(boxes);
       this.fitWidth();
+      // A frame later, because `jumpTo` measures the page divs `shells()` has
+      // only just been given the numbers for.
+      if (wasAt > 1 && wasAt <= boxes.length) {
+        requestAnimationFrame(() => {
+          if (mine === this.generation) this.jumpTo(wasAt);
+        });
+      }
     } catch (err) {
       if (mine !== this.generation) return;
       // By name, never swallowed: a tab showing nothing with no reason on it is

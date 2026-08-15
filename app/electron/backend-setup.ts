@@ -29,6 +29,7 @@
  * resumes at the step that failed rather than starting two gigabytes again.
  */
 import { writeSettings } from './settings';
+import { VLLM_URL } from './vllm-server';
 import { checkVllm, runInDistro, streamInDistro, type EnvTooling, type StreamHandle } from './wsl';
 import type { SetupLogEvent, SetupRequest, SetupResult, SetupRoute } from '../shared/types';
 
@@ -228,12 +229,28 @@ export async function setupWslEnv(
     }
     say(verified.detail);
 
-    // The engine reads these two keys and will find the env by name rather than
-    // by guessing at candidates — and writeSettings preserves every other key
-    // in the file, so the mode and endpoint already in there survive.
+    /*
+     * WHERE THE ENVIRONMENT IS, AND THAT IT IS THE ONE TO USE.
+     *
+     * The first two keys let the engine find the env by name rather than by
+     * guessing at candidates. THE OTHER TWO ARE THE FIX for a fresh install that
+     * could not read a page: nothing in this app had ever written `backend.mode`,
+     * so a machine whose vLLM had just been built successfully still had the
+     * engine looking for the Apple-silicon MLX path and refusing by name. Having
+     * built the server is the user's statement about which backend reads their
+     * pages; making them repeat it in a drop-down is asking twice.
+     *
+     * `writeSettings` preserves every other key in the file.
+     */
     try {
-      writeSettings({ wslDistro: request.distro, vllmPython: target.pythonPath });
-      say(`Wrote backend.wslDistro and backend.vllmPython to the engine's settings.`);
+      writeSettings({
+        wslDistro: request.distro,
+        vllmPython: target.pythonPath,
+        mode: 'endpoint',
+        endpointUrl: VLLM_URL,
+      });
+      say(`Wrote backend.wslDistro, backend.vllmPython, backend.mode=endpoint and `
+        + `backend.endpointUrl=${VLLM_URL} to the engine's settings.`);
     } catch (err) {
       const detail = `vLLM is installed, but the settings file could not be written: ${(err as Error).message}`;
       say(detail);

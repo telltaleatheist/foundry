@@ -18,6 +18,7 @@ import * as path from 'node:path';
 
 import { app } from 'electron';
 
+import { readJson } from '../shared/json';
 import type { RecentDocument, RecentKind } from '../shared/types';
 
 /** How many are kept. Home shows a column of them; past twenty it is an archive. */
@@ -41,7 +42,7 @@ let cache: RecentDocument[] | null = null;
 function load(): RecentDocument[] {
   if (cache !== null) return cache;
   try {
-    const parsed: unknown = JSON.parse(readFileSync(recentsFile(), 'utf8'));
+    const parsed: unknown = readJson(readFileSync(recentsFile(), 'utf8'));
     cache = Array.isArray(parsed) ? parsed.filter(isRecent) : [];
   } catch {
     cache = [];

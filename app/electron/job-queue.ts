@@ -68,7 +68,15 @@ import { readAppSettings } from './app-settings';
 import { parseProgressLine, runEngine } from './engine';
 import { ENV_SPECS } from './env-catalog';
 import { destFor, installEnv } from './env-install';
-import { generatedRoleFor, recordGenerated, recordReading } from './projects';
+import {
+  generatedRoleFor,
+  projectDirOf,
+  recordGenerated,
+  recordReading,
+  restoreRotation,
+  rotateGenerated,
+  type Rotation,
+} from './projects';
 import { readSettings } from './settings';
 import { ensureServer, isLocalVllmEndpoint, noteQueueBusy, noteQueueIdle } from './vllm-server';
 import type { EnvInstallRequest, Job, JobRequest, TranslateRequest } from '../shared/types';
@@ -616,6 +624,50 @@ async function pump(): Promise<void> {
     }
   }
 
+  /*
+   * ── THE PREVIOUS OUTPUT MOVES ASIDE **NOW**, and not a moment earlier ──────
+   *
+   * `generated/` is never overwritten: a second rendering of a book moves the
+   * first into `generated/archived-<stamp>/` rather than replacing it. That
+   * rotation used to happen when the job was PLANNED — before it was enqueued,
+   * let alone run — and the new file was recorded only if the run succeeded. So
+   * a rendering that failed, or was cancelled, or was removed from the queue
+   * without ever starting, left the previous output in an archive folder with
+   * the catalogue's chain pointing at it and nothing live at all. The row went
+   * on listing and opening, and what it opened was silently the run before last,
+   * forever.
+   *
+   * Here, the engine is the next thing that happens. The window between this
+   * rename and the first byte written is one spawn — and even that window is
+   * covered, because a settle that is not a success puts the rotation back
+   * (`restoreRotation`), so the invariant is flat: A RENDERING THAT PRODUCES
+   * NOTHING LEAVES THE CATALOGUE EXACTLY AS IT WAS.
+   *
+   * A refusal here fails the job with its own sentence. `planConversion` asks
+   * the same question when the dialog is still on screen, so this is reached
+   * only when a tab was opened on the previous output in between — which is the
+   * case only the second answer can authorize.
+   */
+  let rotation: Rotation | null = null;
+  let rotatedIn: string | null = null;
+  if (request.kind !== 'translate' && request.kind !== 'read') {
+    const projectDir = projectDirOf(request.outputPath);
+    if (projectDir !== null) {
+      rotatedIn = projectDir;
+      try {
+        rotation = await rotateGenerated(projectDir, path.basename(request.outputPath));
+      } catch (err) {
+        next.state = 'failed';
+        next.error = err instanceof Error ? err.message : String(err);
+        next.finishedAt = Date.now();
+        changed();
+        starting = false;
+        void pump();
+        return;
+      }
+    }
+  }
+
   const args = argsFor(request);
   /*
    * The command, once, before it runs.
@@ -715,8 +767,13 @@ async function pump(): Promise<void> {
   } else if (result.code === -1) {
     next.state = 'cancelled';
     next.message = 'Cancelled.';
+    // Nothing was written, so nothing moved: the previous output comes home and
+    // the chain points back at it. See `restoreRotation` for what "nothing" has
+    // to include — the file, the working tree, and both of their catalogue rows.
+    if (rotation !== null && rotatedIn !== null) await restoreRotation(rotatedIn, rotation);
   } else {
     next.state = 'failed';
+    if (rotation !== null && rotatedIn !== null) await restoreRotation(rotatedIn, rotation);
     // foundry's own stderr is the message a user needs — it names the missing
     // Python, the model it could not load, the page it choked on. Never
     // paraphrased, and never replaced with an exit code.

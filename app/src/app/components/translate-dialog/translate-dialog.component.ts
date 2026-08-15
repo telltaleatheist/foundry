@@ -316,7 +316,20 @@ export class TranslateDialogComponent {
       const instructions = this.instructions().trim();
       if (instructions.length > 0) request.instructions = instructions;
 
-      await this.queue.enqueueTranslate(request);
+      /*
+       * A REFUSAL IS NOT A SUCCESS, and this dialog used not to know the
+       * difference: main dedupes on the output path and answers with the row
+       * that already exists, so a second press announced a translation it had
+       * not queued and closed over the evidence. It stays put and says so, in
+       * the form this card already uses for a problem — the same shape the OCR
+       * dialog has always had.
+       */
+      if (await this.queue.enqueueTranslate(request) === 'already') {
+        this.problem.set(
+          `${to} is already queued for this book — nothing was added. It is in the queue shelf.`,
+        );
+        return;
+      }
       /*
        * The shelf, opened — and it matters more than it used to. The job is
        * HELD (electron/job-queue.ts), so nothing happens until Start is pressed,

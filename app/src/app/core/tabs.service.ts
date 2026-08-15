@@ -497,9 +497,35 @@ export class TabsService {
     }
   }
 
-  /** A conversion's output: unsaved, and in a pane of its own if there is room. */
+  /**
+   * A rendering's output: unsaved, and in a pane of its own if there is room.
+   *
+   * ── A NEW FILE UNDER AN OLD NAME ───────────────────────────────────────────
+   *
+   * Generating a real-text PDF appeared to do nothing at all. The run finished,
+   * the shelf said so, and the page on screen did not change — because a
+   * PDF-producing rendering REPLACES the project's live PDF at the same path
+   * (`refreshLivePdf`), `adopt` finds a tab already on that path and merely
+   * reveals it, and `app-pdf-view` re-reads only when the path STRING changes.
+   * Same name, new bytes, and every layer of the app faithfully concluded there
+   * was nothing to do.
+   *
+   * So a document already open is REVEALED AND RELOADED. The revision bump is
+   * this app's own idiom for exactly this — it is what makes an edited chapter
+   * repaint in an <iframe> pointed at a URL it is already showing — and the PDF
+   * pane now watches it for the same reason.
+   *
+   * A document that is NOT open takes the ordinary path and opens fresh.
+   */
   private openFinished(filePath: string): void {
-    this.expectOwnPane.add(normalise(filePath));
+    const key = normalise(filePath);
+    const already = this.all().find((tab) => normalise(tab.path) === key && tab.kind !== 'editor');
+    if (already) {
+      this.reveal(already.id);
+      this.patch(already.id, { revision: already.revision + 1, unsaved: true, savedPath: null });
+      return;
+    }
+    this.expectOwnPane.add(key);
     void this.openFile(filePath, true);
   }
 
@@ -559,10 +585,15 @@ export class TabsService {
    * already unpacked, and it is unpacked from the SAME project, because the
    * import is keyed by the file's content and both paths reach it.
    *
-   * `savedPath` IS DELIBERATELY NOT TOUCHED. It is a grant: for a book opened
-   * from the user's own disk it names their file, and Save updating the copy they
-   * chose is the behaviour they asked for by opening it. Moving the tab onto the
-   * working copy does not withdraw that.
+   * `savedPath` MOVES WITH IT WHEN IT NAMED THE FILE WE ARE LEAVING. It is a
+   * grant — for a book opened from the user's own disk it names their file, and
+   * Save updating the copy they chose is what they asked for by opening it — but
+   * that stops being true the moment the tab stops showing that file. A Save
+   * that repacked the working tree over a document on another drive, while every
+   * label on screen said the library's copy, is the same invariant `meta:write-pdf`
+   * broke: THE APP NEVER SILENTLY WRITES OUTSIDE ITS LIBRARY. Main revokes the
+   * matching grant in the same breath. Where `savedPath` names something else
+   * entirely — a Save As the user made — it is left exactly alone.
    *
    * Silent when nothing matches — the tab was closed inside the import's own
    * round trip, which is a race with no consequence.
@@ -574,10 +605,43 @@ export class TabsService {
     const moving = this.all().find(
       (tab) => normalise(tab.path) === was && tab.kind !== 'editor');
     if (!moving) return;
-    // Already there — a second import of the same file landing behind the first.
-    if (this.all().some((tab) => normalise(tab.path) === now && tab.id !== moving.id)) return;
+    /*
+     * THE DESTINATION IS ALREADY OPEN — one book reached two ways.
+     *
+     * Somebody opened the project's copy from Home and then dropped their own
+     * file on the window (or the reverse). This used to give up and leave the
+     * outside-path tab exactly where it was, which is the worst of the three
+     * outcomes: that tab keeps every identity bug the relocation exists to fix,
+     * and the user is looking at two tabs of one book with only one of them
+     * working.
+     *
+     * ONE BOOK, ONE TAB. The outside tab closes and the one already on the
+     * working copy is revealed. Nothing is lost — they are the same bytes, and
+     * the surviving tab is the one with a project behind it. `ask: false`
+     * because there is no question here: this is not a document being put away,
+     * it is two views of one document becoming one.
+     */
+    const already = this.all().find((tab) => normalise(tab.path) === now && tab.id !== moving.id);
+    if (already) {
+      void this.close(moving.id, false);
+      this.reveal(already.id);
+      return;
+    }
     this.patch(moving.id, {
       path: to,
+      /*
+       * AND THE SAVE TARGET GOES WITH THE PATH. `savedPath` names the copy the
+       * user chose, and for a book opened from their own disk that is their own
+       * file — which is a deliberate design and stays right up until the moment
+       * the tab stops showing that file. Keeping it here would mean Ctrl+S
+       * repacking the working tree over a document on E:\\ while every label on
+       * screen said the library's. Main revokes the matching write grant at the
+       * same instant, so the two sides cannot disagree; clearing it here is what
+       * makes Save fall through to Save As, which is the door that asks.
+       */
+      ...(moving.savedPath !== null && normalise(moving.savedPath) === was
+        ? { savedPath: null, unsaved: true }
+        : {}),
       /*
        * THE TITLE ONLY IF NOBODY HAS SET A BETTER ONE. A book's title becomes
        * its `dc:title` when it unpacks — "Working Towards the Führer" rather
@@ -586,13 +650,6 @@ export class TabsService {
        * piece of naming this app does on the user's behalf.
        */
       ...(moving.title === baseName(moving.path) ? { title: baseName(to) } : {}),
-      /*
-       * A conversion's output arrives `unsaved` and this is not one: it is the
-       * user's own file, imported, and the copy they chose is still on their
-       * disk exactly where they left it. Clearing the dot would be wrong for a
-       * managed book and setting it would be wrong here, so the flag simply does
-       * not move — the same reason `savedPath` does not.
-       */
     });
     // The editor tab that is a face of this book points at the same file.
     const editor = this.all().find(

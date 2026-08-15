@@ -18,6 +18,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { readJson } from '../shared/json';
 import type { BackendMode, BackendSettingsPatch, SettingsView } from '../shared/types';
 
 const MODES: readonly BackendMode[] = ['auto', 'endpoint', 'mlx'];
@@ -55,7 +56,7 @@ function readRaw(): { parsed: Record<string, unknown> | null; problem?: string }
     return { parsed: null, problem: `${file} could not be read: ${(err as Error).message}` };
   }
   try {
-    const parsed: unknown = JSON.parse(text);
+    const parsed: unknown = readJson(text);
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
       return { parsed: null, problem: `${file} does not hold a JSON object.` };
     }

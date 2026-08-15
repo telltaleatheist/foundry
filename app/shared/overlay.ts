@@ -66,6 +66,8 @@
  * quietly did nothing.
  */
 
+import { readJson } from './json';
+
 /** Refusals from this module, named so a caller can tell them from anything else. */
 export class OverlayError extends Error {
   constructor(message: string) {
@@ -266,7 +268,7 @@ const TARGET_FIELDS = ['page', 'order', 'part'] as const;
 export function parseOverlay(text: string, name: string): OverlayFile {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = readJson(text);
   } catch (err) {
     throw new OverlayError(`${name} is not JSON (${(err as Error).message})`);
   }
@@ -611,7 +613,7 @@ export function chaptersOfText(text: string, where: string): OverlayChapter[] | 
   if (text.length === 0) return null;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = readJson(text);
   } catch (err) {
     throw new OverlayError(`${where} does not hold a chapter list (${(err as Error).message})`);
   }

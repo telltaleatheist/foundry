@@ -147,7 +147,7 @@ import { UiService } from '../../core/ui.service';
                 @if (project.reading.needed && projects.originalOf(project) !== null) {
                   <button
                     class="ocr"
-                    (click)="readPages(project)"
+                    (click)="void readPages(project)"
                     title="These pages have not been read yet — this is the step everything else needs"
                   >OCR</button>
                 }
@@ -468,10 +468,18 @@ export class HomeComponent {
    * put "Open a PDF first" in front of somebody who had just pointed at a
    * specific book — so the row opens it, and the dialog then finds it there.
    */
-  protected readPages(project: ProjectSummary): void {
+  protected async readPages(project: ProjectSummary): Promise<void> {
     const original = this.projects.originalOf(project);
     if (original === null) return;
-    void this.tabs.openFile(original.path, original.managed);
+    /*
+     * AWAITED, and the await is the whole of the fix. Opening a document is a
+     * full round trip through main — it admits the path, records the recent and
+     * pushes `document:opened` back — and firing the dialog beside it meant the
+     * card painted before the tab existed. So a person who pressed OCR on a
+     * specific book got "Open a PDF first" over the book they had just pointed
+     * at, and the only way out was to close the dialog and press it again.
+     */
+    await this.tabs.openFile(original.path, original.managed);
     this.ui.openOcr();
   }
 

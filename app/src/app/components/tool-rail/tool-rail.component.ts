@@ -149,7 +149,9 @@ import { UiService } from '../../core/ui.service';
           class="rail-item"
           [class.active]="blocking()"
           [disabled]="!canBlock()"
-          title="Outline what the model read off this scan: strike, relabel, mark the chapters"
+          [title]="canBlock()
+            ? 'Outline what the model read off this scan: strike, relabel, mark the chapters'
+            : 'There is nothing to correct until the pages have been read — press OCR first'"
           (click)="toggleBlocks()"
         >
           <span class="rail-icon">▦</span>
@@ -358,16 +360,26 @@ export class ToolRailComponent {
   }
 
   /**
-   * Blocks needs a SCAN, which is the mirror of Select needing a book.
+   * Blocks needs a SCAN THAT HAS BEEN READ, which is the mirror of Select
+   * needing an unpacked book.
    *
-   * No further test: whether the model has ever read this document is a question
-   * only main can answer, and asking it here would mean an IPC call per repaint
-   * of the dock. The mode turns on and says what it found — including "the model
-   * has not read this document yet" — which is the honest place for that
-   * sentence and the one a person can act on.
+   * IT USED TO BE `kind === 'pdf'` AND NOTHING ELSE, on the reasoning that
+   * whether the model had read a document was a question only main could answer
+   * and asking it per repaint would be an IPC call per frame. That reasoning
+   * expired: the project listing is a live mirror now — main pushes
+   * `projects:changed` whenever a reading lands — so the answer is already in
+   * this window, in the same signal the OCR light reads.
+   *
+   * The button is still ENABLED for a scan whose project is unknown, which is
+   * the pre-import window and the case where the mode's own sentence is the
+   * useful one ("this file is not in the library yet"). A dead button says
+   * nothing at all, and this rail's rule is that a shut door explains itself.
    */
   protected canBlock(): boolean {
-    return this.tabs.activeDocument()?.kind === 'pdf';
+    const tab = this.tabs.activeDocument();
+    if (tab === null || tab.kind !== 'pdf') return false;
+    const project = this.projects.projectFor(tab.path);
+    return project === null || project.reading.done;
   }
 
   protected blocking(): boolean {

@@ -60,6 +60,8 @@ import {
 } from './env-downloader';
 import { readSettings, writeSettings } from './settings';
 import { checkVllm, listDistros, runInDistro, shellQuote, streamInDistro, toWslPath } from './wsl';
+import { VLLM_URL } from './vllm-server';
+import { readJson } from '../shared/json';
 import type {
   EnvCatalogItem,
   EnvInstallProgress,
@@ -399,9 +401,33 @@ async function run(
     const manifest = await readManifest(target, dest, distro);
 
     if (distro) {
-      // Two keys, and writeSettings preserves everything else in the file — the
-      // mode and endpoint already in there survive this.
-      writeSettings({ wslDistro: distro, vllmPython: pythonPath });
+      /*
+       * FOUR KEYS, AND THE TWO NEW ONES ARE WHY A FRESH INSTALL COULD NOT OCR.
+       *
+       * Nothing in this app had ever written `backend.mode`. The installers set
+       * the distro and the interpreter — where the environment IS — and left the
+       * mode at whatever the engine's shipped settings said, which on a machine
+       * that had never been configured is not `endpoint`. So the engine, asked
+       * to read a book, looked for a local MLX path that does not exist off
+       * Apple silicon and refused with "no reading backend for this run" — on a
+       * machine where the user had just watched a reading server install
+       * successfully.
+       *
+       * INSTALLING THE SERVER IS THE STATEMENT. Somebody who has just built
+       * vLLM in WSL has said which backend reads their pages as plainly as it
+       * can be said; making them then find the Settings screen and repeat it in
+       * a drop-down is asking a question they have already answered.
+       *
+       * `writeSettings` preserves every other key, so a user who had pointed the
+       * app at a different endpoint keeps their URL — this only writes the two
+       * that describe the server it just made.
+       */
+      writeSettings({
+        wslDistro: distro,
+        vllmPython: pythonPath,
+        mode: 'endpoint',
+        endpointUrl: VLLM_URL,
+      });
       emit('configure', 50, `Asking ${pythonPath} whether it can import vllm…`);
       const check = await checkVllm(distro, pythonPath);
       if (!check.ok) {
@@ -411,7 +437,7 @@ async function run(
           detail: `The environment is installed and settings are written, but ${check.detail}`,
         };
       }
-      emit('configure', 100, check.detail);
+      emit('configure', 100, `${check.detail} Reading through ${VLLM_URL}.`);
       return {
         ok: true,
         pythonPath,
@@ -498,7 +524,7 @@ async function readManifest(target: EnvTarget, dest: string, distro: string | nu
     const text = distro
       ? (await runInDistro(distro, `cat ${shellQuote(file)}`, GUEST_PROBE_MS)).stdout
       : fs.readFileSync(file, 'utf8');
-    const parsed: unknown = JSON.parse(text);
+    const parsed: unknown = readJson(text);
     if (typeof parsed !== 'object' || parsed === null) return '.';
     const record = parsed as Record<string, unknown>;
     // The built archives write `python`; `python-version` is accepted too so a

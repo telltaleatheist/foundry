@@ -1639,16 +1639,54 @@ export async function repackEpub(id: string, destination: string): Promise<numbe
  * translate the book as it was before the curation — which is exactly the thing
  * the curation exists to prevent reaching the model.
  *
- * Returns the path unchanged when no open book was unpacked from it. That is the
- * common case (a translation ordered from Home) and there is nothing to export.
+ * ── Which book, and why the old test was a trap ─────────────────────────────
+ *
+ * A book is found BY ITS PATH, and the path it is matched against is the origin
+ * its tree was unpacked from — resolved through this app's own record of where
+ * that tree came from, never by comparing basenames or by joining strings and
+ * hoping. That much is unchanged.
+ *
+ * WHAT CHANGED IS THE MISS. It used to return the input path unchanged when no
+ * open book matched, on the reasoning that "a translation ordered from Home" has
+ * nothing to export. That is true and it is also how an edited book could be
+ * translated in the state it was in before the curation: if the match failed for
+ * any OTHER reason — the tab pointing at a path the registry does not know,
+ * which is exactly what the outside-file window used to produce — the fallthrough
+ * silently handed the engine the unedited origin and reported nothing. The one
+ * failure this function exists to prevent, produced by the function itself.
+ *
+ * So the two cases are separated. NO BOOK IS OPEN ON THIS FILE AT ALL is the
+ * ordinary miss and returns the path: there is no working tree, so there is
+ * nothing that could be newer than what is on disk. A BOOK IS OPEN ON THIS
+ * PROJECT'S TREE but its origin is not this path is the dangerous one, and it
+ * refuses by name rather than exporting the wrong book or the right book's older
+ * self.
  */
 export async function exportWorkingCopy(filePath: string): Promise<string> {
   const resolved = path.resolve(filePath);
+  const fold = (target: string): string => path.resolve(target).toLowerCase();
   for (const book of unpacked.values()) {
-    if (path.resolve(path.join(book.projectDir, ...book.entry.split('/'))) !== resolved) continue;
-    const destination = path.join(book.projectDir, 'working', path.basename(resolved));
-    await repackEpub(book.id, destination);
-    return destination;
+    if (fold(path.join(book.projectDir, ...book.entry.split('/'))) === fold(resolved)) {
+      const destination = path.join(book.projectDir, 'working', path.basename(resolved));
+      await repackEpub(book.id, destination);
+      return destination;
+    }
+  }
+  /*
+   * An open book in the same project, unpacked from something else. The caller
+   * asked for a file this app is holding edits NEAR, and answering with the path
+   * would mean handing the engine a document while a newer version of its
+   * neighbour sits unwritten — which is the state where "translated the wrong
+   * copy" is indistinguishable from success.
+   */
+  const neighbour = [...unpacked.values()].find(
+    (book) => fold(resolved).startsWith(`${fold(book.projectDir)}${path.sep}`.toLowerCase()));
+  if (neighbour !== undefined) {
+    throw new EpubError(
+      `${path.basename(resolved)} is not the book Foundry has open in that project — it is holding `
+      + `${path.basename(neighbour.entry)}. Open the document you mean and try again, so the run `
+      + 'reads the copy with your edits in it rather than an older one.',
+    );
   }
   return resolved;
 }

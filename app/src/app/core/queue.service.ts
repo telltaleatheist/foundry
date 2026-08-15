@@ -57,8 +57,21 @@ export class QueueService {
     return before.has(job.id) ? 'already' : 'added';
   }
 
-  async enqueueTranslate(request: TranslateRequest): Promise<void> {
-    await api?.queue.enqueueTranslate(request);
+  /**
+   * The same dedupe answer as `enqueue`, which this used to throw away.
+   *
+   * Main answers with the EXISTING row when one is already waiting or running to
+   * write that translation, and the shape is identical either way — so
+   * discarding it meant pressing Translate twice announced a success over a
+   * duplicate that was never created. A user who pressed Add twice deserves to
+   * be told the second press changed nothing, which is exactly the reasoning
+   * written above `enqueue`; only this method had been left out of it.
+   */
+  async enqueueTranslate(request: TranslateRequest): Promise<'added' | 'already'> {
+    const before = new Set(this.all().map((job) => job.id));
+    const job = await api?.queue.enqueueTranslate(request);
+    if (!job) return 'added';
+    return before.has(job.id) ? 'already' : 'added';
   }
 
   /** Release the held batch. Main answers with how many; nothing here guesses. */

@@ -86,6 +86,7 @@ import * as path from 'node:path';
 import { documentOf } from './epub-reader';
 import { writeAtomically } from './epub-writer';
 import { historyArchiveDir, historyDir, treeGeneration, workingTreeName } from './projects';
+import { readJson } from '../shared/json';
 import type { DocumentHistory, LedgerAction, LedgerLoad, LedgerRow, LedgerStacks } from '../shared/types';
 
 /** Refusals from this module, named so a caller can tell them from an fs error. */
@@ -286,7 +287,7 @@ async function setAside(file: string, projectDir: string, why: string): Promise<
 function parseHistory(text: string): DocumentHistory {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = readJson(text);
   } catch (err) {
     throw new HistoryError(`it is not JSON (${(err as Error).message})`);
   }

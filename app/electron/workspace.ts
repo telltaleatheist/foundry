@@ -46,10 +46,14 @@
  * labelled with a file format.
  *
  * The bank living IN the project also fixes something the flat layout got wrong
- * by accident: the engine writes its completion marker as `completed.json`
- * beside the bank, so a directory holding every book's bank held exactly one
- * marker, belonging to whichever run happened to finish last. One bank per
- * directory means a marker that names the book it is about.
+ * by accident. The engine's completion marker is named FOR ITS BANK —
+ * `<key>.completed.json`, beside `<key>.jsonl` — and it did not always used to
+ * be: it was once a bare `completed.json` in the bank's directory, so a folder
+ * holding every book's bank held exactly one marker, belonging to whichever run
+ * happened to finish last. One bank per directory would have fixed that on its
+ * own; the engine fixed it properly by naming the marker after the thing it is
+ * about (src/vlm/readings.ts), and this app reads it under that name
+ * (`readingState`).
  */
 import { promises as fsp } from 'node:fs';
 import * as path from 'node:path';
@@ -60,6 +64,7 @@ import {
   importDocument,
   overlaysDir,
   rotateGenerated,
+  rotationRefusal,
   translationFileFor,
 } from './projects';
 import type { ConversionKind, ReadingPlan, WorkspacePlan } from '../shared/types';
@@ -110,11 +115,11 @@ export async function planReading(inputPath: string): Promise<ReadingPlan> {
  * is handed two paths and a path whose parent does not exist is a run that dies
  * after the last page.
  *
- * The PREVIOUS origin of the same kind is rotated aside first, not overwritten
- * — see `rotateGenerated`. That happens at plan time because the engine writes
- * to `outputPath` itself and there is no moment between the two this app is
- * awake for; the dialog calls this immediately before it enqueues, so "planned"
- * and "about to run" are the same instant in practice.
+ * THE PREVIOUS ORIGIN IS ROTATED ASIDE BY THE QUEUE, not here. It used to happen
+ * at plan time on the reasoning that "planned" and "about to run" are the same
+ * instant — which is true of a job that runs and false of every other kind, and
+ * the false cases left the catalogue pointing into an archive folder for a run
+ * that never wrote a byte. See the note at the refusal below.
  */
 export async function planConversion(
   inputPath: string,
@@ -150,7 +155,29 @@ export async function planConversion(
    * and no output path is ever composed there — so there is nothing to guard.
    */
   const sourcePath = await archiveOriginal(dir) ?? inputPath;
-  await rotateGenerated(dir, file);
+  /*
+   * THE ROTATION IS NOT HERE ANY MORE, and moving it is the whole of a fix.
+   *
+   * This function used to move the previous output aside before the job was even
+   * enqueued. The new file was recorded only if the run SUCCEEDED — so a
+   * generate that failed, or was cancelled, or sat in the queue and was removed,
+   * left the previous output in `generated/archived-<stamp>/` with the
+   * catalogue's chain pointing at it and nothing in `generated/` at all. The
+   * document went on listing and opening; what it opened was silently the run
+   * BEFORE last, forever.
+   *
+   * A rotation is now made at the moment the engine is about to write
+   * (electron/job-queue.ts) and put back if it does not (`restoreRotation`), so
+   * a run that produces nothing leaves the catalogue exactly as it was.
+   *
+   * WHAT STAYS HERE IS THE REFUSAL, asked early so it can be said to somebody's
+   * face: the same rule, from the same function, because a rotation that would be
+   * refused at spawn is a job worth not queueing. It is asked AGAIN at the
+   * rotation itself, because a tab can be opened in between and only the second
+   * answer authorizes anything.
+   */
+  const blocked = await rotationRefusal(dir, file);
+  if (blocked !== null) throw new Error(blocked);
   await fsp.mkdir(path.join(dir, 'generated'), { recursive: true });
   await fsp.mkdir(path.join(dir, 'readings'), { recursive: true });
   return {
@@ -234,7 +261,7 @@ export async function planTranslation(
    */
   const movedAside = await rotateGenerated(dir, file);
   const sourcePath = movedAside !== null && samePath(inputPath, outputPath)
-    ? movedAside
+    ? movedAside.movedTo
     : inputPath;
   await fsp.mkdir(path.join(dir, 'generated'), { recursive: true });
   await fsp.mkdir(path.join(dir, 'readings'), { recursive: true });
