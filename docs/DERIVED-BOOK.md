@@ -337,6 +337,19 @@ benefits from C. E needs B+C+D. F is independent of everything after 0.
   the queue starting vLLM for every conversion, `--reuse-readings`
   degrading into a resume over an unmarked bank, and the app never checking
   for that marker outside the translate path.
+- **The position is the one control, and HTML is what it will drive** —
+  user, 2026-08-15: *"most steps arent going to be related to pdfs. most
+  steps will be handled by html/epub… in the future, the html would update.
+  im just trying to explain the logic behind this."* The
+  scan-versus-reprint swap that prompted the two rulings below is an
+  ILLUSTRATION of the logic, not the destination. Read reflows into the
+  flowing HTML base, and every step after it updates that document;
+  standing on a step re-renders it to that point. The PDF is the terminal
+  branch — facsimile and stop. So the thing being built is the SEAM
+  (position → the document to show → the pane shows it), and the PDF-side
+  resolution behind it is deliberately thin: it has a short life, it is
+  replaced at phase B, and hardening it is work thrown away. Anything that
+  threads "this is a PDF" through the renderer is building the wrong thing.
 - **A gesture is satisfied, not explained** — user, 2026-08-15: *"i wanted
   the document to show. instead of showing the document, it gave me an error
   saying it couldnt show the document… it should be showing me document."*
