@@ -75,7 +75,6 @@ import {
   generatedFileFor,
   importDocument,
   overlayForPosition,
-  rotateGenerated,
   rotationRefusal,
   translationFileFor,
 } from './projects';
@@ -311,6 +310,11 @@ export async function planConversion(
  * No readings bank. A translation banks nothing — the engine holds every block
  * in memory and writes one file at the end — so `WorkspacePlan.readingsPath`
  * would be a path to a file that never exists.
+ *
+ * THE PREVIOUS EDITION IS ROTATED ASIDE BY THE QUEUE, not here — the same
+ * correction `planConversion` above already carries, arrived at second because
+ * the translation had one honest-looking reason to rotate early and the
+ * conversion had none. See the note at the refusal below.
  */
 export async function planTranslation(
   inputPath: string,
@@ -320,25 +324,59 @@ export async function planTranslation(
   const file = translationFileFor(stem, targetLanguage);
   const outputPath = path.join(dir, 'generated', file);
   /*
-   * A RE-TRANSLATION READS THE COPY IT IS ABOUT TO REPLACE.
+   * THE ROTATION IS NOT HERE ANY MORE, AND NEITHER IS THE SOURCE SUBSTITUTION
+   * THAT USED TO JUSTIFY IT.
    *
-   * Translating the English edition into English again names one path twice:
-   * the output is composed from the PROJECT's stem and the language, so asking
-   * for a language a document already is lands on that document. This used to be
-   * refused, and the refusal is gone for the reason the conversion's was — the
-   * user asked for something perfectly sensible ("do that again") and got a
-   * sentence about the app's own filing.
+   * A RE-TRANSLATION READS THE COPY IT IS ABOUT TO REPLACE, which is the fact
+   * that kept this function moving files for as long as it did. Translating the
+   * English edition into English again names one path twice: the output is
+   * composed from the PROJECT's stem and the language, so asking for a language a
+   * document already is lands on that document. That is not refused — the user
+   * asked for something perfectly sensible ("do that again") and a refusal would
+   * have been a sentence about this app's own filing — and the rotation is what
+   * makes it work rather than a special case: the copy moved aside IS the source
+   * of record, and the engine reads it there. Read from what was, write to what
+   * will be.
    *
-   * The rotation is what makes it work rather than a special case. `generated/`
-   * is never overwritten, so the previous edition is moved aside before the run
-   * regardless; when the run's own input is that edition, the copy just rotated
-   * aside IS the source of record and the engine reads it there. Read from what
-   * was, write to what will be — the same shape as every other job here.
+   * All of which is true AT THE MOMENT THE ENGINE STARTS, and none of it is true
+   * when a job is merely planned. This function used to move the previous edition
+   * into `generated/archived-<stamp>/` — with the chain rewritten to point there —
+   * before the job was even enqueued, and the new file was recorded only if the
+   * run SUCCEEDED. So a translation that failed, or was cancelled, or sat HELD in
+   * the shelf and was removed, stranded the previous edition in an archive folder
+   * with nothing in `generated/` at all. The document went on listing and opening;
+   * what it opened was silently the edition before last, forever. That is the
+   * exact failure `restoreRotation` was written to end for conversions, and this
+   * plan was the one caller still causing it.
+   *
+   * So the rotation happens where the engine is the next thing that happens
+   * (electron/job-queue.ts) and is put back if the run writes nothing
+   * (`restoreRotation`) — and the substitution travels WITH it, because there is
+   * no moved-aside path to name until the rotation has made one. The queue fixes
+   * the effective `--epub` up after rotating and before `argsFor`.
+   *
+   * WHAT STAYS HERE IS THE REFUSAL, asked early so it can be said to somebody's
+   * face, exactly as `planConversion` asks it: a rotation that would be refused at
+   * spawn is a job worth not queueing. It used to be asked here only as a side
+   * effect of the rotation throwing, which meant it was asked at all only because
+   * the destructive act was here too. It is asked AGAIN at the rotation itself,
+   * because a tab can be opened in between and only the second answer authorizes
+   * anything.
    */
-  const movedAside = await rotateGenerated(dir, file);
-  const sourcePath = movedAside !== null && samePath(inputPath, outputPath)
-    ? movedAside.movedTo
-    : inputPath;
+  const blocked = await rotationRefusal(dir, file);
+  if (blocked !== null) throw new Error(blocked);
+  /*
+   * SO THE PLAN'S SOURCE IS THE INPUT, VERBATIM, and it stays a field rather than
+   * becoming an identity because it is the answer to a different question than it
+   * used to be. It was "which copy of this book will the engine read" — a fact
+   * about the rotation, and now unknowable until the rotation happens. It is now
+   * "which file did this plan admit", which is what main's allow-list adds and
+   * what the queue re-checks (`queue:enqueue-translate`). The stored request
+   * carries THAT path, the one a person could name; the archived path the run
+   * actually reads is composed inside `pump()`, past every admission gate, and is
+   * never handed to the renderer at all.
+   */
+  const sourcePath = inputPath;
   await fsp.mkdir(path.join(dir, 'generated'), { recursive: true });
   await fsp.mkdir(path.join(dir, 'readings'), { recursive: true });
   /*
@@ -409,7 +447,14 @@ async function archiveOriginal(dir: string): Promise<string | null> {
   return archive === null ? null : path.join(dir, 'archive', archive);
 }
 
-/** One spelling for a path, so Windows' three become one. */
-function samePath(a: string, b: string): boolean {
-  return path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
-}
+/*
+ * `samePath` USED TO LIVE HERE and went with the rotation, which is worth a line
+ * because the comparison itself is unchanged and only moved house.
+ *
+ * It existed for one caller: `planTranslation` asking whether the edition it was
+ * about to rotate aside was also the file the run would read. That question is
+ * now asked at the moment of rotating, in electron/job-queue.ts, and it is asked
+ * there with the same case-folded resolve — the per-module path fold this
+ * codebase keeps beside whoever needs it (electron/recents.ts has its own, so
+ * does electron/overlays.ts). A copy left here would be a helper for nobody.
+ */

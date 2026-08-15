@@ -215,6 +215,21 @@ function pendingFor(outputPath: string): Job | undefined {
   );
 }
 
+/**
+ * One spelling for a path, so Windows' three become one.
+ *
+ * It came from electron/workspace.ts with the translate rotation, and it is the
+ * fold `pendingFor` above spells inline for the same reason it spells it inline:
+ * that one hoists the key out of a loop over every job, this one compares exactly
+ * two paths. The house pattern is a fold beside whoever needs it rather than a
+ * shared path module — electron/recents.ts and electron/overlays.ts each keep
+ * their own — because the answer is a fact about the filesystem underneath, and
+ * app/shared is compiled into the renderer where there is no `node:path` at all.
+ */
+function samePath(a: string, b: string): boolean {
+  return path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+}
+
 /** The full request, kept beside the job — the job itself is the PUBLIC shape. */
 const requests = new Map<string, EngineRequest>();
 const envRequests = new Map<string, EnvInstallRequest>();
@@ -299,6 +314,15 @@ export function start(): number {
  *
  * A RUNNING job is refused here. There is a child holding a GPU, and the gesture
  * for that is `cancel` — which stops it and then, correctly, files it.
+ *
+ * "IT WAS NEVER ANYTHING" IS NOW TRUE OF THE DISK AS WELL, and it was not always.
+ * A held translation had already moved the project's previous edition into
+ * `generated/archived-<stamp>/` — at plan time, before this row existed — so
+ * removing it left the catalogue pointing into an archive folder for a run that
+ * never spawned, and this function had nothing to put back because nothing
+ * remembered the move. Both rotations happen in `pump()` now, one line before the
+ * engine starts, so a row removed from here has touched no file at all and there
+ * is nothing for a removal to undo.
  */
 export function remove(id: string): void {
   const index = jobs.findIndex((job) => job.id === id);
@@ -465,6 +489,13 @@ function argsFor(request: EngineRequest): string[] {
      */
     const args = [
       'translate',
+      /*
+       * MAY NOT BE THE PATH THE REQUEST WAS STORED WITH. A re-translation into a
+       * language the document already is reads the copy the rotation moved aside
+       * a moment ago, and `pump()` hands this function a spawn-time copy of the
+       * request with that archived path in it. Read the note above the rotation
+       * there; this line is deliberately unaware of which of the two it has.
+       */
       '--epub', request.inputPath,
       '--out', request.outputPath,
       '--to', request.to,
@@ -673,17 +704,35 @@ async function pump(): Promise<void> {
    * Here, the engine is the next thing that happens. The window between this
    * rename and the first byte written is one spawn — and even that window is
    * covered, because a settle that is not a success puts the rotation back
-   * (`restoreRotation`), so the invariant is flat: A RENDERING THAT PRODUCES
-   * NOTHING LEAVES THE CATALOGUE EXACTLY AS IT WAS.
+   * (`restoreRotation`), so the invariant is flat: A RUN THAT PRODUCES NOTHING
+   * LEAVES THE CATALOGUE EXACTLY AS IT WAS.
    *
-   * A refusal here fails the job with its own sentence. `planConversion` asks
-   * the same question when the dialog is still on screen, so this is reached
-   * only when a tab was opened on the previous output in between — which is the
-   * case only the second answer can authorize.
+   * A TRANSLATION ROTATES HERE TOO, and it is the same sentence rather than a
+   * second mechanism. It used to rotate in `planTranslation`, which is where
+   * conversions rotated before this block existed — so the invariant above was
+   * true of every job in this app except the one that runs for four hours from a
+   * row a person routinely queues, looks at, and removes. A held translation
+   * removed from the shelf had already moved the previous edition into an archive
+   * folder and rewritten the chain to point there, for a run that never spawned.
+   * There is no restore path from a plan, because a plan has nowhere to put one:
+   * `remove` deletes the request and the row, and nothing anywhere remembered
+   * that a file had been moved for it. Rotating HERE gives it the settle paths
+   * below for free, and gives `remove` nothing to undo because nothing has
+   * happened yet.
+   *
+   * A READING NEVER ROTATES: its `outputPath` is the BANK it fills, which lives
+   * in `readings/` and is not a generated document at all. Rotating on its
+   * basename would move a file out of a directory this block has no business in.
+   * The bank's own replace-on-success rule is the engine's (BANK-LIFECYCLE §2).
+   *
+   * A refusal here fails the job with its own sentence. Both plans ask the same
+   * question while the dialog is still on screen, so this is reached only when a
+   * tab was opened on the previous output in between — which is the case only the
+   * second answer can authorize.
    */
   let rotation: Rotation | null = null;
   let rotatedIn: string | null = null;
-  if (request.kind !== 'translate' && request.kind !== 'read') {
+  if (request.kind !== 'read') {
     const projectDir = projectDirOf(request.outputPath);
     if (projectDir !== null) {
       rotatedIn = projectDir;
@@ -701,7 +750,38 @@ async function pump(): Promise<void> {
     }
   }
 
-  const args = argsFor(request);
+  /*
+   * ── AND A RE-TRANSLATION READS THE COPY THAT WAS JUST MOVED ───────────────
+   *
+   * Translating the English edition into English again names one path twice: the
+   * output is composed from the project's stem and the language, so asking for a
+   * language a document already is lands on that document. Nothing refuses that —
+   * the user asked for "do that again", which is sensible, and a refusal would
+   * have been a sentence about this app's own filing (`planTranslation`).
+   *
+   * The rotation is what makes it work: the previous edition is moved aside a few
+   * lines above, so by the time the engine starts the path the request names is
+   * empty and the bytes the run needs are in `generated/archived-<stamp>/`. The
+   * substitution therefore CANNOT be made at plan time any more — the archived
+   * path does not exist until the rotation does — so it is made here, after the
+   * rotation and before `argsFor`, which is the last moment anything can still
+   * change what the command line says.
+   *
+   * THE STORED REQUEST IS LEFT ALONE, and a copy is spawned instead. The request
+   * is what the shelf's row and every admission gate are about — `inputPath` is
+   * the path main admitted and `queue:enqueue-translate` re-checked, and a path
+   * inside an archive folder was never "opened" by anybody. A retry, a restore, or
+   * anything else that reads the request back must see the file a person could
+   * name; only the child process sees the archived one, and only for the length of
+   * this spawn.
+   */
+  const spawned: EngineRequest = rotation !== null
+    && request.kind === 'translate'
+    && samePath(request.inputPath, request.outputPath)
+    ? { ...request, inputPath: rotation.movedTo }
+    : request;
+
+  const args = argsFor(spawned);
   /*
    * The command, once, before it runs.
    *
