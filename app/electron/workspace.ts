@@ -28,9 +28,19 @@
  *
  * ── The readings bank ────────────────────────────────────────────────────────
  *
- * `--readings` is passed on EVERY job, always, at
- * `<project>/readings/<key>.jsonl`. Not a checkbox: there is no version of "read
- * three hundred pages again because the window closed" that anyone wants.
+ * `--readings` is passed on EVERY job, always. Not a checkbox: there is no
+ * version of "read three hundred pages again because the window closed" that
+ * anyone wants.
+ *
+ * WHICH BANK IS A QUESTION NOW, and it used to be a fact. It was
+ * `<project>/readings/<key>.jsonl` composed from the key at both plans, on the
+ * belief that a project has one bank — and a re-read asking for a different page
+ * range branches by design, so a project can hold two readings and both of them
+ * named that one file. Neither plan composes it any more: `planConversion` asks
+ * the step at the position which bank its row is about, and `planReading` decides
+ * whether this reading replaces one that exists or gets a bank of its own. Both
+ * answers come from electron/projects.ts, which is the module that decides where
+ * anything lives.
  *
  * WHAT CHANGED IS WHICH JOB IT IS THE PRODUCT OF. There are two plans below
  * because there are two jobs: `planReading` names the bank an OCR run FILLS, and
@@ -60,6 +70,8 @@ import * as path from 'node:path';
 
 import {
   archiveFileOf,
+  bankForPosition,
+  bankForReading,
   generatedFileFor,
   importDocument,
   overlayForPosition,
@@ -67,6 +79,7 @@ import {
   rotationRefusal,
   translationFileFor,
 } from './projects';
+import type { ReadAsk } from '../shared/ledger';
 import type { ConversionKind, ReadingPlan, WorkspacePlan } from '../shared/types';
 
 /**
@@ -92,14 +105,39 @@ import type { ConversionKind, ReadingPlan, WorkspacePlan } from '../shared/types
  * handed a path and a path whose parent does not exist is a run that dies after
  * the last page.
  */
-export async function planReading(inputPath: string): Promise<ReadingPlan> {
+export async function planReading(
+  inputPath: string,
+  /**
+   * WHAT THE DIALOG ASKED, and the reason this plan takes an argument it never
+   * used to need.
+   *
+   * The bank's path is no longer a fact about the project — it is a fact about
+   * WHICH READING this is, and that is decided by comparing what was asked with
+   * what the project's existing readings were asked (`bankForReading`). Read the
+   * same pages again and this is a replace, aimed at the step that already exists;
+   * ask for a different page range and it is a branch, which gets a bank of its
+   * own so the older row goes on naming the reading it is actually about.
+   *
+   * So the two fields the OCR form holds have to reach the plan, and reach it
+   * BEFORE the enqueue: the engine is handed one path and fills it for three
+   * hours, and by the time anything lands there is nothing left to decide.
+   *
+   * Defaulted for a caller with nothing to say, which asks the plain question —
+   * the whole book, no language declared — exactly as `recordReading` does.
+   */
+  asked: ReadAsk = {},
+): Promise<ReadingPlan> {
   const { dir, key } = await importDocument(inputPath, 'pdf');
   const sourcePath = await archiveOriginal(dir) ?? inputPath;
   await fsp.mkdir(path.join(dir, 'readings'), { recursive: true });
+  const bank = await bankForReading(dir, asked);
   return {
     key,
     sourcePath,
-    readingsPath: path.join(dir, 'readings', `${key}.jsonl`),
+    readingsPath: bank.readingsPath,
+    // Minted with the path and spent at the landing, so the file and the row agree
+    // about which reading the bank belongs to. See `ReadRequest.stepId`.
+    stepId: bank.stepId,
   };
 }
 
@@ -185,15 +223,32 @@ export async function planConversion(
     sourcePath,
     outputPath,
     /*
-     * The bank is keyed by the BOOK, not by the format.
+     * ── WHICH BANK, WHICH IS THE SAME QUESTION `overlayPath` BELOW ANSWERS ────
      *
-     * Both outputs are assembled from the same per-page answers, so converting a
-     * book to text after converting it to EPUB must not read three hundred pages
-     * again — and a readings path with the format in it would guarantee that it
-     * did. What the engine then does with a bank a finished run left behind is
-     * the engine's rule, and this app does not second-guess it.
+     * The bank is keyed by the BOOK and never by the format: both outputs are
+     * assembled from the same per-page answers, so converting a book to text after
+     * converting it to EPUB must not read three hundred pages again, and a readings
+     * path with the format in it would guarantee that it did.
+     *
+     * WHAT CHANGED IS THAT THE BOOK CAN HAVE MORE THAN ONE. A re-read asking for a
+     * different page range branches by design, and while this line composed
+     * `readings/<key>.jsonl` from the key, both read steps named one file — so
+     * standing on the older row and pressing Generate rendered the NEWER reading.
+     * The row named a bank that had been written over from under it and nothing on
+     * screen admitted the swap.
+     *
+     * So the plan asks the row instead: `bankForPosition` walks up from the
+     * position to the reading this branch of the story is about and answers with
+     * that step's own payload. A project with one reading — which is every project
+     * that existed before this — gets exactly the path it always got, because that
+     * is what its read step already says. Nothing moves on disk.
+     *
+     * RESOLVED AT PLAN TIME for `overlayPath`'s reason, one paragraph down: it is
+     * which state of the book the user chose when they pressed Generate, and
+     * re-resolving it at spawn would let a pointer move made while the job waited
+     * silently render a different reading than the dialog said it would.
      */
-    readingsPath: path.join(dir, 'readings', `${key}.jsonl`),
+    readingsPath: await bankForPosition(dir),
     /*
      * ── WHICH CURATION, WHICH IS A QUESTION THIS APP DID NOT USED TO HAVE ─────
      *

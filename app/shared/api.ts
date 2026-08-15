@@ -7,6 +7,7 @@
  * mismatch. So the interface lives here: preload.ts implements it, and the
  * renderer's `window.foundry` is typed as it.
  */
+import type { ReadAsk } from './ledger';
 import type {
   BackendSettingsPatch,
   CloseAnswer,
@@ -207,8 +208,15 @@ export interface FoundryApi {
      * no output name to compose, and because `plan` rotates the `generated/`
      * file its rendering is about to replace — which a reading has no business
      * doing, since it writes nothing there.
+     *
+     * IT TAKES WHAT THE FORM ASKED, and that is not a convenience. Which bank
+     * this run fills depends on whether it is the same question a reading of
+     * this book already answered — same pages, same language, so a replace
+     * aimed at that step's own file — or a different one, which branches and
+     * gets a bank of its own. Main decides that here and hands back the path
+     * AND the step id it belongs to; the request carries both onward.
      */
-    planReading(inputPath: string): Promise<ReadingPlan>;
+    planReading(inputPath: string, asked?: ReadAsk): Promise<ReadingPlan>;
     /** The kind decides the output's EXTENSION, not just its `--format`. */
     plan(inputPath: string, kind: ConversionKind): Promise<WorkspacePlan>;
     /**

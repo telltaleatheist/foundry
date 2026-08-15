@@ -398,10 +398,25 @@ export class OcrDialogComponent {
     this.busy.set(true);
     this.problem.set(null);
     try {
-      // Main names the bank. There is no output file to name and no format to
-      // carry — the whole of what this job produces is the reading, and where
-      // that goes is the project's business rather than a field on this form.
-      const plan = await api.workspace.planReading(input);
+      const skip = this.skipPages().trim();
+      const language = this.language().trim();
+      /*
+       * Main names the bank. There is no output file to name and no format to
+       * carry — the whole of what this job produces is the reading, and where
+       * that goes is the project's business rather than a field on this form.
+       *
+       * THE ASK GOES WITH THE QUESTION, and that is why these two are read before
+       * the plan rather than after it. Which bank this run fills depends on
+       * whether it is the same question a reading of this book already answered:
+       * the same pages and the same language replace that reading, in its own
+       * file; a different page range is a second reading and gets a bank beside
+       * it. Main decides that (`bankForReading`) and hands back the path with the
+       * step id it belongs to.
+       */
+      const plan = await api.workspace.planReading(input, {
+        ...(skip.length > 0 ? { skipPages: skip } : {}),
+        ...(language.length > 0 ? { language } : {}),
+      });
       const request: JobRequest = {
         kind: 'read',
         /*
@@ -416,10 +431,15 @@ export class OcrDialogComponent {
          */
         inputPath: plan.sourcePath,
         readingsPath: plan.readingsPath,
+        /*
+         * Carried, never re-minted. The bank above may be named after this id —
+         * `readings/<key>.<id8>.jsonl` for a second reading of the same book — and
+         * the step that lands hours from now has to be that step, or the file is
+         * named after a row nobody ever created. See `ReadRequest.stepId`.
+         */
+        stepId: plan.stepId,
       };
-      const skip = this.skipPages().trim();
       if (skip.length > 0) request.skipPages = skip;
-      const language = this.language().trim();
       if (language.length > 0) request.language = language;
 
       const outcome = await this.queue.enqueue(request);

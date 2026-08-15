@@ -782,6 +782,51 @@ function pointerAfter(ledger: ProjectLedger, step: LedgerStep): string {
   return positionOf(ledger)?.id ?? step.id;
 }
 
+/**
+ * The two fields the OCR dialog lets somebody fill in, exactly as they typed them.
+ *
+ * It is a named shape rather than an inline object because THREE places now hold
+ * one: the dialog that asks, the plan that decides where the bank goes, and the
+ * landing that records what was asked. All three have to mean the same thing by
+ * it, and a shape spelled three times is a shape that grows a field in two of
+ * them.
+ */
+export interface ReadAsk {
+  /** `--skip-pages`, verbatim: "3,17,19-24". */
+  skipPages?: string;
+  /** `--language`: the BCP-47 tag, declared and never detected. */
+  language?: string;
+}
+
+/**
+ * What a reading ASKED, as params — trimmed, and dropped when there is nothing
+ * left.
+ *
+ * ── Why this is a function and not two spreads at each call site ────────────
+ *
+ * A blank `--skip-pages` box and an absent field are the same statement, and two
+ * spellings of it are two questions as far as `reRunTarget` is concerned: the
+ * same book read twice would branch because one run recorded the empty string
+ * somebody's cursor left behind. That rule used to live inline in `recordReading`
+ * and nowhere else, which was fine while the landing was the only thing that
+ * asked the question.
+ *
+ * IT IS NOT ANY MORE, and the drift would be expensive in a new way. The bank's
+ * PATH is now decided before the job is enqueued, by asking `reRunTarget` the
+ * same question the landing will ask hours later — so a plan that trimmed
+ * differently from the landing would mint a branch path for a run the landing
+ * then files as a replace, and the step and the file it names would disagree
+ * about which bank belongs to which reading. One normalisation, asked twice.
+ */
+export function askedOf(asked: ReadAsk): LedgerParams {
+  const params: LedgerParams = {};
+  const skipPages = asked.skipPages?.trim() ?? '';
+  if (skipPages.length > 0) params.skipPages = skipPages;
+  const language = asked.language?.trim() ?? '';
+  if (language.length > 0) params.language = language;
+  return params;
+}
+
 /** What the user is about to do, before it has an id or a payload. */
 export interface StepRequest {
   action: StepAction;
@@ -1150,6 +1195,36 @@ export function orphanedPayloads(deletion: SubtreeDeletion): string[] {
 }
 
 /**
+ * The engine's in-flight debris beside a bank, by name — the pending replacement
+ * and the sidecar that says what it was asked.
+ *
+ * ── Why a delete has to know about files no step names ──────────────────────
+ *
+ * A re-read writes its answers into `<bank>.pending` and swaps that over the real
+ * bank only when the run completes, so a failed one leaves the old bank untouched
+ * and the pending file sitting there as resumable debris — which is the entire
+ * point of it (docs/BANK-LIFECYCLE.md §2). A PENDING BANK IS INVISIBLE TO THE
+ * LEDGER: steps are minted on success, and success is the moment the pending file
+ * stops existing, so no step ever names one and `orphanedPayloads` cannot be the
+ * thing that finds it.
+ *
+ * That leaves exactly one rule for the sweep to learn: when a delete destroys a
+ * read step's bank, the half-finished replacement OF that bank goes with it.
+ * Debris whose bank is gone is debris about nothing — a resume nothing would ever
+ * ask for, keyed to a question no row in the project still asks.
+ *
+ * ONE FUNCTION FOR BOTH NAMES, and that is the whole reason it is a function
+ * rather than two suffixes at the call site: the sidecar's name is the pending
+ * file's name plus a suffix, so a call site spelling them separately is a call
+ * site where the two can come to disagree about what a pending file is called.
+ * The names are the engine's (src/vlm/readings.ts); this is the app reading them.
+ */
+export function pendingBeside(bank: string): string[] {
+  const pending = `${bank}.pending`;
+  return [pending, `${pending}.request`];
+}
+
+/**
  * The per-type chains with every row naming a destroyed file struck out.
  *
  * ── The ghost row this exists to prevent ────────────────────────────────────
@@ -1271,6 +1346,84 @@ export function currentStandard(ledger: ProjectLedger): Partial<Record<StepActio
 }
 
 /**
+ * WHERE A WALK UP FROM THE POSITION STOPS — the edge of one bank's story.
+ *
+ * ── The rule both views were spelling separately ────────────────────────────
+ *
+ * Two questions are answered by walking the position's ancestry upward and taking
+ * the first thing found: WHICH CURATION is in effect, and WHICH BANK the row is
+ * about. They walk the same chain and they stop in the same places, and the
+ * places are a `read` and the `import` — because a reading is where a bank's
+ * story BEGINS. Anything above a read belongs to a different pass over the pages:
+ * a snapshot from up there names blocks by `(page, order)` numbers that mean
+ * different blocks on this side of it (see `ProjectReading`), and a bank from up
+ * there is somebody else's reading of the same book.
+ *
+ * A TABLE, and the same shape as `RETENTION_OF` for the same reason. The two
+ * views used to state the stopping rule as a literal `if` apiece, and a third
+ * would arrive the day another action is added — at which point one of them
+ * learns the new boundary and the other does not, and the two disagree about
+ * where one reading's story ends while both look correct.
+ */
+const BOUNDS_THE_WALK: Readonly<Record<StepAction, boolean>> = {
+  import: true,
+  read: true,
+  curate: false,
+  translate: false,
+};
+
+/**
+ * The nearest step of this action on the position's ancestry, or null.
+ *
+ * The walk is upward from where the user is standing, so a step of the wanted
+ * action is answered even when it IS the boundary — that is how a `read` finds
+ * itself — and the boundary otherwise ends the search rather than letting it
+ * continue into a pass this row is not about. A sibling is correctly never found:
+ * a curate step hanging off the reading is not on the path from the import to a
+ * position standing on the reading itself.
+ */
+function nearestUpward(ledger: ProjectLedger, wanted: StepAction): LedgerStep | null {
+  const standing = positionOf(ledger);
+  if (standing === null) return null;
+  const chain = ancestry(ledger, standing.id);
+  for (let at = chain.length - 1; at >= 0; at -= 1) {
+    const step = chain[at]!;
+    if (step.action === wanted) return step;
+    if (BOUNDS_THE_WALK[step.action]) return null;
+  }
+  return null;
+}
+
+/**
+ * The reading a rendering AT THE POSITION is made from — the step that owns the
+ * bank — or null for a project with no reading on the path.
+ *
+ * ── The lie this exists to end ──────────────────────────────────────────────
+ *
+ * A read step's `payload` has always been the authority on where its bank lives,
+ * and everything else COMPOSED that path from the project key instead of asking
+ * the step: `readings/<key>.jsonl`, one per project, forever. That was true while
+ * there was only ever one bank, and a re-read with different `--skip-pages`
+ * branches by design (`MINTED_BY_THE_RUN`) — so a project could hold two `read`
+ * steps and one file, the older of them describing a bank that had been written
+ * over from under it. Standing on the older row and pressing Generate rendered
+ * the newer reading, silently, with nothing on screen admitting the swap.
+ *
+ * So the plan asks the row. A branch mints its own bank path and the step records
+ * it; every project that existed before this keeps `readings/<key>.jsonl`, which
+ * is exactly what its one read step already says, so nothing on any disk moves.
+ *
+ * NULL FALLS BACK TO THE COMPOSED PATH, and the caller is where that happens
+ * rather than here, because composing it needs the project key and this module
+ * knows nothing about projects. It is the honest answer for two states: a project
+ * with no reading at all, and a position standing on the import — the revert row,
+ * which is about the untouched original rather than about any bank.
+ */
+export function readingInEffect(ledger: ProjectLedger): LedgerStep | null {
+  return nearestUpward(ledger, 'read');
+}
+
+/**
  * The curation snapshot a rendering AT THE POSITION is made with, or null when
  * the answer is the live overlay.
  *
@@ -1304,18 +1457,11 @@ export function currentStandard(ledger: ProjectLedger): Partial<Record<StepActio
  * nothing about this app's behaviour changes.
  */
 export function curationInEffect(ledger: ProjectLedger): LedgerStep | null {
-  const standing = positionOf(ledger);
-  if (standing === null) return null;
-  const chain = ancestry(ledger, standing.id);
-  for (let at = chain.length - 1; at >= 0; at -= 1) {
-    const step = chain[at]!;
-    if (step.action === 'curate') return step;
-    // The bank this branch of the story is about. Anything above it belongs to a
-    // reading that is not the one being stood on, and a snapshot from there names
-    // blocks by numbers that mean different blocks here (see `ProjectReading`).
-    if (step.action === 'read' || step.action === 'import') return null;
-  }
-  return null;
+  // The walk and its stopping places are `nearestUpward`'s, shared with
+  // `readingInEffect` rather than spelled twice: both questions are "the nearest
+  // one of these on the way up", and both stop at the reading whose blocks the
+  // answer would be about. See `BOUNDS_THE_WALK`.
+  return nearestUpward(ledger, 'curate');
 }
 
 /**

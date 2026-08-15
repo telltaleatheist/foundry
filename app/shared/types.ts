@@ -146,6 +146,28 @@ export interface ReadRequest {
   skipPages?: string;
   /** `--language`: the BCP-47 tag, declared and never detected. */
   language?: string;
+  /**
+   * THE STEP THIS BANK BELONGS TO, minted with the path and travelling with it.
+   *
+   * ── Why a request carries an id for a step that does not exist yet ──────────
+   *
+   * A branching re-read writes a bank of its own — `readings/<key>.<id8>.jsonl`,
+   * where `id8` is the front of the new step's uuid — and the step that lands
+   * hours later has to be THAT step, or the file is named after a row nobody ever
+   * created. Minting the id at the landing instead would mean composing the path
+   * from an id the path could not know, so the id is minted once, in main, at the
+   * moment the path is decided (`planReading`), and carried here.
+   *
+   * SPENT ONLY ON AN APPEND, which is `LandedRun.id`'s own rule and the reason
+   * this is safe to mint speculatively: a landing that turns out to be a replace
+   * swaps a payload into the step that already exists and throws this away. A
+   * replace already had a path to aim at — the target step's own — so the two
+   * halves agree in both directions.
+   *
+   * Optional because a job enqueued by a build that predates this carries none,
+   * and the landing mints its own exactly as it always did.
+   */
+  stepId?: string;
 }
 
 /**
@@ -582,7 +604,22 @@ export interface ReadingPlan {
   key: string;
   /** The pixels — `archive/`, which nothing in this app ever writes. */
   sourcePath: string;
+  /**
+   * The bank THIS reading fills, which is no longer one path per project.
+   *
+   * `readings/<key>.jsonl` for the first read of a book and for every re-read that
+   * asks the same question — a replace, aimed at the step it will swap into. A
+   * re-read asking a DIFFERENT question branches, and a branch gets a bank of its
+   * own (`readings/<key>.<id8>.jsonl`) so that the older row goes on naming the
+   * reading it is actually about.
+   */
   readingsPath: string;
+  /**
+   * The step the path above belongs to — see `ReadRequest.stepId`, which is where
+   * it is going. Decided in the same breath as the path, because the two are one
+   * decision: which reading is this, the one that exists or a new one?
+   */
+  stepId: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

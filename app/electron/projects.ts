@@ -90,6 +90,7 @@ import { openedAtFor } from './recents';
 import type {
   ConversionKind,
   LedgerParams,
+  LedgerStep,
   ProjectDocument,
   ProjectDocumentKind,
   ProjectGenerated,
@@ -111,6 +112,7 @@ import { spokenStem } from '../shared/documents';
 import { readJson } from '../shared/json';
 import { STEP_LABELS, migrateToSteps, readTypeRecords } from '../shared/steps';
 import {
+  askedOf,
   chainsWithout,
   chronological,
   curationInEffect,
@@ -122,12 +124,16 @@ import {
   originOf,
   originStep,
   parseLedger,
+  pendingBeside,
   positionOf,
+  reRunTarget,
+  readingInEffect,
   recordLanding,
   stepOf,
   subtree,
   type LandedRun,
   type Landing,
+  type ReadAsk,
 } from '../shared/ledger';
 import { GENERATED_ROLE_FOR } from '../shared/documents';
 
@@ -1119,7 +1125,19 @@ export function curationsDir(dir: string): string {
  */
 async function landStep(
   manifest: ProjectManifest,
-  run: Omit<LandedRun, 'id' | 'parent'> & { parent: string | null },
+  run: Omit<LandedRun, 'id' | 'parent'> & {
+    parent: string | null;
+    /**
+     * THE ID, WHEN THE CALLER ALREADY SPENT IT ON SOMETHING. A reading's bank is
+     * named after the step it belongs to (`bankForReading`), so that id was minted
+     * hours ago at the plan and has been written into a filename since — minting a
+     * second one here would leave the file named after a step nobody created. Every
+     * other landing has nothing riding on the id and lets this mint one.
+     *
+     * It is spent only on an append either way, which is `LandedRun.id`'s own rule.
+     */
+    id?: string;
+  },
 ): Promise<Landing | null> {
   const ledger = ledgerOf(manifest);
   const standing = positionOf(ledger);
@@ -1127,7 +1145,7 @@ async function landStep(
   const captured = run.parent !== null && ledger.steps.some((step) => step.id === run.parent)
     ? run.parent
     : standing.id;
-  const landing = recordLanding(ledger, { ...run, parent: captured, id: randomUUID() });
+  const landing = recordLanding(ledger, { ...run, parent: captured, id: run.id ?? randomUUID() });
   manifest.ledger = landing.ledger;
   return landing;
 }
@@ -1243,7 +1261,7 @@ export async function describeStepDelete(dir: string, stepId: string): Promise<S
   // say no before the user has agreed to anything.
   const deletion = deleteSubtree(ledger, stepId);
   const destroyed = orphanedPayloads(deletion);
-  const sweeps = await planStepSweep(resolved, destroyed, manifest);
+  const sweeps = await planStepSweep(resolved, destroyed, banksAmong(deletion.removed), manifest);
   // The other refusal that must land before the card is drawn, for its own
   // reason: a book this window is reading cannot be unlinked on Windows, so a
   // card that ignored it would be a question whose yes main declines to act on.
@@ -1325,13 +1343,48 @@ function refuseOpenPayload(sweeps: readonly Sweep[], label: string): void {
 async function planStepSweep(
   dir: string,
   payloads: readonly string[],
+  /**
+   * Which of those payloads are READINGS BANKS, so the engine's in-flight debris
+   * beside them goes too. See `pendingBeside` for what that debris is and why no
+   * step will ever name it.
+   */
+  banks: ReadonlySet<string>,
   manifest: ProjectManifest,
 ): Promise<Sweep[]> {
   const sweeps: Sweep[] = [];
   for (const payload of payloads) {
-    sweeps.push(await planSweep(dir, path.join(dir, ...payload.split('/')), manifest));
+    const resolved = path.join(dir, ...payload.split('/'));
+    const sweep = await planSweep(dir, resolved, manifest);
+    /*
+     * ADDED HERE RATHER THAN INSIDE `planSweep`, deliberately: that function is
+     * shared with the DOCUMENT delete, which is about EPUBs and PDFs and has no
+     * business knowing what a readings bank is. This is the step delete's own
+     * rule, so it is applied where the step delete composes its sweeps.
+     *
+     * The existence test is `planSweep`'s own idiom, and it earns its stat: the
+     * card counts and lists what a sweep holds, and a path in there for a file
+     * that was never on disk would be this app naming debris it invented.
+     */
+    if (banks.has(payload)) {
+      for (const debris of pendingBeside(resolved)) {
+        if (await exists(debris)) sweep.files.push(debris);
+      }
+    }
+    sweeps.push(sweep);
   }
   return sweeps;
+}
+
+/**
+ * Which of the payloads a delete destroys are readings banks.
+ *
+ * BY THE STEP'S OWN ACTION rather than by what the filename looks like. `readings/`
+ * also holds translation banks and, now, one bank per branching re-read — telling
+ * them apart by their characters would be exactly the basename matching this
+ * codebase has paid for twice, and the ledger already knows which step made what.
+ */
+function banksAmong(removed: readonly LedgerStep[]): Set<string> {
+  return new Set(removed.filter((step) => step.action === 'read').map((step) => step.payload));
 }
 
 /**
@@ -1477,13 +1530,37 @@ export async function deletableStep(dir: string, stepId: string): Promise<StepSu
  * The tree's manifest row goes in the same transaction as the ledger surgery, for
  * the reason the chains do — a row naming a directory that is not there is the
  * exact state `rotateGenerated` is careful never to leave.
+ *
+ * ── AND A BANK'S HALF-FINISHED REPLACEMENT GOES WITH THE BANK ───────────────
+ *
+ * A re-read writes into `<bank>.pending` and swaps it over the real file only on
+ * success, so a run that died leaves that pending file and its request sidecar
+ * beside the bank as resumable debris (docs/BANK-LIFECYCLE.md §2). NO STEP NAMES
+ * THEM — steps are minted on success and success is when the pending file stops
+ * existing — so `orphanedPayloads` cannot find them and they would sit in
+ * `readings/` forever after the bank they were replacing was deleted. Debris whose
+ * bank is gone is debris about nothing. `banksAmong` decides which payloads are
+ * banks, from the step's own action, and `planStepSweep` adds the pair.
+ *
+ * A QUEUED JOB ABOUT TO RESUME ONE CANNOT LOSE IT TO THIS, and there is no new
+ * mechanism for that: `refuseBusyStepDelete` (electron/main.ts) already refuses a
+ * step delete while ANY held, queued or running job writes into this project —
+ * deliberately coarse, on `refuseBusyJob`'s own argument that a narrower test
+ * would have to predict where a run that has not started will write. Both IPC
+ * doors ask it, the describe and the delete, so the card is never drawn for
+ * something the click would refuse.
  */
 export async function deleteStep(dir: string, stepId: string): Promise<LedgerView> {
   const resolved = deletableProjectDir(dir);
   const { ledger, orphans, sweeps } = await withManifest(resolved, async (manifest) => {
     const deletion = deleteSubtree(ledgerOf(manifest), stepId);
     const destroyed = orphanedPayloads(deletion);
-    const planned = await planStepSweep(resolved, destroyed, manifest);
+    const planned = await planStepSweep(
+      resolved,
+      destroyed,
+      banksAmong(deletion.removed),
+      manifest,
+    );
     // PROVED AGAIN INSIDE THE TRANSACTION, never trusted from `describeStepDelete`:
     // a book can be opened between the question and the answer, and this is the
     // call that unlinks a working tree.
@@ -1625,6 +1702,129 @@ export function renderingOverlay(dir: string, manifest: ProjectManifest): string
 /** The same answer for a caller that has not read the catalogue yet. */
 export async function overlayForPosition(dir: string): Promise<string> {
   return renderingOverlay(dir, await readManifest(dir));
+}
+
+/**
+ * The bank a rendering AT THE POSITION is made from — the step's own file.
+ *
+ * ── The row that rendered somebody else's reading ───────────────────────────
+ *
+ * `readings/<key>.jsonl` was composed from the project key at every call site, on
+ * the belief that a project has one bank. It does not: a re-read asking for a
+ * different page range BRANCHES by design (`MINTED_BY_THE_RUN`), so a project can
+ * hold two `read` steps — and while both composed the same path, standing on the
+ * older one and pressing Generate rendered the newer reading. The row named a
+ * bank that had been written over from under it and nothing on screen said so.
+ *
+ * So the plan asks the row: `readingInEffect` walks up from the position to the
+ * reading this branch of the story is about, and its payload is the answer. The
+ * exact shape `renderingOverlay` above already has, for the same reason — the
+ * pointer decides which of several files a run is handed, and composing one from
+ * the key is a second opinion about a question the ledger has already answered.
+ *
+ * THE COMPOSED PATH IS THE FALLBACK AND IT IS NOT A LEGACY BRANCH. Every project
+ * that existed before per-step paths has one read step whose payload IS
+ * `readings/<key>.jsonl`, so those go through the ledger like everything else and
+ * no file on any disk moves. What falls back here is a project with no reading at
+ * all — and a position standing on the import, the revert row, which is about the
+ * untouched original rather than about any bank.
+ */
+export function readingBank(dir: string, manifest: ProjectManifest): string {
+  const reading = readingInEffect(ledgerOf(manifest));
+  return reading === null
+    ? path.join(dir, READINGS, `${manifest.key}.jsonl`)
+    : path.join(dir, ...reading.payload.split('/'));
+}
+
+/** The same answer for a caller that has not read the catalogue yet. */
+export async function bankForPosition(dir: string): Promise<string> {
+  return readingBank(dir, await readManifest(dir));
+}
+
+/** A bank an OCR run will fill, and the step it belongs to. See `planReading`. */
+export interface PlannedBank {
+  /** Absolute. What the engine is handed as `--readings`. */
+  readingsPath: string;
+  /** `LandedRun.id` for this run: an existing step on a replace, minted on a branch. */
+  stepId: string;
+}
+
+/**
+ * WHERE THIS READING'S ANSWERS GO, decided before the job is enqueued.
+ *
+ * ── Why the path cannot wait for the landing ────────────────────────────────
+ *
+ * The engine is handed one path and writes into it for three hours. By the time
+ * anything lands there is nothing left to decide — so the question "is this
+ * reading the one that already exists, or a new one beside it?" has to be
+ * answered here, at the plan, and answered the SAME WAY the landing will answer
+ * it or the file and the row will describe different readings.
+ *
+ * It is the same question, asked of the same function, with the same three
+ * arguments the landing uses:
+ *
+ *   THE ACTION is `read`, obviously.
+ *
+ *   THE PARENT IS THE ORIGIN, never the position. A reading reads the PIXELS,
+ *   which live in `archive/` however far through their own history the person
+ *   pressing OCR happens to be standing — the reading-parents-at-origin rule, and
+ *   `recordReading` obeys it too (see `originOf` in shared/ledger.ts for what
+ *   parenting it at the position would cost).
+ *
+ *   THE PARAMS ARE WHAT THE DIALOG ASKED, normalised by `askedOf` rather than
+ *   trimmed here, precisely so the two askings cannot come to disagree about
+ *   whether a blank box is a page range.
+ *
+ * ── The three answers ───────────────────────────────────────────────────────
+ *
+ * A REPLACE aims at the target step's existing payload. Same step, same path, new
+ * contents — which is what `recordLanding` already says about the row, now true
+ * of the file as well. The engine writes a pending bank beside it and swaps on
+ * success (docs/BANK-LIFECYCLE.md §2), so the old answers survive a failed run.
+ *
+ * A FIRST READING keeps `readings/<key>.jsonl`. That is what every project on
+ * every disk already has, and the whole reason this scheme needs no migration.
+ *
+ * A BRANCH mints `readings/<key>.<id8>.jsonl`, `id8` being the front of the
+ * step's own uuid. Deterministic, collision-free, and never shown to a person —
+ * filenames are out of the UI, the row's name comes from `labelFor`. An ordinal
+ * would read better in Explorer and would be a second counter to keep consistent
+ * with the ledger; the uuid is already minted and already unique.
+ *
+ * THE ID IS MINTED HERE AND ONLY HERE, and travels on the request to the landing
+ * (`ReadRequest.stepId`). Minting it at the landing instead would mean composing
+ * a filename from an id the filename could not know; minting it twice would mean
+ * a bank named after a step nobody created.
+ */
+export async function bankForReading(dir: string, asked: ReadAsk): Promise<PlannedBank> {
+  const manifest = await readManifest(dir);
+  const ledger = ledgerOf(manifest);
+  const target = reRunTarget(ledger, {
+    action: 'read',
+    parent: originOf(ledger)?.id ?? null,
+    params: askedOf(asked),
+  });
+  if (target !== null) {
+    return { readingsPath: path.join(dir, ...target.payload.split('/')), stepId: target.id };
+  }
+  const minted = randomUUID();
+  // A project with no reading yet takes the plain name — including one whose only
+  // read step was deleted, which destroyed that bank and left the name free.
+  const first = !ledger.steps.some((step) => step.action === 'read');
+  const file = first ? `${manifest.key}.jsonl` : `${manifest.key}.${id8(minted)}.jsonl`;
+  return { readingsPath: path.join(dir, READINGS, file), stepId: minted };
+}
+
+/**
+ * The front of a uuid, hyphens removed — eight hex characters.
+ *
+ * The hyphens are stripped rather than sliced around because a uuid's first group
+ * is already eight characters and this would still be right if anything ever
+ * handed it an id spelled without them. Nobody reads this string; it exists so
+ * that two banks in one folder cannot collide.
+ */
+function id8(uuid: string): string {
+  return uuid.replace(/-/g, '').slice(0, 8);
 }
 
 /**
@@ -2363,7 +2563,21 @@ export async function recordReading(
    * reading of the whole book with no language declared, which is the plain
    * question and the one a migrated project asks too.
    */
-  asked: { skipPages?: string; language?: string } = {},
+  asked: ReadAsk = {},
+  /**
+   * THE STEP THIS BANK WAS NAMED AFTER, when the plan minted one.
+   *
+   * A branching re-read writes `readings/<key>.<id8>.jsonl`, and the `id8` in that
+   * filename is the front of the step's uuid — decided at the plan, hours before
+   * this runs (`bankForReading`). Landing under a freshly minted id would leave the
+   * file named after a row that does not exist, so the id travels with the job
+   * (`ReadRequest.stepId`) and is spent here.
+   *
+   * Absent for a job from a build that predates the field, and unused whenever
+   * this landing turns out to be a replace: `LandedRun.id` is spent only on an
+   * append, and a replace swaps a payload into the step that is already there.
+   */
+  stepId?: string,
 ): Promise<void> {
   const resolved = path.resolve(readingsPath);
   const dir = projectDirOf(resolved);
@@ -2422,28 +2636,48 @@ export async function recordReading(
       const landing = await landStep(manifest, {
         action: 'read',
         parent: originOf(ledgerOf(manifest))?.id ?? null,
-        payload: `${READINGS}/${manifest.key}.jsonl`,
-        // Trimmed and dropped when empty, so that "asked for nothing" has ONE
-        // spelling. A blank `--skip-pages` box and an absent field are the same
-        // statement, and two spellings of it would be two questions to
-        // `reRunTarget`: the same book read twice, branching because one run
-        // recorded the empty string somebody's cursor left behind.
-        params: {
-          generation,
-          pages,
-          ...asked.skipPages !== undefined && asked.skipPages.trim().length > 0
-            ? { skipPages: asked.skipPages.trim() }
-            : {},
-          ...asked.language !== undefined && asked.language.trim().length > 0
-            ? { language: asked.language.trim() }
-            : {},
-        },
+        /*
+         * WHERE THE ENGINE ACTUALLY WROTE, and not a path composed from the key.
+         *
+         * It used to be `readings/<key>.jsonl` spelled out here, which was true
+         * while a project had one bank and became a lie the moment a re-read could
+         * branch into a bank of its own. The run was handed a path
+         * (`bankForReading`) and filled that file; the step is the record of what
+         * that run produced, so it names the file the run produced. A composed path
+         * would be this function's second opinion about a decision made hours ago.
+         *
+         * Spelled with forward slashes and relative to the project, which is what
+         * `LedgerStep.payload` is and what `destroyPayload` splits again to reach
+         * the file — so nothing here ever matches by basename.
+         */
+        payload: path.relative(dir, resolved).split(path.sep).join('/'),
+        // `askedOf` trims and drops, so that "asked for nothing" has ONE spelling
+        // here and at the plan that named the bank. Two spellings would be two
+        // questions to `reRunTarget` — the same book read twice, branching because
+        // one of them recorded the empty string somebody's cursor left behind.
+        params: { generation, pages, ...askedOf(asked) },
         createdAt: Date.now(),
+        ...(stepId !== undefined ? { id: stepId } : {}),
       });
       await writeManifest(dir, manifest);
-      // The swap has landed, so the file the old step named may go — and only
-      // now. A re-read leaves this null: the engine archived the previous bank
-      // aside and wrote the same path again, so the step's payload never moved.
+      /*
+       * The swap has landed, so the file the old step named may go — and only now.
+       *
+       * NULL IS STILL THE ORDINARY ANSWER and now for the right reason. It used to
+       * be null because every reading composed one path, so a re-read wrote where
+       * the previous one had and there was nothing left to unlink; it is null today
+       * because a replace was AIMED at the target step's own payload before the job
+       * was enqueued (`bankForReading`), so the path genuinely did not move.
+       *
+       * WHAT MAKES IT DO REAL WORK is the one case where a path can drift between
+       * the plan and the landing: a run planned as a branch — its bank minted as
+       * `readings/<key>.<id8>.jsonl` — landing as a replace, because the step it
+       * would have branched beside was deleted while it ran, or because another
+       * reading of the same question landed first. The step keeps its place and
+       * takes the new path, and the bank it used to name is now a file no row in
+       * this project points at. `namesPayload` is what proves that, by the whole
+       * project-relative path, before a byte is destroyed.
+       */
       if (landing?.displaced != null) await destroyPayload(dir, landing.displaced);
     });
     // The one that puts the waiting light out. Home and the dock are drawn from

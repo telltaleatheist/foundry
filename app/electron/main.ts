@@ -112,6 +112,7 @@ import { planConversion, planReading, planTranslation } from './workspace';
 import { detectEnvTooling, listDistros } from './wsl';
 import { fold, isBook } from '../shared/original';
 import type { OverlayFile } from '../shared/overlay';
+import type { ReadAsk } from '../shared/ledger';
 import type { MenuAction } from '../shared/api';
 import type {
   BackendSettingsPatch,
@@ -1401,7 +1402,15 @@ function registerIpc(): void {
    * and rotates the one it replaces. Splitting them is what stops an OCR job
    * having to invent a format in order to be planned.
    */
-  ipcMain.handle('workspace:plan-reading', (_event, inputPath: string) => planReading(inputPath));
+  /*
+   * The ASK reaches the reading plan, because which bank this run fills depends
+   * on whether it is the same question a reading of this book already answered.
+   * A renderer that sent nothing asks the plain question — the whole book, no
+   * language declared — which is the same default `recordReading` takes, so an
+   * old renderer against a new main is consistent rather than merely tolerated.
+   */
+  ipcMain.handle('workspace:plan-reading', (_event, inputPath: string, asked?: ReadAsk) =>
+    planReading(inputPath, asked ?? {}));
   ipcMain.handle(
     'workspace:plan',
     (_event, inputPath: string, kind: ConversionKind) => planConversion(inputPath, kind),

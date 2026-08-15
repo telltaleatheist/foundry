@@ -36,6 +36,7 @@ import {
   StepLedgerError,
   ancestry,
   appendStep,
+  askedOf,
   chainsWithout,
   childrenOf,
   chronological,
@@ -51,8 +52,10 @@ import {
   originOf,
   originStep,
   parseLedger,
+  pendingBeside,
   positionOf,
   reRunTarget,
+  readingInEffect,
   recordLanding,
   stepOf,
   subtree,
@@ -1526,6 +1529,198 @@ describe('curationInEffect says which overlay a rendering at the position is mad
       params: { pages: 12 },
     }));
     assert.equal(curationInEffect({ ...ledger, position: 'r2' }), null);
+  });
+});
+
+/*
+ * ── ONE BANK PATH PER STEP ───────────────────────────────────────────────────
+ *
+ * The failure these hold down is the one a person actually meets: two readings of
+ * one book, a row for each, and clicking the older one renders the newer reading.
+ * It happened because everything COMPOSED `readings/<key>.jsonl` from the project
+ * key while a re-read with different page skips branched by design — two steps,
+ * one file, and the older step describing a bank that had been written over from
+ * under it.
+ *
+ * `readingInEffect` is the answer, and what it is asserted for here is that it
+ * walks the same chain as `curationInEffect` and stops in the same places. The two
+ * used to spell that rule separately; the day they disagree is the day one row
+ * renders another row's bank with another row's corrections.
+ */
+describe('readingInEffect says which bank the row a person is standing on is about', () => {
+  /** import → r1 (17 pages) → a save under it, and r2 branched from the import. */
+  function branchedReads(): ProjectLedger {
+    let ledger = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100, 'Imported'));
+    ledger = appendStep(ledger, step({
+      id: 'r1', parent: 's0', action: 'read', payload: 'readings/book.jsonl', createdAt: 200,
+      params: { generation: GENERATION, pages: 17 },
+    }));
+    ledger = appendStep(ledger, step({
+      id: 'save', parent: 'r1', action: 'curate', payload: 'curations/one.json', createdAt: 300,
+      params: { generation: GENERATION, amendments: 23 },
+    }));
+    return appendStep(ledger, step({
+      id: 'r2', parent: 's0', action: 'read', payload: 'readings/book.a1b2c3d4.jsonl',
+      createdAt: 400, params: { generation: 'second', pages: 12, skipPages: '3,17' },
+    }));
+  }
+
+  test('THE §5 FIX: standing on the older of two branched reads renders the OLDER bank', () => {
+    // The whole point. Both rows exist because they asked different questions of
+    // the same book, and each names the answers it actually produced.
+    assert.equal(readingInEffect({ ...branchedReads(), position: 'r1' })?.payload, 'readings/book.jsonl');
+    assert.equal(
+      readingInEffect({ ...branchedReads(), position: 'r2' })?.payload,
+      'readings/book.a1b2c3d4.jsonl',
+    );
+  });
+
+  test('standing on a save renders the bank that save was made against', () => {
+    // A curation names blocks by (page, order) numbers that mean different blocks
+    // in another pass, so the only bank a snapshot can honestly be drawn over is
+    // the one on its own ancestry.
+    assert.equal(readingInEffect({ ...branchedReads(), position: 'save' })?.payload, 'readings/book.jsonl');
+  });
+
+  test('standing on a translation renders the bank it was translated from', () => {
+    const ledger = appendStep(branchedReads(), step({
+      id: 'hu', parent: 'r2', action: 'translate', payload: 'generated/Book (hu).epub',
+      createdAt: 500, params: { language: 'Hungarian' },
+    }));
+    assert.equal(readingInEffect({ ...ledger, position: 'hu' })?.payload, 'readings/book.a1b2c3d4.jsonl');
+  });
+
+  test('standing on the import has no bank — the revert row is about the original', () => {
+    // Null is the caller's instruction to compose the plain path, which is what
+    // that project has always been handed. It is not a failure.
+    assert.equal(readingInEffect({ ...branchedReads(), position: 's0' }), null);
+  });
+
+  test('a project with no reading, and a project with no history at all, answer null', () => {
+    const imported = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100, 'Imported'));
+    assert.equal(readingInEffect(imported), null);
+    assert.equal(readingInEffect(emptyLedger()), null);
+  });
+
+  test('a sibling reading is never reached, however new it is', () => {
+    // `r2` is the newest step in the ledger and the pointer is absent, so it is
+    // also the position — but from the save, it is a sibling of an ancestor and
+    // not on the path. Standing on the save is standing in r1's story.
+    const ledger = branchedReads();
+    assert.equal(ledger.position, 'r2');
+    assert.equal(readingInEffect(ledger)?.payload, 'readings/book.a1b2c3d4.jsonl');
+    assert.equal(readingInEffect({ ...ledger, position: 'save' })?.payload, 'readings/book.jsonl');
+  });
+
+  test('every project that predates per-step paths gets the path it always had', () => {
+    // One read step, payload `readings/<key>.jsonl` — which is exactly what
+    // `migrateLedger` writes for a v1 project. No disk migration, by construction.
+    const migrated = migrateLedger({
+      version: 2,
+      key: 'Kershaw-d3f7ae65',
+      title: 'Working Towards The Fuhrer',
+      stem: 'Working Towards The Fuhrer. Kershaw, Ian. (1993)',
+      createdAt: 1_786_000_000_000,
+      archive: { file: 'Kershaw.pdf', kind: 'pdf', contentKey: 'd3f7ae65', originPath: null },
+      documents: [],
+      working: { trees: [], files: [] },
+      final: [],
+      reading: { generation: GENERATION, passes: 0, readAt: 1_786_100_000_000, pages: 317 },
+    });
+    assert.equal(readingInEffect(migrated)?.payload, 'readings/Kershaw-d3f7ae65.jsonl');
+  });
+
+  test('the walk stops where curationInEffect stops, so the two agree about one row', () => {
+    // The property that makes them one rule rather than two: whatever bank a
+    // position resolves to, the curation it resolves to is either null or a
+    // snapshot hanging under THAT bank. Asserted over every row of the ledger.
+    const ledger = branchedReads();
+    for (const standing of ledger.steps) {
+      const at = { ...ledger, position: standing.id };
+      const curation = curationInEffect(at);
+      if (curation === null) continue;
+      const bank = readingInEffect(at);
+      assert.ok(bank !== null, `${standing.id} resolved a curation with no bank behind it`);
+      assert.ok(
+        ancestry(at, curation.id).some((row) => row.id === bank.id),
+        `${standing.id} resolved a curation that is not under the bank it renders`,
+      );
+    }
+  });
+});
+
+describe('askedOf: one spelling of the question, at the plan and at the landing', () => {
+  /*
+   * The plan names the bank by asking `reRunTarget` what the landing will ask it
+   * hours later. If the two normalise differently, a run planned as a branch —
+   * with a bank minted under a new step's id — lands as a replace, and the file
+   * and the row disagree about which reading the bank belongs to.
+   */
+  test('a blank box and an absent field are the same statement', () => {
+    assert.deepEqual(askedOf({}), {});
+    assert.deepEqual(askedOf({ skipPages: '', language: '' }), {});
+    assert.deepEqual(askedOf({ skipPages: '   ', language: '\t' }), {});
+  });
+
+  test('what somebody typed is kept, trimmed', () => {
+    assert.deepEqual(askedOf({ skipPages: ' 3,17,19-24 ', language: ' de ' }), {
+      skipPages: '3,17,19-24',
+      language: 'de',
+    });
+  });
+
+  test('the two normalisations agree, which is the property the paths depend on', () => {
+    // The same ask, spelled two ways a form can produce it, has to reach
+    // `reRunTarget` as one question — or the same book read twice branches.
+    const ledger = appendStep(
+      appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100, 'Imported')),
+      step({
+        id: 'r1', parent: 's0', action: 'read', payload: 'readings/book.jsonl', createdAt: 200,
+        params: { generation: GENERATION, pages: 17, skipPages: '3,17' },
+      }),
+    );
+    const request = { action: 'read' as const, parent: 's0' };
+    assert.equal(reRunTarget(ledger, { ...request, params: askedOf({ skipPages: ' 3,17 ' }) })?.id, 'r1');
+    assert.equal(
+      reRunTarget(ledger, { ...request, params: askedOf({ skipPages: '3,17', language: '' }) })?.id,
+      'r1',
+    );
+    // And a genuinely different question still branches.
+    assert.equal(reRunTarget(ledger, { ...request, params: askedOf({ skipPages: '3' }) }), null);
+  });
+});
+
+describe('pendingBeside names the debris a bank leaves when a run dies', () => {
+  /*
+   * No step will ever name these files — steps are minted on success and success
+   * is the moment the pending file stops existing — so the delete sweep is the
+   * only thing that can take them, and it can only do that if it knows what they
+   * are called. One function for both names, because the sidecar's name is built
+   * on the pending file's.
+   */
+  test('the pending bank and its request sidecar, in that order', () => {
+    assert.deepEqual(pendingBeside('readings/book.jsonl'), [
+      'readings/book.jsonl.pending',
+      'readings/book.jsonl.pending.request',
+    ]);
+  });
+
+  test('a branched bank keeps its own debris, which is why this takes the path', () => {
+    // Composed from the bank it belongs to rather than from the project key: two
+    // readings in one folder have two pending files, and a sweep aimed at one of
+    // them must not reach the other's.
+    assert.deepEqual(pendingBeside('readings/book.a1b2c3d4.jsonl'), [
+      'readings/book.a1b2c3d4.jsonl.pending',
+      'readings/book.a1b2c3d4.jsonl.pending.request',
+    ]);
+  });
+
+  test('it works on an absolute path too, because the sweep resolves before it asks', () => {
+    const resolved = 'C:/Foundry/projects/kershaw/readings/kershaw.jsonl';
+    assert.deepEqual(pendingBeside(resolved), [
+      `${resolved}.pending`,
+      `${resolved}.pending.request`,
+    ]);
   });
 });
 

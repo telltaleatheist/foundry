@@ -783,10 +783,25 @@ async function pump(): Promise<void> {
        * exactly as a translation hands over its `--to` rather than leaving the
        * language legible only in a filename.
        */
-      await recordReading(next.outputPath, {
-        ...(request.skipPages !== undefined ? { skipPages: request.skipPages } : {}),
-        ...(request.language !== undefined ? { language: request.language } : {}),
-      });
+      /*
+       * AND THE STEP THE BANK IS NAMED AFTER, which is the third thing that has
+       * to survive the wait.
+       *
+       * A branching re-read writes `readings/<key>.<id8>.jsonl`, and that `id8` is
+       * the front of the step's uuid — minted at the plan, before the row even
+       * appeared in the shelf, because the engine is handed one path and fills it
+       * for three hours. Minting a fresh id here would leave the bank named after a
+       * step nobody created. It is spent only if this lands as an append; a replace
+       * swaps into the step that is already there and throws it away.
+       */
+      await recordReading(
+        next.outputPath,
+        {
+          ...(request.skipPages !== undefined ? { skipPages: request.skipPages } : {}),
+          ...(request.language !== undefined ? { language: request.language } : {}),
+        },
+        request.stepId,
+      );
       next.message = `Read ${path.basename(next.inputPath)} — the answers are banked.`;
       changed();
       void pump();

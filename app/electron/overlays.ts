@@ -66,6 +66,7 @@ import {
   overlaysDir,
   projectDirOf,
   readManifest,
+  readingBank,
   readingGeneration,
   recordCuration,
   renderingOverlay,
@@ -190,7 +191,28 @@ export async function locateOverlay(pdfPath: string): Promise<OverlayLocation> {
   const manifest = await readManifest(projectDir);
   const key = manifest.key;
   const archived = manifest.archive?.kind === 'pdf' ? manifest.archive.file : null;
-  const readings = path.join(projectDir, 'readings', `${key}.jsonl`);
+  /*
+   * THE BANK THE POSITION IS ABOUT, asked of the step rather than composed.
+   *
+   * This said `readings/<key>.jsonl`, one bank per project, which stopped being
+   * true when a re-read asking a different page range began branching: the project
+   * holds two `read` steps, each naming its own file, and this line would hand the
+   * block editor whichever one the key happened to spell. Standing on the older
+   * reading and opening the blocks drew the NEWER bank's pages — the same failure
+   * `planConversion` had, in the one screen where a person is looking at the
+   * blocks themselves and would correct them.
+   *
+   * `readingBank` walks up from the position to the reading this branch of the
+   * story is about, and it is handed the manifest already open here for
+   * `renderingOverlay`'s reason: the bank and the curation must be answers about
+   * one moment of one catalogue. A project with a single reading — which is every
+   * project that predates per-step paths — gets the path it always got, because
+   * that is what its read step says.
+   *
+   * The refusal below is more honest for it too: "not read yet" now means this
+   * position has no bank, rather than the project having none under one name.
+   */
+  const readings = readingBank(projectDir, manifest);
   // The pages have not been read. Said as itself rather than as "convert it
   // first": there is a project, there is a scan in it, and the one step between
   // this person and a page full of outlined blocks is the one the dock is
