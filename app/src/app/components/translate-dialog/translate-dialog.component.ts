@@ -1,6 +1,10 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
+import {
+  DEFAULT_OLLAMA_ENDPOINT as DEFAULT_OLLAMA,
+  DEFAULT_TRANSLATE_MODEL as DEFAULT_MODEL,
+} from '@shared/pipeline';
 import type { TranslateRequest } from '@shared/types';
 
 import { QueueService } from '../../core/queue.service';
@@ -8,10 +12,21 @@ import { TabsService } from '../../core/tabs.service';
 import { UiService } from '../../core/ui.service';
 import { api } from '../../core/foundry';
 
-/** The engine's default, repeated here so the field opens on it. */
-const DEFAULT_MODEL = 'qwen3:32b';
-/** Ollama's own default port, and where it is unless somebody moved it. */
-const DEFAULT_OLLAMA = 'http://localhost:11434';
+/*
+ * THE TWO DEFAULTS MOVED TO `shared/` AND ARE IMPORTED UNDER THEIR SHORT NAMES.
+ *
+ * They were constants in this file, where they were the values the two fields
+ * open on, and this dialog was the only thing that ever asked. It is not any
+ * more: a Generate standing on a translation runs a translate stage with no form
+ * in front of it (`renderPipeline`, shared/pipeline.ts), so main needs the same
+ * answer this dialog would have given. Two copies of a model id is two answers
+ * the day somebody bumps one of them, and that failure presents as a re-render
+ * quietly asking a different model than the translation was made with — filling
+ * the same bank with answers in a second voice.
+ *
+ * Aliased on the way in because the long names are what a shared module owes its
+ * readers and the short ones are what a dozen lines below already say.
+ */
 
 /**
  * Translate — configure ONE translation and put it in the queue.

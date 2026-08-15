@@ -69,17 +69,34 @@ import { promises as fsp } from 'node:fs';
 import * as path from 'node:path';
 
 import {
+  ProjectError,
   archiveFileOf,
-  bankForPosition,
   bankForReading,
   bankForTranslation,
   generatedFileFor,
   importDocument,
-  overlayForPosition,
+  ledgerOf,
+  readManifest,
+  readingBank,
+  readingIsComplete,
+  renderingOverlay,
   rotationRefusal,
 } from './projects';
 import type { ReadAsk } from '../shared/ledger';
-import type { ConversionKind, ReadingPlan, TranslationPlan, WorkspacePlan } from '../shared/types';
+import {
+  DEFAULT_OLLAMA_ENDPOINT,
+  DEFAULT_TRANSLATE_MODEL,
+  renderPipeline,
+} from '../shared/pipeline';
+import type {
+  ConversionKind,
+  LedgerStep,
+  ProjectManifest,
+  ReadingPlan,
+  ThenTranslate,
+  TranslationPlan,
+  WorkspacePlan,
+} from '../shared/types';
 
 /**
  * Where this book's ANSWERS go — everything an OCR job needs, and no more.
@@ -157,6 +174,21 @@ export async function planReading(
  * instant — which is true of a job that runs and false of every other kind, and
  * the false cases left the catalogue pointing into an archive folder for a run
  * that never wrote a byte. See the note at the refusal below.
+ *
+ * ── AND IT IS NO LONGER ALWAYS ONE RUN ──────────────────────────────────────
+ *
+ * The position used to reach a Generate through exactly one field — which
+ * `--overlay` — and standing on a translation rendered the book it was made FROM,
+ * in the language it was made OUT of. That was the honest approximation while
+ * there was nothing better available, and it is a German book handed to somebody
+ * who clicked the row labelled *Translated (Hungarian)*.
+ *
+ * So the plan now READS THE ANCESTRY (`renderPipeline`, shared/pipeline.ts) and a
+ * position standing under a translation becomes two runs under one job: render
+ * the curated book out of the readings bank into a file in the OS temp directory,
+ * then translate that file into the row's own EPUB. Nothing about the first three
+ * rows of that table changed — a project with no translation on the path cannot
+ * reach the second stage at all, and gets exactly the plan it has always got.
  */
 export async function planConversion(
   inputPath: string,
@@ -170,9 +202,37 @@ export async function planConversion(
    */
   kind: ConversionKind = 'epub',
 ): Promise<WorkspacePlan> {
-  const { dir, key, stem } = await importDocument(inputPath, 'pdf');
-  const file = generatedFileFor(stem, kind);
-  const outputPath = path.join(dir, 'generated', file);
+  const { dir } = await importDocument(inputPath, 'pdf');
+  /*
+   * ── ONE READING OF THE CATALOGUE, AND EVERY ANSWER BELOW COMES OUT OF IT ───
+   *
+   * This used to ask `bankForPosition` and `overlayForPosition`, each of which
+   * reads the manifest for itself — which was two answers about one project and
+   * fine while they were two independent facts. They are not independent any
+   * more: which bank, which curation, whether there is a translate stage and
+   * which row it lands in are FOUR ANSWERS ABOUT ONE POSITION, and a save
+   * committed between two reads would give a plan whose curation came from one
+   * ledger and whose landing came from another. So the manifest is read once and
+   * the same in-memory ledger answers all of it.
+   */
+  const manifest = await readManifest(dir);
+  const { key, stem } = manifest;
+  /*
+   * THE PIPELINE, WHICH IS THE ANCESTRY READ AS A PLAN. It refuses here rather
+   * than at the enqueue for a translation of a translation — one hop is what this
+   * pass runs (docs/TRANSLATION-STEPS.md §3) — and a refusal at plan time is one
+   * the dialog can say to somebody's face while the card is still open.
+   */
+  const pipeline = renderPipeline(ledgerOf(manifest));
+  const staged = pipeline.translate === null
+    ? null
+    : await translateStage(dir, manifest, pipeline.translate, pipeline.landsUnder, kind);
+  const file = staged === null
+    ? generatedFileFor(stem, kind)
+    : path.basename(staged.outputPath);
+  const outputPath = staged === null
+    ? path.join(dir, 'generated', file)
+    : staged.outputPath;
   /*
    * THE SOURCE IS THE APP'S TO CHOOSE, and that is the whole correction here.
    *
@@ -236,7 +296,7 @@ export async function planConversion(
      * The row named a bank that had been written over from under it and nothing on
      * screen admitted the swap.
      *
-     * So the plan asks the row instead: `bankForPosition` walks up from the
+     * So the plan asks the row instead: `readingBank` walks up from the
      * position to the reading this branch of the story is about and answers with
      * that step's own payload. A project with one reading — which is every project
      * that existed before this — gets exactly the path it always got, because that
@@ -246,8 +306,12 @@ export async function planConversion(
      * which state of the book the user chose when they pressed Generate, and
      * re-resolving it at spawn would let a pointer move made while the job waited
      * silently render a different reading than the dialog said it would.
+     *
+     * IT IS THE FIRST STAGE'S BANK IN A TWO-STAGE PLAN, and unchanged by being
+     * one: the vlm run reads the same pages out of the same reading whether its
+     * output is the book or the input to a translation.
      */
-    readingsPath: await bankForPosition(dir),
+    readingsPath: readingBank(dir, manifest),
     /*
      * ── WHICH CURATION, WHICH IS A QUESTION THIS APP DID NOT USED TO HAVE ─────
      *
@@ -269,10 +333,121 @@ export async function planConversion(
      * The same rule as `Job.parentStep`, one layer down.
      *
      * A project nobody has committed a save in gets exactly the path it always
-     * got: `overlayForPosition` finds no curation step and answers with the live
+     * got: `renderingOverlay` finds no curation step and answers with the live
      * `overlays/<key>.json`.
+     *
+     * IT IS THE SAME ANSWER IN A TWO-STAGE PLAN, and that is the whole of why the
+     * strike-then-re-render walkthrough needs no new overlay machinery: standing
+     * on a save made UNDER a translation, this is that save, so the vlm stage
+     * writes the curated book and the translate stage never sees the struck
+     * blocks. A block stricken before a translation was never translated and one
+     * stricken after is translated in the bank and simply not asked for — same
+     * artefact either way, and only the ledger's story about the order differs.
      */
-    overlayPath: await overlayForPosition(dir),
+    overlayPath: renderingOverlay(dir, manifest),
+    ...(staged === null ? {} : { thenTranslate: staged.thenTranslate }),
+  };
+}
+
+/**
+ * The second stage of a Generate standing under a translation: where it writes,
+ * and what it is asked.
+ *
+ * ── Where it writes is NOT the translate step's payload, quite ──────────────
+ *
+ * It is on a re-render of the translation itself, and it is deliberately not on a
+ * re-render of a curation made under one. Both fall out of asking
+ * `translationTarget` the question the LANDING will ask — same action, same
+ * parent, same language — which is the same arrangement `planTranslation` already
+ * has and for the same reason: the engine is handed paths and writes into them
+ * for hours, so a plan that named files by one rule and a landing that filed the
+ * row by another would leave the two describing different translations.
+ *
+ * Standing ON the translation, the parent is that row's own parent, so the target
+ * is that row: its EPUB, its bank, its step id, and a landing that REPLACES.
+ * Standing on a save made under it, the parent is the save, so nothing matches
+ * and the target is a branch — `<book> (hu).<id8>.epub` and a bank of its own,
+ * appended as a translate step parented at that save. That is the honest answer
+ * rather than a convenience: the strikes are applied before the translate stage
+ * sees a word, so the EPUB is a different book from the one the translation's
+ * payload holds, and writing it there would leave that row describing a book with
+ * paragraphs missing that nothing in the ledger admits to removing. Generate from
+ * the same save twice and the second run replaces the first, because it is the
+ * same question from the same parent — which is exactly what the walkthrough
+ * describes.
+ *
+ * ── The three refusals, all of them at plan time ────────────────────────────
+ *
+ * EPUB ONLY. A translation is a transform of the BOOK, and there is no version of
+ * `vlm-convert --format pdf` that reprints the scan's own pages in Hungarian. The
+ * Generate dialog disables the other two cards for a position under a translation
+ * (docs/TRANSLATION-STEPS.md §3), and this is the same rule where it can actually
+ * be enforced — a dialog bound is a courtesy, and main does not take the
+ * renderer's word for what a job is.
+ *
+ * A LANGUAGE IT NEVER RECORDED. A translation migrated out of the old catalogue
+ * carries no `params.language`, because the language survived only inside a
+ * filename and reading a fact out of one is what this codebase's oldest house
+ * rule forbids. There is nothing to put after `--to`, and guessing from the
+ * parentheses in its name is the one thing this app will not do.
+ *
+ * A READING WITH NO COMPLETION MARKER. The vlm stage runs `--reuse-readings` over
+ * a finished bank, which is what makes it free and offline — `replaysCompletedBank`
+ * (src/vlm/read.ts) is TRUE BY CONSTRUCTION because of this refusal, which is what
+ * lets the queue skip the reading server for the whole job. Without the marker the
+ * engine would treat the bank as a book to resume, and a person who pressed
+ * Generate would be buying three hours of GPU they did not ask for.
+ */
+async function translateStage(
+  dir: string,
+  manifest: ProjectManifest,
+  translate: LedgerStep,
+  landsUnder: string | null,
+  kind: ConversionKind,
+): Promise<{ outputPath: string; thenTranslate: ThenTranslate }> {
+  if (kind !== 'epub') {
+    throw new ProjectError(
+      `“${translate.label}” can only be generated as an EPUB. A translation is a transform of the book `
+      + 'itself, and reprinting the scan\'s own pages in another language is not something this engine '
+      + 'does — step back to the reading to make a PDF or a text file of the original.',
+    );
+  }
+  const language = translate.params?.language?.trim() ?? '';
+  if (language.length === 0) {
+    throw new ProjectError(
+      `“${translate.label}” does not say which language it was made into, so there is nothing to ask the `
+      + 'model for. It was recorded before Foundry kept that, and the way to get a fresh edition is to '
+      + 'translate again from the step it was made from.',
+    );
+  }
+  if (!await readingIsComplete(dir, manifest)) {
+    throw new ProjectError(
+      `The reading behind “${translate.label}” carries no completion marker, and generating a translation `
+      + 'replays that reading rather than paying for it again. Read the pages once more and this row '
+      + 'regenerates from the finished bank, for nothing.',
+    );
+  }
+  const planned = await bankForTranslation(dir, language, landsUnder);
+  return {
+    outputPath: planned.outputPath,
+    thenTranslate: {
+      to: language,
+      bank: planned.bankPath,
+      /*
+       * NOBODY CHOSE THESE, BECAUSE THERE IS NO DIALOG HERE. The row is the
+       * picker (docs/TRANSLATION-STEPS.md §3) — Generate asks for a format and
+       * nothing else — so the stage takes the same defaults the Translate
+       * dialog's fields open on, out of the one place both of them read them
+       * from. A model recorded per step was considered and refused in §2: a
+       * re-translation with a different model is somebody refining THIS
+       * translation, so the model is not part of what identifies one, and a step
+       * that carried it would make every model bump a new row.
+       */
+      model: DEFAULT_TRANSLATE_MODEL,
+      ollama: DEFAULT_OLLAMA_ENDPOINT,
+      parent: landsUnder,
+      stepId: planned.stepId,
+    },
   };
 }
 

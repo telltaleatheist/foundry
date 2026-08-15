@@ -1,8 +1,10 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 
 import { qualify } from '@shared/documents';
+import { translationInEffect } from '@shared/ledger';
 import type { ConversionKind, JobRequest } from '@shared/types';
 
+import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';
 import { QueueService } from '../../core/queue.service';
 import { TabsService } from '../../core/tabs.service';
@@ -82,6 +84,7 @@ import { api } from '../../core/foundry';
                   role="radio"
                   [attr.aria-checked]="kind() === choice.kind"
                   [class.on]="kind() === choice.kind"
+                  [disabled]="epubOnly() && choice.kind !== 'epub'"
                   (click)="kind.set(choice.kind)"
                 >
                   <span class="kind-name">{{ choice.label }}</span>
@@ -89,6 +92,21 @@ import { api } from '../../core/foundry';
                 </button>
               }
             </div>
+
+            @if (epubOnly()) {
+              <!--
+                THE BOUND, SAID RATHER THAN JUST APPLIED. Two dead cards with no
+                sentence beside them is an app that has decided something and will
+                not say what. Main refuses the same pair for the same reason
+                (planConversion) — this is the courtesy, not the rule.
+              -->
+              <p class="note">
+                The EPUB only, standing here. You are on a translation, and what Foundry can make
+                from one is the book: reprinting the scan's own photographed pages in another
+                language is not something the engine does. Click back to the reading for a PDF or
+                a text file of the original.
+              </p>
+            }
 
             @if (kind() === 'txt') {
               <p class="note">
@@ -233,7 +251,11 @@ import { api } from '../../core/foundry';
       transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1),
                   border-color 100ms cubic-bezier(0, 0, 0.2, 1);
     }
-    .kind:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+    .kind:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--border-strong); }
+    /* Dimmed rather than hidden: the two formats still exist and are still what
+       this book can be made into from one row up, so removing the cards would
+       teach somebody that this app cannot make a PDF at all. */
+    .kind:disabled { opacity: 0.45; cursor: not-allowed; }
     /* The chosen one wears the accent, which is this app's one word for "this is
        the thing" — the same soft fill the rail's active item and the inspector's
        current category row use. */
@@ -284,6 +306,7 @@ export class GenerateDialogComponent {
   private readonly tabs = inject(TabsService);
   private readonly queue = inject(QueueService);
   private readonly projects = inject(ProjectsService);
+  private readonly ledger = inject(LedgerService);
 
   /**
    * The book this is a rendering OF: the focused pane's document.
@@ -345,6 +368,30 @@ export class GenerateDialogComponent {
     { kind: 'txt', label: 'Plain text', blurb: 'The words, with the markup taken off.' },
   ];
 
+  /**
+   * Whether the only thing that can be generated from here is the book itself.
+   *
+   * ── The bound, and where it is actually enforced ────────────────────────────
+   *
+   * Standing under a translation, a Generate is two runs: render the curated book
+   * out of the readings bank, then translate that rendering (`renderPipeline`,
+   * shared/pipeline.ts). The second stage is an EPUB transform — the translate
+   * command reads a book and writes a book — and there is no version of
+   * `vlm-convert --format pdf` that reprints the scan's photographed pages in
+   * Hungarian. So the other two cards are dead here.
+   *
+   * FROM THE LEDGER MIRROR, the same one the inspector paints its rows from and
+   * the OCR dialog asks what a re-read would cost. `translationInEffect` is the
+   * walk `curationInEffect` already makes, asked one more question — and it is the
+   * NON-refusing half of the pair deliberately: `renderPipeline` throws for a
+   * translation of a translation, and a computed that can throw is a template that
+   * can go blank. Main says that sentence when the button is pressed.
+   */
+  protected readonly epubOnly = computed(() => {
+    const ledger = this.ledger.historyFor(this.project()?.dir ?? null)?.ledger ?? null;
+    return ledger !== null && translationInEffect(ledger) !== null;
+  });
+
   /** EPUB unless asked otherwise — it is the format this app can also read. */
   protected readonly kind = signal<ConversionKind>('epub');
   protected readonly problem = signal<string | null>(null);
@@ -357,6 +404,22 @@ export class GenerateDialogComponent {
       this.source();
       this.problem.set(null);
     });
+    /*
+     * READ THE HISTORY FOR THE BOOK THIS DIALOG IS ABOUT, because nothing else
+     * necessarily has. The OCR dialog does exactly this and for the same reason:
+     * somebody who opened a project from Home and pressed Generate straight away
+     * would otherwise be offered all three formats over a translation, because
+     * this window had never read the ledger that says where they are standing.
+     * `ensure` is silent and idempotent — a project already held is a no-op.
+     */
+    effect(() => { this.ledger.ensure(this.project()?.dir ?? null); });
+    /*
+     * AND THE CHOICE FOLLOWS THE BOUND. A person who picked PDF over the reading
+     * and then clicked onto the translation would be left holding a selection that
+     * is now a disabled card — and would press Generate to be told by main what
+     * the card in front of them already said.
+     */
+    effect(() => { if (this.epubOnly()) this.kind.set('epub'); });
   }
 
   /**
@@ -415,6 +478,15 @@ export class GenerateDialogComponent {
          * rendering ordered a moment after a strike applies that strike.
          */
         overlayPath: plan.overlayPath,
+        /*
+         * AND THE SECOND STAGE, WHEN MAIN PUT ONE IN THE PLAN — carried, never
+         * composed. Which language, which bank and which row this lands in are
+         * read off the ledger, and the ledger main holds is the truth; this
+         * window holds a mirror of it that is a repaint behind at worst. Copying
+         * what the plan says is the same rule `readingsPath` and `overlayPath`
+         * have always obeyed one line up.
+         */
+        ...(plan.thenTranslate !== undefined ? { thenTranslate: plan.thenTranslate } : {}),
       };
 
       const outcome = await this.queue.enqueue(request);

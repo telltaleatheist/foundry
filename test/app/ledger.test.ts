@@ -59,6 +59,7 @@ import {
   recordLanding,
   stepOf,
   subtree,
+  translationInEffect,
 } from '../../app/shared/ledger.ts';
 import {
   WHY_HANDMADE,
@@ -1658,6 +1659,74 @@ describe('readingInEffect says which bank the row a person is standing on is abo
         `${standing.id} resolved a curation that is not under the bank it renders`,
       );
     }
+  });
+});
+
+/*
+ * ── THE THIRD QUESTION THE ONE WALK ANSWERS ──────────────────────────────────
+ *
+ * `readingInEffect` asks which bank and `curationInEffect` asks which overlay;
+ * `translationInEffect` asks whether a Generate from here is one run or two. What
+ * these hold down is that it stops in the SAME PLACES as the other two — a walk
+ * that carried on past a reading would find a translation belonging to a
+ * different pass over the pages, and a Generate from a plain reading would grow a
+ * translate stage nobody asked for.
+ */
+describe('translationInEffect says whether a Generate from here has a second stage', () => {
+  /** import → read → hu, with a save under the reading and a save under the translation. */
+  function translated(): ProjectLedger {
+    let ledger = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100, 'Imported'));
+    ledger = appendStep(ledger, step({
+      id: 'r1', parent: 's0', action: 'read', payload: 'readings/book.jsonl', createdAt: 200,
+      params: { generation: GENERATION, pages: 17 },
+    }));
+    ledger = appendStep(ledger, step({
+      id: 'save', parent: 'r1', action: 'curate', payload: 'curations/one.json', createdAt: 300,
+      params: { generation: GENERATION, amendments: 23 },
+    }));
+    ledger = appendStep(ledger, step({
+      id: 'hu', parent: 'r1', action: 'translate', payload: 'generated/Book (hu).epub',
+      createdAt: 400, params: { language: 'hu' },
+    }));
+    return appendStep(ledger, step({
+      id: 'after', parent: 'hu', action: 'curate', payload: 'curations/two.json', createdAt: 500,
+      params: { generation: GENERATION, amendments: 4 },
+    }));
+  }
+
+  test('standing on a translation finds itself', () => {
+    assert.equal(translationInEffect({ ...translated(), position: 'hu' })?.id, 'hu');
+  });
+
+  test('standing on a save made UNDER one finds the translation above it', () => {
+    assert.equal(translationInEffect({ ...translated(), position: 'after' })?.id, 'hu');
+  });
+
+  test('standing on the reading finds nothing — the walk stops at a bank’s own row', () => {
+    // The translation is a CHILD of the reading, not an ancestor of it. A walk
+    // that found it would give every Generate in a translated project a second
+    // stage, including the one somebody pressed to look at the German.
+    assert.equal(translationInEffect({ ...translated(), position: 'r1' }), null);
+  });
+
+  test('a save under the READING finds nothing, because the translation is its sibling', () => {
+    assert.equal(translationInEffect({ ...translated(), position: 'save' }), null);
+  });
+
+  test('standing on the import finds nothing, and neither does a ledger with nothing in it', () => {
+    assert.equal(translationInEffect({ ...translated(), position: 's0' }), null);
+    assert.equal(translationInEffect(emptyLedger()), null);
+  });
+
+  test('a translation is never found across a reading, however new it is', () => {
+    // The rule `BOUNDS_THE_WALK` exists for: a translation above a re-read is a
+    // translation of blocks that have since been renumbered, and it is not on the
+    // path from the import to a position standing under the newer reading.
+    const ledger = appendStep(translated(), step({
+      id: 'r2', parent: 's0', action: 'read', payload: 'readings/book.a1b2c3d4.jsonl',
+      createdAt: 600, params: { generation: 'second', pages: 12, skipPages: '3' },
+    }));
+    assert.equal(translationInEffect({ ...ledger, position: 'r2' }), null);
   });
 });
 

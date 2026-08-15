@@ -1776,6 +1776,33 @@ export async function bankForPosition(dir: string): Promise<string> {
   return readingBank(dir, await readManifest(dir));
 }
 
+/**
+ * Whether the bank AT THE POSITION carries the engine's completion marker — the
+ * one fact that makes a rendering free.
+ *
+ * ── What a caller is actually asking ────────────────────────────────────────
+ *
+ * `replaysCompletedBank` (src/vlm/read.ts) is true for `--reuse-readings` over a
+ * marked bank and false for everything else, and it is what the engine's own argv
+ * layer asks before it refuses a run for having no reading backend. So a marker
+ * beside the bank is exactly "this run will read no pages and needs no server",
+ * and its absence is "this run intends to read whatever is missing" — a resume,
+ * which needs a vLLM the pipeline has no business standing up in the middle of a
+ * two-stage Generate.
+ *
+ * EXISTENCE AND NOT THE STAMP, which `markerStamp` below answers for a different
+ * question. That one parses `completedAt` because the generation ruling compares
+ * instants; this one must agree with the ENGINE's test, and the engine's test is
+ * whether the marker is there. A marker this app could not parse would otherwise
+ * refuse a Generate the engine would have run perfectly well.
+ *
+ * `completionMarkerFor` rather than the name composed a second time here: two
+ * spellings of one file is two answers the day either of them changes.
+ */
+export async function readingIsComplete(dir: string, manifest: ProjectManifest): Promise<boolean> {
+  return exists(completionMarkerFor(readingBank(dir, manifest)));
+}
+
 /** A bank an OCR run will fill, and the step it belongs to. See `planReading`. */
 export interface PlannedBank {
   /** Absolute. What the engine is handed as `--readings`. */
@@ -1890,12 +1917,39 @@ export interface PlannedTranslation {
  * alternative — trusting the renderer to hand back the parent this plan used — is a
  * fact about a person's history taken from outside main.
  */
-export async function bankForTranslation(dir: string, language: string): Promise<PlannedTranslation> {
+export async function bankForTranslation(
+  dir: string,
+  language: string,
+  /**
+   * THE STEP THIS TRANSLATION IS FILED AGAINST, when the caller knows it and the
+   * position is not it.
+   *
+   * ── Why a second answer to "which parent" exists at all ─────────────────────
+   *
+   * The Translate dialog asks for a translation OF what is on screen, so the
+   * position is the parent and this stays undefined — the ordinary case, and the
+   * paragraph above is about it. A GENERATE STANDING ON A TRANSLATION is the case
+   * that needs the argument: the user is asking for that row again, so the run is
+   * filed against the row's own parent, and asking the position instead would
+   * append a translation whose parent is a translation — a second row beside the
+   * one they meant to refresh. `renderPipeline` decides which of the two it is
+   * (`landsUnder`, shared/pipeline.ts) and hands the answer down.
+   *
+   * `undefined` means ask the position; `null` is a real parent (the origin, for
+   * a ledger with nothing else in it) and is passed through as one.
+   */
+  parent?: string | null,
+): Promise<PlannedTranslation> {
   const manifest = await readManifest(dir);
   const ledger = ledgerOf(manifest);
   const target = translationTarget(
     ledger,
-    { parent: positionOf(ledger)?.id ?? null, language, stem: manifest.stem, key: manifest.key },
+    {
+      parent: parent === undefined ? positionOf(ledger)?.id ?? null : parent,
+      language,
+      stem: manifest.stem,
+      key: manifest.key,
+    },
     randomUUID(),
   );
   return {

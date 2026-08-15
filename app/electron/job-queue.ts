@@ -61,7 +61,8 @@
  * make possible is a batch of BOOKS; an install is plumbing.
  */
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, promises as fsp } from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { readAppSettings } from './app-settings';
@@ -79,6 +80,7 @@ import {
 } from './projects';
 import { readSettings } from './settings';
 import { ensureServer, isLocalVllmEndpoint, noteQueueBusy, noteQueueIdle } from './vllm-server';
+import { translationStage } from '../shared/pipeline';
 import type { EnvInstallRequest, Job, JobRequest, TranslateRequest } from '../shared/types';
 
 /**
@@ -642,6 +644,29 @@ async function pump(): Promise<void> {
     return;
   }
 
+  /*
+   * ── THE JOB THAT IS TWO RUNS, DECIDED ONCE AND HELD HERE ──────────────────
+   *
+   * A Generate from a position standing under a translation is `vlm-convert`
+   * into a temporary EPUB and then `translate` out of it into the row's own
+   * file (docs/TRANSLATION-STEPS.md §3). ONE QUEUE ROW, ONE PROGRESS BAR, ONE
+   * SETTLE — because it is one thing the user asked for, and a shelf that grew
+   * a second row halfway through would be this app's bookkeeping surfacing as
+   * an event. The two stages share the rotation below, the cancel, and the
+   * landing.
+   *
+   * `planConversion` decided all of it — which language, which bank, which row
+   * it lands in — for `overlayPath`'s reason, which is the rule for everything
+   * about a Generate: it is the state of the book the user chose when they
+   * pressed the button, and re-resolving any of it at spawn would let a pointer
+   * move made while the job waited silently produce something else.
+   */
+  const piped = request.kind !== 'read'
+    && request.kind !== 'translate'
+    && request.thenTranslate !== undefined
+    ? { request, then: request.thenTranslate }
+    : null;
+
   starting = true;
   next.state = 'running';
   next.startedAt = Date.now();
@@ -662,7 +687,16 @@ async function pump(): Promise<void> {
   // not start, and standing up twenty gigabytes of vLLM so that a job which
   // will never send it a page can begin is a five-minute wait that buys
   // nothing — and puts two models on one GPU if a conversion follows.
-  const endpoint = next.kind === 'translate' ? null : endpointFor();
+  //
+  // AND NEITHER DOES A TWO-STAGE GENERATE, which is the same sentence about a
+  // job that happens to spend its first run inside `vlm-convert`. That run
+  // replays a completed bank — `replaysCompletedBank` is true by construction,
+  // because `planConversion` refuses the whole job when the ancestral reading
+  // carries no completion marker (docs/TRANSLATION-STEPS.md §3) — so it posts
+  // no page anywhere, and its second run is a translation, which is Ollama's.
+  // Waiting here would put a five-minute server start in front of a job that
+  // is arithmetic followed by a model this app does not own.
+  const endpoint = next.kind === 'translate' || piped !== null ? null : endpointFor();
   if (endpoint !== null && isLocalVllmEndpoint(endpoint)) {
     next.message = 'Starting the reading server…';
     changed();
@@ -682,6 +716,46 @@ async function pump(): Promise<void> {
     // Cancelled while the server was coming up — see `cancel`. Re-read rather
     // than test `next.state`, which the compiler still believes is 'running'.
     if (jobs.find((job) => job.id === next.id)?.state === 'cancelled') {
+      starting = false;
+      void pump();
+      return;
+    }
+  }
+
+  /*
+   * ── THE INTERMEDIATE GOES IN THE OS TEMP DIRECTORY, NEVER IN `generated/` ──
+   *
+   * The first stage of a two-stage Generate writes a whole EPUB that nobody
+   * asked for: it exists so the second stage has something to read, and it is
+   * deleted at the settle whichever way the job goes. DEBRIS DOES NOT GO WHERE
+   * PRODUCTS LIVE. `generated/` is the layer this app treats as an origin —
+   * rotated aside rather than overwritten, catalogued, offered on Home, unpacked
+   * into working trees — and dropping a nameless half-book into it would put a
+   * file the user never ordered into the one directory they are shown.
+   *
+   * NAMED FOR THE JOB rather than for the book, because the book already has a
+   * name and this is not it: two jobs about one book must not collide in a
+   * directory that belongs to every program on the machine, and a person who
+   * finds one of these while a run is going should see something that is
+   * obviously a run in progress. Under a `foundry` subdirectory for the same
+   * reason `env-downloader.ts` puts its downloads in one — a temp folder is
+   * shared, and files loose in it belong to nobody.
+   *
+   * MADE BEFORE THE ROTATION, deliberately: a temp directory this app cannot
+   * create is a job that fails having touched nothing at all, and there is no
+   * rotation to put back.
+   */
+  const intermediate = piped === null
+    ? null
+    : path.join(os.tmpdir(), 'foundry', `${next.id}.epub`);
+  if (intermediate !== null) {
+    try {
+      await fsp.mkdir(path.dirname(intermediate), { recursive: true });
+    } catch (err) {
+      next.state = 'failed';
+      next.error = `The temporary folder for this job could not be made: ${(err as Error).message}`;
+      next.finishedAt = Date.now();
+      changed();
       starting = false;
       void pump();
       return;
@@ -781,18 +855,33 @@ async function pump(): Promise<void> {
     ? { ...request, inputPath: rotation.movedTo }
     : request;
 
-  const args = argsFor(spawned);
   /*
-   * The command, once, before it runs.
+   * ── THE RUNS THIS JOB IS, IN ORDER ────────────────────────────────────────
    *
-   * A failure that names a flag is only useful beside the flags it was given —
-   * "--out and --format contradict each other" means nothing without the pair,
-   * and the paths this app composes are exactly the ones nobody typed and
-   * therefore nobody can check. One line, at the start, in the terminal that is
-   * already open.
+   * One for everything this app has ever queued, and two for a Generate standing
+   * under a translation: `vlm-convert` into the temp EPUB, then `translate` out
+   * of it into the file the row is about.
+   *
+   * THE SECOND STAGE IS A `TranslateRequest` AND GOES THROUGH `argsFor`, which is
+   * the whole reason it is composed rather than spelled. The translate command
+   * line has seven flags that were each learned once and expensively — `--bank`
+   * most of all — and a second place assembling one is a second place to forget
+   * one. `translationStage` is pure and lives in shared/, so the composition is
+   * covered by a test rather than by this file being read carefully.
    */
-  console.log(`[job] ${next.kind} ${args.join(' ')}`);
-  const handle = runEngine(args, (line) => {
+  const stages: EngineRequest[] = piped === null || intermediate === null
+    ? [spawned]
+    : [
+      // Stage one writes to the temp file and is otherwise the Generate that was
+      // planned: same pixels, same bank, same overlay, same format. The stored
+      // request keeps its own `outputPath`, which is the file the row, the
+      // rotation and the landing are all about — see the note above `spawned`,
+      // which is the same rule about the same map.
+      { ...piped.request, outputPath: intermediate },
+      translationStage(piped.then, intermediate, piped.request.outputPath),
+    ];
+
+  const watch = (line: string): void => {
     next.message = line;
     const progress = parseProgressLine(line);
     /*
@@ -813,13 +902,72 @@ async function pump(): Promise<void> {
       next.progress = progress;
     }
     changed();
-  });
+  };
+
+  /*
+   * The command, once, before it runs.
+   *
+   * A failure that names a flag is only useful beside the flags it was given —
+   * "--out and --format contradict each other" means nothing without the pair,
+   * and the paths this app composes are exactly the ones nobody typed and
+   * therefore nobody can check. One line, at the start, in the terminal that is
+   * already open — and one PER STAGE, because two runs under one row is exactly
+   * the case where a single line would leave somebody reading the wrong command.
+   */
+  const args = argsFor(stages[0]!);
+  console.log(`[job] ${next.kind} ${args.join(' ')}`);
+  let handle = runEngine(args, watch);
+  /*
+   * THE CANCEL FOLLOWS THE LIVE CHILD, which is the whole of what a two-stage
+   * job costs this file. `handle` is reassigned between stages and the closure
+   * reads it, so the ✕ kills whichever engine is actually running rather than a
+   * child that has already exited — and `running` stays set across the gap
+   * between the two, so no second `pump()` can slip a job in beside this one and
+   * put two engines on one GPU.
+   */
   running = { id: next.id, cancel: () => handle.cancel() };
   starting = false;
 
-  const result = await handle.done;
+  let result = await handle.done;
+  for (let at = 1; at < stages.length && result.code === 0; at += 1) {
+    /*
+     * THE ROW SAYS WHICH STAGE IT IS ON, once, and then the engine's own lines
+     * take the message back over — the same arrangement the `Starting …` line
+     * has always had. The BAR needs nothing: the engine's progress lines carry a
+     * phase, and `translate` counts blocks rather than pages, so the shelf
+     * already draws the second stage as the different quantity it is.
+     */
+    next.message = 'Translating what was just rendered…';
+    next.note = null;
+    changed();
+    const stageArgs = argsFor(stages[at]!);
+    console.log(`[job] ${next.kind} ${stageArgs.join(' ')}`);
+    handle = runEngine(stageArgs, watch);
+    result = await handle.done;
+  }
   running = null;
   next.finishedAt = Date.now();
+
+  /*
+   * THE INTERMEDIATE GOES NOW, whichever way this ended. A run that failed at
+   * block 400 leaves a whole EPUB in the temp directory, and the next one writes
+   * a fresh one under its own job id — so keeping it would be hoarding half-books
+   * nobody can name against a directory this app does not own.
+   *
+   * BEST EFFORT, AND NEVER A THROW. A leftover temp file is a console line; the
+   * job it belonged to succeeded or failed on its own merits, and reporting three
+   * hours of GPU as a failure because a scratch file would not unlink would be
+   * the bookkeeping deciding what happened to the book. `force` so an
+   * already-absent file — the ordinary case when the run never got that far — is
+   * silence rather than an error.
+   */
+  if (intermediate !== null) {
+    try {
+      await fsp.rm(intermediate, { force: true });
+    } catch (err) {
+      console.error(`[job] the intermediate ${intermediate} could not be removed: ${(err as Error).message}`);
+    }
+  }
 
   if (result.code === 0) {
     next.state = 'done';
@@ -904,9 +1052,35 @@ async function pump(): Promise<void> {
      */
     const live = await recordGenerated(
       next.outputPath,
-      request.kind === 'translate' ? 'translation' : generatedRoleFor(request.kind),
+      /*
+       * A TWO-STAGE GENERATE PRODUCED A TRANSLATION, and the role says so.
+       *
+       * What is on disk is an EPUB of this book in another language, made by the
+       * same `translate` command a translation job runs — so it is catalogued as
+       * one, and it lands a ledger step as one. Filing it as a `cast` because the
+       * job's `kind` happens to say `epub` would leave the row that the whole
+       * pipeline exists to refresh untouched, and would put a second EPUB in the
+       * chain claiming to be the model's reading of the pages.
+       */
+      request.kind === 'translate' || piped !== null
+        ? 'translation'
+        : generatedRoleFor(request.kind),
       {
-        parentStep: next.parentStep ?? null,
+        /*
+         * WHICH STEP THIS IS FILED AGAINST, and a two-stage Generate is the one
+         * job in this app where that is NOT the position at the press.
+         *
+         * `Job.parentStep` is where the user was standing, and for a re-render of
+         * a translation that is the translation itself — so filing it there would
+         * append a translation whose parent is a translation: a second row beside
+         * the one they asked to refresh, and a payload nobody wanted. The pipeline
+         * settled it at plan time with the same ancestry walk that chose the
+         * overlay and the bank (`RenderPipeline.landsUnder`), and the answer is
+         * the translation's own parent when you are standing on it and the save
+         * itself when you are standing on a save made under it. `reRunTarget` then
+         * does the rest: a replace of that row, or a branch beside it.
+         */
+        parentStep: piped?.then.parent ?? next.parentStep ?? null,
         /*
          * THE LANGUAGE, HANDED OVER RATHER THAN LEFT IN THE FILENAME.
          *
@@ -931,6 +1105,20 @@ async function pump(): Promise<void> {
             language: request.to,
             bank: request.bankPath,
             ...(request.stepId !== undefined ? { stepId: request.stepId } : {}),
+          }
+          : {}),
+        /*
+         * AND THE SAME THREE FACTS OFF THE PIPELINE, because the second stage was
+         * a translation and left exactly what one leaves. They are the paths the
+         * engine was actually handed a moment ago — `--to`, `--bank` and the id
+         * both files were named after — so the row records what the run did rather
+         * than what something composed for it afterwards.
+         */
+        ...(piped !== null
+          ? {
+            language: piped.then.to,
+            bank: piped.then.bank,
+            ...(piped.then.stepId !== undefined ? { stepId: piped.then.stepId } : {}),
           }
           : {}),
       },

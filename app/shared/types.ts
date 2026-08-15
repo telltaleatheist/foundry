@@ -206,6 +206,85 @@ export interface GenerateRequest {
    * rendering that could be given a different page-skip from the reading it
    * renders would be a rendering of a book that was never read.
    */
+  /**
+   * AND THEN TRANSLATE IT — the second stage, when the position stands under a
+   * translation.
+   *
+   * Absent for every Generate this app has ever run and for every one made from
+   * a position with no translation on its ancestry, which is what keeps this a
+   * `GenerateRequest` rather than a third request shape: the stages share an
+   * input, an overlay and a bank, and only the last of them writes the file the
+   * row is about.
+   *
+   * COMPOSED AT PLAN TIME, like everything else about a Generate. `overlayPath`
+   * is resolved by `planConversion` for the stated reason — it is which state of
+   * the book the user chose when they pressed the button, and re-resolving it at
+   * spawn would let a pointer move made while the job waited silently render a
+   * different book than the dialog said it would — and every word of that applies
+   * to the language, the bank and the step this lands under. Same rule as
+   * `Job.parentStep`, one layer down.
+   */
+  thenTranslate?: ThenTranslate;
+}
+
+/**
+ * The translate stage of a two-stage Generate: what the second spawn is asked.
+ *
+ * A NAMED SHAPE because four places hold one — the plan that composes it, the
+ * request that carries it, the queue that turns it into a command line, and the
+ * landing that files the step — and a shape spelled four times is a shape that
+ * grows a field in three of them. `TranslationPlan` is the same arrangement for
+ * the same reason.
+ */
+export interface ThenTranslate {
+  /** `--to`: the language the ancestral translate step recorded (`params.language`). */
+  to: string;
+  /**
+   * `--bank`, ABSOLUTE: the per-block answers this run reads and fills.
+   *
+   * From `translationTarget` — the step's own bank on a re-render of that step,
+   * which is what makes it nearly free, and a branch's own bank for a curation
+   * made under it. Never composed from the key and the tag: that is the lie
+   * `readings/<key>.jsonl` was for readings, and `translationBankOf` is where the
+   * legacy fallback for a step that predates recorded banks already lives.
+   */
+  bank: string;
+  /** `--model`. Nobody chose it — there is no dialog here — so it is the default. */
+  model: string;
+  /** `--ollama`. Used, never started, exactly as a translate job uses it. */
+  ollama: string;
+  /**
+   * `--instructions`, when there are any.
+   *
+   * NOTHING COMPOSES ONE TODAY and the field is still here rather than left out.
+   * A step deliberately does not record the instructions it was translated with
+   * (`PARAMS_OF.translate` refuses the param by name — a re-translation with
+   * different instructions is somebody refining THIS translation, not asking a
+   * new one), so a re-render has nowhere honest to read them from. The day a
+   * caller has some, this is where they go; until then its absence is the truth.
+   */
+  instructions?: string;
+  /**
+   * The step this run's EPUB is filed against — `RenderPipeline.landsUnder`.
+   *
+   * NOT `Job.parentStep`, and that is the whole reason it is carried here.
+   * `parentStep` is the position at the press, which for a re-render of a
+   * translation is the translation itself — and filing a translation against a
+   * translation is a second row beside the one the user asked to refresh. The
+   * pipeline decides the parent at plan time with the same walk that decided
+   * everything else about the run; the queue spends it at the landing.
+   */
+  parent: string | null;
+  /**
+   * The step both files are named after, minted at the plan.
+   *
+   * `TranslateRequest.stepId`'s arrangement, for exactly its reason: a branching
+   * translation writes `generated/<book> (hu).<id8>.epub` and a bank named the
+   * same way, so the step that lands has to BE that step. Spent only on an
+   * append; a landing that turns out to be a replace swaps into the row that is
+   * already there and throws this away.
+   */
+  stepId?: string;
 }
 
 /**
@@ -587,6 +666,12 @@ export interface WorkspacePlan {
    * The GENERATED layer, because what the engine writes is an origin: it is the
    * record of what the model read, it is never written again, and the copy the
    * user edits is unpacked or copied from it.
+   *
+   * A TWO-STAGE GENERATE WRITES THE TRANSLATION'S OWN NAME — `<book> (hu).epub`,
+   * or a branch's `<book> (hu).<id8>.epub` — because the product of standing on a
+   * translation and pressing Generate IS that translation, made again. The name
+   * comes from `translationTarget` rather than from the book and the format, so
+   * the file this writes and the row it lands in are one decision.
    */
   outputPath: string;
   /**
@@ -609,6 +694,15 @@ export interface WorkspacePlan {
    * spent the wait striking two hundred running heads.
    */
   overlayPath: string;
+  /**
+   * The second stage, when the position stands under a translation — carried
+   * onto the request by whoever enqueues, and absent for every other Generate.
+   *
+   * The dialog copies it rather than composing it: which runs a button press
+   * becomes is main's decision, taken from a ledger the renderer holds only a
+   * mirror of (`renderPipeline`, shared/pipeline.ts).
+   */
+  thenTranslate?: ThenTranslate;
 }
 
 /**

@@ -1768,13 +1768,16 @@ export function readingInEffect(ledger: ProjectLedger): LedgerStep | null {
  * one on the path, which is the one being stood on.
  *
  * A TRANSLATE STEP FALLS THROUGH TO ITS NEAREST ANCESTOR THAT HAS ONE, and that
- * is a deliberate limit of this pass rather than the final answer. A translation
- * has a payload of its own — a bank of translated blocks — and rendering FROM one
- * means rendering that bank rather than the scan's, which is a second rendering
- * path this app does not have yet. Until it does, standing on a translation and
- * pressing Generate renders the book it was translated from, with the curation
- * that translation was made under, which is the honest approximation: it is the
- * state the translation was taken of.
+ * is now exactly right rather than an approximation. It used to be the whole of
+ * what standing on a translation did — the rendering was the book it was
+ * translated from, in the language it was translated OUT of, which is a German
+ * book for somebody who clicked the row labelled *Translated (Hungarian)*. What
+ * changed is not this walk: a translation bank carries no page and no order, so
+ * nothing can ever render from one, and the curation that applies to the blocks
+ * is still the one the translation was made under. What changed is that a
+ * Generate from there no longer STOPS at the rendering — it feeds it to a
+ * translate stage (`renderPipeline`, shared/pipeline.ts), and this answer is the
+ * first half of that pipeline rather than a substitute for the second.
  *
  * NULL IS THE ORDINARY ANSWER. A project nobody has committed a curation in has
  * no `curate` step anywhere, so every position resolves to the live overlay and
@@ -1786,6 +1789,38 @@ export function curationInEffect(ledger: ProjectLedger): LedgerStep | null {
   // one of these on the way up", and both stop at the reading whose blocks the
   // answer would be about. See `BOUNDS_THE_WALK`.
   return nearestUpward(ledger, 'curate');
+}
+
+/**
+ * The translation a Generate AT THE POSITION produces again, or null when the
+ * position is one a single run of `vlm-convert` answers.
+ *
+ * ── The third question the one walk answers ─────────────────────────────────
+ *
+ * `readingInEffect` asks which bank, `curationInEffect` asks which overlay, and
+ * this asks whether there is a SECOND STAGE at all: standing on a `translate`
+ * finds itself, standing on a `curate` made under one finds the translation above
+ * it, and everything else finds nothing — because the walk stops at a `read`, and
+ * anything above a read belongs to a different pass over the pages. So a project
+ * that has never been translated cannot reach the pipeline at all, and neither
+ * can a position under the reading in a project that has.
+ *
+ * IT IS THE STEP AND NOT ITS PAYLOAD, which is the distinction that keeps the
+ * caller honest. What this row supplies is what the translate stage is ASKED —
+ * `--to` from `params.language` and `--bank` from `params.bank` — and never where
+ * the run writes: that is decided by `translationTarget` against the parent the
+ * product is filed under, which for a re-render of this very row is this row's
+ * own parent. Handing back the payload here would invite a caller to write into
+ * it directly, which is right for a re-render of the translation and wrong for a
+ * curation made under it — a different book, and a row that would then be lying
+ * about its own contents.
+ *
+ * The refusal for a translation OF a translation is not here: this answers what
+ * the ledger says, and what this app will and will not run from it is
+ * `renderPipeline`'s to say (shared/pipeline.ts).
+ */
+export function translationInEffect(ledger: ProjectLedger): LedgerStep | null {
+  return nearestUpward(ledger, 'translate');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
