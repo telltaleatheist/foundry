@@ -437,63 +437,31 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
           }
         </section>
 
-        <!-- ── The one selected block, for a scan ───────────────────────── -->
-        @if (panel.kind === 'pdf' && onlyBlock() !== null) {
-          <section class="accordion" [class.shut]="!blockOpen()">
-            <button class="head" (click)="blockOpen.set(!blockOpen())">
-              <span class="twist">{{ blockOpen() ? '▾' : '▸' }}</span>
-              <span class="label">Block</span>
-              <span class="count">{{ onlyBlock()?.key }}</span>
-            </button>
-            @if (blockOpen()) {
-              <div class="body">
-                @if (onlyBlock(); as block) {
-                  <!--
-                    WHAT THE MODEL READ, in a box that can be corrected.
-                    An outline says a block is there and its colour says what the
-                    model called it; whether it READ the words right is invisible
-                    on a photograph of a page until something shows what it
-                    thinks they are. That question is the whole reason this
-                    section exists.
-                  -->
-                  <p class="hint">
-                    @if (block.parts.length > 1) {
-                      The model answered for this region once and Foundry cut the answer into
-                      {{ block.parts.length }} pieces, so its words cannot be corrected as one.
-                      Everything else here still applies to all of them.
-                    } @else {
-                      What the model read off the page. Correct it and the correction is what
-                      every rendering of this book uses.
-                    }
-                  </p>
-                  <textarea
-                    #words
-                    class="words"
-                    rows="5"
-                    spellcheck="false"
-                    [disabled]="block.parts.length > 1 || frozen()"
-                    [value]="draft()"
-                    (input)="draft.set(words.value)"
-                    [attr.aria-label]="'What ' + block.key + ' says'"
-                  ></textarea>
-                  <div class="acts">
-                    <button
-                      class="act"
-                      [disabled]="block.parts.length > 1 || frozen() || draft().trim() === reading()"
-                      (click)="applyWords()"
-                    >Apply</button>
-                    <button
-                      class="act"
-                      [disabled]="!corrected() || frozen()"
-                      title="Put the model's own reading back"
-                      (click)="revertWords()"
-                    >Model's reading</button>
-                  </div>
-                }
-              </div>
-            }
-          </section>
-        }
+        <!--
+          ── The Block section is NOT DRAWN, and the reason is two reasons ──
+
+          IT APPEARED AND DISAPPEARED UNDER THE POINTER. It was the only section
+          conditioned on a SELECTION rather than on which document is focused, so
+          clicking a block on the page added a fourth section to a column of
+          three — and because the sections share the height between them, every
+          other section resized and slid the moment somebody selected something.
+          The panel reorganising itself in response to a click on the page is the
+          same complaint that pinned this running order in the first place: you
+          cannot aim at a section that moves when you touch the book.
+
+          AND ITS ONE JOB IS GONE FOR NOW. The box corrected what the model read
+          off the page, and text editing is retired until the flowing surface
+          carries it as an op (docs/DERIVED-BOOK.md §3, phase B). A control that
+          is still on screen after the thing it does has been withdrawn is worse
+          than no control: it invites the gesture and then refuses it.
+
+          THE LOGIC STAYS, deliberately and untouched — onlyBlock, draft,
+          reading, corrected, applyWords, revertWords. It is the word-level
+          correction path the text-edit op is going to be built on, and
+          onlyBlock is still read by the Chapters section above. This is a
+          surface being withdrawn, not a feature being deleted; deleting it would
+          mean writing it again in three phases' time.
+        -->
         } <!-- end of the document's sections -->
       </div>
     }
