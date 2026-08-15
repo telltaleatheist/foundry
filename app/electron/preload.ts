@@ -9,12 +9,82 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 import type { FoundryApi, MenuAction } from '../shared/api';
-import type { EnvInstallProgress, Job, ServerStatus, SetupLogEvent } from '../shared/types';
+import type {
+  AppQuestion,
+  Asked,
+  CloseAnswer,
+  EchoAnswer,
+  EnvInstallProgress,
+  Job,
+  QuestionAnswer,
+  ReReadAnswer,
+  ServerStatus,
+  SetupLogEvent,
+  UnlinkedNoteAnswer,
+} from '../shared/types';
 
 function subscribe<T>(channel: string, listener: (value: T) => void): () => void {
   const wrapped = (_event: unknown, value: T): void => listener(value);
   ipcRenderer.on(channel, wrapped);
   return () => { ipcRenderer.removeListener(channel, wrapped); };
+}
+
+/**
+ * The card that draws this app's questions, once the renderer has one.
+ *
+ * NULL UNTIL THE APP STARTS, and null forever in a renderer that has no card to
+ * register (`ng serve` in a plain browser reaches none of this, but a window
+ * whose bootstrap threw is a real state). Every `ask` below carries its own safe
+ * answer for that case: a question that was never drawn was never answered, and
+ * a caller must not be told somebody agreed to something.
+ */
+let card: ((question: AppQuestion) => Promise<QuestionAnswer>) | null = null;
+
+/**
+ * ASK MAIN, DRAW THE CARD, ANSWER WITH THE CHOSEN WORD — the shape all five of
+ * this app's questions share.
+ *
+ * Main composes (it owns the sentences) and may answer outright (a standing
+ * "don't ask again", read before anything is composed, so no card is drawn and
+ * nothing flickers). What comes back from the card is the pressed choice's own
+ * key, which IS the caller's answer union — no index, no label lookup, and a
+ * mismatch between main's composition and the caller's `switch` is a type error
+ * rather than a silently wrong answer (see `AppQuestion`).
+ *
+ * The cast on the way out is the one unchecked step in the chain and it is
+ * checked at the other end: main built these choices out of `Answer`'s own
+ * members, and the card returns a key it was given.
+ */
+async function ask<Answer extends string>(
+  channel: string,
+  payload: unknown,
+  /** What the answer is when there is nothing on screen to answer it. */
+  unasked: Answer,
+  /** Where a ticked "do this every time" goes, for the questions that offer it. */
+  remember?: (answer: Answer) => Promise<unknown>,
+): Promise<Answer> {
+  const asked: Asked<Answer> = await ipcRenderer.invoke(channel, payload);
+  if (asked.kind === 'answered') return asked.answer;
+  if (card === null) return unasked;
+  /*
+   * A CARD THAT THREW IS A QUESTION NOBODY ANSWERED, and it resolves like one.
+   * The alternative is a rejection travelling back into `questionBefore` or the
+   * OCR dialog's Add — call sites written against a promise that always settles
+   * — where it would come out as a close that did not happen, with nothing on
+   * screen saying why.
+   */
+  const { key, standing } = await card(asked.question).catch(() => ({ key: asked.question.dismissed, standing: false }));
+  const answer = key as Answer;
+  /*
+   * THE BOX IS ONLY STORED FOR AN ANSWER MAIN SAID IT MAY BE STORED FOR.
+   * `remembers` is main's rule — "always put the number back" would make deleting
+   * a reference number impossible, with no dialog left to explain why every
+   * attempt undoes itself — and this is the one place that could break it.
+   */
+  if (standing && remember && (asked.question.checkbox?.remembers.includes(answer) ?? false)) {
+    await remember(answer);
+  }
+  return answer;
 }
 
 const api: FoundryApi = {
@@ -27,11 +97,45 @@ const api: FoundryApi = {
   documentSaveCopy: (absolutePath, suggestedName) =>
     ipcRenderer.invoke('document:save-copy', absolutePath, suggestedName),
   reveal: (target) => ipcRenderer.invoke('shell:reveal', target),
-  confirmClose: (warning) => ipcRenderer.invoke('document:confirm-close', warning),
-  confirmUnlinkedNote: (note) => ipcRenderer.invoke('document:confirm-unlinked-note', note),
-  confirmReRead: (prompt) => ipcRenderer.invoke('reading:confirm-re-read', prompt),
-  confirmHeadingEcho: (echo) => ipcRenderer.invoke('document:confirm-heading-echo', echo),
-  confirmNavEcho: (echo) => ipcRenderer.invoke('document:confirm-nav-echo', echo),
+  /*
+   * ── The five questions, and the safe answer each of them keeps ─────────────
+   *
+   * Keep the tab open; put the footnote reference back; leave the reading alone;
+   * leave the other side of the book as it is. Every one of them is the outcome
+   * that destroys nothing and costs nothing, which is what an unanswered question
+   * has to resolve to.
+   */
+  confirmClose: (warning) =>
+    ask<CloseAnswer>('document:confirm-close', warning, 'keep'),
+  confirmUnlinkedNote: (note) =>
+    ask<UnlinkedNoteAnswer>(
+      'document:confirm-unlinked-note',
+      note,
+      'cancel',
+      (answer) => ipcRenderer.invoke('prefs:set-unlinked-note-answer', answer),
+    ),
+  confirmReRead: async (prompt) =>
+    await ask<ReReadAnswer>('reading:confirm-re-read', prompt, 'leave') === 'again',
+  confirmHeadingEcho: (echo) =>
+    ask<EchoAnswer>(
+      'document:confirm-heading-echo',
+      echo,
+      'leave',
+      (answer) => ipcRenderer.invoke('prefs:set-contents-rename-echo', answer),
+    ),
+  confirmNavEcho: (echo) =>
+    ask<EchoAnswer>(
+      'document:confirm-nav-echo',
+      echo,
+      'leave',
+      (answer) => ipcRenderer.invoke('prefs:set-heading-edit-echo', answer),
+    ),
+  /*
+   * REGISTERED, NEVER CALLED FROM HERE. The renderer hands its card in as the app
+   * starts and this holds the reference for the five calls above; see
+   * `FoundryApi.drawQuestions` for why the drawing has to arrive from that side.
+   */
+  drawQuestions: (draw) => { card = draw; },
 
   meta: {
     readEpub: (bookId) => ipcRenderer.invoke('meta:read-epub', bookId),

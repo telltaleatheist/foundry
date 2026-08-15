@@ -1356,6 +1356,113 @@ export interface DeletionPrompt {
   confirm: string;
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// Every question this app asks, in this app's own voice
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * A QUESTION COMPOSED IN MAIN AND DRAWN BY THE APP'S OWN CARD.
+ *
+ * ── What this replaced, and what the OS chrome was costing ──────────────────
+ *
+ * Five questions in this program went out as `dialog.showMessageBox`: the
+ * closing document, the unlinked footnote, the re-read, and the two echoes
+ * between a page heading and its contents entry. A native box is genuinely
+ * modal to the WINDOW, which is the one thing it did better than anything in
+ * here — and it is the OS's rectangle, in the OS's fonts, with the OS's button
+ * order and the OS's idea of which button is dangerous. A program whose every
+ * other question is a card in its own idiom, asking these five through a system
+ * alert, reads as a program interrupted by something else; the user's ruling was
+ * "we should have zero js alerts. they should all be custom modals."
+ *
+ * ── The split that did NOT move ─────────────────────────────────────────────
+ *
+ * The sentences stay MAIN'S. `aboutTheCorrections` knows what a save is worth
+ * and `aboutTheCopy` knows where a copy is not; the renderer knows neither and
+ * must never start writing its own copy, which is how a warning worth reading
+ * becomes "Are you sure?". So what crosses the seam is the composed question,
+ * and what comes back is the answer's own WORD (`QuestionChoice.key`) rather
+ * than a button index. An index means different things in boxes of different
+ * shapes — `response === 0` was "close it" in one of these and "save first" in
+ * the other — and the way that goes wrong is silent. The key is the answer
+ * union's own member, so main's composition and the caller's `switch` are held
+ * together by the compiler instead of by a lookup table.
+ *
+ * `detail` is paragraphs rather than one string, as `DeletionPrompt` learned:
+ * the card spaces them, and the native box's `\n\n` was a layout instruction
+ * smuggled inside a sentence.
+ */
+export interface AppQuestion {
+  /** The head of the card — the question itself, short enough to be read at a glance. */
+  title: string;
+  /** The lead sentence: what is true, naming the thing it is true of. */
+  message: string;
+  /** The paragraphs under it, in order. Each is a sentence worth reading. */
+  detail: string[];
+  /**
+   * The buttons, IN THE ORDER THEY ARE DRAWN — which is a safety property and
+   * not a layout one. The card puts them in the DOM exactly as they arrive, so a
+   * composer that wants the destructive answer to be reached deliberately puts
+   * it last and says so in its own words.
+   */
+  choices: QuestionChoice[];
+  /** The key of the choice that is focused, and therefore what Enter takes. */
+  preferred: string;
+  /**
+   * The key a DISMISSAL means — Escape, the scrim, another dialog opening over
+   * this one. Never destructive: a question nobody answered has not been agreed
+   * to.
+   */
+  dismissed: string;
+  /** The standing-answer offer, or null for a question that cannot be silenced. */
+  checkbox: QuestionCheckbox | null;
+}
+
+/** One button on the card, and the word it answers with. */
+export interface QuestionChoice {
+  /** What comes back when this is pressed — a member of the caller's answer union. */
+  key: string;
+  /** What the button says. Never "OK" (see `DeletionPrompt.confirm`). */
+  label: string;
+  /** Drawn in the error colour: this answer ends something. At most one. */
+  danger?: boolean;
+}
+
+/**
+ * "Don't ask again" — the offer, and WHICH answers may be stored.
+ *
+ * `remembers` is the rule rather than a flag, because two of these questions
+ * have an answer that must never become standing. A stored "always put the
+ * number back" would make deleting a footnote reference impossible, with no
+ * dialog left to explain why every attempt undoes itself. Main names the
+ * storable answers; a ticked box on any other choice is ignored.
+ */
+export interface QuestionCheckbox {
+  label: string;
+  remembers: string[];
+}
+
+/** What the card was answered with: the choice's key, and the box's state. */
+export interface QuestionAnswer {
+  key: string;
+  /** True when the standing-answer box was ticked. False when there was none. */
+  standing: boolean;
+}
+
+/**
+ * WHAT MAIN HANDS BACK WHEN IT IS ASKED ONE OF THE FIVE QUESTIONS: a question to
+ * draw, or an answer that was already given.
+ *
+ * The second case is the standing answer, and it is the whole reason this is a
+ * union rather than an `AppQuestion`. Main consults `app-settings.json` BEFORE
+ * composing anything, so a person who ticked "do this every time" gets no card,
+ * no scrim and no flicker — the same silence the native box gave them, which was
+ * never about the box.
+ */
+export type Asked<Answer extends string> =
+  | { kind: 'ask'; question: AppQuestion }
+  | { kind: 'answered'; answer: Answer };
+
 /** What main will do about a request to delete one document, before it does it. */
 export interface DocumentDeletion {
   prompt: DeletionPrompt;
@@ -1491,18 +1598,33 @@ export interface EpubChapter {
 /**
  * What a tab has to say for itself before it closes.
  *
- * THREE FACTS, kept apart because they are three different losses. `unsaved` is
- * "no copy of this exists anywhere you chose" — the Chrome dot. `modified` is
- * "you have edited this since the copy you chose was written", which only means
- * anything once there IS such a copy. `corrections` is neither: nothing about a
- * scan's block corrections is unwritten (they land on disk as they are made), and
- * what is missing is a RESTORE POINT — see `UncommittedCuration`. Main writes a
- * different sentence for each, and a tab that is none of them closes without a
- * question.
+ * ── TWO FACTS NOW, AND THE THIRD ONE IS A RULING RATHER THAN A DELETION ─────
+ *
+ * There used to be three, and the one that went is `unsaved` — "no copy of this
+ * exists anywhere you chose", the Chrome dot. It was true FROM BIRTH for every
+ * book this app opens out of a project, so closing a tab somebody had merely
+ * looked at raised a warning about a loss that had not happened: the book is in
+ * its project, Home still lists it, the working copy holds every edit, and
+ * closing the tab loses track of nothing. The user ruled it out in one sentence
+ * — *"only pop up a confirmation alert if changes have been made"* — and the
+ * ruling was already implied by the surface around it: saving is the export
+ * modal's job now (docs/WORKBENCH.md §6), so "you have not filed a copy of this"
+ * is a warning about a workflow this app no longer has.
+ *
+ * The dot itself STAYS. `Tab.unsaved` is a statement about where a document
+ * lives and it is worth drawing; what it is not is a reason to interrupt
+ * somebody on their way out of a tab.
+ *
+ * So what is left is two genuine losses. `modified` is "you have edited this
+ * since the copy YOU chose was written" — a copy on the user's own disk that is
+ * now behind, which closing does not fix and nothing else will mention.
+ * `corrections` is not an unsaved edit at all: a scan's block decisions land on
+ * disk as they are made, and what is missing is a RESTORE POINT (see
+ * `UncommittedCuration`). Main writes a different sentence for each, and a tab
+ * that is neither closes without a question.
  */
 export interface CloseWarning {
   title: string;
-  unsaved: boolean;
   modified: boolean;
   /** Where a copy was last written, when there is one. */
   savedPath: string | null;
@@ -1525,6 +1647,17 @@ export interface CloseWarning {
  * happened anyway would have thrown away the very thing the answer asked to keep.
  */
 export type CloseAnswer = 'close' | 'save' | 'keep';
+
+/**
+ * How "Read this book again?" was answered.
+ *
+ * A WORD RATHER THAN THE BOOLEAN THE CALLER WANTS, because the card answers with
+ * the key of the button that was pressed and `true` is not the name of a button.
+ * The api layer collapses it to the boolean the OCR dialog asks for; what
+ * crosses the seam says which of the two things a person chose. See
+ * `RE_READ_PROCEED` (shared/reread.ts) for the labels those two keys wear.
+ */
+export type ReReadAnswer = 'again' | 'leave';
 
 /**
  * Corrections a book holds that no save of it does — what closing actually costs.

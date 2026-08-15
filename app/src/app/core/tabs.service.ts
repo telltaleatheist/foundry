@@ -175,8 +175,14 @@ export interface Tab {
    *
    * DISTINCT FROM `modified`, and the distinction is the whole point. This one
    * is about a book nobody has filed; that one is about a filed copy that has
-   * fallen behind. A tab can be either, both, or neither, and the close warning
-   * says something different for each.
+   * fallen behind. A tab can be either, both, or neither.
+   *
+   * IT IS DRAWN AND NOT ASKED ABOUT. The closing question used to fire on this
+   * flag, which is true from birth for every book opened out of a project, so it
+   * interrupted people who had lost nothing; the user ruled it out ("only pop up
+   * a confirmation alert if changes have been made") and `questionBefore` says
+   * the rest. A dot in the corner of a tab is the right weight for "this lives in
+   * the library and nowhere else" — a modal is not.
    */
   unsaved: boolean;
   /**
@@ -343,6 +349,15 @@ export const MAX_PANES = 5;
  * asks for an EPUB precisely because they want to read it.
  */
 const OPENS_ITSELF: ReadonlySet<JobKind> = new Set<JobKind>(['epub', 'pdf', 'translate']);
+
+/**
+ * No tabs at all — the default for `questionBefore`'s second argument.
+ *
+ * A shared frozen empty set rather than a `new Set()` per call: an ordinary close
+ * asks about one tab and has nothing to carry, and allocating a set to say so on
+ * every ✕ is a small thing done often.
+ */
+const EMPTY_IDS: ReadonlySet<string> = new Set<string>();
 
 /** What a rendered chapter reported being clicked, for the editor to jump to. */
 export interface SourceJump {
@@ -828,7 +843,13 @@ export class TabsService {
        */
       untracked(() => {
         for (const key of [...this.showing.keys()]) {
-          if (!open.has(key)) this.showing.delete(key);
+          if (!open.has(key)) {
+            this.showing.delete(key);
+            // The resolved document goes with the picture it belonged to, for the
+            // same reason: a reopen baselines afresh rather than measuring against
+            // what a session nobody is in was showing.
+            this.documentShown.delete(key);
+          }
         }
         for (const move of moves) {
           this.showing.set(move.key, move.now);
@@ -837,6 +858,108 @@ export class TabsService {
         }
       });
     });
+
+    /**
+     * THE POSITION DID NOT MOVE AND THE DOCUMENT UNDER IT DID.
+     *
+     * ── Why the picture above cannot see this by itself ────────────────────────
+     *
+     * `positionPicture` (shared/ledger.ts) is composed of the reading, the
+     * corrections and — for a row that shows its own payload — the row: the three
+     * things the LEDGER knows that decide what is on screen. Which file a read row
+     * actually resolves to is not one of them, and cannot be: it is main's
+     * bookkeeping, answered over IPC (`ledger:document-at`), and the effect above
+     * is synchronous. So a project standing still while its document changes
+     * underneath is invisible to that key by construction.
+     *
+     * And it changes, on the one path this app cares most about. Standing on a
+     * read row in a project whose book has not been cast resolves to the working
+     * PDF, and main answers that fallback by making the book (`towardTheFlowingBook`,
+     * electron/main.ts) — so seconds later the same position resolves to an EPUB.
+     * Nothing in the ledger moved. Without this effect the pane would sit on the
+     * scan until something else happened to move the pointer, which is the exact
+     * complaint the position effect was built for in the first place: *"i wanted
+     * the document to show."*
+     *
+     * ── An effect of its own, on the delete effect's precedent ─────────────────
+     *
+     * The same shape as "a step was deleted, so the panes read their state again"
+     * above: a fact the position cannot express, on a trigger of its own, acting
+     * only where something actually CHANGED. `projects.items()` is that trigger —
+     * main announces the projects whenever a catalogue does anything, which
+     * includes the landing that files a cast — and the acting is `showPosition`,
+     * the one door that puts a position's document on screen.
+     *
+     * IT ASKS MAIN AND NEVER GUESSES. Reading the catalogue here to work out
+     * whether a cast has appeared would be a second opinion about a resolution
+     * that is deliberately main's alone (`showPosition` says why at length), and
+     * it would be wrong in exactly the place it is dearest — a branch read, a
+     * rotated cast. One IPC per open project per announce, and announces are
+     * landings and imports rather than keystrokes.
+     *
+     * THE FIRST ANSWER FOR A PROJECT IS A BASELINE AND MOVES NOTHING, which is
+     * the position effect's own first-sighting rule said about the document
+     * instead of the picture: a window that has just met a project has no
+     * difference to act on.
+     */
+    effect(() => {
+      this.projects.items();
+      untracked(() => void this.followDocuments());
+    });
+  }
+
+  /**
+   * What main last said was at each project's position — this window's memory of
+   * the DOCUMENT, beside `showing`'s memory of the picture.
+   *
+   * Not a field on `ShownPicture`, and that is on purpose: the view and the string
+   * it compares by are made together and never apart (see `pictureIn`), and this
+   * one arrives hundreds of milliseconds later over IPC. A picture carrying a
+   * field that is empty at the moment it is compared would be an invitation to
+   * compare it.
+   */
+  private readonly documentShown = new Map<string, string | null>();
+
+  /** True while a sweep is in flight, so two announces do not walk it twice. */
+  private following = false;
+
+  /**
+   * Re-ask main which document each open project's position resolves to, and put
+   * it on screen if the answer moved.
+   *
+   * ONE SWEEP AT A TIME. Two announces in quick succession — a rendering lands and
+   * a catalogue is rewritten — would otherwise interleave two walks over the same
+   * projects, each acting on the other's answer.
+   *
+   * ANY ANSWER IS DROPPED IF THE POSITION MOVED WHILE IT WAS IN FLIGHT, by
+   * identity against `showing` exactly as `showPosition` does it: a click that
+   * lands mid-sweep is newer than anything this was asking about.
+   */
+  private async followDocuments(): Promise<void> {
+    if (this.following) return;
+    this.following = true;
+    try {
+      const asked = new Set<string>();
+      for (const tab of this.all()) {
+        const dir = this.projectDirOf(tab);
+        if (dir === null) continue;
+        const key = fold(dir);
+        if (asked.has(key)) continue;
+        asked.add(key);
+        const now = this.showing.get(key);
+        // Nothing has painted this project yet; the position effect baselines it
+        // and this has nothing to compare against until it does.
+        if (now === undefined) continue;
+        const target = await this.ledger.documentAt(dir);
+        if (this.showing.get(key) !== now) continue;
+        const was = this.documentShown.get(key);
+        this.documentShown.set(key, target);
+        if (was === undefined || was === target) continue;
+        await this.showPosition({ key, dir, was: now, now }, target);
+      }
+    } finally {
+      this.following = false;
+    }
   }
 
   /**
@@ -905,7 +1028,16 @@ export class TabsService {
    * keeps stepping between a reading and its saves as free as a history panel
    * promises. See `refreshCuration`.
    */
-  private async showPosition(move: PositionMove): Promise<void> {
+  private async showPosition(
+    move: PositionMove,
+    /**
+     * The answer, when the caller already has it — `followDocuments` asks main
+     * which document is at the position in order to notice that it MOVED, and
+     * asking again here would be a second round trip for the same fact and a
+     * second chance to get a different one.
+     */
+    resolved?: string | null,
+  ): Promise<void> {
     const view = move.now.view;
     /*
      * ASKED OF MAIN, EVERY MOVE, AND NEVER COMPOSED HERE. A project's layers are
@@ -917,7 +1049,7 @@ export class TabsService {
      * do for itself. Null is the ordinary "this position names no document of its
      * own" and means keep the one we have.
      */
-    const target = await this.ledger.documentAt(move.dir);
+    const target = resolved !== undefined ? resolved : await this.ledger.documentAt(move.dir);
     /*
      * AND THE ANSWER IS DROPPED IF THE USER HAS MOVED AGAIN. Somebody clicking
      * down a history four rows deep issues four of these, and main answers them in
@@ -929,6 +1061,13 @@ export class TabsService {
      * main a question a later question can invalidate.
      */
     if (this.showing.get(move.key) !== move.now) return;
+    /*
+     * WHAT THE PANES ARE NOW POINTED AT, remembered here because this is the one
+     * place that knows it. `followDocuments` compares against it to notice a
+     * document that changed under a position that did not move; recording it
+     * anywhere else would be recording an intention rather than what happened.
+     */
+    this.documentShown.set(move.key, target);
     const swapped = await this.showDocument(move, target);
     const readingMoved = (move.was?.view.reading?.id ?? null) !== (view.reading?.id ?? null);
     const curationMoved = (move.was?.view.curation?.id ?? null) !== (view.curation?.id ?? null);
@@ -2018,25 +2157,59 @@ export class TabsService {
    * to changing their mind.
    */
   async letGo(): Promise<boolean> {
+    /*
+     * THE TABS THIS SWEEP HAS ALREADY ACCOUNTED FOR, which is what makes the
+     * corrections question fire exactly once for a project with two of them open.
+     *
+     * `questionBefore` skips the corrections when another open tab still reaches
+     * the same project's decisions — see it for why. In a sweep that is every tab
+     * of the project, so with nothing carried between iterations each tab would
+     * point at the next as the one that still holds them and NOBODY would be
+     * asked: the window would close on a project's uncommitted decisions in
+     * silence, which is the exact failure this sweep exists to prevent. Carrying
+     * the ones already passed makes the LAST tab of each project the one with
+     * nothing left to point at, and it is the one that asks.
+     */
+    const accountedFor = new Set<string>();
     // A copy, because a save made from the dialog can repaint the list underneath
     // this loop, and an iteration over the live signal would be walking an array
     // that moved.
     for (const tab of [...this.all()]) {
-      if (await this.questionBefore(tab.id) === 'stay') return false;
+      if (await this.questionBefore(tab.id, accountedFor) === 'stay') return false;
+      accountedFor.add(tab.id);
     }
     return true;
   }
 
   /**
-   * What this document has to say for itself before it goes, asked once.
+   * What this document has to say for itself before it goes, asked once — and
+   * ONLY when something would actually be lost.
    *
-   * ── ONE QUESTION FOR THREE LOSSES ───────────────────────────────────────────
+   * ── THE QUESTION THAT WAS ASKED ABOUT NOTHING ───────────────────────────────
    *
-   * A book's copy can be unfiled, a book's copy can be out of date, and a scan's
-   * corrections can have no save to come back to. Main composes whichever of the
-   * three are true into one box, because this codebase has already ruled that a
-   * closing document is asked about once (`closeShowing`): a second dialog on top
-   * of the first is the app arguing with an answer it already has.
+   * This used to ask whenever a tab was `unsaved`, and `unsaved` means "no copy
+   * of this exists anywhere you chose" — which is true FROM BIRTH of every book
+   * this app opens out of a project, because the project IS where it lives. So
+   * closing a tab somebody had done nothing but look at raised a dialog about a
+   * loss that had not happened, and a warning that fires when nothing is at stake
+   * is how a person learns to dismiss the one that matters. The user ruled on it
+   * in a sentence: *"only pop up a confirmation alert if changes have been
+   * made."*
+   *
+   * It is also a warning that outlived its workflow. It was written when Save put
+   * a copy somewhere of the user's choosing and the app could reasonably say "you
+   * have not done that yet"; saving is the export modal's job now
+   * (docs/WORKBENCH.md §6), a project tab that closes loses track of nothing, and
+   * Home still lists the book. The DOT stays — `Tab.unsaved` is a fact worth
+   * drawing — but it is not a reason to stop somebody on their way out.
+   *
+   * ── ONE QUESTION FOR TWO LOSSES ─────────────────────────────────────────────
+   *
+   * A book's filed copy can be out of date, and a scan's corrections can have no
+   * save to come back to. Main composes whichever of the two are true into one
+   * card, because this codebase has already ruled that a closing document is
+   * asked about once (`closeShowing`): a second dialog on top of the first is the
+   * app arguing with an answer it already has.
    *
    * A PENDING EDIT IS FLUSHED FIRST. The editor writes 700 ms after the last
    * keystroke, and a close inside that window used to lose the sentence being
@@ -2054,7 +2227,14 @@ export class TabsService {
    * thrown away the very thing the answer asked to keep, and main's own sentence
    * is already in the notice strip saying why it would not freeze.
    */
-  private async questionBefore(id: string): Promise<'go' | 'stay'> {
+  private async questionBefore(
+    id: string,
+    /**
+     * Tabs this same operation has already dealt with — see `letGo`. Empty for
+     * an ordinary close, which is dealing with exactly one.
+     */
+    accountedFor: ReadonlySet<string> = EMPTY_IDS,
+  ): Promise<'go' | 'stay'> {
     const doomed = this.byId(id);
     if (doomed === null || !api) return 'go';
     await this.flushPending(doomed.kind === 'editor' ? doomed.id : this.editorFor(doomed.id)?.id ?? null);
@@ -2071,16 +2251,38 @@ export class TabsService {
      * corrected forty blocks, left Blocks, and closed would have been asked
      * nothing at all, which is precisely the person this whole question exists
      * for. Main has the files; main answers. It is null for everything that is not
-     * a scan in a project with a reading behind it.
+     * a document in a project with a reading behind it.
+     *
+     * ── THE BOOK IS ASKED ABOUT TOO, NOT JUST THE SCAN ─────────────────────────
+     *
+     * This tested `kind === 'pdf'` because the only surface that could decide
+     * anything was the scan's block editor. A cut or a relabel on the CAST BOOK
+     * now lands in the same curation (`amendBlocks`, mirrored from the book's own
+     * gestures), and main resolves either path to the one project — `locateOverlay`
+     * asks which project the path is in and never opens the file it names. So a
+     * person who struck four footnotes in the flowing book and closed it was asked
+     * nothing at all, which is the same hole one document over.
+     *
+     * ── AND ONLY WHEN THIS TAB IS THE LAST WAY BACK TO THEM ────────────────────
+     *
+     * The decisions belong to the PROJECT, not to the tab. A project's scan and
+     * its cast book are routinely open together — that is the whole point of the
+     * two of them — and both answer this question with the same uncommitted
+     * curation. Asking as each one closes would be two dialogs about one set of
+     * decisions, and the first of them would be a lie: nothing is losing its way
+     * back while the other tab is still open and Apply changes is still on screen.
+     * So the question is owed only when the LAST tab holding this project's
+     * decisions goes, and a sibling that is not itself going is what makes this
+     * tab not that one.
      */
-    const corrections = current.kind === 'pdf'
+    const holders = this.otherTabsIn(current, accountedFor);
+    const corrections = (current.kind === 'pdf' || current.kind === 'epub') && holders === 0
       ? await api.overlay.uncommitted(current.path).catch(() => null)
       : null;
-    if (!current.unsaved && !current.modified && corrections === null) return 'go';
+    if (!current.modified && corrections === null) return 'go';
 
     const answered = await api.confirmClose({
       title: current.title,
-      unsaved: current.unsaved,
       modified: current.modified,
       savedPath: current.savedPath,
       corrections,
@@ -2091,13 +2293,37 @@ export class TabsService {
   }
 
   /**
+   * How many OTHER open tabs would still reach this document's project after it
+   * goes — the count that decides whether the corrections question is owed.
+   *
+   * EDITORS DO NOT COUNT. An editor tab is a face of its book rather than a
+   * document of its own, and closing the book closes it (`close`), so counting
+   * one would be counting the tab that is going with this one.
+   *
+   * A DOCUMENT IN NO PROJECT HAS NO SIBLINGS: somebody's own PDF out of their
+   * Downloads folder has no project, no curation and nothing to be the last way
+   * back to. Zero is the honest answer and it is also the one that lets the
+   * question be asked, which costs nothing — main answers null for it.
+   */
+  private otherTabsIn(doomed: Tab, accountedFor: ReadonlySet<string>): number {
+    const dir = this.projectDirOf(doomed);
+    if (dir === null) return 0;
+    const key = fold(dir);
+    return this.all().filter((tab) => {
+      if (tab.id === doomed.id || tab.kind === 'editor' || accountedFor.has(tab.id)) return false;
+      const own = this.projectDirOf(tab);
+      return own !== null && fold(own) === key;
+    }).length;
+  }
+
+  /**
    * Close a tab, asking first when it has something to lose.
    *
-   * The question is `questionBefore` above, and it is main's native box — modal
-   * to the window, like every other dialog in this app. THE BOOK IS NOT DELETED
-   * EITHER WAY (see electron/workspace.ts) and neither are its corrections, so
-   * what closing costs is a copy the user can find again and a state they can
-   * come back to, never the work itself.
+   * The question is `questionBefore` above, asked in the app's own card
+   * (`ConfirmService`). THE BOOK IS NOT DELETED EITHER WAY (see
+   * electron/workspace.ts) and neither are its corrections, so what closing costs
+   * is a filed copy left behind and a state they can come back to, never the work
+   * itself.
    *
    * CLOSING A BOOK CLOSES ITS EDITOR. They are one document with two faces, and
    * an editor pane left holding a book that is no longer open is a pane with
@@ -2109,9 +2335,8 @@ export class TabsService {
    * to — and a document being deleted is one where all of that is false and the
    * offer to save it is an offer to write bytes into a file about to be
    * unlinked. The delete's own confirmation asked the only question there is; a
-   * second box on top of it, in the OS's own chrome, asking about saving the
-   * thing they just told the app to destroy, is the app arguing with an answer it
-   * already has.
+   * second card on top of it, asking about saving the thing they just told the
+   * app to destroy, is the app arguing with an answer it already has.
    */
   async close(id: string, ask = true): Promise<void> {
     const doomed = this.all().find((candidate) => candidate.id === id);
@@ -3586,11 +3811,11 @@ export class TabsService {
   /**
    * "You deleted this footnote's last reference — should the footnote go too?"
    *
-   * MAIN ASKS IT (a native box, modal to the window, like every other dialog in
-   * this app) and main also answers it without asking when the user has said
-   * "don't ask again": the standing answer is stored per ANSWER in
-   * app-settings.json, so "always strike it" and "always leave it" stay two
-   * different instructions.
+   * MAIN COMPOSES IT and the app's own card draws it (`ConfirmService`, since
+   * the ruling that there are zero native alerts left in this program), and main
+   * also answers it without asking at all when the user has said "don't ask
+   * again": the standing answer is stored per ANSWER in app-settings.json, so
+   * "always strike it" and "always leave it" stay two different instructions.
    *
    * One edit can orphan more than one note — a paragraph carrying two reference
    * numbers, both deleted in one pass — so this walks them. A CANCEL STOPS THE

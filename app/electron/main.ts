@@ -91,14 +91,16 @@ import {
   type ProjectInventory,
   isArchived,
   isManaged,
+  ledgerOf,
   listProjects,
   noteProjectTitle,
   onProjectsChanged,
   positionStepId,
   projectDirOf,
-  projectsDir,
   promoteStrandedReprints,
+  readManifest,
   readStepLedger,
+  readingIsComplete,
   recordFinal,
 } from './projects';
 import {
@@ -114,11 +116,14 @@ import { planConversion, planExport, planReading, planTranslation } from './work
 import { detectEnvTooling, listDistros } from './wsl';
 import { fold, isBook } from '../shared/original';
 import { OverlayError, type OverlayFile } from '../shared/overlay';
+import { positionView } from '../shared/ledger';
 import type { ReadAsk } from '../shared/ledger';
 import { RE_READ_CANCEL, RE_READ_PROCEED } from '../shared/reread';
 import type { ReReadPrompt } from '../shared/reread';
 import type { MenuAction } from '../shared/api';
 import type {
+  AppQuestion,
+  Asked,
   BackendSettingsPatch,
   CloseAnswer,
   CloseWarning,
@@ -136,6 +141,7 @@ import type {
   ProjectDocument,
   ProjectSummary,
   RecentKind,
+  ReReadAnswer,
   SetupRequest,
   TranslateRequest,
   UncommittedCuration,
@@ -150,37 +156,27 @@ const DEV_SERVER = 'http://localhost:4260';
 let mainWindow: BrowserWindow | null = null;
 
 /**
- * The closing question's buttons, written once and read back once.
+ * The closing question's buttons — the words, beside the answers they mean.
  *
- * A NATIVE BOX ANSWERS WITH AN INDEX, and an index is the wrong thing for this
- * dialog to hold in its head: the box has two buttons for a file copy and three
- * for a set of corrections, so `response === 0` means "close it" in one shape and
+ * ── The lookup table that used to be here, and why it is gone ───────────────
+ *
+ * A NATIVE BOX ANSWERED WITH AN INDEX, and an index was the wrong thing for this
+ * dialog to hold in its head: the box had two buttons for a file copy and three
+ * for a set of corrections, so `response === 0` meant "close it" in one shape and
  * "save first" in the other. Two shapes, two meanings, one number — and the way
- * that goes wrong is silent, because both are valid answers and neither throws.
- * So the label IS the key: whichever button came back is looked up by its own
- * words, and a button added to either shape without a meaning fails loudly at the
- * one place both are composed.
+ * that went wrong was silent, because both were valid answers and neither threw.
+ * The defence was to look the answer up by its own LABEL, through a `Record` that
+ * lived right here.
+ *
+ * The card answers with the KEY of the button that was pressed, and the key is a
+ * `CloseAnswer` — so the label is now nothing but the words on a button, the
+ * table has nobody left to serve, and the compiler checks what a `Record` keyed
+ * by prose used to check at runtime. The labels stay written once because two
+ * spellings of one button is still two spellings.
  */
 const SAVE = 'Save these corrections, then close';
 const CLOSE = 'Close it';
 const KEEP = 'Keep it open';
-const ANSWERS: Readonly<Record<string, CloseAnswer>> = {
-  [SAVE]: 'save',
-  [CLOSE]: 'close',
-  [KEEP]: 'keep',
-};
-
-/**
- * A closing question, with its buttons promised.
- *
- * `MessageBoxOptions.buttons` is optional to Electron — a box with none is a box
- * with one OK on it — and this dialog reads the label back to find out what was
- * answered. Requiring the field is what makes that read total rather than a
- * fallback nobody would notice failing.
- */
-interface ClosingQuestion extends Electron.MessageBoxOptions {
-  buttons: string[];
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // foundry-file:// — how a book's chapters reach an <iframe>
@@ -1044,6 +1040,75 @@ function sizeOnDisk(bytes: number): string {
   return unit === 0 ? `${bytes} bytes` : `${value.toFixed(1)} ${units[unit]}`;
 }
 
+/**
+ * The projects a fallback has already sent to the caster in this run of the app.
+ *
+ * ONE ASK PER PROJECT, and it is a stop rather than an optimisation. Everything
+ * downstream converges — `enqueue` joins a duplicate row, `ensureCast` covers the
+ * window before it, and a landed cast makes the fallback stop firing because the
+ * position resolves to the book instead — but the shape underneath is a cycle: a
+ * landing announces the projects, the renderer re-asks which document is at the
+ * position, and this handler answers. If a cast ever landed WITHOUT the position
+ * coming to resolve to it, that cycle would spawn the engine once per repaint,
+ * forever, for a project this app has already demonstrated it cannot cast. So the
+ * app tries once, says so in the terminal if it fails, and leaves the person with
+ * their scan and an Export button rather than with a machine that will not stop.
+ *
+ * A reading that lands casts its own book (`job-queue.ts`) and is not gated by
+ * this — that path is the one that is SUPPOSED to run again for a new reading.
+ */
+const castAsked = new Set<string>();
+
+/**
+ * THE POSITION SHOULD ALWAYS BE MOVING TOWARD THE FLOWING BOOK.
+ *
+ * ── The ruling, and what the fallback was quietly doing instead ─────────────
+ *
+ * User, 2026-08-15: *"if i click the ocr/read step, it should show the reflowed
+ * html. it should always move toward the html, since thats a format we can work
+ * with."* `documentAtPosition` (electron/projects.ts) answers a read or curate
+ * row with the cast book and falls back to the working PDF when there is none —
+ * which is correct as an ANSWER (a pane must show something that exists) and is
+ * the wrong place to stop. The projects that take the fallback are the ones that
+ * were read before casting was automatic, and the ones whose cast was rotated or
+ * deleted; for all of them the bank is on disk, complete, and a book out of it is
+ * seconds of arithmetic. Settling for the photograph is the app declining to make
+ * the one format everything after this step works on.
+ *
+ * ── What identifies a fallback, without re-deriving main's own resolution ───
+ *
+ * Two facts, both read off the same catalogue the resolution read: the position
+ * is NOT a row that shows its own payload (so it is a read or a curate, not the
+ * import and not a translation), and what came back is a PDF. The flowing book is
+ * never a PDF, so those two together are the fallback and nothing else is. The
+ * bank has to be marked complete as well — the same test every Generate asks
+ * (`readingIsComplete`) — because a resume is a reading, and a reading is hours
+ * of a model spent by a click on a history row.
+ */
+async function towardTheFlowingBook(resolved: string): Promise<void> {
+  if (path.extname(resolved).toLowerCase() !== '.pdf') return;
+  // The document came out of `documentAtPosition`, so its project is already
+  // proven; this only names the folder it was proven in.
+  const dir = projectDirOf(resolved);
+  if (dir === null || castAsked.has(dir.toLowerCase())) return;
+  try {
+    const manifest = await readManifest(dir);
+    const view = positionView(ledgerOf(manifest));
+    if (view.step === null || view.own || view.reading === null) return;
+    if (!await readingIsComplete(dir, manifest)) return;
+    castAsked.add(dir.toLowerCase());
+    await queue.ensureCast(resolved);
+  } catch (err) {
+    // Never thrown at the caller: it asked which document is at the position and
+    // it has a correct answer. This is the app trying to improve on that answer,
+    // and a catalogue it could not read is a line in the terminal.
+    console.error(
+      `[ledger] the flowing book for ${path.basename(dir)} could not be asked for: `
+      + `${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 function registerIpc(): void {
   ipcMain.handle('dialog:open-document', () => promptForDocument());
 
@@ -1139,56 +1204,73 @@ function registerIpc(): void {
    * about to be destroyed when it is not would teach them to distrust the next
    * warning that matters.
    *
-   * ── THREE REASONS, ONE QUESTION ─────────────────────────────────────────────
+   * ── TWO REASONS, ONE QUESTION ───────────────────────────────────────────────
    *
-   * A book's copy can be unfiled, a book's copy can be out of date, and a scan's
-   * corrections can have no save to come back to. They are three different losses
-   * and this app has already ruled that a closing document is asked about once
-   * (`closeShowing`, tabs.service.ts): a second box on top of the first is the app
-   * arguing with an answer it already has. So the sentences are composed from
-   * whichever of the three are true, and a tab can owe more than one of them.
+   * A book's filed copy can be out of date, and a scan's corrections can have no
+   * save to come back to. They are two different losses and this app has already
+   * ruled that a closing document is asked about once (`closeShowing`,
+   * tabs.service.ts): a second card on top of the first is the app arguing with
+   * an answer it already has. So the sentences are composed from whichever of the
+   * two are true, and a tab can owe both.
    *
-   * The corrections lead when they are there, because they are the only one of the
-   * three whose subject is the user's own judgement about four hundred blocks
-   * rather than a file's whereabouts.
+   * IT WAS THREE, and the third — "no copy of this exists anywhere you chose" —
+   * is not asked any more at all. See `CloseWarning`: the flag was true from
+   * birth for every book opened out of a project, so it interrupted people who
+   * had lost nothing, and the ruling that retired it is the user's own: *"only
+   * pop up a confirmation alert if changes have been made."*
+   *
+   * The corrections lead when they are there, because they are the only one whose
+   * subject is the user's own judgement about four hundred blocks rather than a
+   * file's whereabouts.
    */
-  ipcMain.handle('document:confirm-close', async (_event, warning: CloseWarning): Promise<CloseAnswer> => {
-    const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
-    const options = warning.corrections === null
-      ? aboutTheCopy(warning)
-      : aboutTheCorrections(warning, warning.corrections);
-    const result = win
-      ? await dialog.showMessageBox(win, options)
-      : await dialog.showMessageBox(options);
-    // KEEP IS THE ANSWER TO ANYTHING UNRECOGNISED, including a box dismissed by the
-    // window manager. Every other answer here destroys something the person may
-    // not have decided about yet, and doing nothing is the one outcome that is
-    // never wrong.
-    return ANSWERS[options.buttons[result.response] ?? ''] ?? 'keep';
-  });
+  ipcMain.handle(
+    'document:confirm-close',
+    (_event, warning: CloseWarning): Asked<CloseAnswer> => ({
+      kind: 'ask',
+      question: warning.corrections === null
+        ? aboutTheCopy(warning)
+        : aboutTheCorrections(warning, warning.corrections),
+    }),
+  );
 
   /**
-   * The book is somewhere the user did not choose, or is newer than the copy they
-   * did — the question this dialog has always asked, unchanged.
+   * The filed copy is older than the book in front of you — the one thing left
+   * for this half of the question to say.
+   *
+   * ── The sentence that died here, and why it could not stay ──────────────────
+   *
+   * This function used to fork on `warning.unsaved` and say, for a book with no
+   * copy anywhere the user chose, that nothing else on the machine knew about it.
+   * `questionBefore` (tabs.service.ts) no longer asks anything for a bare
+   * `unsaved`, so that branch became unreachable the moment the ruling landed —
+   * and it was also, by then, untrue: the book is in its project, Home lists it,
+   * and the way a copy leaves this app is the export modal (docs/WORKBENCH.md
+   * §6). A branch that can never run, phrased as advice about a gesture that no
+   * longer exists, is worse than no branch at all, so both went.
+   *
+   * What is left is a real state with a real remedy: a copy the person themselves
+   * put somewhere, which this book has moved on from.
    */
-  function aboutTheCopy(warning: CloseWarning): ClosingQuestion {
-    const shared =
-      'Every edit went straight into Foundry\'s working copy of the book as you made it, '
-      + `so nothing is lost — the project is in ${projectsDir()} and Home will still list it.`;
+  function aboutTheCopy(warning: CloseWarning): AppQuestion {
     return {
-      type: 'question',
-      buttons: [CLOSE, KEEP],
-      defaultId: 1,
-      cancelId: 1,
-      title: warning.unsaved ? 'Close without saving it anywhere?' : 'Close with edits unsaved?',
-      message: warning.unsaved
-        ? `“${warning.title}” has not been saved anywhere you chose.`
-        : `“${warning.title}” has been edited since you saved it.`,
-      detail: warning.unsaved
-        ? `${shared} It is not in a folder of yours, though, and nothing else on this machine `
-          + 'knows about it. Save (Ctrl+S) to put it somewhere you will find it.'
-        : `${shared} The copy you saved at ${warning.savedPath ?? 'your chosen location'} is the `
-          + 'older version. Save (Ctrl+S) to bring it up to date.',
+      title: 'Close with edits unsaved?',
+      message: `“${warning.title}” has been edited since you saved it.`,
+      detail: [
+        'Every edit went straight into Foundry\'s working copy of the book as you made it, so '
+        + 'nothing here is lost — the project keeps it and Home will still list it.',
+        'The copy you filed for yourself is the older version, and closing does not bring it up '
+        + 'to date. Export the book again to replace it.',
+      ],
+      // The safe answer is FOCUSED and the ending one is LAST, which is this
+      // app's rule for every card that can destroy something: Enter cannot
+      // reach the button that ends the session's way back.
+      choices: [
+        { key: 'keep', label: KEEP },
+        { key: 'close', label: CLOSE, danger: true },
+      ],
+      preferred: 'keep',
+      dismissed: 'keep',
+      checkbox: null,
     };
   }
 
@@ -1223,7 +1305,7 @@ function registerIpc(): void {
   function aboutTheCorrections(
     warning: CloseWarning,
     at: UncommittedCuration,
-  ): ClosingQuestion {
+  ): AppQuestion {
     /*
      * THE SAVE IS NAMED ONCE AND THEN REFERRED TO. With both a block count and a
      * spine to report, naming the row twice in one sentence reads as two different
@@ -1245,43 +1327,69 @@ function registerIpc(): void {
       ? `“${warning.title}” has ${spine}.`
       : `“${warning.title}” has ${drift}${spine === null ? '' : `, and ${spine}`}.`;
 
-    // The file-copy warning, when this tab owes that one as well. Kept to a
-    // sentence and put last: it is a second, smaller loss, and the corrections are
-    // what the buttons are about.
-    const alsoTheCopy = warning.unsaved
-      ? ' This book has also not been saved anywhere you chose; Ctrl+S puts a copy somewhere '
-        + 'you will find it.'
-      : warning.modified
-        ? ` The copy you saved at ${warning.savedPath ?? 'your chosen location'} is also older `
-          + 'than this one; Ctrl+S brings it up to date.'
-        : '';
+    /*
+     * The filed-copy warning, when this tab owes that one as well. Kept to a
+     * sentence and put last: it is a second, smaller loss, and the corrections
+     * are what the buttons are about.
+     *
+     * ONE BRANCH NOW, not two. The other one said "this book has also not been
+     * saved anywhere you chose", and it went with the ruling that stopped a bare
+     * `unsaved` asking anything at all (`CloseWarning`): a book living in its own
+     * project is not a book somebody has mislaid, and a warning that is untrue in
+     * a card about corrections teaches people to skim the part that is true.
+     */
+    const alsoTheCopy = warning.modified
+      ? [
+        'The copy you filed for yourself is also older than this one, and closing does not bring '
+        + 'it up to date. Export the book again to replace it.',
+      ]
+      : [];
 
     return {
-      type: 'question',
-      buttons: [SAVE, CLOSE, KEEP],
-      defaultId: 0,
-      cancelId: 2,
       title: 'Close without a save to come back to?',
       message,
-      detail:
+      detail: [
         'Nothing here is lost by closing. Every one of these corrections is already written into '
         + 'this book’s curation, and all of them will be exactly where you left them the next time '
-        + 'you open it.\n\n'
-        + 'What closing ends is the way back to this state. Foundry’s step-by-step undo lasts only '
+        + 'you open it.',
+        'What closing ends is the way back to this state. Foundry’s step-by-step undo lasts only '
         + 'as long as the book is open; a save is what turns the corrections as they stand into a '
         + 'row in Steps that you can click back to afterwards. Saving now makes this moment one of '
         + 'those rows. Closing without it keeps every correction and keeps no way back to this '
-        + `point in them.${alsoTheCopy}`,
+        + 'point in them.',
+        ...alsoTheCopy,
+      ],
+      /*
+       * THREE ANSWERS, AND THE ORDER IS THE SAFETY. Save is offered first and is
+       * what Enter takes, because it is the one answer that costs nothing and
+       * keeps everything; Close is LAST and wears the error colour, so the button
+       * that ends the way back has to be aimed at; Keep it open is what a
+       * dismissal means. A card whose only route to keeping the work is *cancel,
+       * hunt for Save, close again* has made the user do the app's job.
+       */
+      choices: [
+        { key: 'save', label: SAVE },
+        { key: 'keep', label: KEEP },
+        { key: 'close', label: CLOSE, danger: true },
+      ],
+      preferred: 'save',
+      dismissed: 'keep',
+      checkbox: null,
     };
   }
 
   /**
    * "You deleted this footnote's last reference. Should the footnote go too?"
    *
-   * MAIN'S NATIVE BOX, like `confirmClose` above and like every other dialog in
-   * this app: the question is modal to the WINDOW — the edit has landed and the
-   * next gesture must not race it — and an in-app modal over a sandboxed iframe
-   * is a rectangle the frame can scroll out from under.
+   * MAIN'S SENTENCES, THE APP'S OWN CARD, like `confirmClose` above and like
+   * every other question this app asks. It used to be a native box, argued for
+   * on the grounds that the question is modal to the WINDOW — the edit has landed
+   * and the next gesture must not race it — and that an in-app modal over a
+   * sandboxed iframe is a rectangle the frame can scroll out from under. The card
+   * answers both: it is a fixed full-window scrim that takes every click before
+   * the frame can (see `ConfirmDialogComponent`), so the frame scrolling under it
+   * moves nothing the person is looking at. What the native box could not answer
+   * was that it did not look like this program (`AppQuestion`).
    *
    * THE NOTE IS NAMED, both by the number the page printed and by the words it
    * begins with. "A footnote is now unreachable" tells a person nothing they can
@@ -1296,7 +1404,7 @@ function registerIpc(): void {
    * number back, which is a second write of the block's previous markup and is
    * why the renderer still has to be holding it.
    *
-   * THE ORDER IS EDIT-THEN-ASK. The edit is already on disk when this box goes
+   * THE ORDER IS EDIT-THEN-ASK. The edit is already on disk when this card goes
    * up, because an edit landing the instant it is typed is the whole feel of
    * select mode and a dialog that interrupted the typing to ask permission would
    * take that away. Cancel undoes; it does not pre-empt.
@@ -1306,84 +1414,118 @@ function registerIpc(): void {
    * "stop asking" flag would leave main choosing which one the user meant. A
    * checked box on CANCEL is ignored — a standing instruction to always undo
    * would make deleting a reference number impossible, with no dialog left to
-   * explain why every attempt reverts itself.
+   * explain why every attempt reverts itself — and that rule is now SAID rather
+   * than implemented twice: `checkbox.remembers` names the two answers a ticked
+   * box may be stored for, and the api layer stores nothing else.
+   *
+   * THE STANDING ANSWER IS READ BEFORE ANYTHING IS COMPOSED, which is what makes
+   * "don't ask again" mean it: no question crosses the seam, so no card is drawn
+   * and nothing flickers on its way to being dismissed.
    */
-  ipcMain.handle('document:confirm-unlinked-note', async (_event, note: UnlinkedNote) => {
-    const standing = readAppSettings().unlinkedNoteAnswer;
-    if (standing !== 'ask') return standing;
-    const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
-    const printed = note.printed.trim();
-    const named = printed.length > 0 ? `Footnote ${printed}` : `The footnote “${note.noteId}”`;
-    const options = {
-      type: 'question' as const,
-      buttons: ['Strike the footnote too', 'Leave the footnote', 'Put the number back'],
-      defaultId: 1,
-      cancelId: 2,
-      checkboxLabel: "Don't ask again — do this every time",
-      checkboxChecked: false,
-      title: 'That was the last reference to a footnote',
-      message: `${named} is no longer reachable from the text.`,
-      detail: (note.opening.length > 0 ? `It reads: “${note.opening}”\n\n` : '')
-        + 'Striking it marks it the way Delete marks any block — it stays in the working copy, '
-        + 'drawn struck through, and only leaves the book when the final edition is built, so '
-        + 'pressing Delete on it brings it back. Leaving it keeps the note in the book with '
-        + 'nothing pointing at it. Putting the number back undoes the edit you just made.',
-    };
-    const result = win
-      ? await dialog.showMessageBox(win, options)
-      : await dialog.showMessageBox(options);
-    const answer: UnlinkedNoteAnswer =
-      result.response === 0 ? 'cut' : result.response === 1 ? 'keep' : 'cancel';
-    if (result.checkboxChecked && answer !== 'cancel') {
-      writeAppSettings({ unlinkedNoteAnswer: answer });
-    }
-    return answer;
-  });
+  ipcMain.handle(
+    'document:confirm-unlinked-note',
+    (_event, note: UnlinkedNote): Asked<UnlinkedNoteAnswer> => {
+      const standing = readAppSettings().unlinkedNoteAnswer;
+      if (standing !== 'ask') return { kind: 'answered', answer: standing };
+      const printed = note.printed.trim();
+      const named = printed.length > 0 ? `Footnote ${printed}` : `The footnote “${note.noteId}”`;
+      return {
+        kind: 'ask',
+        question: {
+          title: 'That was the last reference to a footnote',
+          message: `${named} is no longer reachable from the text.`,
+          detail: [
+            ...(note.opening.length > 0 ? [`It reads: “${note.opening}”`] : []),
+            'Striking it marks it the way Delete marks any block — it stays in the working copy, '
+            + 'drawn struck through, and only leaves the book when the final edition is built, so '
+            + 'pressing Delete on it brings it back. Leaving it keeps the note in the book with '
+            + 'nothing pointing at it. Putting the number back undoes the edit you just made.',
+          ],
+          /*
+           * THE THREE ANSWERS IN THE ORDER THE BOX ALWAYS PUT THEM, and the two
+           * that are not the same answer twice. Leave is FOCUSED (the native
+           * box's own `defaultId: 1`): it is the answer that writes nothing, and
+           * a note standing in the book with nothing pointing at it is a
+           * legitimate edition. A DISMISSAL PUTS THE NUMBER BACK (`cancelId: 2`),
+           * which is the only one of the three that is not a decision about the
+           * footnote at all — somebody who waved the question away did not agree
+           * to an edition, so the edit that raised it is undone and the book is
+           * exactly as it was.
+           */
+          choices: [
+            { key: 'cut', label: 'Strike the footnote too' },
+            { key: 'keep', label: 'Leave the footnote' },
+            { key: 'cancel', label: 'Put the number back' },
+          ],
+          preferred: 'keep',
+          dismissed: 'cancel',
+          checkbox: {
+            label: 'Don’t ask again — do this every time',
+            remembers: ['cut', 'keep'],
+          },
+        },
+      };
+    },
+  );
 
   /**
    * "Read this book again?" — the queue confirm, `BANK-LIFECYCLE.md` §3.
    *
-   * MAIN'S NATIVE BOX, like `confirmClose` and like every other question this app
-   * asks: main owns the dialogs, the box is modal to the window, and the answer is
-   * read back BY LABEL rather than by index (`ANSWERS` above says why at length —
-   * an index means different things in boxes of different shapes, and the way that
-   * goes wrong is silent).
+   * MAIN'S QUESTION AND THE APP'S OWN CARD, like `confirmClose` and like every
+   * other question this app asks. It was a native box, and the box's own defence
+   * was that it is modal to the window — the next thing that happens after a yes
+   * is an enqueue, and a question the user can click behind is a question they
+   * can answer twice. The card is modal to the window in the only sense that
+   * matters here: it is a full-window scrim at the top of the stack, so the Add
+   * button under it cannot be reached while it is up.
    *
-   * ONE BOX FOR THE WHOLE QUESTION. The replaced reading and every step that goes
-   * stale with it are one cost and are asked about once; a second box listing the
-   * casualties would be this app arguing with an answer it already has, which is
-   * the rule `closeShowing` established for a closing document.
+   * ONE CARD FOR THE WHOLE QUESTION. The replaced reading and every step that goes
+   * stale with it are one cost and are asked about once; a second question listing
+   * the casualties would be this app arguing with an answer it already has, which
+   * is the rule `closeShowing` established for a closing document.
    *
-   * THE SENTENCES ARE THE RENDERER'S, and this is the only dialog here where that
-   * is true. They are read off the step ledger, the renderer already mirrors it,
-   * and the composition is a pure shared function held down by tests
+   * THE SENTENCES ARE THE RENDERER'S, and this is the only question here where
+   * that is true. They are read off the step ledger, the renderer already mirrors
+   * it, and the composition is a pure shared function held down by tests
    * (`reReadAhead`, shared/reread.ts) — so main asking the disk again would be a
    * round trip for a decision that is already made and already checked. What stays
-   * main's is what has always been main's: the box, the buttons, and what a press
-   * of one of them means.
+   * main's is what has always been main's: the shape of the question, the buttons,
+   * and what a press of one of them means.
    *
    * ANYTHING UNRECOGNISED IS A NO. A yes here spends hours of GPU and replaces a
-   * bank; a box the window manager dismissed is not somebody agreeing to that.
+   * bank; a card somebody dismissed is not somebody agreeing to that — which is
+   * why `dismissed` names the leave-it answer rather than the proceed one.
+   *
+   * THE CARD DOES NOT CLOSE THE OCR DIALOG IT IS ASKED FROM. That is the
+   * renderer's rule and it is written down where it is enforced
+   * (`ConfirmService.put`), but it is this question that needed it: the ask comes
+   * from inside the OCR card, and a "no" that took the OCR card away with it would
+   * answer a question nobody asked.
    */
-  ipcMain.handle('reading:confirm-re-read', async (_event, prompt: ReReadPrompt): Promise<boolean> => {
-    const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
-    // Not `ClosingQuestion`, which is named for the dialog it was written for. The
-    // literal's own inferred `buttons: string[]` is what makes the read-back below
-    // total, which is the property that interface exists to promise.
-    const options = {
-      type: 'question' as const,
-      buttons: [RE_READ_PROCEED, RE_READ_CANCEL],
-      defaultId: 1,
-      cancelId: 1,
-      title: 'Read this book again?',
-      message: prompt.message,
-      detail: prompt.detail,
-    };
-    const result = win
-      ? await dialog.showMessageBox(win, options)
-      : await dialog.showMessageBox(options);
-    return options.buttons[result.response] === RE_READ_PROCEED;
-  });
+  ipcMain.handle(
+    'reading:confirm-re-read',
+    (_event, prompt: ReReadPrompt): Asked<ReReadAnswer> => ({
+      kind: 'ask',
+      question: {
+        /*
+         * THE HEADLINE IS THE PROMPT'S OWN, AND IT IS SAID ONCE. The native box
+         * had a title bar and a message and this question filled both with the
+         * same sentence, which cost nothing when one of them was window chrome
+         * and would be a card saying "Read this book again?" twice.
+         */
+        title: prompt.message,
+        message: prompt.detail,
+        detail: [],
+        choices: [
+          { key: 'leave', label: RE_READ_CANCEL },
+          { key: 'again', label: RE_READ_PROCEED, danger: true },
+        ],
+        preferred: 'leave',
+        dismissed: 'leave',
+        checkbox: null,
+      },
+    }),
+  );
 
   /*
    * ── The page and the contents are two statements ─────────────────────────
@@ -1400,67 +1542,83 @@ function registerIpc(): void {
    * intents, and a person who has told the app to stop asking about one has
    * said nothing whatever about the other.
    *
-   * Both follow the unlinked-footnote box exactly (`70cdc69`): a native
-   * message box modal to the window, answered from `app-settings.json` without
-   * asking when a standing answer is stored, remembered PER ANSWER so that
-   * "always update the other" and "never update the other" stay two different
-   * instructions, and un-set in Settings' Curation card — because a
-   * don't-ask-again checkbox with no way back is a trap.
+   * Both follow the unlinked-footnote question exactly (`70cdc69`): the app's own
+   * card, answered from `app-settings.json` without asking when a standing answer
+   * is stored, remembered PER ANSWER so that "always update the other" and "never
+   * update the other" stay two different instructions, and un-set in Settings'
+   * Curation card — because a don't-ask-again checkbox with no way back is a trap.
+   * Both of them are EITHER answer storable, which is why `remembers` names both
+   * keys here and only two of three there.
    *
    * ASKED AFTER THE WRITE, both of them, on select mode's rule: what the user
    * typed lands the instant they stop typing, and the question is about the
    * OTHER side, which nothing has touched.
    */
-  ipcMain.handle('document:confirm-heading-echo', async (_event, echo: HeadingEcho) => {
-    const standing = readAppSettings().contentsRenameEcho;
-    if (standing !== 'ask') return standing;
-    const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
-    const options = {
-      type: 'question' as const,
-      buttons: ['Change the heading too', 'Leave the page as it is'],
-      defaultId: 0,
-      cancelId: 1,
-      checkboxLabel: "Don't ask again — do this every time",
-      checkboxChecked: false,
-      title: 'The page still says the old name',
-      message: `The heading on the page reads “${echo.was}”.`,
-      detail: `The contents entry now reads “${echo.now}”. They are allowed to differ — the page `
-        + 'should say what the book says, and the contents should say what the book\'s apparatus '
-        + 'says — so nothing on the page has been changed. Changing it rewrites the heading (and '
-        + 'the document title) to match; leaving it keeps the words the page printed.',
-    };
-    const result = win
-      ? await dialog.showMessageBox(win, options)
-      : await dialog.showMessageBox(options);
-    const answer: EchoAnswer = result.response === 0 ? 'update' : 'leave';
-    if (result.checkboxChecked) writeAppSettings({ contentsRenameEcho: answer });
-    return answer;
-  });
+  ipcMain.handle(
+    'document:confirm-heading-echo',
+    (_event, echo: HeadingEcho): Asked<EchoAnswer> => {
+      const standing = readAppSettings().contentsRenameEcho;
+      if (standing !== 'ask') return { kind: 'answered', answer: standing };
+      return {
+        kind: 'ask',
+        question: {
+          title: 'The page still says the old name',
+          message: `The heading on the page reads “${echo.was}”.`,
+          detail: [
+            `The contents entry now reads “${echo.now}”. They are allowed to differ — the page `
+            + 'should say what the book says, and the contents should say what the book\'s '
+            + 'apparatus says — so nothing on the page has been changed. Changing it rewrites the '
+            + 'heading (and the document title) to match; leaving it keeps the words the page '
+            + 'printed.',
+          ],
+          // Update is offered first and focused (`defaultId: 0`), because the
+          // person just renamed one side and the commonest reason to do that is
+          // that both sides were wrong. Leaving is what a dismissal means:
+          // nothing has been written to the page, so nothing has to be undone.
+          choices: [
+            { key: 'update', label: 'Change the heading too' },
+            { key: 'leave', label: 'Leave the page as it is' },
+          ],
+          preferred: 'update',
+          dismissed: 'leave',
+          checkbox: {
+            label: 'Don’t ask again — do this every time',
+            remembers: ['update', 'leave'],
+          },
+        },
+      };
+    },
+  );
 
-  ipcMain.handle('document:confirm-nav-echo', async (_event, echo: NavEcho) => {
-    const standing = readAppSettings().headingEditEcho;
-    if (standing !== 'ask') return standing;
-    const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
-    const options = {
-      type: 'question' as const,
-      buttons: ['Change the contents entry too', 'Leave the contents as it is'],
-      defaultId: 0,
-      cancelId: 1,
-      checkboxLabel: "Don't ask again — do this every time",
-      checkboxChecked: false,
-      title: 'The contents still says the old name',
-      message: `The contents entry reads “${echo.was}”.`,
-      detail: `The heading on the page now reads “${echo.now}”. Nothing in the contents has been `
-        + 'changed — the two are allowed to differ. Changing it relabels the entry to match; '
-        + 'leaving it keeps the name the table of contents gives this chapter.',
-    };
-    const result = win
-      ? await dialog.showMessageBox(win, options)
-      : await dialog.showMessageBox(options);
-    const answer: EchoAnswer = result.response === 0 ? 'update' : 'leave';
-    if (result.checkboxChecked) writeAppSettings({ headingEditEcho: answer });
-    return answer;
-  });
+  ipcMain.handle(
+    'document:confirm-nav-echo',
+    (_event, echo: NavEcho): Asked<EchoAnswer> => {
+      const standing = readAppSettings().headingEditEcho;
+      if (standing !== 'ask') return { kind: 'answered', answer: standing };
+      return {
+        kind: 'ask',
+        question: {
+          title: 'The contents still says the old name',
+          message: `The contents entry reads “${echo.was}”.`,
+          detail: [
+            `The heading on the page now reads “${echo.now}”. Nothing in the contents has been `
+            + 'changed — the two are allowed to differ. Changing it relabels the entry to match; '
+            + 'leaving it keeps the name the table of contents gives this chapter.',
+          ],
+          choices: [
+            { key: 'update', label: 'Change the contents entry too' },
+            { key: 'leave', label: 'Leave the contents as it is' },
+          ],
+          preferred: 'update',
+          dismissed: 'leave',
+          checkbox: {
+            label: 'Don’t ask again — do this every time',
+            remembers: ['update', 'leave'],
+          },
+        },
+      };
+    },
+  );
 
   // ── Projects ─────────────────────────────────────────────────────────────
   /*
@@ -2438,6 +2596,10 @@ function registerIpc(): void {
   ipcMain.handle('ledger:document-at', async (_event, projectDir: string) => {
     const resolved = await documentAtPosition(projectDir);
     if (resolved !== null) openable.add(path.resolve(resolved));
+    // Fire and forget, deliberately — see `towardTheFlowingBook`. The answer is
+    // the document that exists NOW; a pane held blank while a rendering runs
+    // would be this handler waiting for a job the caller never asked for.
+    if (resolved !== null) void towardTheFlowingBook(resolved);
     return resolved;
   });
   ipcMain.handle('ledger:describe-delete', async (_event, projectDir: string, stepId: string) => {

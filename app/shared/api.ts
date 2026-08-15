@@ -10,6 +10,7 @@
 import type { ReadAsk } from './ledger';
 import type { ReReadPrompt } from './reread';
 import type {
+  AppQuestion,
   BackendSettingsPatch,
   CloseAnswer,
   CloseWarning,
@@ -40,6 +41,7 @@ import type {
   PdfMetadataFields,
   ProjectLedger,
   ProjectSummary,
+  QuestionAnswer,
   ReadingPlan,
   RecentDocument,
   RelabelledBlock,
@@ -132,23 +134,25 @@ export interface FoundryApi {
   documentSaveCopy(absolutePath: string, suggestedName: string): Promise<string | null>;
   reveal(target: string): Promise<void>;
   /**
-   * The native box asked before a tab with something to lose closes. Native
-   * rather than an in-app modal because the question is modal to the WINDOW, and
-   * because main already owns every other dialog in this app.
+   * The question asked before a tab with something to lose closes — main's
+   * sentences, drawn in the app's own card (`drawQuestions`).
    *
-   * ONE QUESTION FOR ALL THREE REASONS, and that is deliberate rather than
+   * ONE QUESTION FOR BOTH REASONS, and that is deliberate rather than
    * economical. This app has already ruled that stacking dialogs about one
    * closing document is wrong (see `closeShowing` in tabs.service.ts): a person
    * shutting a book should be asked once, about everything that closing it costs,
-   * and a second box on top of the first is the app arguing with an answer it
-   * already has. Main picks the wording from the flags — "no copy anywhere you
-   * chose", "the copy you chose is older than this", and "there is no save of
-   * these corrections to come back to" are three different warnings, and a tab
-   * can owe more than one of them at once.
+   * and a second card on top of the first is the app arguing with an answer it
+   * already has. Main picks the wording from the flags — "the copy you chose is
+   * older than this" and "there is no save of these corrections to come back to"
+   * are two different warnings, and a tab can owe both at once.
+   *
+   * IT WAS THREE. The third was "no copy of this exists anywhere you chose",
+   * which was true of every book the app opened out of a project and therefore
+   * interrupted people who had lost nothing. See `CloseWarning` for the ruling.
    */
   confirmClose(warning: CloseWarning): Promise<CloseAnswer>;
   /**
-   * The native box asked when an in-place edit deleted a footnote's LAST
+   * The question asked when an in-place edit deleted a footnote's LAST
    * reference. Three answers, and the caller writes something different for each
    * — see `UnlinkedNoteAnswer`.
    *
@@ -165,22 +169,25 @@ export interface FoundryApi {
   /**
    * "Read this book again?" — the cost of a re-read, named before the job exists.
    *
-   * MAIN'S NATIVE BOX, like every other dialog here, and for this one's own
-   * reason on top of the usual: the question is modal to the WINDOW because the
-   * next thing that happens if it is answered yes is an enqueue, and an in-app
-   * card the user can click behind would let them press Add twice.
+   * MAIN'S QUESTION IN THE APP'S OWN CARD, like every other dialog here. The
+   * native box it replaced was defended on this one's own ground — the next thing
+   * that happens after a yes is an enqueue, and a question the user can click
+   * behind is a question they can answer twice — and the card meets it: it is a
+   * full-window scrim at the top of the stack, so the Add button under it takes
+   * no clicks while the question is up.
    *
    * THE SENTENCES ARRIVE COMPOSED, which is the one place this differs from
    * `confirmClose`. The facts they are made of live in the ledger, and the
    * renderer is the side already holding a mirror of it (`ledger.service.ts`) —
    * so asking main to name the cost would be an IPC round trip for a decision
    * that is pure and shared. The composition is `reReadAhead` in shared/reread.ts,
-   * where it is tested; main owns the box, the two buttons and the reading of the
-   * answer by label.
+   * where it is tested; main owns the shape of the question, the two buttons and
+   * what a press of one of them means.
    *
-   * True means read it again. Anything else — the other button, a box the window
-   * manager dismissed — is a no, because the yes spends three hours of GPU and
-   * doing nothing is the outcome that is never wrong.
+   * True means read it again. Anything else — the other button, a card dismissed
+   * with Escape, a card nothing was there to draw — is a no, because the yes
+   * spends three hours of GPU and doing nothing is the outcome that is never
+   * wrong.
    *
    * ADVISORY, and deliberately so: see `BANK-LIFECYCLE.md` §3.3. The cost is named
    * as of the moment of asking, and the actual replace-or-branch decision is made
@@ -211,6 +218,37 @@ export interface FoundryApi {
    * page stayed in the contents forever with nothing on screen to say so.
    */
   confirmNavEcho(echo: NavEcho): Promise<EchoAnswer>;
+
+  /**
+   * THE APP'S OWN CONFIRMATION CARD, HANDED TO THE BRIDGE ONCE AT STARTUP.
+   *
+   * ── Why the five questions above did not change shape ───────────────────────
+   *
+   * Every one of them used to be `ipcRenderer.invoke` and nothing else: main put
+   * a native box on the screen and the promise settled with what was pressed. The
+   * boxes are gone (the user: "we should have zero js alerts. they should all be
+   * custom modals"), and the thing that draws the replacement is an Angular
+   * component in the renderer — which the bridge cannot reach and must not try
+   * to.
+   *
+   * So the drawing is handed IN. `ConfirmService` registers the card here as the
+   * app starts, and the five calls above keep their exact signatures: they ask
+   * main for the composed question, hand it to whatever was registered, and
+   * resolve with the answer's own word. Not one caller beyond this file changed —
+   * the OCR dialog still awaits a boolean, `questionBefore` still awaits a
+   * `CloseAnswer` — which is the property this indirection exists to buy.
+   *
+   * REGISTERED ONCE AND NOT UNREGISTERED. The card is mounted for the whole life
+   * of the window (see `ConfirmDialogComponent`), so there is no moment where it
+   * is right for a question to go somewhere else.
+   *
+   * WITH NOTHING REGISTERED, A QUESTION IS NOT ASKED AND THEREFORE NOT AGREED TO.
+   * Every one of the five resolves with its own safe answer — keep the tab, undo
+   * the edit, leave the reading alone — because a renderer that cannot draw a
+   * card cannot have been answered, and the alternative is spending hours of GPU
+   * on somebody's behalf.
+   */
+  drawQuestions(draw: (question: AppQuestion) => Promise<QuestionAnswer>): void;
 
   /**
    * A document's own record — the OPF's Dublin Core fields, or the PDF's Info

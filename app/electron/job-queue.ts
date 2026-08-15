@@ -1124,7 +1124,7 @@ async function pump(): Promise<void> {
       );
       next.message = `Read ${path.basename(next.inputPath)} — the answers are banked.`;
       changed();
-      await castFlowingBook(next.inputPath);
+      await ensureCast(next.inputPath);
       void pump();
       return;
     }
@@ -1317,6 +1317,55 @@ async function putBack(
   if (dir === null) return;
   if (rotation !== null) await restoreRotation(dir, rotation);
   if (filed !== null) await restoreFinalRotation(dir, filed);
+}
+
+/**
+ * The projects a cast is being planned for RIGHT NOW — one per project, at most.
+ *
+ * ── The window `enqueue` cannot cover ──────────────────────────────────────
+ *
+ * `pendingFor` already refuses a second job writing the same file, and it is the
+ * dedup that matters: it survives reloads, it covers the whole life of the run,
+ * and it joins a re-read's cast to one already waiting. What it cannot see is the
+ * gap BEFORE the enqueue. `castFlowingBook` awaits `planConversion` first — which
+ * reads a catalogue, resolves the archive, and asks the disk whether the bank is
+ * marked — so five clicks on a read row inside that window are five calls that
+ * have not reached `enqueue` yet, and every one of them would find nothing
+ * pending and add a row.
+ *
+ * Keyed by PROJECT rather than by the path that was named, because the two
+ * callers name different files — the read landing names the scan it was handed,
+ * a click names the working copy the position resolved to — and both mean the one
+ * flowing book of one project. Released the moment the plan has been enqueued or
+ * refused, because from there `pendingFor` is a better answer than this is.
+ */
+const casting = new Set<string>();
+
+/**
+ * MAKE SURE THIS PROJECT HAS ITS FLOWING BOOK — the one door, for both reasons.
+ *
+ * Called by the reading's own landing (the book exists the moment the bank does)
+ * and by main, when somebody stands on a read or curate row and the position
+ * still resolves to a PDF. That second caller is the ruling: *"if i click the
+ * ocr/read step, it should show the reflowed html. it should always move toward
+ * the html, since thats a format we can work with."* A resolution that falls back
+ * to the scan is the app settling for the format it can do least with, and the
+ * answer is to MAKE the book rather than to show the photograph again.
+ *
+ * FIRE AND FORGET, and it must stay that way: the caller is answering "which
+ * document is at the position", the honest answer is the one that exists right
+ * now, and holding that answer for a rendering would leave a pane blank while a
+ * job it was never told about ran.
+ */
+export async function ensureCast(readFrom: string): Promise<void> {
+  const key = (projectDirOf(readFrom) ?? path.resolve(readFrom)).toLowerCase();
+  if (casting.has(key)) return;
+  casting.add(key);
+  try {
+    await castFlowingBook(readFrom);
+  } finally {
+    casting.delete(key);
+  }
 }
 
 /**
