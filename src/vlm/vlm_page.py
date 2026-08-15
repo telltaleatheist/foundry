@@ -20,9 +20,9 @@ canvas layer cannot survive `bun build --compile`, and every drawing method on
 the shim throws so that a rendering path fails loudly instead of drawing with an
 identity transform. There is no rasteriser on the TypeScript side to reuse. The
 page image is already crossing this seam, so it is rendered on the side that can
-do it — and so are the two other pixel jobs this mode has, for the same reason:
-the grayscale raster the dots dialect measures ink in, and the crop that turns a
-Picture block into a picture.
+do it — and so is the other pixel job this mode has, for the same reason: the
+crop that turns a Picture block into a picture. The grayscale raster below is a
+third that has outlived its reader; see `grayscale` in `src/vlm/bridge.ts`.
 
 200 DPI is not a setting. It is what the measurement was taken at — the pages
 the models were scored on were 1300×2112 for a 468×760 pt page, exactly 200 dpi
@@ -136,6 +136,10 @@ def write_pgm(path, pixmap):
     reader on the other side (`src/scan/pgm.ts`) accepts binary P5 with a
     single whitespace after the header and an 8-bit maxval, and this is the
     nine bytes that guarantees it.
+
+    NOTHING ON THE OTHER SIDE OPENS ONE ANY MORE. It fed the ink test that used
+    to decide a page-turn join, and that test is gone — see `grayscale` in
+    `src/vlm/bridge.ts` for why this survives one more pass anyway.
     """
     samples = pixmap.samples
     if len(samples) != pixmap.width * pixmap.height:

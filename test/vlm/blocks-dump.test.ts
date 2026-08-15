@@ -224,7 +224,7 @@ test('the seed and the render agree: the dump\'s chapters are the book\'s chapte
     pages: CHAPTER_PAGES.map((p) => parseDotsPage(p.text, {
       page: p.page, render: RENDER, maxPixels: MAX_PIXELS,
     })),
-    images: { inkExtent: () => null, crop: async () => [] },
+    images: { crop: async () => [] },
     stripNoteMarkers: false,
   });
   assert.deepEqual(
@@ -239,7 +239,7 @@ test('the seed and the render agree: the dump\'s chapters are the book\'s chapte
     pages: CHAPTER_PAGES.map((p) => parseDotsPage(p.text, {
       page: p.page, render: RENDER, maxPixels: MAX_PIXELS,
     })),
-    images: { inkExtent: () => null, crop: async () => [] },
+    images: { crop: async () => [] },
     stripNoteMarkers: false,
     overlay: parseOverlay(JSON.stringify({
       overlay: 1,

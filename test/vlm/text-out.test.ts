@@ -16,7 +16,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { BookLexicon, type DotsBlock } from '../../src/vlm/dots.js';
-import { buildChapterBody, buildDotsBook, type DotsPageImages } from '../../src/vlm/dots-book.js';
+import {
+  buildChapterBody,
+  buildDotsBook,
+  flowBlocks,
+  type DotsPageImages,
+} from '../../src/vlm/dots-book.js';
 import { XHTML_HEAD, XHTML_TAIL, type VlmEpubMetadata } from '../../src/vlm/epub.js';
 import {
   chapterText,
@@ -33,12 +38,12 @@ const META: VlmEpubMetadata = {
 };
 
 /**
- * No ink anywhere — the page-turn join is dots.test.ts's subject, not this
- * file's — and a crop that answers every request, so the EPUB half of the
- * comparison below gets the pictures it checks for.
+ * A crop that answers every request, so the EPUB half of the comparison below
+ * gets the pictures it checks for. Pixels are all the assembler asks a render
+ * for now — the page-turn join is the bank's answer, and dots.test.ts's
+ * subject rather than this file's.
  */
 const IMAGES: DotsPageImages = {
-  inkExtent: () => null,
   crop: async (requests) => requests.map((request) => ({
     name: request.name,
     mediaType: 'image/png',
@@ -73,9 +78,19 @@ function chapterOptions(stripNoteMarkers = false) {
   };
 }
 
+/** The blocks, flowed the way `reflowBook` flows them — what the emitter takes. */
+function flowed(blocks: readonly DotsBlock[]) {
+  return flowBlocks(
+    blocks,
+    new Set(),
+    { x1: 200, x2: 1100 },
+    new BookLexicon(blocks.map((b) => b.text)),
+  ).blocks;
+}
+
 /** A chapter of one page's blocks, rendered the way `buildDotsBook` renders one. */
 function textOf(blocks: readonly DotsBlock[], label: string, stripNoteMarkers = false): string {
-  const body = buildChapterBody(blocks, chapterOptions(stripNoteMarkers));
+  const body = buildChapterBody(flowed(blocks), chapterOptions(stripNoteMarkers));
   return chapterText(label, `${XHTML_HEAD(label, 'en')}${body.xhtml}\n${XHTML_TAIL}`);
 }
 
@@ -178,7 +193,7 @@ test('an element with no plain-text rule stops the run and names its tag', () =>
 });
 
 test('the book states its title and author, because a text file has nowhere else', () => {
-  const body = buildChapterBody(PAGE, chapterOptions());
+  const body = buildChapterBody(flowed(PAGE), chapterOptions());
   const packaged = packageVlmText(META, [{
     id: 'c0001',
     href: 'text/c0001.xhtml',

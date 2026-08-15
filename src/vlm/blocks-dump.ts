@@ -30,13 +30,13 @@
  * because that is what `dots.ts` promises and what `convert.ts` already does
  * with the same failure: one bad page must not cost a person the other 299.
  *
- * WHAT THIS IS NOT: the blocks a finished book is made of. `dots-book.ts`
- * suppresses mistagged running heads, merges headings printed on two lines,
- * rewrites hyphens and reflows paragraphs on its way to an EPUB. None of that
- * has happened here, and none of it should: those passes act on the book, and a
- * person curating blocks is looking at the PAGE. What is here is exactly what
- * `parseDotsPage` produced — the same blocks, with the same ids, that the
- * overlay is about.
+ * WHAT THIS IS NOT: the blocks a finished book is made of. `reflowBook` in
+ * `dots-book.ts` suppresses mistagged running heads, merges headings printed on
+ * two lines, rewrites hyphens, reflows paragraphs and joins the ones that ran
+ * over a page turn. None of that has happened here, and none of it should:
+ * those passes act on the book, and a person curating blocks is looking at the
+ * PAGE. What is here is exactly what `parseDotsPage` produced — the same
+ * blocks, with the same ids, that the overlay is about.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -193,14 +193,24 @@ export async function dumpBlocks(opts: BlocksDumpOptions): Promise<BlocksDump> {
   const out: PageBlocks[] = [];
   const unreadable: { page: number; reason: string }[] = [];
   /*
-   * A SECOND, PRIVATE PARSE OF THE SAME ANSWERS, for the chapter detection to
-   * chew up. `detectChapters` runs the passes `buildDotsBook` runs — and those
-   * passes delete blocks, join headings and rewrite text in place. The blocks
-   * this command reports must be the ones an overlay is keyed to, exactly as
-   * they came off the page, so the detection gets its own copies. Parsing is
-   * arithmetic over strings already in memory; nothing is read twice.
+   * ONE PARSE, AND THE DETECTION CHEWS UP THE SAME BLOCKS THIS COMMAND
+   * REPORTS.
+   *
+   * It used to be two, because the passes behind the chapter detection delete
+   * blocks, join headings and rewrite text IN PLACE, and what this command
+   * reports has to be the page exactly as an overlay is keyed to it. The
+   * second parse was the cheap way to keep those apart while the rules only
+   * existed inside a function that wrote an EPUB.
+   *
+   * What makes one parse safe is that `record` below takes a COPY of every
+   * field it reports — the page, the order, the part, the category and the
+   * text are values, and the box is an object none of the passes ever writes
+   * into (`mergeAdjacentHeadings` replaces a heading's box with a new one
+   * rather than growing it). Every record is made before the detection is
+   * asked, so the answers this command prints are the answers the model gave,
+   * whatever `reflowBook` does to the blocks afterwards.
    */
-  const forDetection: DotsParsedPage[] = [];
+  const parsedPages: DotsParsedPage[] = [];
   for (const page of pages) {
     const reading = readings.get(page)!;
     const banked = readings.geometry(page);
@@ -228,14 +238,14 @@ export async function dumpBlocks(opts: BlocksDumpOptions): Promise<BlocksDump> {
         geometry: banked !== null ? 'bank' : 'render',
         blocks,
       });
-      forDetection.push(parseDotsPage(reading.text, { page, render, maxPixels }));
+      parsedPages.push(parsed);
     } catch (err) {
       if (!(err instanceof DotsPageError)) throw err;
       unreadable.push({ page, reason: err.message.replace(/^page \d+: /, '') });
     }
   }
 
-  const chapters = detectChapters(forDetection);
+  const chapters = detectChapters(parsedPages);
   opts.log(
     `blocks: ${out.reduce((sum, p) => sum + p.blocks.length, 0)} block(s) over ${out.length} page(s) `
     + `of ${readingsPath}, ${chapters.length} chapter(s) this engine would divide the book at`

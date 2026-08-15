@@ -226,8 +226,8 @@ test('a replay against the MLX route is the same promise: render only', async ()
   assert.equal(watched.rendered[0].renderOnly, true);
   assert.equal(phase.run.loadSeconds, 0);
   assert.equal(phase.inferredPages, 0);
-  // The pages were still rasterised — a rendering measures the ink of a page
-  // turn, cuts figures out of the scan and takes the cover from it.
+  // The pages were still rasterised — a rendering cuts figures out of the scan
+  // and takes the cover from it.
   assert.equal(phase.run.pages.length, 2);
   assert.equal(phase.sizes.get(1)?.width, 1300);
 });
@@ -668,17 +668,6 @@ test('a run that MUST read is still refused for want of a backend', async () => 
 // The whole of a generation, offline
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** A blank page render, small: `inkExtentIn` clamps to the raster it is given. */
-function writeBlankPgm(dir: string, page: number): void {
-  fs.mkdirSync(dir, { recursive: true });
-  const header = Buffer.from('P5\n8 8\n255\n', 'ascii');
-  const pixels = Buffer.alloc(64, 0xff);
-  fs.writeFileSync(
-    path.join(dir, `page-${String(page).padStart(4, '0')}.pgm`),
-    Buffer.concat([header, pixels]),
-  );
-}
-
 test('a whole format is generated out of a finished bank with no backend of any kind', async () => {
   /*
    * The end of the promise, end to end: a bank read through a SERVER, rendered
@@ -702,17 +691,14 @@ test('a whole format is generated out of a finished bank with no backend of any 
   const before = fs.readFileSync(readingsPath);
 
   const watched = watch(2);
+  /*
+   * The renders a real run leaves behind. This test used to write a blank PGM
+   * into it for each page, because the page-turn join opened one; nothing reads
+   * a raster any more (`dots-book.ts`, `DotsPageImages`) and the directory is
+   * now only where a crop would come from — and this run, being text, asks for
+   * none.
+   */
   const rendersDir = path.join(dir, 'renders');
-  const bridge: VlmBridge = {
-    readPages: async (o) => {
-      // The renders a real run leaves behind, which the page-turn join reads.
-      if (o.grayscale === true && o.rendersDir !== undefined) {
-        for (let page = 1; page <= 2; page += 1) writeBlankPgm(o.rendersDir, page);
-      }
-      return watched.bridge.readPages(o);
-    },
-    fromEndpoint: watched.bridge.fromEndpoint,
-  };
 
   const lines: string[] = [];
   const report = await vlmConvert({
@@ -724,7 +710,7 @@ test('a whole format is generated out of a finished bank with no backend of any 
     readingsPath,
     reuseReadings: true,
     rendersDir,
-    bridge,
+    bridge: watched.bridge,
     log: (line) => lines.push(line),
   });
 

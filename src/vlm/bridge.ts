@@ -149,10 +149,18 @@ export interface VlmRunOptions {
   /**
    * Also write a grayscale PGM beside each PNG.
    *
-   * The dots dialect measures ink in the render to decide a page-turn join, and
-   * PGM is the one raster format foundry reads with no decoder (`scan/pgm.ts`).
-   * PyMuPDF is already holding the pixmap, so the conversion is free here and
-   * would be a dependency anywhere else.
+   * IT HAS NO READER LEFT, and that is written down rather than quietly true.
+   * It was written for the ink test: the dots dialect measured the ink in a
+   * page's render to decide a page-turn join, and PGM is the one raster format
+   * foundry reads with no decoder (`scan/pgm.ts`). The join is the bank's
+   * answer now and samples no pixel at all (`dots-book.ts`), so nothing on this
+   * side opens one of these files.
+   *
+   * Kept for one more pass because taking it out is not this pass's change:
+   * it reaches across the Python seam into `vlm_page.py`, and it alters what a
+   * run leaves behind under `--renders`, which is a directory somebody may be
+   * looking at. Whoever removes it should remove `src/scan/pgm.ts` in the same
+   * breath — that module's last caller went with the ink test too.
    */
   grayscale?: boolean;
   /**

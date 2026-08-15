@@ -277,9 +277,11 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
    *
    * `reuse` is `readings.ts` stating that this run answers entirely out of a
    * completed bank — "no page is read from the model" is the sentence it prints.
-   * The pages are still RASTERISED, because a rendering measures them: the
-   * page-turn join is decided in the ink of the render, a Picture is cut out of
-   * it, and the cover is the whole of one. What must not happen is a model load,
+   * The pages are still RASTERISED, because the book takes pixels out of them:
+   * a Picture is cut out of a render and the cover is the whole of one. What
+   * the render is no longer asked is whether a paragraph carried on over a page
+   * turn — that is the bank's answer now and nothing else's
+   * (`dots-book.ts`). What must not happen is a model load,
    * which on this route costs minutes and produces nothing, or a request to a
    * server for a page whose answer is already on disk.
    *

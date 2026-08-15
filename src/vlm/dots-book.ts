@@ -9,21 +9,26 @@
  *  - **Alignment is judged against the book's body column** (`bodyColumn` in
  *    `dots.ts`), never the page. A justified column is itself centered on the
  *    paper, so a page-relative rule calls every paragraph in the book centered.
- *  - **A paragraph that runs over a page turn is ONE paragraph.** The cheap test
- *    is textual — the previous block did not end on terminal punctuation and
- *    this one opens lowercase. When that says no, the page render is measured:
- *    a paragraph that continues fills its last line to the right margin, and a
- *    paragraph that genuinely starts on the new page starts with a first-line
- *    indent. Neither of those is in the text, and both are in the ink.
+ *  - **A paragraph that runs over a page turn is ONE paragraph**, and the only
+ *    evidence for it is the BANK. The previous block did not end on terminal
+ *    punctuation and this one opens lowercase; or the column broke a word and
+ *    the two halves are here. Both are pure functions of what the model
+ *    answered, so the same bank makes the same book on any machine.
  *    **A TURN IS ONE PAGE, NOT A GAP.** Page 8 followed by page 12 is not a
  *    page turn: four pages of the book are missing between them, either struck
  *    out by `--skip-pages` or left out because the model could not read them.
- *    Both tests would happily join across that hole — the words because a
- *    sentence that was interrupted mid-clause still reads as interrupted, the
- *    ink because a paragraph that continued onto page 9 still fills its last
- *    line — and the join would fuse two unrelated sentences into one, which is
- *    a lie no reader can see. So a non-consecutive page break is a boundary,
- *    exactly like a chapter start.
+ *    The words would happily join across that hole — a sentence interrupted
+ *    mid-clause still reads as interrupted — and the join would fuse two
+ *    unrelated sentences into one, which is a lie no reader can see. So a
+ *    non-consecutive page break is a boundary, exactly like a chapter start.
+ *  - **THE FLOWING BASE IS THE PRODUCT, AND THE XHTML IS DOWNSTREAM OF IT.**
+ *    Every rule above used to happen while a string was being concatenated, so
+ *    nothing could be shown to a person until a file existed and the rules had
+ *    to be written a second time (`detectChapters`) for anything that wanted
+ *    them without one. `reflowBook` is the pass they live in now: bank in,
+ *    flowing blocks out, each carrying the `(page, order, part)` list of every
+ *    block it swallowed. `buildDotsBook` and `detectChapters` are two readers
+ *    of one answer, and the emitter below writes down what it is handed.
  *  - **Footnotes collect at the END OF THEIR CHAPTER.** Not per page: a page is
  *    not a unit of a reflowable book, and seventeen little note sections in a
  *    chapter is seventeen interruptions. One Footnote block routinely carries
@@ -84,9 +89,6 @@
  * other id in a cast book is unfit for that, and why the number counts elements
  * rather than blocks.
  */
-import { readFileSync } from 'node:fs';
-
-import { readPgm, type GrayRaster } from '../scan/pgm.js';
 import {
   alignmentClass,
   BookLexicon,
@@ -99,7 +101,6 @@ import {
   continuesTextually,
   dotsInline,
   leadingWord,
-  lineHeight,
   plainText,
   topFraction,
   trailingHyphenWord,
@@ -128,25 +129,33 @@ import {
   deriveTypography,
   measureTypeSizes,
   typeSize,
+  type BookTypography,
   type TypographyReport,
 } from './typography.js';
 
 // ── the page images ─────────────────────────────────────────────────────────
 
 /**
- * What the assembler needs from the page renders, and nothing else.
+ * What the assembler needs from the page renders, and it is now ONE thing.
  *
- * An interface rather than a file reader because these are the only two
- * questions asked of a pixel in this whole mode, and because the answers are
- * what make the join test measurable in a unit test. `renders.ts` is the
- * implementation that reads what `vlm_page.py` wrote.
+ * IT USED TO ANSWER TWO QUESTIONS AND THE SECOND ONE IS DEAD. `inkExtent`
+ * reported the leftmost and rightmost dark pixel in a box, and `carriesOver`
+ * asked it whether a paragraph filled its last line to the margin and whether
+ * the next page opened with a first-line indent — the half of the page-turn
+ * join that is in the print and not in the words. It read well and it was not
+ * trustworthy: a footnote sits at the bottom of the page too, and a book whose
+ * notes are set full measure answers "this paragraph continues" on every page
+ * of it. One signal deciding a structural question with no second opinion is
+ * too many eggs in one basket, and the ruling (`docs/DERIVED-BOOK.md` §2) is
+ * that nothing in this program samples ink again. The join is the bank's
+ * answer or it does not happen, and the seams that leaves are joined by hand,
+ * on the page, where a person can see what they are joining.
+ *
+ * What is left is CROPS, which are a different job entirely: a Picture and the
+ * cover are pixels by definition, and cutting them out of a render is not an
+ * inference about anything.
  */
 export interface DotsPageImages {
-  /**
-   * The leftmost and rightmost dark pixel inside a box, measured from the box's
-   * OWN left edge, or null when there is no ink in it at all.
-   */
-  inkExtent(page: number, box: DotsBox): { left: number; right: number } | null;
   /** Crop these boxes out of their page renders, in one go. */
   crop(requests: readonly DotsCrop[]): Promise<readonly DotsCropped[]>;
 }
@@ -191,50 +200,23 @@ export interface DotsCover {
   why: string | null;
 }
 
-/** A grayscale raster reader, shared by `renders.ts` and the tests. */
-export function inkExtentIn(raster: GrayRaster, box: DotsBox): { left: number; right: number } | null {
-  const x1 = Math.max(0, Math.floor(box.x1));
-  const y1 = Math.max(0, Math.floor(box.y1));
-  const x2 = Math.min(raster.width, Math.ceil(box.x2));
-  const y2 = Math.min(raster.height, Math.ceil(box.y2));
-  let left = Number.POSITIVE_INFINITY;
-  let right = Number.NEGATIVE_INFINITY;
-  for (let y = y1; y < y2; y++) {
-    const row = y * raster.width;
-    for (let x = x1; x < x2; x++) {
-      // 128 of 255: the midpoint. A page render is ink on paper, and everything
-      // between the two is an antialiased edge of one of them.
-      if (raster.data[row + x] < 128) {
-        if (x < left) left = x;
-        if (x > right) right = x;
-      }
-    }
-  }
-  if (right < left) return null;
-  return { left: left - x1, right: right - x1 };
-}
-
-/** The page renders `vlm_page.py` left on disk, read as PGM. */
+/**
+ * The page renders `vlm_page.py` left on disk, as far as the assembler is
+ * concerned.
+ *
+ * A NAMED SEAM RATHER THAN A BARE OBJECT, and it is worth keeping as one even
+ * now that it forwards a single function. It used to open PGM rasters and cache
+ * one at a time — a 300-page book at 200 dpi is 800 MB of them — and that half
+ * of it went with the ink test. What it still marks is the boundary the
+ * assembler does not cross: everything above this line is arithmetic over
+ * banked answers, and everything past it is a subprocess reaching for pixels.
+ * A test hands over a crop function that returns nothing and gets a whole book
+ * out of it, which is the property that boundary exists to preserve.
+ */
 export function openPageImages(
-  pgmPath: (page: number) => string,
   crop: (requests: readonly DotsCrop[]) => Promise<readonly DotsCropped[]>,
 ): DotsPageImages {
-  const cache = new Map<number, GrayRaster>();
-  return {
-    inkExtent(page, box) {
-      let raster = cache.get(page);
-      if (!raster) {
-        const path = pgmPath(page);
-        raster = readPgm(new Uint8Array(readFileSync(path)), path);
-        // One page at a time: a 300-page book at 200 dpi is 800 MB of raster,
-        // and the join test only ever looks at two adjacent pages.
-        cache.clear();
-        cache.set(page, raster);
-      }
-      return inkExtentIn(raster, box);
-    },
-    crop,
-  };
+  return { crop };
 }
 
 // ── the running head the model mistagged ────────────────────────────────────
@@ -774,8 +756,17 @@ export interface DotsFold {
  * A section with neither gets an empty string, and an empty string never folds
  * anything. A copyright page has no heading on it, and two consecutive sections
  * that are both nameless are two sections this rule knows nothing about.
+ *
+ * Takes a category and a text and nothing else, because both of its callers
+ * hold a different kind of block: the fold works over the banked blocks, where
+ * a section's index is settled, and `detectChapters` over the flowing ones. A
+ * heading is never joined onto anything, so the two spans answer this question
+ * identically — which is the point rather than a coincidence.
  */
-function sectionName(span: readonly DotsBlock[], opens: DotsChapterProposal | null): string {
+function sectionName(
+  span: readonly { category: DotsCategory; text: string }[],
+  opens: DotsChapterProposal | null,
+): string {
   const label = opens?.label;
   if (label !== null && label !== undefined && label.length > 0) return label;
   const heading = span.find((b) => b.category === 'Title' || b.category === 'Section-header');
@@ -1131,54 +1122,13 @@ export function navTree(chapters: readonly VlmChapter[]): VlmNavItem[] {
 // ── the page turn ───────────────────────────────────────────────────────────
 
 /**
- * Did `previous`'s paragraph run on into `next`? Measured in ink, not in words.
- *
- * A paragraph that continues fills its LAST line to the right margin; one that
- * ended stops short of it. A paragraph that genuinely begins on the new page
- * begins with a first-line indent; a continuation begins flush left. Both facts
- * are in the render and neither is in the text, which is why this test exists
- * beside the textual one rather than instead of it.
- */
-export function carriesOver(
-  previous: DotsBlock,
-  next: DotsBlock,
-  images: DotsPageImages,
-): boolean {
-  // 20 px floors both: a one-line block's height IS its line height, and a box
-  // measured a few pixels tight would otherwise sample the line above.
-  const previousLine = Math.max(20, lineHeight(previous));
-  const previousWidth = previous.box.x2 - previous.box.x1;
-  const tail = images.inkExtent(previous.page, {
-    x1: previous.box.x1,
-    y1: previous.box.y2 - previousLine,
-    x2: previous.box.x2,
-    y2: previous.box.y2,
-  });
-  if (!tail || tail.right < 0.9 * previousWidth) return false;
-
-  const nextLine = Math.max(20, lineHeight(next));
-  const nextWidth = next.box.x2 - next.box.x1;
-  const head = images.inkExtent(next.page, {
-    x1: next.box.x1,
-    y1: next.box.y1,
-    x2: next.box.x2,
-    y2: next.box.y1 + nextLine,
-  });
-  if (!head) return false;
-  // 3% of the block plus 8 px of slack for the box's own edge. A first-line
-  // indent is an em or more, which at 200 dpi is over 25 px.
-  return head.left < 0.03 * nextWidth + 8;
-}
-
-/**
  * Are these two blocks close enough to be halves of one paragraph?
  *
  * Same page, or the very next one. Anything else is a GAP — pages struck out
  * with `--skip-pages`, or pages the model could not read and that were left out
- * by number — and nothing may be joined across one. See this file's header:
- * both join tests answer "yes, continue" for a paragraph whose continuation is
- * on a page that is not in the book, and the sentence they would build never
- * existed.
+ * by number — and nothing may be joined across one. See this file's header: the
+ * words answer "yes, continue" for a paragraph whose continuation is on a page
+ * that is not in the book, and the sentence they would build never existed.
  *
  * Exported because the rule is worth asserting on its own; it is arithmetic,
  * and it decides whether a book contains a sentence nobody wrote.
@@ -1186,6 +1136,62 @@ export function carriesOver(
 export function adjoins(previous: DotsBlock | null, next: DotsBlock): boolean {
   if (previous === null) return true;
   return next.page === previous.page || next.page === previous.page + 1;
+}
+
+/**
+ * A page turn resolved: what comes off the end of the paragraph so far, and
+ * what the next block puts back on.
+ *
+ * THE ONE RESOLUTION OF THE ONE HYPHEN, and the reason it hands back pieces
+ * rather than a finished string is the whole shape of this phase. It used to be
+ * done TWICE per join and in two different representations: `joinTexts` fused
+ * the word in plain text so that the running paragraph stayed correct for the
+ * next `continuesTextually` call, and `appendToParagraph` did the same
+ * arithmetic over RENDERED MARKUP — re-opening a closed `</p>` with a regex,
+ * counting characters back from the end of a string full of `<sup>` and
+ * `<em>`, and splicing the pagebreak span into the seam of a word. Two
+ * implementations of one decision, in two languages, that had to agree and had
+ * nothing making them.
+ *
+ * Now the decision is taken here, once, over the model's own text, and both
+ * readers take their answer from the same four fields: the flow block joins
+ * them into its text and the emitter writes each piece out with the page marker
+ * between them. The markup is a rendering of the answer instead of a second
+ * place the answer is worked out.
+ */
+export interface ParagraphJoin {
+  /** The paragraph so far, with the word the column broke taken off its end. */
+  opening: string;
+  /** A space between two whole words; nothing where a word was broken in half. */
+  separator: string;
+  /** The broken word, made whole by the book's own lexicon. Null when none was. */
+  fused: string | null;
+  /** What is left of the next block once its half of the word is off the front. */
+  rest: string;
+}
+
+export function resolveJoin(
+  previous: string,
+  next: string,
+  lexicon: BookLexicon,
+): ParagraphJoin {
+  const tail = trailingHyphenWord(previous);
+  const head = leadingWord(next);
+  if (tail === null || head === null) {
+    return { opening: previous, separator: ' ', fused: null, rest: next };
+  }
+  const trimmed = previous.trimEnd();
+  return {
+    opening: trimmed.slice(0, trimmed.length - (tail.length + 1)),
+    separator: '',
+    fused: lexicon.join(tail, head),
+    rest: next.slice(head.length),
+  };
+}
+
+/** The joined paragraph, as one string. */
+function joinedText(join: ParagraphJoin): string {
+  return join.opening + join.separator + (join.fused ?? '') + join.rest;
 }
 
 // ── one chapter's XHTML ─────────────────────────────────────────────────────
@@ -1309,8 +1315,6 @@ function pageBreak(page: number): string {
 
 export interface DotsChapterOptions {
   column: BodyColumn;
-  lexicon: BookLexicon;
-  images: DotsPageImages;
   stripNoteMarkers: boolean;
   /** Running note number, so ids are unique across the whole book. */
   firstNote: number;
@@ -1395,8 +1399,20 @@ function printedNumber(run: string): number {
   return Number([...run].map((c) => String(SUPERSCRIPT_VALUE.indexOf(c))).join(''));
 }
 
+/**
+ * One section of the flowing book, written down as XHTML.
+ *
+ * IT DECIDES NOTHING ABOUT THE BOOK ANY MORE, and that is the whole of this
+ * phase. It used to work out the page-turn joins while it concatenated strings
+ * — reopening a `</p>` it had already closed, counting characters back through
+ * rendered markup to find the half of a word the column broke, and splicing the
+ * pagebreak span into the seam. The joins are `reflowBook`'s answer now and
+ * arrive already made; what is left here is the questions that are genuinely
+ * about the FILE: which tag a category takes, where an anchor is needed, what a
+ * note's id is, and which page marker is still owed.
+ */
 export function buildChapterBody(
-  blocks: readonly DotsBlock[],
+  blocks: readonly FlowBlock[],
   opts: DotsChapterOptions,
 ): DotsChapterBody {
   const out: string[] = [];
@@ -1409,19 +1425,18 @@ export function buildChapterBody(
    * the reference markers live, and a marker can only become a link to a note
    * that is already known — rendering in one pass would mean the first half of
    * a page's prose could never reach the notes at that page's bottom.
+   *
+   * `seq` is the only thing added to what the base already collected: it runs
+   * through the WHOLE book because it mints element ids, so it is the caller's
+   * running number and not a fact about this chapter.
    */
-  const notes: ChapterNote[] = [];
-  {
-    let seq = opts.firstNote;
-    for (const block of blocks) {
-      if (block.category !== 'Footnote') continue;
-      for (const text of splitNotes(block.text)) {
-        const lead = LEADING_SUPERSCRIPT.exec(text);
-        notes.push({ block, text, printed: lead ? printedNumber(lead[0]) : null, seq, refId: null });
-        seq += 1;
-      }
-    }
-  }
+  const notes: ChapterNote[] = collectNotes(blocks).map((note, index) => ({
+    block: note.source,
+    text: note.text,
+    printed: note.printed,
+    seq: opts.firstNote + index,
+    refId: null,
+  }));
 
   /*
    * (page, printed) -> the note, or null — and null means the marker stays a
@@ -1452,9 +1467,6 @@ export function buildChapterBody(
 
   let label: string | null = null;
   let openList: 'ol' | 'ul' | null = null;
-  let lastParagraph: number | null = null;
-  let lastParagraphBlock: DotsBlock | null = null;
-  let lastParagraphText = '';
   const pagesSeen = new Set<number>();
 
   const closeList = (): void => {
@@ -1497,30 +1509,38 @@ export function buildChapterBody(
     return pageBreak(block.page);
   };
 
-  for (const [index, block] of blocks.entries()) {
-    if (block.category === 'List-item') {
-      const tag = /^\d+[.)]/.test(block.text) ? 'ol' : 'ul';
+  for (const [index, flow] of blocks.entries()) {
+    /*
+     * The block the ELEMENT is about: the first of the parts, and for every
+     * block in a book but a joined paragraph it is the only one. Its box gives
+     * the alignment, its identity gives the measured type size, and its page
+     * and category give the stamp — all four are facts about where the
+     * paragraph STARTED, which is what a paragraph broken over a page turn has
+     * one of.
+     */
+    const block = flow.source;
+    if (flow.category === 'List-item') {
+      const tag = /^\d+[.)]/.test(flow.text) ? 'ol' : 'ul';
       if (openList !== tag) {
         closeList();
         out.push(`<${tag}${stamp(block)}>`);
         openList = tag;
       }
-      out.push(`  <li${stamp(block)}>${marker(block)}${inline(block.text, block.page)}</li>`);
-      lastParagraph = null;
+      out.push(`  <li${stamp(block)}>${marker(block)}${inline(flow.text, block.page)}</li>`);
       continue;
     }
     closeList();
 
-    switch (block.category) {
+    switch (flow.category) {
       case 'Title':
       case 'Section-header': {
-        const xhtml = inline(block.text, block.page);
+        const xhtml = inline(flow.text, block.page);
         // The TAG still comes from the true category: `h1` for a Title and `h2`
         // for a Section-header is the book's own hierarchy, and a chapter that
         // opens on a Section-header did not become a Title by opening one.
-        const tag = block.category === 'Title' ? 'h1' : 'h2';
+        const tag = flow.category === 'Title' ? 'h1' : 'h2';
         const align = alignmentClass(block.box, opts.column);
-        const cat = opts.openers.has(index) ? CHAPTER_ATTRIBUTE : CATEGORY_ATTRIBUTE[block.category];
+        const cat = opts.openers.has(index) ? CHAPTER_ATTRIBUTE : CATEGORY_ATTRIBUTE[flow.category];
         /*
          * A Section-header that is neither the chapter's own title (the first
          * heading, where `label` comes from) nor one of its opening headings
@@ -1550,15 +1570,13 @@ export function buildChapterBody(
         // inner heading's is: the document's `<h1>` keeps the printed break and
         // the nav gets one line of it.
         label ??= headingLabel(plainText(xhtml));
-        lastParagraph = null;
         break;
       }
       case 'Quote':
         out.push(
           `<blockquote${stamp(block)}><p${sized(block)}${stamp(block)}>`
-          + `${marker(block)}${inline(block.text, block.page)}</p></blockquote>`,
+          + `${marker(block)}${inline(flow.text, block.page)}</p></blockquote>`,
         );
-        lastParagraph = null;
         break;
       case 'Footnote':
         // Already in `notes`, held back to the end of the chapter. The page
@@ -1568,13 +1586,11 @@ export function buildChapterBody(
       case 'Table':
         out.push(
           `<div class="tablewrap"${stamp(block)}>${marker(block)}`
-          + `${checkTableHtml(block.text, block.page)}</div>`,
+          + `${checkTableHtml(flow.text, block.page)}</div>`,
         );
-        lastParagraph = null;
         break;
       case 'Formula':
-        out.push(`<p class="formula"${stamp(block)}>${marker(block)}${inline(block.text, block.page)}</p>`);
-        lastParagraph = null;
+        out.push(`<p class="formula"${stamp(block)}>${marker(block)}${inline(flow.text, block.page)}</p>`);
         break;
       case 'Picture': {
         const name = `p${String(block.page).padStart(4, '0')}-${opts.firstPicture + crops.length}.png`;
@@ -1583,54 +1599,47 @@ export function buildChapterBody(
           `<figure${stamp(block)}>${marker(block)}`
           + `<img src="../images/${name}" alt="figure from page ${block.page}"/></figure>`,
         );
-        lastParagraph = null;
         break;
       }
       case 'Caption':
         out.push(
           `<p class="caption"${sized(block)}${stamp(block)}>`
-          + `${marker(block)}${inline(block.text, block.page)}</p>`,
+          + `${marker(block)}${inline(flow.text, block.page)}</p>`,
         );
-        lastParagraph = null;
         break;
       default: {
-        // Text. The only kind that can be joined onto the one before it, and
-        // only when it is an ordinary column-width paragraph — a centered
-        // epigraph that happens to open lowercase is not a continuation.
+        /*
+         * Text — the one kind that can be several banked blocks, and the whole
+         * of what is left of the page-turn join here: writing down, in order,
+         * the pieces `reflowBook` resolved.
+         *
+         * THE PAGE MARKER GOES INSIDE THE PARAGRAPH, at the seam, which is
+         * exactly where the EPUB convention puts it and is the reason it is a
+         * span rather than an attribute on the block. Its position is
+         * `parts`: the page turned where one part ended and the next began, so
+         * the provenance list is not a lookup for this, it IS this. And when a
+         * word was broken across the turn, the marker goes BEFORE the whole
+         * word — a reader cannot be given half a word on either side of a
+         * marker that stands for the paper it was printed on.
+         *
+         * The size and the alignment are written once, from the block that
+         * OPENED the paragraph: a paragraph broken over a page turn is one
+         * paragraph, and one paragraph is one size.
+         */
         const align = alignmentClass(block.box, opts.column);
-        let joined = false;
-        if (lastParagraph !== null && align === '' && adjoins(lastParagraphBlock, block)) {
-          joined = continuesTextually(lastParagraphText, block.text);
-          if (!joined && lastParagraphBlock !== null && block.page !== lastParagraphBlock.page) {
-            joined = carriesOver(lastParagraphBlock, block, opts.images);
-          }
+        const written: string[] = [];
+        for (const [n, part] of flow.parts.entries()) {
+          if (part.join === 'space') written.push(' ');
+          written.push(marker(part.block));
+          if (part.fused !== null) written.push(inline(part.fused, part.page));
+          written.push(inline(part.text, part.page));
+          // A TURN, not merely a part: two blocks the printer set one under the
+          // other on one page are joined here too, and no page was turned.
+          if (n > 0 && part.page !== flow.parts[n - 1].page) joinedPages.push(part.page);
         }
-        if (joined) {
-          if (lastParagraphBlock !== null && block.page !== lastParagraphBlock.page) {
-            joinedPages.push(block.page);
-          }
-          out[lastParagraph!] = appendToParagraph(
-            out[lastParagraph!],
-            marker(block),
-            block.text,
-            lastParagraphText,
-            opts.lexicon,
-            (text) => inline(text, block.page),
-          );
-          lastParagraphText = joinTexts(lastParagraphText, block.text, opts.lexicon);
-        } else {
-          // The size is written when a paragraph OPENS and never when one is
-          // continued onto: a paragraph broken over a page turn is one
-          // paragraph, and one paragraph is one size — the size of the half
-          // that started it.
-          out.push(
-            `<p${classOf(align)}${sized(block)}${stamp(block)}>`
-            + `${marker(block)}${inline(block.text, block.page)}</p>`,
-          );
-          lastParagraph = out.length - 1;
-          lastParagraphText = block.text;
-        }
-        lastParagraphBlock = block;
+        out.push(
+          `<p${classOf(align)}${sized(block)}${stamp(block)}>${written.join('')}</p>`,
+        );
       }
     }
   }
@@ -1697,43 +1706,6 @@ export function splitNotes(text: string): string[] {
   return parts.filter((p) => p.length > 0);
 }
 
-/** The two halves of a joined paragraph, as plain text, hyphen resolved. */
-function joinTexts(previous: string, next: string, lexicon: BookLexicon): string {
-  const tail = trailingHyphenWord(previous);
-  const head = leadingWord(next);
-  if (tail !== null && head !== null) {
-    const fused = lexicon.join(tail, head);
-    return previous.trimEnd().slice(0, -(tail.length + 1)) + fused + next.slice(head.length);
-  }
-  return `${previous} ${next}`;
-}
-
-/** The same join, performed on the rendered `<p>` that is already in `out`. */
-function appendToParagraph(
-  paragraph: string,
-  marker: string,
-  next: string,
-  previousText: string,
-  lexicon: BookLexicon,
-  inline: (text: string) => string,
-): string {
-  const open = paragraph.replace(/<\/p>$/, '');
-  const tail = trailingHyphenWord(previousText);
-  const head = leadingWord(next);
-  if (tail !== null && head !== null) {
-    const fused = lexicon.join(tail, head);
-    // The rendered paragraph ends in `word-`; the hyphen and the word come off
-    // and the resolved form goes back on, so the join is performed once and the
-    // markup around it is untouched.
-    const trimmed = open.trimEnd();
-    const cut = trimmed.slice(0, trimmed.length - (tail.length + 1));
-    // The marker goes BEFORE the resolved word: the page turned in the middle
-    // of it, and a word cannot be split around a marker without splitting the
-    // word again in the finished book.
-    return `${cut}${marker}${inline(fused)}${inline(next.slice(head.length))}</p>`;
-  }
-  return `${open} ${marker}${inline(next)}</p>`;
-}
 
 // ── the paragraph the model forgot to reflow ────────────────────────────────
 
@@ -1954,14 +1926,14 @@ export function dotsStylesheet(typography: TypographyReport | null): string {
  * statement, and they are not places a reader wants the book to divide.
  */
 export function openingHeadings(
-  span: readonly DotsBlock[],
+  span: readonly FlowBlock[],
   kind: DotsPageKind | null,
 ): Set<number> {
   const openers = new Set<number>();
   if (span.length === 0 || (kind !== 'chapter' && kind !== 'part')) return openers;
-  const page = span[0].page;
+  const page = span[0].source.page;
   for (const [index, block] of span.entries()) {
-    if (block.page !== page) break;
+    if (block.source.page !== page) break;
     if (block.category === 'Title' || block.category === 'Section-header') {
       openers.add(index);
       continue;
@@ -1969,6 +1941,446 @@ export function openingHeadings(
     if (kind === 'chapter') break;
   }
   return openers;
+}
+
+// ── the flowing book ────────────────────────────────────────────────────────
+
+/**
+ * How a part's text was attached to the part before it in the same paragraph.
+ *
+ * `opens` is the block a flow block began at and is what every unjoined block
+ * in a book gets. The other two are the two halves of the page turn: `space`
+ * where two whole words met, `fused` where the column broke a word and the
+ * lexicon put it back together.
+ */
+export type FlowJoin = 'opens' | 'space' | 'fused';
+
+/**
+ * One banked block's contribution to a flowing block — the provenance, and the
+ * piece of text it brought.
+ *
+ * `(page, order, part)` IS THE KEY, and it is the same key `overlay.ts` writes
+ * amendments against and the same key a transform record will be written
+ * against (`docs/DERIVED-BOOK.md` §5). It is carried here because pagination
+ * stops being structure the moment the pages are flattened, and "which page did
+ * this come from" has to stay answerable afterwards — for the reader who wants
+ * to check a quotation against the scan, for the ops a person makes on the
+ * flowing page, and for the pagebreak marker the emitter still owes the book.
+ *
+ * The CONTINUATION half of a joined paragraph is in this list, and that closes a
+ * hole rather than opening one: today's emitter never stamps it at all, so the
+ * second half of a paragraph that runs over a page turn reaches the finished
+ * EPUB with no id, no category and no page of its own — invisible to the picker
+ * and to `epub-final`'s cut machinery. The information exists from here on. The
+ * emitter starts using it when the id scheme moves, which is a later phase and
+ * deliberately not this one.
+ */
+export interface FlowPart {
+  /**
+   * The banked block, BY OBJECT IDENTITY and never a copy.
+   *
+   * `measureTypeSizes` and the typography report key `Map<DotsBlock, …>`, which
+   * is why `applyOverlay` deliberately hands back the same object when nothing
+   * about a block changed. A pass that copied blocks freely would lose every
+   * measured type size in the book and say nothing about it.
+   */
+  block: DotsBlock;
+  page: number;
+  order: number;
+  part: number;
+  join: FlowJoin;
+  /** The word the column broke, made whole. Null unless `join` is `fused`. */
+  fused: string | null;
+  /** What this part contributes to the flow block's text, after `fused`. */
+  text: string;
+}
+
+/**
+ * One block of the flowing book: what a reader sees as a single paragraph,
+ * heading, note or figure, wherever the printer happened to break the page.
+ */
+export interface FlowBlock {
+  /** Every block this one is made of, in reading order. Never empty. */
+  parts: FlowPart[];
+  category: DotsCategory;
+  /** Dehyphenated, reflowed, page turns resolved. The text, once. */
+  text: string;
+  /** The FIRST part's block — where the alignment, the box and the size come from. */
+  source: DotsBlock;
+}
+
+/** One note of the book, as `splitNotes` cuts it out of its Footnote block. */
+export interface FlowNote {
+  source: DotsBlock;
+  text: string;
+  /** The number the BOOK printed on it, or null when it printed none. */
+  printed: number | null;
+}
+
+/**
+ * The flowing base: what the bank says the book is, before anybody writes a
+ * file.
+ *
+ * Everything in here is a deterministic function of the banked answers and the
+ * chapter list a person laid out. No rasters, no model, no clock, no I/O — the
+ * same bank produces the same base on any machine, which is what makes it
+ * something an editing surface can show and a transform can be keyed to.
+ */
+export interface FlowBook {
+  /** The book, flowing. Empty for a bank with nothing readable in it. */
+  blocks: FlowBlock[];
+  /** The banked blocks the passes left, flat and in reading order. */
+  sourceBlocks: DotsBlock[];
+  /** Every note in the book, in order — the apparatus, collected once. */
+  notes: FlowNote[];
+  /** Where the rules WOULD open a section. Indices into `sourceBlocks`. */
+  proposals: DotsChapterProposal[];
+  /** Where the book actually divides, after the fold. Indices into `blocks`. */
+  starts: number[];
+  /** The proposal that opened each start, or null for a leading span nothing named. */
+  opens: (DotsChapterProposal | null)[];
+  folded: DotsFold[];
+  suppressedHeads: SuppressedHead[];
+  mergedHeadings: DotsHeadingMerge[];
+  /** The blocks whose print line breaks were reflowed back into prose. */
+  reflowed: DotsBlock[];
+  column: BodyColumn;
+  lexicon: BookLexicon;
+  typography: BookTypography | null;
+  /**
+   * The pages whose opening paragraph WOULD have been joined onto the previous
+   * page's if this program still read ink, and now is not.
+   *
+   * The one behaviour this phase changes, counted so that it can be said out
+   * loud. See `reflowBook` for what it costs and who pays it.
+   */
+  unjoinedTurns: number[];
+}
+
+export interface FlowBookOptions {
+  /** In page order. MUTATED, like every pass this is made of. */
+  pages: readonly DotsParsedPage[];
+  /**
+   * A person's decisions. Only the CHAPTERS are read here — the strikes, the
+   * categories and the text corrections were applied at the parse
+   * (`convert.ts`), so by now they are simply what the blocks say.
+   */
+  overlay?: Overlay;
+}
+
+/**
+ * THE BANK, MADE INTO A BOOK — every rule that turns pages into one, in one
+ * pass, with nothing rendered.
+ *
+ * This is the prologue `buildDotsBook` used to run inline while it concatenated
+ * XHTML, and the move is the point rather than a tidy-up. Interleaved with
+ * string building, these rules were: impossible to show a person before a file
+ * existed; written a second time by hand in `detectChapters` so that the app
+ * could seed a chapter list without emitting a book, and kept in step by an
+ * assertion; and lossy, because the join was performed on rendered markup and
+ * the continuation block never reached the stamper. All three were one defect —
+ * the book's structure had no existence apart from the file that carried it.
+ * It has one now, and the emitter, the chapter seed and everything phase B and
+ * after will ask are readers of the same answer.
+ *
+ * THE ORDER OF THE PASSES IS A CONSTRAINT AND NOT A STYLE, and two of them are
+ * load-bearing:
+ *
+ *  - `suppressRunningHeads` and `mergeAdjacentHeadings` run FIRST, before the
+ *    blocks are flattened. Both measure type, `lineHeight` counts a block's
+ *    lines off the newlines the model kept, and dehyphenation and the reflow
+ *    take those newlines away. Measured afterwards, a five-line paragraph reads
+ *    as one line in a five-line box and the book's body type comes out five
+ *    times its real size.
+ *  - the type is measured immediately after the flatten and BEFORE a character
+ *    is rewritten, and carried forward in a map keyed by block identity — which
+ *    is why nothing here may copy a block.
+ *
+ * THE PAGE TURN IS RESOLVED HERE, LAST, and it is resolved on the bank alone.
+ * The textual test is `continuesTextually` — the previous paragraph did not end
+ * on terminal punctuation and this one opens lowercase — plus the hyphen carry.
+ * When neither fires the two paragraphs stay two paragraphs. There used to be a
+ * third test that measured the page's ink, and `DotsPageImages` above says why
+ * it is gone.
+ *
+ * KNOW WHAT THAT COSTS IN A CASELESS SCRIPT. `continuesTextually` ends in
+ * `first !== first.toUpperCase()`, which is true of a lowercase letter and
+ * false of a digit, a quotation mark, and EVERY CHARACTER IN A SCRIPT THAT HAS
+ * NO CASE — Chinese, Japanese, Arabic, Hebrew. Such a book joined nothing on
+ * the words and reached the ink for every page turn in it, so with the ink gone
+ * it joins nothing automatically at all and every turn is a manual join. That
+ * is the honest price of the ruling, it is accepted, and `unjoinedTurns` counts
+ * it so the run can say the number out loud rather than let somebody discover
+ * three hundred seams and read them as a defect. The fix is a person joining
+ * them on the flowing page, where they can see what they are joining; the
+ * eventual fix is a bank-only signal for caseless scripts, which is a question
+ * to ask the model AT READING TIME and never a reason to sample a pixel here.
+ *
+ * A JOIN NEVER CROSSES A SECTION BOUNDARY, which is why the sections are
+ * proposed and folded before the paragraphs are joined rather than after. A
+ * chapter opens where the rules say it opens, and a paragraph that reached
+ * across that line would put the end of one chapter inside the beginning of the
+ * next — and would do it in the one place a reader is least able to tell that
+ * something went wrong.
+ */
+export function reflowBook(opts: FlowBookOptions): FlowBook {
+  const suppressedHeads = suppressRunningHeads(opts.pages);
+  const mergedHeadings = mergeAdjacentHeadings(opts.pages);
+
+  // PAGINATION STOPS BEING STRUCTURE HERE. From this line on a page number is
+  // a fact about where a block came from, and nothing about where it goes.
+  const sourceBlocks = opts.pages.flatMap((p) => p.blocks);
+  /*
+   * A BOOK WITH NOTHING IN IT IS ANSWERED HERE AND NOT REFUSED HERE.
+   *
+   * Every measurement below needs a block to measure — the body column needs a
+   * page width and a page width lives on a block — and there is no honest value
+   * for any of them. So the empty answer is returned as an empty answer, and
+   * what to DO about it belongs to the caller: `detectChapters` proposes no
+   * chapters, which is correct and quiet, and `buildDotsBook` stops the run,
+   * because a book that was asked for and has no words in it is a failure and
+   * an empty EPUB is the worst possible way to report one.
+   */
+  if (sourceBlocks.length === 0) {
+    return {
+      blocks: [],
+      sourceBlocks,
+      notes: [],
+      proposals: [],
+      starts: [],
+      opens: [],
+      folded: [],
+      suppressedHeads,
+      mergedHeadings,
+      reflowed: [],
+      column: { x1: 0, x2: 0 },
+      lexicon: new BookLexicon([]),
+      typography: null,
+      unjoinedTurns: [],
+    };
+  }
+  const measured = measureTypeSizes(sourceBlocks);
+
+  // The lexicon is built from the text as the model wrote it, hyphens and all:
+  // a compound that appears mid-line anywhere in the book is the evidence that
+  // decides every line-broken instance of it (`BookLexicon`).
+  const lexicon = new BookLexicon(sourceBlocks.map((b) => b.text));
+  for (const block of sourceBlocks) {
+    if (block.text.includes('-\n')) block.text = lexicon.dehyphenate(block.text);
+  }
+  const reflowed = reflowWrappedProse(sourceBlocks);
+
+  // Read off the measurements above, and after the rewriting, so that the
+  // snippet naming an outlier in the report reads the way the book reads.
+  const typography = deriveTypography(sourceBlocks, measured);
+  const column = bodyColumn(sourceBlocks, sourceBlocks[0].pageWidth);
+
+  const proposals = proposeSections(opts.pages, opts.overlay ?? emptyOverlay());
+
+  // The leading span, when the book does not open on a section start. It has no
+  // proposal behind it and therefore no kind: nothing said what it is.
+  const opens: (DotsChapterProposal | null)[] = [...proposals];
+  const starts = proposals.map((p) => p.index);
+  if (starts.length === 0 || starts[0] !== 0) {
+    starts.unshift(0);
+    opens.unshift(null);
+  }
+  /*
+   * The book printed its own opening twice, and the second copy is not a
+   * section. Folded HERE, between the starts and the spans, because the rule
+   * needs both: a proposal's index says where a section would begin, and only
+   * the span it would cover says whether anything in it is the reader's. The
+   * fold edits `starts` and `opens` in place, so the spans below are the ones
+   * the book actually gets.
+   *
+   * `proposals` is deliberately left alone. It is the list of places the rules
+   * WOULD open a section, which is what the picker curates and what
+   * `writeProposals` documents it as; the fold is a decision taken after it,
+   * and it is recorded as one in `folded`.
+   *
+   * NOT WHEN THE SPINE WAS LAID OUT. The fold is a rule about a book whose
+   * sections were inferred — it catches the opening the printer set twice and
+   * the proposal that came with it — and a listed spine has no inferred
+   * sections in it at all. Folding one away would be this file deleting a
+   * chapter somebody wrote down, which is the one thing a definitive list must
+   * be safe from.
+   */
+  const folded = opts.overlay?.chapters !== undefined
+    ? []
+    : foldDuplicateSections(sourceBlocks, starts, opens);
+
+  const flow = flowBlocks(sourceBlocks, new Set(starts), column, lexicon);
+  return {
+    blocks: flow.blocks,
+    sourceBlocks,
+    notes: collectNotes(flow.blocks),
+    proposals,
+    // Into the flowing list, which is shorter than the banked one by exactly the
+    // number of paragraphs that swallowed a page turn. A section start is a
+    // heading or the first block of a page that carries something, and neither
+    // is ever a continuation, so every one of them still names a block.
+    starts: starts.map((start) => flow.flowIndexOf[start]),
+    opens,
+    folded,
+    suppressedHeads,
+    mergedHeadings,
+    reflowed,
+    column,
+    lexicon,
+    typography,
+    unjoinedTurns: flow.unjoinedTurns,
+  };
+}
+
+/**
+ * The blocks, joined into paragraphs — the last pass, and the only one that
+ * changes how many blocks a book has.
+ *
+ * WHICH BLOCKS MAY JOIN is exactly what the emitter used to decide while it
+ * wrote `<p>`s, kept here verbatim because the contract of this phase is that
+ * the finished book does not change: the previous element must have been a
+ * paragraph and nothing may have closed it; this block must sit at column width
+ * (`alignmentClass` empty — a centered epigraph that happens to open lowercase
+ * is not a continuation of anything); and the two must `adjoin`.
+ *
+ * A FOOTNOTE DOES NOT CLOSE A PARAGRAPH, which looks like an oversight and is
+ * not. Its block is held back to the end of the chapter and writes nothing
+ * where it stands, so a page whose prose is interrupted by the note at its own
+ * foot still has one paragraph running through it — which is what the printed
+ * page has.
+ */
+export function flowBlocks(
+  blocks: readonly DotsBlock[],
+  starts: ReadonlySet<number>,
+  column: BodyColumn,
+  lexicon: BookLexicon,
+): { blocks: FlowBlock[]; flowIndexOf: number[]; unjoinedTurns: number[] } {
+  const out: FlowBlock[] = [];
+  const flowIndexOf: number[] = [];
+  const unjoinedTurns: number[] = [];
+
+  /** The paragraph a continuation could still join, or null. */
+  let open: FlowBlock | null = null;
+  /** The last Text block seen, which is what `adjoins` is asked about. */
+  let previous: DotsBlock | null = null;
+
+  const opened = (block: DotsBlock): FlowBlock => {
+    const flow: FlowBlock = {
+      parts: [{
+        block,
+        page: block.page,
+        order: block.order,
+        part: block.part,
+        join: 'opens',
+        fused: null,
+        text: block.text,
+      }],
+      category: block.category,
+      text: block.text,
+      source: block,
+    };
+    out.push(flow);
+    return flow;
+  };
+
+  for (const [index, block] of blocks.entries()) {
+    // A section boundary closes whatever was open. See `reflowBook`.
+    if (starts.has(index)) {
+      open = null;
+      previous = null;
+    }
+
+    // Held back to the end of the chapter, and it writes nothing here, so it
+    // does not interrupt the paragraph it sits in the middle of.
+    if (block.category === 'Footnote') {
+      flowIndexOf[index] = out.length;
+      opened(block);
+      continue;
+    }
+    if (!JOINABLE.has(block.category)) {
+      flowIndexOf[index] = out.length;
+      open = null;
+      opened(block);
+      continue;
+    }
+
+    let joined = false;
+    if (open !== null && alignmentClass(block.box, column) === '' && adjoins(previous, block)) {
+      joined = continuesTextually(open.text, block.text);
+      /*
+       * WHERE THE INK USED TO BE ASKED, and now nothing is. The words said no
+       * about a paragraph that runs over a page turn, which is the one case
+       * `carriesOver` existed for; the two halves stay two paragraphs and the
+       * run says how often that happened. Counted only across a TURN, because
+       * that is the only place the old test was ever consulted — two blocks on
+       * one page that the words do not join are two paragraphs the printer set
+       * as two, and there was never a question about them.
+       */
+      if (!joined && previous !== null && block.page !== previous.page) {
+        unjoinedTurns.push(block.page);
+      }
+    }
+
+    if (joined && open !== null) {
+      const join = resolveJoin(open.text, block.text, lexicon);
+      const last = open.parts[open.parts.length - 1];
+      // What `opening` took off the end of the paragraph came off the end of
+      // its LAST part — the broken word was there, and so was any space after
+      // it. Taking it off the part rather than off the whole is what lets the
+      // emitter render each part on its own and still write the fused word once.
+      last.text = last.text.slice(0, last.text.length - (open.text.length - join.opening.length));
+      open.parts.push({
+        block,
+        page: block.page,
+        order: block.order,
+        part: block.part,
+        join: join.fused === null ? 'space' : 'fused',
+        fused: join.fused,
+        text: join.rest,
+      });
+      open.text = joinedText(join);
+      flowIndexOf[index] = out.length - 1;
+    } else {
+      flowIndexOf[index] = out.length;
+      open = opened(block);
+    }
+    previous = block;
+  }
+
+  return { blocks: out, flowIndexOf, unjoinedTurns };
+}
+
+/**
+ * The categories a paragraph join may ever be about.
+ *
+ * `default:` in the emitter's switch, written out: Text, and the two furniture
+ * categories, which reach a book only when a person reclassified a block into
+ * one (`overlay.ts` accepts every category the model has a name for). Nothing
+ * else can continue a paragraph, and everything else closes the one before it.
+ */
+const JOINABLE: ReadonlySet<DotsCategory> =
+  new Set<DotsCategory>(['Text', 'Page-header', 'Page-footer']);
+
+/**
+ * Every note in the book, in the order the pages carried them.
+ *
+ * ONE IMPLEMENTATION, TWO READERS. The base holds the whole book's apparatus
+ * because a transform and an editing surface both need it as data; the emitter
+ * asks the same question of one chapter's span, because a note's element id and
+ * its backlink are per-book running numbers it mints as it writes. Splitting a
+ * Footnote block into its notes is the part that must not be done twice — the
+ * split is where "one note nobody can see the start of" is decided.
+ */
+export function collectNotes(blocks: readonly FlowBlock[]): FlowNote[] {
+  const notes: FlowNote[] = [];
+  for (const block of blocks) {
+    if (block.category !== 'Footnote') continue;
+    for (const text of splitNotes(block.text)) {
+      const lead = LEADING_SUPERSCRIPT.exec(text);
+      notes.push({ source: block.source, text, printed: lead ? printedNumber(lead[0]) : null });
+    }
+  }
+  return notes;
 }
 
 /** Where the rules would divide a book, and what they would call each division. */
@@ -1986,13 +2398,16 @@ export interface DetectedChapter {
  * It exists so that an app can seed a chapter list with EXACTLY what a run
  * without one would do — the seed and the render must never disagree, or the
  * first thing a person does after opening the editor is silently change their
- * book. So this is not a second implementation of the rules; it is the same
- * prologue `buildDotsBook` runs, in the same order, over pages it is handed:
- * the mistagged running heads come out, the two-line headings are joined, the
- * text is dehyphenated and reflowed, the sections are proposed, and the openings
- * the book printed twice are folded away. Every one of those changes the answer,
- * and a shortcut past any of them is a seed that is wrong on exactly the books
- * the passes exist for.
+ * book.
+ *
+ * IT USED TO BE A HAND-COPIED REPLAY OF `buildDotsBook`'s first passes, in the
+ * same order, kept in step with the original by an assertion and by whoever
+ * remembered to edit both. It could not be anything else: the rules only
+ * existed inside a function that wrote an EPUB, so running them without writing
+ * one meant writing them again. `reflowBook` is where they live now, and this
+ * is what it always wanted to be — one line asking the pass for its answer, and
+ * the label of each division read off it. The two agreeing is no longer a
+ * coincidence somebody maintains.
  *
  * IT MUTATES THE PAGES, like the passes it is made of. Hand it pages nothing
  * else is going to render from — `blocks-dump.ts` parses the bank a second time
@@ -2003,41 +2418,29 @@ export interface DetectedChapter {
  * rather than a chapter somebody named.
  */
 export function detectChapters(pages: readonly DotsParsedPage[]): DetectedChapter[] {
-  suppressRunningHeads(pages);
-  mergeAdjacentHeadings(pages);
-  const blocks = pages.flatMap((p) => p.blocks);
-  if (blocks.length === 0) return [];
-
-  const lexicon = new BookLexicon(blocks.map((b) => b.text));
-  for (const block of blocks) {
-    if (block.text.includes('-\n')) block.text = lexicon.dehyphenate(block.text);
-  }
-  reflowWrappedProse(blocks);
-
-  const proposals = proposeSections(pages);
-  const opens: (DotsChapterProposal | null)[] = [...proposals];
-  const starts = proposals.map((p) => p.index);
-  if (starts.length === 0 || starts[0] !== 0) {
-    starts.unshift(0);
-    opens.unshift(null);
-  }
-  foldDuplicateSections(blocks, starts, opens);
+  const flow = reflowBook({ pages });
+  if (flow.blocks.length === 0) return [];
 
   const detected: DetectedChapter[] = [];
-  for (const [i, start] of starts.entries()) {
-    const proposal = opens[i];
+  for (const [i, start] of flow.starts.entries()) {
+    const proposal = flow.opens[i];
     if (proposal === null) continue;
-    const block = blocks[start];
+    const block = flow.blocks[start];
     if (block === undefined) continue;
-    const span = blocks.slice(start, starts[i + 1] ?? blocks.length);
+    const span = flow.blocks.slice(start, flow.starts[i + 1] ?? flow.blocks.length);
     // The label in the order `buildDotsBook` settles it: the classifier's
     // composed name, then the section's own first heading, then the honest name
     // for the kind, then the position. `sectionName` is the first two, and it is
-    // the same function the fold above compares nav entries with.
+    // the same function the fold compares nav entries with.
     const title = sectionName(span, proposal)
       || KIND_LABEL[proposal.kind ?? 'chapter']
       || `Chapter ${i + 1}`;
-    detected.push({ page: block.page, order: block.order, part: block.part, title });
+    detected.push({
+      page: block.source.page,
+      order: block.source.order,
+      part: block.source.part,
+      title,
+    });
   }
   return detected;
 }
@@ -2092,6 +2495,15 @@ export interface DotsBookResult {
   /** Pages whose opening paragraph was joined onto the previous page's. */
   joinedPages: number[];
   /**
+   * The other half of that number: page turns where the paragraph MIGHT have
+   * carried on and the bank does not say so, left as two paragraphs.
+   *
+   * Reported because it is the one thing about a converted book that changed
+   * when the ink test died, and a change nobody can see is a change nobody can
+   * correct. `reflowBook` has the argument; `commands.ts` says the number.
+   */
+  unjoinedTurns: number[];
+  /**
    * The running heads the model mistagged, taken out of the book by
    * `suppressRunningHeads` — page, text and the evidence path that condemned
    * them, because a removal nobody can read is a removal nobody can check, and
@@ -2130,94 +2542,32 @@ export interface DotsBookResult {
 export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResult> {
   const started = Date.now();
 
-  // FIRST, before the blocks are flattened and before anything counts them: the
-  // running heads the model did not label are not part of the book, and every
-  // pass after this — the lexicon, the chapter proposals, the body column —
-  // would otherwise be reading them as if they were.
-  const suppressed = suppressRunningHeads(opts.pages);
-
   /*
-   * SECOND, AND STILL ON THE PAGES: a heading the page printed on two lines is
-   * one heading, and from here on it is one block.
+   * THE WHOLE BOOK, WORKED OUT BEFORE A CHARACTER OF IT IS WRITTEN.
    *
-   * The position is the pass — see `mergeAdjacentHeadings`. After the
-   * suppression, because a running head on its way out of the book must not be
-   * joined onto anything on its way; and before the flatten, which is before
-   * the type is measured, before the chapter proposals are made and before a
-   * character of the text is rewritten. Everything downstream then sees one
-   * heading without being told about it: one proposal, one `<h1>`, one anchor,
-   * one nav entry, and one box measured over the newline that is now in it.
+   * Everything above this line used to be forty lines of prologue right here —
+   * the suppression, the merge, the flatten, the measurement, the lexicon, the
+   * dehyphenation, the reflow, the proposals and the fold, in that exact order,
+   * with the order load-bearing and argued in comments that had to be read
+   * inside a function whose job was to zip a file. `reflowBook` is that
+   * prologue with a name and a return value, and the value is what makes the
+   * difference: a person can be shown it, `detectChapters` can ask for it
+   * instead of replaying it by hand, and a transform can be keyed to it. This
+   * function's job is now what its name always said — building the book out of
+   * an answer somebody else worked out.
    */
-  const mergedHeadings = mergeAdjacentHeadings(opts.pages);
-
-  const blocks = opts.pages.flatMap((p) => p.blocks);
+  const flow = reflowBook({
+    pages: opts.pages,
+    ...(opts.overlay !== undefined ? { overlay: opts.overlay } : {}),
+  });
+  const blocks = flow.sourceBlocks;
   if (blocks.length === 0) {
     throw new Error('no blocks survived the pages — there is no book to write');
   }
-
-  /*
-   * THE TYPE IS MEASURED HERE, AND THE POSITION IS THE MEASUREMENT.
-   *
-   * `lineHeight` divides a block's box by how many lines are in it, and it
-   * counts those lines off the newlines the model kept. The two passes
-   * immediately below take those newlines away — `dehyphenate` fuses the
-   * `word-\nword` seams and `reflowWrappedProse` turns a wrapped paragraph back
-   * into one long line — so a measurement taken after either of them reads a
-   * five-line paragraph as one line in a five-line box and calls the book's
-   * body type five times its real size. The blocks are the same OBJECTS all the
-   * way through the pipeline, so the answer is carried forward in a map keyed
-   * by identity and read again at the end, where the outliers are worked out.
-   */
-  const measured = measureTypeSizes(blocks);
-
-  // The lexicon is built from the text as the model wrote it, hyphens and all:
-  // a compound that appears mid-line anywhere in the book is the evidence that
-  // decides every line-broken instance of it (`BookLexicon`).
-  const lexicon = new BookLexicon(blocks.map((b) => b.text));
-  for (const block of blocks) {
-    if (block.text.includes('-\n')) block.text = lexicon.dehyphenate(block.text);
-  }
-  const reflowed = reflowWrappedProse(blocks);
-
-  // Read off the measurements above, and after the rewriting, so that the
-  // snippet naming an outlier in the report reads the way the book reads.
-  const typography = deriveTypography(blocks, measured);
-
-  const column = bodyColumn(blocks, blocks[0].pageWidth);
-  const proposals = proposeSections(opts.pages, opts.overlay ?? emptyOverlay());
-
-  // The leading span, when the book does not open on a section start. It has no
-  // proposal behind it and therefore no kind: nothing said what it is.
-  const opens: (DotsChapterProposal | null)[] = [...proposals];
-  const starts = proposals.map((p) => p.index);
-  if (starts.length === 0 || starts[0] !== 0) {
-    starts.unshift(0);
-    opens.unshift(null);
-  }
-  /*
-   * The book printed its own opening twice, and the second copy is not a
-   * section. Folded HERE, between the starts and the spans, because the rule
-   * needs both: a proposal's index says where a section would begin, and only
-   * the span it would cover says whether anything in it is the reader's. The
-   * fold edits `starts` and `opens` in place, so the spans below are the ones
-   * the book actually gets.
-   *
-   * `proposals` is deliberately left alone. It is the list of places the rules
-   * WOULD open a section, which is what the picker curates and what
-   * `writeProposals` documents it as; the fold is a decision taken after it,
-   * and it is recorded as one in `foldedSections`.
-   */
-  /*
-   * NOT WHEN THE SPINE WAS LAID OUT. The fold is a rule about a book whose
-   * sections were inferred — it catches the opening the printer set twice and the
-   * proposal that came with it — and a listed spine has no inferred sections in
-   * it at all. Folding one away would be this file deleting a chapter somebody
-   * wrote down, which is the one thing a definitive list must be safe from.
-   */
-  const folded = opts.overlay?.chapters !== undefined
-    ? []
-    : foldDuplicateSections(blocks, starts, opens);
-  const spans = starts.map((start, i) => [start, starts[i + 1] ?? blocks.length] as const);
+  const { column, typography, opens } = flow;
+  const spans = flow.starts.map(
+    (start, i) => [start, flow.starts[i + 1] ?? flow.blocks.length] as const,
+  );
 
   const documents: VlmDocument[] = [];
   const chapters: VlmChapter[] = [];
@@ -2231,12 +2581,10 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
   const elementNumbers = new Map<number, number>();
 
   for (const [index, [from, to]] of spans.entries()) {
-    const span = blocks.slice(from, to);
+    const span = flow.blocks.slice(from, to);
     const kind = opens[index]?.kind ?? null;
     const body = buildChapterBody(span, {
       column,
-      lexicon,
-      images: opts.images,
       stripNoteMarkers: opts.stripNoteMarkers,
       firstNote: notes,
       firstPicture: crops.length,
@@ -2249,7 +2597,11 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
     joinedPages.push(...body.joinedPages);
 
     const n = String(index + 1).padStart(4, '0');
-    const pages = span.map((b) => b.page);
+    // EVERY PART'S PAGE, not just the block each paragraph opened at. A section
+    // whose last paragraph swallowed the first block of the next page reaches
+    // onto that page, and a `lastPage` that stopped at the opening block would
+    // be a claim the reader can disprove by turning to it.
+    const pages = span.flatMap((b) => b.parts.map((p) => p.page));
     const firstPage = Math.min(...pages);
     /*
      * The label, in the order of who actually knows it.
@@ -2275,7 +2627,10 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
       id: `c${n}`,
       href,
       label,
-      blocks: span.length,
+      // The BANKED blocks, for the same reason `pages` counts every part: this
+      // is what the section is made of, and a paragraph made of two of them is
+      // still two answers the model gave.
+      blocks: span.reduce((sum, b) => sum + b.parts.length, 0),
       firstPage,
       lastPage: Math.max(...pages),
       ...(kind !== null ? { kind } : {}),
@@ -2394,7 +2749,7 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
     bytes: packaged.bytes,
     chapters,
     cover,
-    proposals,
+    proposals: flow.proposals,
     blocks: blocks.length,
     categories,
     footnotes: notes - 1,
@@ -2403,17 +2758,18 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
     // zero on a text run would be a report about the file rather than the book.
     pictures: crops.length,
     joinedPages,
-    suppressedHeads: suppressed.map((b) => ({ page: b.page, text: b.text, why: b.why })),
-    foldedSections: folded,
-    mergedHeadings,
+    unjoinedTurns: flow.unjoinedTurns,
+    suppressedHeads: flow.suppressedHeads.map((b) => ({ page: b.page, text: b.text, why: b.why })),
+    foldedSections: flow.folded,
+    mergedHeadings: flow.mergedHeadings,
     // The working map of per-block sizes stays out of the report: it is keyed
     // by block identity, which means nothing once the blocks are gone, and
     // everything a reader of the report wants about it is in `outliers`.
     typography: typography === null
       ? null
       : { bodyPx: typography.bodyPx, categories: typography.categories, outliers: typography.outliers },
-    reflowedBlocks: reflowed.length,
-    lexiconWords: lexicon.size,
+    reflowedBlocks: flow.reflowed.length,
+    lexiconWords: flow.lexicon.size,
     xhtmlSeconds,
     zipSeconds: packaged.zipSeconds,
   };

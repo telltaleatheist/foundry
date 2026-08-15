@@ -178,10 +178,12 @@ export interface BookTypography extends TypographyReport {
  * exceed 60 px whatever is in the box, because a box big enough to be a big
  * line is always big enough to be two small ones. A 100 px chapter title on one
  * line comes back as 50, a 120 px one comes back as 40, and 40 is the size of
- * the body text it is three times bigger than. For `carriesOver`, which is what
- * `lineHeight` exists for, that is harmless: it wants a strip off the bottom of
- * a paragraph and any plausible line height finds one. For a question about
- * TYPE it is fatal — it flattens exactly the distinction being measured.
+ * the body text it is three times bigger than. That was harmless for the caller
+ * `lineHeight` was written for — the ink test wanted a strip off the bottom of
+ * a paragraph, and any plausible line height finds one — and that caller is
+ * gone (`dots-book.ts`), which leaves this file its only remaining reader. For
+ * a question about TYPE the flattening is fatal: it destroys exactly the
+ * distinction being measured.
  *
  * So the line count is taken from the block instead of maximised over guesses:
  *

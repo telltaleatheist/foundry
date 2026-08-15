@@ -637,6 +637,36 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
   if (categories.length > 0) {
     log(`vlm-convert: ${categories.map(([name, n]) => `${name} ${n}`).join(', ')}`);
   }
+  if (report.unjoinedTurns.length > 0) {
+    /*
+     * THE SEAMS, COUNTED — the one thing about a converted book this program
+     * decided NOT to decide, and it is on the completion line because a
+     * decision nobody can see is a decision nobody can correct.
+     *
+     * This used to be settled by measuring the page's ink: a paragraph that
+     * carried on filled its last line to the margin, one that ended stopped
+     * short of it. It read well and it was not trustworthy — a footnote sits
+     * at the bottom of the page too — so the join is now the bank's answer or
+     * it does not happen (`docs/DERIVED-BOOK.md` §2).
+     *
+     * A BIG NUMBER HERE IS NOT A DEFECT, and the sentence is worded so that
+     * nobody reads it as one. The textual test asks whether the next page
+     * opens lowercase, which is false of every character in a script that has
+     * no case at all — Chinese, Japanese, Arabic, Hebrew — so such a book gets
+     * a seam at every page turn in it and this line will read in the hundreds.
+     * That is the honest price of not guessing, it was accepted when the rule
+     * was made, and the fix is a person joining them where they can see what
+     * they are joining.
+     */
+    const turns = report.unjoinedTurns;
+    log(
+      `vlm-convert: ${turns.length} page turn(s) left as two paragraphs — the words do not say the `
+      + 'paragraph carried on, and nothing here reads the page to guess (p'
+      + `${turns.slice(0, 12).join(', p')}${turns.length > 12 ? `, and ${turns.length - 12} more` : ''}`
+      + '). Join them by hand where the book wanted them joined; a book set in a caseless script '
+      + 'will show one at every turn, which is a known cost and not a fault in this run.',
+    );
+  }
   if (report.unreadable.length > 0) {
     // Last, and named again: the run has printed forty lines by now, and a page
     // that is not in the book has to be the thing still on screen at the end.

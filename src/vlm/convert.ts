@@ -21,10 +21,10 @@
  * answers with prose gets the emitter that builds a book out of prose. A
  * dialect that answers with BOXES gets the one that can use them, and takes
  * three things with it that the prose route has no way to obtain: the page
- * renders are kept (a grayscale copy of each is what the page-turn join is
- * measured in), the pixel budget is pinned and travels to the parser (the
- * boxes are in the model's frame, not the render's), and a page the model could
- * not answer for is RECORDED BY NAME rather than stopping the book.
+ * renders are kept (a Picture and the cover are cut out of them), the pixel
+ * budget is pinned and travels to the parser (the boxes are in the model's
+ * frame, not the render's), and a page the model could not answer for is
+ * RECORDED BY NAME rather than stopping the book.
  *
  * EVERY PHASE IS TIMED AND EVERY TIME IS REPORTED. This mode's cost is minutes
  * of GPU per book, and the only honest way to decide whether it is usable on a
@@ -174,6 +174,17 @@ export interface VlmConvertReport {
   footnotes: number;
   pictures: number;
   joinedPages: number[];
+  /**
+   * Page turns this run did NOT join, because the words did not say the
+   * paragraph carried on and nothing here reads the page's ink to guess.
+   *
+   * The one thing about a converted book that changed when the ink test was
+   * taken out (`dots-book.ts`, `DotsPageImages`), so it is counted and said out
+   * loud. On a book set in a script that has no case it will be large, and that
+   * is a known cost with a known fix rather than a defect — see `commands.ts`,
+   * which is where the sentence is.
+   */
+  unjoinedTurns: number[];
   /**
    * Running heads the model tagged as headings, found by the book's own
    * repetition and taken out. Blocks DELETED, so they are named — and each one
@@ -546,6 +557,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     let footnotes = 0;
     let pictures = 0;
     let joinedPages: number[] = [];
+    let unjoinedTurns: number[] = [];
     let suppressedHeads: { page: number; text: string; why: FurnitureEvidence }[] = [];
     let foldedSections: DotsFold[] = [];
     let mergedHeadings: DotsHeadingMerge[] = [];
@@ -703,10 +715,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
         // decision about the spine rather than about a block (`proposeSections`).
         overlay,
         stripNoteMarkers: opts.stripNoteMarkers === true,
-        images: openPageImages(
-          (page) => path.join(rendersDir, `page-${String(page).padStart(4, '0')}.pgm`),
-          (requests) => cropRenders(requests, pdfPath, rendersDir, opts.python),
-        ),
+        images: openPageImages((requests) => cropRenders(requests, pdfPath, rendersDir, opts.python)),
       });
       bytes = built.bytes;
       chapters = built.chapters;
@@ -717,6 +726,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       footnotes = built.footnotes;
       pictures = built.pictures;
       joinedPages = built.joinedPages;
+      unjoinedTurns = built.unjoinedTurns;
       /*
        * WHICH PAGE THE READER SEES FIRST, or why they will see a grey
        * rectangle.
@@ -969,6 +979,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       footnotes,
       pictures,
       joinedPages,
+      unjoinedTurns,
       suppressedHeads,
       foldedSections,
       mergedHeadings,

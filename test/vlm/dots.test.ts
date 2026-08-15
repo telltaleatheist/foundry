@@ -8,8 +8,8 @@
  *  - the PROMPT is the model's interface, so its bytes are pinned;
  *  - the bbox SCALE is the difference between a picture cropped right and a
  *    picture cropped wrong, and it is invisible in the text either way;
- *  - a paragraph joined across a page turn is judged in INK, so the ink test
- *    gets a raster with an indent in it and a raster without one.
+ *  - a paragraph joined across a page turn is judged on the BANK and on nothing
+ *    else, so the join tests hand over blocks and no pixels at all.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -43,11 +43,10 @@ import {
   bareNumbersAreSectionMarks,
   buildChapterBody,
   buildDotsBook,
-  carriesOver,
+  flowBlocks,
   foldDuplicateSections,
   furnitureKey,
   headingLabel,
-  inkExtentIn,
   joinsHeading,
   mergeAdjacentHeadings,
   navTree,
@@ -59,6 +58,7 @@ import {
   suppressRunningHeads,
   type DotsCrop,
   type DotsPageImages,
+  type FlowBlock,
 } from '../../src/vlm/dots-book.js';
 import { requireVlmModel } from '../../src/vlm/models.js';
 import { applyOverlay, parseOverlay, type Overlay } from '../../src/vlm/overlay.js';
@@ -184,7 +184,7 @@ test('a Table whose HTML is broken stops the page by name', () => {
     { bbox: [0, 0, 10, 10], category: 'Table', text: '<table><tr><td>x</tr></table>' },
   ]), PARSE);
   assert.throws(
-    () => buildChapterBody(parsed.blocks, chapterOptions()),
+    () => buildChapterBody(flowed(parsed.blocks), chapterOptions()),
     (err: unknown) => err instanceof DotsPageError && err.page === 3,
   );
 });
@@ -374,56 +374,31 @@ test('a line height comes from the box when the model kept no newlines', () => {
 
 // ── the page turn ───────────────────────────────────────────────────────────
 
-/** A raster with one horizontal ink run per row band, for the ink tests. */
-function raster(width: number, height: number, runs: readonly [number, number, number, number][]) {
-  const data = new Uint8Array(width * height).fill(255);
-  for (const [x1, y1, x2, y2] of runs) {
-    for (let y = y1; y < y2; y++) for (let x = x1; x < x2; x++) data[y * width + x] = 0;
-  }
-  return { width, height, data };
+/**
+ * No pixels reach these tests, and after this phase none reach the assembler
+ * either: a book is arithmetic over the bank, and the only thing a render is
+ * still asked for is a crop.
+ */
+function images(): DotsPageImages {
+  return { crop: async () => [] };
 }
 
-test('ink extents are measured from the box\'s own left edge', () => {
-  const page = raster(200, 100, [[60, 10, 150, 20]]);
-  assert.deepEqual(inkExtentIn(page, { x1: 50, y1: 0, x2: 200, y2: 100 }), { left: 10, right: 99 });
-  assert.equal(inkExtentIn(page, { x1: 0, y1: 50, x2: 200, y2: 100 }), null);
-});
-
-function images(pages: Record<number, ReturnType<typeof raster>>): DotsPageImages {
-  return {
-    inkExtent: (page, box) => inkExtentIn(pages[page], box),
-    crop: async () => [],
-  };
+/**
+ * A span of banked blocks, flowed the way `reflowBook` flows them — the page
+ * turns resolved, which is what the emitter is handed now rather than deciding
+ * for itself.
+ *
+ * The column is `chapterOptions`' own, because a block has to sit at column
+ * width before a paragraph will be continued onto it.
+ */
+function flowed(blocks: readonly DotsBlock[]): FlowBlock[] {
+  return flowBlocks(
+    blocks,
+    new Set(),
+    { x1: 200, x2: 1100 },
+    new BookLexicon(blocks.map((b) => b.text)),
+  ).blocks;
 }
-
-test('a full last line and an unindented next page is a join', () => {
-  // Page 1's block runs 100..1100; its last line reaches 1099, so the paragraph
-  // did not end. Page 2's first line starts flush at 100.
-  const previous = block({ page: 1, box: { x1: 100, y1: 100, x2: 1100, y2: 500 } });
-  const next = block({ page: 2, box: { x1: 100, y1: 200, x2: 1100, y2: 600 } });
-  assert.equal(carriesOver(previous, next, images({
-    1: raster(1300, 700, [[100, 460, 1100, 490]]),
-    2: raster(1300, 700, [[100, 205, 900, 235]]),
-  })), true);
-});
-
-test('a short last line is a paragraph that ended', () => {
-  const previous = block({ page: 1, box: { x1: 100, y1: 100, x2: 1100, y2: 500 } });
-  const next = block({ page: 2, box: { x1: 100, y1: 200, x2: 1100, y2: 600 } });
-  assert.equal(carriesOver(previous, next, images({
-    1: raster(1300, 700, [[100, 460, 500, 490]]),
-    2: raster(1300, 700, [[100, 205, 900, 235]]),
-  })), false);
-});
-
-test('a first-line indent on the next page is a new paragraph', () => {
-  const previous = block({ page: 1, box: { x1: 100, y1: 100, x2: 1100, y2: 500 } });
-  const next = block({ page: 2, box: { x1: 100, y1: 200, x2: 1100, y2: 600 } });
-  assert.equal(carriesOver(previous, next, images({
-    1: raster(1300, 700, [[100, 460, 1100, 490]]),
-    2: raster(1300, 700, [[160, 205, 900, 235]]),
-  })), false);
-});
 
 test('a page turn is one page; a gap is a boundary', () => {
   // Pages 8 and 9 are a turn. Pages 8 and 12 are four missing pages, whether
@@ -435,29 +410,29 @@ test('a page turn is one page; a gap is a boundary', () => {
   assert.equal(adjoins(block({ page: 8 }), block({ page: 12 })), false);
 });
 
-test('neither join test is even asked across a gap', () => {
-  // Both would say yes here: the first paragraph ends mid-clause and the second
-  // opens lowercase, which is exactly what `continuesTextually` is looking for.
-  // The pages are 1 and 3, so the sentence the join would build ran through a
-  // page that is not in this book — and nobody wrote it.
-  const gapped = buildChapterBody([
+test('the join is not even asked across a gap', () => {
+  // The words would say yes here: the first paragraph ends mid-clause and the
+  // second opens lowercase, which is exactly what `continuesTextually` is
+  // looking for. The pages are 1 and 3, so the sentence the join would build
+  // ran through a page that is not in this book — and nobody wrote it.
+  const gapped = buildChapterBody(flowed([
     block({ page: 1, text: 'The Reich was' }),
     block({ page: 3, text: 'divided in two.' }),
-  ], chapterOptions());
+  ]), chapterOptions());
   assert.equal(gapped.xhtml.match(/<p /g)?.length, 2);
   assert.deepEqual(gapped.joinedPages, []);
 
   // The same two blocks one page apart ARE one paragraph — the rule above is a
   // gap rule, not a new refusal to join.
-  const turned = buildChapterBody([
+  const turned = buildChapterBody(flowed([
     block({ page: 1, text: 'The Reich was' }),
     block({ page: 2, text: 'divided in two.' }),
-  ], chapterOptions());
+  ]), chapterOptions());
   assert.equal(turned.xhtml.match(/<p /g)?.length, 1);
   assert.deepEqual(turned.joinedPages, [2]);
 });
 
-test('the words decide first, and the ink is only asked when they do not', () => {
+test('the words are the whole of the join, and they refuse more than they accept', () => {
   assert.equal(continuesTextually('the Reich was', 'divided in two.'), true);
   assert.equal(continuesTextually('the Reich was divided.', 'Two years later'), false);
   assert.equal(continuesTextually('the Reich was', 'Two years later'), false);
@@ -473,10 +448,10 @@ test('one Footnote block carrying three notes becomes three paragraphs', () => {
 });
 
 test('a marker links to its note and the note links back', () => {
-  const body = buildChapterBody([
+  const body = buildChapterBody(flowed([
     block({ page: 4, category: 'Text', text: 'As Kershaw argues.¹' }),
     block({ page: 4, category: 'Footnote', text: '¹ Kershaw, p. 4.' }),
-  ], chapterOptions());
+  ]), chapterOptions());
   // Forward: the printed number, wrapped in a noteref that aims at the note.
   assert.match(
     body.xhtml,
@@ -494,41 +469,41 @@ test('a marker links to its note and the note links back', () => {
 });
 
 test('printed numbers restart per page, and the page is what disambiguates them', () => {
-  // Pages 4 and 6, not 4 and 5: adjacent Text blocks would ask the cross-page
-  // ink join, which needs page rasters this test has no reason to build.
-  const body = buildChapterBody([
+  // Pages 4 and 6, not 4 and 5: a page apart the two claims would be asked
+  // whether they are one paragraph, and this test is about their notes.
+  const body = buildChapterBody(flowed([
     block({ page: 4, category: 'Text', text: 'First claim.¹' }),
     block({ page: 4, category: 'Footnote', text: '¹ Note on page four.' }),
     block({ page: 6, category: 'Text', text: 'Second claim.¹' }),
     block({ page: 6, category: 'Footnote', text: '¹ Note on page six.' }),
-  ], chapterOptions());
+  ]), chapterOptions());
   // Both markers are printed "1"; each links to its own page's note.
   assert.match(body.xhtml, /Second claim\.<a id="ref-fn2"[^>]*href="#fn2">/);
   assert.match(body.xhtml, /id="fn2"[^>]*>.*Note on page six/);
 });
 
 test('a marker with no matching note stays a plain sup — no link beats a wrong one', () => {
-  const body = buildChapterBody([
+  const body = buildChapterBody(flowed([
     block({ page: 4, category: 'Text', text: 'A claim.⁷' }),
     block({ page: 4, category: 'Footnote', text: '¹ The only note.' }),
-  ], chapterOptions());
+  ]), chapterOptions());
   assert.match(body.xhtml, /A claim\.<sup>7<\/sup>/);
   assert.doesNotMatch(body.xhtml, /A claim\.<a /);
 });
 
 test('a note the model read one page late is still found', () => {
-  const body = buildChapterBody([
+  const body = buildChapterBody(flowed([
     block({ page: 4, category: 'Text', text: 'A claim.¹' }),
     block({ page: 5, category: 'Footnote', text: '¹ The note, read on the next page.' }),
-  ], chapterOptions());
+  ]), chapterOptions());
   assert.match(body.xhtml, /A claim\.<a id="ref-fn1"[^>]*href="#fn1">/);
 });
 
 test('stripping the markers strips the links with them', () => {
-  const body = buildChapterBody([
+  const body = buildChapterBody(flowed([
     block({ page: 4, category: 'Text', text: 'As Kershaw argues.¹' }),
     block({ page: 4, category: 'Footnote', text: '¹ Kershaw, p. 4.' }),
-  ], { ...chapterOptions(), stripNoteMarkers: true });
+  ]), { ...chapterOptions(), stripNoteMarkers: true });
   assert.match(body.xhtml, /As Kershaw argues\.<\/p>/);
   assert.doesNotMatch(body.xhtml, /noteref|fn-back/);
 });
@@ -1047,8 +1022,6 @@ test('body prose is what a divider does not have', () => {
 function chapterOptions() {
   return {
     column: { x1: 200, x2: 1100 },
-    lexicon: new BookLexicon([]),
-    images: images({}),
     stripNoteMarkers: false,
     firstNote: 1,
     firstPicture: 0,
@@ -1060,11 +1033,11 @@ function chapterOptions() {
 }
 
 test('every element carries the page it came from and the model\'s own category', () => {
-  const body = buildChapterBody([
+  const body = buildChapterBody(flowed([
     block({ page: 7, category: 'Title', text: 'ONE' }),
     block({ page: 7, category: 'Text', text: 'A paragraph.' }),
     block({ page: 7, category: 'Footnote', text: '¹ A note.' }),
-  ], chapterOptions());
+  ]), chapterOptions());
   assert.match(body.xhtml, /<h1 data-bf-page="7" data-bf-cat="title" data-bf-id="p7-1">/);
   assert.match(body.xhtml, /<p data-bf-page="7" data-bf-cat="text" data-bf-id="p7-2">/);
   assert.match(
@@ -1087,12 +1060,12 @@ test('every stamped element gets an id of its own, and no two are the same', () 
    * `<blockquote>` and its `<p>`. Numbering elements rather than blocks is
    * what keeps those four apart.
    */
-  const body = buildChapterBody([
+  const body = buildChapterBody(flowed([
     block({ page: 3, category: 'Title', text: 'A Heading' }),
     block({ page: 3, category: 'List-item', text: 'An item.' }),
     block({ page: 3, category: 'Quote', text: 'A quotation.' }),
     block({ page: 4, category: 'Text', text: 'A paragraph on the next page.' }),
-  ], chapterOptions());
+  ]), chapterOptions());
 
   const ids = [...body.xhtml.matchAll(/data-bf-id="([^"]+)"/g)].map((m) => m[1]!);
   assert.deepEqual(ids, ['p3-1', 'p3-2', 'p3-3', 'p3-4', 'p3-5', 'p4-1']);
@@ -1117,13 +1090,13 @@ test('a page split across two chapters does not issue the same id twice', () => 
    * name, in the attribute whose entire job is to be unique.
    */
   const shared = chapterOptions();
-  const first = buildChapterBody([
+  const first = buildChapterBody(flowed([
     block({ page: 9, category: 'Text', text: 'The end of the chapter before.' }),
-  ], shared);
-  const second = buildChapterBody([
+  ]), shared);
+  const second = buildChapterBody(flowed([
     block({ page: 9, category: 'Title', text: 'The next chapter' }),
     block({ page: 9, category: 'Text', text: 'Its opening paragraph.' }),
-  ], shared);
+  ]), shared);
 
   assert.match(first.xhtml, /data-bf-id="p9-1"/);
   assert.match(second.xhtml, /data-bf-id="p9-2"/);
@@ -1132,10 +1105,10 @@ test('a page split across two chapters does not issue the same id twice', () => 
 });
 
 test('footnotes leave the prose and land at the end of the chapter', () => {
-  const body = buildChapterBody([
+  const body = buildChapterBody(flowed([
     block({ page: 1, category: 'Footnote', text: '¹ First note.' }),
     block({ page: 1, category: 'Text', text: 'The prose.' }),
-  ], chapterOptions());
+  ]), chapterOptions());
   assert.ok(body.xhtml.indexOf('The prose.') < body.xhtml.indexOf('First note.'));
   assert.equal(body.notes, 1);
 });
@@ -1158,7 +1131,7 @@ test('a paragraph joined across a page turn is one paragraph, hyphen resolved', 
   const built = await buildDotsBook({
     metadata: { title: 'A Book', language: 'en', identifier: 'urn:x:1' },
     pages,
-    images: images({}),
+    images: images(),
     stripNoteMarkers: false,
   });
   const entries = unzipMap(built.bytes);
@@ -1174,8 +1147,8 @@ test('a paragraph joined across a page turn is one paragraph, hyphen resolved', 
 
 // ── the sections a named page opens ─────────────────────────────────────────
 
-/** No ink anywhere: the page-turn join is not what these tests are about. */
-const blindImages: DotsPageImages = { inkExtent: () => null, crop: async () => [] };
+/** Nothing to crop: these tests are about where the book divides, not pictures. */
+const blindImages: DotsPageImages = { crop: async () => [] };
 
 function page(number: number, blocks: DotsBlock[]) {
   return {
@@ -1315,11 +1288,11 @@ test('a chapter\'s section headers nest under it in the nav, as anchors into it'
 });
 
 test('inside a chapter, a later h2 is anchored and reported; the title heading is not', () => {
-  const body = buildChapterBody([
+  const body = buildChapterBody(flowed([
     block({ page: 25, category: 'Section-header', text: 'PRELUDE' }),
     block({ page: 25, category: 'Text', text: 'THE PRISONER awoke.' }),
     block({ page: 25, category: 'Section-header', text: 'The purge' }),
-  ], chapterOptions());
+  ]), chapterOptions());
   assert.deepEqual(body.headings, [{ id: 'sh1', label: 'The purge' }]);
   assert.match(body.xhtml, /<h2 id="sh1" data-bf-page="25" data-bf-cat="section-header"[^>]*>The purge<\/h2>/);
   // The first heading is the chapter's own title — no anchor, no entry.
@@ -1332,7 +1305,8 @@ test('an opening heading never becomes a section entry, even when it is not the 
     block({ page: 25, category: 'Section-header', text: 'PRELUDE TO JUDGMENT' }),
     block({ page: 25, category: 'Text', text: 'THE PRISONER awoke.' }),
   ];
-  const body = buildChapterBody(span, { ...chapterOptions(), openers: openingHeadings(span, 'chapter') });
+  const flow = flowed(span);
+  const body = buildChapterBody(flow, { ...chapterOptions(), openers: openingHeadings(flow, 'chapter') });
   assert.deepEqual(body.headings, []);
 });
 
@@ -1347,9 +1321,10 @@ test('a chapter opener is stamped for the picker, both halves of it', () => {
     // The next page's heading is inside the chapter, not the start of one.
     block({ page: 26, category: 'Section-header', text: '2' }),
   ];
-  const openers = openingHeadings(span, 'chapter');
+  const flow = flowed(span);
+  const openers = openingHeadings(flow, 'chapter');
   assert.deepEqual([...openers], [0, 1]);
-  const body = buildChapterBody(span, { ...chapterOptions(), openers });
+  const body = buildChapterBody(flow, { ...chapterOptions(), openers });
   assert.equal(body.xhtml.match(/data-bf-cat="chapter"/g)?.length, 2);
   assert.match(body.xhtml, /<h2[^>]*data-bf-cat="chapter"[^>]*>.*CHAPTER I<\/h2>/);
   // The tag still comes from the true category, and the heading inside the
@@ -1365,15 +1340,15 @@ test('a part divider\'s announcement is a split point too', () => {
     block({ page: 8, category: 'Picture', text: '' }),
     block({ page: 8, category: 'Section-header', text: 'RESISTANCE AND GUILT' }),
   ];
-  assert.deepEqual([...openingHeadings(span, 'part')], [0, 2]);
+  assert.deepEqual([...openingHeadings(flowed(span), 'part')], [0, 2]);
   // A chapter's first paragraph is right under its title, and ends the run.
-  assert.deepEqual([...openingHeadings(span, 'chapter')], [0]);
+  assert.deepEqual([...openingHeadings(flowed(span), 'chapter')], [0]);
 });
 
 test('a section nothing proposed has no opener, and no chapter stamp', () => {
   const span = [block({ page: 10, category: 'Section-header', text: 'Postwar Germans' })];
   for (const kind of [null, 'title-page', 'copyright', 'contents'] as const) {
-    assert.equal(openingHeadings(span, kind).size, 0);
+    assert.equal(openingHeadings(flowed(span), kind).size, 0);
   }
 });
 
@@ -1811,7 +1786,7 @@ test('the container is an EPUB and every document parses', async () => {
         block({ page: 1, category: 'Table', text: '<table><tr><td>x</td></tr></table>' }),
       ],
     }],
-    images: images({}),
+    images: images(),
     stripNoteMarkers: false,
   });
   const entries = unzipMap(built.bytes);
@@ -1843,7 +1818,6 @@ test('the container is an EPUB and every document parses', async () => {
 function cropping(): DotsPageImages & { asked: DotsCrop[] } {
   const asked: DotsCrop[] = [];
   return {
-    inkExtent: () => null,
     asked,
     crop: async (requests) => {
       asked.push(...requests);
@@ -2008,7 +1982,6 @@ test('a run that cannot crop the cover writes the book anyway and says why', asy
    * named, with every word of the book still in it.
    */
   const refuses: DotsPageImages = {
-    inkExtent: () => null,
     crop: async () => { throw new Error('page-0007.png is not on disk'); },
   };
   const built = await buildDotsBook({
@@ -2101,8 +2074,8 @@ test('a corrected block renders EXACTLY as the same words from the model would',
     curation({ amendments: [{ at: { page: 1, order: 0 }, text: words }] }),
   );
   const native = block({ text: words });
-  const fixed = buildChapterBody([corrected], chapterOptions()).xhtml;
-  assert.equal(fixed, buildChapterBody([native], chapterOptions()).xhtml);
+  const fixed = buildChapterBody(flowed([corrected]), chapterOptions()).xhtml;
+  assert.equal(fixed, buildChapterBody(flowed([native]), chapterOptions()).xhtml);
   // And it really did go through the emphasis and the superscript rules.
   assert.match(fixed, /<strong>Führer<\/strong>/);
   assert.match(fixed, /<em>Reich<\/em>/);
