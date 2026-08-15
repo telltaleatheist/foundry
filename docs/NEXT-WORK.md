@@ -182,13 +182,18 @@ EPUB edits become steps of their own — which is a real gap in the step model
 worth naming separately: editing a book's HTML is user labour, therefore
 irreplaceable, therefore ought to be a retained step.
 
-**Open:**
-- Does uncommitted work need an indicator? Session-scoped undo means a restart
-  silently converts "undoable" into "permanent", and the app already has an
-  unsaved-dot idiom. Without something, people learn Save's value by losing
-  work.
-- Should closing a document with uncommitted corrections offer a commit rather
-  than auto-committing (which would spam the ledger)?
+**Settled (user, 2026-08-15): closing with uncommitted corrections asks.** Not a
+passive dot — a dot teaches you after the loss. It routes through the close
+question that already exists (`api.confirmClose`) rather than stacking a second
+dialog, and it offers to commit and then close, because "cancel, hunt for Save,
+close again" is the app making the user do its job. No auto-commit: that would
+spam the ledger with rows nobody chose.
+
+**The sentence must not lie.** "Unsaved changes will be lost" is false here —
+the live overlay persists and every correction is still there on reopening. What
+is at stake is the ability to come back to *this* point: a restore point never
+made. Being built now, ahead of the undo change, because it is correct either
+way and it is what makes that change safe.
 
 ---
 
