@@ -75,6 +75,10 @@ function chapterOptions(stripNoteMarkers = false) {
     firstPicture: 0,
     elementNumbers: new Map<number, number>(),
     openers: new Set<number>(),
+    // No answer element in these blocks was cut into parts, so nothing here
+    // names a part: `data-bf-src` reads `page:order`, the whole element, which
+    // is what the overlay calls the useful default. See `stampSrc`.
+    split: new Set<string>(),
   };
 }
 

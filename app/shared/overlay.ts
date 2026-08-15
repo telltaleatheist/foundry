@@ -311,6 +311,45 @@ export function parseTargetKey(key: string): OverlayTarget {
   return target;
 }
 
+/**
+ * A cast book's `data-bf-src`, read back as the blocks it names.
+ *
+ * ── The one crossing between a chapter file and a curation ──────────────────
+ *
+ * The emitter writes this attribute on every element of the flowing book
+ * (src/vlm/dots-book.ts, `stampSrc`): the banked answers that element's words
+ * came from, in the very spelling `targetKey` above produces — `7:14`, or
+ * `7:14:1` for one piece of a split answer, space-separated where a paragraph
+ * broken over a page turn was joined out of two of them. It exists because
+ * `data-bf-id`, the name every write into a book uses, is a counter over ELEMENTS
+ * OF A FILE and names nothing a decision can be about. Without this, a strike
+ * made on the flowing page could be written into somebody's chapter markup and
+ * could not be recorded as a decision at all — which is precisely what used to
+ * happen, and why the ledger never heard about anything done to a cast book.
+ *
+ * IT SKIPS WHAT IT CANNOT READ RATHER THAN REFUSING THE LOT, which is the
+ * opposite of `parseTargetKey`'s rule and the difference is who wrote the string.
+ * A ledger row is this app's own record and a row that will not parse is a bug
+ * worth failing loudly over. This arrives from a DOCUMENT — usually one foundry
+ * cast, sometimes one it did not, occasionally one somebody has edited by hand —
+ * so a piece that is not a block name is a piece to leave alone, exactly as the
+ * shell already treats every other value that comes out of a book. An empty
+ * answer means "nothing here names a block", which is the same thing a missing
+ * attribute means and is handled in one place by the caller.
+ */
+export function parseSourceKeys(value: string): OverlayTarget[] {
+  const targets: OverlayTarget[] = [];
+  for (const piece of value.split(/\s+/)) {
+    if (piece.length === 0) continue;
+    try {
+      targets.push(parseTargetKey(piece));
+    } catch {
+      // Deliberately silent, and only here. See above: the book is data.
+    }
+  }
+  return targets;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Reading one
 // ─────────────────────────────────────────────────────────────────────────────

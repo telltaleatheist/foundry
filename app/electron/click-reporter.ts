@@ -250,7 +250,16 @@ export const REPORTER_SOURCE = `(function () {
     if (index < 0) return;
     // targetOrigin must be '*': a sandboxed frame's origin is opaque, so there
     // is no origin string that names the parent. The parent checks the SOURCE.
-    window.parent.postMessage({ type: 'foundry:block-click', bf: !!bf, tag: tag, index: index }, '*');
+    window.parent.postMessage({
+      type: 'foundry:block-click',
+      bf: !!bf,
+      tag: tag,
+      index: index,
+      // Where the words came from, for the same reason every other message in
+      // this mode now carries it — see SRC below. Null for an element the cast
+      // book did not stamp, which is every block of a book foundry did not make.
+      src: target.getAttribute ? target.getAttribute('data-bf-src') : null,
+    }, '*');
   }, true);
 
   // ═══ select mode ═══════════════════════════════════════════════════════════
@@ -262,6 +271,30 @@ export const REPORTER_SOURCE = `(function () {
 
   var CAT = 'data-bf-cat';
   var ID = 'data-bf-id';
+  /*
+   * data-bf-src — THE ONE ATTRIBUTE THAT NAMES SOMETHING OUTSIDE THIS BOOK.
+   *
+   * data-bf-id names an element of a chapter file: p47-3 is the third element
+   * the emitter wrote for page 47, and it is the name every write in this mode
+   * uses because that is what main's setters address. It says nothing about the
+   * blocks the MODEL answered, and the whole ledger — every strike, every
+   * relabel, every chapter mark this program keeps — is keyed to those, as
+   * page:order, or page:order:part for one piece of an answer element.
+   *
+   * So a person striking a footnote here changed their chapter file and nothing
+   * else: the decision was invisible to the ledger, invisible to the export, and
+   * gone the next time the book was cast. The emitter now writes both names on
+   * every stamped element (src/vlm/dots-book.ts, stampSrc), and this file
+   * carries the second one out with every id it reports. The parent is what
+   * turns it into a decision; the frame's job is only to say, of the block the
+   * user actually pointed at, which banked answers it was made of.
+   *
+   * NULL AND NOT AN OMISSION when the attribute is absent. A book cast before
+   * provenance existed, and any EPUB foundry did not make, is exactly this case:
+   * the gesture still lands in the chapter, and the parent skips the half it
+   * cannot record rather than guessing at a block.
+   */
+  var SRC = 'data-bf-src';
   var CUT = 'data-bf-cut';
   var SEL = 'data-bf-sel';
   var EDIT = 'data-bf-edit';
@@ -383,16 +416,24 @@ export const REPORTER_SOURCE = `(function () {
    */
   function announce() {
     var ids = [];
+    var srcs = [];
     var cat = null;
     var mixed = false;
     for (var i = 0; i < picked.length; i += 1) {
       var id = picked[i].getAttribute(ID);
-      if (id) ids.push(id);
+      // PUSHED TOGETHER OR NOT AT ALL. The two arrays are read by index — the
+      // src of ids[n] is srcs[n] — so a block that contributes no id must
+      // contribute no src either, or every name after it would be reported
+      // against the wrong block's provenance.
+      if (id) {
+        ids.push(id);
+        srcs.push(picked[i].getAttribute(SRC));
+      }
       var mine = picked[i].getAttribute(CAT);
       if (i === 0) cat = mine;
       else if (mine !== cat) mixed = true;
     }
-    post({ type: 'foundry:block-selected', ids: ids, cat: mixed ? null : cat });
+    post({ type: 'foundry:block-selected', ids: ids, srcs: srcs, cat: mixed ? null : cat });
   }
 
   /**
@@ -649,14 +690,16 @@ export const REPORTER_SOURCE = `(function () {
       return;
     }
     var ids = [];
+    var srcs = [];
     for (var i = 0; i < picked.length; i += 1) {
       var id = named(picked[i]);
       if (id === null) return;
       ids.push(id);
+      srcs.push(picked[i].getAttribute(SRC));
     }
     if (editing) commitEdit();
     for (var j = 0; j < picked.length; j += 1) picked[j].setAttribute(CAT, category);
-    post({ type: 'foundry:blocks-relabelled', ids: ids, cat: category });
+    post({ type: 'foundry:blocks-relabelled', ids: ids, srcs: srcs, cat: category });
     // The selection has not moved but what it IS has, and the inspector marks
     // the row the selection already carries. Without this it would go on
     // pointing at the category those blocks were before the click.
@@ -689,6 +732,7 @@ export const REPORTER_SOURCE = `(function () {
       return;
     }
     var ids = [];
+    var srcs = [];
     var cut = false;
     for (var j = 0; j < mine.length; j += 1) {
       var id = mine[j].getAttribute(ID);
@@ -699,6 +743,7 @@ export const REPORTER_SOURCE = `(function () {
         return;
       }
       ids.push(id);
+      srcs.push(mine[j].getAttribute(SRC));
       if (!mine[j].hasAttribute(CUT)) cut = true;
     }
     if (editing) commitEdit();
@@ -709,7 +754,7 @@ export const REPORTER_SOURCE = `(function () {
     // THE SAME MESSAGE A SELECTION'S DELETE SENDS, carrying the category only so
     // the parent can name it in the notice. One message means one write door
     // and one undo entry shape for every strike this mode can make.
-    post({ type: 'foundry:blocks-cut', ids: ids, cut: cut, cat: category });
+    post({ type: 'foundry:blocks-cut', ids: ids, srcs: srcs, cut: cut, cat: category });
     countCategories();
   }
 
@@ -725,10 +770,12 @@ export const REPORTER_SOURCE = `(function () {
   function cutSelection() {
     if (picked.length === 0) return;
     var ids = [];
+    var srcs = [];
     for (var i = 0; i < picked.length; i += 1) {
       var id = named(picked[i]);
       if (id === null) return;
       ids.push(id);
+      srcs.push(picked[i].getAttribute(SRC));
     }
     var cut = false;
     for (var j = 0; j < picked.length; j += 1) {
@@ -739,7 +786,7 @@ export const REPORTER_SOURCE = `(function () {
       if (cut) picked[k].setAttribute(CUT, '1');
       else picked[k].removeAttribute(CUT);
     }
-    post({ type: 'foundry:blocks-cut', ids: ids, cut: cut, cat: null });
+    post({ type: 'foundry:blocks-cut', ids: ids, srcs: srcs, cut: cut, cat: null });
     countCategories();
   }
 

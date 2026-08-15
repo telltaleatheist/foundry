@@ -1247,6 +1247,101 @@ function stampId(page: number, n: number): string {
 }
 
 /**
+ * `data-bf-src` — WHICH BANKED BLOCKS THIS ELEMENT'S WORDS CAME FROM.
+ *
+ * ── What its absence cost, which was the whole of "apply changes" ────────────
+ *
+ * `data-bf-id` names an ELEMENT OF THE FILE and nothing else. `p47-3` is the
+ * third element written for page 47, counted by the emitter as it wrote them, so
+ * a list contributes two of them and a joined paragraph contributes one for two
+ * banked blocks. Nothing outside this function has ever been able to work the
+ * number out: it is a counter, and the counter lives here.
+ *
+ * Meanwhile every decision this program keeps is keyed `(page, order, part)` —
+ * the model's own answer, which is what an overlay amends, what a chapter list
+ * points at and what a transform record will be written against. So the app
+ * could let a person strike a paragraph in the cast book, write the strike into
+ * their chapter markup, and have NO WAY AT ALL to record it as a decision about
+ * the block: the two names could not be brought together outside this file, and
+ * the ledger never heard about a single thing done on the flowing page. The
+ * curation and the book drifted apart, silently, and the only surface that could
+ * write a decision was the scan.
+ *
+ * So the emitter writes the correspondence down. It is the one thing here that
+ * knows both halves, it costs one attribute, and it is deterministic: same bank,
+ * same book, same string.
+ *
+ * ── The grammar ─────────────────────────────────────────────────────────────
+ *
+ * `page:order`, or `page:order:part` where the answer element was cut into
+ * several blocks, SPACE-SEPARATED when a flow block was joined out of more than
+ * one of them (a paragraph broken over a page turn is one element of the file
+ * and two answers of the model — both of them, in reading order). It is
+ * `overlay.ts`'s target spelling exactly, because it IS a target: an app reading
+ * it hands the pieces to `parseTargetKey` and writes amendments, and a spelling
+ * of our own would be a translation table between two files that must agree.
+ *
+ * EVERY ELEMENT OF ONE BLOCK CARRIES THE SAME VALUE. A list writes `<ul>` and
+ * `<li>`, a quote writes `<blockquote>` and its `<p>`, and each gets its own
+ * `data-bf-id` because ids are unique — but they are one block of the book and
+ * one decision is about all of them. A cut of either is a cut of the same
+ * banked answer.
+ *
+ * THE PART IS OMITTED WHERE THE ELEMENT WAS NEVER SPLIT, and that is not
+ * shorthand — it is the overlay's own default said out loud. `at` without a
+ * `part` means the whole answer element, every piece of it, which is what the
+ * block editor over the scan writes for the same block (`BlockElement.key` is
+ * `page:order`, one outline per answer element). Writing `12:3:0` for an
+ * unsplit block would be a second spelling of one decision in one file, and the
+ * two would fold together correctly but read as two. Where `consumeMarkdown`
+ * DID cut an answer up, the pieces are separate blocks with separate categories
+ * in the book, so each names its own part — relabelling a heading that a split
+ * made must not relabel the two paragraphs that came out of the same answer.
+ */
+function stampSrc(keys: string): string {
+  return ` data-bf-src="${keys}"`;
+}
+
+/**
+ * One banked block's name, as a decision would spell it.
+ *
+ * `split` is the set of answer elements the markdown pass cut up, book-wide —
+ * see `DotsChapterOptions.split` for why it cannot be worked out from one
+ * chapter's blocks.
+ */
+function sourceKey(
+  page: number,
+  order: number,
+  part: number,
+  split: ReadonlySet<string>,
+): string {
+  const element = `${page}:${order}`;
+  return split.has(element) ? `${element}:${part}` : element;
+}
+
+/**
+ * Which answer elements arrived as more than one block — the book's own record
+ * of where `consumeMarkdown` cut.
+ *
+ * BOOK-WIDE AND NOT PER CHAPTER, because a split's pieces can land in two
+ * sections: a `# Heading` cut out of a Text answer is exactly the kind of thing
+ * `proposeChapters` opens a chapter at, and then part 0 is the last block of one
+ * file and part 1 the first block of the next. A chapter that counted its own
+ * blocks would see one piece, call the element unsplit, and write a name that
+ * means "every part of it" over a decision about one of them.
+ */
+export function splitElements(blocks: readonly DotsBlock[]): Set<string> {
+  const seen = new Set<string>();
+  const split = new Set<string>();
+  for (const block of blocks) {
+    const key = `${block.page}:${block.order}`;
+    if (seen.has(key)) split.add(key);
+    else seen.add(key);
+  }
+  return split;
+}
+
+/**
  * What a section is called when its own words do not say.
  *
  * A copyright page has no heading on it — that is half of what identifies it —
@@ -1343,6 +1438,18 @@ export interface DotsChapterOptions {
    * split point or the first heading inside one.
    */
   openers: ReadonlySet<number>;
+  /**
+   * The `page:order` of every answer element the markdown pass cut into more
+   * than one block, for the WHOLE book — what `data-bf-src` needs to know before
+   * it can decide whether to name a part.
+   *
+   * Passed in for `elementNumbers`' reason rather than counted here: a split's
+   * pieces can land in two chapters, so a span that counted its own blocks would
+   * call a split element unsplit and write a name meaning every piece of it.
+   * `splitElements` is the one implementation and `buildDotsBook` runs it over
+   * the flattened bank.
+   */
+  split: ReadonlySet<string>;
   /**
    * The inline `font-size` an OUTLIER block keeps, pre-formatted (`1.48em`),
    * keyed by block identity — `BookTypography.sizes`, and nothing else ever.
@@ -1492,15 +1599,36 @@ export function buildChapterBody(
     return em === undefined ? '' : ` style="font-size:${em}"`;
   };
 
-  /** `data-bf-page`, `data-bf-cat` and `data-bf-id` — see this file's header. */
+  /**
+   * `data-bf-page`, `data-bf-cat`, `data-bf-id` and `data-bf-src` — see this
+   * file's header, and `stampSrc` for the last of them.
+   *
+   * `src` IS A PARAMETER RATHER THAN SOMETHING WORKED OUT FROM `block`, and it
+   * has to be: the block handed here is the one the ELEMENT is about — the first
+   * part of a joined paragraph — and the provenance is the whole list. Only the
+   * caller holds the flow block, so only the caller can name every answer the
+   * element's words came from. A block that is its own single part passes
+   * `sourceOf` of itself, which is the ordinary case and every case but a
+   * page-turn join.
+   */
   const stamp = (
     block: DotsBlock,
+    src: string,
     attribute: string = CATEGORY_ATTRIBUTE[block.category],
   ): string => {
     const n = opts.elementNumbers.get(block.page) ?? 1;
     opts.elementNumbers.set(block.page, n + 1);
-    return ` data-bf-page="${block.page}" data-bf-cat="${attribute}"${stampId(block.page, n)}`;
+    return ` data-bf-page="${block.page}" data-bf-cat="${attribute}"${stampId(block.page, n)}`
+      + stampSrc(src);
   };
+
+  /** Every part of a flow block, named as a decision would name it. */
+  const sourceOf = (parts: readonly FlowPart[]): string =>
+    parts.map((part) => sourceKey(part.page, part.order, part.part, opts.split)).join(' ');
+
+  /** The same, for a block that reaches the stamp on its own — a note. */
+  const sourceOfBlock = (block: DotsBlock): string =>
+    sourceKey(block.page, block.order, block.part, opts.split);
 
   /** The page marker owed to this block, if it opens a page. Consumed once. */
   const marker = (block: DotsBlock): string => {
@@ -1519,14 +1647,21 @@ export function buildChapterBody(
      * one of.
      */
     const block = flow.source;
+    /*
+     * WHERE THIS BLOCK'S WORDS CAME FROM, worked out once and written on every
+     * element the block produces. See `stampSrc`: the container and its child are
+     * two names of the file and one block of the book, and a decision about
+     * either is a decision about the same banked answer.
+     */
+    const src = sourceOf(flow.parts);
     if (flow.category === 'List-item') {
       const tag = /^\d+[.)]/.test(flow.text) ? 'ol' : 'ul';
       if (openList !== tag) {
         closeList();
-        out.push(`<${tag}${stamp(block)}>`);
+        out.push(`<${tag}${stamp(block, src)}>`);
         openList = tag;
       }
-      out.push(`  <li${stamp(block)}>${marker(block)}${inline(flow.text, block.page)}</li>`);
+      out.push(`  <li${stamp(block, src)}>${marker(block)}${inline(flow.text, block.page)}</li>`);
       continue;
     }
     closeList();
@@ -1563,7 +1698,7 @@ export function buildChapterBody(
           }
         }
         out.push(
-          `<${tag}${anchor}${classOf(align)}${sized(block)}${stamp(block, cat)}>`
+          `<${tag}${anchor}${classOf(align)}${sized(block)}${stamp(block, src, cat)}>`
           + `${marker(block)}${xhtml}</${tag}>`,
         );
         // The section's own name, flattened for the contents the same way an
@@ -1574,7 +1709,7 @@ export function buildChapterBody(
       }
       case 'Quote':
         out.push(
-          `<blockquote${stamp(block)}><p${sized(block)}${stamp(block)}>`
+          `<blockquote${stamp(block, src)}><p${sized(block)}${stamp(block, src)}>`
           + `${marker(block)}${inline(flow.text, block.page)}</p></blockquote>`,
         );
         break;
@@ -1585,25 +1720,25 @@ export function buildChapterBody(
         break;
       case 'Table':
         out.push(
-          `<div class="tablewrap"${stamp(block)}>${marker(block)}`
+          `<div class="tablewrap"${stamp(block, src)}>${marker(block)}`
           + `${checkTableHtml(flow.text, block.page)}</div>`,
         );
         break;
       case 'Formula':
-        out.push(`<p class="formula"${stamp(block)}>${marker(block)}${inline(flow.text, block.page)}</p>`);
+        out.push(`<p class="formula"${stamp(block, src)}>${marker(block)}${inline(flow.text, block.page)}</p>`);
         break;
       case 'Picture': {
         const name = `p${String(block.page).padStart(4, '0')}-${opts.firstPicture + crops.length}.png`;
         crops.push({ page: block.page, box: block.box, name });
         out.push(
-          `<figure${stamp(block)}>${marker(block)}`
+          `<figure${stamp(block, src)}>${marker(block)}`
           + `<img src="../images/${name}" alt="figure from page ${block.page}"/></figure>`,
         );
         break;
       }
       case 'Caption':
         out.push(
-          `<p class="caption"${sized(block)}${stamp(block)}>`
+          `<p class="caption"${sized(block)}${stamp(block, src)}>`
           + `${marker(block)}${inline(flow.text, block.page)}</p>`,
         );
         break;
@@ -1638,7 +1773,7 @@ export function buildChapterBody(
           if (n > 0 && part.page !== flow.parts[n - 1].page) joinedPages.push(part.page);
         }
         out.push(
-          `<p${classOf(align)}${sized(block)}${stamp(block)}>${written.join('')}</p>`,
+          `<p${classOf(align)}${sized(block)}${stamp(block, src)}>${written.join('')}</p>`,
         );
       }
     }
@@ -1672,7 +1807,7 @@ export function buildChapterBody(
           : `<sup>${printed}</sup> `;
       out.push(
         `<aside class="footnote" epub:type="footnote" role="doc-footnote" id="fn${note.seq}"`
-        + `${sized(note.block)}${stamp(note.block)}>${number}${inline(rest)}</aside>`,
+        + `${sized(note.block)}${stamp(note.block, sourceOfBlock(note.block))}>${number}${inline(rest)}</aside>`,
       );
     }
     out.push('</section>');
@@ -2579,6 +2714,12 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
    * chapters — see `DotsChapterOptions.elementNumbers`.
    */
   const elementNumbers = new Map<number, number>();
+  /**
+   * The answer elements the markdown pass cut up, over the WHOLE bank — see
+   * `DotsChapterOptions.split`. Computed here for `elementNumbers`' reason: one
+   * chapter cannot see the other half of a split that opened it.
+   */
+  const split = splitElements(blocks);
 
   for (const [index, [from, to]] of spans.entries()) {
     const span = flow.blocks.slice(from, to);
@@ -2589,6 +2730,7 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
       firstNote: notes,
       firstPicture: crops.length,
       elementNumbers,
+      split,
       openers: openingHeadings(span, kind),
       ...(typography !== null ? { sizes: typography.sizes } : {}),
     });

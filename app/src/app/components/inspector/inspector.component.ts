@@ -12,7 +12,12 @@ import {
 
 import { BLOCK_CATEGORIES, PDF_BLOCK_CATEGORIES, UNKNOWN_CATEGORY_COLOUR } from '@shared/categories';
 import { targetKey, type OverlayChapter } from '@shared/overlay';
-import type { EpubChapter, LedgerStep, StepRow } from '@shared/types';
+import type {
+  EpubChapter,
+  LedgerStep,
+  StepRow,
+  UncommittedCuration,
+} from '@shared/types';
 
 import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';
@@ -176,20 +181,23 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
                 </ul>
 
                 <!--
-                  SAVE IS OFFERED WHERE THE STEP WILL APPEAR, which is most of what
-                  teaches what it does: press it and the row shows up two lines
-                  below. It is NOT disabled when there is nothing to freeze — main
-                  refuses that with a sentence saying what to correct first, and a
-                  dead button teaches nobody why it is dead.
+                  APPLY IS OFFERED WHERE THE STEP WILL APPEAR, which is most of
+                  what teaches what it does: press it and the row shows up two
+                  lines above. It appears only when there is something to apply
+                  (see unkept) rather than standing there dead — the whole
+                  reason it exists is that edits on the page were going nowhere,
+                  and a button that is always there says nothing about whether
+                  they have.
                 -->
-                @if (canSave()) {
+                @if (unkept(); as pending) {
                   <div class="acts">
                     <button
                       class="act"
-                      title="Keep a copy of these corrections that nothing later can change"
-                      (click)="saveCorrections()"
-                    >Save corrections</button>
+                      title="Add these changes to the history as a step nothing later can change"
+                      (click)="applyChanges()"
+                    >Apply changes</button>
                   </div>
+                  <p class="applying">{{ applyLine(pending) }}</p>
                 }
               </div>
             }
@@ -704,6 +712,20 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
     }
 
     .acts { display: flex; gap: 6px; padding: 8px 12px 4px; }
+    /*
+      The sentence under Apply changes. NOT a hint and deliberately not given
+      that class's four-line reserve: a hint is a section's standing description
+      and holds its height whatever happens, while this line and the button above
+      it are one thing that appears together and goes away together. Reserving
+      space for it would leave a hole under the button in the ordinary state,
+      which is the state where nothing is waiting to be applied.
+    */
+    .applying {
+      margin: 0 0 6px;
+      padding: 0 12px;
+      font-size: 11px; line-height: 1.4;
+      color: var(--text-tertiary);
+    }
     .act {
       flex: 1;
       padding: 5px 8px;
@@ -1262,17 +1284,56 @@ export class InspectorComponent {
     this.ledger.historyFor(this.projectDir()) !== null);
 
   /**
-   * Save is offered over a SCAN BEING CORRECTED and nowhere else.
+   * WHAT THIS PROJECT HOLDS THAT NO STEP OF IT DOES — the whole gate on Apply
+   * changes, and null when there is nothing waiting.
    *
-   * What it freezes is the block editor's curation, so a pane that is not in that
-   * mode has nothing to freeze — and it is not offered while standing on a save
-   * either, because correcting is off there and a Save that kept a copy of
-   * corrections nobody was allowed to make would be a button with nothing behind
-   * it. The way back is named in the banner above it.
+   * ── What it used to ask, and why that was the wrong question ────────────────
+   *
+   * The button here was offered over A SCAN BEING CORRECTED and nowhere else: it
+   * needed the PDF in block view, because that was the only surface in the app
+   * whose edits reached a curation. Everything a person did to the flowing book —
+   * the document they actually read, and the one the OCR step now shows — wrote
+   * their chapter and stopped, so the button they wanted was on the pane they
+   * were not looking at, and would have had nothing of theirs to freeze if they
+   * had found it.
+   *
+   * Those edits are decisions now (`mirrorToCuration`, tabs.service.ts), so the
+   * question is no longer "which document is in front" but "is there anything
+   * unapplied here", which is one answer for the whole project and true whichever
+   * of its documents is on screen. Main measures it — the live curation against
+   * the step the pointer stands at or behind — and it is why an empty answer can
+   * hide the button honestly, where the old gate could not.
+   *
+   * NOT WHILE STANDING ON A SAVE. Correcting is refused at that position, on both
+   * surfaces now, so a button that froze a copy of corrections nobody is allowed
+   * to make would be offering to keep work the app has just declined to let
+   * anybody do. The way back is the same as it has always been: click a row that
+   * edits.
    */
-  protected canSave(): boolean {
-    const panel = this.subject();
-    return panel !== null && panel.kind === 'pdf' && panel.live && !this.frozen();
+  protected readonly unkept = computed<UncommittedCuration | null>(() => {
+    const dir = this.projectDir();
+    if (dir === null || this.ledger.lockIn(dir) !== null) return null;
+    return this.tabs.uncommittedIn(dir);
+  });
+
+  /**
+   * The one sentence under the button: what is waiting, and against what.
+   *
+   * NO FILENAMES AND NO NUMBERS THE USER CANNOT ACCOUNT FOR. `blocks` is main's
+   * difference — blocks that stand differently now than in the last save — so it
+   * is spoken as a count of changes rather than of anything on a disk, and the
+   * save it is measured against is named by its own label when there is one.
+   */
+  protected applyLine(pending: UncommittedCuration): string {
+    // Never both zero: main answers null when there is nothing at all, which is
+    // the state this whole block is hidden in.
+    const what = pending.blocks === 0
+      ? 'Where the book divides'
+      : `${pending.blocks === 1 ? '1 change' : `${pending.blocks} changes`}${
+        pending.chapters ? ', and where the book divides,' : ''}`;
+    return pending.since === null
+      ? `${what} — not in this book’s history yet. Applying adds a step you can come back to.`
+      : `${what} — changed since “${pending.since}”. Applying adds a step of its own.`;
   }
 
   /**
@@ -1410,10 +1471,19 @@ export class InspectorComponent {
     }
   }
 
-  /** Freeze the corrections as a step. The refusal for an empty one is main's. */
-  protected saveCorrections(): void {
-    const panel = this.subject();
-    if (panel !== null && panel.kind === 'pdf') void this.tabs.saveCorrections(panel.id);
+  /**
+   * Apply: add what has been decided here to the history as a step. The refusal
+   * for an empty one is main's.
+   *
+   * IT NAMES THE DOCUMENT IN FRONT, whichever kind that is, and not the panel's
+   * `subject` — which is null for a book still opening and for a scan nobody has
+   * pressed Blocks on, both of which are perfectly ordinary states to have
+   * something to apply in. Main resolves either path to the one curation, so the
+   * step is the same step whichever pane it was pressed from.
+   */
+  protected applyChanges(): void {
+    const tab = this.tabs.activeDocument();
+    if (tab !== null) void this.tabs.saveCorrections(tab.id);
   }
 }
 

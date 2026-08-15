@@ -1029,6 +1029,10 @@ function chapterOptions() {
     // book that begins where the test's blocks begin.
     elementNumbers: new Map<number, number>(),
     openers: new Set<number>(),
+    // No answer element in these blocks was cut into parts, so nothing here
+    // names a part: `data-bf-src` reads `page:order`, the whole element, which
+    // is what the overlay calls the useful default. See `stampSrc`.
+    split: new Set<string>(),
   };
 }
 
@@ -1038,8 +1042,8 @@ test('every element carries the page it came from and the model\'s own category'
     block({ page: 7, category: 'Text', text: 'A paragraph.' }),
     block({ page: 7, category: 'Footnote', text: '¹ A note.' }),
   ]), chapterOptions());
-  assert.match(body.xhtml, /<h1 data-bf-page="7" data-bf-cat="title" data-bf-id="p7-1">/);
-  assert.match(body.xhtml, /<p data-bf-page="7" data-bf-cat="text" data-bf-id="p7-2">/);
+  assert.match(body.xhtml, /<h1 data-bf-page="7" data-bf-cat="title" data-bf-id="p7-1" data-bf-src="7:0">/);
+  assert.match(body.xhtml, /<p data-bf-page="7" data-bf-cat="text" data-bf-id="p7-2" data-bf-src="7:0">/);
   assert.match(
     body.xhtml,
     /class="footnote" epub:type="footnote" role="doc-footnote" id="fn1" data-bf-page="7" data-bf-cat="footnote"/,
@@ -1072,10 +1076,10 @@ test('every stamped element gets an id of its own, and no two are the same', () 
   assert.equal(new Set(ids).size, ids.length, 'no id is used twice');
 
   // The container and the thing inside it are two elements and two ids.
-  assert.match(body.xhtml, /<ul data-bf-page="3" data-bf-cat="list-item" data-bf-id="p3-2">/);
-  assert.match(body.xhtml, /<li data-bf-page="3" data-bf-cat="list-item" data-bf-id="p3-3">/);
-  assert.match(body.xhtml, /<blockquote data-bf-page="3" data-bf-cat="quote" data-bf-id="p3-4">/);
-  assert.match(body.xhtml, /<p data-bf-page="3" data-bf-cat="quote" data-bf-id="p3-5">/);
+  assert.match(body.xhtml, /<ul data-bf-page="3" data-bf-cat="list-item" data-bf-id="p3-2" data-bf-src="3:0">/);
+  assert.match(body.xhtml, /<li data-bf-page="3" data-bf-cat="list-item" data-bf-id="p3-3" data-bf-src="3:0">/);
+  assert.match(body.xhtml, /<blockquote data-bf-page="3" data-bf-cat="quote" data-bf-id="p3-4" data-bf-src="3:0">/);
+  assert.match(body.xhtml, /<p data-bf-page="3" data-bf-cat="quote" data-bf-id="p3-5" data-bf-src="3:0">/);
 
   // The ordinal is within the page, so a new page starts again at 1.
   assert.match(body.xhtml, /data-bf-page="4"[^>]*data-bf-id="p4-1"/);

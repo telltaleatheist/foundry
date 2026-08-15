@@ -1,7 +1,7 @@
 import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 
 import type { FoundryApi } from '@shared/api';
-import { categoryLabel, pdfCategoryLabel } from '@shared/categories';
+import { PDF_BLOCK_CATEGORIES, categoryLabel, pdfCategoryLabel } from '@shared/categories';
 import type { CurationLock } from '@shared/curation-lock';
 import { positionPicture, positionView, type PositionView } from '@shared/ledger';
 import { fold } from '@shared/original';
@@ -10,7 +10,9 @@ import {
   chaptersText,
   chaptersOfText,
   compareTargets,
+  decisionFor,
   decisionsOf,
+  parseSourceKeys,
   parseTargetKey,
   setChapters,
   type CurationContent,
@@ -33,6 +35,7 @@ import type {
   PdfBlock,
   PdfBlockPage,
   PdfDetectedChapter,
+  UncommittedCuration,
   UnlinkedNote,
 } from '@shared/types';
 
@@ -395,11 +398,17 @@ export interface CategoryCounts {
  * shape rather than handed to a Ctrl+Z that would fall through every branch.
  */
 
-/** The list under one key, made on first use. Grouping rows for one repaint call. */
-function bucket<K>(map: Map<K, string[]>, key: K): string[] {
+/**
+ * The list under one key, made on first use. Grouping rows for one repaint call.
+ *
+ * Generic in what it holds as well as in the key: a replay groups ids for the
+ * frame to repaint AND the decisions those rows owe the curation, and two
+ * copies of four lines is how the two would learn to behave differently.
+ */
+function bucket<K, V>(map: Map<K, V[]>, key: K): V[] {
   const found = map.get(key);
   if (found) return found;
-  const made: string[] = [];
+  const made: V[] = [];
   map.set(key, made);
   return made;
 }
@@ -666,6 +675,39 @@ export class TabsService {
         const want = this.nameFor(tab.path);
         if (want !== tab.title) this.patch(tab.id, { title: want });
       }
+    });
+
+    /**
+     * WHETHER THERE IS ANYTHING TO APPLY, re-asked whenever the answer could
+     * have moved — see `unkept`.
+     *
+     * THREE THINGS MOVE IT and all three are read here on purpose. The DOCUMENT
+     * in front changes which project is being asked about. A CURATION WRITE by
+     * this window — a strike on the scan, a strike on the cast book, an undo of
+     * either — changes what is unkept. And the POSITION changes what it is
+     * measured against: the restore point is the save the pointer stands at or
+     * behind, so clicking back through the history changes the answer without a
+     * byte being written.
+     *
+     * The ask itself is untracked, because it writes `unkept` and a signal
+     * written inside its own effect is a loop waiting for a slow disk.
+     */
+    effect(() => {
+      const tab = this.activeDocument();
+      const seq = this.curationSeq();
+      const dir = tab === null ? null : this.projectDirOf(tab);
+      const standing = this.ledger.standingIn(dir)?.id ?? '';
+      /*
+       * ASKED ONCE PER ANSWER, not once per repaint. `activeDocument` is a whole
+       * Tab and `patch` replaces one on every edit — a held Delete key is several
+       * a second — so without this the effect would put a file read behind every
+       * keystroke to be told the same thing it was told a moment ago. The three
+       * things that can move the answer are exactly the three in this key.
+       */
+      const asking = `${tab?.path ?? ''}|${seq}|${standing}`;
+      if (asking === this.lastAsked) return;
+      this.lastAsked = asking;
+      untracked(() => void this.askUnkept(tab));
     });
 
     /**
@@ -2094,6 +2136,13 @@ export class TabsService {
     // awaited: the tab must close now, and a %TEMP% removal that loses a race
     // with the iframe's last read is retried on quit.
     if (current.book && api) void api.epub.close(current.book.id);
+    /*
+     * AND THE PROVENANCE READ OFF THAT BOOK'S CHAPTERS. It is a cache of what a
+     * working tree said, the tree is being unpacked-and-forgotten one line above,
+     * and an entry under a book id nothing will ever name again is memory held
+     * for a document that no longer exists.
+     */
+    if (current.book) this.forgetSources(current.book.id);
 
     this.all.set(tabs.filter((candidate) => !going.has(candidate.id)));
     for (const gone of going) {
@@ -2688,7 +2737,21 @@ export class TabsService {
    */
   async saveCorrections(tabId: string): Promise<boolean> {
     const tab = this.byId(tabId);
-    if (!api || tab === null || tab.kind !== 'pdf') return false;
+    /*
+     * A BOOK MAY PRESS IT TOO, and that is the whole of Apply changes.
+     *
+     * This used to refuse anything but a scan, on the reasoning that a curation
+     * is the block editor's and the block editor is a PDF surface. The reasoning
+     * held exactly as long as the flowing book's strikes went nowhere. They are
+     * decisions in the same curation now, so the person who made them is usually
+     * standing on the cast book and not on the scan — and a Save that could only
+     * be pressed from the document they are NOT looking at would be the app
+     * asking them to go and find the right pane before their work could be kept.
+     *
+     * Main resolves either path to the one project (`locateOverlay`), so what is
+     * committed is the same file whichever document is in front.
+     */
+    if (!api || tab === null || (tab.kind !== 'pdf' && tab.kind !== 'epub')) return false;
     const dir = this.projectDirOf(tab);
     if (dir === null) {
       this.notice.set(
@@ -2718,11 +2781,71 @@ export class TabsService {
         + 'change it. Carry on correcting — you are still on your live corrections, and this save '
         + 'stays exactly as it is until you click its row in Steps to stand on it.',
       );
+      // What is now unkept has changed — to nothing, usually — and the button
+      // that offered this is drawn from that answer.
+      this.curationWritten();
       return true;
     } catch (err) {
       this.notice.set(err instanceof Error ? err.message : String(err));
       return false;
     }
+  }
+
+  // ── What no save of this project holds ───────────────────────────────────
+  //
+  // THE GATE ON APPLY CHANGES, and it is a question only main can answer. The
+  // live curation is a file beside the readings bank; whether it says anything a
+  // step does not already hold is a comparison against the restore point in the
+  // manifest, and neither file is in this window. `overlay:uncommitted` is that
+  // comparison and it writes nothing (electron/overlays.ts is explicit about
+  // it), so it is safe to ask on a repaint.
+  //
+  // KEYED BY PROJECT, not by tab. One project has one live curation, and the
+  // scan and the cast book are two views of it — so the button must appear on
+  // both the moment either of them records a decision, and go quiet on both the
+  // moment it is applied. Keyed by tab, a person who struck a paragraph in the
+  // book and then clicked the scan would have been shown nothing to apply.
+
+  private readonly unkept = signal<ReadonlyMap<string, UncommittedCuration | null>>(new Map());
+
+  /** The last question asked, so a repaint does not ask it again. See the effect. */
+  private lastAsked = '';
+
+  /**
+   * A number that changes whenever this window writes a curation — the effect
+   * below watches it, so nothing has to remember to re-ask.
+   */
+  private readonly curationSeq = signal(0);
+
+  private curationWritten(): void {
+    this.curationSeq.update((n) => n + 1);
+  }
+
+  /** What this project holds that no save of it does, or null. */
+  uncommittedIn(projectDir: string | null): UncommittedCuration | null {
+    return projectDir === null ? null : this.unkept().get(fold(projectDir)) ?? null;
+  }
+
+  /**
+   * Ask main, for the document in front of the user.
+   *
+   * ASKED OF A PATH RATHER THAN OF A PROJECT, because that is the door main
+   * offers and because the renderer naming a scan it already has open is the
+   * pattern every call in this family follows. Either kind of document resolves
+   * to the same curation, so whichever one is in front answers for the project.
+   *
+   * EVERY FAILURE IS NULL AND NOTHING IS SAID. The question is asked on a
+   * repaint, of a document that may be outside the library or unread, and a
+   * sentence in the strip for a question nobody asked would be noise on top of
+   * whatever the user is actually doing. The button simply does not appear.
+   */
+  private async askUnkept(tab: Tab | null): Promise<void> {
+    if (!api || tab === null) return;
+    const dir = this.projectDirOf(tab);
+    if (dir === null) return;
+    const key = fold(dir);
+    const answer = await api.overlay.uncommitted(tab.path).catch(() => null);
+    this.unkept.update((map) => new Map(map).set(key, answer));
   }
 
   // ── The gestures ─────────────────────────────────────────────────────────
@@ -3061,14 +3184,35 @@ export class TabsService {
   private async putOverlay(tabId: string, file: OverlayFile): Promise<string | null> {
     const view = this.blocksFor(tabId);
     const tab = this.byId(tabId);
-    if (view === null || view.overlay === null || !tab || !api) return null;
-    const was = view.overlay;
-    this.setOverlay(tabId, file);
+    if (!tab || !api) return null;
+    /*
+     * THE PAINT IS THE SCAN'S AND THE WRITE IS EVERYBODY'S, and separating the two
+     * is what lets a gesture made on the cast BOOK reach the same file.
+     *
+     * This used to refuse outright unless a block view was open, because a
+     * correction could only be made where the outlines were drawn. It is not true
+     * any more: select mode on the flowing book now mirrors its strikes and
+     * relabels into the same curation (see `mirrorToCuration`), and that tab has
+     * no block view and never will — its pages are a chapter in an iframe, not
+     * outlines this service draws. So the state update is conditional on there
+     * being state to update, and the write is not.
+     *
+     * `tab.path` is the EPUB there rather than the scan, and main resolves both to
+     * the one curation: `locateOverlay` answers with the project's overlay pair
+     * and never opens the file it was named (electron/overlays.ts). One project,
+     * one live curation, whichever of its documents is on screen.
+     */
+    const was = view?.overlay ?? null;
+    if (view !== null && was !== null) this.setOverlay(tabId, file);
     try {
       await api.overlay.save(tab.path, file);
+      // ONE PLACE, because this is the one write. What the project holds that no
+      // save of it does has just changed, and the Apply changes button is drawn
+      // from that answer — see `unkept`.
+      this.curationWritten();
       return null;
     } catch (err) {
-      this.setOverlay(tabId, was);
+      if (view !== null && was !== null) this.setOverlay(tabId, was);
       return err instanceof Error ? err.message : String(err);
     }
   }
@@ -3578,6 +3722,7 @@ export class TabsService {
     blockIds: readonly string[],
     category: string,
   ): Promise<void> {
+    if (this.refusedByASave(id)) return;
     const kind = categoryLabel(category).toLowerCase();
     const changed = await this.blockEdit(
       id,
@@ -3598,10 +3743,29 @@ export class TabsService {
         })),
       }),
     );
-    if (changed === null || blockIds.length < 2) return;
-    this.notice.set(changed.length === 0
-      ? `All ${blockIds.length} of those blocks were already ${kind} — nothing changed.`
-      : `Relabelled ${changed.length} block${changed.length === 1 ? '' : 's'} as ${kind}.`);
+    if (changed === null) return;
+    if (blockIds.length >= 2) {
+      this.notice.set(changed.length === 0
+        ? `All ${blockIds.length} of those blocks were already ${kind} — nothing changed.`
+        : `Relabelled ${changed.length} block${changed.length === 1 ? '' : 's'} as ${kind}.`);
+    }
+    /*
+     * AND THE SAME RELABEL, RECORDED AS A DECISION. `changed` is what main said
+     * moved, which is exactly the list a decision may be made about — the blocks
+     * that were already this category were not relabelled by anybody.
+     *
+     * LAST, AFTER THE SENTENCE ABOVE, so that the one thing the mirror has to say
+     * is not painted over half a millisecond later. It speaks only when it could
+     * not record what the user has already watched happen, and that sentence
+     * outranks "relabelled 30 blocks".
+     *
+     * A move to Chapter Openings records nothing (`bankCategory` answers null and
+     * says why): the spine is a list with titles in it, not a category, and this
+     * gesture carries no title. The book still divides where the user said.
+     */
+    const banked = this.bankCategory(category);
+    if (banked === null) return;
+    await this.mirrorBlockEdit(id, 'category', changed.map((one) => ({ id: one.id, value: banked })));
   }
 
   /**
@@ -3623,6 +3787,7 @@ export class TabsService {
     cut: boolean,
     category: string | null,
   ): Promise<void> {
+    if (this.refusedByASave(id)) return;
     const kind = category === null ? '' : `${categoryLabel(category).toLowerCase()} `;
     const changed = await this.blockEdit(
       id,
@@ -3651,13 +3816,22 @@ export class TabsService {
      * repeating what the user is already looking at would train them to stop
      * reading the strip, which is where every refusal in this mode lands.
      */
-    if (changed.length === 1 && blockIds.length === 1) return;
-    const many = changed.length === 1 ? '' : 's';
-    this.notice.set(changed.length === 0
-      ? `Every one of those ${kind}blocks already ${cut ? 'was struck' : 'stood'} — nothing changed.`
-      : cut
-        ? `Struck ${changed.length} ${kind}block${many}. Press Delete on them to bring them back.`
-        : `Brought back ${changed.length} ${kind}block${many}.`);
+    if (changed.length !== 1 || blockIds.length !== 1) {
+      const many = changed.length === 1 ? '' : 's';
+      this.notice.set(changed.length === 0
+        ? `Every one of those ${kind}blocks already ${cut ? 'was struck' : 'stood'} — nothing changed.`
+        : cut
+          ? `Struck ${changed.length} ${kind}block${many}. Press Delete on them to bring them back.`
+          : `Brought back ${changed.length} ${kind}block${many}.`);
+    }
+    // The strike, recorded as a decision — main's list of what actually moved,
+    // and LAST for the reason the relabel above is last: the only thing this can
+    // say is that it could not record the strike the user just watched land, and
+    // a success sentence written over it would be that failure going unread.
+    await this.mirrorBlockEdit(id, 'strike', changed.map((target) => ({
+      id: target,
+      value: cut ? 'true' : '',
+    })));
   }
 
   /**
@@ -3705,6 +3879,281 @@ export class TabsService {
   /** Something the frame itself refused, said where the user can read it. */
   reportSelectRefusal(reason: string): void {
     this.notice.set(reason);
+  }
+
+  // ── The book's gestures, written down as decisions ───────────────────────
+  //
+  // ── WHAT THE OLD BEHAVIOUR COST, WHICH WAS THE WHOLE FEATURE ──────────────
+  //
+  // Select mode on the cast book wrote `data-bf-cut` and `data-bf-cat` into a
+  // chapter of the working tree and stopped there. The step ledger never heard
+  // about it: no curation row, nothing to commit, nothing for the Steps panel to
+  // show, and — because the flowing book is CAST FROM THE BANK — every strike a
+  // person made was thrown away the next time the book was cast. Half of this
+  // app's whole model, "every edit is a ledger entry", was true of the scan and
+  // false of the document people actually read.
+  //
+  // It could not be fixed in the shell, and R1 stopped rather than guess: a
+  // book's blocks are named `data-bf-id="p47-3"`, a counter over ELEMENTS THE
+  // EMITTER WROTE, and a decision is named `page:order[:part]`, the model's own
+  // answer. Only the emitter ever held both, and it wrote neither down. It writes
+  // `data-bf-src` now (src/vlm/dots-book.ts, `stampSrc`) and this is what reads
+  // it: a strike on the flowing page becomes an amendment against the same block
+  // the scan's block editor would have amended, in the same file, which is what
+  // makes Apply changes a button rather than a plan.
+  //
+  // TWO WRITES, ONE GESTURE, AND THE SECOND ONE NEVER SPEAKS FIRST. The chapter
+  // write is what the user can see happening and it stays exactly as it was —
+  // painted in the frame, written by main, reported by its own notice. The
+  // curation write is a record of it, and a record is not an event: it mints no
+  // ledger row (the book's own action is already recorded, and one gesture must
+  // not become two Ctrl+Zs), and it says nothing at all when it cannot be made.
+
+  /**
+   * `data-bf-id` -> `data-bf-src` for one chapter, off the working tree.
+   *
+   * ── Why the file and not the frame's message ────────────────────────────────
+   *
+   * The reporter now carries a `src` beside every id it posts, and that is the
+   * frame saying what the user pointed at. It cannot be the source of truth here,
+   * for one plain reason: AN UNDO SENDS NO MESSAGE. A Ctrl+Z replays rows that
+   * name blocks by id and nothing else — the gesture that made them may have been
+   * yesterday, in a window that no longer exists — and the mirror has to un-write
+   * exactly what the gesture wrote or the curation drifts away from the book by
+   * one strike at a time. The chapter file answers both, so both ask it.
+   *
+   * CACHED PER CHAPTER, because ids and provenance do not move while a book is
+   * open: a cut writes an attribute, an edit writes words, and neither renames
+   * anything. Held Delete on a page of footnotes is one read rather than one per
+   * keystroke. Keyed by book AND member, so a chapter change or a re-cast (a new
+   * unpack, a new book id) reads again rather than answering from a document that
+   * is no longer on screen.
+   */
+  private readonly blockSources = new Map<string, ReadonlyMap<string, string>>();
+
+  private async sourcesOf(bookId: string, member: string): Promise<ReadonlyMap<string, string>> {
+    const key = `${bookId}|${member}`;
+    const held = this.blockSources.get(key);
+    if (held !== undefined) return held;
+    if (!api) return new Map();
+    try {
+      const found = sourceKeysIn(await api.epub.readMember(bookId, member));
+      this.blockSources.set(key, found);
+      return found;
+    } catch {
+      /*
+       * SILENT, AND IT IS THE ONLY SWALLOWED FAILURE IN THIS PATH. What failed is
+       * a second read of a file main has just successfully written, so the book
+       * itself is fine and the gesture the user made has landed. Saying "the
+       * provenance could not be read" over a strike that visibly worked would be
+       * a sentence about this app's bookkeeping in the strip where refusals go.
+       * Nothing is cached, so the next gesture asks again.
+       */
+      return new Map();
+    }
+  }
+
+  /** Everything read off one book's chapters, dropped with the book. */
+  private forgetSources(bookId: string): void {
+    for (const key of [...this.blockSources.keys()]) {
+      if (key.startsWith(`${bookId}|`)) this.blockSources.delete(key);
+    }
+  }
+
+  /**
+   * The same mirror, for a gesture made in the chapter that is on screen.
+   *
+   * The member is the open chapter's, exactly as `blockEdit` resolves it, so the
+   * two halves of one gesture are certainly about one file. The undo path calls
+   * `mirrorToCuration` directly instead, because a row names the member it was
+   * recorded against and that need not be the chapter in front of anybody now.
+   */
+  private async mirrorBlockEdit(
+    tabId: string,
+    field: OverlayField,
+    moves: readonly { id: string; value: string }[],
+  ): Promise<void> {
+    const tab = this.byId(tabId);
+    if (tab === null || tab.chapterHref === null) return;
+    await this.mirrorToCuration(tabId, memberOf(tab.chapterHref), field, moves);
+  }
+
+  /**
+   * Standing on a save, a gesture on the CAST BOOK is refused too — the same
+   * answer, at a fourth door.
+   *
+   * ── Why this door had to open ───────────────────────────────────────────────
+   *
+   * `heldByASave` guards the three ways a scan's curation is changed and its
+   * comment says why: the pages are showing a frozen copy while the write would
+   * go into the live one, so the correction would be made to a book nobody is
+   * looking at. Select mode on the flowing book used to be none of its business —
+   * it wrote `data-bf-cat` into somebody's chapter and had "no more to do with a
+   * frozen curation than a translation does", which is what the inspector's lock
+   * still says of the panel it draws.
+   *
+   * That stopped being true one function above this one. A strike on the flowing
+   * page is now ALSO a decision in the live curation, so standing on a save it
+   * would be the same silent rewrite the other three doors exist to refuse. And
+   * it is refused BEFORE the chapter is written rather than after: a gesture that
+   * struck the paragraph and then declined to record it would leave the book and
+   * the curation saying different things, which is the exact drift this whole
+   * unit closes.
+   *
+   * THE SENTENCE IS THE LOCK'S OWN, in the strip where every refusal in this mode
+   * lands. It names the way back — step off the save — because a mode that went
+   * quiet under a Delete key is indistinguishable from a broken one.
+   */
+  private refusedByASave(tabId: string): boolean {
+    const tab = this.byId(tabId);
+    if (tab === null || tab.kind !== 'epub') return false;
+    const held = this.heldByASave(tabId);
+    if (held === null) return false;
+    this.notice.set(held);
+    return true;
+  }
+
+  /**
+   * The one door a book's cut or relabel goes through on its way into the
+   * curation — the gesture's, and the undo's.
+   *
+   * `moves` are the blocks MAIN SAID MOVED, by `data-bf-id`, with the value each
+   * one now carries. Never what the frame asked for: a block already struck was
+   * not changed by this gesture, and mirroring it would write a decision nobody
+   * made.
+   *
+   * ── A book cast before provenance existed is skipped, in silence ────────────
+   *
+   * No `data-bf-src` means the emitter that wrote this chapter predates the
+   * attribute — or that the book is not one foundry cast at all, which is a thing
+   * this app is happy to open and edit. There is nothing to say about it: the
+   * user's gesture landed in their book, the decision cannot be recorded against
+   * a block because nothing in the file names one, and the next cast repairs it
+   * without anybody being told. A notice here would be a sentence about the
+   * app's own history appearing on a keystroke, once per block, on a book that is
+   * working exactly as the user sees it working.
+   */
+  private async mirrorToCuration(
+    tabId: string,
+    member: string,
+    field: OverlayField,
+    moves: readonly { id: string; value: string }[],
+  ): Promise<void> {
+    const tab = this.byId(tabId);
+    if (!api || tab === null || tab.kind !== 'epub' || tab.book === null) return;
+    // No project, no bank, no curation — a book somebody opened from their own
+    // disk. Its select mode still edits it; there is simply nothing to record
+    // against, and main would refuse the load by name.
+    if (this.projectDirOf(tab) === null) return;
+    if (moves.length === 0) return;
+
+    const sources = await this.sourcesOf(tab.book.id, member);
+    if (sources.size === 0) return;
+
+    let file: OverlayFile;
+    try {
+      file = (await api.overlay.load(tab.path)).file as OverlayFile;
+    } catch (err) {
+      // READ FRESH ON EVERY GESTURE, and this is the failure that has to be said
+      // out loud: unlike the provenance read above, nothing here can be retried
+      // by the next keystroke — the decision is lost. The scan's block editor
+      // holds the curation in memory and writes it whole; if this side wrote from
+      // a copy of its own, two panes of one project would take turns erasing each
+      // other's corrections. So it is read, amended and written, and a read that
+      // failed is a correction that did not happen.
+      this.notice.set(
+        `That change is in your book, but it could not be recorded as a decision: ${
+          err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+    /*
+     * READ BACK OFF THE FILE AFTER EVERY AMENDMENT, and it is not a formality:
+     * TWO ELEMENTS OF ONE BLOCK SHARE A SOURCE. A list is a `<ul>` and its
+     * `<li>`, a quote is a `<blockquote>` and its `<p>` — two ids, two moves in
+     * this batch, one banked answer behind both — so the second move arrives at a
+     * decision the first one has already made. Asked of a map made before the
+     * loop, it would read the state as it was, count a change that is not one and
+     * write the same value twice.
+     */
+    let decisions = decisionsOf(file);
+
+    let touched = 0;
+    for (const move of moves) {
+      const src = sources.get(move.id);
+      if (src === undefined) continue;
+      for (const at of parseSourceKeys(src)) {
+        const before = fieldValue(decisionFor(decisions, at.page, at.order, at.part ?? 0), field);
+        // Already saying this: not a change, and not a write. The same rule
+        // `amendBlocks` follows over a scan.
+        if (before === move.value) continue;
+        file = amendOverlay(file, at, field, move.value);
+        decisions = decisionsOf(file);
+        touched += 1;
+      }
+    }
+    if (touched === 0) return;
+
+    const refused = await this.putOverlay(tabId, file);
+    if (refused !== null) {
+      this.notice.set(
+        `That change is in your book, but it could not be recorded as a decision: ${refused}`,
+      );
+      return;
+    }
+    this.repaintCurations(tab);
+  }
+
+  /**
+   * The scan panes of this project read the curation again — because this write
+   * came from somewhere else.
+   *
+   * ── The clobber this exists to prevent ──────────────────────────────────────
+   *
+   * A block view holds the whole curation in memory and writes it WHOLE on every
+   * gesture, which is right while it is the only thing writing: the file is a few
+   * kilobytes, a person makes a few gestures a minute, and there is no
+   * read-modify-write to serialise. It stops being right the moment a second
+   * surface writes the same file. Strike a footnote in the cast book with the
+   * scan open in the next column, and that column is now holding a copy of the
+   * curation from before the strike — the next thing struck over there would be
+   * written from it, and the book's decision would be erased by a gesture nobody
+   * connected to it.
+   *
+   * `refreshCuration` is the machinery that already exists for "the curation
+   * moved and the outlines have not" — it re-reads the pair and nothing else, a
+   * few kilobytes off a disk, which is why the position move is allowed to use
+   * it on every click. Same call, one more reason to make it.
+   */
+  private repaintCurations(source: Tab): void {
+    const dir = this.projectDirOf(source);
+    if (dir === null) return;
+    for (const tab of this.all()) {
+      if (tab.kind !== 'pdf' || !tab.blockView || tab.id === source.id) continue;
+      const mine = this.projectDirOf(tab);
+      if (mine === null || fold(mine) !== fold(dir)) continue;
+      void this.refreshCuration(tab.id, tab.path);
+    }
+  }
+
+  /**
+   * The overlay categories, under the names a CAST BOOK's blocks carry.
+   *
+   * Two vocabularies for one idea, and shared/categories.ts says why: a book's
+   * blocks are `data-bf-cat="footnote"` because that is what the emitter writes,
+   * and a decision is `Footnote` because that is what the model answered and the
+   * bank is never edited. The table is derived from the one list rather than
+   * written out, so the two cannot drift.
+   *
+   * `chapter` IS NOT IN IT, and that is the one relabel this mirror cannot make.
+   * "The book divides here" is not a category on a scan at all — it is the
+   * overlay's `chapters` list, which carries a TITLE for the contents, and
+   * nothing in a relabel gesture supplies one. So a heading moved into or out of
+   * Chapter Openings changes the book and is not recorded as a decision; the
+   * spine is its own op and owns its own gesture (docs/DERIVED-BOOK.md §3).
+   */
+  private bankCategory(id: string): string | null {
+    return BANK_CATEGORY_OF[id] ?? null;
   }
 
   // ── Undo / redo: the ledger ──────────────────────────────────────────────
@@ -4077,6 +4526,22 @@ export class TabsService {
     // Guarded above — a book still opening was turned away with a sentence — and
     // repeated here because the two branches merge what TypeScript knew.
     if (tab.book === null) return;
+    /*
+     * THE FOURTH DOOR, ON THE WAY BACK. A cut or a relabel in a cast book is a
+     * decision in the project's live curation now (`mirrorToCuration`), so taking
+     * one back while standing on a frozen save would change that curation under
+     * pages showing the snapshot — the very thing the scan's own replay refuses a
+     * few lines above. Only an action that CARRIES one of those rows is refused:
+     * a word edit and a renamed heading are the book's markup and nothing else's,
+     * and freezing a curation was never a reason to stop typing.
+     */
+    if (action.rows.some((row) => row.field === 'cut' || row.field === 'category')) {
+      const heldBook = this.heldByASave(tab.id);
+      if (heldBook !== null) {
+        this.notice.set(heldBook);
+        return;
+      }
+    }
     const bookId = tab.book.id;
     /*
      * REPAINTED WITHOUT A RELOAD WHERE THE ROW IS AN ATTRIBUTE, and with one
@@ -4094,6 +4559,8 @@ export class TabsService {
      */
     const cutIds = new Map<boolean, string[]>();
     const labelled = new Map<string, string[]>();
+    /** The decisions this replay owes the curation, by field. See the loop. */
+    const mirrored = new Map<OverlayField, { id: string; member: string; value: string }[]>();
     // A contents entry put back is a row in the sidebar, which is drawn from
     // `book.chapters` and not from the file — so undoing the write without this
     // would leave the panel showing a label the navigation document no longer
@@ -4128,6 +4595,28 @@ export class TabsService {
         return;
       }
       this.memberChanged(tab.id, row.member);
+      /*
+       * AND THE CURATION FOLLOWS THE BOOK BACK. The row landed — the setter above
+       * is the same one the gesture used — so the decision it recorded has to be
+       * un-recorded, or a Ctrl+Z would take the strike out of the book and leave
+       * it in the ledger for the next Apply changes to freeze. Gathered PER
+       * MEMBER, because an action's rows may name a chapter that is not the one
+       * on screen, and written after the loop so forty rows are one read of each
+       * chapter and one write of the curation.
+       *
+       * `note-cut` IS NOT IN HERE, and it is not an oversight: it names a
+       * footnote by its own id inside a block, and a curation has no word for one
+       * note of a Footnote answer. See `setNoteCut`'s own path — nothing mirrors
+       * it in either direction, so nothing has to be taken back.
+       */
+      if (row.field === 'cut') {
+        bucket(mirrored, 'strike').push({ id: row.target, member: row.member, value: value === '1' ? 'true' : '' });
+      } else if (row.field === 'category') {
+        const banked = this.bankCategory(value);
+        if (banked !== null) {
+          bucket(mirrored, 'category').push({ id: row.target, member: row.member, value: banked });
+        }
+      }
       if (row.field === 'cut' || row.field === 'note-cut') bucket(cutIds, value === '1').push(row.target);
       else if (row.field === 'category') bucket(labelled, value).push(row.target);
       else if (row.field === 'nav-label') renamed.set(row.target, value);
@@ -4143,7 +4632,6 @@ export class TabsService {
     for (const [category, ids] of labelled) {
       this.commandFrame(tab.id, { type: 'foundry:mark-labels', ids, cat: category });
     }
-
     from.pop();
     (direction === 'undo' ? ledger.undone : ledger.done).push(action);
     // The action has moved from one stack to the other, which is a mutation of
@@ -4173,6 +4661,24 @@ export class TabsService {
     // to find out what moved; the label was written when the action was
     // recorded precisely so this sentence could exist.
     this.notice.set(`${direction === 'undo' ? 'Undid' : 'Redid'}: ${action.label}.`);
+    /*
+     * AND THE CURATION FOLLOWS, LAST. Grouped per member because an action's rows
+     * can name a chapter that is not the one on screen, and per field because the
+     * two are two decisions; after the sentence above for the reason the gesture
+     * itself mirrors last — the only thing this can say is that the decision could
+     * not be taken back, and "Undid: struck 14 blocks" written over that would be
+     * the app reporting success it did not have.
+     */
+    for (const [field, moves] of mirrored) {
+      for (const member of new Set(moves.map((one) => one.member))) {
+        await this.mirrorToCuration(
+          tab.id,
+          member,
+          field,
+          moves.filter((one) => one.member === member),
+        );
+      }
+    }
   }
 
   /**
@@ -4894,6 +5400,53 @@ const OVERLAY_FIELD_OF: Readonly<Record<string, OverlayField>> = {
   'block-category': 'category',
   'block-text': 'text',
 };
+
+/**
+ * Every `data-bf-id` in a chapter, with the `data-bf-src` on the same element.
+ *
+ * ── Read off the START TAGS and nothing else ────────────────────────────────
+ *
+ * A chapter of a cast book is XHTML this program wrote, and what is wanted from
+ * it is two attributes on the same tag. Parsing it as a document would mean
+ * handing somebody's book to `DOMParser` on every keystroke of a held Delete;
+ * scanning the start tags reads the two names where they were written, ignores
+ * everything in between, and cannot be confused by the prose because a `<` in
+ * text is `&lt;` in a file that parses as XML at all — which this one must,
+ * since the reader renders it.
+ *
+ * ORDER-BLIND WITHIN THE TAG. The emitter writes page, category, id and src in
+ * that order today, and `foundry epub-stamp` writes ids into books that were
+ * never cast here at all. A scan that depended on the order would be a scan that
+ * broke the day either of them changed a line.
+ *
+ * An element with an id and no src is simply absent from the answer: that is the
+ * pre-provenance book, and `mirrorToCuration` treats "no entry" and "no
+ * attribute" as the one state, which is what they are.
+ */
+function sourceKeysIn(xhtml: string): Map<string, string> {
+  const found = new Map<string, string>();
+  for (const [tag] of xhtml.matchAll(/<[a-zA-Z][^>]*>/g)) {
+    const id = /\sdata-bf-id="([^"]*)"/.exec(tag);
+    if (id === null || id[1] === undefined || id[1].length === 0) continue;
+    const src = /\sdata-bf-src="([^"]*)"/.exec(tag);
+    if (src === null || src[1] === undefined || src[1].length === 0) continue;
+    found.set(id[1], src[1]);
+  }
+  return found;
+}
+
+/**
+ * A cast book's category names to the bank's — `footnote` to `Footnote`.
+ *
+ * Derived from the one table in shared/categories.ts rather than written out
+ * again: those ids ARE the overlay's categories (`OVERLAY_CATEGORIES`), spelled
+ * as the model spells them, and a second hand-kept list is a translation waiting
+ * to disagree with itself. `chapter` has no entry, which is the whole of why
+ * `bankCategory` can answer null — see it for what that costs.
+ */
+const BANK_CATEGORY_OF: Readonly<Record<string, string>> = Object.fromEntries(
+  PDF_BLOCK_CATEGORIES.map((one) => [one.id.toLowerCase(), one.id]),
+);
 
 /** What a decision says about one field, as a ledger row spells it. */
 function fieldValue(decision: OverlayDecision | undefined, field: OverlayField): string {
