@@ -61,7 +61,7 @@
  * make possible is a batch of BOOKS; an install is plumbing.
  */
 import { randomUUID } from 'node:crypto';
-import { existsSync, promises as fsp } from 'node:fs';
+import { copyFileSync, existsSync, promises as fsp } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
@@ -188,8 +188,17 @@ export function enqueue(
      * It still goes THROUGH the queue and still waits behind whatever is
      * running. That is the machine being busy rather than the person being
      * asked, which is the distinction `held` and `queued` have always drawn.
+     *
+     * A TWO-STAGE GENERATE IS NOT A RENDERING — it is the exception's own test
+     * applied honestly. The paragraph above holds because a replay costs
+     * nothing, and a job whose second stage runs the translator is not that
+     * job: a seeded bank makes it cheap, but text edited since the translation
+     * is re-asked of a model, and a cold Ollama makes it a translation run in
+     * everything but the button that started it. So it is held, exactly as
+     * `enqueueTranslate` holds every translate — one press to ask, one press
+     * to spend.
      */
-    state: request.kind === 'read' ? 'held' : 'queued',
+    state: request.kind === 'read' || request.thenTranslate !== undefined ? 'held' : 'queued',
     progress: null,
     parentStep,
     createdAt: Date.now(),
@@ -940,6 +949,25 @@ async function pump(): Promise<void> {
     next.message = 'Translating what was just rendered…';
     next.note = null;
     changed();
+    /*
+     * A BRANCH'S BANK STARTS AS A COPY OF ITS PARENT'S — here, not at plan time,
+     * because this is the first moment the job is a commitment rather than a row
+     * somebody can still remove (`ThenTranslate.seedBank` says why the debris
+     * matters). The bank is question-keyed by the blocks' own text, so the
+     * parent's answers are exactly as true here: the stricken blocks are never
+     * looked up, and only text edited since the translation is re-asked. An
+     * existing bank is never overwritten — a retried job has its own answers in
+     * there by now, and they are newer than the seed.
+     */
+    const stage = stages[at]!;
+    if (stage.kind === 'translate' && stage.seedBank !== undefined
+      && !existsSync(stage.bankPath) && existsSync(stage.seedBank)) {
+      try {
+        copyFileSync(stage.seedBank, stage.bankPath);
+      } catch (err) {
+        console.error(`[job] could not seed ${stage.bankPath} from ${stage.seedBank}:`, err);
+      }
+    }
     const stageArgs = argsFor(stages[at]!);
     console.log(`[job] ${next.kind} ${stageArgs.join(' ')}`);
     handle = runEngine(stageArgs, watch);

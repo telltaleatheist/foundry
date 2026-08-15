@@ -82,6 +82,7 @@ import {
   renderingOverlay,
   rotationRefusal,
 } from './projects';
+import { translationBankOf } from '../shared/ledger';
 import type { ReadAsk } from '../shared/ledger';
 import {
   DEFAULT_OLLAMA_ENDPOINT,
@@ -428,11 +429,24 @@ async function translateStage(
     );
   }
   const planned = await bankForTranslation(dir, language, landsUnder);
+  /*
+   * A BRANCH IS SEEDED FROM ITS PARENT'S BANK — the plan names the source here,
+   * and the copy itself waits for the spawn (`pump()`), because a held job that
+   * is removed must leave `readings/` untouched. The branch test is the step id:
+   * `translationTarget` spends the minted uuid only when no existing row is the
+   * re-run target, so an id that is not the ancestral row's is a new row with an
+   * empty bank ahead of it — the one case where a first Generate would otherwise
+   * pay for a whole book whose translation already exists (see `seedBank`).
+   */
+  const seed = planned.stepId !== translate.id
+    ? translationBankOf(translate, manifest.key)
+    : null;
   return {
     outputPath: planned.outputPath,
     thenTranslate: {
       to: language,
       bank: planned.bankPath,
+      ...(seed !== null ? { seedBank: path.join(dir, ...seed.split('/')) } : {}),
       /*
        * NOBODY CHOSE THESE, BECAUSE THERE IS NO DIALOG HERE. The row is the
        * picker (docs/TRANSLATION-STEPS.md §3) — Generate asks for a format and

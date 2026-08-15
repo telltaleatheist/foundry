@@ -253,6 +253,9 @@ export function translationStage(
     model: then.model,
     ollama: then.ollama,
     bankPath: then.bank,
+    // Carried so the spawn can copy the parent's answers into a branch's empty
+    // bank (`ThenTranslate.seedBank`). Not a flag: `argsFor` never sees it.
+    ...(then.seedBank !== undefined ? { seedBank: then.seedBank } : {}),
     ...(then.instructions !== undefined && then.instructions.trim().length > 0
       ? { instructions: then.instructions }
       : {}),

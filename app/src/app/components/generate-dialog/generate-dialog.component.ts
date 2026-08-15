@@ -133,11 +133,20 @@ import { api } from '../../core/foundry';
             <!--
               WHAT THIS IS MADE FROM, said plainly, because it is the reassurance
               that makes generating a second time feel free rather than reckless.
+              A translation position gets a different second sentence, because the
+              first one would lie there: the render half is still free, but the
+              translator runs over whatever the bank cannot answer, and a job that
+              can spend model time starts from the queue, not from this button.
             -->
             <p class="note quiet">
               Made from the {{ pages() > 0 ? pages().toLocaleString() + ' pages' : 'pages' }} the
               model has already read{{ curated() ? ', with your block corrections applied' : '' }}.
-              Nothing is read again and no GPU is used.
+              @if (epubOnly()) {
+                Blocks already translated come out of the bank; anything changed since is asked of
+                the translator again. It waits in the queue until you press Start.
+              } @else {
+                Nothing is read again and no GPU is used.
+              }
             </p>
 
             @if (problem(); as reason) {
@@ -495,7 +504,12 @@ export class GenerateDialogComponent {
         return;
       }
       this.ui.shelfExpanded.set(true);
-      this.ui.announce(`Generating ${this.nameFor(input)} as ${kind}. It will open when it is done.`);
+      // A two-stage job is HELD (it can spend model time — see the queue's hold
+      // rule), so the sentence has to hand the person to the button that
+      // actually starts it, the way the Translate dialog's always has.
+      this.ui.announce(plan.thenTranslate !== undefined
+        ? `${this.nameFor(input)} is queued. Press Start on the shelf to run it.`
+        : `Generating ${this.nameFor(input)} as ${kind}. It will open when it is done.`);
       this.ui.closeGenerate();
     } catch (err) {
       this.problem.set(err instanceof Error ? err.message : String(err));

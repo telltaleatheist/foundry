@@ -254,6 +254,28 @@ export interface ThenTranslate {
   /** `--ollama`. Used, never started, exactly as a translate job uses it. */
   ollama: string;
   /**
+   * The ANCESTRAL translation's bank, ABSOLUTE — copied over `bank` at spawn
+   * when `bank` does not exist yet.
+   *
+   * ── Why a branch starts with its parent's answers ───────────────────────────
+   *
+   * A save made under a translation branches, and a branch deliberately owns its
+   * own bank (docs/TRANSLATION-STEPS.md §2) — but an EMPTY one would make the
+   * first strike-then-Generate a full re-translation of a book that is already
+   * translated, when the whole promise of the question-keyed bank is that an
+   * unchanged block is never asked twice. The keys are hashes of the blocks'
+   * own text, so the parent's answers are exactly as true in the branch as they
+   * were at home: the stricken blocks are simply never looked up, and only text
+   * somebody edited since is re-asked.
+   *
+   * COPIED AT SPAWN, NOT AT PLAN, because a plan is not a commitment: a held job
+   * that is removed must leave `readings/` exactly as it found it, and a file
+   * seeded at plan time would sit there named by no step, invisible to the sweep,
+   * forever. Absent when the run replaces the translate step itself — its bank
+   * already exists and already holds its own answers.
+   */
+  seedBank?: string;
+  /**
    * `--instructions`, when there are any.
    *
    * NOTHING COMPOSES ONE TODAY and the field is still here rather than left out.
@@ -331,6 +353,14 @@ export interface TranslateRequest {
    * of them this is — see `stepId` below, which is the same decision.
    */
   bankPath: string;
+  /**
+   * A bank to copy over `bankPath` at spawn when `bankPath` does not exist —
+   * the parent translation's answers, seeding a branch so the first Generate
+   * from a save-under-a-translation is not a full re-translation of a book that
+   * is already translated. See `ThenTranslate.seedBank` for the whole argument;
+   * `argsFor` never reads it, so the engine never knows it happened.
+   */
+  seedBank?: string;
   /**
    * THE STEP THESE FILES BELONG TO, minted with them and travelling with them.
    *
