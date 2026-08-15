@@ -281,15 +281,20 @@ import { TabsService, type BlockElement, type ChapterMark } from '../../core/tab
 
                 <div class="acts">
                   <!--
-                    ADDING ONE IS THE SCAN'S BUTTON AND THE BOOK'S GUTTER.
+                    ADDING ONE IS A BUTTON ON BOTH SURFACES NOW, and they mean
+                    two different things by "here".
 
                     Over a scan, "here" is the one block a person has selected on
-                    the pages, and this button is the only way to say it. Over
-                    the flowing book "here" is a seam between two paragraphs the
-                    reader can point at directly — the affordance appears in the
-                    gap and the click adds the break — so a button that acted on
-                    a selection would be a second, worse gesture for a thing the
-                    page already offers where the eye is.
+                    the pages, and the press adds it there and then.
+
+                    Over the flowing book, "here" is a seam the reader is about
+                    to point at, so the press does not add anything — it turns
+                    ADD CHAPTER ON, the next click in the book places the line,
+                    and the mode is over. That is the user's own sequence
+                    (2026-08-15): \`press the button, pick where it goes, and it
+                    exits chapter mode\`. It replaces a gutter that lit up under
+                    any passing pointer, which is a tool grabbing at somebody who
+                    was only reading.
                   -->
                   @if (panel.kind === 'pdf') {
                     <button
@@ -298,6 +303,16 @@ import { TabsService, type BlockElement, type ChapterMark } from '../../core/tab
                       [title]="chapterAddTitle()"
                       (click)="makeChapter()"
                     >Chapter starts here</button>
+                  } @else {
+                    <button
+                      class="act"
+                      [class.armed]="addingChapter()"
+                      [disabled]="frozen()"
+                      [title]="addingChapter()
+                        ? 'Click in the book to place it, or press Escape to stop'
+                        : 'Then click in the book where the chapter starts'"
+                      (click)="toggleAddChapter()"
+                    >{{ addingChapter() ? 'Click where it starts…' : 'Add chapter' }}</button>
                   }
                   <!--
                     The way back. The first chapter edit turns "Foundry decides"
@@ -317,7 +332,7 @@ import { TabsService, type BlockElement, type ChapterMark } from '../../core/tab
                 @if (panel.kind === 'epub') {
                   <p class="hint">
                     On the book, a chapter is the green dotted line. Drag one to move it,
-                    double-click it to rename it, or hover between two blocks to add one.
+                    double-click it to rename it, or drop it on the ✕ to remove it.
                   </p>
                 }
               </div>
@@ -691,6 +706,16 @@ import { TabsService, type BlockElement, type ChapterMark } from '../../core/tab
     }
     .act:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--border-strong); }
     .act:disabled { opacity: 0.4; cursor: default; }
+    /*
+     * ARMED — the button holding a mode open. It wears the chapter line's own
+     * green, because it is the same statement in two places: the dotted line is
+     * green, the button that places one is green while it is waiting, and the
+     * cursor over the book is a crosshair. Three signs of one mode, which is
+     * what a mode with no window of its own needs to not be invisible.
+     */
+    .act.armed, .act.armed:hover:not(:disabled) {
+      background: #2f7d4f; border-color: #2f7d4f; color: #fff;
+    }
 
     .words {
       display: block;
@@ -1127,6 +1152,26 @@ export class InspectorComponent {
     if (panel === null) return;
     if (panel.kind === 'pdf') void this.tabs.resetChapters(panel.id);
     else void this.tabs.resetBookSpine(panel.id);
+  }
+
+  /** True while this book is waiting for a click to say where a chapter starts. */
+  protected readonly addingChapter = computed(() => {
+    const panel = this.subject();
+    return panel !== null && panel.kind === 'epub' && this.tabs.chapterModeOn(panel.id);
+  });
+
+  /**
+   * Add chapter — on, or off again.
+   *
+   * A TOGGLE AND NOT A ONE-WAY SWITCH, because a mode a person can enter and
+   * cannot leave is the worse version of the hover this replaces: that at least
+   * ended when the pointer moved away. Pressing it again is a cancel, and so is
+   * Escape in the book, and so is placing the line.
+   */
+  protected toggleAddChapter(): void {
+    const panel = this.subject();
+    if (panel === null || panel.kind !== 'epub') return;
+    this.tabs.toggleChapterMode(panel.id);
   }
 
   protected startChapterRename(row: ChapterRow): void {

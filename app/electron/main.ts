@@ -150,6 +150,7 @@ import type {
   NavEcho,
   OverlayFileWire,
   ProjectDocument,
+  ProjectFinal,
   ProjectLedger,
   ProjectSummary,
   StepRow,
@@ -2000,7 +2001,85 @@ function registerIpc(): void {
     );
   }
 
+  /**
+   * The same question asked of the TRAY, which is a different catalogue.
+   *
+   * ── The bug this closes ─────────────────────────────────────────────────────
+   *
+   * The library tree draws a ✕ on export rows, and every one of them threw:
+   * `findDocument` searches `project.documents` — the CHAIN, what each step
+   * produced — while an export row comes from `manifest.final` by way of
+   * `filedDocuments`. Two catalogues, and the delete only knew one, so pressing
+   * the ✕ on a file this app had just made produced "is not a document in any
+   * of Foundry's projects" — a sentence written for a path somebody typed from
+   * outside the library, shown for a row the app drew from its own manifest.
+   *
+   * ── Why a separate door instead of teaching `findDocument` about final/ ─────
+   *
+   * Because an export is not a document in the sense the delete pair means. It
+   * has no steps, no retention, no origin; it can never be the book the project
+   * is built on; nothing was made FROM it. Folding it into the document lookup
+   * would put a row in front of `isBook`, `documentAssets` and the original's
+   * refusal — three questions that have no answer for a file in the tray — and
+   * the first one to guess would be a bug nobody could see coming.
+   *
+   * `final/` is the user's own tray (`projects.ts`, `filedDocuments`): they may
+   * have already moved it onto a reader or deleted it themselves, which is why
+   * a row whose file has gone is a REMOVAL and not an error.
+   */
+  async function findExport(filePath: string): Promise<{
+    project: ProjectSummary;
+    made: ProjectFinal;
+    label: string;
+  } | null> {
+    const target = fold(filePath);
+    for (const project of await listProjects()) {
+      for (const made of project.exports) {
+        // Whole paths, never basenames — this project holds `generated/Book.pdf`
+        // and `final/Book.pdf` at once, and the layer is the only thing telling
+        // them apart. The oldest house rule in this codebase.
+        if (fold(path.join(project.dir, ...made.file.split('/'))) !== target) continue;
+        return { project, made, label: path.basename(made.file) };
+      }
+    }
+    return null;
+  }
+
   ipcMain.handle('documents:describe', async (_event, filePath: string): Promise<DocumentDeletion> => {
+    /*
+     * THE TRAY IS ASKED FIRST, and the question it gets is its own. Removing an
+     * export takes the file and its row and nothing else: no chain to unpick, no
+     * working tree, no history, and nothing was ever made from it. Saying so in
+     * one sentence is the honest card — the document card's paragraph about the
+     * readings bank surviving would be reassurance about a danger that was never
+     * on the table.
+     */
+    const filed = await findExport(filePath);
+    if (filed !== null) {
+      // `final/` is the user's own tray, so the file may legitimately not be
+      // there — moved onto a reader, handed to somebody, deleted by hand. That
+      // is a row to clear, not an error to raise, and it changes the sentence.
+      const gone = await fsp.access(filePath).then(() => false, () => true);
+      return {
+        prompt: {
+          message: `“${filed.label}” will be removed from “${filed.project.title}”.`,
+          detail: [
+            gone
+              ? 'That file is no longer on the disk — moved or deleted somewhere else — so this '
+                + 'clears the row that still lists it.'
+              : 'The file is deleted from the disk. Foundry keeps no copy of it anywhere else.',
+            'Nothing else changes: this is one of the finished documents you exported, and the '
+            + 'book, its readings and every step it was made from stay exactly as they are. You '
+            + 'can export it again at any time.',
+          ],
+          confirm: gone ? 'Remove this row' : 'Delete this export',
+        },
+        original: false,
+        projectDir: filed.project.dir,
+        missing: gone,
+      };
+    }
+
     const { project, document } = await findDocument(filePath);
     const inventory = await inspectProject(project.dir);
 
@@ -2078,6 +2157,27 @@ function registerIpc(): void {
   }
 
   ipcMain.handle('documents:delete', async (_event, filePath: string) => {
+    /*
+     * The tray again, and asked again rather than trusted from the describe —
+     * same rule as the busy-job proof below: this is the call that unlinks
+     * something, and the catalogue may have moved under it.
+     *
+     * `deleteDocument` already does exactly the right thing with a `final/`
+     * path: it strikes the row out of `manifest.final` by LAYER (`inLayer`),
+     * removes the file, and sweeps nothing else, because an export has no
+     * working tree, no archived predecessors and no history to sweep. Only the
+     * lookup above it was blind.
+     */
+    const filed = await findExport(filePath);
+    if (filed !== null) {
+      refuseBusyJob(await inspectProject(filed.project.dir));
+      const removed = await deleteDocument(filePath);
+      forgetRecentsUnder(filePath);
+      return removed.wasMissing
+        ? `Removed “${filed.label}” from “${filed.project.title}” — the file was already gone.`
+        : `Deleted “${filed.label}” from “${filed.project.title}”.`;
+    }
+
     const { project, document } = await findDocument(filePath);
     const inventory = await inspectProject(project.dir);
     // Proven again, not trusted from the describe: a job can be queued between

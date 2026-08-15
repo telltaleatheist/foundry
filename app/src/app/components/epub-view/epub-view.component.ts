@@ -548,6 +548,9 @@ export class EpubViewComponent implements OnDestroy {
       this.frameCounts.delete(member);
       this.pushSelectMode(member);
       this.pushFlow(member);
+      // A frame that just came back from a re-serve knows nothing, and a mode
+      // the rest of the book is in is one of the things it does not know.
+      this.pushChapterMode(this.tabs.chapterModeOn(this.tab().id), member);
       return;
     }
     /*
@@ -705,6 +708,13 @@ export class EpubViewComponent implements OnDestroy {
       void this.tabs.removeChapterMark(this.tab().id, data.id, member);
       return;
     }
+    // The mode reporting itself over — the line was placed, or Escape was
+    // pressed inside the frame. The service clears it, the effect above tells
+    // every OTHER frame of this book, and the button comes back up.
+    if (data.type === 'foundry:chapter-mode' && data.on === false) {
+      this.tabs.endChapterMode();
+      return;
+    }
     // The seam's own gesture: join this paragraph to the one before it — or
     // take the decision back. Same shape as the chapter lines' four: a block
     // name and nothing else, resolved by the service to the banked answer the
@@ -760,6 +770,22 @@ export class EpubViewComponent implements OnDestroy {
 
   private pushSelectMode(member?: string): void {
     const message = { type: 'foundry:select-mode', on: this.tab().selectMode };
+    if (member === undefined) this.broadcast(message);
+    else this.postTo(member, message);
+  }
+
+  /**
+   * ADD CHAPTER, on and off, to every frame of the book at once.
+   *
+   * BROADCAST, and that is the point of it being here rather than per-frame: a
+   * continuous book is many frames in one scroll, and a person who presses Add
+   * chapter has not decided WHICH document they are going to click in. The mode
+   * is a fact about the book, so every frame is told; the first click anywhere
+   * places the line, and that frame tells the others it is over by answering
+   * back through `chapterModeEnded`.
+   */
+  private pushChapterMode(on: boolean, member?: string): void {
+    const message = { type: 'foundry:chapter-mode', on };
     if (member === undefined) this.broadcast(message);
     else this.postTo(member, message);
   }
@@ -908,6 +934,10 @@ export class EpubViewComponent implements OnDestroy {
       this.tabs.bookSpineFor(this.tab().id);
       this.pushChapters();
     });
+
+    // Add chapter, pressed or over. Every frame of the book hears it, because
+    // the person has not yet decided which document they are clicking in.
+    effect(() => { this.pushChapterMode(this.tabs.chapterModeOn(this.tab().id)); });
 
     /**
      * The inspector's commands, on their way into the frames.

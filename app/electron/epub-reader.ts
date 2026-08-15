@@ -728,7 +728,7 @@ function tagSignature(tag: ScannedTag): string {
 }
 
 /**
- * The two things an editor may delete from a block by hand.
+ * The things an editor may delete from a block by hand.
  *
  * A `noteref` anchor is the reference number's link and a `<sup>` is the number
  * itself — the emitter writes the anchor around the sup when it could match a
@@ -740,10 +740,47 @@ function tagSignature(tag: ScannedTag): string {
  * Matched on the signature's CLASS rather than its tag alone, so an `<a>` that
  * is not note apparatus — there are none in a cast book, but an imported EPUB is
  * somebody else's markup — cannot be deleted by this door.
+ *
+ * ── And `<br>`, which was being protected as though it pointed at something ──
+ *
+ * Owen edited a title holding three of them and was refused for losing them,
+ * with a message that said "a page marker is not a word" about a tag that is
+ * not a page marker. The rule was counting every tag alike, and `<br>` is not
+ * like the others: everything else this guard protects is a POINTER — a
+ * pagebreak span's id, an href, a noteref's target — and losing one silently
+ * breaks a link to somewhere. A `<br>` has no attribute, no id and no
+ * referent. It is typography, and where a title breaks its lines is precisely
+ * what a person editing a title is deciding.
+ *
+ * So it may go. See `isFreelyTypeable` for the other half of the same fact:
+ * it may also arrive, which the editor has invited by leaving Shift+Enter
+ * alone since the day it was written.
  */
 function isRemovableMarker(signature: string): boolean {
   if (signature.startsWith('<sup')) return true;
+  if (isFreelyTypeable(signature)) return true;
   return signature.startsWith('<a ') && signature.includes('class=noteref');
+}
+
+/**
+ * The tags a person may ADD to a block, which until now was none of them.
+ *
+ * The gained side of the count was absolute: any tag that was not there before
+ * refused the edit. That is right for everything that carries a reference and
+ * wrong for the line break, and the contradiction was already sitting in the
+ * editor — `click-reporter.ts` deliberately lets Shift+Enter through *"so a
+ * genuine `<br>` is still typeable in a book that uses them"*, and then this
+ * guard threw the result away. One half of a feature invited the keystroke and
+ * the other half rejected it.
+ *
+ * A break has nothing to point at, so an invented one cannot point at the
+ * wrong thing — the entire reason the exact-match rule exists. It stays exact
+ * for every other tag, and a `<br>` with attributes on it (which the emitter
+ * never writes) is NOT this: the signature carries its attributes, so a
+ * decorated break is a different signature and refuses like anything else.
+ */
+function isFreelyTypeable(signature: string): boolean {
+  return signature === '<br>';
 }
 
 function countSignatures(tags: readonly ScannedTag[]): Map<string, number> {
@@ -830,6 +867,10 @@ function refuseUnlessWordEdit(before: string, after: string, blockId: string, la
   }
   for (const [signature, count] of now) {
     const had = was.get(signature) ?? 0;
+    // A LINE BREAK MAY BE TYPED. See `isFreelyTypeable`: it is the one tag with
+    // nothing to point at, and the editor has been letting Shift+Enter make one
+    // all along.
+    if (count > had && isFreelyTypeable(signature)) continue;
     if (count > had) added.push(`${signature}${count - had > 1 ? ` ×${count - had}` : ''}`);
   }
   if (dropped.length > 0 || added.length > 0) {
@@ -838,8 +879,9 @@ function refuseUnlessWordEdit(before: string, after: string, blockId: string, la
     if (added.length > 0) parts.push(`it gains ${added.join(', ')}`);
     throw new EpubError(
       `That edit to ${where} changes the markup inside the block and not only its words: `
-      + `${parts.join(' and ')}. The tags and their attributes have to come back exactly as `
-      + 'they went in — a page marker is not a word.',
+      + `${parts.join(' and ')}. Editing in place changes words and line breaks; anything that `
+      + 'points at something else — a page anchor, a link, a note\'s reference — has to come back '
+      + 'exactly as it went in.',
     );
   }
 

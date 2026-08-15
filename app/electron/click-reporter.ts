@@ -522,6 +522,21 @@ export const REPORTER_SOURCE = `(function () {
   var gutterAt = null;
   /** What the join pill on the open gutter would post, or null for no pill. */
   var gutterJoin = null;
+  /** Which mode the OPEN strip was built for, so a mode change rebuilds it. */
+  var gutterMode = false;
+  /**
+   * ADDING A CHAPTER IS A MODE THE USER ENTERS, and this is whether they are in
+   * it. User ruling, 2026-08-15: *"chapter markers shouldnt light up when i
+   * drag the mouse around, it should be a button i press - add chapter. then it
+   * lets me pick where it goes, then it exits chapter mode."*
+   *
+   * It was built the other way — the seam offered itself to any pointer that
+   * passed over it — and the difference is the difference between a tool you
+   * pick up and a tool that keeps grabbing at you while you read. Moving a line
+   * and deleting one stay free actions, because those are gestures ON something
+   * that is already there and visible; only ADDING needed asking for.
+   */
+  var chapterMode = false;
   /** The continuations whose seams are decided, as the parent last stated them. */
   var joinedIds = [];
   var titleEditing = null;
@@ -1177,6 +1192,21 @@ export const REPORTER_SOURCE = `(function () {
       joinedIds = readJoins(data.joins);
       drawMarkers();
       applyJoins();
+      // A frozen save cannot take a new chapter, so a mode left on when the
+      // lines stop being editable is a crosshair over a book that will refuse
+      // every click.
+      if (!marksEditable && chapterMode) setChapterMode(false);
+      return;
+    }
+    /*
+     * ADD CHAPTER, pressed. Above the mode gate with the other four, because a
+     * frame in chapter mode is not exercising a power select mode confers —
+     * the lines are drawn and draggable for any reader of a live book, and
+     * adding one belongs with them (\`marksEditable\` is the real gate, and it
+     * is checked where the click lands).
+     */
+    if (data.type === 'foundry:chapter-mode') {
+      setChapterMode(data.on === true && marksEditable);
       return;
     }
     if (data.type === 'foundry:locate') { locate(data.token, data.id, data.frag); return; }
@@ -1638,13 +1668,20 @@ export const REPORTER_SOURCE = `(function () {
     // the pointer moved from an ordinary seam to a joinable one, or onto a
     // decided one — rebuilds the strip rather than showing yesterday's pills
     // over today's seam.
-    if (gutter && gutterJoin !== joinState) hideGutter();
+    if (gutter && (gutterJoin !== joinState || gutterMode !== chapterMode)) hideGutter();
     if (!gutter) {
       gutter = document.createElement('div');
       gutter.setAttribute(GUTTER, '1');
-      var pill = document.createElement('span');
-      pill.textContent = 'Chapter starts here';
-      gutter.appendChild(pill);
+      // The chapter pill belongs to chapter mode and appears nowhere else. A
+      // seam outside the mode can still open this strip — for the join pill —
+      // and it must not carry an offer to divide the book that nobody asked
+      // for.
+      if (chapterMode) {
+        var pill = document.createElement('span');
+        pill.textContent = 'Chapter starts here';
+        gutter.appendChild(pill);
+      }
+      gutterMode = chapterMode;
       /*
        * THE SEAM'S SECOND GESTURE, offered only where it means something: two
        * prose paragraphs meeting at a page turn the reflow left split. One
@@ -1681,6 +1718,25 @@ export const REPORTER_SOURCE = `(function () {
     gutterOrigin = null;
     gutterAt = null;
     gutterJoin = null;
+  }
+
+  /**
+   * Enter or leave chapter mode, and SHOW that it happened.
+   *
+   * The cursor is the whole of the feedback inside the frame, and it is enough
+   * because it is everywhere: a crosshair over the entire page says "this click
+   * is going to place something" in a way no button state can, since the button
+   * is in another window and the person is looking at the book. The button
+   * outside says which mode it is; the cursor says the mode is on.
+   *
+   * The open strip goes with the change either way — a chapter pill left over
+   * from a mode that has just ended is an offer the next click would honour.
+   */
+  function setChapterMode(on) {
+    chapterMode = on === true;
+    hideGutter();
+    var root = document.documentElement;
+    if (root) root.style.cursor = chapterMode ? 'crosshair' : '';
   }
 
   /** The page a block key names, off either end of a data-bf-src. */
@@ -1745,7 +1801,20 @@ export const REPORTER_SOURCE = `(function () {
       return;
     }
     if (markerBefore(block)) { hideGutter(); return; }
-    showGutter(id, rect.top + scrollTop(), rect.left + scrollLeft(), rect.width, joinOffer(block));
+    /*
+     * OUTSIDE CHAPTER MODE THE SEAM SAYS NOTHING ABOUT CHAPTERS. See
+     * \`chapterMode\` for the ruling that made this a mode.
+     *
+     * The join pill is the one thing a seam still volunteers unasked, and it is
+     * a different kind of offer: \`joinOffer\` returns non-null only where two
+     * prose paragraphs meet across a page turn the reflow left split — a
+     * handful of places in a book rather than every seam in it. That is
+     * information about a specific defect on this page, not an affordance
+     * chasing the pointer down the column.
+     */
+    var offer = joinOffer(block);
+    if (!chapterMode && offer === null) { hideGutter(); return; }
+    showGutter(id, rect.top + scrollTop(), rect.left + scrollLeft(), rect.width, offer);
   }
 
   // ═══ how tall this document is ═════════════════════════════════════════════
@@ -1921,11 +1990,20 @@ export const REPORTER_SOURCE = `(function () {
         hideGutter();
         return;
       }
+      // A chapter is only ever PLACED in chapter mode. Outside it this strip is
+      // the join pill's and nothing else, and a stray click on it must not
+      // divide the book.
+      if (!chapterMode) return;
       // NO TITLE IN THE MESSAGE. The parent reads the block's own words out of
       // the chapter file — the same read the relabel gesture makes — so the two
       // ways of saying "the book divides here" name a chapter identically, and
       // an undo of either has somewhere to get the name back from.
       post({ type: 'foundry:chapter-add', id: gutterAt });
+      // PLACING IT IS LEAVING THE MODE — the user's own sequence: press the
+      // button, pick the place, and the mode is over. One press, one chapter.
+      // The parent is told so its button can come back up.
+      setChapterMode(false);
+      post({ type: 'foundry:chapter-mode', on: false });
       hideGutter();
     }
   }, true);
@@ -1996,6 +2074,18 @@ export const REPORTER_SOURCE = `(function () {
   }, true);
 
   document.addEventListener('keydown', function (event) {
+    /*
+     * ESCAPE LEAVES CHAPTER MODE, and it is ABOVE the select-mode gate because
+     * the mode is: a person who entered it can always get out of it, whatever
+     * else the book is doing. A mode with no exit is worse than the hover this
+     * replaced — that at least stopped when you moved the pointer away.
+     */
+    if (chapterMode && event.key === 'Escape') {
+      event.preventDefault();
+      setChapterMode(false);
+      post({ type: 'foundry:chapter-mode', on: false });
+      return;
+    }
     if (!mode) return;
     if (editing) {
       if (event.key === 'Escape') { event.preventDefault(); cancelEdit(); }

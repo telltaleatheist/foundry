@@ -3684,6 +3684,46 @@ export class TabsService {
   }
 
   /**
+   * ── ADD CHAPTER IS A MODE, AND THIS IS WHO IS IN IT ────────────────────────
+   *
+   * One tab at a time, held as the tab's id rather than a flag per tab, because
+   * that is the rule rather than a convenience: a person is placing ONE chapter
+   * in ONE book, and two books both waiting for a click is a state nobody asked
+   * for and nobody could see. Standing in it in one book and pressing the button
+   * in another moves the mode rather than lighting up both.
+   *
+   * User ruling, 2026-08-15: *"it should be a button i press - add chapter. then
+   * it lets me pick where it goes, then it exits chapter mode."* It was built as
+   * a hover — every seam offering itself to a pointer that passed over it —
+   * which is what "chapter markers shouldnt light up when i drag the mouse
+   * around" is about. Moving a line and deleting one stay free: those act on
+   * something already drawn and already visible, and only ADDING was ambient.
+   */
+  private readonly chapterModeTab = signal<string | null>(null);
+
+  /** True while this book is waiting for a click to say where a chapter starts. */
+  chapterModeOn(tabId: string | null): boolean {
+    return tabId !== null && this.chapterModeTab() === tabId;
+  }
+
+  /** The button. Pressing it again is a cancel, which is what a toggle owes. */
+  toggleChapterMode(tabId: string): void {
+    this.chapterModeTab.update((current) => (current === tabId ? null : tabId));
+  }
+
+  /**
+   * The mode ending for any reason that is not the button: the line was placed,
+   * Escape was pressed in the frame, or the book stopped being editable.
+   *
+   * Idempotent and unconditional about WHICH tab — a frame reporting the mode
+   * over cannot be reporting it over for somebody else, since only one tab is
+   * ever in it.
+   */
+  endChapterMode(): void {
+    this.chapterModeTab.set(null);
+  }
+
+  /**
    * Read the spine this book is showing — the live curation, or the frozen one
    * when the position stands on a save.
    *
