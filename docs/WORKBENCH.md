@@ -481,6 +481,10 @@ means "finished". (User: "im thinking we shouldnt call the working files
 tabs (through the ordinary close question — uncommitted decisions still
 get their one ask), and the tree leaves the library — a project is open
 while one of its documents is, which is the existing ruling, unchanged.
+(Amended by the 2026-08-15 debris pass: the root also wears a
+hover-revealed ✕ — the same action through the same dispatch — because
+a right-click with nothing on screen to suggest it was the only door,
+and an invisible door is not a door.)
 With nothing open, the workbench shows its empty state — home. Closed
 projects live on the home screen's "Your books", not in the library.
 
@@ -612,3 +616,326 @@ budget warning is pre-existing). No new tests (user ruling; fix invalidated
 ones, don't add). Long WHY comments in the codebase's voice. Escape
 backticks as \` in Angular template prose. Never a raw control byte. Never
 match basenames across directories. No filenames in user-facing copy.
+
+---
+
+## 8. Phase C — what lands in `final/` is an edition (specced 2026-08-15)
+
+DERIVED-BOOK phase C promised "cuts really removed and apparatus tidied at
+materialization". A line-referenced survey of the tree corrected the
+premise before it became the spec: **struck blocks are already really
+removed from every format** — `applyOverlay` drops them
+(`src/vlm/overlay.ts:690`) at `convert.ts:483`, upstream of the format
+fork, and select-mode strikes mirror into the overlay since A2. What still
+leaks into an export today:
+
+1. **Struck footnotes ship present.** A note strike renders as
+   `data-bf-cut="1"` on the `<aside>` (`dots-book.ts:1858-1863`) — marks,
+   not removal, by design, because the CAST book is the working surface
+   and the user must see what they struck. But no export path ever runs
+   the removal: the exported EPUB contains the struck note and its live
+   `noteref` link, and the plain-text export contains the note's TEXT
+   with no mark at all (`packageVlmText` tag-strips the same XHTML,
+   `dots-book.ts:2973`).
+2. **Editing stamps ship.** `data-bf-id` on every element, `data-bf-src`,
+   `data-bf-note` — the picker's plumbing, exported to the reader.
+3. **The second door is worse.** Save-As (`epub:save`,
+   `app/electron/main.ts:2242-2254`) repacks the working tree VERBATIM
+   into `final/` and records it as an export — every mark, every stamp,
+   zero tidying.
+
+`epub-final` (`src/epub/final.ts`, entry `epubFinal` at `:771`; 22 tests
+in `test/epub/final.test.ts`) already knows the whole tidy: cut removal,
+orphaned-note drop, noteref demotion to a bare `<sup>` (`:528-545`),
+empty-footnotes-section removal, nav tidy, page-marker re-homing,
+attribute stripping (`:226` — strips `data-bf-cut` + `data-bf-id`, KEEPS
+`data-bf-page` + `data-bf-cat`, `:218-225`). Nothing in `app/` invokes it.
+
+**The ruling.** `generated/` is the workbench and keeps its marks;
+anything that lands in `final/` is an EDITION: struck notes absent, their
+references demoted to the printed number, no editing attributes. Two
+mechanisms, chosen by where the product is made:
+
+- **Fresh casts get a `--final` mode in the engine** (assembly-time,
+  upstream of the format fork), because the txt route can only be fixed
+  there — a post-zip pass on the EPUB would leave the note's text in the
+  plain-text export. `vlm-convert --final`: a struck note's `<aside>` is
+  never emitted; its noterefs emit as bare `<sup>n</sup>` (the
+  `epub-final` demotion, done at the source); a chapter whose every note
+  is struck emits no footnotes section; `data-bf-id`/`data-bf-src`/
+  `data-bf-note`/`data-bf-cut` are not emitted; `data-bf-page` and
+  `data-bf-cat` stay (the `final.ts:218-225` ruling, unchanged). Default
+  off — the cast path must stay byte-identical, and the suite pins it.
+- **Already-built EPUBs go through `epubFinal`** — the translate-descended
+  export (stage 1 must keep stamps because `translate` requires them,
+  `src/translate/book.ts:124-130`, so the tidy must run AFTER the last
+  stage: translate writes to a tmp intermediate and an `epub-final` stage
+  lands the file in `final/`) and the Save-As door (repack to tmp, tidy
+  into the destination; a book without stamps — a loose EPUB that was
+  never foundry's — repacks verbatim as today, since `epub-final` refuses
+  it and there is nothing of ours to strip).
+
+**The facsimile is exempt, and honestly.** The PDF branch forks before
+notes exist (`convert.ts:568`); a note is just text on the printed page
+there. Block strikes already apply to the facsimile (they die at
+`applyOverlay`); a NOTE strike does not reach it, and page-faithful is
+what a facsimile is for. Recorded as the known asymmetry, not a defect.
+
+### Unit C — the edition (fence: `src/**`, `test/**`,
+`app/electron/workspace.ts`, `app/electron/job-queue.ts`,
+`app/electron/engine.ts`, `app/electron/epub-reader.ts`,
+`app/electron/main.ts` — the `epub:save` handler only)
+
+1. **Engine**: `--final` on `vlm-convert` (register in `src/commands.ts`;
+   thread through `convert.ts` into the assembly). Emission rules above.
+   The struck-note set must be consultable at noteref-emission time
+   (`buildChapterBody`'s callback, `dots-book.ts:1582-1592`, matches via
+   `noteFor` `:1575-1578` — the same `(page, printed)` match `noteStruck`
+   uses).
+2. **Engine**: extend `epub-final`'s `EDITING_ATTRIBUTES` (`final.ts:226`)
+   to also strip `data-bf-src` and `data-bf-note` — the two attributes
+   born after it was written. Fix the one test this invalidates
+   (`final.test.ts:122`); add none.
+3. **App, plain export**: `argsFor`'s conversion branch
+   (`job-queue.ts:578-612`) appends `--final` when the request is an
+   export (`request.export`). The cast path (no `export`) is untouched.
+4. **App, translate-descended export**: today the pipeline's last stage
+   writes `final/<name>.epub` directly. Insert the tidy: the translate
+   stage aims at a tmp intermediate and a new `epub-final` stage
+   (`engine.ts` gains the wrapper) writes the destination. Held/immediate
+   and rotation rules unchanged (`job-queue.ts:223`, `:874-897`).
+5. **App, Save-As**: the `epub:save` path repacks to tmp and runs
+   `epubFinal` into the destination when the book is a foundry book;
+   verbatim repack otherwise. `recordFinal` unchanged.
+6. Every changed behavior gets its WHY comment; the cast-vs-edition
+   distinction (point of this section) belongs at the `--final` flag's
+   declaration.
+
+---
+
+## 9. Unit M — metadata joins the ledger, and a curate step casts its own
+book (specced 2026-08-15; the two §3/§6 deferrals, built)
+
+Both rulings are already on the books: "Metadata belongs in the ledger"
+(§6) and re-casting at a curate landing (§3, deferred; the deferral is
+even recorded in code at `projects.ts:1941-1945`). Survey line refs are
+current at `a82797c`.
+
+### The metadata step
+
+Today the dialog writes straight into the live document — the OPF inside
+the open book's working tree (`meta:write-epub`, `main.ts:2313-2317` →
+`workingTreeOf`) or the working PDF whole-file (`meta:write-pdf`,
+`:2377-2381`) — and nothing else learns it happened: no step, no
+announce, only `noteDocumentEdited`. Two consequences the spec fixes:
+the ledger lies by omission, and **an export silently loses the edits**
+(the export casts fresh from the bank; the working tree's OPF is not an
+input to it).
+
+- **New `StepAction` `'metadata'`**, shaped like curate: retention
+  `irreplaceable` (typed human values; each Apply is a deliberate act
+  and appends its own row), `RETAINED_BESIDE_YOU: true` (the pointer
+  does not move for a save-shaped step), `DISPLAYS_ITSELF: false`
+  (a metadata row does not freeze the editor), `SHOWS_ITS_PAYLOAD:
+  false`, `BOUNDS_THE_WALK: false`, `PARAMS_OF: ['fields']` — the
+  changed-field names, for the label. `labelFor`: **Metadata** (with
+  the fields in parens when short, e.g. "Metadata (title, author)").
+  Adding the action makes the six `Record<StepAction, …>` tables
+  compile errors — that is the design working; the full checklist of
+  switches is in the survey (ledger.ts:94, :111, :138, :175, :251,
+  :309, :1705, :1865, :1997; glyph map
+  open-documents.component.ts:1537).
+- **Payload**: `metadata/<uuid>.json` — the patch as applied (kind,
+  fields, values). A new `recordMetadata(dir, payload, params)` beside
+  `recordCuration` (`projects.ts:1712-1738`), same
+  `deletableProjectDir → withManifest → landStep → writeManifest →
+  announceProjects` shape, called from the `meta:write-*` handler tails
+  in main.ts. The write to the live document stays (the user sees the
+  edit at once); the step is the durable record. Deleting the step
+  deletes the record, not the applied values — the same honesty curate
+  already has, and `deleteCost` says so.
+- **Exports apply the chain.** At materialization, the position's
+  accumulated metadata patches (walk the ancestry, newest value per
+  field wins) are applied to the product as a final stage: `epub-meta`
+  on the packed EPUB (the zip form the engine already has,
+  `src/epub/meta.ts:679-699`), `pdf-meta` for the facsimile. This
+  closes the exports-lose-metadata hole the same way Unit C closes the
+  cuts hole. Plain-text exports carry no metadata; skip.
+- **The rail gate joins the ruling it already cites.**
+  `canEditMetadata` (`tool-rail.component.ts:506-509`) is tab-keyed
+  and has no import-row disable, despite `:444-452` recording "Same
+  rule for Export and Metadata." Fix: in a project, enabled only when
+  the standing step's action is not `import` (the Export shape,
+  `:459-466`); loose files keep tab keying.
+
+### The curate re-cast
+
+A curate row shows `castBook(manifest)` — the project's ONE cast
+(`documentAtPosition`, `projects.ts:1989-1996`) — so every curate step
+shows the same document: the live tree wearing the marks. The ruling:
+**a curate landing casts its own book**, so standing on an older save
+shows the book as of that save.
+
+- Per-step cast name: `generated/<stem>.<id8>.epub`, `id8` from the
+  curate step's own uuid — the exact scheme readings and translations
+  already use (`bankForReading` `projects.ts:2365-2370`,
+  `translationTarget` `ledger.ts:1165-1171`).
+- The plan must be keyed to the STEP, not the position: a curate
+  landing leaves the pointer where it was (`RETAINED_BESIDE_YOU`), so
+  `planRendering`'s `renderingOverlay(dir, manifest)` would render the
+  live overlay under a step-shaped name. A `planConversionForStep`
+  variant passes the landed step's own payload via
+  `overlayFileFor(dir, manifest, step)` (`projects.ts:1814-1822`, the
+  existing seam) and the per-step output name.
+- Hook: after `overlay:commit` returns in main.ts (`:2472-2473`) —
+  main is where the queue is already reachable (`queue.ensureCast`
+  precedent at `main.ts:1101`); `projects.ts`/`overlays.ts` cannot
+  import the queue (cycle). Fire-and-forget like `ensureCast`; a
+  failed cast is a console line, never a failed save.
+- `documentAtPosition`'s read-or-curate arm asks for the standing
+  curate step's own cast first (`onDisk`), falling back to
+  `castBook` — projects from before this unit keep working. The
+  reverse mapping moves with it: `stepStandingFor` maps a per-step
+  cast's path to its curate step; `positionPicture` already carries
+  the step id when `own` is true.
+- The cast is a RENDERING — free, regenerable, never anyone's payload.
+  Deleting the curate step sweeps its cast file (`planStepSweep`
+  learns the name); the queue's rotation refusal is satisfied by the
+  per-step name (nothing overwrites).
+
+Fence: `app/shared/types.ts`, `app/shared/ledger.ts`,
+`app/electron/projects.ts`, `app/electron/overlays.ts`,
+`app/electron/main.ts`, `app/electron/workspace.ts`,
+`app/electron/job-queue.ts` (export stage + cast hook only),
+`app/src/app/components/metadata-dialog/**`, `tool-rail.component.ts`,
+`open-documents.component.ts` (glyph + label only),
+`inspector.component.ts` (standing-strip label only if needed).
+Runs AFTER Unit C lands (shares workspace.ts/job-queue.ts).
+
+---
+
+## 10. Phase D — transforms as records: the rulings and the cut
+(specced 2026-08-15)
+
+The survey corrected DERIVED-BOOK §5's optimism in four places; these
+rulings absorb the findings so no agent re-litigates them:
+
+1. **The bank re-keys, loudly.** Text-level masking changes the masked
+   source, which is a key input; `KEY_FORMAT` (`bank.ts:136`) exists
+   exactly for this. Bump it (`foundry-translate-bank-2`). Every
+   existing translation bank stops matching and a re-generate re-asks
+   the model. Considered and rejected: migrating old answers by
+   re-keying — recomputing a cross-version masked form is precisely
+   the ambiguity KEY_FORMAT forbids. The bank is a cost cache, not
+   truth; the honest price is one full re-ask per book, and it is
+   accepted.
+2. **Footnote records are per-note.** One banked Footnote answer
+   becomes several notes only at emit; a whole-block foreign-language
+   record has no handle to drop note 3 of 5, so §5's "every language
+   drops the block on replay" fails for single notes. Ruling: the
+   transform consumes Footnote blocks SPLIT per note (the split rule —
+   leading superscript at line start — runs on SOURCE text, so it is
+   language-neutral), and a record's `parts` key carries the `#note`
+   dimension the overlay grammar already has. A note strike then drops
+   its record at materialization like a block strike drops a block.
+3. **Chains stay refused this wave.** §5 said translate-of-translate
+   "falls out for free"; it does not — the one-hop refusal
+   (`pipeline.ts:207-214`), `landsUnder`, and a composed key are real
+   design work. Records make chains POSSIBLE; building them is
+   deferred and recorded here, not silently dropped.
+4. **The EPUB-shaped jobs move into materialization.** A records-mode
+   translate produces no EPUB, so `dc:language`/`xml:lang` retagging
+   and nav relabelling move to the cast/export: the emitter substitutes
+   record text BEFORE nav is minted, so nav headings come out
+   translated with no before/after comparison at all, and the language
+   tags are set from the step's `params.language`.
+5. **Success = the records file's own atomic write.** Pending file +
+   swap-into-place, the readings pattern (`readings.ts:399/:574`).
+6. **The branched-read overlay ping-pong is pre-existing and out of
+   scope.** One live overlay per project vs per-step generations
+   archives working corrections on every branch hop
+   (`overlays.ts:491-497`). Phase D must not REBUILD the hazard
+   (records are per step and consumed per position — they don't), but
+   fixing it is separate work, recorded here.
+7. **"Edit transformed text" is a human row in the records file.** A
+   per-record, per-language correction appends `{key, parts, text,
+   author: 'user'}`; materialization takes the newest row per key.
+   Per-language by construction (one records file per translate step).
+   "Edit block text" (source-level) mirrors to the overlay's existing
+   `text` field and re-keys the block's records automatically — the
+   masked source changed, so the question changed.
+
+**The cut** (serial where fences overlap):
+
+- **Unit D1 — the engine (fence: `src/**`, `test/**`)**: the
+  text-level masker (markdown emphasis pairs + Unicode superscript
+  runs; no direct tests exist for `markers.ts` today — write the new
+  masker's characterization as fixes to the run.test contract, not a
+  parallel suite); grouping rebuilt over FlowBlocks (consecutive
+  List-items travel together; Table text is raw model HTML and keeps
+  the whole-group refusal); `translate --records` mode: consumes the
+  reflowed base of a stamped EPUB, emits
+  `readings/<key>.<tag>[.<id8>].records.jsonl` rows
+  `{key, parts, generation, text}`, pending+swap, KEY_FORMAT bump;
+  materialization substitution: the emitter takes an optional records
+  map and uses record text in place of `flow.text` at the one `inline`
+  call (`dots-book.ts:1676` area) — provenance/`data-bf-src` keeps
+  naming the source block (it is computed from parts, not text);
+  language retag + translated nav from substitution; per-note Footnote
+  records per ruling 2. The EPUB→EPUB mode STAYS working this unit
+  (the app still drives it until D2 lands) — `--records` is additive.
+- **Unit D2 — the app (fence: `app/shared/**`, `app/electron/**`,
+  renderer dialog/queue surfaces)**: `translateStage`/`planTranslation`
+  plan records jobs; the two-stage export becomes cast-with-records
+  (vlm-convert reads the step's records file; no tmp EPUB splice); the
+  ledger learns the records path (`PARAMS_OF`/`MINTED_BY_THE_RUN` gain
+  `records` as `bank` was added; `orphanedBanks`/`destroyedBy`/
+  `planStepSweep` learn the third name — the survey names the exact
+  lines); the dialog-branch seeding asymmetry is fixed (a branch from
+  the dialog seeds records by copy exactly as Generate seeds banks,
+  `job-queue.ts:1026-1033`); the shelf's progress parsing keeps
+  working (`translate: block N/M` line shape is load-bearing,
+  `engine.ts:225-228`).
+- **Unit D3 — the ops (fence: renderer + `app/shared/overlay.ts` +
+  engine `parseOverlay`/reflow as needed)**: "edit transformed text"
+  per ruling 7 (the in-place word editor over a translated book writes
+  a human record row instead of the working tree); "edit block text"
+  mirrors to the overlay `text` field (today it writes the working
+  tree only — the survey's finding 1); both keep
+  `refuseUnlessWordEdit` as the guard. **Plus the MANUAL JOIN OP** —
+  DERIVED-BOOK §2/§3 promised it the day the ink test died ("the user
+  sees the seam on the flowing page, joins it, and the ledger records
+  labour like any other decision") and it was never built: the overlay
+  vocabulary has no join field, the reflow consumes none, no gesture
+  offers it. A 2026-08-15 sweep caught it as a dropped half. The op:
+  source-level `join` decision (join this block to its predecessor),
+  consumed by the reflow's seam logic, offered on the book where two
+  adjacent blocks meet at a page seam, mirrored and committed like
+  every other decision. The existing text-override exclusion for
+  multi-part elements is a recorded limit — do not silently widen it.
+
+D1 runs alongside Unit M (disjoint: engine vs app). D2 after D1 and M.
+D3 after D2. Phase E (retirement) runs last, after D3.
+
+**Folded into phase E, so it stops being forgotten:** DERIVED-BOOK
+phase 0 (undo goes in-memory) never landed — `overlay:ledger-load/save`
+are still registered (`main.ts:2455-2458`) and the scan-side undo still
+persists. The 2026-08-15 ruling (§3 of DERIVED-BOOK, later than the
+"survives the app dying" build) stands: BOTH undo persistences —
+`overlays/<key>.ledger.json` and `history/<tree>.json` — retire in
+phase E, stacks go in-memory per session, fresh per open and per
+generation change (not per position move), and the live overlay's
+continuous persistence is what makes a crash lose only undo DEPTH,
+never decisions.
+
+**Scheduled as its own unit, after E — the branched-read overlay
+ping-pong** (foundry-step-model's standing ARCHITECTURAL item, half
+fixed by BANK-LIFECYCLE): banks are per-step now, but the live overlay
+is still ONE file per project while generations are per read step, so
+standing on branch B archives branch A's working corrections aside
+(`overlays.ts:491-497`), and hopping back archives again — corrections
+ping-pong into stamped folders. The fix follows the bank scheme:
+per-read-branch overlay files (`overlays/<key>.<id8>.json` keyed to the
+read step), `locateOverlay`/`overlayFileFor` ask the position's read
+step, archive-on-mismatch becomes the rare case (a re-read) instead of
+the every-hop case.
