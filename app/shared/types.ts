@@ -1689,7 +1689,7 @@ export interface UncommittedCuration {
   /** True when the chapter list differs from that save's — a spine is labour too. */
   chapters: boolean;
   /**
-   * What the save is called — "Saved corrections (23)" — or null when this book
+   * What the save is called — "Applied changes (23)" — or null when this book
    * has none that these corrections could be measured against.
    */
   since: string | null;
@@ -2419,8 +2419,15 @@ export interface LedgerStep {
   retention: StepRetention;
   createdAt: number;
   /**
-   * What the row says, in the app's own voice: "Read (17 pages)", "Saved
-   * corrections (23)", "Translated (Hungarian)". Never a filename.
+   * What the row says, in the app's own voice: "Read (17 pages)", "Applied
+   * changes (23)", "Translated (Hungarian)". Never a filename.
+   *
+   * STORED, NOT DERIVED, which is why a project can hold two spellings of one
+   * kind of row: `labelFor` is asked once, when the step is recorded, and a
+   * rename of the vocabulary afterwards leaves the old rows saying what they were
+   * stamped with. Nothing keys off the words — the action does — and rewriting a
+   * person's history to tidy the app's own naming would be editing the record of
+   * what happened to their book.
    */
   label: string;
   /**

@@ -609,11 +609,11 @@ export interface FoundryApi {
      * saving it.
      *
      * REJECTS with a sentence when there is nothing to freeze. An empty snapshot
-     * would put a row reading "Saved corrections" between the reading and the
+     * would put a row reading "Applied changes" between the reading and the
      * translation for a book nobody has curated.
      *
      * A SAVE IS NOT A NAME, which is why this takes a path and nothing else. The
-     * row reads "Saved corrections (23)", composed by `labelFor` from the count in
+     * row reads "Applied changes (23)", composed by `labelFor` from the count in
      * the app's own voice, exactly as every other step is named by its action —
      * asking for a title would put one row of somebody's history in a different
      * register from the rest, and it would be the row they left blank.
@@ -668,9 +668,9 @@ export interface FoundryApi {
    * destroy, what a step costs to lose and whether a path is a project at all are
    * main's own records — and `delete` UNLINKS FILES, so a renderer's word about a
    * directory cannot be an authorization (the `admitted` precedent). Main proves
-   * the directory is one of Home's projects on all four calls, not only the
-   * destructive one: a gate that guards only the delete is a gate somebody routes
-   * around by reading first.
+   * the directory is one of Home's projects on every call in this family, not only
+   * the destructive one: a gate that guards only the delete is a gate somebody
+   * routes around by reading first.
    *
    * ── And why the ordering never crosses the boundary ───────────────────────
    *
@@ -708,6 +708,39 @@ export interface FoundryApi {
      * somebody a book they did not ask for.
      */
     go(projectDir: string, stepId: string): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
+    /**
+     * Stand on whichever step this document belongs to. Answers exactly as `go`
+     * does, and answers with the ledger UNCHANGED when the document belongs to no
+     * step or to the one already stood on.
+     *
+     * ── The gesture it exists for ─────────────────────────────────────────────
+     *
+     * There is ONE selection: clicking a row in the library moves the position,
+     * and focusing a document moves it back, so the pointer and the pane can never
+     * describe two different things. Without it a person reads the book, clicks
+     * Translate, and translates the scan — because the pointer was still on the
+     * import while the right document was on screen, and nothing on the surface
+     * said so.
+     *
+     * ── Why the renderer names a file and not a step ──────────────────────────
+     *
+     * Because a tab holds a path and nothing else, and turning a path into a step
+     * means knowing which reading cast the book in `generated/`, which working
+     * copy is the scan rather than a reprint, and which of a chain's rows is the
+     * one you can still act from. Those are main's records — the same ones
+     * `documentAt` reads in the other direction, resolved in the same place so the
+     * two cannot come to disagree.
+     *
+     * FREE AND SILENT WHERE NOTHING MOVES. This runs on every focus gesture, and
+     * the answer is nearly always the row already stood on; no manifest is
+     * rewritten in that case. An export never moves the position at all — exports
+     * are terminal, nothing is made from one, and looking at one is not a step.
+     *
+     * Rejects only for a directory that is not a project or a catalogue that will
+     * not parse, like everything else here. A path belonging to no step is an
+     * ordinary answer, not a refusal.
+     */
+    standFor(projectDir: string, filePath: string): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
     /**
      * WHICH DOCUMENT BELONGS ON SCREEN AT THIS PROJECT'S POSITION — absolute, or
      * null when the position names no document of its own.

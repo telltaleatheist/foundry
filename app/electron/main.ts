@@ -102,6 +102,7 @@ import {
   readStepLedger,
   readingIsComplete,
   recordFinal,
+  standForDocument,
 } from './projects';
 import {
   clearRecents,
@@ -2494,7 +2495,7 @@ function registerIpc(): void {
 
   // ── The step ledger ──────────────────────────────────────────────────────
   /*
-   * FOUR CALLS, AND MAIN PROVES THE DIRECTORY ON ALL FOUR.
+   * ONE FAMILY, AND MAIN PROVES THE DIRECTORY ON EVERY MEMBER OF IT.
    *
    * The renderer names a project directory, exactly as it names a PDF above, and
    * `deleteStep` unlinks files inside whatever it was handed — which is the same
@@ -2581,6 +2582,27 @@ function registerIpc(): void {
   ipcMain.handle('ledger:read', (_event, projectDir: string) => readStepLedger(projectDir));
   ipcMain.handle('ledger:go', (_event, projectDir: string, stepId: string) =>
     goToStep(projectDir, stepId));
+  /*
+   * THE SAME MOVE, NAMED BY A DOCUMENT INSTEAD OF BY A ROW.
+   *
+   * `go` is the user pointing at a step; this is the user pointing at a document
+   * and the app working out which step that is — the gesture behind "focusing a
+   * tab moves the position back" (docs/WORKBENCH.md §6c). The resolution is
+   * `standForDocument` (electron/projects.ts), beside the forward direction it has
+   * to agree with, for the reason every other path in a project is composed there:
+   * a renderer deciding for itself which step a file belongs to would be a second
+   * opinion about the ledger, and the way that opinion goes wrong is that it
+   * stands somebody on the import and then translates their scan.
+   *
+   * NO PATH IS ADMITTED HERE, and the difference from `document-at` is worth
+   * saying out loud. That call ANSWERS with a path this process then has to let a
+   * viewer open, so it adds it to the allow-list. This one is handed a path the
+   * renderer already has open — the allow-list said yes to it when the document
+   * was opened — and answers with rows. A handler that admitted whatever it was
+   * given would be a door that grants access for being asked a question.
+   */
+  ipcMain.handle('ledger:stand-for', (_event, projectDir: string, filePath: string) =>
+    standForDocument(projectDir, filePath));
   /*
    * MAIN RESOLVES IT, SO MAIN ADMITS IT — the same pairing the import's relocation
    * already makes (`document:relocated`, above), and for the same reason. The

@@ -196,6 +196,8 @@ const api: FoundryApi = {
   ledger: {
     read: (projectDir) => ipcRenderer.invoke('ledger:read', projectDir),
     go: (projectDir, stepId) => ipcRenderer.invoke('ledger:go', projectDir, stepId),
+    standFor: (projectDir, filePath) =>
+      ipcRenderer.invoke('ledger:stand-for', projectDir, filePath),
     documentAt: (projectDir) => ipcRenderer.invoke('ledger:document-at', projectDir),
     describeDelete: (projectDir, stepId) =>
       ipcRenderer.invoke('ledger:describe-delete', projectDir, stepId),

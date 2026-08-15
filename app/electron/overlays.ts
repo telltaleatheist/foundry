@@ -572,7 +572,7 @@ export async function saveOverlayFile(pdfPath: string, file: OverlayFile): Promi
  * between a document that autosaves and a document that keeps restore points.
  *
  * A STEP IS NOT NAMED BY THE PERSON WHO MAKES IT, which is why this takes a path
- * and nothing else. `labelFor` composes "Saved corrections (23)" from the count,
+ * and nothing else. `labelFor` composes "Applied changes (23)" from the count,
  * in the app's own voice, exactly as every other row in the history is named by
  * its action — a typed-in name would be the one row of somebody's history in a
  * different register, and it would be the row they left blank.
@@ -592,7 +592,7 @@ export async function saveOverlayFile(pdfPath: string, file: OverlayFile): Promi
  * An empty snapshot is a step whose payload says nothing, sitting in the history
  * beside steps that cost hours, offering the user a delete confirmation about a
  * file with no decisions in it. Worse, it makes the history lie about the shape
- * of the work: a row that reads "Saved corrections" between the reading and the
+ * of the work: a row that reads "Applied changes" between the reading and the
  * translation says somebody curated this book, and nobody did.
  *
  * THE CHAPTERS COUNT AS DECISIONS, which is why the test is not simply the
@@ -658,7 +658,7 @@ export async function commitOverlay(pdfPath: string): Promise<LedgerView> {
     // after a re-read, so a snapshot that did not say which reading it was made
     // under would be a set of amendments nobody could ever safely apply again.
     generation: where.generation,
-    // The count is what the ROW says ("Saved corrections (23)"), so it is the
+    // The count is what the ROW says ("Applied changes (23)"), so it is the
     // amendments and not the chapters: a spine is one decision about the book
     // rather than a number of decisions about blocks, and adding it in would make
     // the label quote a total nobody could account for.

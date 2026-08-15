@@ -143,6 +143,7 @@ import {
   reRunTarget,
   readingInEffect,
   recordLanding,
+  SHOWS_ITS_PAYLOAD,
   stepOf,
   subtree,
   translatedInto,
@@ -154,6 +155,9 @@ import {
   type ReadAsk,
 } from '../shared/ledger';
 import { GENERATED_ROLE_FOR } from '../shared/documents';
+// One spelling for a path, so Windows' three become one — and the same one the
+// renderer compares with, which is the point of it living in `shared`.
+import { fold } from '../shared/original';
 
 /**
  * Somebody has to be told when the library changes, and this is how.
@@ -1146,7 +1150,7 @@ function originLedger(payload: string, label: string, createdAt: number): Projec
  * entire premise is that what it finds there is disposable.
  *
  * `<uuid>.json` rather than a name anybody reads: the step's LABEL is what a
- * person sees ("Saved corrections (23)"), and a filename that tried to say the
+ * person sees ("Applied changes (23)"), and a filename that tried to say the
  * same thing would be a second place for it to be said differently.
  */
 export function curationsDir(dir: string): string {
@@ -1252,8 +1256,8 @@ export interface LedgerView {
  *
  * The path is PROVEN to be a project before a byte is read — `deletableProjectDir`
  * — because every call in this family takes a directory named by the renderer and
- * one of them unlinks files. The gate is the same one for all four so that no
- * member of the family is the lenient way in.
+ * one of them unlinks files. The gate is the same one on every member so that none
+ * of them is the lenient way in.
  */
 export async function readStepLedger(dir: string): Promise<LedgerView> {
   const manifest = await readManifest(deletableProjectDir(dir));
@@ -1979,6 +1983,201 @@ export async function documentAtPosition(dir: string): Promise<string | null> {
   if (flowing !== null) return flowing;
   const live = await reconcileLivePdf(resolved, manifest);
   return live === null ? null : onDisk(resolved, `${WORKING}/${live.file}`);
+}
+
+/**
+ * STAND WHERE THIS DOCUMENT BELONGS — `documentAtPosition` run backwards, and the
+ * two have to agree about every path either of them can name.
+ *
+ * ── The two selectors pretending to be one ──────────────────────────────────
+ *
+ * The library picked a FILE and the steps list picked a STEP, and the user found
+ * the hole between them: *"i could have a document open, the epub, but have the
+ * pdf import step selected, and id never know that i just ran translate against
+ * the original pdf rather than the generated epub because i had the wrong step
+ * selected, since the right document was open."* Every action in this app is made
+ * from the POSITION — a reading's parent, a translation's source, what Export is
+ * offered — so a pane showing one thing while the pointer stands on another is an
+ * app that will quietly act on the file the person is not looking at. There is one
+ * selection now, and focusing a document is one of the gestures that moves it.
+ *
+ * ── Why the mapping is HERE, beside the forward direction ───────────────────
+ *
+ * Because these are one fact read in two directions, and the day they disagree is
+ * the day clicking a tab moves the pointer somewhere that then shows a different
+ * file — a selection that fights the user. `documentAtPosition` is directly above;
+ * everything this consults (`castBook`, `liveCopyOf`, the origin's payload) is
+ * what that function consults, so a change to what a row SHOWS lands in the same
+ * screen as what a document STANDS FOR.
+ *
+ * ── The four answers ────────────────────────────────────────────────────────
+ *
+ * AN EXPORT MOVES NOTHING. `final/` is where Save and Export write, and an export
+ * is terminal by ruling — nothing is ever made from one (docs/WORKBENCH.md §1,
+ * "it wont go into the working files as a step because it isnt the base for new
+ * steps"). It has no step, so there is nowhere to stand, and yanking the pointer
+ * to some plausible row because somebody glanced at a facsimile would be the app
+ * inventing a selection out of a look.
+ *
+ * THE ORIGINAL STANDS ON THE IMPORT — its archived payload and the working copy
+ * made from it, which are the two paths `documentAtPosition` answers for that row
+ * and therefore the two that must come back to it. The live copy is asked for by
+ * `liveCopyOf` rather than composed from `working/` and the stem: a working PDF
+ * that came from somewhere else is a reprint that replaced the scan, and calling
+ * that the import would stand the pointer on the untouched original for a document
+ * the original is not.
+ *
+ * THE BOOK STANDS ON THE NEWEST STEP OF ITS CHAIN, and the newest is the point.
+ * The cast in `generated/` is shown by the reading AND by every curate save under
+ * it — one file, many rows — so the reverse direction has to choose, and the only
+ * honest choice is the one you can act from: standing on an old save and then
+ * translating would translate the book as of that save, which is not the book on
+ * screen. (`castBook` records which cast is live; nothing records which READING
+ * cast it, and `documentAtPosition` names that limitation rather than engineering
+ * around it. The newest reading is the one that left it, so that is the chain
+ * walked here — the same answer, from the same missing fact.)
+ *
+ * A TRANSLATION IS A BOOK OF ITS OWN and walks its own chain, from the translate
+ * step that retained it down through its saves. That is why the walk stops at any
+ * descendant that retained a document (`SHOWS_ITS_PAYLOAD`): a translation made
+ * from a reading is emphatically not the newest step "of" that reading for the
+ * purpose of deciding where the reading's own book stands.
+ *
+ * AND ANYTHING ELSE MOVES NOTHING. A loose file, a bank, a curation snapshot, a
+ * rotated predecessor still on disk, a document from another project: none of them
+ * is a row in this ledger, and the caller's tab is none the worse for the pointer
+ * staying where the user put it.
+ *
+ * ── Standing still is not a write ───────────────────────────────────────────
+ *
+ * This runs on every focus gesture — a tab click, a Ctrl+Tab, a pane pointerdown —
+ * where the answer is nearly always the row the pointer is already on. A manifest
+ * rewritten on each of those would be a folder people sync churning for a fact
+ * that did not change, so the write is skipped when nothing moves, and the answer
+ * is composed from the catalogue as it already stands. `positionOf` and not
+ * `ledger.position` for the comparison: an absent pointer MEANS the newest step
+ * (shared/types.ts, `ProjectLedger.position`), so a project that has never written
+ * one and is standing on its newest row must recognise itself and stay quiet.
+ *
+ * Where it does move it is `goToStep` and nothing else — the same write, the same
+ * announcement, the same rows — because two ways to move the pointer is two
+ * accounts of what moving it costs.
+ */
+export async function standForDocument(dir: string, absolutePath: string): Promise<LedgerView> {
+  const resolved = deletableProjectDir(dir);
+  const manifest = await readManifest(resolved);
+  const ledger = ledgerOf(manifest);
+  const wanted = await stepStandingFor(resolved, manifest, absolutePath);
+  if (wanted === null || wanted === positionOf(ledger)?.id) {
+    return { ledger, rows: chronological(ledger) };
+  }
+  return goToStep(resolved, wanted);
+}
+
+/**
+ * The step a document in this project belongs to, or null for one that belongs to
+ * none.
+ *
+ * COMPARED PROJECT-RELATIVE AND FOLDED, whole path against whole path, with
+ * `fold` — the same spelling-flattener both sides of the app already compare
+ * paths with (shared/original.ts). Never by basename: a project holds
+ * `archive/Book.pdf`, `working/Book.pdf` and `generated/archived-…/Book.pdf` at
+ * once, and the layer is the entire difference between the untouched scan, the
+ * copy being edited and a rotated predecessor nobody is standing on.
+ *
+ * THE PATH IS RESOLVED BEFORE IT IS FOLDED, because the caller's path came in
+ * over the wire and `..` in the middle of it is a spelling of somewhere else.
+ * A path outside this project's directory answers null: it is a document of some
+ * other book, and moving THIS project's pointer for it would be a selection made
+ * about a folder nobody clicked in.
+ */
+async function stepStandingFor(
+  dir: string,
+  manifest: ProjectManifest,
+  absolutePath: string,
+): Promise<string | null> {
+  const ledger = ledgerOf(manifest);
+  const origin = originOf(ledger);
+  if (origin === null) return null;
+
+  const root = fold(path.resolve(dir));
+  const target = fold(path.resolve(absolutePath));
+  if (!target.startsWith(`${root}/`)) return null;
+  const relative = target.slice(root.length + 1);
+
+  // Terminal, and terminal means it is not a place to be standing.
+  if (relative.startsWith(`${FINAL}/`)) return null;
+
+  if (relative === fold(origin.payload)) return origin.id;
+  const live = await liveCopyOf(dir, manifest, origin.payload);
+  if (live !== null && relative === fold(live)) return origin.id;
+
+  const translated = newestWhere(
+    ledger,
+    (step) => step.action === 'translate' && fold(step.payload) === relative,
+  );
+  if (translated !== null) return newestOfChain(ledger, translated).id;
+
+  const cast = castBook(manifest);
+  if (cast !== null && relative === fold(cast)) {
+    const reading = newestWhere(ledger, (step) => step.action === 'read');
+    if (reading !== null) return newestOfChain(ledger, reading).id;
+  }
+  return null;
+}
+
+/**
+ * The last step this ledger holds that answers a question, or null for none.
+ *
+ * THE ARRAY'S ORDER IS THE CHRONOLOGY, which is the ledger's own rule rather than
+ * a convenience taken here: `parseLedger` refuses a file whose rows run backwards
+ * and `chronological` draws the list in this order, so "the last one matching" and
+ * "the newest one matching" are the same sentence. Re-sorting by `createdAt`
+ * instead would let two rows stamped in one millisecond swap places between
+ * repaints, and the pointer would land on a different row for the same click.
+ */
+function newestWhere(
+  ledger: ProjectLedger,
+  wanted: (step: LedgerStep) => boolean,
+): LedgerStep | null {
+  let newest: LedgerStep | null = null;
+  for (const step of ledger.steps) if (wanted(step)) newest = step;
+  return newest;
+}
+
+/**
+ * The newest step of the chain that shows one book: this step, and the descendants
+ * that are still about the same document.
+ *
+ * WALKED DOWNWARD THROUGH A CHILDREN MAP, on `subtree`'s reasoning and not merely
+ * in imitation of it: a single forward pass over the array assumes every parent is
+ * listed before its child, which is an invariant `appendStep` happens to produce
+ * and the file format does not promise, and a grandchild missed here is a pointer
+ * that lands one row short of where the user is looking.
+ *
+ * THE WALK STOPS AT A STEP THAT RETAINED A DOCUMENT. A translation hangs off the
+ * reading it was made from and is a different book at a different path; including
+ * it would make "the newest step of the reading's chain" answer with a row whose
+ * own document is not the one that was handed in.
+ */
+function newestOfChain(ledger: ProjectLedger, from: LedgerStep): LedgerStep {
+  const children = new Map<string, LedgerStep[]>();
+  for (const step of ledger.steps) {
+    if (step.parent === null) continue;
+    children.set(step.parent, [...(children.get(step.parent) ?? []), step]);
+  }
+  const kept = new Set<string>();
+  const pending = [from];
+  while (pending.length > 0) {
+    const step = pending.pop()!;
+    if (kept.has(step.id)) continue;
+    kept.add(step.id);
+    for (const child of children.get(step.id) ?? []) {
+      if (SHOWS_ITS_PAYLOAD[child.action]) continue;
+      pending.push(child);
+    }
+  }
+  return newestWhere(ledger, (step) => kept.has(step.id)) ?? from;
 }
 
 /**

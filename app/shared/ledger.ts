@@ -292,6 +292,19 @@ export function originStep(
  * and "Read" alone is a row that does not say whether it read the book or four
  * pages of it. A step whose count nobody recorded says the plain word, which is
  * the honest answer and the one a migrated project gets.
+ *
+ * A CURATION SAVE SAYS WHAT THE BUTTON SAID. The button is Apply changes, and
+ * the row it produces used to read "Saved corrections" — two names for one act,
+ * which asks a person to work out that the row is the thing they just pressed.
+ * "Corrections" was also a claim about the work: striking a running head or
+ * relabelling a heading is a change to the book, not a correction of an error.
+ *
+ * LABELS ARE DISPLAY-ONLY, so old projects keep the words they were stamped with.
+ * `LedgerStep.label` is stored, not derived, and rewriting every project's history
+ * to match a rename would be this app editing the record of what happened to
+ * somebody's book in order to tidy its own vocabulary. Nothing keys off the text —
+ * the action does — so the two spellings sitting side by side in an old ledger
+ * cost nothing but the truth that the rows were made a year apart.
  */
 export function labelFor(action: StepAction, params?: LedgerParams): string {
   switch (action) {
@@ -301,8 +314,8 @@ export function labelFor(action: StepAction, params?: LedgerParams): string {
       return params?.pages === undefined || params.pages <= 0 ? 'Read' : `Read (${params.pages} pages)`;
     case 'curate':
       return params?.amendments === undefined || params.amendments <= 0
-        ? 'Saved corrections'
-        : `Saved corrections (${params.amendments})`;
+        ? 'Applied changes'
+        : `Applied changes (${params.amendments})`;
     default:
       return params?.language === undefined || params.language.length === 0
         ? 'Translated'
@@ -1972,8 +1985,16 @@ export function translationInEffect(ledger: ProjectLedger): LedgerStep | null {
  * is in effect" is answered by walking. Writing it as `action === 'translate'` at
  * the one call site that asks today would make the next change a search for every
  * place that guessed.
+ *
+ * EXPORTED FOR THE REVERSE DIRECTION. `standForDocument` (electron/projects.ts)
+ * resolves a document back to the step it belongs to, and the question it asks
+ * while walking DOWN a chain is this same one: a descendant that retained a
+ * document of its own is a different book, so the walk stops there rather than
+ * offering a translation as the newest step of the reading it was made from. That
+ * is the exact `action === 'translate'` this table was written to prevent being
+ * spelled a second time.
  */
-const SHOWS_ITS_PAYLOAD: Readonly<Record<StepAction, boolean>> = {
+export const SHOWS_ITS_PAYLOAD: Readonly<Record<StepAction, boolean>> = {
   import: true,
   read: false,
   curate: false,

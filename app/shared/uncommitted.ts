@@ -64,7 +64,7 @@ import type { LedgerStep, ProjectLedger, UncommittedCuration } from './types';
 
 /** A frozen save, as this module needs it: what it holds, and what it is called. */
 export interface SavedCuration {
-  /** The step's own label — "Saved corrections (23)". Never a filename. */
+  /** The step's own label — "Applied changes (23)". Never a filename. */
   label: string;
   content: CurationContent;
 }

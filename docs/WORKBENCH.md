@@ -392,6 +392,214 @@ When both land, DERIVED-BOOK §3's op table gains its two rows: `cut note`
 
 ---
 
+## 6c. The library tree — one selector, settled 2026-08-15
+
+The user, after living with the built wave: "i feel like the available
+documents (on the left sidebar) and the steps (right sidebar) are
+confusing. i could have a document open, the epub, but have the pdf import
+step selected, and id never know that i just ran translate against the
+original pdf rather than the generated epub because i had the wrong step
+selected, since the right document was open."
+
+The diagnosis: the app has **two selectors pretending to be one**. The left
+sidebar selects a file, the right sidebar selects a step, and actions key
+off a mix of both. The resolution, in the user's words: "maybe we merge
+them and top level things get arrows that expand down. steps applied to
+[x] document. the original document can be the root since thats where it
+all started … this is kind of set up like final cut pro, where the left
+side is the events/libraries/etc, and the right side is the effects to
+apply to each thing."
+
+### The tree
+
+The left sidebar becomes the **library**: one tree per project, rooted at
+the original import, plus loose files as childless top-level rows.
+
+```
+▾ moby-dick.pdf                      ← import, the root. Click = the scan.
+   ▾ Book · read 8/12               ← the reading. Click = the reflowed HTML.
+        Applied changes · 8/13       ← curation save
+        ▾ Translated · 8/14          ← translate = a new book, so it nests
+             Applied changes · 8/14
+   Facsimile PDF · 8/14              ← export: terminal, no arrow,
+   EPUB · 8/15                          nothing ever under it
+```
+
+- **Every step is a tree node.** The ledger was always secretly a tree
+  (every step has a parent); the flat Steps list was that tree with the
+  indentation removed. Children of the import: the reading and the
+  exports. Children of a reading: its curation saves and any translate
+  built from it. A translate is a new book, so it nests and grows its own
+  saves.
+- **Exports are children of the root**, at the same indent as the Book —
+  visibly terminal (no expand arrow), labelled by product and date, never
+  filename. NOT fully top-level: with several projects open, orphaned
+  exports would lose their parentage. This amends §4-R1's "indented under
+  the project" only in that the project row IS the import root now.
+- **Loose files** stay top-level, childless, file-keyed (no ledger, so no
+  position; their actions keep taking the file).
+
+### One selection
+
+- **Clicking a tree node moves the position** and shows that node's
+  document (import → the scan; reading/save → the book as of that step;
+  export → the exported file). Same `ledger:go` → `showPosition` seam.
+- **Focusing a tab moves the position back** — the scan tab stands on the
+  import; a book tab stands on the newest step of its chain (the only one
+  you can act from). Tabs are windows onto the selection, never a second
+  selector.
+- **Every action keys off the position, never the open tab.** Translate on
+  a reading = the book as read; on a save = as curated; on the import row
+  = disabled. Same rule for Export and Metadata. The open tab stops being
+  an input to anything.
+- Right-click a step still offers "Open in split"; exports drag into a
+  split for comparison exactly as tabs do.
+
+### The right sidebar
+
+**Steps leaves the inspector.** The tree absorbed it. Chapters and
+Categories stay, describing whatever node the position stands on. In the
+vacated top slot sits a one-line **standing strip** — the standing step's
+label — with the **Apply changes** button and its sentence beneath it,
+gated exactly as today. The right side is the inspector in the Final Cut
+sense — details and actions for the selected thing, never a competing
+selection. This amends the stationary-sections rule: the sections that
+remain still hold their order and their fixed hint reserves; there is
+simply one fewer of them, and the standing strip is the new fixed top.
+
+### Naming
+
+**The working document is never called "EPUB".** It is **the Book** — the
+evolving thing you read, curate, and translate. "EPUB" appears in exactly
+two places: the export modal's card and an export row's label. The word
+means "finished". (User: "im thinking we shouldnt call the working files
+'epub' until we export.")
+
+### Going home
+
+**Right-click the import root → Close project.** Closes the project's
+tabs (through the ordinary close question — uncommitted decisions still
+get their one ask), and the tree leaves the library — a project is open
+while one of its documents is, which is the existing ruling, unchanged.
+With nothing open, the workbench shows its empty state — home. Closed
+projects live on the home screen's "Your books", not in the library.
+
+### The build — units T1, T2, T3
+
+Survey facts this plan stands on: the renderer already holds the whole
+DAG (`StepRow.step.parent` is the full parent id; `types.ts:2385–2391`
+says the flat list was a deliberate flattening); today NO rail button
+reads the position (`tool-rail` gates on `tabs.activeDocument()`;
+Translate's input is the focused tab's path,
+`translate-dialog.component.ts:283–286`; Export's is the project's
+original, `export-dialog.component.ts:370–376`); and tab focus never
+writes the position (`activateInPane` / `focusPane`,
+`tabs.service.ts:1733–1754`, call nothing on the ledger — the complete
+list of `this.ledger.*` calls is lines 715, 953, 980, 1052, 1293, 2633,
+2924, 2936, none of them `go`).
+
+**Unit T1 — main + shared** (fence: `app/electron/**`, `app/shared/**`)
+
+1. New IPC **`ledger:stand-for (dir, absolutePath)`** — resolve which
+   step the document belongs to, move the position there, return
+   `{ ledger, rows }` exactly like `ledger:go`. The mapping lives next
+   to `documentAtPosition` (`projects.ts`), because that is the forward
+   direction and the two must agree:
+   - a path under `final/` → no-op (exports are terminal; viewing one
+     never moves the position);
+   - the working scan / origin payload → the origin step;
+   - the cast book in `generated/` → the NEWEST step of the chain
+     descending from the reading that cast it (the read, or its latest
+     curate save) — the newest is the only step you can act from;
+   - a translation's book (a translate step's payload) → the newest
+     step of that translate's own chain;
+   - anything that resolves to no step → no-op, return current.
+   Standing where the position already stands must not rewrite the
+   ledger file — skip the write when nothing moved.
+2. Preload + `app/shared/api.ts`: `api.ledger.standFor(dir, path)`.
+3. `labelFor` curate rename (`shared/ledger.ts:296–311`):
+   `'Saved corrections'` → `'Applied changes'` — the button says Apply
+   changes, the step should say what the button did. Old persisted
+   labels stay as stored; labels are display-only.
+
+**Unit T2 — the library tree** (fence:
+`open-documents.component.ts`, `inspector.component.ts`, and
+`ledger.service.ts` only if ensure-wiring proves necessary)
+
+1. `open-documents` becomes the **library**. For each OPEN project (the
+   existing has-open-tabs rule, `groups()` `:650–651`, stands), render
+   the ledger tree from `ledger.historyFor(dir)` — verify the ledger is
+   actually held for every open project (`ensure` runs somewhere near
+   `tabs.service.ts:2633`; wire it in `open-documents`/`ledger.service`
+   if a project can be open unheld). Root = the origin step, labelled
+   with the project title. Children by `step.parent`. Exports
+   (`ProjectSummary.exports`) render as children of the root — no
+   expand arrow, labelled by product + date (existing `exportLabel` /
+   `exportWhen`). Node labels: **"Book"** for read steps, `step.label`
+   for everything else; date tally per the inspector's `when()` rule.
+   `.current` marks `standingId()`. Clicking any step node →
+   `ledger.go(dir, step.id)` (the inspector's `stand()`,
+   `inspector.component.ts:1389–1399`, moves here). Clicking an export
+   row keeps today's open semantics.
+2. Rows that die: the per-project document rows — open, available, and
+   their `typeLabel` names ("EPUB" as a working-document label dies
+   with them). Rows that stay: loose tabs (top-level, childless),
+   editor (HTML) faces indented under their root, "a copy you opened".
+3. Context menus: root → **Close project** (the group-✕ semantics,
+   `closeProject()` `:885–888` — ordinary tab close so the B1 questions
+   fire) + Show in file manager; step node → **Open in split** (move
+   the inspector's `openInSplit` wiring, `:1430–1445`) + **Delete this
+   step…** (move the inspector's `discard` flow, `:1454–1472`); export
+   node → existing Show / Delete. The per-row ✕ stays a tab-closing
+   affordance only — a step is not a tab and its deletion hides behind
+   the menu.
+4. `inspector` loses the Steps section (template 80–205 and its class
+   members). In the vacated top slot: the standing strip — one line,
+   the standing step's label — and the Apply changes button + sentence,
+   gated by `unkept()` exactly as today (`:1313–1317`, `:1484–1487`).
+   Update the furniture comment (`:81–98`) to record the reversal and
+   point here; Chapters / Categories keep their order and their fixed
+   hint reserves.
+5. The panel header says **Library**.
+
+**Unit T3 — one selection** (fence: `tabs.service.ts`,
+`workspace.component.ts`, `tool-rail.component.ts`,
+`translate-dialog.component.ts`, `export-dialog.component.ts`,
+`metadata-dialog.component.ts`, `queue-shelf.component.ts`) — runs
+after T1 (needs its API) and after T2 (works on its landscape).
+
+1. **The focus mirror.** The user's focus gestures — strip tab click
+   (`workspace.component.ts:141`), pane pointerdown (`:109`), Ctrl+Tab
+   (`nextTab`), Ctrl+1…5 (`focusPaneAt`) — call a new
+   `standForTab(tabId)`: loose file → no-op; **if the tab's path IS the
+   position's shown document → no-op** (the guard that matters:
+   standing on an older step and clicking into its document must not
+   yank the position to newest); else `api.ledger.standFor(dir, path)`
+   and fold the returned history into `LedgerService` the way `go()`
+   does. Programmatic reveals (`showPosition` / `showDocument`) must
+   NOT mirror — only the user-gesture call sites do.
+2. Expose **`documentShownFor(dir)`** as a signal-backed read — the
+   `documentShown` map (`tabs.service.ts:921`) mirrors its writes into
+   a signal so dialogs and gates can react to it.
+3. **Dialogs key off the position.** Translate `source()`: in a
+   project, the position's shown document (must be the book; standing
+   on the import → empty state, "Stand on the book to translate it");
+   a loose EPUB tab keeps file keying. Export enablement: in a
+   project, reading done AND the standing step's action is not
+   `import`; a loose PDF keeps today's rule. Metadata: in a project,
+   the position's document; loose unchanged.
+4. **The naming audit** (§6c Naming): `translate-dialog` `:158`/`:164`
+   ("Open an EPUB first" → book language), `queue-shelf` `:133`/`:177`
+   (the automatic cast is "the book"; an export stays "EPUB"), rail
+   button titles. The working document is never called EPUB; the word
+   appears only on the export modal's card and export rows. `typeLabel`
+   itself survives (it names files — loose rows and copies).
+
+T1 and T2 run in parallel (disjoint fences, no shared contract). T3
+runs after both. The lead verifies and commits; agents never commit.
+
+---
+
 ## 7. Order, gates, house rules
 
 Units E and R2 run in parallel (disjoint fences, contracts in §5). Unit R1
