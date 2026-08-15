@@ -232,6 +232,57 @@ unchanged.
   throwaway scripts. If a session has budget for one thing, that is
   the thing.
 
+### Wave 4b — THE HAND-TEST'S FIRST THREE (run before Phase E)
+
+Found by the user clicking, 2026-08-15, within minutes of D3 landing.
+**All three are one shape**: a rule that was right for the surface it
+was written against, still aimed at that surface after the surface
+moved. That is the exact failure mode this file exists for, and it is
+why Phase G is not optional — the gates caught none of them.
+
+1. **Deleting an export throws.** The library tree offers the ✕ to
+   export rows (`open-documents.component.ts:315`, `kind === 'export'`),
+   but main's `findDocument` (`main.ts:1988`) searches only
+   `project.documents`. Export rows come from a DIFFERENT catalogue —
+   `manifest.final` → `filedDocuments` (`projects.ts:4670`) →
+   `project.exports` — so the lookup can never succeed, and it fails
+   with a sentence written for a foreign path ("not a document in any
+   of Foundry's projects") about a file this app made and listed.
+   **Fix**: an export delete is its own door, not the document door —
+   an export has no steps, no origin, cannot be the project's
+   original, and its removal is "unlink the file, drop the manifest
+   row". Teaching `findDocument` about `manifest.final` is the wrong
+   direction: it would make export rows answer questions
+   (original? retention? steps?) that do not apply to them.
+2. **`<br>` is protected as though it were a page marker.**
+   `refuseUnlessWordEdit` lets only `<sup>` and a noteref `<a>`
+   disappear; every other tag must return exactly. A `<br>` carries no
+   attribute, no id, no reference — it is typography, and where a
+   title breaks its lines is precisely what a person editing a title
+   is deciding. The refusal even says "a page marker is not a word"
+   about a tag that is not a page marker. **And the twin, unhit but
+   certain**: the editor's keydown deliberately leaves Shift+Enter
+   alone *"so a genuine `<br>` is still typeable"*
+   (`click-reporter.ts:2005`) while the guard refuses ANY gained tag —
+   the editor invites the keystroke and then rejects the edit. **Fix**:
+   `<br>` becomes freely droppable AND typeable; every pointer-bearing
+   tag keeps exact-match protection; the message stops calling a line
+   break a page marker.
+3. **Renaming a chapter from the inspector throws.** The Contents
+   rename needs a nav anchor matching on file AND fragment exactly
+   (`epub-reader.ts:1532`, no fallback), or a page heading still
+   reading what the nav said. After unit K the book is CONTINUOUS —
+   many chapters inside one document — so the inspector's rows carry
+   in-document fragments the per-document nav anchors do not have, and
+   a chapter line's title is not a heading element for the fallback to
+   find either. **Fix, and it follows the user's own ruling** (*"that
+   dotted line is the definitive chapter info for the book"*): a
+   rename from the inspector amends the CHAPTERS overlay row — the
+   same write the line's own double-click performs — instead of
+   hunting for an anchor. Confirm the diagnosis against a live cast's
+   nav before building; the fragment mismatch is strongly indicated
+   but was not observed directly.
+
 ### Wave 5
 
 - **Phase E — retire the old surfaces.** The html-editor machinery (dead
