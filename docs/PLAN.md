@@ -82,7 +82,8 @@ unit K).
 | 3 | A deleted book's ledger answers "gone", not "broken" | `a82797c` |
 | 4 | Debris: stale comments, dead `openConfirm()`, duplicate toolbar titles, visible Close-book ✕ on the tree root | `54bb437` |
 | 5 | **Phase C — what lands in `final/` is an edition**: struck notes never emitted, noterefs demoted to the printed digit, editing attributes withheld, translated exports tidied after their last stage, Save-As no longer zips the workbench verbatim | `2beeaf5` |
-| — | The specs for everything below | `f2a8141`, `da96196` |
+| 6 | **Unit D1 — the engine's records mode**: text-level masking (a new tokenizer; the edge-peel hack proved unnecessary), `translate --records` + `--source-records` (chain-ready), `vlm-convert --records` substitution at the emitter, per-note footnote records, KEY_FORMAT bumped, composes with `--final` | `cd919d0` |
+| — | The specs for everything below, and this file | `f2a8141`, `da96196`, `fea8f6b` |
 
 Phase C's premise was corrected by survey before it was built: struck
 BLOCKS were already really removed (they die at `applyOverlay`, upstream of
@@ -96,7 +97,7 @@ wrong, and the next survey should be trusted over the next memory too.
 
 Fences are disjoint within a wave; a wave lands before the next starts.
 
-### Wave 2 — RUNNING
+### Wave 2 — Unit D1 LANDED (`cd919d0`); Unit M running
 
 - **Unit M — metadata joins the ledger, and a curate step casts its own
   book.** Spec: WORKBENCH §9. Closes two deferrals from §3/§6 of that file
@@ -104,13 +105,14 @@ Fences are disjoint within a wave; a wave lands before the next starts.
   because the export casts fresh from the bank and the edit lives in the
   working tree's OPF. Also fixes `canEditMetadata`, which never got the
   import-row gate its own comment says it has.
-- **Unit D1 — the engine's records mode.** Spec: WORKBENCH §10 + the D1
-  cut. Text-level masking (a new tokenizer over markdown emphasis and
-  Unicode superscript runs — `markers.ts` does NOT relocate), grouping
-  rebuilt over blocks, `translate --records`, `vlm-convert --records`
-  substitution at the emitter, per-note footnote records, KEY_FORMAT
-  bumped. Must compose with `--final`. Chain-ready format + a
-  parent-records source mode (see chains, below).
+- ~~Unit D1~~ — landed. The format it wrote is the contract D2 consumes;
+  it is spelled out in WORKBENCH §10 rather than left in a report.
+  Grouping came free rather than being rebuilt: the cast's own container
+  markup already groups a list with its items, so `planChunks` and its
+  siblings were reused verbatim. What D1 leaves for D2 (its own words):
+  the one-hop refusal at `pipeline.ts:207-214`, the `landsUnder`
+  generalization, `params.language` → `--from` wiring, and the
+  "Translate (English → Hungarian)" labels.
 
 ### Wave 3
 
@@ -223,6 +225,19 @@ supposed to be, and it exists so the same failure is visible next time.
 - **The reported footnote count includes struck notes** in edition mode
   (the counter mints ids book-wide; returning the emitted count would make
   two chapters share one). Documented at the filter.
+- **D1's new machinery has no suite behind it** — the text masker, the
+  un-renderer that recovers flowing text from a cast, the records file and
+  the substitution were verified by throwaway scripts against a real cast
+  and then the scripts were deleted, per the no-unasked-tests ruling. The
+  builder named this as the one honest gap in the unit, and it is repeated
+  here rather than left in a report nobody re-reads. If the testing ruling
+  ever relaxes, this is the second place to spend it (after the app).
+- **A part-divider's composed label stays in the source language** under
+  records materialization (e.g. `PART III — RESISTANCE`). Nav labels and
+  headings translate, because they are read off the substituted heading;
+  a part divider's label is composed by the page classifier before any
+  substitution exists. Found and recorded by D1 rather than papered over;
+  a fix belongs with whoever owns `partVerdict`.
 
 ---
 

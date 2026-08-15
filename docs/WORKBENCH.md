@@ -896,6 +896,38 @@ rulings absorb the findings so no agent re-litigates them:
   language retag + translated nav from substitution; per-note Footnote
   records per ruling 2. The EPUB→EPUB mode STAYS working this unit
   (the app still drives it until D2 lands) — `--records` is additive.
+**The records format AS BUILT (D1, landed `cd919d0`) — D2 consumes
+exactly this.** File: `readings/<key>.<tag>[.<id8>].records.jsonl`,
+one JSON object per line:
+
+```
+{"key":"<sha256 hex>","parts":"12:3 13:0","generation":"g7","text":"…"}
+{"key":"…","parts":"9:3#1","text":"…"}
+{"parts":"9:3#1","text":"a person's correction","author":"user"}
+```
+
+- `parts` (required) — `data-bf-src` verbatim: `page:order`,
+  `page:order:part`, space-joined for a reflow-joined paragraph, plus
+  `#<ordinal>` for one note. Materialization looks up by this; **newest
+  row wins**.
+- `key` (required on machine rows) — `bankKey` over
+  `foundry-translate-bank-2 ∥ model ∥ to ∥ from ∥ instructions ∥
+  maskedText`. The cost cache. A keyless row is remembered by position
+  only and never enters the cache — which is what makes D3's human
+  rows possible without polluting it.
+- `generation` (optional) — opaque, carried, never interpreted.
+- `text` — the flowing dialect (`**bold**`, `*ital*`, `¹⁴`).
+- `author` (optional) — absent = model, `"user"` = a person. **A run
+  never appends over a user row answering the same key**; where the
+  key changed it does append and logs why.
+
+CLI: `translate --epub <cast.epub> --to en [--from de] --records <out>
+[--source-records <parent>] [--generation <tok>] [--fresh-bank]`, then
+`vlm-convert --pdf … --out … --records <file> --language en [--final]
+[--format txt]`. Records mode REQUIRES `data-bf-src` on translatable
+blocks and `data-bf-note` on asides, and refuses by name otherwise —
+so it must be handed the cast, never an edition.
+
 - **Unit D2 — the app (fence: `app/shared/**`, `app/electron/**`,
   renderer dialog/queue surfaces)**: `translateStage`/`planTranslation`
   plan records jobs; the two-stage export becomes cast-with-records
