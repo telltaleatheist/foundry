@@ -56,8 +56,19 @@
 import { promises as fsp } from 'node:fs';
 import * as path from 'node:path';
 
+import { randomUUID } from 'node:crypto';
+
 import { writeAtomically } from './epub-writer';
-import { overlayArchiveDir, overlaysDir, projectDirOf, readManifest, readingGeneration } from './projects';
+import {
+  curationsDir,
+  overlayArchiveDir,
+  overlaysDir,
+  projectDirOf,
+  readManifest,
+  readingGeneration,
+  recordCuration,
+  renderingOverlay,
+} from './projects';
 import {
   OverlayError,
   emptyOverlay,
@@ -67,7 +78,14 @@ import {
   type OverlayFile,
 } from '../shared/overlay';
 import { readJson } from '../shared/json';
-import type { LedgerAction, LedgerLoad, LedgerRow, LedgerStacks, OverlayLoad } from '../shared/types';
+import type {
+  LedgerAction,
+  LedgerLoad,
+  LedgerRow,
+  LedgerStacks,
+  OverlayLoad,
+  ProjectLedger,
+} from '../shared/types';
 
 /** The ledger schema this module writes and the only one it reads. */
 const LEDGER_VERSION = 1;
@@ -88,6 +106,28 @@ const FIELDS: ReadonlySet<string> = new Set([
 export interface OverlayLocation {
   file: string;
   ledger: string;
+  /**
+   * The overlay a RENDERING at the project's position is made with — the frozen
+   * curation snapshot when the user is standing on one, and `file` otherwise.
+   *
+   * ── Why this is a second field and not `file` resolved differently ──────────
+   *
+   * `file` is the LIVE curation and has to stay the live curation, because it is
+   * what `saveOverlayFile` writes to. A snapshot is a retained payload: it is
+   * frozen at the instant it was committed and it never changes again, which is
+   * the entire reason it is worth keeping and the entire reason a step can point
+   * at it. Resolving `file` to the snapshot would mean the next strike anybody
+   * made while standing on a save silently rewrote that save — destroying the
+   * frozen state to record an edit, which is the one thing a snapshot may never
+   * do.
+   *
+   * So the two questions are kept apart, because they are two questions: WHERE
+   * DOES A CORRECTION GO (always the live pair) and WHAT DOES A RENDERING READ
+   * (the position's answer). Showing a snapshot read-only in the block editor
+   * when the position is a save is the renderer's job and a later pass; what this
+   * field settles is the one that reaches the engine's command line.
+   */
+  rendering: string;
   /**
    * The readings bank these amendments are about.
    *
@@ -160,6 +200,11 @@ export async function locateOverlay(pdfPath: string): Promise<OverlayLocation> {
   return {
     file: path.join(folder, `${key}.json`),
     ledger: path.join(folder, `${key}.ledger.json`),
+    // Composed from the manifest that was already read, rather than by a second
+    // read: the position is a fact about the same catalogue this function has
+    // open, and asking for it again would let the two answers be about two
+    // different moments.
+    rendering: renderingOverlay(projectDir, manifest),
     readings,
     /**
      * THE PDF THE BANK WAS READ FROM, which is not the one the tab is showing.
@@ -259,8 +304,27 @@ async function setAside(where: OverlayLocation, why: string): Promise<string> {
  * looks like before its first correction.
  */
 export async function loadOverlayFile(pdfPath: string): Promise<OverlayLoad> {
-  const where = await locateOverlay(pdfPath);
+  return readOverlay(await locateOverlay(pdfPath));
+}
 
+/**
+ * The same three outcomes, for a caller that has already located the files —
+ * and typed as the overlay this module actually holds.
+ *
+ * SPLIT OUT FOR TWO REASONS, and the second one is the one that matters.
+ * `commitOverlay` has a location in its hand and calling the public door would
+ * read the catalogue a second time, so the two halves of one commit could be
+ * about two different moments. And `OverlayLoad.file` is the WIRE shape
+ * (`OverlayFileWire`), which is structurally the same object with its literal
+ * types widened for the boundary — perfectly correct to send to a renderer, and
+ * not something to build a file out of. A commit that took the wire shape back
+ * would need a cast to write it, and a cast is how a category the engine never
+ * emits gets written into a snapshot that four hundred blocks depend on.
+ */
+async function readOverlay(where: OverlayLocation): Promise<{
+  file: OverlayFile;
+  notice: string | null;
+}> {
   let text: string;
   try {
     text = await fsp.readFile(where.file, 'utf8');
@@ -350,6 +414,107 @@ export async function saveOverlayFile(pdfPath: string, file: OverlayFile): Promi
   parseOverlay(bytes.toString('utf8'), where.file);
   await fsp.mkdir(overlaysDir(where.projectDir), { recursive: true });
   await serialise(where.file, () => writeAtomically(where.file, bytes));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Freezing one: a curation step
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Freeze the live curation as a snapshot, and record the step that names it.
+ *
+ * ── What Save means here, which is not what Save means anywhere else ────────
+ *
+ * The live overlay is already saved. It is written whole and atomically after
+ * every gesture — that is what `saveOverlayFile` is — so there is no unsaved work
+ * for a Save button to rescue, and a button that claimed to be doing that would
+ * be lying about the file it was writing.
+ *
+ * What this does instead is take a COPY that will never change again. The live
+ * file goes on being the working state, edited continuously, still the thing
+ * `Ctrl+Z` walks back; the snapshot is a retained payload with a step of its own,
+ * clickable in the history, renderable, and restorable. It is the difference
+ * between a document that autosaves and a document you can name a version of.
+ *
+ * ── The live overlay is NOT cleared, moved or touched ───────────────────────
+ *
+ * The obvious alternative — commit takes the live file and starts a fresh one —
+ * is wrong in the way that costs somebody their afternoon. Committing would then
+ * be a gesture that EMPTIES the block editor, so the book on screen would repaint
+ * as uncorrected the instant the user pressed Save, and the only way back to
+ * their own work would be to understand the step model well enough to click the
+ * right row. Nothing is taken away: the copy is what is retained, and the
+ * original is where it was.
+ *
+ * ── A commit with nothing in it is refused rather than minted ───────────────
+ *
+ * An empty snapshot is a step whose payload says nothing, sitting in the history
+ * beside steps that cost hours, offering the user a delete confirmation about a
+ * file with no decisions in it. Worse, it makes the history lie about the shape
+ * of the work: a row that reads "Saved corrections" between the reading and the
+ * translation says somebody curated this book, and nobody did.
+ *
+ * THE CHAPTERS COUNT AS DECISIONS, which is why the test is not simply the
+ * amendment count. A definitive chapters list is a person saying where this book
+ * divides — the same labour as a strike and retained for the same reason — and a
+ * curation that is nothing but a spine is a real thing to want to keep. An
+ * ABSENT `chapters` means nobody has touched them; an empty ARRAY means somebody
+ * said this book has no divisions, which is a decision and is preserved as one
+ * (see `OverlayFile.chapters`).
+ */
+export async function commitOverlay(pdfPath: string): Promise<ProjectLedger> {
+  const where = await locateOverlay(pdfPath);
+  const { file } = await readOverlay(where);
+
+  if (file.amendments.length === 0 && file.chapters === undefined) {
+    throw new OverlayError(
+      `There is nothing to save for ${path.basename(pdfPath)} yet — no blocks have been struck, `
+      + 'relabelled or rewritten, and no chapters have been set. Correct something first and this '
+      + 'will keep a copy of it that nothing later can change.',
+    );
+  }
+
+  /*
+   * A UUID, AND THE PROJECT-RELATIVE PATH IS WHAT THE STEP CARRIES.
+   *
+   * Never the book's name and never a timestamp: a snapshot is addressed by the
+   * step that names it, the step's LABEL is what a person reads, and a filename
+   * that tried to say the same thing would be a second place for it to be said
+   * differently. The uuid also makes the write collision-free by construction —
+   * two commits a second apart cannot land on one name, which is exactly the
+   * failure `archiveAside` has to refuse for its per-second stamps.
+   */
+  const name = `${randomUUID()}.json`;
+  const snapshot = path.join(curationsDir(where.projectDir), name);
+  // The generation is MAIN'S, stamped over whatever was loaded — `saveOverlayFile`'s
+  // rule and its reason: the file's binding to a reading is main's assertion about
+  // main's own catalogue. Round-tripped through the reader before a byte lands,
+  // for that function's reason too.
+  const bytes = Buffer.from(overlayText({ ...file, generation: where.generation }), 'utf8');
+  parseOverlay(bytes.toString('utf8'), snapshot);
+  await fsp.mkdir(curationsDir(where.projectDir), { recursive: true });
+  await serialise(snapshot, () => writeAtomically(snapshot, bytes));
+
+  /*
+   * THE FILE FIRST, THE STEP SECOND, and never the other way round. A step is a
+   * pointer at a retained payload; a step recorded before its payload exists is a
+   * row the user can click, render from and be shown a refusal by. If the write
+   * above fails this throws and no step is minted, which leaves an orphan file
+   * only in the case where the write half-succeeded — and `writeAtomically` is
+   * what makes that case not exist.
+   */
+  return recordCuration(where.projectDir, `curations/${name}`, {
+    // WHICH PASS OVER THE PAGES THESE BLOCK NUMBERS ARE ABOUT. Carried for the
+    // reason the live overlay carries it: `(page, order)` means different blocks
+    // after a re-read, so a snapshot that did not say which reading it was made
+    // under would be a set of amendments nobody could ever safely apply again.
+    generation: where.generation,
+    // The count is what the ROW says ("Saved corrections (23)"), so it is the
+    // amendments and not the chapters: a spine is one decision about the book
+    // rather than a number of decisions about blocks, and adding it in would make
+    // the label quote a total nobody could account for.
+    amendments: file.amendments.length,
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

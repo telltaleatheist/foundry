@@ -267,6 +267,27 @@ export interface Job {
    * lie in the other direction.
    */
   note?: string | null;
+  /**
+   * The step this job's product will be recorded as being made FROM — the
+   * project's position pointer, CAPTURED AT ENQUEUE.
+   *
+   * ── Why it is captured here and not read when the run lands ─────────────────
+   *
+   * Moving the pointer is free, instant and unconfirmed: it is a repaint, and
+   * people do it while they wait. A job sits held in the shelf for as long as it
+   * takes somebody to assemble a batch, and then runs for three hours. Reading
+   * the position at either end of that would file the run against whichever row
+   * the user happened to be looking at when it finished — so queueing a
+   * translation from the reading, then clicking back through the history to
+   * compare two saves, would silently produce a translation of a save.
+   *
+   * The user's commitment is the press. This is the state of the project at the
+   * moment of it, and it is what the landing appends against.
+   *
+   * NULL for a job in a project whose ledger has no steps to point at, and absent
+   * on an `env-install`, which is not about a book at all.
+   */
+  parentStep?: string | null;
   createdAt: number;
   startedAt?: number;
   finishedAt?: number;
@@ -1808,4 +1829,46 @@ export interface StepRow {
   step: LedgerStep;
   /** The parent's label, when the chain jumps. Null when it does not. */
   from: string | null;
+}
+
+/** One step a delete would take, and what losing it costs. */
+export interface StepCasualty {
+  id: string;
+  /** The step's own label — "Read (317 pages)". Never a filename. */
+  label: string;
+  /**
+   * `deleteCost`'s sentence, verbatim, composed in MAIN.
+   *
+   * The renderer draws the card and owns nothing about the words, exactly as it
+   * does for `DeletionPrompt`. The three retentions are three genuinely different
+   * losses and the sentence for each is written once, in shared/ledger.ts, so
+   * that every warning in this app says the same words about the same loss.
+   */
+  cost: string;
+  /** True for a row that was already dimmed. It still costs what it costs. */
+  stale: boolean;
+}
+
+/**
+ * What deleting one step would take with it — the facts, not the card.
+ *
+ * DESCRIBED AND DELETED BY TWO CALLS, exactly as a document is. The describe
+ * composes the facts AND proves the delete is currently allowed, so the app never
+ * puts a warning on screen for something it would refuse a click later; the
+ * delete proves it again, because a renderer that skipped the question must meet
+ * the same refusal.
+ */
+export interface StepDeletion {
+  /** The step the ✕ was pressed on. */
+  stepId: string;
+  label: string;
+  /**
+   * Every step that goes, in creation order, the named one among them.
+   *
+   * A DELETE CASCADES AND EVERY CASUALTY IS NAMED — that was the ruling, and the
+   * naming is what makes the cascade safe. Somebody deleting a reading is
+   * deleting the translations made from it, and the only version of that which is
+   * not a surprise is the one where they read the list first.
+   */
+  casualties: StepCasualty[];
 }

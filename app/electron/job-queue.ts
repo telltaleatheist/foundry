@@ -128,7 +128,27 @@ function changed(): void {
  * because that is what collides; the same book converted to an EPUB and to a
  * PDF is two different files and therefore two honest rows.
  */
-export function enqueue(request: JobRequest): Job {
+export function enqueue(
+  request: JobRequest,
+  /**
+   * The project's position, RESOLVED BY THE CALLER BEFORE IT CALLED.
+   *
+   * ── Why it is an argument rather than read in here ──────────────────────────
+   *
+   * Reading a position means reading a catalogue off the disk, and this function
+   * is synchronous on purpose: it returns the row the shelf draws, immediately,
+   * so pressing Add cannot leave a moment where nothing has appeared. Making it
+   * async to fetch one field would put a file read between a person's click and
+   * its own feedback, for a fact the IPC handler is already awaiting things to
+   * compose.
+   *
+   * WHAT MATTERS IS THE MOMENT, AND THE MOMENT IS THE SAME ONE. The handler
+   * resolves the position and enqueues in one turn, so this is the position at
+   * the press — which is the whole point (`Job.parentStep`). Null for a project
+   * with no history yet, and for every caller that has nothing to say.
+   */
+  parentStep: string | null = null,
+): Job {
   /*
    * WHAT THIS JOB PRODUCES, which for a reading is the BANK.
    *
@@ -169,6 +189,7 @@ export function enqueue(request: JobRequest): Job {
      */
     state: request.kind === 'read' ? 'held' : 'queued',
     progress: null,
+    parentStep,
     createdAt: Date.now(),
   };
   jobs.push(job);
@@ -206,7 +227,11 @@ const envRequests = new Map<string, EnvInstallRequest>();
  * of another; running both means two models resident on one GPU, which on the
  * hardware this is built for is an out-of-memory failure four hours in.
  */
-export function enqueueTranslate(request: TranslateRequest): Job {
+export function enqueueTranslate(
+  request: TranslateRequest,
+  /** The position at the press. See `enqueue` above and `Job.parentStep`. */
+  parentStep: string | null = null,
+): Job {
   const already = pendingFor(request.outputPath);
   if (already) return already;
 
@@ -217,6 +242,14 @@ export function enqueueTranslate(request: TranslateRequest): Job {
     kind: 'translate',
     state: 'held',
     progress: null,
+    /*
+     * A TRANSLATION IS THE STEP THIS FIELD WAS BUILT FOR. It is the one action a
+     * person routinely runs from an earlier row — translate from the reading,
+     * click back, translate again into another language — and it is the one that
+     * runs for hours, which is exactly the window in which a pointer moves. The
+     * user's own scenario in the design document is this job twice.
+     */
+    parentStep,
     createdAt: Date.now(),
   };
   jobs.push(job);
@@ -725,6 +758,18 @@ async function pump(): Promise<void> {
      * been read.
      */
     if (request.kind === 'read') {
+      /*
+       * NO CAPTURED PARENT GOES WITH IT, AND THAT IS NOT AN OVERSIGHT.
+       *
+       * `next.parentStep` is where the user was standing when they pressed Add,
+       * and it is what a translation is filed against. A READING IS THE ONE
+       * ACTION THAT IS NOT MADE FROM A STEP: it reads the pixels in `archive/`,
+       * which `planReading` resolves for itself precisely because the document
+       * the person was looking at may be a real-text reprint with none of the ink
+       * in it. So its parent is the project's import, settled by what it read
+       * rather than by where anybody was standing — see `originOf` in
+       * shared/ledger.ts for what parenting it at the position would cost.
+       */
       await recordReading(next.outputPath);
       next.message = `Read ${path.basename(next.inputPath)} — the answers are banked.`;
       changed();
@@ -748,6 +793,20 @@ async function pump(): Promise<void> {
     const live = await recordGenerated(
       next.outputPath,
       request.kind === 'translate' ? 'translation' : generatedRoleFor(request.kind),
+      {
+        parentStep: next.parentStep ?? null,
+        /*
+         * THE LANGUAGE, HANDED OVER RATHER THAN LEFT IN THE FILENAME.
+         *
+         * The output is called `<book> (en).epub` and the tag is legible in those
+         * parentheses, which is exactly why it is passed here instead: reading a
+         * fact about a book out of the characters in its name is what this
+         * codebase's oldest house rule forbids, and `migrateLedger` would rather
+         * leave an old translation unlabelled than do it. This job asked for a
+         * language; it says which.
+         */
+        ...(request.kind === 'translate' ? { language: request.to } : {}),
+      },
     );
     /*
      * WHERE THE FINISHED ROW POINTS, when the catalogue made a live copy of what

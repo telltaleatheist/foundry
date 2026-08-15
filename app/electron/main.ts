@@ -67,6 +67,7 @@ import {
 import { loadLedger, saveLedger } from './history';
 import * as queue from './job-queue';
 import {
+  commitOverlay,
   loadOverlayFile,
   loadOverlayLedger,
   locateOverlay,
@@ -77,8 +78,11 @@ import {
   adoptLegacyLayout,
   deleteDocument,
   deleteProject,
+  deleteStep,
+  describeStepDelete,
   documentAssets,
   finalDir,
+  goToStep,
   importDocument,
   inspectProject,
   type ProjectInventory,
@@ -86,8 +90,11 @@ import {
   listProjects,
   noteProjectTitle,
   onProjectsChanged,
+  positionStepId,
+  projectDirOf,
   projectsDir,
   promoteStrandedReprints,
+  readStepLedger,
   recordFinal,
 } from './projects';
 import {
@@ -1873,6 +1880,48 @@ function registerIpc(): void {
     loadOverlayLedger(admittedPdf(filePath)));
   ipcMain.handle('overlay:ledger-save', (_event, filePath: string, stacks: LedgerStacks) =>
     saveOverlayLedger(admittedPdf(filePath), stacks));
+  /**
+   * Freeze the corrections as a curation step.
+   *
+   * Through `admittedPdf` like every other call in this family: the renderer names
+   * the scan it already has open and main resolves the project, the reading
+   * generation and where a snapshot goes. A commit WRITES A FILE and mints a step
+   * that the delete card will one day offer to destroy, so it is not a door a
+   * renderer gets to point at an arbitrary path.
+   *
+   * A refusal — nothing corrected yet — REJECTS with its sentence, so it reaches
+   * the notice strip through the renderer's ordinary catch rather than looking
+   * like a commit that quietly did nothing.
+   */
+  ipcMain.handle('overlay:commit', (_event, filePath: string) =>
+    commitOverlay(admittedPdf(filePath)));
+
+  // ── The step ledger ──────────────────────────────────────────────────────
+  /*
+   * FOUR CALLS, AND MAIN PROVES THE DIRECTORY ON ALL FOUR.
+   *
+   * The renderer names a project directory, exactly as it names a PDF above, and
+   * `deleteStep` unlinks files inside whatever it was handed — which is the same
+   * authorization problem `deletableProjectDir` exists for and is gated by the
+   * same check (electron/projects.ts). The read and the pointer move ask it too,
+   * deliberately: a gate that only guards the destructive call is a gate somebody
+   * routes around by reading first.
+   *
+   * DESCRIBE, THEN DELETE, on the document delete's precedent and for its reason.
+   * `describe-delete` composes the facts AND proves the delete is currently
+   * allowed, so a card is never drawn for something that would be refused a click
+   * later; `delete` proves it again, because a renderer that skipped the question
+   * meets the same refusal. The origin is refused by name in both — deleting the
+   * import is deleting the project, and the project ✕ does that with its own
+   * ceremony and its own accounting of what it costs.
+   */
+  ipcMain.handle('ledger:read', (_event, projectDir: string) => readStepLedger(projectDir));
+  ipcMain.handle('ledger:go', (_event, projectDir: string, stepId: string) =>
+    goToStep(projectDir, stepId));
+  ipcMain.handle('ledger:describe-delete', (_event, projectDir: string, stepId: string) =>
+    describeStepDelete(projectDir, stepId));
+  ipcMain.handle('ledger:delete', (_event, projectDir: string, stepId: string) =>
+    deleteStep(projectDir, stepId));
 
   // ── The library folder ───────────────────────────────────────────────────
   ipcMain.handle('library:dir', () => readAppSettings().libraryDir);
@@ -1896,16 +1945,50 @@ function registerIpc(): void {
   ipcMain.handle('recents:forget', (_event, filePath: string) => forgetRecent(filePath));
   ipcMain.handle('recents:clear', () => clearRecents());
 
+  /**
+   * The position of the project a job is about to write into, at the press.
+   *
+   * ── Why the press and not the spawn ─────────────────────────────────────────
+   *
+   * A job's product is recorded as having been made FROM a step, and that step is
+   * what decides whether a re-run replaces an earlier one (staling everything
+   * downstream) or branches beside it. Moving the pointer, meanwhile, is free and
+   * unconfirmed — people click through their own history while they wait, which is
+   * exactly what the history is for. So a job that read its parent when it landed
+   * would be retargeted by a glance: queue a translation from the reading, click
+   * back to compare two saves, and three hours later the app files a translation
+   * of a save nobody asked it to translate.
+   *
+   * Resolved HERE, in the handler, so the read of the catalogue and the enqueue
+   * happen in one turn and `queue.enqueue` stays synchronous — the shelf row has
+   * to appear the instant Add is pressed (see that function).
+   *
+   * FROM THE JOB'S OWN OUTPUT PATH, which is main's composition rather than the
+   * renderer's word: `workspace:plan*` built it, into a project directory this app
+   * chose. A request naming somewhere else answers null and lands on the same
+   * fallback a project with no history does.
+   */
+  const parentStepFor = async (target: string): Promise<string | null> => {
+    const dir = projectDirOf(target);
+    return dir === null ? null : positionStepId(dir);
+  };
+
   ipcMain.handle('queue:list', () => queue.listJobs());
-  ipcMain.handle('queue:enqueue', (_event, request: JobRequest) => queue.enqueue(request));
-  ipcMain.handle('queue:enqueue-translate', (_event, request: TranslateRequest) => {
+  ipcMain.handle('queue:enqueue', async (_event, request: JobRequest) => queue.enqueue(
+    request,
+    // The BANK for a reading, the rendering's output otherwise — the same
+    // `outputPath` the queue dedupes on, and the only path in a request that is
+    // certainly inside the project the job is about.
+    await parentStepFor(request.kind === 'read' ? request.readingsPath : request.outputPath),
+  ));
+  ipcMain.handle('queue:enqueue-translate', async (_event, request: TranslateRequest) => {
     // The input again, because a request can arrive with any `inputPath` at all
     // — `workspace:plan-translation` checked the one it was given, not the one
     // that ends up here.
     if (admitted(request.inputPath) === null) {
       throw new Error(`${request.inputPath} was never opened in this app.`);
     }
-    return queue.enqueueTranslate(request);
+    return queue.enqueueTranslate(request, await parentStepFor(request.outputPath));
   });
   ipcMain.handle('queue:start', () => queue.start());
   ipcMain.handle('queue:remove', (_event, id: string) => { queue.remove(id); });

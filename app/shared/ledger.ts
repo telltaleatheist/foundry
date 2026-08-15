@@ -509,6 +509,38 @@ export function positionOf(ledger: ProjectLedger): LedgerStep | null {
   return newest;
 }
 
+/**
+ * The import — the one step with no parent — or null for a ledger with none.
+ *
+ * ── Which actions are made from the position, and which from the document ───
+ *
+ * The position is the parent of whatever the user does next, and that is right
+ * for every action whose INPUT is a step's payload: a translation reads a book
+ * that was cast from a bank, a save freezes a curation of a reading. A READING IS
+ * NOT ONE OF THOSE. It reads the pixels, which live in `archive/` and are the
+ * project's origin — `planReading` resolves the source itself for exactly this
+ * reason, because the document the user is looking at may be a real-text reprint
+ * with no photograph in it at all.
+ *
+ * So a reading's parent is this, wherever the pointer happens to be, and getting
+ * that wrong is expensive in the way this whole model exists to prevent. Standing
+ * on the reading and pressing OCR again is the ordinary way somebody re-reads a
+ * book; parented at the position it would append a reading MADE FROM a reading,
+ * which is not a thing, and `reRunTarget` would never match it — so the project
+ * would collect a chain of read steps, every one of them naming the single bank
+ * file the engine writes, all but the newest describing a bank that has been
+ * archived out from under it. Parented here, the second read replaces the first
+ * and stales the saves and translations that were about the old blocks, which is
+ * what actually happened.
+ *
+ * It is also what `migrateLedger` already does, and a reconstruction and a
+ * recording that disagreed about the shape of one project's history would be two
+ * accounts of one book.
+ */
+export function originOf(ledger: ProjectLedger): LedgerStep | null {
+  return ledger.steps.find((step) => step.parent === null) ?? null;
+}
+
 /** The step of that id, or a refusal naming it. */
 export function stepOf(ledger: ProjectLedger, id: string): LedgerStep {
   const step = ledger.steps.find((candidate) => candidate.id === id);
@@ -740,6 +772,160 @@ export function markStale(ledger: ProjectLedger, id: string): ProjectLedger {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// A run that finished: append or replace, decided once
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * What the main process is holding when a job comes home successfully.
+ *
+ * THE ID IS SUPPLIED AND IS ONLY USED IF THIS APPENDS, which is the one shape
+ * this module can offer for the uuid problem. A landing may turn out to be a
+ * re-run, in which case there is no new step and no new id — but the caller
+ * cannot know that before asking, and this module has no randomness to mint one
+ * with after asking (see the header). So the caller mints one speculatively and
+ * this says whether it was used.
+ */
+export interface LandedRun {
+  action: StepAction;
+  /**
+   * The step this was made FROM — the position CAPTURED WHEN THE JOB WAS
+   * ENQUEUED, and not the position now. A person who queued a translation from
+   * the reading, then clicked back to look at something else while it ran, asked
+   * for a translation of the reading; retargeting it at whatever row they happen
+   * to be standing on three hours later would file the run against a parent
+   * nobody chose.
+   */
+  parent: string;
+  /** Project-relative, forward slashes. See `LedgerStep.payload`. */
+  payload: string;
+  params?: LedgerParams;
+  createdAt: number;
+  /** Minted by the caller, spent only on an append. */
+  id: string;
+  /** Overrides `labelFor`, for the rare step whose name the catalogue already wrote. */
+  label?: string;
+}
+
+/** What a landing did — everything main needs to finish the job on disk. */
+export interface Landing {
+  ledger: ProjectLedger;
+  /** The step as it now stands: the one appended, or the one swapped into. */
+  step: LedgerStep;
+  /** True when an existing step's payload was replaced rather than a new one added. */
+  replaced: boolean;
+  /**
+   * The file the replace displaced, and which nothing in the ledger names any
+   * more — or null, which is the ORDINARY answer and not an edge case.
+   *
+   * A re-read writes `readings/<key>.jsonl`, which is exactly where the previous
+   * reading was; a re-translation writes `generated/<book> (en).epub`, which is
+   * exactly where the previous translation was. The engine has already dealt with
+   * what was there (the bank is archived, the origin is rotated aside), so the
+   * step's payload PATH is unchanged and there is nothing left for main to unlink.
+   * This is set only when a re-run genuinely moved a payload to a new path, and
+   * then only when no surviving step still names the old one — a delete or a
+   * destruction that took a file another row points at would leave that row
+   * describing nothing.
+   */
+  displaced: string | null;
+  /** Everything this landing marked stale, in creation order, so main can say so. */
+  stale: LedgerStep[];
+}
+
+/**
+ * A finished run, put where it belongs: appended, or swapped into the step it
+ * re-ran.
+ *
+ * ── Why this is one function rather than three lines at each call site ──────
+ *
+ * Three places record a landing — a reading, a translation, a curation commit —
+ * and every one of them owes the same four decisions: is this a re-run
+ * (`reRunTarget`), what is it called (`labelFor`), what goes stale (`markStale`),
+ * and what file is now nobody's. A rule re-derived at three call sites is a rule
+ * that drifts, and the two ways it drifts are both expensive: a call site that
+ * forgot `markStale` leaves a translation of a bank that no longer exists looking
+ * current, and one that decided "replace" for itself could destroy a payload the
+ * user still wanted.
+ *
+ * ── The replaced step KEEPS ITS PLACE AND ITS DATE ──────────────────────────
+ *
+ * A re-run swaps a payload; it does not move a row. Stamping the new time on it
+ * would put a row claiming to have happened today above rows that happened
+ * yesterday, which is precisely the file `parseLedger` refuses to load — the
+ * array's order IS the chronology, and re-sorting to fix it would shuffle the
+ * list under somebody who is looking at it. What changed is the payload, the
+ * params the run recorded, and the label those params compose; where the step
+ * sits in the story of this book did not change, because it is the same step.
+ *
+ * ── And nothing here touches a disk ─────────────────────────────────────────
+ *
+ * This is only ever called on a run that SUCCEEDED, which is what makes the
+ * swap-on-success rule true by construction rather than by remembering it: a
+ * failed run never reaches this function, so the old payload is still on disk and
+ * still the one the ledger names. `displaced` is the caller's instruction to
+ * destroy something, issued after the replacement exists and never before.
+ */
+export function recordLanding(ledger: ProjectLedger, run: LandedRun): Landing {
+  const label = run.label ?? labelFor(run.action, run.params);
+  const params = run.params !== undefined && Object.keys(run.params).length > 0
+    ? run.params
+    : undefined;
+  const target = reRunTarget(ledger, { action: run.action, parent: run.parent, params: run.params });
+
+  if (target === null) {
+    const step: LedgerStep = {
+      id: run.id,
+      parent: run.parent,
+      action: run.action,
+      payload: run.payload,
+      retention: RETENTION_OF[run.action],
+      createdAt: run.createdAt,
+      label,
+    };
+    if (params !== undefined) step.params = params;
+    const next = appendStep(ledger, step);
+    // Read back out of the new ledger rather than handed on: `appendStep` clamps
+    // a createdAt that ran backwards, and the caller should be told what was
+    // actually recorded rather than what was offered.
+    return { ledger: next, step: stepOf(next, step.id), replaced: false, displaced: null, stale: [] };
+  }
+
+  const swapped: LedgerStep = { ...target, payload: run.payload, label };
+  if (params === undefined) delete swapped.params;
+  else swapped.params = params;
+  const replaced: ProjectLedger = {
+    ...ledger,
+    position: target.id,
+    steps: ledger.steps.map((step) => (step.id === target.id ? swapped : step)),
+  };
+  const marked = markStale(replaced, target.id);
+  const stale = subtree(marked, target.id).filter((step) => step.id !== target.id);
+  return {
+    ledger: marked,
+    step: stepOf(marked, target.id),
+    replaced: true,
+    displaced: target.payload === run.payload || namesPayload(marked, target.payload)
+      ? null
+      : target.payload,
+    stale,
+  };
+}
+
+/**
+ * Does any step still name this file?
+ *
+ * BY THE WHOLE PROJECT-RELATIVE PATH, never by its last segment. A project holds
+ * `archive/Book.pdf`, `generated/Book.pdf` and `working/Book.pdf` at once, and a
+ * comparison that had thrown away the layer would report the archived original as
+ * still-in-use because a reprint of it happens to share a name — or, in the
+ * direction that actually destroys something, would let a delete take one of them
+ * believing it had checked.
+ */
+function namesPayload(ledger: ProjectLedger, payload: string): boolean {
+  return ledger.steps.some((step) => step.payload === payload);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Deleting
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -797,6 +983,37 @@ export function deleteSubtree(ledger: ProjectLedger, id: string): SubtreeDeletio
   if (standing !== null && gone.has(standing.id)) next.position = step.parent;
   else if (ledger.position !== undefined) next.position = ledger.position;
   return { ledger: next, removed };
+}
+
+/**
+ * The files a delete may actually destroy, in creation order, without repeats.
+ *
+ * ── Why "the removed steps' payloads" is the wrong answer ───────────────────
+ *
+ * Two steps are allowed to name one file, and in this app they routinely do. A
+ * re-read that branched rather than replaced — different pages asked for, so a
+ * different question — leaves two `read` steps, and the readings bank has ONE
+ * path: the engine archives the previous one aside and writes the same
+ * `readings/<key>.jsonl` again. Delete the older of those two and a naive unlink
+ * would destroy the bank the newer one is made of, which is hours of GPU thrown
+ * away by a delete aimed at something else entirely.
+ *
+ * So the question is not "what did this subtree name" but "what is left naming
+ * it", asked of the ledger AFTER the surgery — and asked by whole project-
+ * relative path, for `namesPayload`'s reason.
+ *
+ * Deduplicated because the caller unlinks what this returns and a path listed
+ * twice is a second unlink of something that is already gone, reported as a
+ * failure by every filesystem that bothers to answer.
+ */
+export function orphanedPayloads(deletion: SubtreeDeletion): string[] {
+  const orphaned: string[] = [];
+  for (const casualty of deletion.removed) {
+    if (orphaned.includes(casualty.payload)) continue;
+    if (namesPayload(deletion.ledger, casualty.payload)) continue;
+    orphaned.push(casualty.payload);
+  }
+  return orphaned;
 }
 
 /**
@@ -864,6 +1081,54 @@ export function currentStandard(ledger: ProjectLedger): Partial<Record<StepActio
     standard[step.action] = step;
   }
   return standard;
+}
+
+/**
+ * The curation snapshot a rendering AT THE POSITION is made with, or null when
+ * the answer is the live overlay.
+ *
+ * ── This is what makes the pointer worth moving ─────────────────────────────
+ *
+ * Every rendering in this app is `render(bank + overlay)`. Which overlay was
+ * never a question before, because there was one: `overlays/<key>.json`, the
+ * mutable working state of the block editor. A curation step freezes a copy of
+ * that file, and the whole point of freezing one is to be able to stand on it and
+ * get the book as it was — so the pointer has to decide which of them a Generate
+ * reads, or the frozen snapshots are files nobody can ever see the effect of.
+ *
+ * THE ANSWER IS FOUND BY WALKING UP FROM THE POSITION, and the walk stops at a
+ * reading. Standing on a save gives that save; standing on the reading gives the
+ * live overlay, because the reading step is where live editing happens (a curate
+ * step made from that reading is a SIBLING of wherever the user is standing, not
+ * an ancestor, so it is correctly not found). A chain of saves gives the newest
+ * one on the path, which is the one being stood on.
+ *
+ * A TRANSLATE STEP FALLS THROUGH TO ITS NEAREST ANCESTOR THAT HAS ONE, and that
+ * is a deliberate limit of this pass rather than the final answer. A translation
+ * has a payload of its own — a bank of translated blocks — and rendering FROM one
+ * means rendering that bank rather than the scan's, which is a second rendering
+ * path this app does not have yet. Until it does, standing on a translation and
+ * pressing Generate renders the book it was translated from, with the curation
+ * that translation was made under, which is the honest approximation: it is the
+ * state the translation was taken of.
+ *
+ * NULL IS THE ORDINARY ANSWER. A project nobody has committed a curation in has
+ * no `curate` step anywhere, so every position resolves to the live overlay and
+ * nothing about this app's behaviour changes.
+ */
+export function curationInEffect(ledger: ProjectLedger): LedgerStep | null {
+  const standing = positionOf(ledger);
+  if (standing === null) return null;
+  const chain = ancestry(ledger, standing.id);
+  for (let at = chain.length - 1; at >= 0; at -= 1) {
+    const step = chain[at]!;
+    if (step.action === 'curate') return step;
+    // The bank this branch of the story is about. Anything above it belongs to a
+    // reading that is not the one being stood on, and a snapshot from there names
+    // blocks by numbers that mean different blocks here (see `ProjectReading`).
+    if (step.action === 'read' || step.action === 'import') return null;
+  }
+  return null;
 }
 
 /**

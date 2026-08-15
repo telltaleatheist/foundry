@@ -35,6 +35,7 @@ import type {
   OverlayLoad,
   PdfBlocksOutcome,
   PdfMetadataFields,
+  ProjectLedger,
   ProjectSummary,
   ReadingPlan,
   RecentDocument,
@@ -44,6 +45,8 @@ import type {
   SetupLogEvent,
   SetupRequest,
   SetupResult,
+  StepDeletion,
+  StepRow,
   TranslateRequest,
   UnlinkedNote,
   UnlinkedNoteAnswer,
@@ -451,6 +454,123 @@ export interface FoundryApi {
      */
     loadLedger(pdfPath: string): Promise<LedgerLoad>;
     saveLedger(pdfPath: string, stacks: LedgerStacks): Promise<void>;
+    /**
+     * Freeze the corrections as they stand — a curation step in the history.
+     *
+     * ── This is not the Save people are used to, and the difference matters ────
+     *
+     * `save` above already wrote the file, atomically, the instant the gesture
+     * happened. There is no unsaved work here for a Save button to rescue. What
+     * this makes is a COPY THAT WILL NEVER CHANGE AGAIN: a snapshot with a step of
+     * its own, which the user can click back to, render from, and delete
+     * deliberately. It is the difference between a document that autosaves and one
+     * you can name a version of.
+     *
+     * THE LIVE OVERLAY IS UNTOUCHED. It is not cleared, not moved and not
+     * archived — the editor is in exactly the state it was in a moment before,
+     * and the snapshot is the thing that is retained. A commit that emptied the
+     * editor would repaint somebody's book as uncorrected as the reward for
+     * saving it.
+     *
+     * REJECTS with a sentence when there is nothing to freeze. An empty snapshot
+     * would put a row reading "Saved corrections" between the reading and the
+     * translation for a book nobody has curated.
+     *
+     * Resolves with the whole updated ledger, so the caller repaints the history
+     * from the answer rather than asking for it again and drawing a list from
+     * before its own commit.
+     */
+    commit(pdfPath: string): Promise<ProjectLedger>;
+  };
+
+  /**
+   * The step ledger — everything that has been done to one book, and where the
+   * user is standing in it.
+   *
+   * ── What this surface is, in one paragraph ────────────────────────────────
+   *
+   * Every project carries a list of STEPS: the import, each reading, each frozen
+   * curation, each translation. Each one is the retained payload of one action and
+   * records which step it was made FROM, so the structure is a tree — but the UI
+   * is a flat chronological list, like Photoshop's History panel, with one quiet
+   * "from Read" annotation on the rows where the chain jumps. DO NOT BUILD A TREE
+   * UI. A position pointer marks where the user is standing; clicking a row moves
+   * it, and acting from an earlier row APPENDS rather than truncating, which is
+   * the one thing Photoshop does that this must never do.
+   *
+   * ── Why every one of these is a main-process call ─────────────────────────
+   *
+   * The renderer names a project directory and nothing else, exactly as it names a
+   * PDF for the overlay calls. Where the payloads are, what a delete would
+   * destroy, what a step costs to lose and whether a path is a project at all are
+   * main's own records — and `delete` UNLINKS FILES, so a renderer's word about a
+   * directory cannot be an authorization (the `admitted` precedent). Main proves
+   * the directory is one of Home's projects on all four calls, not only the
+   * destructive one: a gate that guards only the delete is a gate somebody routes
+   * around by reading first.
+   *
+   * ── And why the ordering never crosses the boundary ───────────────────────
+   *
+   * `read` answers with the rows already composed. The chronological order and the
+   * "from …" annotation are the whole of this design's concession to the tree, and
+   * a renderer deriving them would be a second implementation of the one rule that
+   * decides whether the flat list is misleading about what was made from what.
+   */
+  ledger: {
+    /**
+     * One project's steps, plus the flat list the accordion draws.
+     *
+     * REJECTS for a catalogue that will not parse, including one whose stored
+     * ledger is malformed — a project in that state is already listed on Home
+     * with the reason on its row, and this is the same refusal reaching the same
+     * strip.
+     */
+    read(projectDir: string): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
+    /**
+     * Stand on a different step. Answers with the ledger as it now stands.
+     *
+     * FREE, INSTANT AND UNCONFIRMED — one line of the manifest, no job, no
+     * rendering, no file written. That is the promise every history panel makes
+     * by looking like one, and it is kept here: what changes is which state the
+     * viewers show and which step the next action is made from.
+     *
+     * Rejects by name for a step id this project does not hold. The caller is
+     * clicking a row main drew, so an unknown id means the two are looking at
+     * different ledgers, and standing somewhere plausible instead would show
+     * somebody a book they did not ask for.
+     */
+    go(projectDir: string, stepId: string): Promise<ProjectLedger>;
+    /**
+     * What deleting this step would take — the facts for the confirm card.
+     *
+     * EVERY CASUALTY, NAMED, WITH ITS OWN COST SENTENCE. A delete cascades: a
+     * reading's translations were made from that reading and have nowhere to
+     * hang, so they go with it. That was the ruling, and what makes it safe is
+     * that the user reads the list first — which is what this is for.
+     *
+     * The sentences are composed in main, from the retention rule, in the words
+     * every other warning in this app uses for the same loss. An "Are you sure?"
+     * over a list of four teaches people to click through the one that was about
+     * their curation.
+     *
+     * IT ALSO PROVES THE DELETE IS ALLOWED, so a card is never put on screen for
+     * something the delete would refuse a click later. The origin rejects here:
+     * deleting the import is deleting the project, and `projects.delete` does
+     * that with its own ceremony.
+     */
+    describeDelete(projectDir: string, stepId: string): Promise<StepDeletion>;
+    /**
+     * Do it: the step and its whole subtree off the ledger, their payloads off
+     * the disk. Answers with the ledger that is left.
+     *
+     * ASKING IS THE CALLER'S JOB; PROVING IS STILL MAIN'S. This runs the same
+     * refusals `describeDelete` ran, because a renderer that skipped the question
+     * must meet the same answer — including the origin's, which rejects by name.
+     *
+     * It really deletes. Nothing is rotated aside and there is no copy anywhere
+     * else; a payload that survives is one another step still names.
+     */
+    delete(projectDir: string, stepId: string): Promise<ProjectLedger>;
   };
 
   /**

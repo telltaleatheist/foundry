@@ -38,6 +38,7 @@ import {
   appendStep,
   childrenOf,
   chronological,
+  curationInEffect,
   currentStandard,
   deleteCost,
   deleteSubtree,
@@ -45,10 +46,13 @@ import {
   labelFor,
   markStale,
   migrateLedger,
+  orphanedPayloads,
+  originOf,
   originStep,
   parseLedger,
   positionOf,
   reRunTarget,
+  recordLanding,
   stepOf,
   subtree,
 } from '../../app/shared/ledger.ts';
@@ -899,5 +903,335 @@ describe('labelFor names a step in words, never in filenames', () => {
     assert.equal(labelFor('translate', { language: 'Hungarian' }), 'Translated (Hungarian)');
     assert.equal(labelFor('translate'), 'Translated');
     assert.equal(labelFor('import'), 'Imported');
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// A run that landed
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('recordLanding decides append-or-replace once, for every job that finishes', () => {
+  /** import → read, which is where every landing after the first starts. */
+  function read(): ProjectLedger {
+    const imported = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100, 'Imported'));
+    return appendStep(imported, step({
+      id: 's1', parent: 's0', action: 'read', payload: 'readings/book.jsonl', createdAt: 200,
+      params: { generation: GENERATION, pages: 17 },
+    }));
+  }
+
+  test('a first translation appends, spends the id it was given, and stales nothing', () => {
+    const landed = recordLanding(read(), {
+      action: 'translate', parent: 's1', payload: 'generated/Book (en).epub',
+      params: { language: 'English' }, createdAt: 300, id: 'new',
+    });
+    assert.equal(landed.replaced, false);
+    assert.equal(landed.step.id, 'new');
+    assert.equal(landed.step.label, 'Translated (English)');
+    assert.equal(landed.step.retention, 'expensive');
+    assert.deepEqual(landed.stale, []);
+    assert.equal(landed.displaced, null);
+    // The pointer follows what was just made — that is what the viewers show.
+    assert.equal(landed.ledger.position, 'new');
+  });
+
+  test('a second language from the same step is a branch, not a replace', () => {
+    const first = recordLanding(read(), {
+      action: 'translate', parent: 's1', payload: 'generated/Book (en).epub',
+      params: { language: 'English' }, createdAt: 300, id: 'en',
+    });
+    const second = recordLanding(first.ledger, {
+      action: 'translate', parent: 's1', payload: 'generated/Book (hu).epub',
+      params: { language: 'Hungarian' }, createdAt: 400, id: 'hu',
+    });
+    assert.equal(second.replaced, false);
+    assert.deepEqual(second.ledger.steps.map((row) => row.id), ['s0', 's1', 'en', 'hu']);
+  });
+
+  test('the same language from the same step again replaces, and adds no row', () => {
+    const first = recordLanding(read(), {
+      action: 'translate', parent: 's1', payload: 'generated/Book (en).epub',
+      params: { language: 'English' }, createdAt: 300, id: 'en',
+    });
+    const again = recordLanding(first.ledger, {
+      action: 'translate', parent: 's1', payload: 'generated/Book (en).epub',
+      params: { language: 'English' }, createdAt: 999, id: 'unused',
+    });
+    assert.equal(again.replaced, true);
+    assert.equal(again.step.id, 'en');
+    assert.deepEqual(again.ledger.steps.map((row) => row.id), ['s0', 's1', 'en']);
+    // The id offered for an append is not spent, and nothing in the ledger has it.
+    assert.equal(again.ledger.steps.some((row) => row.id === 'unused'), false);
+  });
+
+  test('a replaced step keeps its place and its date, because the list is the chronology', () => {
+    // Stamping the new time on a row that sits in the middle of the array would
+    // produce exactly the file `parseLedger` refuses: rows running backwards.
+    const first = recordLanding(read(), {
+      action: 'translate', parent: 's1', payload: 'generated/Book (en).epub',
+      params: { language: 'English' }, createdAt: 300, id: 'en',
+    });
+    const branchedOff = recordLanding(first.ledger, {
+      action: 'translate', parent: 's1', payload: 'generated/Book (hu).epub',
+      params: { language: 'Hungarian' }, createdAt: 400, id: 'hu',
+    });
+    const again = recordLanding(branchedOff.ledger, {
+      action: 'translate', parent: 's1', payload: 'generated/Book (en).epub',
+      params: { language: 'English' }, createdAt: 5_000, id: 'unused',
+    });
+    assert.equal(again.step.createdAt, 300);
+    assert.deepEqual(again.ledger.steps.map((row) => row.createdAt), [100, 200, 300, 400]);
+    // And the file it produced is still one this app would load back.
+    assert.equal(parseLedger(JSON.parse(JSON.stringify(again.ledger))).steps.length, 4);
+  });
+
+  test('THE GENERATION TRAP: a re-read replaces even though its generation is new', () => {
+    // A re-read mints a fresh generation by design. Comparing it would make every
+    // re-read a new branch and leave the project holding two banks, one stale,
+    // forever — the rule inverted by the very field that protects the overlay.
+    const landed = recordLanding(read(), {
+      action: 'read', parent: 's0', payload: 'readings/book.jsonl',
+      params: { generation: 'a-completely-different-uuid', pages: 17 },
+      createdAt: 900, id: 'unused',
+    });
+    assert.equal(landed.replaced, true);
+    assert.equal(landed.step.id, 's1');
+    assert.equal(landed.step.params?.generation, 'a-completely-different-uuid');
+  });
+
+  test('a re-read stales the saves and the translations made from the bank it replaced', () => {
+    let ledger = read();
+    ledger = appendStep(ledger, step({
+      id: 'save', parent: 's1', action: 'curate', payload: 'curations/one.json', createdAt: 300,
+      params: { generation: GENERATION, amendments: 23 },
+    }));
+    ledger = appendStep(ledger, step({
+      id: 'en', parent: 'save', action: 'translate', payload: 'generated/Book (en).epub',
+      createdAt: 400, params: { language: 'English' },
+    }));
+    const landed = recordLanding(ledger, {
+      action: 'read', parent: 's0', payload: 'readings/book.jsonl',
+      params: { generation: 'second-pass', pages: 17 }, createdAt: 500, id: 'unused',
+    });
+    assert.deepEqual(landed.stale.map((row) => row.id), ['save', 'en']);
+    // Stale is a display state: both rows are still in the list, with their payloads.
+    assert.deepEqual(landed.ledger.steps.map((row) => row.id), ['s0', 's1', 'save', 'en']);
+    assert.equal(stepOf(landed.ledger, 'save').payload, 'curations/one.json');
+  });
+
+  test('a re-run un-stales the step it re-ran, which is how a branch is brought current', () => {
+    const stale = markStale(read(), 's0');
+    assert.equal(stepOf(stale, 's1').stale, true);
+    const landed = recordLanding(stale, {
+      action: 'read', parent: 's0', payload: 'readings/book.jsonl',
+      params: { generation: 'fresh', pages: 17 }, createdAt: 600, id: 'unused',
+    });
+    assert.equal(landed.step.stale, undefined);
+  });
+
+  test('a re-run onto the same path displaces nothing, which is the ordinary case', () => {
+    // The engine archived the previous bank and wrote the same path again, so
+    // there is no file left for main to unlink.
+    const landed = recordLanding(read(), {
+      action: 'read', parent: 's0', payload: 'readings/book.jsonl',
+      params: { generation: 'again', pages: 17 }, createdAt: 700, id: 'unused',
+    });
+    assert.equal(landed.displaced, null);
+  });
+
+  test('a re-run onto a new path names the file nothing points at any more', () => {
+    const landed = recordLanding(read(), {
+      action: 'read', parent: 's0', payload: 'readings/book-v2.jsonl',
+      params: { generation: 'again', pages: 17 }, createdAt: 700, id: 'unused',
+    });
+    assert.equal(landed.displaced, 'readings/book.jsonl');
+  });
+
+  test('a displaced payload another step still names is NOT offered for destruction', () => {
+    // Two steps are allowed to name one file. Unlinking on the strength of one of
+    // them would destroy the payload the other is made of.
+    const shared = appendStep(read(), step({
+      id: 'twin', parent: 's1', action: 'translate', payload: 'readings/book.jsonl',
+      createdAt: 250, params: { language: 'English' },
+    }));
+    const landed = recordLanding(shared, {
+      action: 'read', parent: 's0', payload: 'readings/book-v2.jsonl',
+      params: { generation: 'again', pages: 17 }, createdAt: 700, id: 'unused',
+    });
+    assert.equal(landed.displaced, null);
+  });
+
+  test('an empty params bag is not written, so a step says nothing rather than claiming nothing', () => {
+    const landed = recordLanding(read(), {
+      action: 'translate', parent: 's1', payload: 'generated/Book.epub',
+      params: {}, createdAt: 300, id: 'plain',
+    });
+    assert.equal('params' in landed.step, false);
+    assert.equal(landed.step.label, 'Translated');
+  });
+});
+
+describe('orphanedPayloads names only the files a delete really leaves nobody holding', () => {
+  test('a leaf delete offers its own payload', () => {
+    const imported = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100, 'Imported'));
+    const ledger = appendStep(imported, step({
+      id: 's1', parent: 's0', action: 'read', payload: 'readings/book.jsonl', createdAt: 200,
+    }));
+    assert.deepEqual(orphanedPayloads(deleteSubtree(ledger, 's1')), ['readings/book.jsonl']);
+  });
+
+  test('a subtree delete offers every casualty, in creation order', () => {
+    assert.deepEqual(orphanedPayloads(deleteSubtree(branched(), 's1')), [
+      'readings/book.jsonl',
+      'translations/book-en.jsonl',
+      'translations/book-hu.jsonl',
+    ]);
+  });
+
+  test('THE DANGEROUS ONE: a payload a surviving step still names is left alone', () => {
+    // Two `read` steps from one parent, branched rather than replaced, both
+    // naming the single bank the engine writes. Deleting the older must not
+    // destroy the bank the newer one is made of.
+    let ledger = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100, 'Imported'));
+    ledger = appendStep(ledger, step({
+      id: 'first', parent: 's0', action: 'read', payload: 'readings/book.jsonl', createdAt: 200,
+      params: { pages: 17 },
+    }));
+    ledger = appendStep(ledger, step({
+      id: 'second', parent: 's0', action: 'read', payload: 'readings/book.jsonl', createdAt: 300,
+      params: { pages: 12 },
+    }));
+    assert.deepEqual(orphanedPayloads(deleteSubtree(ledger, 'first')), []);
+  });
+
+  test('one file named twice inside the doomed subtree is offered once', () => {
+    let ledger = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100, 'Imported'));
+    ledger = appendStep(ledger, step({
+      id: 's1', parent: 's0', action: 'read', payload: 'readings/book.jsonl', createdAt: 200,
+    }));
+    ledger = appendStep(ledger, step({
+      id: 's2', parent: 's1', action: 'translate', payload: 'readings/book.jsonl', createdAt: 300,
+    }));
+    assert.deepEqual(orphanedPayloads(deleteSubtree(ledger, 's1')), ['readings/book.jsonl']);
+  });
+
+  test('paths are compared whole, so one layer is never mistaken for another', () => {
+    const imported = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100, 'Imported'));
+    const ledger = appendStep(imported, step({
+      id: 's1', parent: 's0', action: 'read', payload: 'generated/Book.pdf', createdAt: 200,
+    }));
+    // `Book.pdf` twice, in two layers. The archive survives; the reprint goes.
+    assert.deepEqual(orphanedPayloads(deleteSubtree(ledger, 's1')), ['generated/Book.pdf']);
+  });
+});
+
+describe('curationInEffect says which overlay a rendering at the position is made with', () => {
+  /** import → read → save → a translation OF that save. */
+  function curated(): ProjectLedger {
+    let ledger = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100, 'Imported'));
+    ledger = appendStep(ledger, step({
+      id: 'read', parent: 's0', action: 'read', payload: 'readings/book.jsonl', createdAt: 200,
+    }));
+    ledger = appendStep(ledger, step({
+      id: 'save', parent: 'read', action: 'curate', payload: 'curations/one.json', createdAt: 300,
+      params: { generation: GENERATION, amendments: 23 },
+    }));
+    return appendStep(ledger, step({
+      id: 'en', parent: 'save', action: 'translate', payload: 'generated/Book (en).epub',
+      createdAt: 400, params: { language: 'English' },
+    }));
+  }
+
+  test('standing on a save renders that save', () => {
+    assert.equal(curationInEffect({ ...curated(), position: 'save' })?.payload, 'curations/one.json');
+  });
+
+  test('standing on the reading renders the LIVE overlay, not a sibling save', () => {
+    // The save is a sibling of where the user is standing, not an ancestor. The
+    // reading step is where live editing happens.
+    assert.equal(curationInEffect({ ...curated(), position: 'read' }), null);
+  });
+
+  test('standing on the import renders the live overlay', () => {
+    assert.equal(curationInEffect({ ...curated(), position: 's0' }), null);
+  });
+
+  test('a chain of saves resolves to the one being stood on', () => {
+    const ledger = appendStep(curated(), step({
+      id: 'save2', parent: 'save', action: 'curate', payload: 'curations/two.json', createdAt: 500,
+      params: { generation: GENERATION, amendments: 41 },
+    }));
+    assert.equal(curationInEffect({ ...ledger, position: 'save2' })?.payload, 'curations/two.json');
+    assert.equal(curationInEffect({ ...ledger, position: 'save' })?.payload, 'curations/one.json');
+  });
+
+  test('a translate step falls back to the nearest ancestor that has one', () => {
+    // Rendering a translation's own bank is a second rendering path this app does
+    // not have yet; until it does, the honest answer is the state it was taken of.
+    assert.equal(curationInEffect({ ...curated(), position: 'en' })?.payload, 'curations/one.json');
+  });
+
+  test('a translation made straight from the reading renders the live overlay', () => {
+    const ledger = appendStep(curated(), step({
+      id: 'hu', parent: 'read', action: 'translate', payload: 'generated/Book (hu).epub',
+      createdAt: 600, params: { language: 'Hungarian' },
+    }));
+    assert.equal(curationInEffect({ ...ledger, position: 'hu' }), null);
+  });
+
+  test('a project nobody has ever saved in behaves exactly as it always did', () => {
+    assert.equal(curationInEffect(branched()), null);
+    assert.equal(curationInEffect(emptyLedger()), null);
+  });
+
+  test('the walk stops at the reading, so a save from an earlier bank is not reached', () => {
+    // Two readings from the import, a save under the first, standing under the
+    // second. That save names blocks by numbers that mean different blocks here.
+    let ledger = appendStep(emptyLedger(), originStep('s0', 'archive/Book.pdf', 100, 'Imported'));
+    ledger = appendStep(ledger, step({
+      id: 'r1', parent: 's0', action: 'read', payload: 'readings/book.jsonl', createdAt: 200,
+      params: { pages: 17 },
+    }));
+    ledger = appendStep(ledger, step({
+      id: 'save', parent: 'r1', action: 'curate', payload: 'curations/one.json', createdAt: 300,
+    }));
+    ledger = appendStep(ledger, step({
+      id: 'r2', parent: 's0', action: 'read', payload: 'readings/book.jsonl', createdAt: 400,
+      params: { pages: 12 },
+    }));
+    assert.equal(curationInEffect({ ...ledger, position: 'r2' }), null);
+  });
+});
+
+describe('originOf is what a reading is parented at, wherever the pointer is', () => {
+  test('it finds the one step with no parent, and nothing in an empty ledger', () => {
+    assert.equal(originOf(branched())?.id, 's0');
+    assert.equal(originOf(emptyLedger()), null);
+  });
+
+  test('THE RE-READ TRAP: parented at the import, a second reading replaces the first', () => {
+    // Somebody standing on their reading presses OCR again — the ordinary way a
+    // book gets re-read. Parented at the POSITION this would append a reading
+    // made from a reading, `reRunTarget` would never match it, and the project
+    // would collect a chain of read steps all naming the one bank file the engine
+    // writes, every one but the newest describing a bank that has been archived
+    // out from under it.
+    const ledger = { ...branched(), position: 's1' };
+    const atThePosition = recordLanding(ledger, {
+      action: 'read', parent: 's1', payload: 'readings/book.jsonl',
+      params: { generation: 'second', pages: 17 }, createdAt: 500, id: 'wrong',
+    });
+    assert.equal(atThePosition.replaced, false);
+    assert.equal(atThePosition.ledger.steps.length, 5);
+
+    const atTheImport = recordLanding(ledger, {
+      action: 'read', parent: originOf(ledger)!.id, payload: 'readings/book.jsonl',
+      params: { generation: 'second', pages: 17 }, createdAt: 500, id: 'unused',
+    });
+    assert.equal(atTheImport.replaced, true);
+    assert.equal(atTheImport.step.id, 's1');
+    assert.equal(atTheImport.ledger.steps.length, 4);
+    // And both translations of the old bank are dimmed rather than destroyed.
+    assert.deepEqual(atTheImport.stale.map((row) => row.id), ['s2', 's3']);
   });
 });

@@ -89,10 +89,12 @@ import { stampEpub } from './engine';
 import { openedAtFor } from './recents';
 import type {
   ConversionKind,
+  LedgerParams,
   ProjectDocument,
   ProjectDocumentKind,
   ProjectGenerated,
   ProjectGeneratedRole,
+  ProjectLedger,
   ProjectManifest,
   ProjectReading,
   ProjectSummary,
@@ -100,11 +102,32 @@ import type {
   ProjectTypeRecord,
   ProjectWorkingFile,
   ProjectWorkingTree,
+  StepCasualty,
+  StepDeletion,
+  StepRow,
 } from '../shared/types';
 import { WHY_HANDMADE, WHY_IMPORTED, WHY_MODEL_PASS } from '../shared/types';
 import { spokenStem } from '../shared/documents';
 import { readJson } from '../shared/json';
 import { STEP_LABELS, migrateToSteps, readTypeRecords } from '../shared/steps';
+import {
+  chronological,
+  curationInEffect,
+  deleteCost,
+  deleteSubtree,
+  emptyLedger,
+  migrateLedger,
+  orphanedPayloads,
+  originOf,
+  originStep,
+  parseLedger,
+  positionOf,
+  recordLanding,
+  stepOf,
+  subtree,
+  type LandedRun,
+  type Landing,
+} from '../shared/ledger';
 import { GENERATED_ROLE_FOR } from '../shared/documents';
 
 /**
@@ -175,6 +198,10 @@ const FINAL = 'final';
 const HISTORY = 'history';
 /** The sixth: the block editor's corrections, one pair per reading. See `overlaysDir`. */
 const OVERLAYS = 'overlays';
+/**
+ * The seventh: frozen curations. See `curationsDir`.
+ */
+const CURATIONS = 'curations';
 /**
  * And the bank of the model's answers — hours of GPU, the thing every rendering
  * is made from, and the product of the one job in this app that costs anything.
@@ -363,7 +390,7 @@ export async function readManifest(dir: string): Promise<ProjectManifest> {
     : {};
   const stem = typeof row['stem'] === 'string' && row['stem'].length > 0 ? row['stem'] : key;
   const title = typeof row['title'] === 'string' && row['title'].length > 0 ? row['title'] : stem;
-  return {
+  const manifest: ProjectManifest = {
     version: MANIFEST_VERSION,
     key,
     /*
@@ -384,6 +411,48 @@ export async function readManifest(dir: string): Promise<ProjectManifest> {
     final: readFinal(row['final']),
     reading: readReading(row['reading']),
   };
+  // LAST, because it is the only field built from the manifest rather than from
+  // one of its rows: an un-migrated project's ledger is reconstructed out of the
+  // archive, the reading and the chains that were read above it.
+  manifest.ledger = readLedger(row['ledger'], manifest, file);
+  return manifest;
+}
+
+/**
+ * The step ledger — parsed from the catalogue, or reconstructed for one that
+ * predates the whole idea.
+ *
+ * HEAL ON READ, PERSIST ON NEXT WRITE, which is `healImport`'s pattern a few
+ * lines up and `readDocuments`'s before it, for their reason: every project on
+ * every disk predates this field, and a migration that only ran on write could
+ * half-finish across a crash, while one that rewrote the file on read would make
+ * opening Home a write across the user's whole library. `migrateLedger` is
+ * deterministic — its ids are ordinal and its times come from the catalogue — so
+ * reading a project twice produces the same history byte for byte, and the ids
+ * the pointer and the parent chain point at do not move between Tuesday and
+ * Wednesday. It reaches disk the next time anything edits the project.
+ *
+ * A STORED LEDGER THAT WILL NOT PARSE TAKES THE CATALOGUE DOWN, by name, and is
+ * not quietly replaced with a migrated one. Both halves of that matter. Refusing
+ * is what `readManifest` already does for a catalogue that is not JSON, and it
+ * surfaces the same way — `summarise` lists the project with the reason on it, so
+ * Home is still the door back to the book. Rebuilding instead would be worse than
+ * useless: the reconstruction cannot know about a curation step or a second
+ * translation, so a project with a typo in one row would silently lose the
+ * history of everything the migration cannot see, and the payloads those steps
+ * named would sit in the folder with nothing in the app aware that they exist.
+ */
+function readLedger(stored: unknown, manifest: ProjectManifest, file: string): ProjectLedger {
+  if (stored === undefined) return migrateLedger(manifest);
+  try {
+    return parseLedger(stored);
+  } catch (err) {
+    throw new ProjectError(
+      `${file} holds a step ledger this app cannot read: ${(err as Error).message}. The ledger is `
+      + 'this project\'s account of everything that has been done to the book and of which file each '
+      + 'of those left behind, so it is not something to guess at or to rebuild around.',
+    );
+  }
 }
 
 /**
@@ -637,6 +706,12 @@ function withCreatedProject<T>(
           // generation is minted by the first amendment, not by the import —
           // see `readingGeneration`.
           reading: null,
+          // No history yet, and not even an origin: the import that is about to
+          // happen is what mints one, and it does so knowing which file it
+          // copied. A project directory can also be created by an adoption that
+          // never imports anything, and an empty ledger is the honest record of
+          // that.
+          ledger: emptyLedger(),
         };
         await writeManifest(dir, manifest);
       }
@@ -927,12 +1002,375 @@ export async function importDocument(
         why: WHY_IMPORTED,
       }, { onlyIfEmpty: true });
     }
+    /*
+     * ── THE ORIGIN OF THE STEP LEDGER ─────────────────────────────────────────
+     *
+     * The one step in a project whose parent is null, and the only one that is
+     * not produced by a queue job: importing is a file copy, and what it retains
+     * is the untouched original — irreplaceable for the reason nothing else in a
+     * project is, which is that some of these are scans of documents that exist
+     * nowhere else and only the user knows where the file came from.
+     *
+     * ONLY INTO AN EMPTY LEDGER, which is `recordStep`'s `onlyIfEmpty` for the
+     * same reason: importing the same book twice is the app noticing something it
+     * already knew, and a second origin would be a second account of where this
+     * project's document came from. A project that reached here with a MIGRATED
+     * ledger already has an origin reconstructed from this very archive row, so
+     * this is correctly skipped for it too — the ids stay the ones `migrateLedger`
+     * mints deterministically, and the pointer keeps pointing at something.
+     *
+     * THE LABEL IS THE CHAIN'S, verbatim, and that is not a coincidence to be
+     * cleaned up later: `migrateLedger` reads the origin step's label out of the
+     * per-type chain, so a project that arrived by migration and one that arrived
+     * by import must say the same words about the same file or the two look like
+     * different books.
+     */
+    if (ledgerOf(manifest).steps.length === 0) {
+      manifest.ledger = originLedger(
+        `${ARCHIVE}/${manifest.archive.file}`,
+        kind === 'pdf' ? 'The scan you imported' : 'The book you imported',
+        manifest.createdAt > 0 ? manifest.createdAt : Date.now(),
+      );
+    }
     await writeManifest(dir, manifest);
     // A project was made or grown. The library screen has no other way to hear
     // about a drop that landed while somebody was looking at something else.
     announceProjects();
     return { dir, entry: `${live}/${liveFile}`, key, stem: manifest.stem, notice };
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The step ledger, on disk
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A manifest's ledger, never undefined.
+ *
+ * `readManifest` sets the field on every project it returns — migrated when the
+ * file has none — so the optional in `ProjectManifest` describes the FILE FORMAT
+ * rather than anything a caller in this process can be handed. This is the one
+ * place that says so, instead of `?? emptyLedger()` at every call site, where the
+ * fallback would eventually be read as "a ledger is sometimes absent" and
+ * somebody would write a branch for it.
+ */
+function ledgerOf(manifest: ProjectManifest): ProjectLedger {
+  return manifest.ledger ?? emptyLedger();
+}
+
+/**
+ * The origin, with a uuid: this module has the clock and the randomness
+ * `shared/ledger.ts` deliberately does without.
+ *
+ * NO POINTER, which means the newest step — and with one step in the ledger that
+ * is this one. Writing it out would be recording a fact the array already
+ * implies, in a folder people sync.
+ */
+function originLedger(payload: string, label: string, createdAt: number): ProjectLedger {
+  return { steps: [originStep(randomUUID(), payload, Math.max(0, Math.trunc(createdAt)), label)] };
+}
+
+/**
+ * `<project>/curations/` — the frozen snapshots of the block editor's overlay.
+ *
+ * A SEVENTH SIBLING, on `overlays/`'s precedent and NOT inside it, which is the
+ * decision worth writing down. `overlays/` is the live pair and its archive
+ * folders, and everything that walks it — `countAmendments` for the delete card,
+ * the archive-on-generation-mismatch machinery — treats what it finds there as
+ * one book's current curation and its discarded predecessors. A snapshot is
+ * neither: it is a RETAINED PAYLOAD, named by a step, deleted only when that step
+ * is, and never archived aside because it was never bound to the live file's
+ * fate. Filing it under `overlays/` would put it in the path of a sweep whose
+ * entire premise is that what it finds there is disposable.
+ *
+ * `<uuid>.json` rather than a name anybody reads: the step's LABEL is what a
+ * person sees ("Saved corrections (23)"), and a filename that tried to say the
+ * same thing would be a second place for it to be said differently.
+ */
+export function curationsDir(dir: string): string {
+  return path.join(dir, CURATIONS);
+}
+
+/**
+ * A finished action, recorded against an OPEN manifest. The caller writes.
+ *
+ * ── The parent, and the two ways it can be wrong ────────────────────────────
+ *
+ * `parent` is the position captured when the job was ENQUEUED (`Job.parentStep`),
+ * which is the whole reason it is an argument rather than something read here: a
+ * pointer move while a job sits held must not silently retarget it. Null means
+ * nobody captured one — a curation commit, which happens now and therefore has no
+ * gap to be wrong across, or a job from a build that predates the field — and
+ * then the position at this instant is the honest answer.
+ *
+ * A CAPTURED PARENT THAT IS NO LONGER THERE FALLS BACK TO THE POSITION rather
+ * than refusing. The step it named was deleted while the run was going, and the
+ * alternative to falling back is throwing away the payload of a job that has
+ * already finished in order to protect the shape of a list. The list is
+ * recoverable; three hours of GPU are not — the same call `appendStep` makes when
+ * a clock steps backwards, for the same reason.
+ *
+ * RETURNS NULL FOR A LEDGER WITH NO STEPS, which is not an error either. A
+ * project adopted out of the old flat workspace can have outputs and no import,
+ * so there is no origin for anything to hang from, and inventing a parentless
+ * `read` would give that project a history whose first act was reading a book
+ * nobody can see was imported.
+ */
+async function landStep(
+  manifest: ProjectManifest,
+  run: Omit<LandedRun, 'id' | 'parent'> & { parent: string | null },
+): Promise<Landing | null> {
+  const ledger = ledgerOf(manifest);
+  const standing = positionOf(ledger);
+  if (standing === null) return null;
+  const captured = run.parent !== null && ledger.steps.some((step) => step.id === run.parent)
+    ? run.parent
+    : standing.id;
+  const landing = recordLanding(ledger, { ...run, parent: captured, id: randomUUID() });
+  manifest.ledger = landing.ledger;
+  return landing;
+}
+
+/**
+ * Destroy a payload the ledger no longer names. After the write, never before.
+ *
+ * `force` so a payload that is already gone — a bank the user deleted by hand, a
+ * rendering that never landed — finishes the delete rather than refusing it: what
+ * is being removed is the app's claim to own the file, and being generous about a
+ * file that has already left is not being generous about which file this is. The
+ * path is composed from the project directory and the step's own PROJECT-RELATIVE
+ * payload, split on the forward slashes the format stores, so nothing here ever
+ * matches a file by its basename.
+ */
+async function destroyPayload(dir: string, payload: string): Promise<void> {
+  const target = path.join(dir, ...payload.split('/'));
+  await fsp.rm(target, { force: true, recursive: false });
+}
+
+/** The steps and the flat list the accordion draws, in one answer. */
+export interface LedgerView {
+  ledger: ProjectLedger;
+  /**
+   * `chronological`'s rows, composed HERE rather than in the renderer.
+   *
+   * The ordering and the quiet "from Read" annotation are the two things the flat
+   * list gets wrong if anybody re-derives them, and the renderer re-deriving them
+   * would be a second implementation of the one concession this design makes to
+   * the tree. Main holds the ledger; main says what the list looks like.
+   */
+  rows: StepRow[];
+}
+
+/**
+ * One project's history, as the accordion needs it.
+ *
+ * The path is PROVEN to be a project before a byte is read — `deletableProjectDir`
+ * — because every call in this family takes a directory named by the renderer and
+ * one of them unlinks files. The gate is the same one for all four so that no
+ * member of the family is the lenient way in.
+ */
+export async function readStepLedger(dir: string): Promise<LedgerView> {
+  const manifest = await readManifest(deletableProjectDir(dir));
+  const ledger = ledgerOf(manifest);
+  return { ledger, rows: chronological(ledger) };
+}
+
+/**
+ * Stand on a different step.
+ *
+ * FREE, AND THE FREENESS IS THE FEATURE. Clicking a row in a history panel is a
+ * gesture every user of every history panel believes costs nothing, and here it
+ * genuinely does: one manifest write, no job, no rendering, no file touched. What
+ * it changes is what the viewers show and what the next action is made from.
+ *
+ * `stepOf` refuses an id this ledger does not hold, by name. A pointer that has
+ * come loose is not something to fall back from quietly — the caller named a row
+ * the app drew, so an id that is not there means the two are looking at different
+ * ledgers, and the honest answer is to say so.
+ */
+export async function goToStep(dir: string, stepId: string): Promise<ProjectLedger> {
+  const resolved = deletableProjectDir(dir);
+  const ledger = await withManifest(resolved, async (manifest) => {
+    const standing = stepOf(ledgerOf(manifest), stepId);
+    const next: ProjectLedger = { ...ledgerOf(manifest), position: standing.id };
+    manifest.ledger = next;
+    await writeManifest(resolved, manifest);
+    return next;
+  });
+  // The tabs of this project repaint from the position, and Home's rows are
+  // derived from what the ledger calls current. Both hear about it the one way
+  // anything in this app hears that a project moved.
+  announceProjects();
+  return ledger;
+}
+
+/**
+ * What deleting this step would take, and whether it is allowed at all.
+ *
+ * DESCRIBE AND DELETE ARE TWO CALLS, exactly as they are for a document, and this
+ * one owes the refusals as well as the facts: a card must never be put on screen
+ * for something the delete would refuse a click later. `deleteSubtree` refuses the
+ * origin by name — deleting the import is deleting the project, and the project ✕
+ * does that with its own ceremony and its own accounting of what it costs.
+ *
+ * EVERY CASUALTY IS NAMED WITH ITS OWN COST, in the retention rule's own terms,
+ * because the three retentions are three genuinely different losses. A confirm
+ * that said "Are you sure?" over a list of four would train somebody to click
+ * through the one that was about their curation.
+ */
+export async function describeStepDelete(dir: string, stepId: string): Promise<StepDeletion> {
+  const manifest = await readManifest(deletableProjectDir(dir));
+  const ledger = ledgerOf(manifest);
+  const named = stepOf(ledger, stepId);
+  // Run for its REFUSAL as much as for its list: this is the one place that can
+  // say no before the user has agreed to anything.
+  deleteSubtree(ledger, stepId);
+  return {
+    stepId: named.id,
+    label: named.label,
+    casualties: subtree(ledger, stepId).map((step): StepCasualty => ({
+      id: step.id,
+      label: step.label,
+      cost: deleteCost(step),
+      stale: step.stale === true,
+    })),
+  };
+}
+
+/**
+ * Take a step and everything made from it, off the ledger and off the disk.
+ *
+ * ── The order, which is the only interesting decision here ──────────────────
+ *
+ * THE MANIFEST GOES FIRST. Between the two writes there is a window, and it can
+ * only fall one of two ways: files on disk that nothing names, or rows naming
+ * files that are gone. The second is the survivable one — `summarise` already
+ * draws a document whose file is missing, marked missing, so a person can see
+ * what happened and act — while the first is a folder quietly holding hours of
+ * GPU that no screen in this app will ever mention again. So the record of the
+ * decision lands first, and the unlinking follows it.
+ *
+ * A FILE THAT WILL NOT DELETE IS A NAMED CONSOLE LINE AND NOT A THROW, for the
+ * same reason: by the time it is reached the delete has happened as far as this
+ * app's own bookkeeping is concerned, and rejecting the call would tell the user
+ * their delete failed while leaving it done. What is left behind is one stray
+ * file, named, in a folder they can open.
+ *
+ * WHAT IS DESTROYED IS `orphanedPayloads` AND NOT "the removed steps' payloads".
+ * Two steps are allowed to name one file and in this app routinely do — see that
+ * function for the re-read that leaves two `read` steps pointing at one bank.
+ */
+export async function deleteStep(dir: string, stepId: string): Promise<ProjectLedger> {
+  const resolved = deletableProjectDir(dir);
+  const { ledger, orphans } = await withManifest(resolved, async (manifest) => {
+    const deletion = deleteSubtree(ledgerOf(manifest), stepId);
+    manifest.ledger = deletion.ledger;
+    await writeManifest(resolved, manifest);
+    return { ledger: deletion.ledger, orphans: orphanedPayloads(deletion) };
+  });
+  for (const payload of orphans) {
+    try {
+      await destroyPayload(resolved, payload);
+    } catch (err) {
+      console.error(
+        `[projects] ${path.basename(resolved)}: ${payload} was deleted from this project's history `
+        + `and could not be removed from the disk (${(err as Error).message}). Nothing in Foundry `
+        + 'names that file any more; it is still in the project folder.',
+      );
+    }
+  }
+  announceProjects();
+  return ledger;
+}
+
+/**
+ * A curation commit: the snapshot is already written, this is the step for it.
+ *
+ * The file work is `electron/overlays.ts`'s, which owns every other write to a
+ * curation and its per-file serialisation; the manifest surgery is this module's,
+ * because all of it happens behind `withManifest`. The split is the same one
+ * `recordGenerated` draws — the engine writes the file, the catalogue learns
+ * about it here.
+ *
+ * NO CAPTURED PARENT, and none is possible: a commit is not a queue job. It
+ * happens the instant the user presses Save, so there is no gap between the
+ * gesture and the recording for a pointer move to slip through, and the position
+ * now IS the position they pressed it from.
+ */
+export async function recordCuration(
+  dir: string,
+  payload: string,
+  params: LedgerParams,
+): Promise<ProjectLedger> {
+  const resolved = deletableProjectDir(dir);
+  const ledger = await withManifest(resolved, async (manifest) => {
+    const landing = await landStep(manifest, {
+      action: 'curate',
+      parent: null,
+      payload,
+      params,
+      createdAt: Date.now(),
+    });
+    if (landing === null) {
+      throw new ProjectError(
+        `${path.basename(resolved)} has no recorded history for a save to be made from — this app `
+        + 'has no record of the document it was built on, so there is no step to hang a curation off. '
+        + 'Opening the book from Home imports it and gives this project an origin.',
+      );
+    }
+    await writeManifest(resolved, manifest);
+    return landing.ledger;
+  });
+  announceProjects();
+  return ledger;
+}
+
+/**
+ * The position of this project, or null when it has no history — the fact a job
+ * captures at ENQUEUE.
+ *
+ * NEVER THROWS. A catalogue that will not parse is a project whose next action
+ * cannot be filed against anything, and refusing to queue a three-hour reading
+ * because a JSON file is malformed would be this bookkeeping deciding whether the
+ * user gets to read their book. Null lands on `landStep`'s fallback, which is the
+ * position at the moment the run comes home.
+ */
+export async function positionStepId(dir: string): Promise<string | null> {
+  try {
+    return positionOf(ledgerOf(await readManifest(dir)))?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The overlay a rendering AT THE POSITION is made with: a frozen snapshot when
+ * the user is standing on one, the live curation otherwise.
+ *
+ * ── This is where the pointer stops being decoration ────────────────────────
+ *
+ * Every rendering in this app is `render(bank + overlay)` and there has only ever
+ * been one overlay to pass. A curation step freezes a copy of it, and a frozen
+ * copy nobody can render is a file with no purpose — so standing on a save has to
+ * change which file `--overlay` names, or the whole commit is bookkeeping about
+ * nothing. `curationInEffect` is the decision and it is pure; this composes the
+ * path from it.
+ *
+ * THE LIVE FILE IS THE ANSWER FOR ALMOST EVERY PROJECT, and that is what makes
+ * this safe to put in the path of every Generate: a project where nobody has ever
+ * pressed Save has no `curate` step for any position to resolve to, so it gets
+ * exactly the path it has always got.
+ */
+export function renderingOverlay(dir: string, manifest: ProjectManifest): string {
+  const snapshot = curationInEffect(ledgerOf(manifest));
+  return snapshot === null
+    ? path.join(overlaysDir(dir), `${manifest.key}.json`)
+    : path.join(dir, ...snapshot.payload.split('/'));
+}
+
+/** The same answer for a caller that has not read the catalogue yet. */
+export async function overlayForPosition(dir: string): Promise<string> {
+  return renderingOverlay(dir, await readManifest(dir));
 }
 
 /**
@@ -1261,6 +1699,23 @@ export async function restoreRotation(dir: string, rotation: Rotation): Promise<
 export async function recordGenerated(
   outputPath: string,
   role: ProjectGeneratedRole,
+  /**
+   * What the LEDGER needs, which the per-type chain has never had to know.
+   *
+   * Both fields exist because the alternative is reading a fact out of a
+   * filename. A translation's output is called `<book> (en).epub`, and the
+   * language is legible in those parentheses — which is exactly the basename
+   * matching this codebase's oldest house rule forbids, and which `migrateLedger`
+   * refuses to do even at the cost of leaving old translations unlabelled. The
+   * job knows what it asked for; it hands it over rather than writing it into a
+   * name for something else to read back out.
+   */
+  landed: {
+    /** The position when the job was ENQUEUED. See `Job.parentStep`. */
+    parentStep?: string | null;
+    /** `TranslateRequest.to`, as the dialog named it. */
+    language?: string;
+  } = {},
 ): Promise<string | null> {
   const resolved = path.resolve(outputPath);
   const dir = projectDirOf(resolved);
@@ -1298,12 +1753,49 @@ export async function recordGenerated(
         retention: 'expensive',
           why: WHY_MODEL_PASS,
       });
+      /*
+       * ── AND A LEDGER STEP, FOR A TRANSLATION AND NOTHING ELSE ────────────────
+       *
+       * The four roles that reach here are not four of a kind. A cast EPUB, a
+       * reprinted PDF and a text emission are RENDERINGS: three ways of writing
+       * out one bank of answers, free to make again, reproducible from a payload
+       * that is already a step. Minting a step for each would put three filenames
+       * where one action belongs, and would offer the user a delete button for
+       * something that costs nothing to have back. A translation is not that — it
+       * is hours of a model over every block of the book, and what it leaves
+       * behind is the only copy of that work.
+       *
+       * That is the settled rule stated as code, and it is the same rule
+       * `migrateLedger` applies to an old catalogue: translations become steps,
+       * renderings do not.
+       */
+      let landing: Landing | null = null;
+      if (role === 'translation') {
+        landing = await landStep(manifest, {
+          action: 'translate',
+          parent: landed.parentStep ?? null,
+          payload: `${GENERATED}/${file}`,
+          // Absent rather than empty when the caller did not say. An empty
+          // language would be this app claiming to know a fact it does not, and
+          // `labelFor` already prints the plain word for a step that says nothing
+          // about itself — which is what a migrated translation gets too.
+          ...(landed.language !== undefined && landed.language.trim().length > 0
+            ? { params: { language: landed.language.trim() } satisfies LedgerParams }
+            : {}),
+          createdAt: Date.now(),
+        });
+      }
       // WRITTEN BEFORE the live copy is refreshed, and that ordering is the
       // whole reason these are two writes. Refreshing can refuse — an archive
       // folder from this same second already exists — and a refusal that took
       // the origin's own catalogue row down with it would leave the engine's
       // output on disk, uncatalogued, invisible to Home.
       await writeManifest(dir, manifest);
+      // After the write, never before: the replacement is on disk and recorded,
+      // so whatever the swap displaced is now a file nothing in this project
+      // names. Null on every ordinary re-translation, because the rotation
+      // already moved the previous edition and the new one took its path.
+      if (landing?.displaced != null) await destroyPayload(dir, landing.displaced);
       if (role !== 'searchable') return null;
       const live = await refreshLivePdf(dir, manifest, file);
       await writeManifest(dir, manifest);
@@ -1619,7 +2111,51 @@ export async function recordReading(readingsPath: string): Promise<void> {
         readAt: Date.now(),
         pages,
       };
+      /*
+       * ── AND THE READ STEP, WHICH IS THE SAME FACT IN THE OTHER RECORD ────────
+       *
+       * `manifest.reading` above says which reading the block editor's live
+       * corrections are bound to — one per project, replaced in place, a fact
+       * about NOW. The ledger says what has been done to this book and what each
+       * of those left behind, and it keeps every one of them. Both are written
+       * from the same three values in the same instant precisely so they cannot
+       * come to disagree about a book.
+       *
+       * ITS PARENT IS THE IMPORT AND NOT THE POSITION, which is the one action
+       * where those differ — see `originOf`. A reading reads the PIXELS, and the
+       * pixels are in `archive/` however far through their own history the person
+       * pressing OCR happens to be standing. Parented at the position it would
+       * append a reading made FROM a reading the moment anybody re-read a book
+       * while looking at it, and every one of those steps would name the single
+       * bank file the engine writes.
+       *
+       * THE GENERATION IS CARRIED AND IS NOT PART OF THE QUESTION. `reRunTarget`
+       * excludes it deliberately (see `MINTED_BY_THE_RUN`): a re-read mints a new
+       * one — that is what a generation is FOR — so comparing them would make
+       * every re-read look like a new question and leave the project holding two
+       * banks where the user asked for one. What decides append-or-replace here is
+       * the parent and the page count; what the generation does is let a curation
+       * say which pass over the pages its block numbers are about.
+       *
+       * A REPLACE STALES EVERYTHING DOWNSTREAM, which `recordLanding` does: the
+       * saves made against the previous bank name blocks by numbers that mean
+       * different blocks now, and the translations of those saves were of blocks
+       * that have moved. They stay in the list, dimmed and clickable, because each
+       * still has its own payload and that payload is still a true record of
+       * something.
+       */
+      const landing = await landStep(manifest, {
+        action: 'read',
+        parent: originOf(ledgerOf(manifest))?.id ?? null,
+        payload: `${READINGS}/${manifest.key}.jsonl`,
+        params: { generation, pages },
+        createdAt: Date.now(),
+      });
       await writeManifest(dir, manifest);
+      // The swap has landed, so the file the old step named may go — and only
+      // now. A re-read leaves this null: the engine archived the previous bank
+      // aside and wrote the same path again, so the step's payload never moved.
+      if (landing?.displaced != null) await destroyPayload(dir, landing.displaced);
     });
     // The one that puts the waiting light out. Home and the dock are drawn from
     // the listing, and until this is heard they both go on asking for a step
@@ -2136,8 +2672,15 @@ async function hasBytes(target: string): Promise<boolean> {
  * comparison rather than after it — a string test against an unresolved path is
  * the classic way this check gets defeated.
  *
- * NO EXCEPTIONS and no second caller. If something ever needs to erase a
- * directory that is not a project, it does not get to reach it through here.
+ * NO EXCEPTIONS. If something ever needs to erase a directory that is not a
+ * project, it does not get to reach it through here.
+ *
+ * THE STEP-LEDGER CALLS ASK IT TOO, and that is the check being used for exactly
+ * what it is rather than being widened. `deleteStep` unlinks payload files inside
+ * a directory the renderer named, which is the same authorization problem one
+ * level down, and its describe/read/go siblings ask the same question so that no
+ * member of that family is the lenient way in — a gate that only guards the
+ * destructive call is a gate somebody routes around by reading first.
  */
 function deletableProjectDir(dir: string): string {
   const root = projectsDir();
@@ -2238,7 +2781,26 @@ export async function inspectProject(dir: string): Promise<ProjectInventory> {
       : (await summarise(resolved, path.basename(resolved))).documents.length,
     filed: (manifest?.final.length ?? 0) > 0,
     bytes: await measure(resolved),
-    amendments: await countAmendments(overlaysDir(resolved)),
+    /*
+     * BOTH FOLDERS, because a project delete destroys both.
+     *
+     * `curations/` did not exist when this number was written and it holds the
+     * same thing `overlays/` does — a person's decisions about the blocks on the
+     * pages — frozen, retained, and named by a step. A card that counted only the
+     * live pair would quietly under-report the irreplaceable half of what is about
+     * to be erased, which is the one direction this sentence must never be wrong
+     * in.
+     *
+     * A SNAPSHOT'S DECISIONS OVERLAP THE LIVE FILE'S and are counted anyway, which
+     * is what this number has always been: every amendment in every curation file
+     * under the project, not a count of distinct decisions. The archived overlays
+     * it already walks overlap each other the same way — each is a whole copy of
+     * the state at the time it was set aside. What the figure conveys is how much
+     * recorded judgement is in this folder, and every one of those files is a
+     * separate thing that will not exist afterwards.
+     */
+    amendments: await countAmendments(overlaysDir(resolved))
+      + await countAmendments(curationsDir(resolved)),
   };
 }
 

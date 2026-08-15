@@ -62,7 +62,7 @@ import {
   archiveFileOf,
   generatedFileFor,
   importDocument,
-  overlaysDir,
+  overlayForPosition,
   rotateGenerated,
   rotationRefusal,
   translationFileFor,
@@ -194,27 +194,48 @@ export async function planConversion(
      * the engine's rule, and this app does not second-guess it.
      */
     readingsPath: path.join(dir, 'readings', `${key}.jsonl`),
-    overlayPath: overlayPathFor(dir, key),
+    /*
+     * ── WHICH CURATION, WHICH IS A QUESTION THIS APP DID NOT USED TO HAVE ─────
+     *
+     * There was one overlay per book, so `--overlay` had one answer and it was a
+     * fact about the project. There is more than one now: the live file, and a
+     * frozen snapshot for every time somebody pressed Save. The POSITION decides
+     * which — standing on a save renders the book as it was at that save,
+     * standing on the reading renders it with the live corrections — and without
+     * that, a committed snapshot would be a file with a row in the history and no
+     * way on earth to see its effect.
+     *
+     * RESOLVED AT PLAN TIME, and the alternative was considered and is worse.
+     * `argsFor` tests for the file's EXISTENCE as the engine starts, deliberately,
+     * because a batch waits hours and the hours are when somebody sits with the
+     * block editor open — but WHICH overlay is a different question from whether
+     * it is there. It is what the user chose when they pressed Generate, and
+     * re-resolving it at spawn would let a pointer move made while the job waited
+     * silently render a different state of the book than the dialog said it would.
+     * The same rule as `Job.parentStep`, one layer down.
+     *
+     * A project nobody has committed a save in gets exactly the path it always
+     * got: `overlayForPosition` finds no curation step and answers with the live
+     * `overlays/<key>.json`.
+     */
+    overlayPath: await overlayForPosition(dir),
   };
 }
 
-/**
- * `<project>/overlays/<key>.json` — where this book's block corrections live.
+/*
+ * `overlayPathFor` USED TO LIVE HERE and is gone, which is worth a line because
+ * its argument was right and only stopped applying.
  *
- * KEYED BY THE BANK, exactly as the bank is keyed by the book: one reading, one
- * curation of it. The format is deliberately NOT in the name, for the reason the
- * readings path gives — an EPUB and a plain-text emission are two renderings of
- * one set of answers, and a person who struck two hundred running heads before
- * casting the book has struck them for every rendering of it.
- *
- * DERIVED HERE and not by whatever is about to use it, so that the app has one
- * answer to "where is the curation for this book". The block editor asks main,
- * which asks `projects.overlaysDir`; a job asks its plan, which asks this. Both
- * arrive at the same file because both compose it from the project and the key.
+ * It composed `<project>/overlays/<key>.json`, and it existed so that the app had
+ * ONE answer to "where is the curation for this book" rather than two call sites
+ * spelling the same path. There is no longer one curation to point at: there is
+ * the live file and a frozen snapshot for every save, and which of them a
+ * rendering reads is decided by the position rather than composed from the key.
+ * So the single answer moved to where the position is known —
+ * `projects.renderingOverlay`, and `overlayForPosition` for a caller that has not
+ * read the catalogue yet — and a function here that could still compose the live
+ * path would be the second opinion its own comment existed to prevent.
  */
-export function overlayPathFor(projectDir: string, key: string): string {
-  return path.join(overlaysDir(projectDir), `${key}.json`);
-}
 
 /**
  * Where this book's TRANSLATION goes.

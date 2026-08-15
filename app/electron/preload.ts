@@ -82,6 +82,15 @@ const api: FoundryApi = {
     save: (pdfPath, file) => ipcRenderer.invoke('overlay:save', pdfPath, file),
     loadLedger: (pdfPath) => ipcRenderer.invoke('overlay:ledger-load', pdfPath),
     saveLedger: (pdfPath, stacks) => ipcRenderer.invoke('overlay:ledger-save', pdfPath, stacks),
+    commit: (pdfPath) => ipcRenderer.invoke('overlay:commit', pdfPath),
+  },
+
+  ledger: {
+    read: (projectDir) => ipcRenderer.invoke('ledger:read', projectDir),
+    go: (projectDir, stepId) => ipcRenderer.invoke('ledger:go', projectDir, stepId),
+    describeDelete: (projectDir, stepId) =>
+      ipcRenderer.invoke('ledger:describe-delete', projectDir, stepId),
+    delete: (projectDir, stepId) => ipcRenderer.invoke('ledger:delete', projectDir, stepId),
   },
 
   prefs: {
