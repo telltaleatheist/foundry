@@ -119,7 +119,40 @@ Fences are disjoint within a wave; a wave lands before the next starts.
   generalization, `params.language` → `--from` wiring, and the
   "Translate (English → Hungarian)" labels.
 
-### Wave 3
+### Wave 3 — Unit K LANDED (`0e2cd1c` + `e9ed0ef`); Unit D2 running
+
+**Unit K's residual, owed before this wave is called done:** K was
+committed on gates 1–3 verified by the lead (`bun test`, root `tsc`,
+electron `tsc`) plus the builder's own five-gate run in an isolated
+worktree. The lead could NOT re-run `tsconfig.app.json` and `ng build`
+independently, because those resolve Angular only from the main
+checkout and the main tree was dirty with D2's mid-flight work. **When
+D2 lands, the combined five-gate run is what confirms K's app build**;
+if it fails and the cause is K's, fix it there. Recorded rather than
+glossed, because "the gates passed" meant something narrower here than
+it usually does.
+
+Also learned, so nobody repeats the hour: an isolated worktree cannot
+run the Angular gates. `bunx tsc -p tsconfig.app.json` and `ng build`
+work only in `C:\Users\tellt\Projects\foundry` — `@angular/*` is not
+in either `node_modules` and junctioning them into a worktree does not
+reproduce whatever resolves it. Verify app-side units in the main tree,
+one at a time, or accept a narrower claim and say so.
+
+- ~~Unit K~~ — landed. Viewer-side stacking; the cast format is
+  untouched and the engine never learned about it. Route 2 (a
+  single-flow cast) was never needed. Two limits stated, not hidden: a
+  chapter line cannot be dragged across a document boundary (remove and
+  re-add through that document's gutter), and a long book is that many
+  live frames with no virtualization. **Three spec assumptions of mine
+  were wrong and the builder said so**: the inspector's Chapters
+  section did not serve the book at all (it was scan-only, so the
+  second projection had to be built, not reused); the overlay door I
+  named needs a scan's block view and was unusable from a book tab; and
+  undo did not already cover a chapters row on a book — it would have
+  thrown. A routed one-line fix (`e9ed0ef`) taught the book's undo
+  ledger the `chapters` field, which would otherwise have archived a
+  book's whole undo history aside on next open.
 
 - **Unit D2 — the app switches to records.** Planning, ledger, sweep and
   seeding move to record files; **and CHAINS**: the one-hop refusal
