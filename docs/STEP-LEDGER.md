@@ -80,6 +80,15 @@ overlay keeps going; the snapshot never changes again.
   or commits again from where they are (see "acting from a step" below).
 - A curation step's parent may be a reading **or another curation step** —
   commit, keep editing, commit again: a chain of saves, each one restorable.
+- **A commit does NOT move the position** (ruling, 2026-08-15 — the spec said
+  otherwise and it was wrong). Every other action moves the pointer onto what it
+  just made, because a new reading or translation is where you now stand. A save
+  is not: it retains what you have and leaves you holding it. Moving the pointer
+  onto the snapshot made the editor read-only *the instant somebody pressed
+  Save* — punishing the one gesture the whole restore-point idea depends on
+  people making often, and doing it for nothing, since the live overlay is
+  byte-identical to the snapshot at that moment and is the editable one. Standing
+  on a frozen save stays a deliberate act: you click the row.
 - Generation binding: a snapshot records the reading generation it was made
   under, same as the live overlay does today. The existing archive-on-mismatch
   machinery stays for the live overlay; committed snapshots are already
