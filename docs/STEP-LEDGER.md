@@ -111,7 +111,21 @@ user is never surprised by which state their epub reflects.
   This is the branching case and it is always safe.
 - **Same action, same parameters, same parent** (re-read the same pages,
   re-translate to English again): this is a **re-run**, and re-run means
-  **replace** — swap-on-success, exactly per the settled rule. The old payload
+  **replace** — swap-on-success, exactly per the settled rule.
+
+  > **The generation trap — this spec said it wrong, and the build caught it.**
+  > A read's params carry the reading `generation`, and a re-read *mints a new
+  > one* — that is what a generation is for. So comparing params naively means
+  > the second reading never matches the first, every re-read appends beside the
+  > reading it was meant to replace, and the user ends up with two banks: the
+  > rule exactly inverted. Identity therefore compares only **what was asked
+  > for**, never what the run **stamped on its own answer**; `read.generation`
+  > is excluded, and `ledger.ts` names that set `MINTED_BY_THE_RUN`. Any field
+  > added to a step's params must be sorted into one of those two piles.
+  >
+  > For the same reason, **an irreplaceable step is never a re-run target** —
+  > derived from the retention rule rather than special-cased, which is what
+  > makes a second curation save append (and protects the origin) for free. The old payload
   is destroyed only after the new run completes; the queue confirm names what is
   replaced and what becomes stale downstream ("this replaces the 17-page reading
   and marks your 2 saves and the English translation stale"). No timestamped
