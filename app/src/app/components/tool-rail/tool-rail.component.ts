@@ -113,6 +113,22 @@ import { UiService } from '../../core/ui.service';
           <span class="rail-label">Select</span>
         </button>
 
+        <!-- Block view: select mode for a SCAN. A separate item rather than a
+             second meaning for Select, because they act on different documents
+             and a person should be able to see which of the two the thing in
+             front of them has. Disabled over a book, exactly as Select is
+             disabled over a scan — the pair reads as one idea in two places. -->
+        <button
+          class="rail-item"
+          [class.active]="blocking()"
+          [disabled]="!canBlock()"
+          title="Outline what the model read off this scan: strike, relabel, mark the chapters"
+          (click)="toggleBlocks()"
+        >
+          <span class="rail-icon">▦</span>
+          <span class="rail-label">Blocks</span>
+        </button>
+
         <!-- The split editor's discoverable half: the same toggle as the
              button in the book's own toolbar, surfaced where a person who has
              never opened it will look. Disabled rather than hidden when the
@@ -290,6 +306,28 @@ export class ToolRailComponent {
   protected toggleSelect(): void {
     const tab = this.tabs.activeDocument();
     if (tab && tab.kind === 'epub' && tab.book !== null) void this.tabs.toggleSelectMode(tab.id);
+  }
+
+  /**
+   * Blocks needs a SCAN, which is the mirror of Select needing a book.
+   *
+   * No further test: whether the model has ever read this document is a question
+   * only main can answer, and asking it here would mean an IPC call per repaint
+   * of the dock. The mode turns on and says what it found — including "the model
+   * has not read this document yet" — which is the honest place for that
+   * sentence and the one a person can act on.
+   */
+  protected canBlock(): boolean {
+    return this.tabs.activeDocument()?.kind === 'pdf';
+  }
+
+  protected blocking(): boolean {
+    return this.tabs.activeDocument()?.blockView === true;
+  }
+
+  protected toggleBlocks(): void {
+    const tab = this.tabs.activeDocument();
+    if (tab && tab.kind === 'pdf') void this.tabs.toggleBlockView(tab.id);
   }
 
   protected editingActive(): boolean {

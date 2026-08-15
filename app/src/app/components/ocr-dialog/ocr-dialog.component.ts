@@ -457,6 +457,14 @@ export class OcrDialogComponent {
         outputPath: plan.outputPath,
         kind,
         readingsPath: plan.readingsPath,
+        /*
+         * AND THE BLOCK EDITOR'S CORRECTIONS, if there are any by the time this
+         * job actually starts. The path is carried, not the decision: main tests
+         * for the file as it spawns the engine (electron/job-queue.ts), because a
+         * queued batch waits hours and the hours are exactly when somebody sits
+         * with the block editor open.
+         */
+        overlayPath: plan.overlayPath,
       };
       const skip = this.skipPages().trim();
       if (skip.length > 0) request.skipPages = skip;

@@ -132,6 +132,92 @@ export const CATEGORY_IDS: ReadonlySet<string> = new Set(BLOCK_CATEGORIES.map((o
 /** What a category this table has never heard of is drawn in. Grey, and named as unknown. */
 export const UNKNOWN_CATEGORY_COLOUR = '#8c8c8c';
 
+/**
+ * The same eleven, plus the page furniture, under the names a SCAN's blocks
+ * carry — for the block editor over a PDF.
+ *
+ * ── Why there are two vocabularies and only one set of colours ───────────────
+ *
+ * A cast book's blocks carry `data-bf-cat="footnote"`; the readings bank's blocks
+ * carry `"Footnote"`, because that is what the model answered and the bank is
+ * never edited. They are the same idea spelled for two different files, and the
+ * one thing that must not differ is the COLOUR: the block editor outlines a
+ * footnote on the scan, select mode outlines the same footnote in the cast book,
+ * and a person moving between the two panes is reading one legend.
+ *
+ * So the rows are DERIVED from the table above by lower-casing the engine's
+ * spelling, and nothing here restates a hex value that is already up there. Only
+ * the two categories the EPUB vocabulary has no word for carry their own.
+ *
+ * ── The two that are new, and the one that is missing ───────────────────────
+ *
+ * `Page-header` and `Page-footer` are the running head and the folio. They are
+ * not in the EPUB's list because the cast book does not contain them — the engine
+ * sets them aside as furniture — but they are emphatically in the SCAN, they are
+ * what the model most often mistags as a Title (168 pages of running head, three
+ * of them called a Title, each one a spurious chapter split), and correcting one
+ * is the single most valuable thing a person can do in this editor. A curation
+ * pass that could not name them would be missing its main job.
+ *
+ * `chapter` goes the other way: it is foundry's own category in the EPUB and the
+ * model has no such answer. On a scan, "the book divides here" is not a category
+ * at all — it is the overlay's `chapter` flag, drawn as a mark on the block's edge
+ * rather than as a colour, which is `CHAPTER_MARK_COLOUR` below.
+ */
+const PAGE_FURNITURE: readonly BlockCategory[] = [
+  {
+    id: 'Page-header',
+    label: 'Running head',
+    colour: '#9a8c98',
+    note: 'The line printed at the top of every page. Not part of the book.',
+  },
+  {
+    id: 'Page-footer',
+    label: 'Folio',
+    colour: '#6b7280',
+    note: 'The page number and whatever sits beside it. Not part of the book.',
+  },
+];
+
+/**
+ * Every category a block in the readings bank can carry, in the engine's order
+ * (`DOTS_CATEGORIES`, src/vlm/dots.ts).
+ *
+ * Built rather than written: an entry the EPUB table also knows takes that row's
+ * colour and note under the engine's spelling of its id, so the two lists cannot
+ * drift apart in the one way that would matter.
+ */
+export const PDF_BLOCK_CATEGORIES: readonly BlockCategory[] = [
+  'Caption', 'Footnote', 'Formula', 'List-item', 'Page-footer', 'Page-header',
+  'Picture', 'Quote', 'Section-header', 'Table', 'Text', 'Title',
+].map((id) => {
+  const furniture = PAGE_FURNITURE.find((one) => one.id === id);
+  if (furniture !== undefined) return furniture;
+  const shared = BLOCK_CATEGORIES.find((one) => one.id === id.toLowerCase());
+  return shared === undefined
+    ? { id, label: id, colour: UNKNOWN_CATEGORY_COLOUR, note: '' }
+    : { ...shared, id };
+});
+
+/** A scan block's colour, or the fallback grey for a category no build knows. */
+export function pdfCategoryColour(id: string): string {
+  return PDF_BLOCK_CATEGORIES.find((one) => one.id === id)?.colour ?? UNKNOWN_CATEGORY_COLOUR;
+}
+
+export function pdfCategoryLabel(id: string): string {
+  return PDF_BLOCK_CATEGORIES.find((one) => one.id === id)?.label ?? id;
+}
+
+/**
+ * The edge mark on a block the book divides at.
+ *
+ * The EPUB's `chapter` colour, because it is the same statement about the same
+ * thing — one drawn as an outline round a heading in a cast book, the other as a
+ * bar down the side of a block on a scan.
+ */
+export const CHAPTER_MARK_COLOUR =
+  BLOCK_CATEGORIES.find((one) => one.id === 'chapter')?.colour ?? UNKNOWN_CATEGORY_COLOUR;
+
 export function categoryLabel(id: string): string {
   return BLOCK_CATEGORIES.find((one) => one.id === id)?.label ?? id;
 }

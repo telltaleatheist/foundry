@@ -103,6 +103,17 @@ export interface JobRequest {
   kind: ConversionKind;
   /** `--readings`, from `WorkspacePlan.readingsPath`. Always passed; see workspace.ts. */
   readingsPath: string;
+  /**
+   * `--overlay`, from `WorkspacePlan.overlayPath` — the block editor's file of
+   * corrections.
+   *
+   * Optional on the REQUEST and conditional on the command line: a job enqueued
+   * before this field existed carries none, and a job that carries one still only
+   * gets the flag when the file is on disk when the engine starts. A run told to
+   * apply an overlay that is not there is refused by the engine, by name, which
+   * would turn "nobody has curated this book" into a failed conversion.
+   */
+  overlayPath?: string;
   /** `--skip-pages`, verbatim: "3,17,19-24". */
   skipPages?: string;
   /** `--strip-note-markers`: drop footnote reference numbers. For a narration build. */
@@ -452,6 +463,17 @@ export interface WorkspacePlan {
   outputPath: string;
   /** `<libraryDir>/projects/<key>/readings/<key>.jsonl`. Passed on every job. */
   readingsPath: string;
+  /**
+   * `<libraryDir>/projects/<key>/overlays/<key>.json` — the curation, if there is
+   * one.
+   *
+   * ALWAYS DERIVED, PASSED ONLY WHEN THE FILE EXISTS (see job-queue's `argsFor`).
+   * The path is a fact about the project and can be composed the moment the plan
+   * is made; whether there is a file at it is a fact about the moment the engine
+   * starts, which is hours later for a queued batch and may be after somebody has
+   * spent the wait striking two hundred running heads.
+   */
+  overlayPath: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -652,6 +674,57 @@ export interface ProjectManifest {
     files: ProjectWorkingFile[];
   };
   final: ProjectFinal[];
+  /**
+   * Which reading of this book the block editor's corrections are about, or null
+   * for a project nobody has corrected yet.
+   *
+   * See `ProjectReading`. Null is the ordinary state and is not a hole in the
+   * catalogue: it is minted the first time anybody amends a block, because before
+   * that there is nothing for a generation to bind.
+   */
+  reading: ProjectReading | null;
+}
+
+/**
+ * The identity of a READING — the model's pass over the pages — so that a file of
+ * corrections can say which one it is about.
+ *
+ * ── The hazard, which is why this exists at all ─────────────────────────────
+ *
+ * An overlay names blocks as `(page, order, part)`: the page, the element's place
+ * in the model's answer for that page, and the piece of it a split cut out. Those
+ * numbers are stable across every RE-RENDER of a bank, which is the whole reason
+ * the scheme works — the answers are replayed verbatim and the split is
+ * deterministic over them. They are not stable across a RE-READ. The engine
+ * archives a completed bank and reads every page again, the model answers
+ * differently, and `{"page": 7, "order": 14}` afterwards is whatever the new pass
+ * happened to answer fourteenth. Amendments from the previous life would then
+ * strike a different block and split the book in a different place, with nothing
+ * on screen saying anything had happened. That is the failure this app spends its
+ * refusals avoiding, and it is exactly the one `ProjectWorkingTree.generation`
+ * guards for a book's undo history.
+ *
+ * ── Why it counts passes rather than being stamped by the job ───────────────
+ *
+ * The obvious design mints a uuid when a conversion finishes. It is wrong in one
+ * ordinary case and the case is common: converting a book to plain text after
+ * curating its EPUB runs the engine again, records another step, and replays the
+ * SAME bank — every block identical, every amendment still exactly about the
+ * block it was made about. A generation minted per job would throw that curation
+ * aside and tell the user their corrections had been archived, for a run that
+ * changed nothing.
+ *
+ * So the generation is bound to the thing that actually moves: `passes` is how
+ * many banks the `readings/archived-<stamp>` folders held when it was minted, and
+ * the engine's `archiveReadingsBank` is the only thing that puts one there. A re-read
+ * increments it and a re-render does not, which is precisely the distinction the
+ * overlay cares about.
+ */
+export interface ProjectReading {
+  /** The uuid the overlay file and its undo ledger both carry. */
+  generation: string;
+  /** Archived banks under `readings/` when this generation was minted. */
+  passes: number;
 }
 
 /**
@@ -1191,7 +1264,35 @@ export interface EpubBook {
  * route is refused as the wrong shape instead of being handed back to a Ctrl+Z
  * that would fall through every branch and do nothing.
  */
-export type LedgerField = 'cut' | 'category' | 'html' | 'note-cut' | 'nav-label' | 'page-heading';
+export type LedgerField =
+  | 'cut' | 'category' | 'html' | 'note-cut' | 'nav-label' | 'page-heading'
+  /*
+   * ── AND THE FOUR THE BLOCK EDITOR ADDS ──────────────────────────────────
+   *
+   * The same idea one document earlier. The first three name a block in a SCAN's
+   * readings — `page:order`, or `page:order:part` — and their setter is not a
+   * call into somebody's markup but one line of the overlay file
+   * (shared/overlay.ts, `amendOverlay`): the same shape as every field above it,
+   * a targeted validated write of one value, so an undo is that call again with
+   * the old one.
+   *
+   * `member` for all four is the overlay's own key, which is the readings bank's
+   * key, which is the project's. A scan has no chapters to be a member of; what
+   * it has is one bank and one file of decisions about it.
+   *
+   * The empty string is "nothing said", and it is a real value rather than a
+   * missing one: un-striking a block is not writing `strike: false`, it is
+   * REMOVING the field, and `before: ''` is what makes that undoable.
+   *
+   * `chapters` IS THE ODD ONE AND IT CARRIES THE WHOLE LIST. Its `target` is the
+   * overlay key again rather than a block, because the spine is one statement
+   * about the book: adding a chapter, removing one and renaming one are all "it
+   * used to run like this and now runs like that", and the first chapter edit of
+   * all turns an ABSENT list into a seeded one — a state no per-chapter row could
+   * return from, since undoing one row would leave the other fifty-nine written
+   * out explicitly, which means something different from having said nothing.
+   */
+  | 'strike' | 'block-category' | 'block-text' | 'chapters';
 
 /**
  * One element, one field, and what it said on each side of an action.
@@ -1273,4 +1374,113 @@ export interface LedgerLoad {
   actions: LedgerStacks;
   /** One sentence for the strip, or null when there was nothing to say. */
   notice: string | null;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// The block editor: what the engine says is on a scan's pages
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * One block of one page, as the model read it.
+ *
+ * STRAIGHT OFF THE READINGS BANK, through a command that prints it — the app
+ * never parses the bank itself, for the same reason it never opens an EPUB by
+ * hand: the bank's shape is the engine's, the split into parts is the engine's,
+ * and a second reader of it would be a second opinion about what a block is.
+ */
+export interface PdfBlock {
+  /** 1-based, the PDF's own numbering. */
+  page: number;
+  /** The element's index in the model's answer for that page. */
+  order: number;
+  /** Which piece of that element this is, after the markdown split. */
+  part: number;
+  /** What the model called it — one of `OVERLAY_CATEGORIES`. */
+  category: string;
+  /** The block's box IN THE RENDER'S PIXEL FRAME. See `PdfBlockPage.width`. */
+  box: { x1: number; y1: number; x2: number; y2: number };
+  /** What the model read. Shown in the inspector beside any override of it. */
+  text: string;
+}
+
+/**
+ * One page's blocks, and the frame their boxes are measured in.
+ *
+ * THE RENDER SIZE IS NOT THE PAGE SIZE and the difference is the whole reason it
+ * is carried. The model was shown a raster of the page at whatever resolution the
+ * conversion rasterised it at, and every box it answered with is in those pixels.
+ * The viewer draws the page at a CSS size that depends on the window and the
+ * zoom. So a box is scaled by `cssPageWidth / width` — axis-aligned, one factor,
+ * because both frames are the same page in the same orientation.
+ */
+export interface PdfBlockPage {
+  page: number;
+  width: number;
+  height: number;
+  blocks: PdfBlock[];
+}
+
+/**
+ * The blocks of a whole document, or the sentence saying why there are none.
+ *
+ * A RESULT AND NOT A REJECTION, exactly like `MetadataOutcome`: "this book has
+ * never been read by the model" and "this engine build has no blocks command" are
+ * both ordinary answers that belong on screen as words, and neither is a reason
+ * for a tab to break.
+ */
+export type PdfBlocksOutcome =
+  | { ok: true; pages: PdfBlockPage[]; chapters: PdfDetectedChapter[] }
+  | { ok: false; reason: string };
+
+/**
+ * Where the ENGINE thinks a chapter starts, and what it would call it.
+ *
+ * REPORTED SO THE APP CAN SEED, and for nothing else. The overlay's `chapters`
+ * list, once written, supersedes detection completely — but a person opening the
+ * chapter accordion on a three-hundred-page book must not be handed an empty list
+ * and told to find forty chapter openings by hand. So the detected spine is what
+ * the accordion shows until somebody touches it, drawn as detected-not-confirmed,
+ * and the first edit writes it out as theirs.
+ */
+export interface PdfDetectedChapter {
+  page: number;
+  order: number;
+  part?: number;
+  /** What the engine derived, usually the block's own words. */
+  title: string;
+}
+
+/**
+ * What `overlay:load` answers with: the amendments, and what had to be said about
+ * getting them.
+ *
+ * The same three outcomes `LedgerLoad` has, for the same reasons — restored, or
+ * archived aside with a sentence naming the file and where it went. Never
+ * silently empty.
+ */
+export interface OverlayLoad {
+  /** The file as it stands, or an empty one bound to the current reading. */
+  file: OverlayFileWire;
+  notice: string | null;
+}
+
+/**
+ * The overlay as it crosses IPC.
+ *
+ * Structurally the `OverlayFile` of shared/overlay.ts and deliberately declared
+ * again here rather than imported: this file is the wire, it is imported by the
+ * preload, and a type alias reaching into a module with a class in it would drag
+ * that module across a boundary it has no business on.
+ */
+export interface OverlayFileWire {
+  overlay: number;
+  generation: string;
+  amendments: {
+    at: { page: number; order: number; part?: number };
+    strike?: boolean;
+    category?: string;
+    text?: string;
+  }[];
+  /** Absent means the engine decides. See `OverlayFile.chapters`. */
+  chapters?: { at: { page: number; order: number; part?: number }; title: string }[];
 }

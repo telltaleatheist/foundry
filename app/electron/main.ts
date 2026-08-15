@@ -34,6 +34,7 @@ import { injectReporter, REPORTER_ID, REPORTER_MEMBER, REPORTER_SOURCE, sanitize
 import {
   engineInfo,
   readEpubMetadata,
+  readPdfBlocks,
   readPdfMetadata,
   runDoctor,
   writeEpubMetadata,
@@ -66,6 +67,13 @@ import {
 import { loadLedger, saveLedger } from './history';
 import * as queue from './job-queue';
 import {
+  loadOverlayFile,
+  loadOverlayLedger,
+  locateOverlay,
+  saveOverlayFile,
+  saveOverlayLedger,
+} from './overlays';
+import {
   adoptLegacyLayout,
   deleteDocument,
   deleteProject,
@@ -92,6 +100,7 @@ import * as vllm from './vllm-server';
 import { planConversion, planTranslation } from './workspace';
 import { detectEnvTooling, listDistros } from './wsl';
 import { fold, isBook } from '../shared/original';
+import type { OverlayFile } from '../shared/overlay';
 import type { MenuAction } from '../shared/api';
 import type {
   BackendSettingsPatch,
@@ -106,6 +115,7 @@ import type {
   JobRequest,
   LedgerStacks,
   NavEcho,
+  OverlayFileWire,
   ProjectDocument,
   ProjectSummary,
   RecentKind,
@@ -1201,6 +1211,19 @@ function registerIpc(): void {
         + 'again from anything else on this disk, and once it is gone a future conversion of this '
         + 'book pays for every page from scratch.'
       : 'There is no readings bank in it, so nothing in here costs GPU-hours to make again.';
+    /*
+     * AND THE CURATION, which is the one thing in here that is IRREPLACEABLE
+     * rather than merely expensive (`ProjectStep.retention`). A bank can be read
+     * again for money and hours. A person going through four hundred pages
+     * saying which blocks are running heads and where the chapters start cannot
+     * be reproduced by anything, at any price, and it is quoted before the bank
+     * for exactly that reason.
+     */
+    const curation = project.amendments > 0
+      ? `It also holds ${project.amendments.toLocaleString()} corrections you made by hand about `
+        + 'the blocks on those pages — strikes, categories, wording and chapter starts. Nothing '
+        + 'can make those again: they are judgements about the book, not output.'
+      : '';
     const filed = project.filed
       ? ' The copy you filed into this project\'s own folder is inside it and goes with it.'
       : '';
@@ -1223,6 +1246,7 @@ function registerIpc(): void {
         + 'fetch it again — wherever you got it from is the only place it still exists.',
         `${project.dir} and everything under it goes: ${made}, every working copy and every `
         + `edit in them, and the undo history. ${sizeOnDisk(project.bytes)} in all.${filed}`,
+        ...(curation.length > 0 ? [curation] : []),
         bank,
         'This is a real delete. The folder is removed from the disk — it is not moved aside, '
         + 'Foundry keeps no copy of it anywhere else, and there is nothing that will bring it back.',
@@ -1665,6 +1689,40 @@ function registerIpc(): void {
     (_event, filePath: string, patch: Record<string, string | undefined>) =>
       writePdfMetadata(admittedPdf(filePath), patch),
   );
+
+  /*
+   * ── The block editor ─────────────────────────────────────────────────────
+   *
+   * A scan's blocks come from the ENGINE, off the readings bank, because the
+   * engine is what decides where one block ends and the next begins — the
+   * markdown split into parts, the furniture set aside, the quotes it
+   * synthesises. An amendment naming `7:14` has to mean the same element here as
+   * it will in the conversion that applies it, and one program deciding that is
+   * the only way that stays true.
+   *
+   * WHICH FILES, AND WHICH READING, ARE MAIN'S. The renderer names the PDF it has
+   * open — through `admittedPdf`, the same allow-list the pdf.js viewer's own
+   * bytes go through, so this cannot become a door onto files nobody opened — and
+   * `locateOverlay` turns that into a project, a bank, a curation, its ledger and
+   * the generation all three are bound to. See electron/overlays.ts for what
+   * happens when that generation has moved: the files are archived aside, never
+   * deleted, and the notice says where they went.
+   */
+  ipcMain.handle('overlay:blocks', async (_event, filePath: string) => {
+    const pdf = admittedPdf(filePath);
+    return readPdfBlocks(pdf, (await locateOverlay(pdf)).readings);
+  });
+  ipcMain.handle('overlay:load', (_event, filePath: string) =>
+    loadOverlayFile(admittedPdf(filePath)));
+  // Called after every gesture that changes a curation. Whole file, atomically,
+  // for `history:save`'s reason: a crash mid-write is exactly the case the
+  // flush-on-every-change design exists for.
+  ipcMain.handle('overlay:save', (_event, filePath: string, file: OverlayFileWire) =>
+    saveOverlayFile(admittedPdf(filePath), file as OverlayFile));
+  ipcMain.handle('overlay:ledger-load', (_event, filePath: string) =>
+    loadOverlayLedger(admittedPdf(filePath)));
+  ipcMain.handle('overlay:ledger-save', (_event, filePath: string, stacks: LedgerStacks) =>
+    saveOverlayLedger(admittedPdf(filePath), stacks));
 
   // ── The library folder ───────────────────────────────────────────────────
   ipcMain.handle('library:dir', () => readAppSettings().libraryDir);

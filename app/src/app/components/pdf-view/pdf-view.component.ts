@@ -2,6 +2,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   ElementRef,
+  HostListener,
   OnDestroy,
   computed,
   effect,
@@ -31,7 +32,15 @@ import {
   type RenderTask,
 } from 'pdfjs-dist/legacy/build/pdf.mjs';
 
-import { TabsService, type Tab } from '../../core/tabs.service';
+import {
+  CHAPTER_MARK_COLOUR,
+  categoryRgb,
+  pdfCategoryColour,
+  pdfCategoryLabel,
+} from '@shared/categories';
+import { targetKey, type OverlayDecision } from '@shared/overlay';
+
+import { TabsService, type BlockElement, type Tab } from '../../core/tabs.service';
 import { api } from '../../core/foundry';
 
 /**
@@ -137,6 +146,19 @@ import { api } from '../../core/foundry';
           [disabled]="doc() === null"
           (click)="tabs.toggleThumbnails(tab().id)"
         >Thumbnails</button>
+        <!--
+          The scan's select mode. In the toolbar as well as on the dock for the
+          reason the book's Edit HTML is in both: the dock is where somebody who
+          has never met the feature finds it, and the toolbar is where the hand
+          already is once they have.
+        -->
+        <button
+          class="ghost"
+          [class.on]="tab().blockView"
+          [disabled]="doc() === null"
+          title="Outline what the model read: click to select, Delete to strike"
+          (click)="tabs.toggleBlockView(tab().id)"
+        >Blocks</button>
 
         <span class="counter">{{ current() }} / {{ shells().length }}</span>
 
@@ -185,6 +207,15 @@ import { api } from '../../core/foundry';
           <p>{{ reason }}</p>
         </div>
       } @else {
+        <!--
+          What the block editor is doing, or why it cannot. ON A STRIP rather
+          than over the pages: reading the bank takes a moment (or minutes, for
+          an old one), and a scan that went blank while it happened would look
+          broken. The pages stay readable throughout.
+        -->
+        @if (blockNotice(); as said) {
+          <p class="block-note">{{ said }}</p>
+        }
         <div class="panes" [class.split]="tab().layerView">
           <div class="viewport" #viewport (scroll)="onScroll()" (wheel)="onWheel($event)">
             <div class="reel">
@@ -198,6 +229,57 @@ import { api } from '../../core/foundry';
                 >
                   <canvas></canvas>
                   <div class="text"></div>
+                  <!--
+                    THE THIRD LAYER, and it is @for in this template rather than
+                    document.createElement for the reason written at length under
+                    \`.text\` below: Angular scopes a component's styles with an
+                    attribute it stamps on TEMPLATE elements, and a dynamically
+                    created element never gets one, so every rule for it silently
+                    misses. The text layer pays for that with ::ng-deep. This
+                    layer does not have to, because these boxes are data.
+                  -->
+                  @if (blockLayer(); as layer) {
+                    <div class="blocks" (mousedown)="beginMarquee($event, shell.number)">
+                      @for (box of layer.get(shell.number) ?? []; track box.key) {
+                        <!--
+                          THE COLOURS ARE INLINE and the states are classes, which
+                          is the division that keeps this working. A category's
+                          colour is data — one of twelve, from the one table — so
+                          it arrives as a style binding; struck, picked and
+                          chapter are states of the block and belong in CSS where
+                          they can carry hatching, a halo and a hover. The one
+                          thing an inline style cannot be overridden by is a
+                          stylesheet rule, which is why the hatch is drawn on a
+                          pseudo-element rather than as a background of its own.
+                        -->
+                        <div
+                          class="block"
+                          [class.struck]="box.struck"
+                          [class.picked]="box.picked"
+                          [class.chapter]="box.chapter"
+                          [class.reworded]="box.reworded"
+                          [style.left.px]="box.left"
+                          [style.top.px]="box.top"
+                          [style.width.px]="box.width"
+                          [style.height.px]="box.height"
+                          [style.border-color]="box.colour"
+                          [style.border-left-color]="box.chapter ? chapterInk : box.colour"
+                          [style.background]="box.tint"
+                          [title]="box.title"
+                          (mousedown)="pick($event, box.key)"
+                        ></div>
+                      }
+                      @if (marqueeOn(shell.number); as rect) {
+                        <div
+                          class="marquee"
+                          [style.left.px]="rect.left"
+                          [style.top.px]="rect.top"
+                          [style.width.px]="rect.width"
+                          [style.height.px]="rect.height"
+                        ></div>
+                      }
+                    </div>
+                  }
                   @if (pageProblems().get(shell.number); as reason) {
                     <p class="page-problem">This page would not render — {{ reason }}</p>
                   }
@@ -370,6 +452,106 @@ import { api } from '../../core/foundry';
     .text ::ng-deep span.hit { background: rgba(6, 182, 212, 0.55); border-radius: 2px; }
     .text.shown ::ng-deep span.hit { background: rgba(6, 182, 212, 0.85); }
 
+    /*
+      ── The block layer ──────────────────────────────────────────────────────
+
+      OVER the text layer, and taking the pointer while the mode is on. Block
+      view is an editing mode: a click in it means "this block", and a drag means
+      "these blocks", so the selectable copy of the page's words underneath has
+      to stop answering for the duration. Turning the mode off removes this
+      element entirely and the text is selectable again — there is no state to
+      get wrong, because the layer is only in the DOM while it is wanted.
+    */
+    .blocks { position: absolute; inset: 0; overflow: hidden; cursor: crosshair; }
+
+    /*
+      A BLOCK IS AN OUTLINE AND A TINT, never a fill: this is a photograph of a
+      page and the words under it have to stay readable. Both colours are bound
+      inline from the one table this and the book's select mode share
+      (shared/categories.ts), so a footnote is the same amber over the scan as it
+      is over the cast book.
+
+      HOVER IS A FILTER rather than a second colour, because the first one is
+      inline and a stylesheet cannot override it — and because brightening
+      whatever is there is one rule that works for all twelve categories instead
+      of twelve rules that have to be kept in step with the table.
+    */
+    .block {
+      position: absolute;
+      box-sizing: border-box;
+      border: 1.5px solid #8c8c8c;
+      border-radius: 2px;
+      cursor: pointer;
+      transition: filter 80ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .block:hover { filter: brightness(1.35) saturate(1.2); }
+
+    /*
+      PICKED IS A HALO, not a different colour. The category colour is the block's
+      identity and a selection that overwrote it would hide the very thing the
+      user is about to relabel — so the ring goes OUTSIDE the border, where it
+      cannot be confused with one.
+    */
+    .block.picked { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--accent); }
+
+    /*
+      STRUCK IS HATCHED, and the hatching is doing real work. A struck block has
+      to read as "this is leaving the book" over a photograph of paper, at any
+      zoom, where a dimmed outline is simply an outline in worse contrast.
+
+      ON A PSEUDO-ELEMENT, because the block's own background is an inline style
+      and nothing in a stylesheet can win against one. It also keeps the category
+      tint visible underneath, which matters: a struck footnote is still a
+      footnote and the person may be about to un-strike it.
+    */
+    .block.struck { border-style: dashed; }
+    .block.struck::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: repeating-linear-gradient(
+        45deg,
+        rgba(220, 38, 38, 0.30) 0px,
+        rgba(220, 38, 38, 0.30) 3px,
+        rgba(255, 255, 255, 0.10) 3px,
+        rgba(255, 255, 255, 0.10) 7px
+      );
+    }
+
+    /*
+      A CHAPTER OPENING GETS A BAR DOWN ITS LEFT EDGE rather than a colour of its
+      own: "the book divides here" is not a category — the block is still a
+      heading, still whatever the model called it — so it is drawn as a mark ON
+      the block rather than instead of it. The colour is bound with the others;
+      only the width is a state.
+    */
+    .block.chapter { border-left-width: 5px; }
+    /* A corrected wording gets a corner. The block still draws as what it is;
+       this only says that what it SAYS is no longer the model's reading of it. */
+    .block.reworded::after {
+      content: '';
+      position: absolute; top: 0; right: 0;
+      border-width: 0 8px 8px 0;
+      border-style: solid;
+      border-color: transparent var(--accent) transparent transparent;
+    }
+
+    .marquee {
+      position: absolute;
+      border: 1px solid var(--accent);
+      background: var(--accent-soft);
+      pointer-events: none;
+    }
+
+    .block-note {
+      flex-shrink: 0;
+      margin: 0;
+      padding: 6px 12px;
+      background: var(--bg-elevated);
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--text-tertiary);
+      font-size: 11px;
+    }
+
     .strip {
       /* Positioned for the same reason the viewport is — revealThumb reads
          offsetLeft against this element's scrollLeft. */
@@ -511,8 +693,18 @@ export class PdfViewComponent implements OnDestroy {
   private readonly items = new Map<number, readonly TextItem[]>();
   /** Page -> the spans of the invisible layer and of the visible one, index-aligned with `items`. */
   private readonly spans = new Map<number, HTMLElement[][]>();
-  /** Pages the observer says are within reach of the viewport. */
+  /**
+   * Pages the observer says are within reach of the viewport.
+   *
+   * A SIGNAL as well as a set, because the block layer is drawn from it. Every
+   * page of the document has a `.page` div from the moment the file opens — that
+   * is what makes the scrollbar tell the truth — so building outlines for all of
+   * them would be ten thousand divs for a book this viewer is showing eleven
+   * pages of. The canvases are already lazy for the same reason; this is that
+   * rule applied to the third layer.
+   */
   private readonly near = new Set<number>();
+  private readonly nearPages = signal<ReadonlySet<number>>(new Set());
   private readonly thumbsDrawn = new Set<number>();
 
   private pages: IntersectionObserver | null = null;
@@ -599,6 +791,7 @@ export class PdfViewComponent implements OnDestroy {
           this.release(page);
         }
       }
+      this.nearPages.set(new Set(this.near));
     }, { rootMargin: '100% 0px' });
 
     this.thumbs = new IntersectionObserver((entries) => {
@@ -607,6 +800,27 @@ export class PdfViewComponent implements OnDestroy {
         if (page !== null && entry.isIntersecting) void this.drawThumb(page);
       }
     }, { rootMargin: '0px 200%' });
+
+    /**
+     * "Show me that chapter" — a row clicked in the inspector, three components
+     * away.
+     *
+     * IT NAMES A TAB and every viewer watches, which is `frameCommand`'s shape
+     * for the panel that cannot reach into a pane. The one that is showing that
+     * document scrolls; the other four ignore it. The block is SELECTED as well
+     * as scrolled to, because the reason to go and look at a chapter opening is
+     * almost always to do something about it.
+     */
+    effect(() => {
+      const reveal = this.tabs.blockReveal();
+      if (reveal === null || reveal.tabId !== this.tab().id) return;
+      untracked(() => {
+        const element = this.tabs.elementAt(reveal.tabId, reveal.target);
+        if (element === null) return;
+        this.jumpTo(element.page);
+        this.tabs.selectBlocks(reveal.tabId, [reveal.target], false);
+      });
+    });
   }
 
   ngOnDestroy(): void {
@@ -1076,6 +1290,220 @@ export class PdfViewComponent implements OnDestroy {
     this.paintHit();
   }
 
+  // ── The block layer ──────────────────────────────────────────────────────
+  //
+  // WHAT IS ON THE PAGE, drawn from the service's own signals rather than
+  // reported by anything. A book's select mode has to ask an <iframe> behind an
+  // opaque origin what the user clicked; a scan's blocks are data this window
+  // already holds, so the outlines, the selection and the tallies are one
+  // computed away and there is no message to lose.
+
+  /**
+   * Every outline on every page near the viewport, in CSS pixels.
+   *
+   * ONE COMPUTED FOR THE WHOLE LAYER rather than a function called per page from
+   * the template. A template method runs on every change-detection pass for every
+   * page div in the document — five hundred of them — and this depends on six
+   * signals that change on every gesture. As a computed it is recalculated when
+   * one of them actually moves, and the template only indexes a map.
+   *
+   * THE SCALE IS `cssPageWidth / renderWidth`, one factor, axis-aligned: the
+   * model was shown a raster of the page and answered in its pixels, and the
+   * viewer draws the same page at whatever the window and the zoom make it. Both
+   * frames are the same page the same way up, so a box converts by a ratio and
+   * nothing else. Getting this wrong is invisible until somebody strikes the
+   * wrong paragraph, which is why the render size is carried per page rather than
+   * assumed from the first one.
+   */
+  protected readonly blockLayer = computed<ReadonlyMap<number, readonly DrawnBlock[]>>(() => {
+    const tab = this.tab();
+    const layer = new Map<number, readonly DrawnBlock[]>();
+    if (!tab.blockView) return layer;
+    const view = this.tabs.blocksFor(tab.id);
+    if (view === null || view.overlay === null) return layer;
+
+    const near = this.nearPages();
+    const picked = new Set(this.tabs.selectionFor(tab.id)?.blockIds ?? []);
+    const chapters = new Set(this.tabs.chaptersFor(tab.id).chapters.map((one) => targetKey(one.at)));
+    const shells = new Map(this.shells().map((shell) => [shell.number, shell]));
+
+    for (const page of view.pages) {
+      if (!near.has(page.page)) continue;
+      const shell = shells.get(page.page);
+      if (shell === undefined || page.width <= 0) continue;
+      const factor = shell.width / page.width;
+      const boxes: DrawnBlock[] = [];
+      for (const element of view.elements.get(page.page) ?? []) {
+        const decision = this.tabs.decisionFor(tab.id, element);
+        const category = decision.category ?? element.category;
+        boxes.push({
+          key: element.key,
+          left: element.box.x1 * factor,
+          top: element.box.y1 * factor,
+          width: Math.max(1, (element.box.x2 - element.box.x1) * factor),
+          height: Math.max(1, (element.box.y2 - element.box.y1) * factor),
+          colour: pdfCategoryColour(category),
+          // The same hue at an alpha, so the ink underneath stays readable —
+          // this is a photograph of a page, and a filled rectangle over a
+          // paragraph is a paragraph nobody can check.
+          tint: `rgba(${categoryRgb(pdfCategoryColour(category))}, 0.14)`,
+          struck: decision.strike === true,
+          picked: picked.has(element.key),
+          chapter: chapters.has(element.key),
+          reworded: decision.text !== undefined,
+          title: describeBlock(element, category, decision),
+        });
+      }
+      layer.set(page.page, boxes);
+    }
+    return layer;
+  });
+
+  /** What the mode is doing, or why it cannot do it. Null when it is simply on. */
+  protected readonly blockNotice = computed<string | null>(() => {
+    const tab = this.tab();
+    if (!tab.blockView) return null;
+    const view = this.tabs.blocksFor(tab.id);
+    if (view === null || view.loading) return 'Reading the blocks the model found on these pages…';
+    if (view.problem !== null) return view.problem;
+    if (view.pages.length === 0) {
+      // NOT AN ERROR AND SAID ANYWAY. A scan nobody has converted has no bank,
+      // so there is nothing to correct — and a mode that turned on and drew
+      // nothing would be indistinguishable from one that is broken.
+      return 'The model has not read this document yet, so there are no blocks to correct. '
+        + 'Run OCR / Convert on it first.';
+    }
+    return null;
+  });
+
+  /**
+   * A click on a block. Ctrl (or Cmd) adds to the selection, plain replaces it.
+   *
+   * `stopPropagation` because the layer under this element starts a marquee on
+   * mousedown, and a click that both selected a block and began a rubber band
+   * would clear the selection it had just made the moment the mouse moved.
+   */
+  protected pick(event: MouseEvent, key: string): void {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    event.preventDefault();
+    this.tabs.selectBlocks(this.tab().id, [key], event.ctrlKey || event.metaKey);
+  }
+
+  // ── The marquee ──────────────────────────────────────────────────────────
+  //
+  // A drag over the page takes everything it touches. It is worth the forty
+  // lines for one reason: the gesture this mode exists for is "strike the two
+  // hundred running heads", and doing that a click at a time is not a curation
+  // pass, it is an afternoon.
+  //
+  // TOUCHES, not encloses. A rubber band that required a block to be wholly
+  // inside it makes the user drag past the edges of the page to catch a wide
+  // paragraph, which they cannot do on the last page of a column.
+
+  /** The one colour a chapter mark is drawn in, from the one table. */
+  protected readonly chapterInk = CHAPTER_MARK_COLOUR;
+
+  private readonly marquee = signal<Marquee | null>(null);
+
+  protected beginMarquee(event: MouseEvent, page: number): void {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const layer = event.currentTarget as HTMLElement;
+    const rect = layer.getBoundingClientRect();
+    const from = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    this.marquee.set({ page, from, to: from, add: event.ctrlKey || event.metaKey });
+
+    /*
+     * ON THE WINDOW, and released on the window, because a drag that began on a
+     * block layer routinely ends outside it — off the bottom of the page, over
+     * the next one, past the edge of the viewport. Listeners on the layer itself
+     * would leave a rubber band painted on the page with the mouse button long
+     * since let go.
+     */
+    const move = (moved: MouseEvent): void => {
+      const now = this.marquee();
+      if (now === null) return;
+      this.marquee.set({ ...now, to: { x: moved.clientX - rect.left, y: moved.clientY - rect.top } });
+    };
+    const up = (): void => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      this.endMarquee();
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }
+
+  /** The band as a box, for the one page it started on. */
+  protected marqueeOn(page: number): { left: number; top: number; width: number; height: number } | null {
+    const band = this.marquee();
+    if (band === null || band.page !== page) return null;
+    return boxOf(band);
+  }
+
+  private endMarquee(): void {
+    const band = this.marquee();
+    this.marquee.set(null);
+    if (band === null) return;
+    const rect = boxOf(band);
+    /*
+     * A DRAG OF A FEW PIXELS IS A CLICK ON THE PAGE, which means "nothing is
+     * selected". Without the threshold, the tiny movement every real click has
+     * in it would run a rubber band over an empty patch of paper and then
+     * announce, correctly and uselessly, that it had selected nothing — which is
+     * the same thing, but it would also have taken the ctrl-click path and
+     * cleared a selection somebody was assembling.
+     */
+    if (rect.width < 4 && rect.height < 4) {
+      if (!band.add) this.tabs.selectBlocks(this.tab().id, [], false);
+      return;
+    }
+    const caught: string[] = [];
+    for (const box of this.blockLayer().get(band.page) ?? []) {
+      const misses = box.left > rect.left + rect.width
+        || box.left + box.width < rect.left
+        || box.top > rect.top + rect.height
+        || box.top + box.height < rect.top;
+      if (!misses) caught.push(box.key);
+    }
+    if (caught.length > 0) this.tabs.selectBlocks(this.tab().id, caught, band.add);
+  }
+
+  /**
+   * Delete strikes the selection — and strikes it BACK when it is already struck.
+   *
+   * ON THE WINDOW, gated on this tab being the document in front of the user.
+   * There are up to five of these components alive and only one of them is the
+   * one a keypress is meant for; the pane itself cannot hold the focus reliably
+   * (the pages are divs, and clicking one must not steal focus from an input in
+   * the inspector), so the test is the same one the dock and Ctrl+S apply.
+   */
+  @HostListener('window:keydown', ['$event'])
+  protected onKey(event: KeyboardEvent): void {
+    const tab = this.tab();
+    if (!tab.blockView || this.tabs.activeDocument()?.id !== tab.id) return;
+    if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+    // A key pressed with a caret in a text box belongs to the text box, always.
+    const focused = document.activeElement;
+    if (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement) return;
+    const picked = this.tabs.selectionFor(tab.id)?.blockIds ?? [];
+    if (picked.length === 0) return;
+    event.preventDefault();
+    /*
+     * IT TOGGLES, and the state is read from the SERVICE rather than from the
+     * drawn layer. The layer only holds pages near the viewport, and a selection
+     * can reach past them — the inspector's strike-all-of-this-kind picks blocks
+     * on three hundred pages — so asking what is drawn would decide the direction
+     * of the gesture from the handful that happen to be on screen.
+     */
+    const everyOneStruck = picked.every((key) => {
+      const element = this.tabs.elementAt(tab.id, key);
+      return element !== null && this.tabs.decisionFor(tab.id, element).strike === true;
+    });
+    void this.tabs.strikeBlocks(tab.id, picked, !everyOneStruck);
+  }
+
   /** The current match's spans, in whichever panes are drawn. */
   private paintHit(): void {
     const found = this.matches();
@@ -1095,6 +1523,62 @@ export class PdfViewComponent implements OnDestroy {
 
 interface PageBox { number: number; width: number; height: number }
 interface Shell { number: number; width: number; height: number }
+
+/** One outline, in the CSS pixels of the page it sits on. */
+interface DrawnBlock {
+  /** The overlay target — `page:order` — and the @for key. */
+  key: string;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  colour: string;
+  /** The same hue as a translucent fill. Inline, so hover brightens it. */
+  tint: string;
+  struck: boolean;
+  picked: boolean;
+  chapter: boolean;
+  reworded: boolean;
+  /** The tooltip: what it is, and anything a person has said about it. */
+  title: string;
+}
+
+interface Marquee {
+  page: number;
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  /** Ctrl was down when it began: this band ADDS to what is already picked. */
+  add: boolean;
+}
+
+function boxOf(band: Marquee): { left: number; top: number; width: number; height: number } {
+  return {
+    left: Math.min(band.from.x, band.to.x),
+    top: Math.min(band.from.y, band.to.y),
+    width: Math.abs(band.to.x - band.from.x),
+    height: Math.abs(band.to.y - band.from.y),
+  };
+}
+
+/**
+ * The tooltip on a block — what it is, and what has been done about it.
+ *
+ * IT CARRIES THE WORDS, which is the point rather than a nicety: an outline on a
+ * photograph of a page tells you a block is there and the colour tells you what
+ * the model called it, but whether the model READ it correctly is invisible until
+ * something says what it thinks the block says. That question is the whole reason
+ * for the text override, and hovering is the cheapest place to ask it.
+ */
+function describeBlock(element: BlockElement, category: string, decision: OverlayDecision): string {
+  const lines = [`${pdfCategoryLabel(category)} · ${element.key}`];
+  if (decision.category !== undefined) {
+    lines.push(`Relabelled from ${pdfCategoryLabel(element.category)}.`);
+  }
+  if (decision.strike === true) lines.push('Struck: it is in no rendering of this book.');
+  if (decision.text !== undefined) lines.push(`Reads: ${decision.text}`);
+  else if (element.text.length > 0) lines.push(element.text.slice(0, 300));
+  return lines.join('\n');
+}
 interface Match { page: number; item: number }
 interface PageText { number: number; lower: string; starts: readonly number[] }
 

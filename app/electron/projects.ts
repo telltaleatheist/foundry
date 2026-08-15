@@ -94,6 +94,7 @@ import type {
   ProjectGenerated,
   ProjectGeneratedRole,
   ProjectManifest,
+  ProjectReading,
   ProjectSummary,
   ProjectStep,
   ProjectTypeRecord,
@@ -132,6 +133,8 @@ const WORKING = 'working';
 const FINAL = 'final';
 /** The fifth folder: the undo ledgers, one per document. See `historyDir`. */
 const HISTORY = 'history';
+/** The sixth: the block editor's corrections, one pair per reading. See `overlaysDir`. */
+const OVERLAYS = 'overlays';
 
 /**
  * `<libraryDir>/projects` — under the user's library, not under userData.
@@ -318,6 +321,28 @@ export async function readManifest(dir: string): Promise<ProjectManifest> {
       files: readWorkingFiles(working['files']),
     },
     final: readFinal(row['final']),
+    reading: readReading(row['reading']),
+  };
+}
+
+/**
+ * The reading generation, or null for a catalogue written before there were any.
+ *
+ * NULL RATHER THAN A MINTED ONE, and the difference is the whole safety of the
+ * backfill: a project with no record here has no overlay that could be bound to a
+ * generation — there was nothing writing one — so whatever id it is given first
+ * cannot disagree with a file already on disk. Read leniently for the same
+ * reason `readTrees` is: a half-written field is treated as absent, which lands
+ * on the same safe path.
+ */
+function readReading(value: unknown): ProjectReading | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const generation = row['generation'];
+  if (typeof generation !== 'string' || generation.length === 0) return null;
+  return {
+    generation,
+    passes: typeof row['passes'] === 'number' && Number.isInteger(row['passes']) ? row['passes'] : 0,
   };
 }
 
@@ -503,6 +528,10 @@ function withCreatedProject<T>(
           documents: [],
           working: { trees: [], files: [] },
           final: [],
+          // Nothing has been read and nothing has been corrected. The reading's
+          // generation is minted by the first amendment, not by the import —
+          // see `readingGeneration`.
+          reading: null,
         };
         await writeManifest(dir, manifest);
       }
@@ -1219,6 +1248,94 @@ export function historyDir(dir: string): string {
 }
 
 /**
+ * `<project>/overlays/` — what a PERSON decided about the blocks on the pages.
+ *
+ * A SIXTH SIBLING, on `history/`'s precedent and for its reasons: it is neither
+ * an origin nor something the user asked to have written, and it belongs to THIS
+ * BOOK and travels with it. Not in `readings/`, which is the model's own record
+ * and is never edited by anything in this app — the entire design of the overlay
+ * is that a correction is a second file rather than a rewrite of the evidence,
+ * and filing the corrections inside the evidence would undo that on the disk if
+ * not in the code.
+ *
+ * TWO FILES PER READING, both keyed by the bank's own key: `<key>.json` is the
+ * curation and `<key>.ledger.json` is its undo history. They are together rather
+ * than the ledger being in `history/` because they are ARCHIVED TOGETHER — a
+ * re-read of the pages invalidates both in one instant, for one reason — and a
+ * pair that has to be moved aside as a unit should not be a pair spread across
+ * two directories with two archive folders and two ways for half the move to
+ * fail. (`history/` keys by working TREE, which a scan does not have at all.)
+ */
+export function overlaysDir(dir: string): string {
+  return path.join(dir, OVERLAYS);
+}
+
+/** Where a curation that is not this reading's goes. Nothing is deleted. */
+export function overlayArchiveDir(dir: string): string {
+  return stampedArchive(overlaysDir(dir));
+}
+
+/**
+ * The generation the overlay and its ledger are bound to, minting one if this
+ * project has none.
+ *
+ * See `ProjectReading` for the hazard and for why this counts passes instead of
+ * being stamped by whichever job happened to finish last. The short version:
+ * re-RENDERING a bank leaves every block exactly where it was, re-READING it
+ * renumbers all of them, and only the second may throw a curation aside.
+ *
+ * BACKFILLING IS SAFE, exactly as it is in `treeGeneration`: a project with no
+ * record here has no overlay bound to a generation, because nothing was writing
+ * one. What it cannot do is re-mint on a whim — so the pass count is recorded
+ * with the id, and an unchanged count returns the id unchanged without writing.
+ */
+export async function readingGeneration(dir: string): Promise<string> {
+  const passes = await countArchivedBanks(dir);
+  return withManifest(dir, async (manifest) => {
+    if (manifest.reading !== null && manifest.reading.passes === passes) {
+      return manifest.reading.generation;
+    }
+    const minted = randomUUID();
+    manifest.reading = { generation: minted, passes };
+    await writeManifest(dir, manifest);
+    return minted;
+  });
+}
+
+/**
+ * How many times this book's pages have been read and the answers put away.
+ *
+ * `archiveReadingsBank` (src/vlm/readings.ts) is the ONLY thing that writes into
+ * `readings/archived-<stamp>/`, and it does so exactly once per re-read: the
+ * completed bank and its marker are renamed in, and the run then reads every page
+ * again. So the number of archived banks IS the number of readings this project
+ * has finished with, and a change in it is the one event that invalidates a
+ * curation.
+ *
+ * Only files named for the project's own bank are counted. `readings/` also holds
+ * translation banks (`<key>.<lang>.bank.jsonl`), which are answers about the
+ * BOOK's blocks rather than the scan's pages and have nothing to say about
+ * whether an overlay is still about the right blocks.
+ */
+async function countArchivedBanks(dir: string): Promise<number> {
+  const readings = path.join(dir, 'readings');
+  let key: string;
+  try {
+    key = (await readManifest(dir)).key;
+  } catch {
+    // A catalogue that will not parse cannot name its bank. Zero is the honest
+    // answer, and it is the SAFE one: it leaves the generation as it was rather
+    // than inventing a re-read that never happened.
+    return 0;
+  }
+  let count = 0;
+  for (const archive of await archivesIn(readings)) {
+    if (await exists(path.join(archive, `${key}.jsonl`))) count += 1;
+  }
+  return count;
+}
+
+/**
  * Promote any reprint that was left sitting in `generated/` as a row of its own.
  *
  * A MIGRATION FOR ONE EVENING'S PROJECTS, and it is written down because it will
@@ -1646,6 +1763,17 @@ export interface ProjectInventory {
   filed: boolean;
   /** Everything under the directory, in bytes. A scan is most of it. */
   bytes: number;
+  /**
+   * Corrections a PERSON made about the blocks on the pages — every amendment in
+   * every overlay under `overlays/`, archived ones included.
+   *
+   * THE SECOND NUMBER THIS DIALOG EXISTS TO SAY, and by the retention rule
+   * (`ProjectStep.retention`) it is the more expensive of the two. A readings
+   * bank is `expensive`: hours of GPU, and a machine can make it again. A
+   * curation is `irreplaceable` — somebody looked at four hundred pages and said
+   * what was on them, and nothing on this disk or any other can reproduce that.
+   */
+  amendments: number;
 }
 
 /**
@@ -1683,7 +1811,47 @@ export async function inspectProject(dir: string): Promise<ProjectInventory> {
       : manifest.documents.length,
     filed: (manifest?.final.length ?? 0) > 0,
     bytes: await measure(resolved),
+    amendments: await countAmendments(overlaysDir(resolved)),
   };
+}
+
+/**
+ * Amendments in every overlay under `dir`, by counting them.
+ *
+ * PARSED RATHER THAN LINE-COUNTED, which is the opposite of `countBankPages` and
+ * for the opposite reason: a bank is one JSON object per line so its newlines ARE
+ * its pages, while an overlay is one JSON document whose lines are formatting. It
+ * is also small — a heavily curated book is a few hundred amendments — so reading
+ * it whole costs nothing worth avoiding.
+ *
+ * A file that will not parse counts as nothing. The number informs a question,
+ * and a delete button that does not work because a count failed is worse than a
+ * count that is low.
+ */
+async function countAmendments(dir: string): Promise<number> {
+  let entries: Dirent[];
+  try {
+    entries = await fsp.readdir(dir, { withFileTypes: true });
+  } catch {
+    return 0; // No overlays: nobody has corrected this book.
+  }
+  let amendments = 0;
+  for (const entry of entries) {
+    const here = path.join(dir, entry.name);
+    // Recursive, because `archived-<stamp>/` overlays are somebody's work too —
+    // they are kept precisely because a re-read must never destroy a curation,
+    // and a project delete is about to destroy every one of them.
+    if (entry.isDirectory()) {
+      amendments += await countAmendments(here);
+    } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.json')) {
+      try {
+        const parsed: unknown = JSON.parse(await fsp.readFile(here, 'utf8'));
+        const list = (parsed as { amendments?: unknown })?.amendments;
+        if (Array.isArray(list)) amendments += list.length;
+      } catch { /* not an overlay this app can read; not a reason to fail a dialog */ }
+    }
+  }
+  return amendments;
 }
 
 /**
@@ -1796,6 +1964,17 @@ function deletableDocumentPath(filePath: string): { dir: string; resolved: strin
  * of the working document that also went and destroyed the copy somebody
  * deliberately filed would be reaching outside what was asked for — the same
  * reason a Save As to a USB stick is left alone.
+ *
+ * THE OVERLAY AND ITS LEDGER (`overlays/<key>.json`), and this is the bank's rule
+ * carried one step further. A curation is not about the EPUB — it is about the
+ * READING, which is why it is keyed by the bank rather than by any output: the
+ * two hundred running heads somebody struck are struck for the text emission and
+ * for every future cast of the book as much as for the one being deleted. And
+ * deleting an output in order to make a better one is the ordinary reason to
+ * delete an output, which is exactly the case where destroying the corrections
+ * would be worst. By the retention rule they are `irreplaceable` where the bank
+ * is merely `expensive`; a project delete takes them, says so in those words, and
+ * nothing else does.
  */
 export interface DocumentAssets {
   /** Previous versions of this same file, rotated aside by earlier runs. */

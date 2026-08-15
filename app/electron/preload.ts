@@ -75,6 +75,14 @@ const api: FoundryApi = {
     save: (bookId, stacks) => ipcRenderer.invoke('history:save', bookId, stacks),
   },
 
+  overlay: {
+    blocks: (pdfPath) => ipcRenderer.invoke('overlay:blocks', pdfPath),
+    load: (pdfPath) => ipcRenderer.invoke('overlay:load', pdfPath),
+    save: (pdfPath, file) => ipcRenderer.invoke('overlay:save', pdfPath, file),
+    loadLedger: (pdfPath) => ipcRenderer.invoke('overlay:ledger-load', pdfPath),
+    saveLedger: (pdfPath, stacks) => ipcRenderer.invoke('overlay:ledger-save', pdfPath, stacks),
+  },
+
   prefs: {
     unlinkedNoteAnswer: () => ipcRenderer.invoke('prefs:unlinked-note-answer'),
     setUnlinkedNoteAnswer: (answer) =>

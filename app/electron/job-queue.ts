@@ -50,6 +50,7 @@
  * make possible is a batch of BOOKS; an install is plumbing.
  */
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import * as path from 'node:path';
 
 import { readAppSettings } from './app-settings';
@@ -401,6 +402,29 @@ function argsFor(request: EngineRequest): string[] {
     '--out', request.outputPath,
     '--readings', request.readingsPath,
   ];
+  /*
+   * THE CURATION, when there is one — and the existence test is the whole of the
+   * condition rather than a checkbox anywhere.
+   *
+   * A person's corrections about the blocks are not an option of a run: a book
+   * whose running heads have been struck has had them struck, and a conversion
+   * that quietly rendered the uncorrected version would be the app throwing away
+   * work it is still storing. So the flag is passed whenever the file is there.
+   *
+   * TESTED HERE, AS THE ENGINE STARTS, and not when the job was planned. A queued
+   * batch waits hours, and the hours are exactly when somebody sits with the
+   * block editor open — a plan-time test would render the book as it was before
+   * the afternoon's work. `existsSync` because this function is the command line
+   * and one stat on the way to spawning a process that will run for an hour is
+   * not a cost worth making asynchronous.
+   *
+   * ABSENT IS SILENCE, never the flag with a path behind it: the engine refuses
+   * an `--overlay` it cannot open, by name, which would turn "nobody has curated
+   * this book" into a failed conversion.
+   */
+  if (request.overlayPath !== undefined && existsSync(request.overlayPath)) {
+    args.push('--overlay', request.overlayPath);
+  }
   // Passed only when it is not the default, so an EPUB job's command line is the
   // one it has always been and a diff of two runs shows what actually differed.
   // The extension `planConversion` chose already agrees with it; the engine

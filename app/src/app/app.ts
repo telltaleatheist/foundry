@@ -152,17 +152,27 @@ export class App {
   protected readonly documentsUp = computed(() => this.tabs.tabs().length > 0);
 
   /**
-   * The inspector is up when there is a book to inspect.
+   * The inspector is up when there is something to inspect.
    *
-   * NOT WHEN THERE IS MERELY A DOCUMENT: a PDF has no chapter list and no
-   * stamped blocks — its categories live in the readings bank, unparsed, behind
-   * an IPC that does not exist — so an inspector beside one would be 260 pixels
-   * of two empty accordions. It follows `activeDocument`, so with the HTML
-   * editor focused it still shows the book that editor is a face of.
+   * A BOOK, as it always was. AND NOW A SCAN IN BLOCK VIEW, which is the case
+   * the old comment here said could never happen: "a PDF has no chapter list and
+   * no stamped blocks — its categories live in the readings bank, unparsed,
+   * behind an IPC that does not exist". That IPC exists (`overlay.blocks`), the
+   * bank is parsed by the engine on request, and the panel beside a scan in that
+   * mode has exactly as much to say as it does beside a book — the same category
+   * rows with the same colours, a chapter list, and whatever one block is
+   * selected.
+   *
+   * NOT beside a PDF that is merely open. Out of the mode there is still nothing
+   * to inspect, and 260 pixels of empty accordions is what this test exists to
+   * prevent. It follows `activeDocument`, so with the HTML editor focused it
+   * still shows the book that editor is a face of.
    */
   protected readonly inspectorUp = computed(() => {
     const tab = this.tabs.activeDocument();
-    return tab !== null && tab.kind === 'epub' && tab.book !== null;
+    if (tab === null) return false;
+    if (tab.kind === 'epub') return tab.book !== null;
+    return tab.kind === 'pdf' && tab.blockView;
   });
 
   protected readonly dropping = signal(false);

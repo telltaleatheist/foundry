@@ -31,6 +31,9 @@ import type {
   LedgerStacks,
   MetadataOutcome,
   NavEcho,
+  OverlayFileWire,
+  OverlayLoad,
+  PdfBlocksOutcome,
   PdfMetadataFields,
   ProjectSummary,
   RecentDocument,
@@ -393,6 +396,51 @@ export interface FoundryApi {
      * and "have therefore overwritten it" must not be the same event.
      */
     save(bookId: string, stacks: LedgerStacks): Promise<void>;
+  };
+
+  /**
+   * The block editor: what the model read off a scan's pages, and what a person
+   * has decided about it.
+   *
+   * THE RENDERER NAMES THE PDF IT ALREADY HAS OPEN and nothing else. Which
+   * project that is, where the readings bank sits, where the corrections are
+   * filed and which READING they are bound to are all main's own records — the
+   * same division as `history`, and for the sharper version of its reason. An
+   * overlay names blocks as `(page, order)` in one pass of the model over the
+   * pages; a bank that has been read again renumbers every one of them; and a
+   * renderer that could assert which reading a file belongs to could assert the
+   * wrong one and silently strike somebody else's paragraphs. Every call here is
+   * gated by the same `admitted` allow-list the viewer's own bytes go through.
+   */
+  overlay: {
+    /**
+     * Every block of every page, with the render frame its boxes are measured
+     * in, plus the chapter starts the engine would detect for itself.
+     *
+     * A RESULT AND NOT A REJECTION: a scan nobody has converted has no bank, and
+     * that is a sentence in the pane rather than a broken tab.
+     */
+    blocks(pdfPath: string): Promise<PdfBlocksOutcome>;
+    /**
+     * The corrections as they stand, and one sentence about how that went. A
+     * clean overlay with a notice means a file was found and could not be used —
+     * it has been archived aside, and the sentence names where it went.
+     */
+    load(pdfPath: string): Promise<OverlayLoad>;
+    /**
+     * Write the whole file. Called after every gesture, atomically, because the
+     * alternative is a curation that survives a crash in halves.
+     *
+     * Main stamps its own generation over whatever arrives and refuses to write
+     * at all over a file it could not read or move aside.
+     */
+    save(pdfPath: string, file: OverlayFileWire): Promise<void>;
+    /**
+     * The block editor's own undo ledger — the same two calls `history` has, for
+     * a document that has no book id because it is a scan.
+     */
+    loadLedger(pdfPath: string): Promise<LedgerLoad>;
+    saveLedger(pdfPath: string, stacks: LedgerStacks): Promise<void>;
   };
 
   /**

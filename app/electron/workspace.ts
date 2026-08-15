@@ -49,6 +49,7 @@ import {
   archiveFileOf,
   generatedFileFor,
   importDocument,
+  overlaysDir,
   rotateGenerated,
   translationFileFor,
 } from './projects';
@@ -118,7 +119,26 @@ export async function planConversion(
      * the engine's rule, and this app does not second-guess it.
      */
     readingsPath: path.join(dir, 'readings', `${key}.jsonl`),
+    overlayPath: overlayPathFor(dir, key),
   };
+}
+
+/**
+ * `<project>/overlays/<key>.json` — where this book's block corrections live.
+ *
+ * KEYED BY THE BANK, exactly as the bank is keyed by the book: one reading, one
+ * curation of it. The format is deliberately NOT in the name, for the reason the
+ * readings path gives — an EPUB and a plain-text emission are two renderings of
+ * one set of answers, and a person who struck two hundred running heads before
+ * casting the book has struck them for every rendering of it.
+ *
+ * DERIVED HERE and not by whatever is about to use it, so that the app has one
+ * answer to "where is the curation for this book". The block editor asks main,
+ * which asks `projects.overlaysDir`; a job asks its plan, which asks this. Both
+ * arrive at the same file because both compose it from the project and the key.
+ */
+export function overlayPathFor(projectDir: string, key: string): string {
+  return path.join(overlaysDir(projectDir), `${key}.json`);
 }
 
 /**

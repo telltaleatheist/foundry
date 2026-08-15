@@ -1,15 +1,33 @@
 import { Injectable, computed, effect, inject, signal } from '@angular/core';
 
 import type { FoundryApi } from '@shared/api';
-import { categoryLabel } from '@shared/categories';
+import { categoryLabel, pdfCategoryLabel } from '@shared/categories';
+import {
+  amendOverlay,
+  chaptersText,
+  chaptersOfText,
+  compareTargets,
+  decisionsOf,
+  parseTargetKey,
+  setChapters,
+  type OverlayChapter,
+  type OverlayDecision,
+  type OverlayField,
+  type OverlayFile,
+} from '@shared/overlay';
 import type {
   EpubBook,
   HeadingEcho,
   JobKind,
   LedgerAction,
+  LedgerField,
   LedgerLoad,
   LedgerRow,
   LedgerStacks,
+  OverlayLoad,
+  PdfBlock,
+  PdfBlockPage,
+  PdfDetectedChapter,
   UnlinkedNote,
 } from '@shared/types';
 
@@ -139,6 +157,20 @@ export interface Tab {
   /** True while the PDF viewer's thumbnail strip is up. ON by default — it sits
    *  along the bottom where it costs little, and Owen wants the pages in reach. */
   thumbnails: boolean;
+  /**
+   * True while the PDF viewer is outlining the blocks the model read.
+   *
+   * The scan's answer to select mode, and it lives on the tab for the reason
+   * `layerView` and `selectMode` do: five panes can each hold a different
+   * document, and a component or a global flag would either forget the mode the
+   * moment you looked away or turn it on in all five at once.
+   *
+   * NOT PERSISTED, like `selectMode`. The mode is a thing you are doing right
+   * now; a scan that reopened covered in coloured rectangles would look broken
+   * until the user found the button that was already pressed. What IS persisted
+   * is everything done in it, which is the overlay file.
+   */
+  blockView: boolean;
   /**
    * True while this book is in SELECT MODE — blocks outlined, click to select,
    * Delete to cut, Enter to fix a word.
@@ -505,6 +537,7 @@ export class TabsService {
       sourceTabId: null,
       layerView: false,
       thumbnails: true,
+      blockView: false,
       selectMode: false,
       revision: 0,
       problem: null,
@@ -548,7 +581,7 @@ export class TabsService {
        * says it, with whatever the history has to say landing on top as the
        * newer sentence.
        */
-      await this.restoreLedger(id, book.id);
+      await this.restoreLedger(id);
     } catch (err) {
       this.patch(id, { problem: err instanceof Error ? err.message : String(err) });
     }
@@ -914,6 +947,13 @@ export class TabsService {
        */
       this.ledgers.delete(gone);
       this.editing.delete(gone);
+      /*
+       * AND THE BLOCKS GO WITH THE TAB, for the frame state's reason exactly: a
+       * book's worth of boxes held for a document nobody is looking at is memory
+       * spent on nothing, and the overlay they describe is on disk. Reopening the
+       * scan and pressing Blocks reads both back.
+       */
+      this.forgetBlockView(gone);
     }
     this.dropFromPanes(going);
   }
@@ -1048,6 +1088,687 @@ export class TabsService {
     this.all.update((tabs) =>
       tabs.map((tab) => (tab.id === id ? { ...tab, thumbnails: !tab.thumbnails } : tab)));
   }
+
+  // ── The block editor ─────────────────────────────────────────────────────
+  //
+  // SELECT MODE FOR A SCAN, and the differences from the EPUB's are all
+  // consequences of one fact: there is no markup to edit. A cast book's blocks
+  // are elements with ids, and a cut is an attribute written into somebody's
+  // chapter. A scan's blocks are the MODEL'S ANSWER — `(page, order, part)` in a
+  // readings bank this app will never edit — so a decision about one cannot be
+  // written where it is. It goes into a file beside the bank, and every
+  // rendering becomes bank + overlay.
+  //
+  // WHAT FOLLOWS FROM THAT, in the order it bites:
+  //
+  //   THE STATE IS HERE, not in the frame. There is no iframe and no reporter:
+  //   the pages are drawn by app-pdf-view out of this service's own signals, so
+  //   the selection, the tallies and the outlines are read straight rather than
+  //   posted across an opaque origin. The inspector reads the same signals it
+  //   reads for a book (`selectionFor`, and the counts below), which is why one
+  //   panel serves both modes.
+  //
+  //   THE WRITE IS OPTIMISTIC AND WHOLE. Main is handed the entire overlay on
+  //   every gesture, atomically, exactly as the undo ledger is — the file is a
+  //   few kilobytes and a person makes a few gestures a minute. There is no
+  //   read-modify-write to serialise and no "what actually moved" to hear back:
+  //   this side holds the file, so it knows what moved before it asks.
+  //
+  //   AND THE LEDGER IS THE SAME LEDGER. The rows below name a block instead of
+  //   a `data-bf-id` and their setter is `amendOverlay` instead of a call into a
+  //   chapter, but an undo is still the same call with the old value, through the
+  //   same validator, and one gesture over forty blocks is still one action with
+  //   forty rows.
+
+  /** One scan's blocks, and what has been decided about them. */
+  private readonly blockViews = signal<ReadonlyMap<string, BlockView>>(new Map());
+
+  /** The block editor's state for a tab, or null while it is not in it. */
+  blocksFor(tabId: string | null): BlockView | null {
+    return tabId === null ? null : this.blockViews().get(tabId) ?? null;
+  }
+
+  /**
+   * The rail's Blocks toggle.
+   *
+   * TURNING IT ON READS THE BANK, which is a spawn of the engine and can take a
+   * moment (or minutes, for an old bank whose pages have to be measured again),
+   * so the state exists from the first instant with `loading` on it and the pane
+   * says so. Turning it off drops the state entirely: the overlay is on disk, the
+   * blocks are re-derivable, and holding a book's worth of boxes for a mode
+   * nobody is in is memory spent on nothing.
+   */
+  async toggleBlockView(id: string): Promise<void> {
+    const tab = this.byId(id);
+    if (!tab || tab.kind !== 'pdf') return;
+    if (tab.blockView) {
+      this.patch(id, { blockView: false });
+      this.forgetBlockView(id);
+      return;
+    }
+    this.patch(id, { blockView: true });
+    await this.loadBlockView(id, tab.path);
+  }
+
+  /**
+   * The blocks, the curation and the undo history, in that order, for one scan.
+   *
+   * ALL THREE BEFORE THE MODE IS USABLE, and awaited in one call rather than
+   * raced, because each answer decides how the next is read: the blocks say what
+   * exists, the overlay says what was decided about it, and the ledger is only
+   * meaningful against the overlay it was recorded over. Main archives an overlay
+   * and a ledger that belong to an earlier READING of this book before either
+   * gets here (electron/overlays.ts), so what arrives is always about the blocks
+   * that arrived — and it says so in the strip when that has just happened.
+   */
+  private async loadBlockView(tabId: string, pdfPath: string): Promise<void> {
+    if (!api) return;
+    this.setBlockView(tabId, { pages: [], detected: [], overlay: null, problem: null, loading: true });
+    try {
+      const blocks = await api.overlay.blocks(pdfPath);
+      if (!this.stillInBlockView(tabId)) return;
+      if (!blocks.ok) {
+        this.setBlockView(tabId, {
+          pages: [], detected: [], overlay: null, problem: blocks.reason, loading: false,
+        });
+        return;
+      }
+      const loaded: OverlayLoad = await api.overlay.load(pdfPath);
+      if (!this.stillInBlockView(tabId)) return;
+      this.setBlockView(tabId, {
+        pages: blocks.pages,
+        detected: blocks.chapters,
+        overlay: loaded.file as OverlayFile,
+        problem: null,
+        loading: false,
+      });
+      if (loaded.notice !== null) this.notice.set(loaded.notice);
+      /*
+       * AND THE UNDO HISTORY, from the same pair of files. `restoreLedger` is
+       * called from the EPUB unpack and from here and from nowhere else: a
+       * ledger is restored when a document's editable surface OPENS, and for a
+       * scan that moment is entering this mode rather than opening the tab.
+       */
+      await this.restoreLedger(tabId);
+    } catch (err) {
+      if (!this.stillInBlockView(tabId)) return;
+      // ON THE MODE, not on the tab. The scan still renders and every other
+      // thing this tab does still works; what failed is the curation surface,
+      // and it says so where the outlines would have been.
+      this.setBlockView(tabId, {
+        pages: [],
+        detected: [],
+        overlay: null,
+        problem: err instanceof Error ? err.message : String(err),
+        loading: false,
+      });
+    }
+  }
+
+  /** The tab is still open and still in the mode — the guard every await owes. */
+  private stillInBlockView(tabId: string): boolean {
+    return this.byId(tabId)?.blockView === true;
+  }
+
+  /**
+   * The one writer of the block view, and where everything derived is derived.
+   *
+   * ONCE PER CHANGE, NOT ONCE PER PAINT. A page of outlines asks the decision map
+   * twice per block and there are five hundred pages; the elements are a regroup
+   * of the whole book. Both are pure functions of the two things a caller
+   * actually has — the engine's answer and the overlay — so making them here is
+   * what keeps every consumer from making its own slightly different copy.
+   */
+  private setBlockView(
+    tabId: string,
+    state: Omit<BlockView, 'decisions' | 'elements' | 'byKey'>,
+  ): void {
+    const elements = new Map<number, readonly BlockElement[]>();
+    const byKey = new Map<string, BlockElement>();
+    for (const page of state.pages) {
+      const made = elementsOfPage(page);
+      elements.set(page.page, made);
+      for (const element of made) byKey.set(element.key, element);
+    }
+    this.blockViews.update((map) => new Map(map).set(tabId, {
+      ...state,
+      elements,
+      byKey,
+      decisions: state.overlay === null ? new Map() : decisionsOf(state.overlay),
+    }));
+  }
+
+  /**
+   * The overlay changed and nothing else did — the path every gesture takes.
+   *
+   * Separate from `setBlockView` so that a strike does not regroup ten thousand
+   * blocks into elements again to produce the identical map. The elements are a
+   * function of the ENGINE'S answer, which does not move while the mode is open.
+   */
+  private setOverlay(tabId: string, file: OverlayFile): void {
+    this.blockViews.update((map) => {
+      const view = map.get(tabId);
+      if (view === undefined) return map;
+      return new Map(map).set(tabId, { ...view, overlay: file, decisions: decisionsOf(file) });
+    });
+  }
+
+  private forgetBlockView(tabId: string): void {
+    this.blockViews.update((map) => {
+      const next = new Map(map);
+      next.delete(tabId);
+      return next;
+    });
+    this.forgetFrameState(tabId);
+  }
+
+  /**
+   * What this overlay says about one block — the element's amendment with the
+   * part's on top.
+   *
+   * The one accessor the drawing surface and the inspector share, so that an
+   * outline and the row describing it can never disagree about what was decided.
+   */
+  decisionFor(tabId: string, element: BlockElement): OverlayDecision {
+    const view = this.blocksFor(tabId);
+    return view === null ? {} : elementDecision(view.decisions, element);
+  }
+
+  /** What a block IS after the overlay: the person's word, or the model's. */
+  categoryOf(tabId: string, element: BlockElement): string {
+    return this.decisionFor(tabId, element).category ?? element.category;
+  }
+
+  /** One page's outlines, in the model's own answer order. */
+  elementsOn(tabId: string, page: number): readonly BlockElement[] {
+    return this.blocksFor(tabId)?.elements.get(page) ?? [];
+  }
+
+  /** The element a target names, if this reading still has one. */
+  elementAt(tabId: string, target: string): BlockElement | null {
+    return this.blocksFor(tabId)?.byKey.get(target) ?? null;
+  }
+
+  // ── The gestures ─────────────────────────────────────────────────────────
+
+  /**
+   * Strike — or bring back — a list of blocks in ONE action, and SAY IT.
+   *
+   * THE ONE STRIKE PATH: Delete on a selection, the inspector's
+   * strike-all-of-this-category, and an undo all arrive here. Only the blocks
+   * that actually MOVE get a row, which is the same rule the book's cut follows
+   * and for the same reason — a block already struck was not changed by this
+   * gesture and must not be brought back by undoing it.
+   */
+  async strikeBlocks(tabId: string, targets: readonly string[], strike: boolean): Promise<void> {
+    const moved = await this.amendBlocks(
+      tabId,
+      targets,
+      'strike',
+      strike ? 'true' : '',
+      (count) => `${strike ? 'struck' : 'brought back'} ${count} block${count === 1 ? '' : 's'}`,
+    );
+    if (moved === null || (moved === 1 && targets.length === 1)) return;
+    this.notice.set(moved === 0
+      ? `Every one of those blocks already ${strike ? 'was struck' : 'stood'} — nothing changed.`
+      : strike
+        ? `Struck ${moved} block${moved === 1 ? '' : 's'}. Press Delete on them to bring them back.`
+        : `Brought back ${moved} block${moved === 1 ? '' : 's'}.`);
+  }
+
+  /**
+   * Relabel the whole selection — the inspector's Category rows over a scan.
+   *
+   * A relabel BACK TO WHAT THE MODEL SAID removes the amendment rather than
+   * writing an override that happens to agree, which is `amendOverlay`'s
+   * canonical rule reaching the gesture: the overlay is what a person decided,
+   * and agreeing with the model is not a decision worth carrying into every
+   * future rendering of the book.
+   */
+  async relabelBlocks(tabId: string, targets: readonly string[], category: string): Promise<void> {
+    const view = this.blocksFor(tabId);
+    if (view === null) return;
+    const kind = pdfCategoryLabel(category).toLowerCase();
+    const moved = await this.amendBlocks(
+      tabId,
+      targets,
+      'category',
+      category,
+      (count) => `relabelled ${count} block${count === 1 ? '' : 's'} as ${kind}`,
+      // Relabelling a block to what the model already called it REMOVES the
+      // amendment rather than writing an override that agrees with it. See
+      // `amendOverlay`: the overlay is what a person decided, and agreeing is
+      // not a decision worth carrying into every future rendering.
+      (element) => (element.category === category ? '' : category),
+    );
+    if (moved === null || targets.length < 2) return;
+    this.notice.set(moved === 0
+      ? `All ${targets.length} of those blocks were already ${kind} — nothing changed.`
+      : `Relabelled ${moved} block${moved === 1 ? '' : 's'} as ${kind}.`);
+  }
+
+  /**
+   * Correct what a block SAYS — the line the model read as `1V` where the page
+   * prints `IV`.
+   *
+   * ONE BLOCK AT A TIME, because the value is different for each: this is the one
+   * gesture in the mode that cannot be applied to a selection, and the inspector
+   * offers it only when exactly one block is picked. An empty string clears the
+   * override and puts the model's own reading back.
+   */
+  async setBlockText(tabId: string, target: string, text: string): Promise<void> {
+    await this.amendBlocks(
+      tabId,
+      [target],
+      'text',
+      text.trim(),
+      () => (text.trim().length === 0
+        ? `put ${target} back to what the model read`
+        : `corrected the words of ${target}`),
+    );
+  }
+
+  /**
+   * Every block gesture, and the one place their optimism is spelled out.
+   *
+   * `moved` is what actually changed — a block whose value is already the one
+   * being written is not a change, gets no row, and is not counted in the
+   * sentence. Zero of them means the action is not recorded at all, because a
+   * Ctrl+Z that appears to do nothing is worse than no entry.
+   *
+   * `valueFor` lets a caller decide per block, which the relabel needs: writing
+   * the model's own category is spelled as removing the amendment.
+   */
+  private async amendBlocks(
+    tabId: string,
+    targets: readonly string[],
+    field: OverlayField,
+    value: string,
+    label: (moved: number) => string,
+    valueFor?: (element: BlockElement) => string,
+  ): Promise<number | null> {
+    const view = this.blocksFor(tabId);
+    const tab = this.byId(tabId);
+    if (view === null || view.overlay === null || !tab) return null;
+
+    const ledgerField = LEDGER_FIELD_OF[field];
+    const rows: LedgerRow[] = [];
+    let file = view.overlay;
+    for (const target of targets) {
+      const element = view.byKey.get(target);
+      if (element === undefined) continue;
+      const wanted = valueFor === undefined ? value : valueFor(element);
+      const before = fieldValue(elementDecision(view.decisions, element), field);
+      // Already saying this: not a change, no row, and not counted in the
+      // sentence. The same rule main enforces for a book's cut, enforced here
+      // because here this side is the one holding the file.
+      if (before === wanted) continue;
+      file = amendOverlay(file, parseTargetKey(target), field, wanted);
+      rows.push({ member: this.overlayKey(tab), target, field: ledgerField, before, after: wanted });
+    }
+    if (rows.length === 0) return 0;
+    await this.commitOverlay(tabId, file, label(rows.length), rows);
+    return rows.length;
+  }
+
+  // ── The spine ────────────────────────────────────────────────────────────
+
+  /**
+   * The chapters as the accordion shows them: the person's list, or the
+   * engine's until somebody touches it.
+   *
+   * `confirmed` is the difference and it is the whole of the seeding design. An
+   * overlay with no `chapters` field hands the book to the engine's own
+   * detection — which is what every conversion in this app's history has done —
+   * so the rows drawn are the detection's, marked as its. The first edit writes
+   * the whole list out as the person's, and from then on it is definitive: the
+   * detection is superseded rather than consulted, because somebody curating
+   * chapters is doing it precisely because the detection got something wrong.
+   */
+  chaptersFor(tabId: string): { chapters: readonly OverlayChapter[]; confirmed: boolean } {
+    const view = this.blocksFor(tabId);
+    if (view === null || view.overlay === null) return { chapters: [], confirmed: false };
+    if (view.overlay.chapters !== undefined) {
+      return { chapters: view.overlay.chapters, confirmed: true };
+    }
+    return { chapters: seedChapters(view.detected), confirmed: false };
+  }
+
+  /** "The book divides here" — a chapter added at the one selected block. */
+  async addChapter(tabId: string, target: string, title: string): Promise<void> {
+    const at = parseTargetKey(target);
+    const { chapters } = this.chaptersFor(tabId);
+    if (chapters.some((one) => compareTargets(one.at, at) === 0)) {
+      this.notice.set('A chapter already starts at that block.');
+      return;
+    }
+    const named = title.trim();
+    await this.writeChapters(
+      tabId,
+      [...chapters, { at, title: named.length > 0 ? named : `Chapter at ${target}` }],
+      `made ${target} a chapter start`,
+    );
+  }
+
+  async removeChapter(tabId: string, target: string): Promise<void> {
+    const at = parseTargetKey(target);
+    const { chapters } = this.chaptersFor(tabId);
+    const going = chapters.find((one) => compareTargets(one.at, at) === 0);
+    if (going === undefined) return;
+    await this.writeChapters(
+      tabId,
+      chapters.filter((one) => one !== going),
+      `took out the chapter “${going.title}”`,
+    );
+  }
+
+  async renameChapter(tabId: string, target: string, title: string): Promise<void> {
+    const at = parseTargetKey(target);
+    const { chapters } = this.chaptersFor(tabId);
+    const named = title.trim();
+    const current = chapters.find((one) => compareTargets(one.at, at) === 0);
+    if (current === undefined || named.length === 0 || named === current.title) return;
+    await this.writeChapters(
+      tabId,
+      chapters.map((one) => (one === current ? { at: one.at, title: named } : one)),
+      `renamed a chapter to “${named}”`,
+    );
+  }
+
+  /**
+   * Hand the book back to the engine's own detection — the only gesture that
+   * REMOVES the list rather than editing it.
+   *
+   * It exists because the seeding is one-way otherwise: the first chapter edit
+   * turns "the engine decides" into "these forty-one blocks, exactly", and
+   * without this there would be no way back to the state every unconverted scan
+   * is already in. It is one ledger row like any other, so Ctrl+Z brings the
+   * list back.
+   */
+  async resetChapters(tabId: string): Promise<void> {
+    const view = this.blocksFor(tabId);
+    if (view === null || view.overlay === null || view.overlay.chapters === undefined) return;
+    await this.writeChapters(tabId, null, 'gave the chapters back to Foundry to work out');
+  }
+
+  /**
+   * The spine, written whole.
+   *
+   * ONE ROW CARRYING THE WHOLE LIST, which is the shape `LedgerField` explains:
+   * adding, removing, renaming and seeding are all "it used to run like this and
+   * now runs like that", and the seeding gesture in particular turns an ABSENT
+   * field into forty rows at once — a state no per-chapter scheme could undo
+   * back to.
+   */
+  private async writeChapters(
+    tabId: string,
+    chapters: readonly OverlayChapter[] | null,
+    label: string,
+  ): Promise<void> {
+    const view = this.blocksFor(tabId);
+    const tab = this.byId(tabId);
+    if (view === null || view.overlay === null || !tab) return;
+    const before = chaptersText(view.overlay.chapters ?? null);
+    const after = chaptersText(chapters);
+    if (before === after) return;
+    let file: OverlayFile;
+    try {
+      file = setChapters(view.overlay, chapters);
+    } catch (err) {
+      this.notice.set(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    await this.commitOverlay(tabId, file, label, [{
+      member: this.overlayKey(tab),
+      // The spine is one statement about the whole book rather than about a
+      // block, so the row names the overlay itself. Nothing replays it against
+      // a target and nothing should be able to.
+      target: this.overlayKey(tab),
+      field: 'chapters',
+      before,
+      after,
+    }]);
+  }
+
+  // ── Writing it down ──────────────────────────────────────────────────────
+
+  /**
+   * Paint it, file it, and write it — in that order, and the order is the feel of
+   * the mode.
+   *
+   * THE SIGNAL FIRST, so the outline changes under the pointer that struck it.
+   * The disk write is a few kilobytes through IPC and the gesture has already
+   * landed as far as the user is concerned; a mode that waited for a rename in
+   * the library folder before drawing a line through a paragraph would be a mode
+   * nobody uses on four hundred of them.
+   *
+   * A REFUSAL PUTS IT BACK. Main will not write over a file it could not read or
+   * archive, and it says so by name — so the state returns to what the disk
+   * still holds rather than leaving the screen describing a curation that was
+   * never saved. The ledger entry goes with it, because an action that did not
+   * happen is not an action to undo.
+   */
+  private async commitOverlay(
+    tabId: string,
+    file: OverlayFile,
+    label: string,
+    rows: readonly LedgerRow[],
+  ): Promise<void> {
+    const refused = await this.putOverlay(tabId, file);
+    if (refused !== null) {
+      this.notice.set(
+        `That correction could not be written to disk, so it has been taken back: ${refused}`,
+      );
+      return;
+    }
+    /*
+     * RECORDED AFTER THE WRITE LANDED, and the order of the two files matters.
+     *
+     * An action that was refused is not an action, so it must not reach the
+     * ledger at all — recording first and un-recording on failure would also
+     * have to put back the REDO stack that `record` clears, which is a second
+     * thing to get right for no gain.
+     *
+     * And the overlay is written before the ledger deliberately. Dying between
+     * them leaves a correction whose undo entry is missing, which costs one
+     * Ctrl+Z; the other order leaves an undo entry for a correction that never
+     * happened, which takes back somebody else's work.
+     */
+    this.record(tabId, label, rows);
+  }
+
+  /**
+   * Paint an overlay and write it — the one write, shared by a gesture and by a
+   * replay of one.
+   *
+   * Resolves to NULL for a write that landed and to the reason for one that did
+   * not, having already put the state back to what the disk still holds. It is a
+   * returned value rather than a throw because both callers have something
+   * different to say about it: a gesture takes its ledger entry back, and a
+   * replay leaves its action where it is so that pressing undo again after the
+   * problem is fixed tries the same rows.
+   */
+  private async putOverlay(tabId: string, file: OverlayFile): Promise<string | null> {
+    const view = this.blocksFor(tabId);
+    const tab = this.byId(tabId);
+    if (view === null || view.overlay === null || !tab || !api) return null;
+    const was = view.overlay;
+    this.setOverlay(tabId, file);
+    try {
+      await api.overlay.save(tab.path, file);
+      return null;
+    } catch (err) {
+      this.setOverlay(tabId, was);
+      return err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  /**
+   * One action's rows put back into the overlay — every one of them, then ONE
+   * write.
+   *
+   * WHERE THE BOOK'S REPLAY WRITES A FILE PER ROW, this writes once for the
+   * action, and the difference is not an optimisation. A book's rows land in
+   * different chapters through different validated setters, so each is its own
+   * commit and a failure halfway is a real half-done state the code has to
+   * report. A scan's rows all land in ONE file: forty strikes taken back are
+   * forty edits of one object and a single atomic write of it, so the action is
+   * whole or it never happened, which is exactly what an action should be.
+   *
+   * IN REVERSE ORDER, like the book's, so that an action whose rows touch one
+   * target twice unwinds in the order it was made.
+   */
+  private async replayOverlay(
+    tabId: string,
+    action: LedgerAction,
+    direction: 'undo' | 'redo',
+  ): Promise<string | null> {
+    const view = this.blocksFor(tabId);
+    if (view === null || view.overlay === null) {
+      return 'the block editor is not open on this document any more.';
+    }
+    let file = view.overlay;
+    for (let at = action.rows.length - 1; at >= 0; at -= 1) {
+      const row = action.rows[at]!;
+      const value = direction === 'undo' ? row.before : row.after;
+      try {
+        file = replayOverlayRow(file, row, value);
+      } catch (err) {
+        // Nothing has been written: the edits above were made to a copy. So the
+        // curation on screen is still exactly the curation on disk, and the
+        // action stays on its stack.
+        return `${row.target}: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+    return this.putOverlay(tabId, file);
+  }
+
+  /**
+   * The overlay's key, which is what a block row's `member` is.
+   *
+   * The renderer does not know the project's content key — main does, and main
+   * is what files the ledger — so this uses the document's own path, folded. It
+   * is never resolved back to anything: `member` for these rows is an identity
+   * rather than a route, since the setter is the overlay itself and there is only
+   * ever one of those per document.
+   */
+  private overlayKey(tab: Tab): string {
+    return normalise(tab.path);
+  }
+
+  // ── What the inspector reads ─────────────────────────────────────────────
+
+  /**
+   * How many blocks of each category this SCAN holds, and how many are struck.
+   *
+   * DERIVED HERE rather than reported, which is the one structural difference
+   * from the book's tallies: a chapter's counts come from the frame because
+   * nothing outside it can see into an opaque origin, and a scan's blocks are
+   * this service's own data. The shape is identical (`CategoryCounts`) so the
+   * inspector draws one panel for both.
+   *
+   * COUNTED AFTER THE OVERLAY, always. A block relabelled Footnote counts as a
+   * footnote, because that is what it now is — a tally that reported the model's
+   * opinion would be a legend for outlines that are no longer that colour.
+   */
+  blockCountsFor(tabId: string | null): CategoryCounts | null {
+    const view = this.blocksFor(tabId);
+    if (view === null || view.overlay === null) return null;
+    const counts: Record<string, number> = {};
+    const struck: Record<string, number> = {};
+    for (const element of view.byKey.values()) {
+      const decision = elementDecision(view.decisions, element);
+      const category = decision.category ?? element.category;
+      counts[category] = (counts[category] ?? 0) + 1;
+      if (decision.strike === true) struck[category] = (struck[category] ?? 0) + 1;
+    }
+    return { counts, struck };
+  }
+
+  /** Every block of one category, by name — the inspector's strike-all. */
+  targetsOfCategory(tabId: string, category: string): string[] {
+    const view = this.blocksFor(tabId);
+    if (view === null) return [];
+    const targets: string[] = [];
+    for (const element of view.byKey.values()) {
+      if (this.categoryOf(tabId, element) === category) targets.push(element.key);
+    }
+    return targets;
+  }
+
+  /**
+   * A click, a ctrl-click or a marquee, reported as the selection.
+   *
+   * THE SAME CHANNEL THE FRAME USES (`reportSelection`), so the inspector's
+   * "three blocks are selected" is one code path over two kinds of document. The
+   * shared category is worked out here for the same reason it is worked out in
+   * the frame: a marked row over a mixed selection is the panel asserting
+   * something untrue about most of what is highlighted.
+   */
+  selectBlocks(tabId: string, targets: readonly string[], add: boolean): void {
+    const existing = add ? this.selectionFor(tabId)?.blockIds ?? [] : [];
+    const picked = new Set(existing);
+    for (const target of targets) {
+      // Ctrl-clicking a block that is already picked takes it out, which is what
+      // every list in every app does and what makes a mis-click cheap.
+      if (add && picked.has(target)) picked.delete(target);
+      else picked.add(target);
+    }
+    const blockIds = [...picked];
+    let category: string | null = null;
+    for (const target of blockIds) {
+      const element = this.elementAt(tabId, target);
+      const mine = element === null ? null : this.categoryOf(tabId, element);
+      if (category === null) category = mine;
+      else if (category !== mine) { category = null; break; }
+    }
+    this.reportSelection(tabId, blockIds, category);
+  }
+
+  /** The inspector's Category rows, over the focused scan. */
+  relabelSelectedBlocks(category: string): void {
+    const tab = this.activeDocument();
+    if (!tab || tab.kind !== 'pdf' || !tab.blockView) return;
+    const picked = this.selectionFor(tab.id);
+    if (picked === null) {
+      this.notice.set('Click a block on the page first, or drag a rectangle over several; the '
+        + 'category is applied to everything that is selected.');
+      return;
+    }
+    void this.relabelBlocks(tab.id, picked.blockIds, category);
+  }
+
+  /** The inspector's strike-all-of-this-kind, over the focused scan. It TOGGLES. */
+  strikeBlockCategory(category: string): void {
+    const tab = this.activeDocument();
+    if (!tab || tab.kind !== 'pdf' || !tab.blockView) return;
+    const targets = this.targetsOfCategory(tab.id, category);
+    if (targets.length === 0) return;
+    const counts = this.blockCountsFor(tab.id);
+    // With every one of them already struck the gesture brings them back, which
+    // is what makes a two-hundred-block strike feel undoable with the tool that
+    // did it. Same rule as the book's.
+    const allStruck = (counts?.struck[category] ?? 0) === targets.length;
+    void this.strikeBlocks(tab.id, targets, !allStruck);
+  }
+
+  /**
+   * Put a block in front of the reader — a click on a chapter row.
+   *
+   * A SIGNAL NAMING THE TAB, exactly like `frameCommand` and for a milder version
+   * of its reason: the inspector is in the shell and the five viewers are a
+   * component tree away, so it names a document and whichever pane is drawing
+   * that document scrolls. The sequence number is what makes clicking the same
+   * row twice do anything at all.
+   */
+  readonly blockReveal = signal<{ tabId: string; target: string; seq: number } | null>(null);
+  private revealSeq = 0;
+
+  revealBlock(tabId: string, target: string): void {
+    this.revealSeq += 1;
+    this.blockReveal.set({ tabId, target, seq: this.revealSeq });
+  }
+
 
   // ── Select mode ──────────────────────────────────────────────────────────
 
@@ -1663,10 +2384,10 @@ export class TabsService {
    * gesture that records one needs a book.
    */
   private flush(tabId: string): void {
-    const bookId = this.byId(tabId)?.book?.id;
     const ledger = this.ledgers.get(tabId);
-    if (!api || bookId === undefined || ledger === undefined) return;
-    void api.history.save(bookId, { done: ledger.done, undone: ledger.undone })
+    const store = this.ledgerStore(this.byId(tabId));
+    if (store === null || ledger === undefined) return;
+    void store.save({ done: ledger.done, undone: ledger.undone })
       .catch((err: unknown) => {
         this.notice.set(
           `This document's undo history could not be written to disk, so it will not survive a `
@@ -1694,11 +2415,50 @@ export class TabsService {
    * set rather than a merge, because a merge would be inventing an order between
    * two sessions' actions that no LIFO stack can honour.
    */
-  private async restoreLedger(tabId: string, bookId: string): Promise<void> {
-    if (!api) return;
+  /**
+   * WHICH LEDGER IS THIS DOCUMENT'S, and the two answers this app has.
+   *
+   * A BOOK'S is keyed by its working tree and bound to the generation of that
+   * tree, because its rows name `data-bf-id="p47-3"` in an unpacked EPUB. A
+   * SCAN'S is keyed by its readings bank and bound to the generation of that
+   * READING, because its rows name `7:14` in the model's answer. Neither key is a
+   * runtime id, and neither side of that is the renderer's to know — main
+   * resolves both, exactly as it always has, and this only decides which door to
+   * knock on.
+   *
+   * Null for a document that has no editable surface open: a book still
+   * unpacking, a scan not in block view, an HTML editor tab (whose typing is the
+   * textarea's own undo and never the book's).
+   */
+  private ledgerStore(tab: Tab | null): {
+    load(): Promise<LedgerLoad>;
+    save(stacks: LedgerStacks): Promise<void>;
+  } | null {
+    const bridge = api;
+    if (bridge === null || bridge === undefined || tab === null) return null;
+    if (tab.kind === 'epub' && tab.book !== null) {
+      const bookId = tab.book.id;
+      return {
+        load: () => bridge.history.load(bookId),
+        save: (stacks) => bridge.history.save(bookId, stacks),
+      };
+    }
+    if (tab.kind === 'pdf' && tab.blockView) {
+      const filePath = tab.path;
+      return {
+        load: () => bridge.overlay.loadLedger(filePath),
+        save: (stacks) => bridge.overlay.saveLedger(filePath, stacks),
+      };
+    }
+    return null;
+  }
+
+  private async restoreLedger(tabId: string): Promise<void> {
+    const store = this.ledgerStore(this.byId(tabId));
+    if (store === null) return;
     let loaded: LedgerLoad;
     try {
-      loaded = await api.history.load(bookId);
+      loaded = await store.load();
     } catch (err) {
       // Not a `problem` on the tab: the book is open and every edit still
       // works. What is gone is the undo history, and that is a sentence.
@@ -1769,7 +2529,24 @@ export class TabsService {
       this.commandFrame(tab.id, { type: 'foundry:undo-typing', redo: direction === 'redo' });
       return;
     }
-    if (tab.book === null) {
+    /*
+     * A SCAN GOES THROUGH THIS FUNCTION AND NOT AROUND IT. Its rows name a block
+     * in a readings bank instead of an element in a chapter and its setter is a
+     * line of the overlay instead of a call into somebody's markup, but an action
+     * is still an action, one gesture over forty blocks is still forty rows that
+     * go back together, and the notice still says what was undone by name. A
+     * second replay loop for the second kind of document is how the two would
+     * start behaving differently.
+     */
+    if (tab.kind === 'pdf') {
+      if (!tab.blockView) {
+        this.notice.set(
+          `There is nothing to undo in ${tab.title}. Press Blocks to correct what the model read `
+          + 'off its pages.',
+        );
+        return;
+      }
+    } else if (tab.book === null) {
       this.notice.set(`${tab.title} is still opening.`);
       return;
     }
@@ -1784,6 +2561,38 @@ export class TabsService {
       return;
     }
 
+    /*
+     * A SCAN'S ROWS ALL LAND IN ONE FILE, so its whole replay is one call and
+     * one atomic write, and there is nothing to repaint by hand: the overlay is
+     * a signal and the outlines are drawn from it.
+     *
+     * A REFUSAL LEAVES THE ACTION WHERE IT IS, exactly as it does below. The
+     * difference is that nothing partial can have happened — the rows were
+     * applied to a copy and the write is one rename — so there is no frame to
+     * reload and nothing on screen that the file does not back.
+     */
+    if (tab.kind === 'pdf') {
+      const stopped = await this.replayOverlay(tab.id, action, direction);
+      if (stopped !== null) {
+        this.notice.set(`${direction === 'undo' ? 'Undo' : 'Redo'} stopped at ${stopped}`);
+        return;
+      }
+      from.pop();
+      (direction === 'undo' ? ledger.undone : ledger.done).push(action);
+      this.flush(tab.id);
+      /*
+       * NO `modified` FLAG. That flag means "the copy you filed is older than
+       * this one", and nothing here touched the PDF: a curation is a file beside
+       * the readings bank, and the scan on screen is the same bytes it always
+       * was. Setting it would put a dot on a tab whose Save has nothing to write.
+       */
+      this.notice.set(`${direction === 'undo' ? 'Undid' : 'Redid'}: ${action.label}.`);
+      return;
+    }
+
+    // Guarded above — a book still opening was turned away with a sentence — and
+    // repeated here because the two branches merge what TypeScript knew.
+    if (tab.book === null) return;
     const bookId = tab.book.id;
     /*
      * REPAINTED WITHOUT A RELOAD WHERE THE ROW IS AN ATTRIBUTE, and with one
@@ -1952,12 +2761,31 @@ export class TabsService {
         bridge.epub.renameHeading(bookId, row.target, value));
       return;
     }
-    // `page-heading`. `was` is the OTHER side of the row, which is what the
-    // page reads right now — main checks it against the file and refuses if
-    // the heading moved underneath, exactly as it does for the dialog.
-    const was = direction === 'undo' ? row.after : row.before;
-    await this.queueMemberWrite(bookId, row.member, () =>
-      bridge.epub.renamePageHeading(bookId, row.target, value, was));
+    if (row.field === 'page-heading') {
+      // `was` is the OTHER side of the row, which is what the page reads right
+      // now — main checks it against the file and refuses if the heading moved
+      // underneath, exactly as it does for the dialog.
+      const was = direction === 'undo' ? row.after : row.before;
+      await this.queueMemberWrite(bookId, row.member, () =>
+        bridge.epub.renamePageHeading(bookId, row.target, value, was));
+      return;
+    }
+    /*
+     * A BLOCK-EDITOR FIELD IN A BOOK'S LEDGER — which cannot happen, and is
+     * refused rather than falling through.
+     *
+     * The two ledgers are separate files with separate validators and neither
+     * accepts the other's field names, so the only way here is a bug in this app.
+     * The old shape of this function ended with `page-heading` as the fallthrough
+     * `else`, which meant a field it had never heard of would have been replayed
+     * as a heading rename against a target that is not an href. Naming the last
+     * branch and refusing the rest costs one line and removes a whole class of
+     * silent wrong write.
+     */
+    throw new Error(
+      `"${row.field}" is not something a book's undo history can replay — it names a correction to `
+      + 'a scan\'s blocks, which lives in that document\'s own overlay.',
+    );
   }
 
   /**
@@ -2390,6 +3218,189 @@ export class TabsService {
     this.all.update((tabs) =>
       tabs.map((tab) => (tab.id === id ? { ...tab, ...changes } : tab)));
   }
+}
+
+/**
+ * One scan's block editor: what the model read, and what a person has said
+ * about it.
+ *
+ * HELD PER TAB and dropped when the mode closes. Five panes can each be showing
+ * a different scan, and a single set of signals would have the second one's
+ * pages blanking the first's — the same reason `selections` and `counts` are
+ * maps rather than pairs of signals.
+ */
+export interface BlockView {
+  /** Every page's blocks, in the frame their boxes are measured in. */
+  pages: readonly PdfBlockPage[];
+  /**
+   * The same blocks as the things a PERSON points at, by page number.
+   *
+   * ONE OUTLINE PER ANSWER ELEMENT, not per part. The model answered once for a
+   * region of the page and the engine cut that answer into parts where the
+   * markdown said to; the parts are text, they share the element's box, and
+   * drawing them would put three identical rectangles on top of each other for a
+   * person to try to click between. So the editing surface addresses `page:order`
+   * — which is exactly what the overlay contract calls the useful default, "every
+   * part of that element" — and the split stays where it belongs, inside the
+   * renderer that made it.
+   */
+  elements: ReadonlyMap<number, readonly BlockElement[]>;
+  /** The same elements by target key, for a ledger row or a chapter row. */
+  byKey: ReadonlyMap<string, BlockElement>;
+  /** Where the ENGINE would divide the book. What the chapter list seeds from. */
+  detected: readonly PdfDetectedChapter[];
+  /** The curation, or null while it is being read (or could not be). */
+  overlay: OverlayFile | null;
+  /** Every amendment by target — derived once per change, read once per outline. */
+  decisions: ReadonlyMap<string, OverlayDecision>;
+  /** Why there is nothing to correct, when that happens. Never swallowed. */
+  problem: string | null;
+  /** True from the moment the mode opens until the engine has answered. */
+  loading: boolean;
+}
+
+/** One thing on a page a person can point at: the model's answer element. */
+export interface BlockElement {
+  /** `page:order` — the overlay target, the ledger's target, the DOM key. */
+  key: string;
+  page: number;
+  order: number;
+  /** The pieces the engine cut this answer into, in order. Usually one. */
+  parts: readonly PdfBlock[];
+  /** What the model called it. The parts of one element agree in practice. */
+  category: string;
+  /** The union of the parts' boxes, in the page's render frame. */
+  box: { x1: number; y1: number; x2: number; y2: number };
+  /** What the model read, the parts run together — for the inspector to show. */
+  text: string;
+}
+
+/**
+ * The blocks of one page, gathered into the elements a person points at.
+ *
+ * The union rather than the first part's box, because a renderer that splits an
+ * answer is free to give the pieces boxes of their own one day — and an outline
+ * that covered the first third of a paragraph would be an outline you cannot
+ * click on the words it is about.
+ */
+function elementsOfPage(page: PdfBlockPage): BlockElement[] {
+  const byOrder = new Map<number, PdfBlock[]>();
+  for (const block of page.blocks) {
+    const found = byOrder.get(block.order);
+    if (found === undefined) byOrder.set(block.order, [block]);
+    else found.push(block);
+  }
+  const elements: BlockElement[] = [];
+  for (const [order, blocks] of byOrder) {
+    const parts = [...blocks].sort((a, b) => a.part - b.part);
+    const first = parts[0]!;
+    const box = { ...first.box };
+    for (const part of parts) {
+      box.x1 = Math.min(box.x1, part.box.x1);
+      box.y1 = Math.min(box.y1, part.box.y1);
+      box.x2 = Math.max(box.x2, part.box.x2);
+      box.y2 = Math.max(box.y2, part.box.y2);
+    }
+    elements.push({
+      key: `${page.page}:${order}`,
+      page: page.page,
+      order,
+      parts,
+      category: first.category,
+      box,
+      text: parts.map((part) => part.text).join('\n').trim(),
+    });
+  }
+  return elements.sort((a, b) => a.order - b.order);
+}
+
+/**
+ * What the overlay says about a whole element.
+ *
+ * The element-wide amendment, then any part-specific ones folded over it in part
+ * order — which is what the engine will do with the same file. THIS APP ONLY EVER
+ * WRITES ELEMENT-WIDE amendments, so the fold is a copy in every file it made;
+ * it is here so that a file somebody edited by hand is DRAWN as it will RENDER,
+ * rather than drawn as though the parts said nothing.
+ */
+function elementDecision(
+  decisions: ReadonlyMap<string, OverlayDecision>,
+  element: BlockElement,
+): OverlayDecision {
+  let decision = decisions.get(element.key) ?? {};
+  for (const part of element.parts) {
+    const piece = decisions.get(`${element.page}:${element.order}:${part.part}`);
+    if (piece !== undefined) decision = { ...decision, ...piece };
+  }
+  return decision;
+}
+
+/**
+ * The ledger's name for each overlay field.
+ *
+ * Two vocabularies because two files: `strike`/`category`/`text` are what the
+ * OVERLAY calls them, and the ledger has to spell two of those differently
+ * because `category` is already a book's `data-bf-cat` route and `text` would be
+ * indistinguishable from one. One table, in one direction, so the mapping cannot
+ * be written twice and drift.
+ */
+const LEDGER_FIELD_OF: Readonly<Record<OverlayField, LedgerField>> = {
+  strike: 'strike',
+  category: 'block-category',
+  text: 'block-text',
+};
+
+const OVERLAY_FIELD_OF: Readonly<Record<string, OverlayField>> = {
+  strike: 'strike',
+  'block-category': 'category',
+  'block-text': 'text',
+};
+
+/** What a decision says about one field, as a ledger row spells it. */
+function fieldValue(decision: OverlayDecision | undefined, field: OverlayField): string {
+  if (decision === undefined) return '';
+  if (field === 'strike') return decision.strike === true ? 'true' : '';
+  if (field === 'category') return decision.category ?? '';
+  return decision.text ?? '';
+}
+
+/**
+ * One ledger row applied to an overlay — the setter its field names, with the
+ * other value.
+ *
+ * A PURE FUNCTION, deliberately: a replay of forty rows is forty of these over
+ * one object and then a single write, so nothing here may touch the disk or the
+ * signals. It is also what makes the whole action atomic — a row that refuses
+ * throws before anything has been written anywhere.
+ */
+function replayOverlayRow(file: OverlayFile, row: LedgerRow, value: string): OverlayFile {
+  if (row.field === 'chapters') {
+    return setChapters(file, chaptersOfText(value, 'this undo entry'));
+  }
+  const field = OVERLAY_FIELD_OF[row.field];
+  if (field === undefined) {
+    throw new Error(
+      `"${row.field}" is not something a scan's corrections can replay — it names an edit to a `
+      + 'book\'s markup, which lives in that book\'s own history.',
+    );
+  }
+  return amendOverlay(file, parseTargetKey(row.target), field, value);
+}
+
+/**
+ * The engine's detected chapters as an overlay's own list.
+ *
+ * The seed, and it has to be EXACT: saving it back unchanged must render the
+ * identical book, or the first thing somebody does after opening the chapter
+ * accordion is silently change their own spine. So the part is carried when the
+ * engine gave one and nothing is normalised, rounded or re-derived on the way
+ * through.
+ */
+function seedChapters(detected: readonly PdfDetectedChapter[]): OverlayChapter[] {
+  return detected.map((one) => ({
+    at: { page: one.page, order: one.order, ...(one.part === undefined ? {} : { part: one.part }) },
+    title: one.title,
+  }));
 }
 
 /**

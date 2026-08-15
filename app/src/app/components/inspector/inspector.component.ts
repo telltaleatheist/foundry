@@ -6,13 +6,15 @@ import {
   effect,
   inject,
   signal,
+  untracked,
   viewChild,
 } from '@angular/core';
 
-import { BLOCK_CATEGORIES, UNKNOWN_CATEGORY_COLOUR } from '@shared/categories';
+import { BLOCK_CATEGORIES, PDF_BLOCK_CATEGORIES, UNKNOWN_CATEGORY_COLOUR } from '@shared/categories';
+import { targetKey, type OverlayChapter } from '@shared/overlay';
 import type { EpubChapter } from '@shared/types';
 
-import { TabsService } from '../../core/tabs.service';
+import { TabsService, type BlockElement } from '../../core/tabs.service';
 
 /**
  * The inspector — what the focused book IS, down the right-hand side.
@@ -53,9 +55,10 @@ import { TabsService } from '../../core/tabs.service';
   selector: 'app-inspector',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    @if (book(); as current) {
+    @if (subject(); as panel) {
       <div class="panel">
         <!-- ── Contents ─────────────────────────────────────────────────── -->
+        @if (book(); as current) {
         <section class="accordion" [class.shut]="!contentsOpen()">
           <button class="head" (click)="contentsOpen.set(!contentsOpen())">
             <span class="twist">{{ contentsOpen() ? '▾' : '▸' }}</span>
@@ -102,6 +105,95 @@ import { TabsService } from '../../core/tabs.service';
             </div>
           }
         </section>
+        }
+
+        <!-- ── The chapters, for a scan ─────────────────────────────────── -->
+        @if (panel.kind === 'pdf') {
+          <section class="accordion" [class.shut]="!chaptersOpen()">
+            <button class="head" (click)="chaptersOpen.set(!chaptersOpen())">
+              <span class="twist">{{ chaptersOpen() ? '▾' : '▸' }}</span>
+              <span class="label">Chapters</span>
+              <span class="count">{{ spine().chapters.length }}</span>
+            </button>
+            @if (chaptersOpen()) {
+              <div class="body">
+                <!--
+                  WHOSE LIST THIS IS, said before anything is clicked. Until
+                  somebody edits it these rows are Foundry's own answer, and the
+                  first edit takes the whole list over — after which detection is
+                  superseded rather than consulted. A person who does not know
+                  which of those two states they are in cannot tell whether a
+                  chapter appearing was their doing or the app's.
+                -->
+                <p class="hint">
+                  @if (spine().confirmed) {
+                    These are your chapters. The book divides here and nowhere else.
+                  } @else {
+                    These are the chapters Foundry found. Change any of them and the list
+                    becomes yours — from then on the book divides exactly where it says.
+                  }
+                </p>
+
+                <ul>
+                  @for (row of chapterRows(); track row.target) {
+                    <li class="entry" [class.missing]="!row.present">
+                      @if (renamingHref() === row.target) {
+                        <input
+                          #renameBox
+                          class="rename"
+                          [value]="renameText()"
+                          (input)="renameText.set(renameBox.value)"
+                          (keydown.enter)="commitChapterRename(row.target)"
+                          (keydown.escape)="cancelRename()"
+                          (blur)="cancelRename()"
+                          [attr.aria-label]="'Rename ' + row.title"
+                        >
+                      } @else {
+                        <button
+                          class="chapter"
+                          [title]="row.present ? row.title : row.title + ' — not on these pages'"
+                          (click)="showBlock(row.target)"
+                          (dblclick)="startChapterRename(row)"
+                        >
+                          <span class="ch-title">{{ row.title }}</span>
+                          <span class="ch-at">{{ row.where }}</span>
+                        </button>
+                        <button class="pencil" title="Rename" (click)="startChapterRename(row)">✎</button>
+                        <button class="pencil" title="Not a chapter" (click)="dropChapter(row.target)">✕</button>
+                      }
+                    </li>
+                  }
+                  @if (chapterRows().length === 0) {
+                    <li class="none">This book does not divide: it renders as one section.</li>
+                  }
+                </ul>
+
+                <div class="acts">
+                  <button
+                    class="act"
+                    [disabled]="onlyBlock() === null || onlyBlockIsChapter()"
+                    [title]="chapterAddTitle()"
+                    (click)="makeChapter()"
+                  >Chapter starts here</button>
+                  <!--
+                    The way back. The first chapter edit turns "Foundry decides"
+                    into forty-one blocks stated exactly, and without this that
+                    door only opens one way — a person who curated a spine and
+                    then wanted the app's answer again would have no gesture for
+                    it. One ledger row like any other, so Ctrl+Z brings their
+                    list back.
+                  -->
+                  <button
+                    class="act"
+                    [disabled]="!spine().confirmed"
+                    title="Throw this list away and let Foundry work the chapters out again"
+                    (click)="resetChapters()"
+                  >Use Foundry's</button>
+                </div>
+              </div>
+            }
+          </section>
+        }
 
         <!-- ── Category ─────────────────────────────────────────────────── -->
         <section class="accordion" [class.shut]="!categoryOpen()">
@@ -120,8 +212,12 @@ import { TabsService } from '../../core/tabs.service';
                 than letting a person discover it by relabelling something.
               -->
               <p class="hint">
-                @if (!current.selectMode) {
-                  Turn on Select to colour the blocks and relabel them.
+                @if (!panel.live) {
+                  @if (panel.kind === 'epub') {
+                    Turn on Select to colour the blocks and relabel them.
+                  } @else {
+                    Press Blocks to outline what the model read and relabel it.
+                  }
                 } @else if (selected(); as picked) {
                   @if (picked.blockIds.length === 1) {
                     {{ picked.blockIds[0] }} is selected — click a row to relabel it.
@@ -140,7 +236,7 @@ import { TabsService } from '../../core/tabs.service';
                     <button
                       class="pick"
                       [title]="row.note"
-                      [disabled]="!current.selectMode"
+                      [disabled]="!panel.live"
                       (click)="relabel(row.id)"
                     >
                       <span class="swatch" [style.background]="row.colour"></span>
@@ -162,7 +258,7 @@ import { TabsService } from '../../core/tabs.service';
                     -->
                     <button
                       class="strike"
-                      [disabled]="!current.selectMode || row.total === null || row.total === 0"
+                      [disabled]="!panel.live || row.total === null || row.total === 0"
                       [title]="strikeTitle(row)"
                       (click)="strike(row.id)"
                     >{{ row.total !== null && row.total > 0 && row.struck === row.total ? '↺' : '⌦' }}</button>
@@ -191,6 +287,64 @@ import { TabsService } from '../../core/tabs.service';
             </div>
           }
         </section>
+
+        <!-- ── The one selected block, for a scan ───────────────────────── -->
+        @if (panel.kind === 'pdf' && onlyBlock() !== null) {
+          <section class="accordion" [class.shut]="!blockOpen()">
+            <button class="head" (click)="blockOpen.set(!blockOpen())">
+              <span class="twist">{{ blockOpen() ? '▾' : '▸' }}</span>
+              <span class="label">Block</span>
+              <span class="count">{{ onlyBlock()?.key }}</span>
+            </button>
+            @if (blockOpen()) {
+              <div class="body">
+                @if (onlyBlock(); as block) {
+                  <!--
+                    WHAT THE MODEL READ, in a box that can be corrected.
+                    An outline says a block is there and its colour says what the
+                    model called it; whether it READ the words right is invisible
+                    on a photograph of a page until something shows what it
+                    thinks they are. That question is the whole reason this
+                    section exists.
+                  -->
+                  <p class="hint">
+                    @if (block.parts.length > 1) {
+                      The model answered for this region once and Foundry cut the answer into
+                      {{ block.parts.length }} pieces, so its words cannot be corrected as one.
+                      Everything else here still applies to all of them.
+                    } @else {
+                      What the model read off the page. Correct it and the correction is what
+                      every rendering of this book uses.
+                    }
+                  </p>
+                  <textarea
+                    #words
+                    class="words"
+                    rows="5"
+                    spellcheck="false"
+                    [disabled]="block.parts.length > 1"
+                    [value]="draft()"
+                    (input)="draft.set(words.value)"
+                    [attr.aria-label]="'What ' + block.key + ' says'"
+                  ></textarea>
+                  <div class="acts">
+                    <button
+                      class="act"
+                      [disabled]="block.parts.length > 1 || draft().trim() === reading()"
+                      (click)="applyWords()"
+                    >Apply</button>
+                    <button
+                      class="act"
+                      [disabled]="!corrected()"
+                      title="Put the model's own reading back"
+                      (click)="revertWords()"
+                    >Model's reading</button>
+                  </div>
+                }
+              </div>
+            }
+          </section>
+        }
       </div>
     }
   `,
@@ -351,6 +505,63 @@ import { TabsService } from '../../core/tabs.service';
     }
     .strike:hover:not(:disabled) { background: var(--bg-hover); color: var(--error); }
     .strike:disabled { opacity: 0.25; cursor: default; }
+
+    /* ── The scan's two extra sections ─────────────────────────────────── */
+
+    /* A chapter row is two lines of unequal weight: the name somebody will read
+       in the contents, and the page it opens on, which is only ever a check. */
+    .chapter { display: flex; align-items: baseline; gap: 6px; }
+    .ch-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ch-at {
+      flex: 0 0 auto;
+      color: var(--text-tertiary); font-size: 10px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /*
+      A CHAPTER WHOSE BLOCK IS NOT IN THIS RENDERING. The engine skips it rather
+      than refusing the run — a page taken out with --skip-pages, or a block
+      struck since — so the app must not refuse it either. It is DRAWN AND
+      DIMMED: a row that vanished would take somebody's chapter name with it, and
+      a row that looked ordinary would promise a division the book will not have.
+    */
+    .entry.missing .ch-title { text-decoration: line-through; }
+    .entry.missing { opacity: 0.5; }
+
+    .none {
+      padding: 4px 12px 8px;
+      color: var(--text-tertiary); font-size: 11px; font-style: italic;
+    }
+
+    .acts { display: flex; gap: 6px; padding: 8px 12px 4px; }
+    .act {
+      flex: 1;
+      padding: 5px 8px;
+      background: var(--bg-input);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary); font-size: 11px;
+      cursor: pointer;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .act:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--border-strong); }
+    .act:disabled { opacity: 0.4; cursor: default; }
+
+    .words {
+      display: block;
+      width: calc(100% - 24px);
+      margin: 0 12px;
+      padding: 6px 8px;
+      background: var(--bg-input);
+      color: var(--text-primary);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      font-family: var(--font-mono, monospace);
+      font-size: 11px; line-height: 1.45;
+      resize: vertical;
+    }
+    .words:focus { outline: none; box-shadow: var(--focus-ring); border-color: var(--accent); }
+    .words:disabled { opacity: 0.6; }
   `],
 })
 export class InspectorComponent {
@@ -366,6 +577,8 @@ export class InspectorComponent {
    */
   protected readonly contentsOpen = signal(true);
   protected readonly categoryOpen = signal(true);
+  protected readonly chaptersOpen = signal(true);
+  protected readonly blockOpen = signal(true);
 
   /** Which chapter row is being renamed, and the text in its box. */
   protected readonly renamingHref = signal<string | null>(null);
@@ -390,23 +603,73 @@ export class InspectorComponent {
     return { ...tab, book: tab.book };
   });
 
-  protected readonly selected = computed(() =>
-    this.tabs.selectionFor(this.book()?.id ?? null));
+  /**
+   * WHAT THIS PANEL IS ABOUT, which is now one of two things.
+   *
+   * A BOOK, as it always was — an unpacked EPUB with chapters and stamped
+   * blocks. Or a SCAN in block view, which has neither: its "blocks" are the
+   * model's answers about the pages and its "contents" is a list somebody is
+   * building. The two share the Category section entirely, because a footnote is
+   * a footnote in both and the colours come from one table; everything else is
+   * one kind's or the other's.
+   *
+   * `live` is the mode being ON — Select for a book, Blocks for a scan. The
+   * category rows are a LEGEND as well as a control, so they are drawn either
+   * way and only the clicking is gated, which is the rule this panel has always
+   * followed.
+   */
+  protected readonly subject = computed<{ kind: 'epub' | 'pdf'; id: string; live: boolean } | null>(() => {
+    const tab = this.tabs.activeDocument();
+    if (tab === null) return null;
+    if (tab.kind === 'epub' && tab.book !== null) {
+      return { kind: 'epub', id: tab.id, live: tab.selectMode };
+    }
+    if (tab.kind === 'pdf' && tab.blockView) {
+      // Live once the curation has been read, not merely once the mode is on:
+      // the rows are clickable the instant they appear otherwise, and the first
+      // click would land on an overlay this window has not seen yet.
+      const view = this.tabs.blocksFor(tab.id);
+      return { kind: 'pdf', id: tab.id, live: view !== null && view.overlay !== null };
+    }
+    return null;
+  });
 
-  private readonly tally = computed(() => this.tabs.countsFor(this.book()?.id ?? null));
+  protected readonly selected = computed(() =>
+    this.tabs.selectionFor(this.subject()?.id ?? null));
 
   /**
-   * The eleven rows, with this chapter's numbers when the frame has sent any.
+   * How many blocks of each kind, from whichever side can count them.
    *
-   * `total` is NULL rather than 0 while the mode is off, and the difference is
-   * worth the extra state: the frame only counts while select mode is on, so a
-   * zero would be the panel asserting "this chapter has no footnotes" when what
-   * it means is "nobody has counted". A category with a real zero is drawn as a
-   * zero and its strike button is dead, which is honest.
+   * A book's come from the FRAME, because nothing outside a sandboxed iframe can
+   * see into it. A scan's are derived by the service from data this window
+   * already holds. Same shape, same rows, same swatches.
+   */
+  private readonly tally = computed(() => {
+    const panel = this.subject();
+    if (panel === null) return null;
+    return panel.kind === 'epub'
+      ? this.tabs.countsFor(panel.id)
+      : this.tabs.blockCountsFor(panel.id);
+  });
+
+  /**
+   * The rows, with this document's numbers when anything has counted them.
+   *
+   * `total` is NULL rather than 0 while nothing has, and the difference is worth
+   * the extra state: a zero would be the panel asserting "this chapter has no
+   * footnotes" when what it means is "nobody has counted". A category with a real
+   * zero is drawn as a zero and its strike button is dead, which is honest.
+   *
+   * TWO VOCABULARIES, ONE SET OF COLOURS. A cast book's blocks are
+   * `data-bf-cat="footnote"` and a scan's are the model's `Footnote`; the tables
+   * are separate because they are the vocabularies of two different files, and
+   * they share every colour because a person moving between the two panes is
+   * reading one legend (shared/categories.ts).
    */
   protected readonly rows = computed<CategoryRow[]>(() => {
     const counted = this.tally();
-    return BLOCK_CATEGORIES.map((one) => ({
+    const table = this.subject()?.kind === 'pdf' ? PDF_BLOCK_CATEGORIES : BLOCK_CATEGORIES;
+    return table.map((one) => ({
       id: one.id,
       label: one.label,
       colour: one.colour,
@@ -426,8 +689,9 @@ export class InspectorComponent {
   protected readonly unknown = computed<{ id: string; total: number }[]>(() => {
     const counted = this.tally();
     if (counted === null) return [];
+    const table = this.subject()?.kind === 'pdf' ? PDF_BLOCK_CATEGORIES : BLOCK_CATEGORIES;
     return Object.entries(counted.counts)
-      .filter(([id, total]) => total > 0 && !BLOCK_CATEGORIES.some((one) => one.id === id))
+      .filter(([id, total]) => total > 0 && !table.some((one) => one.id === id))
       .map(([id, total]) => ({ id, total }));
   });
 
@@ -440,6 +704,20 @@ export class InspectorComponent {
         box.focus();
         box.select();
       }
+    });
+
+    /*
+     * THE DRAFT FOLLOWS THE SELECTION, and this is the one effect in the panel
+     * that would be a bug if it were missing. The textarea holds a correction
+     * somebody is typing; clicking a different block while it has text in it
+     * would leave those words in the box with a different block's name over
+     * them, and pressing Apply would write one paragraph's correction onto
+     * another paragraph — silently, and only in the books where somebody had
+     * done the most work.
+     */
+    effect(() => {
+      const words = this.reading();
+      untracked(() => this.draft.set(words));
     });
   }
 
@@ -456,12 +734,168 @@ export class InspectorComponent {
       : `Strike all ${row.total} of them in this chapter`;
   }
 
+  /**
+   * The two gestures, routed by what the panel is about.
+   *
+   * ONE PAIR OF BUTTONS OVER TWO KINDS OF DOCUMENT. A book's relabel is a message
+   * into a sandboxed frame that rewrites an attribute; a scan's is a line of the
+   * overlay. Neither of those belongs in a panel — the service owns both — and
+   * the row does not need to know which it just fired.
+   */
   protected relabel(category: string): void {
-    this.tabs.relabelSelected(category);
+    if (this.subject()?.kind === 'pdf') this.tabs.relabelSelectedBlocks(category);
+    else this.tabs.relabelSelected(category);
   }
 
   protected strike(category: string): void {
-    this.tabs.strikeCategory(category);
+    if (this.subject()?.kind === 'pdf') this.tabs.strikeBlockCategory(category);
+    else this.tabs.strikeCategory(category);
+  }
+
+  // ── The scan's chapters ──────────────────────────────────────────────────
+
+  /** The spine as it stands, and whose it is. */
+  protected readonly spine = computed(() => {
+    const panel = this.subject();
+    return panel === null || panel.kind !== 'pdf'
+      ? { chapters: [] as readonly OverlayChapter[], confirmed: false }
+      : this.tabs.chaptersFor(panel.id);
+  });
+
+  /**
+   * The rows, each knowing whether the block it names is still on these pages.
+   *
+   * A CHAPTER WHOSE BLOCK IS GONE IS DRAWN, DIMMED, AND KEPT. The engine skips
+   * such a location rather than refusing the run — a page taken out with
+   * `--skip-pages`, a block struck since the chapter was made — so the app must
+   * not refuse it either. Hiding the row would take somebody's chapter name off
+   * the screen while leaving it in the file; drawing it as though it were fine
+   * would promise a division the book is not going to have.
+   */
+  protected readonly chapterRows = computed<ChapterRow[]>(() => {
+    const panel = this.subject();
+    if (panel === null || panel.kind !== 'pdf') return [];
+    return this.spine().chapters.map((one) => {
+      const target = targetKey(one.at);
+      return {
+        target,
+        title: one.title,
+        where: `p${one.at.page}`,
+        present: this.tabs.elementAt(panel.id, target) !== null,
+      };
+    });
+  });
+
+  /** The one block selected, or null for none and for several. */
+  protected readonly onlyBlock = computed<BlockElement | null>(() => {
+    const panel = this.subject();
+    const picked = this.selected();
+    if (panel === null || panel.kind !== 'pdf' || picked === null) return null;
+    if (picked.blockIds.length !== 1) return null;
+    return this.tabs.elementAt(panel.id, picked.blockIds[0]!);
+  });
+
+  protected onlyBlockIsChapter(): boolean {
+    const block = this.onlyBlock();
+    return block !== null && this.chapterRows().some((row) => row.target === block.key);
+  }
+
+  protected chapterAddTitle(): string {
+    if (this.onlyBlock() === null) return 'Select one block on the page first';
+    return this.onlyBlockIsChapter()
+      ? 'A chapter already starts at that block'
+      : 'The book divides at this block, and the contents lists it';
+  }
+
+  protected showBlock(target: string): void {
+    const panel = this.subject();
+    if (panel !== null && panel.kind === 'pdf') this.tabs.revealBlock(panel.id, target);
+  }
+
+  protected makeChapter(): void {
+    const panel = this.subject();
+    const block = this.onlyBlock();
+    if (panel === null || panel.kind !== 'pdf' || block === null) return;
+    /*
+     * SEEDED WITH THE BLOCK'S OWN WORDS, which is right far more often than any
+     * other guess and is exactly what the detection would have called it. It is
+     * a starting point rather than a rule: the contents entry and the printed
+     * heading are two statements — "IV" on the page and "Chapter 4 — The
+     * Windmill" in the contents is correct and ordinary — so the row is
+     * immediately renameable and the first line of the block is only what saves
+     * somebody typing it.
+     */
+    const words = block.text.split('\n')[0]?.trim() ?? '';
+    void this.tabs.addChapter(panel.id, block.key, words.slice(0, 120));
+  }
+
+  protected dropChapter(target: string): void {
+    const panel = this.subject();
+    if (panel !== null && panel.kind === 'pdf') void this.tabs.removeChapter(panel.id, target);
+  }
+
+  protected resetChapters(): void {
+    const panel = this.subject();
+    if (panel !== null && panel.kind === 'pdf') void this.tabs.resetChapters(panel.id);
+  }
+
+  protected startChapterRename(row: ChapterRow): void {
+    this.renameText.set(row.title);
+    this.renamingHref.set(row.target);
+  }
+
+  protected commitChapterRename(target: string): void {
+    const panel = this.subject();
+    const label = this.renameText().trim();
+    this.renamingHref.set(null);
+    if (panel === null || panel.kind !== 'pdf' || label.length === 0) return;
+    void this.tabs.renameChapter(panel.id, target, label);
+  }
+
+  // ── The one selected block's words ───────────────────────────────────────
+
+  /**
+   * The textarea's contents.
+   *
+   * A DRAFT RATHER THAN A LIVE BINDING, because a text override is a sentence
+   * somebody is typing and every keystroke must not become a ledger action. It
+   * is re-seeded by the effect below whenever the selection moves, so switching
+   * blocks never leaves the previous one's words in the box — the one way this
+   * design could write a correction onto the wrong block.
+   */
+  protected readonly draft = signal('');
+
+  /** What the block says right now: the correction if there is one, else the model's. */
+  protected readonly reading = computed(() => {
+    const panel = this.subject();
+    const block = this.onlyBlock();
+    if (panel === null || panel.kind !== 'pdf' || block === null) return '';
+    return this.tabs.decisionFor(panel.id, block).text ?? block.text;
+  });
+
+  protected corrected(): boolean {
+    const panel = this.subject();
+    const block = this.onlyBlock();
+    if (panel === null || panel.kind !== 'pdf' || block === null) return false;
+    return this.tabs.decisionFor(panel.id, block).text !== undefined;
+  }
+
+  protected applyWords(): void {
+    const panel = this.subject();
+    const block = this.onlyBlock();
+    if (panel === null || panel.kind !== 'pdf' || block === null) return;
+    const words = this.draft().trim();
+    // Typing the model's own reading back is not a correction. It is written as
+    // REMOVING the override rather than as an override that agrees, which is the
+    // overlay's canonical rule reaching the button.
+    void this.tabs.setBlockText(panel.id, block.key, words === block.text ? '' : words);
+  }
+
+  protected revertWords(): void {
+    const panel = this.subject();
+    const block = this.onlyBlock();
+    if (panel === null || panel.kind !== 'pdf' || block === null) return;
+    void this.tabs.setBlockText(panel.id, block.key, '');
   }
 
   // ── Contents ─────────────────────────────────────────────────────────────
@@ -493,6 +927,17 @@ export class InspectorComponent {
     if (!tab || label.length === 0 || label === chapter.label) return;
     await this.tabs.renameHeading(tab.id, chapter.href, label);
   }
+}
+
+/** One drawn row of the Chapters section. */
+interface ChapterRow {
+  /** The overlay target — `page:order`. */
+  target: string;
+  title: string;
+  /** `p12`, so a person can check the row against the page. */
+  where: string;
+  /** False when this reading has no such block. Drawn, dimmed, and kept. */
+  present: boolean;
 }
 
 /** One drawn row of the Category section. */

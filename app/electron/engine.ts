@@ -25,6 +25,10 @@ import type {
   EngineInfo,
   JobProgress,
   MetadataOutcome,
+  PdfBlock,
+  PdfBlockPage,
+  PdfBlocksOutcome,
+  PdfDetectedChapter,
 } from '../shared/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -388,11 +392,20 @@ export async function runDoctor(endpointUrl?: string): Promise<DoctorResult> {
  */
 async function runMetaCommand(
   args: string[],
+  /**
+   * Reading a package is milliseconds and rewriting a PDF is seconds, so sixty
+   * is far past either and a hang would leave a modal with a spinner in it.
+   *
+   * It is an argument because ONE command here is not of that order:
+   * `vlm-blocks` over a bank that recorded no render sizes measures every page
+   * of the PDF again, which for a three-hundred-page scan is minutes. A timeout
+   * that fits a metadata read would kill it every time, and the failure would
+   * look exactly like an engine that does not have the command.
+   */
+  timeoutMs = 60_000,
 ): Promise<{ ok: true; json: unknown } | { ok: false; reason: string }> {
   const run = runEngine(args);
-  // Reading a package is milliseconds and rewriting a PDF is seconds. Sixty is
-  // far past either, and a hang here would leave a modal with a spinner in it.
-  const timer = setTimeout(() => run.cancel(), 60_000);
+  const timer = setTimeout(() => run.cancel(), timeoutMs);
   const result = await run.done.finally(() => clearTimeout(timer));
 
   if (result.code !== 0) {
@@ -494,6 +507,148 @@ export async function writeEpubMetadata(
   if (flags.length === 0) return readEpubMetadata(treeRoot);
   const result = await runMetaCommand(['epub-meta', '--epub', treeRoot, '--json', ...flags]);
   return result.ok ? { ok: true, metadata: asEpubMetadata(result.json) } : result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// blocks — what the model said is on the pages
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Every block of every page, off the readings bank, for the block editor.
+ *
+ * THE COMMAND LINE IS ONE ARRAY ON ONE LINE, deliberately: the engine's command
+ * for this is new, its flags are still settling, and the whole of this app's
+ * dependency on their spelling is the literal below. Nothing else in the renderer
+ * or in main knows what the engine is asked; they know the shape of the answer,
+ * which is `PdfBlocksOutcome`.
+ *
+ * `--pdf` is passed on every call although the command marks it optional. It is
+ * the fallback for a bank written before runs recorded the size they rendered
+ * each page at, and a box measured in the wrong frame is an outline a few per
+ * cent away from the block it belongs to — which is invisible until somebody
+ * strikes the wrong paragraph. The file is beside us and the flag is free.
+ *
+ * THE APP NEVER READS THE BANK ITSELF, and that is the rule this exists to obey
+ * rather than an implementation detail. `readings/<key>.jsonl` is the model's own
+ * record: the engine decides what a block IS (the markdown split into parts, the
+ * furniture set aside, the synthesised quotes), and a second reader here would be
+ * a second opinion about the identity of every block the overlay names. An
+ * amendment targeting `7:14` has to mean the same element in this app and in the
+ * conversion that applies it, and the only way to guarantee that is for one
+ * program to do the deciding.
+ *
+ * NOT A REJECTION. "This engine build has no blocks command" and "this book has
+ * never been read" are both ordinary answers a person should meet as a sentence
+ * in the pane rather than as a broken tab.
+ */
+export async function readPdfBlocks(
+  pdfPath: string,
+  readingsPath: string,
+): Promise<PdfBlocksOutcome> {
+  const result = await runMetaCommand(
+    ['vlm-blocks', '--readings', readingsPath, '--pdf', pdfPath],
+    // Ten minutes. A bank with its geometry recorded answers in seconds; one
+    // without it re-renders every page of the book first, and a person opening
+    // the block editor on an old conversion would rather wait than be told the
+    // engine cannot do it.
+    600_000,
+  );
+  if (!result.ok) {
+    return {
+      ok: false,
+      reason: /unknown command/i.test(result.reason)
+        ? `This build of the engine cannot list a scan's blocks yet, so there is nothing to `
+          + `correct.\n${result.reason}`
+        : result.reason,
+    };
+  }
+  return asBlocks(result.json);
+}
+
+/**
+ * The engine's JSON → the shape the app draws.
+ *
+ * READ FIELD BY FIELD AND NEVER CAST. A block whose box is missing would be drawn
+ * at the top-left corner of the page over somebody else's paragraph, and a block
+ * whose page or order did not arrive would be an amendment written against the
+ * wrong element — so a page that does not describe itself is DROPPED with a line
+ * in the log rather than being repaired into something plausible. Everything that
+ * survives is fully formed.
+ */
+function asBlocks(json: unknown): PdfBlocksOutcome {
+  const root = (json ?? {}) as Record<string, unknown>;
+  const rawPages = Array.isArray(root['pages']) ? root['pages'] : [];
+  const pages: PdfBlockPage[] = [];
+  for (const entry of rawPages) {
+    const page = entry as Record<string, unknown>;
+    const number = numberField(page['page']);
+    // The frame every box on this page is measured in. It is a nested `render`
+    // rather than two fields on the page because the engine has one `Size` type
+    // and says so; flattening it here is what keeps the app's own shape honest
+    // about which two numbers belong together.
+    const render = (page['render'] ?? {}) as Record<string, unknown>;
+    const width = numberField(render['width']);
+    const height = numberField(render['height']);
+    if (number === null || width === null || height === null || width <= 0 || height <= 0) {
+      console.error('[blocks] a page arrived without its number or its render size, and was dropped.');
+      continue;
+    }
+    const blocks: PdfBlock[] = [];
+    for (const candidate of Array.isArray(page['blocks']) ? page['blocks'] : []) {
+      const block = asBlock(candidate as Record<string, unknown>, number);
+      if (block !== null) blocks.push(block);
+    }
+    pages.push({ page: number, width, height, blocks });
+  }
+  const chapters: PdfDetectedChapter[] = [];
+  for (const candidate of Array.isArray(root['chapters']) ? root['chapters'] : []) {
+    const row = candidate as Record<string, unknown>;
+    const page = numberField(row['page']);
+    const order = numberField(row['order']);
+    const title = typeof row['title'] === 'string' ? row['title'] : '';
+    // A detected chapter with no name is dropped rather than listed as an empty
+    // row: the list is what the accordion seeds from, and a contents entry with
+    // nothing in it is a row nobody can click.
+    if (page === null || order === null || title.trim().length === 0) continue;
+    const part = numberField(row['part']);
+    chapters.push({ page, order, title, ...(part === null ? {} : { part }) });
+  }
+  /*
+   * A PAGE THE PARSER COULD NOT READ IS NOT A PAGE WITH NO BLOCKS ON IT, and the
+   * engine reports the two separately so that this distinction survives. It is
+   * said in the log rather than on screen: one unparseable page out of three
+   * hundred must not put a banner over a curation pass, and the page itself draws
+   * with no outlines on it, which is what "nothing was read here" looks like.
+   */
+  const unreadable = Array.isArray(root['unreadable']) ? root['unreadable'] : [];
+  for (const entry of unreadable) {
+    const row = entry as Record<string, unknown>;
+    console.error(`[blocks] page ${String(row['page'])} could not be read: ${String(row['reason'])}`);
+  }
+  return { ok: true, pages, chapters };
+}
+
+function asBlock(row: Record<string, unknown>, page: number): PdfBlock | null {
+  const order = numberField(row['order']);
+  if (order === null) return null;
+  const box = (row['box'] ?? {}) as Record<string, unknown>;
+  const x1 = numberField(box['x1']);
+  const y1 = numberField(box['y1']);
+  const x2 = numberField(box['x2']);
+  const y2 = numberField(box['y2']);
+  if (x1 === null || y1 === null || x2 === null || y2 === null) return null;
+  return {
+    page: numberField(row['page']) ?? page,
+    order,
+    part: numberField(row['part']) ?? 0,
+    category: typeof row['category'] === 'string' ? row['category'] : '',
+    box: { x1, y1, x2, y2 },
+    text: typeof row['text'] === 'string' ? row['text'] : '',
+  };
+}
+
+function numberField(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 /** Read a PDF's Info dictionary: `foundry pdf-meta --pdf <file> --json`. */
