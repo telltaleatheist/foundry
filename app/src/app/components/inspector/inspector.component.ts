@@ -133,6 +133,7 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
                       class="step"
                       [class.current]="row.step.id === standingId()"
                       [class.stale]="row.step.stale === true"
+                      (contextmenu)="onStepMenu($event, row)"
                     >
                       <button class="pick step-pick" [title]="rowTitle(row)" (click)="stand(row)">
                         <span class="dot"></span>
@@ -463,6 +464,35 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
           mean writing it again in three phases' time.
         -->
         } <!-- end of the document's sections -->
+
+        <!--
+          RIGHT-CLICK ON A STEP ROW — the second half of the user's rule about
+          opening steps: *"they can right-click a different step and click open,
+          and itll split the screens between the one they just opened and the one
+          they already had open."*
+
+          ONE ITEM, because there is one thing right-clicking a step is for. The
+          ordinary click already stands there and shows the document; ✕ is on the
+          row. What the menu adds is the arrangement — beside, rather than instead
+          — and a menu of one is honest where a menu padded out to three would be
+          two items nobody wants next to the one they came for.
+
+          The same scrim-and-card shape the documents list and the tab strips use.
+          There is one context-menu idiom in this app.
+        -->
+        @if (menu(); as open) {
+          <div class="menu-scrim" (click)="menu.set(null)" (contextmenu)="menu.set(null)"></div>
+          <div
+            class="menu"
+            role="menu"
+            [attr.aria-label]="'Actions for ' + open.row.step.label"
+            [style.left.px]="open.x"
+            [style.top.px]="open.y"
+            (keydown.escape)="menu.set(null)"
+          >
+            <button role="menuitem" (click)="openInSplit(open.row)">Open in split</button>
+          </div>
+        }
       </div>
     }
   `,
@@ -759,6 +789,29 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
     .step.stale .name { opacity: 0.55; }
     .step.stale .tally { opacity: 0.55; }
     .step.stale .dot { opacity: 0.4; }
+
+    /* Above the panel and below the dialogs; the scrim is what makes the next
+       click dismiss it exactly once. The documents list's menu, to the pixel. */
+    .menu-scrim { position: fixed; inset: 0; z-index: 1000; }
+    .menu {
+      position: fixed;
+      z-index: 1001;
+      min-width: 150px;
+      padding: 4px;
+      display: flex; flex-direction: column;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      box-shadow: 0 10px 20px -6px rgba(0, 0, 0, 0.35);
+    }
+    .menu button {
+      display: block; width: 100%;
+      padding: 6px 10px;
+      background: transparent; border: none; border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      font-size: 12px; text-align: left; cursor: pointer;
+    }
+    .menu button:hover { background: var(--bg-hover); color: var(--text-primary); }
   `],
 })
 export class InspectorComponent {
@@ -1280,6 +1333,52 @@ export class InspectorComponent {
     } catch (err) {
       // Main's words. It refuses an id this project does not hold, which means the
       // two sides are looking at different ledgers — not something to smooth over.
+      this.tabs.notice.set(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /** The open step context menu: which row it is about, and where it was asked for. */
+  protected readonly menu = signal<{ row: StepRow; x: number; y: number } | null>(null);
+
+  protected onStepMenu(event: MouseEvent, row: StepRow): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.menu.set({ row, x: event.clientX, y: event.clientY });
+  }
+
+  /**
+   * "Open in split" — stand on that step, and put what it shows in a column of
+   * its own beside what is already there.
+   *
+   * ── Two acts that have to arrive as one ─────────────────────────────────────
+   *
+   * WHAT A STEP SHOWS IS NOT KNOWN HERE. Main resolves it (`ledger:document-at`)
+   * and only for the position the project is standing ON, so there is no way to
+   * ask "what would that row show" without moving there first. So the intention
+   * is left with `TabsService` before the pointer moves, and the answer — which
+   * arrives asynchronously, inside the effect that watches the position — picks
+   * it up and opens into a new column instead of into the one in front.
+   *
+   * THE ROW ALREADY BEING CURRENT IS THE CASE THAT NEEDS SAYING. `go` on the
+   * position you are on produces the same ledger and the same picture, so nothing
+   * moves and nothing would ever consume that intention — the menu would appear
+   * to do nothing and then split the NEXT step somebody clicked. So that row asks
+   * the service to do it outright, and the flag is dropped rather than left lying
+   * for a move it was not set for.
+   */
+  protected async openInSplit(row: StepRow): Promise<void> {
+    this.menu.set(null);
+    const dir = this.projectDir();
+    if (dir === null) return;
+    if (row.step.id === this.standingId()) {
+      await this.tabs.splitAtPosition(dir);
+      return;
+    }
+    this.tabs.splitNextIn(dir);
+    try {
+      await this.ledger.go(dir, row.step.id);
+    } catch (err) {
+      this.tabs.forgetSplitIn(dir);
       this.tabs.notice.set(err instanceof Error ? err.message : String(err));
     }
   }

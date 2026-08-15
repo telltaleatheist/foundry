@@ -3,6 +3,7 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } 
 import { Router } from '@angular/router';
 
 import { documentNames, qualify, typeLabel } from '@shared/documents';
+import type { ProjectDocumentKind } from '@shared/types';
 
 import { api } from '../../core/foundry';
 import { ProjectsService } from '../../core/projects.service';
@@ -47,6 +48,21 @@ import { UiService } from '../../core/ui.service';
  * there. That listing is `listProjects`' own (electron/projects.ts), which is
  * why it moved here rather than being rebuilt: one function decides what a
  * project contains, and this is now its reader.
+ *
+ * ── And under those, the EXPORTS ─────────────────────────────────────────────
+ *
+ * *"under the project and indented, there will be terminal files i generated
+ * from the project. pdf facsimile, epub, whatever i exported."* An export is not
+ * a document row and must not be drawn as one: a document row is one per TYPE
+ * and is a base for further work, and there can be four exported EPUBs of one
+ * book with nothing made from any of them. So they are their own run, indented a
+ * step further in, at the bottom of the group where the newest is first.
+ *
+ * NAMED BY PRODUCT AND DATE — "Facsimile PDF · 14 Aug" — because that is the
+ * pair of facts that tells two of them apart, and because a project's exports all
+ * share the book's stem the way its documents do. `.txt` is listed and INERT:
+ * this app has no tab that reads plain text, so the row dims itself and offers
+ * Show in file manager instead of pretending a click will do something.
  *
  * ── A ROW IS NOT A FILENAME ──────────────────────────────────────────────────
  *
@@ -209,6 +225,8 @@ import { UiService } from '../../core/ui.service';
           class="row"
           [class.child]="row.indent"
           [class.grouped]="row.grouped"
+          [class.terminal]="row.terminal"
+          [class.inert]="row.tab === null && row.openable === false"
           [class.on]="row.column !== null"
           [class.focused]="row.focused"
           [class.available]="row.tab === null"
@@ -419,6 +437,24 @@ import { UiService } from '../../core/ui.service';
     .row.grouped.child { padding-left: 36px; }
 
     /*
+      AN EXPORT SITS UNDER THE DOCUMENTS, one step further in. It is a fact about
+      the project the same way they are, and it is NOT one of them: a document row
+      is one per type and is a base for further work, an export is terminal and
+      there can be four of them. The indent is the whole of what says so — a
+      second visual language for a row that behaves like every other row would be
+      chrome making a distinction the gestures do not.
+    */
+    .row.grouped.terminal { padding-left: 32px; }
+
+    /*
+      PLAIN TEXT HAS NO TAB IN THIS APP, and the row says so by not lighting up.
+      It is still listed, because it is a thing the user made and a thing they can
+      reveal or delete; what it does not do is pretend a click will open it.
+    */
+    .row.inert { color: var(--text-tertiary); opacity: 0.65; }
+    .row.inert:hover { background: transparent; color: var(--text-tertiary); }
+
+    /*
       AVAILABLE, NOT OPEN — dimmed and nothing else. The list's existing language
       for "on screen" is the accent bar (.on / .focused), so the honest opposite
       is simply not having it: an available row is a row without the mark rather
@@ -554,7 +590,15 @@ export class OpenDocumentsComponent {
     const focusedPaneId = this.tabs.focusedPaneId();
     const out: Row[] = [];
     const emit = (tab: Tab, indent: boolean): void => {
-      const at = panes.findIndex((pane) => pane.tabId === tab.id);
+      /*
+       * THE COLUMN A DOCUMENT IS SHOWING IN, and showing is the word: with the
+       * strips back a tab can be in a column's stack without being the one on
+       * screen, and the accent bar here has always meant "you are looking at
+       * this". A tab waiting in a strip is drawn as an ordinary row — its strip
+       * already says where it is, and marking it on screen as well would be two
+       * surfaces disagreeing about what "on screen" means.
+       */
+      const at = panes.findIndex((pane) => pane.activeTabId === tab.id);
       out.push({
         key: tab.id,
         tab,
@@ -687,6 +731,53 @@ export class OpenDocumentsComponent {
       }
 
       /*
+       * THE TERMINAL FILES — the exports, indented a step further in, under the
+       * documents they were made from.
+       *
+       * Main sends them newest first with a PROJECT-RELATIVE path
+       * (`ProjectSummary.exports`), which is this codebase's oldest house rule
+       * reaching the nav: a project holds `archive/Book.pdf`, `working/Book.pdf`
+       * and `final/Book.pdf` at once, so nothing may ever be matched or joined by
+       * its last segment. The path is rebuilt against the project's own directory
+       * — in the project's own separator, so a Windows tooltip does not read half
+       * in slashes — and it is never on screen as a name.
+       *
+       * An export whose file has gone is not listed at all: main drops those
+       * before it sends the list, because `final/` is the user's own tray and a
+       * row that opens nothing is worse than no row.
+       *
+       * BEFORE the unclaimed sweep below, because an export that is OPEN is a tab
+       * inside this project's folder and the sweep would otherwise draw it a
+       * second time as "a copy you opened" — one file, two rows, one of them
+       * lying about what it is.
+       */
+      for (const made of project.exports) {
+        const path = joinIn(project.dir, made.file);
+        const label = exportLabel(made.kind);
+        const open = mine.find((row) => fold(row.path) === fold(path)) ?? null;
+        if (open !== null) claimed.add(open.key);
+        rows.push({
+          key: `${project.key}:final:${made.file}`,
+          tab: open?.tab ?? null,
+          path,
+          title: `${label} · ${exportWhen(made.madeAt)}`,
+          glyph: made.kind === 'epub' ? '▤' : made.kind === 'pdf' ? '▦' : '≡',
+          tooltip: made.kind === 'txt'
+            ? `${path}\nPlain text — Foundry has no tab that reads one. Right-click to show it in the file manager.`
+            : `Open this ${label}\nExported ${new Date(made.madeAt).toLocaleString()}\n${path}`,
+          indent: false,
+          grouped: true,
+          terminal: true,
+          // A finished thing this app made, so it wears the dot when it is opened:
+          // it lives in the library and nowhere the user filed it themselves.
+          managed: true,
+          openable: made.kind !== 'txt',
+          column: open?.column ?? null,
+          focused: open?.focused ?? false,
+        });
+      }
+
+      /*
        * A document open from inside the project folder that the catalogue does
        * not list — an archived copy, something a user reached by hand. It is in
        * the group because that is where it is on disk, and dropping it would be
@@ -721,10 +812,24 @@ export class OpenDocumentsComponent {
     return out;
   });
 
-  /** Everything open that no group claimed — a file opened from anywhere else. */
+  /**
+   * Everything open that no group claimed — a file opened from anywhere else.
+   *
+   * BY TAB AND NOT ONLY BY KEY. An export row carries a key of its own
+   * (`<project>:final:<file>`) rather than the tab's, because the row exists
+   * whether or not anything opened it — so a group holding an OPEN export claims
+   * a tab under a key this filter would never have seen, and the document would
+   * be listed twice: once as the export it is, and once at the bottom of the
+   * panel as a stray file from nowhere.
+   */
   protected readonly loose = computed<Row[]>(() => {
-    const grouped = new Set(this.groups().flatMap((group) => group.rows.map((row) => row.key)));
-    return this.rows().filter((row) => !grouped.has(row.key));
+    const groups = this.groups();
+    const keys = new Set(groups.flatMap((group) => group.rows.map((row) => row.key)));
+    const taken = new Set(groups.flatMap((group) => group.rows
+      .map((row) => row.tab?.id)
+      .filter((id): id is string => id !== undefined)));
+    return this.rows().filter((row) => !keys.has(row.key)
+      && !(row.tab !== null && taken.has(row.tab.id)));
   });
 
   /**
@@ -735,15 +840,30 @@ export class OpenDocumentsComponent {
    */
   protected pick(tab: Tab): void {
     void this.router.navigateByUrl('/');
-    this.tabs.reveal(tab.id);
+    this.tabs.reveal(tab.id, true);
   }
 
   /**
-   * A click on either kind of row: reveal what is open, open what is not.
+   * A click on any of the three kinds of row: reveal what is open, open what is
+   * not, and do nothing at all for a file this app has no tab for.
    *
-   * The gestures are deliberately the same one. From the user's side both rows
-   * say "put this document in front of me", and whether that costs a tab or
-   * merely a focus change is this app's bookkeeping, not their question.
+   * The first two gestures are deliberately the same one. From the user's side
+   * both rows say "put this document in front of me", and whether that costs a
+   * tab or merely a focus change is this app's bookkeeping, not their question.
+   *
+   * ── AND IT REPLACES WHAT THE COLUMN WAS SHOWING ─────────────────────────────
+   *
+   * *"clicking another file will automatically close the one i was looking at and
+   * open the one i just clicked, unless i pin the file by right-clicking the
+   * chrome-style tab at the top."* This panel is the list that ruling is about —
+   * it is where somebody browses a project's faces and its exports — so the
+   * `replace` flag is passed HERE and nowhere else. A drop, a finished job and a
+   * step's own document all join the strip instead, because none of them is a
+   * person saying "that one instead of this one".
+   *
+   * The displaced tab is closed through the ordinary close, so a document with
+   * unsaved work still gets its question and a "keep" leaves it in the strip
+   * beside the new one. A pinned one is not touched at all.
    */
   protected pickRow(row: Row): void {
     if (row.tab !== null) {
@@ -752,7 +872,7 @@ export class OpenDocumentsComponent {
     }
     if (row.openable !== true) return;
     void this.router.navigateByUrl('/');
-    void this.tabs.openFile(row.path, row.managed === true);
+    void this.tabs.openFromList(row.path, row.managed === true);
   }
 
   /**
@@ -1033,6 +1153,11 @@ interface Row {
   indent: boolean;
   /** True when the row is inside a project group, which indents the whole run. */
   grouped: boolean;
+  /**
+   * True for an EXPORT — a terminal file in `final/`, indented one step further
+   * under the documents it was made from and never a base for anything.
+   */
+  terminal?: boolean;
   /** Available rows only: the file the catalogue lists is not on the disk. */
   missing?: boolean;
   /** Available rows only: false for a missing file and for `.txt`. */
@@ -1058,6 +1183,51 @@ interface Group {
 function glyphFor(tab: Tab): string {
   if (tab.kind === 'editor') return '</>';
   return tab.kind === 'epub' ? '▤' : '▦';
+}
+
+/**
+ * What an export IS, in the words the export modal offered it in.
+ *
+ * THE PRODUCT AND NOT THE FORMAT, and certainly not the file: somebody chose
+ * "Facsimile PDF" in a dialog and the row that turns up afterwards has to be
+ * recognisably the thing they chose. A `pdf` under `final/` is never anything
+ * else in this app — a real-text reprint is a `generated/` rendering and a step's
+ * document, not an export — so the word is not a guess.
+ */
+function exportLabel(kind: ProjectDocumentKind): string {
+  if (kind === 'epub') return 'EPUB';
+  if (kind === 'txt') return 'Plain text';
+  return 'Facsimile PDF';
+}
+
+/**
+ * WHEN, in as few characters as a row can spare — the Steps section's rule, for
+ * the Steps section's reason.
+ *
+ * The year is dropped for anything from this one, which is nearly every export
+ * anybody looks at, and kept for the rest: two rows both reading "14 Aug" would
+ * be this panel quietly claiming they were made together.
+ */
+function exportWhen(madeAt: number): string {
+  const at = new Date(madeAt);
+  const sameYear = at.getFullYear() === new Date().getFullYear();
+  return at.toLocaleDateString(undefined, sameYear
+    ? { day: 'numeric', month: 'short' }
+    : { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+/**
+ * A project-relative path against its project, in the project's own separator.
+ *
+ * Main sends `final/<name>.epub` with forward slashes whatever the platform, and
+ * a Windows path spelled half one way and half the other opens perfectly well
+ * and reads like a bug in the one place it is shown — the tooltip. So the joined
+ * halves are made to agree rather than left to.
+ */
+function joinIn(dir: string, relative: string): string {
+  return dir.includes('\\')
+    ? `${dir.replace(/[\\/]+$/, '')}\\${relative.replace(/\//g, '\\')}`
+    : `${dir.replace(/\/+$/, '')}/${relative}`;
 }
 
 /** One spelling for a path, so Windows' three become one. */

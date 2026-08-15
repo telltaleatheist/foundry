@@ -27,7 +27,7 @@ import { api } from '../../core/foundry';
  * They are two acts. THE PRODUCT OF THIS ONE IS THE READING: a bank of the
  * model's answers, page by page, in the project, which is the expensive
  * irreplaceable thing everything else is made from. What the book eventually
- * BECOMES is chosen afterwards, from the Generate dialog, as many times as
+ * BECOMES is chosen afterwards, from the Export dialog, as many times as
  * somebody likes, for nothing.
  *
  * So what is left here is the two questions that are genuinely about reading —
@@ -98,10 +98,10 @@ import { api } from '../../core/foundry';
             the field.
           -->
           <p class="note">
-            This reads every page with the vision model and banks what it says. Nothing is
-            written as a book yet — once the pages are read you can generate an EPUB, plain
-            text or a real-text PDF from the same reading, as often as you like, without
-            reading anything again.
+            This reads every page with the vision model and banks what it says. The book
+            appears by itself the moment the pages are read — and from that same reading
+            you can Export a finished EPUB, plain text or a real-text PDF as often as you
+            like, without reading anything again.
           </p>
 
           <label class="field">

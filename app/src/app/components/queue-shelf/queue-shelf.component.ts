@@ -179,8 +179,17 @@ import { api } from '../../core/foundry';
                         own last line is the tooltip either way, and both paths
                         are on the name.
                       -->
+                      <!--
+                        AND "READY TO GENERATE" NAMED A BUTTON THAT NO LONGER
+                        EXISTS. Generate became Export (docs/WORKBENCH.md §6), so
+                        the line was pointing somebody at a control they would go
+                        and fail to find — and it was the wrong thing to point at
+                        anyway: a reading now casts the book by itself, so what
+                        actually happens next is that the book turns up. The line
+                        says the outcome rather than the next click.
+                      -->
                       @if (job.kind === 'env-install') { Installed }
-                      @else if (job.kind === 'read') { Read · ready to generate }
+                      @else if (job.kind === 'read') { Read · the book follows }
                       @else { Done · {{ made(job) }} }
                     </span>
                   }

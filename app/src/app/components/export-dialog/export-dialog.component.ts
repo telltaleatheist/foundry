@@ -64,16 +64,16 @@ import { api } from '../../core/foundry';
  */
 @Component({
   /*
-   * TWO SELECTORS, and the second one is a SEAM rather than a courtesy.
-   *
-   * The shell mounts this dialog by its old tag (app.ts), and that file belongs
-   * to the unit that rebuilds the pane chrome — so until it is opened, an app
-   * that answered only to the new name would be an app with no export dialog at
-   * all. One extra selector costs nothing and keeps the window working across
-   * the seam; both it and the re-export beside the old path go when app.ts is
-   * next touched.
+   * ONE SELECTOR AGAIN. There were two for one wave: the shell mounted this
+   * dialog by its old tag while `app.ts` still belonged to another unit, and an
+   * app that answered only to the new name would have been an app with no export
+   * dialog at all until that file was opened. It has been opened, the shell
+   * writes \`<app-export-dialog />\`, and the second name went with the re-export
+   * that stood beside the old path. A compatibility name that outlives its reason
+   * is how a codebase ends up with two words for one thing and nobody sure which
+   * one is real.
    */
-  selector: 'app-export-dialog, app-generate-dialog',
+  selector: 'app-export-dialog',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="scrim" (click)="ui.closeExport()"></div>

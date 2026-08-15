@@ -5,7 +5,7 @@ import { Router, RouterOutlet } from '@angular/router';
 
 import { InspectorComponent } from './components/inspector/inspector.component';
 import { ConfirmDialogComponent } from './components/confirm-dialog/confirm-dialog.component';
-import { GenerateDialogComponent } from './components/generate-dialog/generate-dialog.component';
+import { ExportDialogComponent } from './components/export-dialog/export-dialog.component';
 import { OcrDialogComponent } from './components/ocr-dialog/ocr-dialog.component';
 import { OpenDocumentsComponent } from './components/open-documents/open-documents.component';
 import { MetadataDialogComponent } from './components/metadata-dialog/metadata-dialog.component';
@@ -65,7 +65,7 @@ import { api } from './core/foundry';
   selector: 'app-root',
   imports: [
     RouterOutlet, ToolRailComponent, OpenDocumentsComponent, InspectorComponent,
-    QueueShelfComponent, OcrDialogComponent, GenerateDialogComponent, TranslateDialogComponent,
+    QueueShelfComponent, OcrDialogComponent, ExportDialogComponent, TranslateDialogComponent,
     MetadataDialogComponent,
     ConfirmDialogComponent,
   ],
@@ -91,8 +91,8 @@ import { api } from './core/foundry';
         <app-ocr-dialog />
       }
 
-      @if (ui.generateOpen()) {
-        <app-generate-dialog />
+      @if (ui.exportOpen()) {
+        <app-export-dialog />
       }
 
       @if (ui.translateOpen()) {
@@ -207,11 +207,24 @@ export class App {
     // The File menu's Settings item. Main cannot route; it can only say where.
     api?.onNavigate((route) => { void this.router.navigateByUrl(route); });
 
-    // Save a copy / Close tab / Split right / Documents. Every one of them acts
-    // on renderer state — the focused pane, its document, the panel — so main
-    // asks rather than does.
+    /*
+     * Export / Close tab / Split right / Documents. Every one of them acts on
+     * renderer state — the focused pane, its document, the panel — so main asks
+     * rather than does.
+     *
+     * `export` IS FIRST, AND THE ORDER IS NOT COSMETIC. This chain ends in a
+     * fall-through to `closeActive`, which is a reasonable default for exactly as
+     * long as every action main sends is named above it. Main's File menu started
+     * sending `export` on Ctrl+S the day Save became the export modal's job
+     * (docs/WORKBENCH.md §4, Unit E), the name landed here unrecognised, and the
+     * chord that has meant "keep this" in every application anybody has ever used
+     * silently CLOSED THE DOCUMENT instead. A fall-through that can turn a new
+     * verb into a destructive one is a shape worth naming: anything main learns to
+     * say gets a branch here before it is taught to say it.
+     */
     api?.onMenuAction((action) => {
-      if (action === 'save') void this.tabs.saveActive();
+      if (action === 'export') this.ui.openExport();
+      else if (action === 'save') void this.tabs.saveActive();
       else if (action === 'save-as') void this.tabs.saveActiveAs();
       else if (action === 'split-right') this.tabs.newEmptyPane();
       else if (action === 'toggle-documents') this.toggleDocuments();
@@ -315,9 +328,9 @@ export class App {
       this.ui.closeOcr();
       return;
     }
-    if (event.key === 'Escape' && this.ui.generateOpen()) {
+    if (event.key === 'Escape' && this.ui.exportOpen()) {
       event.preventDefault();
-      this.ui.closeGenerate();
+      this.ui.closeExport();
       return;
     }
     if (event.key === 'Escape' && this.ui.translateOpen()) {

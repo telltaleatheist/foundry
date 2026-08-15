@@ -28,17 +28,6 @@ export class UiService {
    * would have been the same confusion with better spelling.
    */
   readonly exportOpen = signal(false);
-  /**
-   * THE OLD NAMES, still answering, and they are a SEAM rather than kindness.
-   *
-   * The shell mounts this dialog and routes Escape to it (`app.ts`), and that
-   * file belongs to the unit that rebuilds the pane chrome — so it still says
-   * `generateOpen` and `closeGenerate`. Aliasing the signal itself, rather than
-   * keeping a second one in step, is what makes the two names impossible to
-   * disagree: there is one piece of state and two words for it. Both words go
-   * when app.ts is next opened.
-   */
-  readonly generateOpen = this.exportOpen;
   /** The Translate dialog. */
   readonly translateOpen = signal(false);
   /** The Metadata dialog — the book's own record, not the app's idea of it. */
@@ -146,15 +135,6 @@ export class UiService {
 
   closeExport(): void {
     this.exportOpen.set(false);
-  }
-
-  /** The old names — see `generateOpen` above. Both are one line for app.ts. */
-  openGenerate(): void {
-    this.openExport();
-  }
-
-  closeGenerate(): void {
-    this.closeExport();
   }
 
   openTranslate(): void {
