@@ -865,27 +865,73 @@ export interface ProjectManifest {
  * refusals avoiding, and it is exactly the one `ProjectWorkingTree.generation`
  * guards for a book's undo history.
  *
- * ── Why it counts passes rather than being stamped by the job ───────────────
+ * ── Why a READING mints one and a rendering does not ────────────────────────
  *
- * The obvious design mints a uuid when a conversion finishes. It is wrong in one
- * ordinary case and the case is common: converting a book to plain text after
- * curating its EPUB runs the engine again, records another step, and replays the
- * SAME bank — every block identical, every amendment still exactly about the
- * block it was made about. A generation minted per job would throw that curation
- * aside and tell the user their corrections had been archived, for a run that
- * changed nothing.
+ * The obvious design mints a uuid when any conversion finishes. It is wrong in
+ * one ordinary case and the case is common: converting a book to plain text
+ * after curating its EPUB runs the engine again, records another step, and
+ * replays the SAME bank — every block identical, every amendment still exactly
+ * about the block it was made about. A generation minted per job would throw
+ * that curation aside and tell the user their corrections had been archived, for
+ * a run that changed nothing.
  *
- * So the generation is bound to the thing that actually moves: `passes` is how
- * many banks the `readings/archived-<stamp>` folders held when it was minted, and
- * the engine's `archiveReadingsBank` is the only thing that puts one there. A re-read
- * increments it and a re-render does not, which is precisely the distinction the
- * overlay cares about.
+ * So a generation is minted by a READING LANDING and by nothing else, which is
+ * exactly the event that renumbers the blocks. The authority is the read step's
+ * own `params.generation` (`LedgerParams.generation`) and the one a viewer
+ * compares against is the POSITION'S — the nearest read step on the ancestry, so
+ * two branches of a book compare their overlays against their own pass over the
+ * pages. `readingGeneration` (electron/projects.ts) is where that is asked; this
+ * record is what answers for a project whose ledger holds no read step at all.
+ *
+ * ── It used to count archive folders, and both legs were knocked out ────────
+ *
+ * `passes` was how many banks the `readings/archived-<stamp>/` folders held when
+ * the generation was minted, on the reading that the engine archived a completed
+ * bank before reading it again — so a re-read incremented the count and a
+ * re-render did not. That was always a proxy, and two changes landed together
+ * that made it a false one: a re-read now writes a PENDING bank and swaps it in
+ * on success (docs/BANK-LIFECYCLE.md §2), so nothing archives and the count
+ * never moves; and a re-read asking for a different page range BRANCHES to a
+ * bank of its own, which never archived anything either. Both would have kept
+ * the old generation over renumbered blocks — the exact silent misapplication
+ * this whole record exists to prevent.
  */
 export interface ProjectReading {
   /** The uuid the overlay file and its undo ledger both carry. */
   generation: string;
-  /** Archived banks under `readings/` when this generation was minted. */
-  passes: number;
+  /**
+   * DEAD, AND KEPT SO AN OLD CATALOGUE IS NOT REFUSED. It counted the archived
+   * banks under `readings/` when the generation was minted; nothing archives a
+   * bank any more (see above), nothing reads this, and nothing writes a new one.
+   * A catalogue that carries one parses exactly as it did and the field drops
+   * out the next time anything edits the project.
+   */
+  passes?: number;
+  /**
+   * The engine's completion marker for this bank when this generation was
+   * minted or adopted — `completedAt` parsed to epoch milliseconds — or absent
+   * when there was no marker to record.
+   *
+   * THE HONEST SUCCESSOR TO "THE FOLDER COUNT MOVED". A bank can be replaced
+   * without this app watching: `foundry vlm-read` from a terminal reads the
+   * pages again and swaps a new bank into the same path, and every block is
+   * renumbered with nothing in the catalogue changed. What DOES change is the
+   * marker beside the bank, so the stamp is recorded next to the generation and
+   * a stamp that disagrees with the disk is a reading this app did not see.
+   *
+   * ABSENT IS SAFE AND IS WHY IT IS OPTIONAL. A record with no stamp is one
+   * minted before there was a marker — a generation minted while the first OCR
+   * was still running is the ordinary case — and the answer to a marker
+   * appearing where none was recorded is to ADOPT it, never to re-mint: the
+   * pages already read keep their numbers when a run resumes into the same bank,
+   * and an overlay made against them survives the run finishing.
+   *
+   * PER-STEP, WHEREVER THERE IS A STEP. This is the project-wide copy and it
+   * answers only for a project whose ledger holds no read step; a step carries
+   * its own (`LedgerParams.completedAt`), because a branch has its own bank and
+   * its own marker and one field could not describe both.
+   */
+  completedAt?: number;
   /**
    * When a reading of this book COMPLETED, or 0 for one that never has.
    *
@@ -1880,6 +1926,25 @@ export interface LedgerParams {
    * else. What identifies a reading is `skipPages` and `language`.
    */
   pages?: number;
+  /**
+   * `read` — the engine's completion marker for THIS step's bank, `completedAt`
+   * parsed to epoch milliseconds, as it stood when this step's generation was
+   * minted. Absent for a step landed before this was recorded, and for one whose
+   * run left no marker.
+   *
+   * WHAT IT IS FOR, in one sentence: it is how the app notices that the bank a
+   * step names has been read again by something other than the app. See
+   * `ProjectReading.completedAt`, which says the whole of it — this is the
+   * per-step copy, and the per-step copy is the real one, because a branch has
+   * its own bank and its own marker.
+   *
+   * ANOTHER ANSWER, NOT A QUESTION, so it goes in `MINTED_BY_THE_RUN` beside the
+   * generation and the page count. Two readings of the same pages finish at two
+   * different instants and are still the same question asked twice; comparing
+   * the instants would make every re-read branch, which is the trap
+   * `MINTED_BY_THE_RUN` was named for.
+   */
+  completedAt?: number;
   /** `curate` — how many decisions the snapshot froze. For the row's sentence. */
   amendments?: number;
   /**

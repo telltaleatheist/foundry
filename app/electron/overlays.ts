@@ -26,14 +26,17 @@
  * The hazard is the same one and it is worth restating because it is the whole
  * reason this module has more code than a JSON reader. `(page, order, part)`
  * survives a re-RENDER of a bank — the answers are replayed verbatim, the split
- * is deterministic — and does not survive a re-READ, which archives the bank and
- * asks the model again. After a re-read, `{"page": 7, "order": 14}` is whatever
- * the new pass answered fourteenth. An overlay from the previous life would
- * strike a paragraph nobody struck and divide the book in a place nobody chose,
- * WITH NOTHING ON SCREEN SAYING SO. That is the only failure mode worse than
- * losing the curation, so `projects.readingGeneration` mints an id that changes
- * exactly when a bank is archived, both files carry it, and a file that names a
- * different one is not read.
+ * is deterministic — and does not survive a re-READ, which asks the model the
+ * same pages again and takes whatever comes back. After a re-read, `{"page": 7,
+ * "order": 14}` is whatever the new pass answered fourteenth. An overlay from the
+ * previous life would strike a paragraph nobody struck and divide the book in a
+ * place nobody chose, WITH NOTHING ON SCREEN SAYING SO. That is the only failure
+ * mode worse than losing the curation, so `projects.readingGeneration` answers
+ * with an id that changes exactly when the bank at this project's POSITION
+ * becomes a different pass over the pages — the read step's own
+ * `params.generation`, minted by every landing but the one that resumes into the
+ * bank somebody was already correcting. Both files carry the id, and a file that
+ * names a different one is not read.
  *
  * ── The pair moves together ─────────────────────────────────────────────────
  *

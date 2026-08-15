@@ -68,6 +68,7 @@ import {
   type LedgerStep,
   type ProjectLedger,
   type ProjectManifest,
+  type ProjectReading,
   type ProjectStep,
   type ProjectTypeRecord,
   type StepAction,
@@ -124,13 +125,13 @@ export const RETENTION_OF: Readonly<Record<StepAction, LedgerStep['retention']>>
  *
  * A READ CARRIES WHAT THE OCR DIALOG ASKED FOR AND WHAT THE RUN ANSWERED, in that
  * order of importance: `skipPages` and `language` are the question (`ReadRequest`
- * has exactly those two fields the user fills in), and `generation` and `pages`
- * are what came back. Both piles are recorded; only the question is compared. See
- * `MINTED_BY_THE_RUN`, which is where that split is enforced.
+ * has exactly those two fields the user fills in), and `generation`, `pages` and
+ * `completedAt` are what came back. Both piles are recorded; only the question is
+ * compared. See `MINTED_BY_THE_RUN`, which is where that split is enforced.
  */
 export const PARAMS_OF: Readonly<Record<StepAction, readonly (keyof LedgerParams)[]>> = {
   import: [],
-  read: ['skipPages', 'language', 'generation', 'pages'],
+  read: ['skipPages', 'language', 'generation', 'pages', 'completedAt'],
   curate: ['generation', 'amendments'],
   translate: ['language'],
 };
@@ -223,7 +224,7 @@ export const RETAINED_BESIDE_YOU: Readonly<Record<StepAction, boolean>> = {
  */
 const MINTED_BY_THE_RUN: Readonly<Record<StepAction, readonly (keyof LedgerParams)[]>> = {
   import: [],
-  read: ['generation', 'pages'],
+  read: ['generation', 'pages', 'completedAt'],
   curate: [],
   translate: [],
 };
@@ -1462,6 +1463,210 @@ export function curationInEffect(ledger: ProjectLedger): LedgerStep | null {
   // one of these on the way up", and both stop at the reading whose blocks the
   // answer would be about. See `BOUNDS_THE_WALK`.
   return nearestUpward(ledger, 'curate');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Which pass over the pages an overlay is about
+//
+// The generation is the id a curation carries and the app compares before it
+// draws one over a book. It is a uuid, and this module has no randomness (see
+// the header), so every function here is handed one and says whether it was
+// spent — the same shape `LandedRun.id` already uses for a step id.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The generation a viewer at the position compares against, and what has to be
+ * written down for that answer to still be true tomorrow.
+ *
+ * ── What replaced the folder count ──────────────────────────────────────────
+ *
+ * This used to be answered by counting `readings/archived-<stamp>/` folders: the
+ * engine archived a completed bank before reading the pages again, so a count
+ * that had moved meant a re-read and an unchanged one meant a re-render, which
+ * is exactly the distinction an overlay cares about. Two changes landed together
+ * and took both of its legs. A re-read now writes a PENDING bank and swaps it in
+ * on success (docs/BANK-LIFECYCLE.md §2) — nothing archives, so the count never
+ * moves and a fresh reading would silently inherit the old generation. And a
+ * re-read asking for a different page range BRANCHES into a bank of its own,
+ * which never archived anything either, so both branches would answer with the
+ * first reading's id and the app would compare an overlay against a pass it was
+ * not made from.
+ *
+ * The step model already holds the truth. A read step's `params.generation` is
+ * what that pass over the pages was called, and the one a viewer wants is the
+ * POSITION'S — `readingInEffect`, the same walk `readingBank` uses to find the
+ * bank, so the id and the file it is about are answered from one row.
+ *
+ * ── The four answers, in the order they are asked ───────────────────────────
+ *
+ * THE STEP'S OWN ID, when the position stands under a reading that recorded one.
+ * This is every project that has read a book since the ledger existed.
+ *
+ * RE-MINTED, when the completion marker on disk is not the one this step landed
+ * with. That is a bank read again by something that is not this app — `foundry
+ * vlm-read` from a terminal swaps a new bank into the same path — and it is the
+ * honest successor to "the folder count moved": the blocks were renumbered, so
+ * the id has to move or the archive-the-pair machinery never fires.
+ *
+ * THE PROJECT'S RECORD, for a project whose ledger holds no read step at all: a
+ * bank filled from a terminal, one adopted out of the old flat workspace, or a
+ * position standing on the import — the revert row, which is about the untouched
+ * original and not about any bank.
+ *
+ * MINTED FRESH, for a project that has no record anywhere. Backfilling is safe
+ * exactly as it always was: a project with nothing written here has no overlay
+ * bound to a generation, because nothing was writing one.
+ *
+ * ── And what it will NOT do ─────────────────────────────────────────────────
+ *
+ * A MARKER NOBODY RECORDED IS ADOPTED, NEVER RE-MINTED. An absent stamp means
+ * the generation was minted before there was a marker to record — somebody
+ * opened the block editor while the first OCR was still running — and the run
+ * that finishes appends to the very bank they were looking at. Re-minting there
+ * would archive an overlay aside for a run that renumbered nothing, which is the
+ * one case the folder count got right and the one this must not lose.
+ *
+ * A MISSING MARKER IS NOT EVIDENCE EITHER. There is a window inside the swap
+ * where the old marker is gone and the new one is not written yet (§2), and a
+ * bank can outlive its marker for reasons nobody chose. "I cannot see one" is
+ * never allowed to mean "the bank was replaced".
+ */
+export interface GenerationRuling {
+  /** The id the overlay and its undo ledger are bound to at this position. */
+  generation: string;
+  /** The ledger to write, or null when no step's record changed. */
+  ledger: ProjectLedger | null;
+  /** The reading record to write, or null when it did not change. */
+  reading: ProjectReading | null;
+}
+
+export function generationInEffect(
+  ledger: ProjectLedger,
+  reading: ProjectReading | null,
+  /** The position's bank's completion marker, epoch ms, or null for no marker. */
+  markerAt: number | null,
+  /** Spent only when this mints. See `LandedRun.id` for the same arrangement. */
+  minted: string,
+): GenerationRuling {
+  const settled = (generation: string): GenerationRuling => (
+    { generation, ledger: null, reading: null }
+  );
+
+  const step = readingInEffect(ledger);
+  const recorded = step?.params?.generation;
+  if (step !== null && recorded !== undefined && recorded.length > 0) {
+    const stamped = step.params?.completedAt;
+    if (markerAt === null) return settled(recorded);
+    // The backfill: a step landed before markers were recorded, or one whose
+    // generation was minted mid-read. Take the marker as this step's own without
+    // moving the id — see "adopted, never re-minted" above.
+    if (stamped === undefined) {
+      return { generation: recorded, ledger: stamping(ledger, step.id, recorded, markerAt), reading: null };
+    }
+    if (stamped === markerAt) return settled(recorded);
+    return { generation: minted, ledger: stamping(ledger, step.id, minted, markerAt), reading: null };
+  }
+
+  if (reading === null) {
+    return {
+      generation: minted,
+      ledger: null,
+      reading: {
+        generation: minted,
+        readAt: 0,
+        pages: 0,
+        ...(markerAt !== null ? { completedAt: markerAt } : {}),
+      },
+    };
+  }
+  /*
+   * THE MARKER IS ONLY ASKED WHERE THE PROJECT HAS NO READ STEP AT ALL, and the
+   * guard is the whole safety of this arm.
+   *
+   * `manifest.reading` is one record per project. The bank being looked at is the
+   * POSITION'S, and a project with steps can have several — so standing on the
+   * import, or on an older branch, would compare one branch's marker against a
+   * stamp the newest landing wrote about a different file, disagree every time,
+   * and re-mint a generation on every repaint. That would archive somebody's
+   * curation aside for no event at all.
+   *
+   * With no read step anywhere there is exactly one bank this record can be
+   * about, and the comparison is the same one the steps make.
+   */
+  if (ledger.steps.some((other) => other.action === 'read')) return settled(reading.generation);
+  if (markerAt === null) return settled(reading.generation);
+  if (reading.completedAt === undefined) {
+    return { generation: reading.generation, ledger: null, reading: { ...reading, completedAt: markerAt } };
+  }
+  if (reading.completedAt === markerAt) return settled(reading.generation);
+  /*
+   * `readAt` AND `pages` ARE LEFT EXACTLY AS THEY ARE, which is not laziness.
+   * They are this app's record of ITS OWN landings — `readAt > 0` is what the
+   * library row means by "read", and zeroing it would re-arm the adoption rule
+   * below and let the next landing in this app inherit an id minted against
+   * somebody else's bank. What moved is which pass the pages came from, and that
+   * is the only thing rewritten here. The next landing counts the pages again.
+   */
+  return { generation: minted, ledger: null, reading: { ...reading, generation: minted, completedAt: markerAt } };
+}
+
+/** One step's generation and marker stamp, written into a copy of the ledger. */
+function stamping(
+  ledger: ProjectLedger,
+  id: string,
+  generation: string,
+  completedAt: number,
+): ProjectLedger {
+  return {
+    ...ledger,
+    steps: ledger.steps.map((step) => (
+      step.id === id ? { ...step, params: { ...step.params, generation, completedAt } } : step
+    )),
+  };
+}
+
+/**
+ * The generation a READING THAT HAS JUST FINISHED lands with.
+ *
+ * ── Every landing mints, with one exception, and the exception is the point ──
+ *
+ * A reading that lands is a bank that is now on disk and was not before: a first
+ * read, a re-read swapped in over the old one, or a branch beside it. In all
+ * three the blocks are the model's answers from THIS pass and the `(page, order)`
+ * numbers an older overlay carries mean different blocks, so the id moves and the
+ * archive-the-pair machinery hands that overlay off. Minting is the rule.
+ *
+ * THE EXCEPTION IS A FIRST READ THAT SOMEBODY WATCHED. Open the block editor
+ * while the first OCR is running and the app mints a first-touch generation
+ * against the pages read so far, and a person can start correcting them; the run
+ * then finishes by appending the remaining pages to the SAME bank. Nothing those
+ * corrections name has moved. Minting there would archive their work aside as the
+ * reward for having started early, for a run that renumbered nothing.
+ *
+ * So a landing adopts when all of this holds: this is the project's first read
+ * step (there is no other for the id to be wrong about), the record was made by a
+ * first touch and never by a landing (`readAt === 0`), and the marker it was
+ * minted against is either absent — nothing had completed, so the run in progress
+ * is the one that made those pages — or is the very marker this landing sees,
+ * meaning the bank finished before and has not been read since.
+ *
+ * A RECORD WITH A DIFFERENT MARKER IS THE CASE THIS RULE EXISTS TO REFUSE. A bank
+ * read from a terminal, corrected in the app, then read again from the OCR dialog
+ * lands as this project's first read step with `readAt === 0` — every condition
+ * of the old rule met — and the bank underneath it is a completely new pass. The
+ * stamp is what tells those two apart.
+ */
+export function generationForLanding(
+  ledger: ProjectLedger,
+  reading: ProjectReading | null,
+  /** The marker this run wrote for its own bank, epoch ms, or null for none. */
+  markerAt: number | null,
+  minted: string,
+): string {
+  if (ledger.steps.some((step) => step.action === 'read')) return minted;
+  if (reading === null || reading.readAt !== 0) return minted;
+  if (reading.completedAt === undefined || reading.completedAt === markerAt) return reading.generation;
+  return minted;
 }
 
 /**

@@ -61,10 +61,17 @@
  * ── Nothing is deleted ───────────────────────────────────────────────────────
  *
  * Re-running a conversion does not clobber the origin it replaces — it rotates
- * it into `generated/archived-<timestamp>/`, the way the engine's
- * `archiveReadingsBank` (src/vlm/readings.ts) rotates a bank, and the working
+ * it into `generated/archived-<timestamp>/` (`rotateGenerated`), and the working
  * tree unpacked from it goes into the same folder so the next open unpacks the
  * NEW book rather than reopening the old one's edits.
+ *
+ * A GENERATED BOOK IS ARCHIVED AND A READINGS BANK IS NOT, and the difference is
+ * deliberate rather than an inconsistency (docs/BANK-LIFECYCLE.md §5). A
+ * generated EPUB can carry a working tree with a person's text edits in it, and
+ * labour is kept forever. A bank is a machine's answers: the engine writes the
+ * replacement beside the old one and renames it into place only when the run has
+ * succeeded, so nothing is destroyed until its successor exists and `readings/`
+ * grows no `archived-<stamp>/` hoards.
  *
  * ── Except when the user says so ─────────────────────────────────────────────
  *
@@ -119,6 +126,8 @@ import {
   deleteCost,
   deleteSubtree,
   emptyLedger,
+  generationForLanding,
+  generationInEffect,
   migrateLedger,
   orphanedPayloads,
   originOf,
@@ -477,11 +486,27 @@ function readReading(value: unknown): ProjectReading | null {
   const row = value as Record<string, unknown>;
   const generation = row['generation'];
   if (typeof generation !== 'string' || generation.length === 0) return null;
+  const completedAt = row['completedAt'];
   return {
     generation,
-    passes: typeof row['passes'] === 'number' && Number.isInteger(row['passes']) ? row['passes'] : 0,
     readAt: typeof row['readAt'] === 'number' ? row['readAt'] : 0,
     pages: typeof row['pages'] === 'number' ? row['pages'] : 0,
+    /*
+     * ABSENT AND ZERO ARE NOT THE SAME STATEMENT here, which is why this is
+     * spread rather than defaulted. Absent means nobody recorded which completion
+     * this generation was minted against, and `readingGeneration` ADOPTS the
+     * marker it finds rather than treating it as a change — the safe direction. A
+     * recorded 0 would be a claim about an epoch nothing ever completed at, and
+     * every marker on disk would disagree with it forever.
+     *
+     * `passes` IS NOT READ AND IS NOT CARRIED. It counted archived banks, nothing
+     * archives one any more, and a number whose meaning has been deleted is worse
+     * kept than dropped — see `ProjectReading.passes`. A catalogue holding one is
+     * not refused; the field simply goes the next time this project is written.
+     */
+    ...(typeof completedAt === 'number' && Number.isFinite(completedAt) && completedAt > 0
+      ? { completedAt }
+      : {}),
   };
 }
 
@@ -2495,50 +2520,73 @@ export function overlayArchiveDir(dir: string): string {
 }
 
 /**
- * The generation the overlay and its ledger are bound to, minting one if this
- * project has none.
+ * The generation the overlay and its ledger are bound to AT THIS PROJECT'S
+ * POSITION, minting one if nothing has ever answered for this book.
  *
- * See `ProjectReading` for the hazard and for why this counts passes instead of
- * being stamped by whichever job happened to finish last. The short version:
- * re-RENDERING a bank leaves every block exactly where it was, re-READING it
- * renumbers all of them, and only the second may throw a curation aside.
+ * See `ProjectReading` for the hazard and `generationInEffect` for the whole of
+ * the rule; this is the half that touches disk. The short version: re-RENDERING a
+ * bank leaves every block exactly where it was, re-READING it renumbers all of
+ * them, and only the second may throw a curation aside.
  *
- * BACKFILLING IS SAFE, exactly as it is in `treeGeneration`: a project with no
- * record here has no overlay bound to a generation, because nothing was writing
- * one. What it cannot do is re-mint on a whim — so the pass count is recorded
- * with the id, and an unchanged count returns the id unchanged without writing.
+ * IT ASKS THE STEP, and it used to count `readings/archived-<stamp>/` folders.
+ * The engine no longer archives a bank at all — it swaps a finished pending one
+ * into place — so the count stopped moving on the exact event it existed to
+ * notice, and a re-read asking a different page range branches to a bank of its
+ * own without ever having archived anything either. The read step's
+ * `params.generation` is the authority now, taken from the nearest reading on the
+ * position's ancestry so that standing on either branch of a book compares an
+ * overlay against the pass it was made from.
+ *
+ * THE MARKER IS READ INSIDE THE LOCK, with the manifest that decides which bank
+ * to read it for. Outside it, the position could move between the two and this
+ * would compare one reading's completion against another reading's record — which
+ * is precisely the disagreement it is here to detect, arriving from nowhere.
+ *
+ * A WRITE IS THE UNUSUAL PATH and stays that way: a project whose step already
+ * carries a generation and a marker stamp that still matches the disk is answered
+ * without touching the file, which is what makes this affordable in front of every
+ * block-editor open.
  */
 export async function readingGeneration(dir: string): Promise<string> {
-  const passes = await countArchivedBanks(dir);
   return withManifest(dir, async (manifest) => {
-    if (manifest.reading !== null && manifest.reading.passes === passes) {
-      return manifest.reading.generation;
-    }
-    const minted = randomUUID();
-    // The completion facts do NOT carry over. A pass count that has moved means
-    // the bank on disk is a different bank, so what the old one held and when it
-    // landed are facts about a reading that is now in `archived-<stamp>/`.
-    manifest.reading = { generation: minted, passes, readAt: 0, pages: 0 };
+    const ruling = generationInEffect(
+      ledgerOf(manifest),
+      manifest.reading,
+      await markerStamp(readingBank(dir, manifest)),
+      // Minted before it is known to be wanted, because `shared/ledger.ts` has no
+      // randomness by design (see its header) and a uuid costs nothing. The ruling
+      // says whether it was spent — the same arrangement `LandedRun.id` uses.
+      randomUUID(),
+    );
+    if (ruling.ledger === null && ruling.reading === null) return ruling.generation;
+    if (ruling.ledger !== null) manifest.ledger = ruling.ledger;
+    if (ruling.reading !== null) manifest.reading = ruling.reading;
     await writeManifest(dir, manifest);
-    return minted;
+    return ruling.generation;
   });
 }
 
 /**
  * A reading FINISHED — the one moment anything can honestly say a bank is done.
  *
- * WHERE THE GENERATION IS MINTED NOW, and it is the natural place rather than a
- * new one: this calls `readingGeneration`, which mints when the pass count has
- * moved and returns the existing id when it has not. So a first read mints, a
- * re-read (which archived the previous bank) mints again and correctly orphans
- * the curation that was about the old blocks, and a RESUMED read — which appends
- * to the same bank without archiving anything — keeps the id, so an overlay
- * somebody made against the pages already read survives the run finishing.
+ * WHERE THE GENERATION IS MINTED, and it is the natural place: a landing is a
+ * bank that is on disk and was not before, so it is the event a generation is
+ * about. `generationForLanding` states the rule and its one exception — a first
+ * read adopts a generation somebody's first touch minted while it was still
+ * running, so corrections made against the pages already read survive the run
+ * finishing. Everything else mints: a re-read swapped in over the old bank, a
+ * branch beside it, and a first read nobody watched.
  *
- * FIRST-TOUCH MINTING STAYS as the fallback, because it has to: a bank filled by
- * `foundry vlm-read` from a terminal, or one adopted from the old flat layout,
- * is complete and this app never saw it happen. Opening the block editor on one
- * of those mints an id the same way, from the same function, with the same rule.
+ * IT USED TO ASK `readingGeneration`, which answered from a count of archived
+ * banks and so kept the id whenever nothing had archived. Nothing archives now
+ * (docs/BANK-LIFECYCLE.md §2), and that function has become a question about
+ * where the user is STANDING rather than about what just landed — the two are
+ * different questions and a landing is not a viewer.
+ *
+ * FIRST-TOUCH MINTING STILL EXISTS, in `readingGeneration`, because it has to: a
+ * bank filled by `foundry vlm-read` from a terminal, or one adopted from the old
+ * flat layout, is complete and this app never saw it happen. Opening the block
+ * editor on one of those mints an id there, under the same rule.
  *
  * A failure is a console line and never a throw. This runs after a job that may
  * have taken three hours, and a catalogue row that could not be written is not a
@@ -2586,17 +2634,27 @@ export async function recordReading(
     return;
   }
   try {
-    // Before the manifest edit, and deliberately outside it: this mints or keeps
-    // the generation through its own `withManifest`, and a nested one would wait
-    // on a chain it is already inside.
-    const generation = await readingGeneration(dir);
     const pages = await countLines(resolved);
+    /*
+     * THE MARKER FOR THE BANK THIS RUN WROTE, and not for the position's. They
+     * are usually one file and are not always: a branch lands beside the reading
+     * somebody is standing on. The step records the completion of its OWN bank,
+     * which is the only thing a later "has this been read again behind our back?"
+     * can honestly compare against.
+     */
+    const completedAt = await markerStamp(resolved);
     await withManifest(dir, async (manifest) => {
+      const generation = generationForLanding(
+        ledgerOf(manifest),
+        manifest.reading,
+        completedAt,
+        randomUUID(),
+      );
       manifest.reading = {
         generation,
-        passes: manifest.reading?.passes ?? 0,
         readAt: Date.now(),
         pages,
+        ...(completedAt !== null ? { completedAt } : {}),
       };
       /*
        * ── AND THE READ STEP, WHICH IS THE SAME FACT IN THE OTHER RECORD ────────
@@ -2605,8 +2663,11 @@ export async function recordReading(
        * corrections are bound to — one per project, replaced in place, a fact
        * about NOW. The ledger says what has been done to this book and what each
        * of those left behind, and it keeps every one of them. Both are written
-       * from the same three values in the same instant precisely so they cannot
-       * come to disagree about a book.
+       * from the same values in the same instant precisely so they cannot come to
+       * disagree about a book. (`readingGeneration` reads the STEP first, and the
+       * project record only for a project that has no read step at all — but a
+       * step can be deleted, and the record left behind should still be about the
+       * reading that happened rather than about one before it.)
        *
        * ITS PARENT IS THE IMPORT AND NOT THE POSITION, which is the one action
        * where those differ — see `originOf`. A reading reads the PIXELS, and the
@@ -2617,9 +2678,10 @@ export async function recordReading(
        * bank file the engine writes.
        *
        * WHAT WAS ASKED FOR IS RECORDED SEPARATELY FROM WHAT CAME BACK, and the
-       * two piles decide different things. `generation` and `pages` are the run's
-       * own answer — one minted by the pass, one counted off the finished bank —
-       * and both are excluded from the re-run comparison (`MINTED_BY_THE_RUN`): a
+       * two piles decide different things. `generation`, `pages` and `completedAt`
+       * are the run's own answer — one minted by the pass, one counted off the
+       * finished bank, one read off the marker the engine left beside it — and all
+       * three are excluded from the re-run comparison (`MINTED_BY_THE_RUN`): a
        * re-read mints a new generation by design, so comparing it would make every
        * re-read look like a new question and leave the project holding two banks
        * where the user asked for one. The page skips and the language are the
@@ -2655,7 +2717,15 @@ export async function recordReading(
         // here and at the plan that named the bank. Two spellings would be two
         // questions to `reRunTarget` — the same book read twice, branching because
         // one of them recorded the empty string somebody's cursor left behind.
-        params: { generation, pages, ...askedOf(asked) },
+        params: {
+          generation,
+          pages,
+          // Absent rather than 0 for a run whose marker could not be read: see
+          // `readReading` for why those two are different statements, and
+          // `generationInEffect` for what an absent one means to the next reader.
+          ...(completedAt !== null ? { completedAt } : {}),
+          ...askedOf(asked),
+        },
         createdAt: Date.now(),
         ...(stepId !== undefined ? { id: stepId } : {}),
       });
@@ -2694,36 +2764,58 @@ export async function recordReading(
 }
 
 /**
- * How many times this book's pages have been read and the answers put away.
+ * The engine's completion marker for one bank: `<bank>.completed.json`, beside it
+ * and named for it.
  *
- * `archiveReadingsBank` (src/vlm/readings.ts) is the ONLY thing that writes into
- * `readings/archived-<stamp>/`, and it does so exactly once per re-read: the
- * completed bank and its marker are renamed in, and the run then reads every page
- * again. So the number of archived banks IS the number of readings this project
- * has finished with, and a change in it is the one event that invalidates a
- * curation.
- *
- * Only files named for the project's own bank are counted. `readings/` also holds
- * translation banks (`<key>.<lang>.bank.jsonl`), which are answers about the
- * BOOK's blocks rather than the scan's pages and have nothing to say about
- * whether an overlay is still about the right blocks.
+ * SPELLED HERE RATHER THAN IMPORTED, and that is the rule rather than an
+ * oversight — this app never imports the engine, it spawns it. The engine's own
+ * `completionMarkerPath` (src/vlm/readings.ts) composes exactly this, and the
+ * paragraph above it says why the name has to come off the BANK rather than off
+ * its directory: one `readings/` folder held two books' banks once, one marker
+ * sat in it, and the run asked about the other book archived a finished bank and
+ * paid for a hundred pages again.
  */
-async function countArchivedBanks(dir: string): Promise<number> {
-  const readings = path.join(dir, READINGS);
-  let key: string;
+function completionMarkerFor(bankPath: string): string {
+  return `${path.resolve(bankPath).replace(/\.jsonl$/i, '')}.completed.json`;
+}
+
+/**
+ * When the run that filled this bank said it finished — epoch milliseconds — or
+ * null when nothing beside the bank says.
+ *
+ * ── What this is for, and why a number ──────────────────────────────────────
+ *
+ * It is the only fact on disk that moves when a bank is READ AGAIN and stays put
+ * when one is merely re-rendered, now that no bank is ever archived. A run swaps
+ * its finished pending bank into place and writes a fresh marker; a Generate
+ * touches neither. So the stamp recorded beside a generation and the stamp on
+ * disk disagreeing is exactly "these are different answers about the same pages",
+ * which is what the generation exists to notice (`generationInEffect`).
+ *
+ * `completedAt` IS AN ISO STRING IN THE FILE and a number here. The engine writes
+ * an instant, and an instant compared as text is a comparison that a change of
+ * timezone spelling or of trailing zeros could break — `Date.parse` gives the
+ * milliseconds back exactly, and epoch milliseconds is what every other time in
+ * this catalogue already is.
+ *
+ * NULL FOR EVERY KIND OF SILENCE: no marker, unreadable, not JSON, no
+ * `completedAt`, or one that is not a date. All of them mean the same thing to
+ * the caller — there is no evidence here — and the caller's answer to no evidence
+ * is to leave the generation exactly as it stands. A marker this app cannot read
+ * must never be allowed to invent a re-read that did not happen.
+ */
+async function markerStamp(bankPath: string): Promise<number | null> {
+  let parsed: unknown;
   try {
-    key = (await readManifest(dir)).key;
+    parsed = readJson(await fsp.readFile(completionMarkerFor(bankPath), 'utf8'));
   } catch {
-    // A catalogue that will not parse cannot name its bank. Zero is the honest
-    // answer, and it is the SAFE one: it leaves the generation as it was rather
-    // than inventing a re-read that never happened.
-    return 0;
+    return null;
   }
-  let count = 0;
-  for (const archive of await archivesIn(readings)) {
-    if (await exists(path.join(archive, `${key}.jsonl`))) count += 1;
-  }
-  return count;
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const said = (parsed as Record<string, unknown>)['completedAt'];
+  if (typeof said !== 'string') return null;
+  const at = Date.parse(said);
+  return Number.isNaN(at) ? null : at;
 }
 
 /**
@@ -3120,7 +3212,9 @@ async function readingState(
   const recorded = manifest.reading !== null && manifest.reading.readAt > 0;
   const banked = path.join(dir, READINGS, `${manifest.key}.jsonl`);
   const done = recorded
-    || await exists(`${banked.replace(/\.jsonl$/i, '')}.completed.json`)
+    // `completionMarkerFor` rather than the name composed a second time here: two
+    // spellings of one file is two answers the day either of them changes.
+    || await exists(completionMarkerFor(banked))
     /*
      * AND A BANK WITH ANSWERS IN IT, which is the third source and the one the
      * legacy libraries need.

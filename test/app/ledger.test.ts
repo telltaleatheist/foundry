@@ -226,7 +226,7 @@ describe('parseLedger refuses a wrong ledger by name rather than guessing at it'
   test('a param the action has no use for is a step something wrote wrong', () => {
     const wrong = refusal(() => parseLedger({ steps: [ORIGIN, { ...READ, params: { amendments: 23 } }] }));
     assert.match(wrong, /is a read and carries a param called "amendments"/);
-    assert.match(wrong, /A read is described by skipPages, language, generation and pages/);
+    assert.match(wrong, /A read is described by skipPages, language, generation, pages and completedAt/);
     // And the import is described by nothing at all.
     assert.match(
       refusal(() => parseLedger({ steps: [{ ...ORIGIN, params: { pages: 3 } }] })),

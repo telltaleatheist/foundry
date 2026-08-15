@@ -827,8 +827,9 @@ async function pump(): Promise<void> {
      * A READING LANDED, which is the moment the whole front door turns on.
      *
      * `recordReading` stamps the catalogue: when it finished, how many pages the
-     * bank holds, and — through the same passes rule that has always governed it
-     * — the reading GENERATION every overlay and its undo ledger are bound to.
+     * bank holds, and — through `generationForLanding`, the landing half of the
+     * rule in shared/ledger.ts — the reading GENERATION every overlay and its
+     * undo ledger are bound to.
      * That is why the mint belongs here rather than at the first correction: this
      * is the only moment anything in this app can honestly say a bank is a
      * different bank from the one that was there before.

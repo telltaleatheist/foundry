@@ -72,10 +72,10 @@
  * ── And nothing is ever deleted ──────────────────────────────────────────────
  *
  * A history file is somebody's work. One that cannot be used is MOVED ASIDE into
- * `history/archived-<stamp>/`, exactly as `archiveReadingsBank` rotates a bank
- * (src/vlm/readings.ts) and as `rotateGenerated` rotates an origin — never
- * removed, never overwritten, and always named out loud in the notice strip so
- * that a Ctrl+Z which suddenly has nothing to reach says why (ARCHITECTURE §8).
+ * `history/archived-<stamp>/`, exactly as `rotateGenerated` rotates an origin
+ * (electron/projects.ts) — never removed, never overwritten, and always named
+ * out loud in the notice strip so that a Ctrl+Z which suddenly has nothing to
+ * reach says why (ARCHITECTURE §8).
  * If the move itself fails, this module REFUSES TO WRITE that file for the rest
  * of the session rather than letting the next save clobber what it could not
  * preserve.
