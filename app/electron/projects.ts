@@ -1055,7 +1055,7 @@ export async function importDocument(
  * fallback would eventually be read as "a ledger is sometimes absent" and
  * somebody would write a branch for it.
  */
-function ledgerOf(manifest: ProjectManifest): ProjectLedger {
+export function ledgerOf(manifest: ProjectManifest): ProjectLedger {
   return manifest.ledger ?? emptyLedger();
 }
 

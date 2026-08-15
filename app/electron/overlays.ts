@@ -61,6 +61,7 @@ import { randomUUID } from 'node:crypto';
 import { writeAtomically } from './epub-writer';
 import {
   curationsDir,
+  ledgerOf,
   overlayArchiveDir,
   overlaysDir,
   projectDirOf,
@@ -70,6 +71,7 @@ import {
   renderingOverlay,
   type LedgerView,
 } from './projects';
+import { restorePointOf, uncommittedCuration, type SavedCuration } from '../shared/uncommitted';
 import {
   OverlayError,
   emptyOverlay,
@@ -87,6 +89,7 @@ import type {
   LedgerRow,
   LedgerStacks,
   OverlayLoad,
+  UncommittedCuration,
 } from '../shared/types';
 
 /** The ledger schema this module writes and the only one it reads. */
@@ -612,6 +615,69 @@ export async function commitOverlay(pdfPath: string): Promise<LedgerView> {
     // the label quote a total nobody could account for.
     amendments: file.amendments.length,
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// What no save of this book holds — the closing question's one fact
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The corrections this book has that no save of it does, or null when there is
+ * nothing to ask a person about on their way out.
+ *
+ * ── It reads and it does not touch anything, and that is a rule ─────────────
+ *
+ * `readOverlay` is the function that would obviously be reused here and it must
+ * not be: it ARCHIVES THE PAIR ASIDE when the file will not parse or names an
+ * earlier reading (`setAside`), which is right when a person is opening a book to
+ * work on it and indefensible as the side effect of a question. Somebody who
+ * closed a tab would have found their curation moved into an `archived-<stamp>/`
+ * folder because the app wondered whether to warn them. So this reads the file
+ * plainly, and every way of failing to read it comes back null.
+ *
+ * ── Null for every shape where the question is meaningless ──────────────────
+ *
+ * A document outside the library, a scan nobody has read, a book with no overlay
+ * file yet, an overlay bound to a reading that has since been replaced. That last
+ * one is worth naming: those amendments are about block numbers that mean
+ * different blocks now, the next open will archive them aside and say so, and
+ * offering to freeze them as a restore point would be offering to retain a
+ * curation of a book that no longer exists.
+ *
+ * ── A snapshot that will not read counts as no restore point ────────────────
+ *
+ * Deliberately, and it errs towards asking rather than away from it. A save whose
+ * file is unreadable is a row the user cannot actually come back to, so the
+ * corrections in front of them are as unretained as they would be with no save at
+ * all — and being asked about work that turns out to be safe is a smaller failure
+ * than being closed on silently because a file main could not open was assumed to
+ * be holding everything.
+ */
+export async function uncommittedIn(pdfPath: string): Promise<UncommittedCuration | null> {
+  const where = await locateOverlay(pdfPath);
+  const live = await readCurationAt(where.file);
+  if (live === null || live.generation !== where.generation) return null;
+
+  const manifest = await readManifest(where.projectDir);
+  const step = restorePointOf(ledgerOf(manifest));
+  let saved: SavedCuration | null = null;
+  if (step !== null) {
+    // Project-relative with forward slashes, as every payload is — rebuilt into a
+    // path here rather than joined blind, because the ledger's spelling of a
+    // payload is not this platform's.
+    const content = await readCurationAt(path.join(where.projectDir, ...step.payload.split('/')));
+    if (content !== null) saved = { label: step.label, content };
+  }
+  return uncommittedCuration(live, saved);
+}
+
+/** A curation off disk, or null for every way that can fail. Writes nothing. */
+async function readCurationAt(file: string): Promise<OverlayFile | null> {
+  try {
+    return parseOverlay(await fsp.readFile(file, 'utf8'), file);
+  } catch {
+    return null;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

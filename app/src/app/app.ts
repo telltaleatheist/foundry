@@ -220,6 +220,27 @@ export class App {
       else void this.tabs.closeActive();
     });
 
+    /*
+     * THE WINDOW IS GOING, AND THE DOCUMENTS IN IT HAVE NOT BEEN ASKED.
+     *
+     * Quit and the window's ✕ used to bypass per-tab closing entirely — the window
+     * was destroyed and the tabs went with it — which was harmless while the only
+     * thing at stake was a copy of a file, and is not now that closing a scan is
+     * the event that ends its session-scoped undo history. Main raises the question
+     * here rather than answering it itself because what is OPEN is renderer state:
+     * main knows which files were ever opened, not which ones are in a pane now.
+     *
+     * ANSWERED EXACTLY ONCE, whatever happens. A window that failed to reply would
+     * be a window that can never be quit, so the failure path answers yes: the
+     * corrections are on disk either way, and refusing to let somebody close their
+     * app because this code threw would be the larger of the two failures.
+     */
+    api?.onWindowClosing(() => {
+      void this.tabs.letGo()
+        .catch(() => true)
+        .then((go) => api?.letWindowClose(go));
+    });
+
     // The window says which document is open. The OS window list is the one
     // place a person looks when three of these are running against three books.
     //

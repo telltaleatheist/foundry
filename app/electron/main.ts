@@ -73,6 +73,7 @@ import {
   locateOverlay,
   saveOverlayFile,
   saveOverlayLedger,
+  uncommittedIn,
 } from './overlays';
 import {
   adoptLegacyLayout,
@@ -114,6 +115,7 @@ import type { OverlayFile } from '../shared/overlay';
 import type { MenuAction } from '../shared/api';
 import type {
   BackendSettingsPatch,
+  CloseAnswer,
   CloseWarning,
   ConversionKind,
   DeletionPrompt,
@@ -131,6 +133,7 @@ import type {
   RecentKind,
   SetupRequest,
   TranslateRequest,
+  UncommittedCuration,
   UnlinkedNote,
   UnlinkedNoteAnswer,
   UnlinkedNoteStanding,
@@ -140,6 +143,39 @@ const isDev = process.argv.includes('--dev');
 const DEV_SERVER = 'http://localhost:4260';
 
 let mainWindow: BrowserWindow | null = null;
+
+/**
+ * The closing question's buttons, written once and read back once.
+ *
+ * A NATIVE BOX ANSWERS WITH AN INDEX, and an index is the wrong thing for this
+ * dialog to hold in its head: the box has two buttons for a file copy and three
+ * for a set of corrections, so `response === 0` means "close it" in one shape and
+ * "save first" in the other. Two shapes, two meanings, one number — and the way
+ * that goes wrong is silent, because both are valid answers and neither throws.
+ * So the label IS the key: whichever button came back is looked up by its own
+ * words, and a button added to either shape without a meaning fails loudly at the
+ * one place both are composed.
+ */
+const SAVE = 'Save these corrections, then close';
+const CLOSE = 'Close it';
+const KEEP = 'Keep it open';
+const ANSWERS: Readonly<Record<string, CloseAnswer>> = {
+  [SAVE]: 'save',
+  [CLOSE]: 'close',
+  [KEEP]: 'keep',
+};
+
+/**
+ * A closing question, with its buttons promised.
+ *
+ * `MessageBoxOptions.buttons` is optional to Electron — a box with none is a box
+ * with one OK on it — and this dialog reads the label back to find out what was
+ * answered. Requiring the field is what makes that read total rather than a
+ * fallback nobody would notice failing.
+ */
+interface ClosingQuestion extends Electron.MessageBoxOptions {
+  buttons: string[];
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // foundry-file:// — how a book's chapters reach an <iframe>
@@ -631,7 +667,82 @@ async function promptForDocument(): Promise<string | null> {
 // Window + menu
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The window is allowed to go — every open document has been asked what closing
+ * it costs, and answered.
+ *
+ * ── Why quitting needs a flag at all ────────────────────────────────────────
+ *
+ * Quit used to bypass per-tab closing entirely: the window was destroyed, the
+ * tabs went with it, and none of them was ever asked the question the ✕ on a tab
+ * asks. That was survivable while the only thing at stake was a file copy, and it
+ * is not now — closing a scan is the moment a session's undo history stops
+ * existing, so a quit was a silent conversion of "undoable" into "permanent" for
+ * every book in the window at once.
+ *
+ * The ask has to happen BEFORE `before-quit`'s own body, not after it, and that
+ * is the reason this is one flag consulted in two places rather than a guard in
+ * the window's `close` alone. `before-quit` aborts every running job and stops the
+ * reading server; a person who answered "keep it open" to a dialog raised after
+ * all that would have kept their window and lost the three-hour run in it.
+ */
+let letGo = false;
+
+/**
+ * The renderer's promised answer to `window:closing`, held while the dialogs are
+ * up — or null when nothing has been asked.
+ *
+ * ONE AT A TIME, because a second ✕ pressed while the first question is on screen
+ * is the same question, and answering it twice would resolve a promise that has
+ * already decided the window's fate.
+ */
+let letGoAnswer: ((go: boolean) => void) | null = null;
+
+/**
+ * Whether there is a renderer to ask. Set when the window has actually loaded.
+ *
+ * WITHOUT THIS THE APP CANNOT BE QUIT after a renderer that failed to load. The
+ * question goes out over `webContents.send`, and a page that never ran subscribes
+ * to nothing and answers nothing — so the quit would be prevented forever by a
+ * dialog nobody could see. A window with no renderer has no open documents, and
+ * therefore nothing to ask about.
+ */
+let rendererLoaded = false;
+
+/**
+ * Ask the window's documents, then do the thing that was interrupted.
+ *
+ * The renderer runs the per-document question — it is the side that knows what is
+ * open — and answers once through `window:let-go`. False is the user saying keep
+ * it open, and then nothing happens at all: no close, no quit, and whatever
+ * `before-quit` was about to shut down is still running.
+ */
+function letTheWindowGo(then: () => void): void {
+  const contents = mainWindow?.webContents;
+  const answer = !rendererLoaded || contents === undefined || contents.isDestroyed()
+    ? Promise.resolve(true)
+    : new Promise<boolean>((resolve) => {
+      if (letGoAnswer !== null) {
+        // Already asking. The second press is the same question, and it waits for
+        // the first one's answer rather than raising a second stack of dialogs.
+        resolve(false);
+        return;
+      }
+      letGoAnswer = resolve;
+      contents.send('window:closing');
+    });
+  void answer.then((go) => {
+    if (!go) return;
+    letGo = true;
+    then();
+  });
+}
+
 function createWindow(): void {
+  // A window built after the last one was closed starts owing the question again.
+  letGo = false;
+  rendererLoaded = false;
+  letGoAnswer = null;
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 960,
@@ -662,6 +773,7 @@ function createWindow(): void {
    * bigger this app means.
    */
   mainWindow.webContents.on('did-finish-load', () => {
+    rendererLoaded = true;
     mainWindow?.webContents.setZoomFactor(1);
     void mainWindow?.webContents.setVisualZoomLevelLimits(1, 1);
   });
@@ -720,6 +832,21 @@ function createWindow(): void {
       console.error(`[renderer] failed to load ${url}: ${description} (${code})`);
     });
   }
+
+  /**
+   * The ✕ on the window, and the OS asking it to go.
+   *
+   * Prevented ONCE, so that the documents in it can be asked what closing them
+   * costs, and then let through on the second pass. On Windows and Linux this is
+   * also the front half of a quit: closing the last window fires
+   * `window-all-closed`, which quits — so the question reaches a person who never
+   * touched a tab's ✕ and never opened the File menu.
+   */
+  mainWindow.on('close', (event) => {
+    if (letGo) return;
+    event.preventDefault();
+    letTheWindowGo(() => mainWindow?.close());
+  });
 
   mainWindow.on('closed', () => { mainWindow = null; });
 }
@@ -966,6 +1093,20 @@ function registerIpc(): void {
   });
 
   /**
+   * The renderer's answer to `window:closing` — the one reply, spent once.
+   *
+   * `handle` rather than `on` so the renderer knows the answer arrived: without
+   * it, a reply sent into a main process that had already given up waiting would
+   * be indistinguishable from one that landed, and the renderer's own "the window
+   * is going" state would never clear.
+   */
+  ipcMain.handle('window:let-go', (_event, go: boolean) => {
+    const answer = letGoAnswer;
+    letGoAnswer = null;
+    answer?.(go === true);
+  });
+
+  /**
    * The warning before a tab with something to lose closes.
    *
    * Worded around what is ACTUALLY at risk, which is never the book itself:
@@ -974,15 +1115,46 @@ function registerIpc(): void {
    * loses track of a book and never loses one. Telling a user their work is
    * about to be destroyed when it is not would teach them to distrust the next
    * warning that matters.
+   *
+   * ── THREE REASONS, ONE QUESTION ─────────────────────────────────────────────
+   *
+   * A book's copy can be unfiled, a book's copy can be out of date, and a scan's
+   * corrections can have no save to come back to. They are three different losses
+   * and this app has already ruled that a closing document is asked about once
+   * (`closeShowing`, tabs.service.ts): a second box on top of the first is the app
+   * arguing with an answer it already has. So the sentences are composed from
+   * whichever of the three are true, and a tab can owe more than one of them.
+   *
+   * The corrections lead when they are there, because they are the only one of the
+   * three whose subject is the user's own judgement about four hundred blocks
+   * rather than a file's whereabouts.
    */
-  ipcMain.handle('document:confirm-close', async (_event, warning: CloseWarning) => {
+  ipcMain.handle('document:confirm-close', async (_event, warning: CloseWarning): Promise<CloseAnswer> => {
     const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
+    const options = warning.corrections === null
+      ? aboutTheCopy(warning)
+      : aboutTheCorrections(warning, warning.corrections);
+    const result = win
+      ? await dialog.showMessageBox(win, options)
+      : await dialog.showMessageBox(options);
+    // KEEP IS THE ANSWER TO ANYTHING UNRECOGNISED, including a box dismissed by the
+    // window manager. Every other answer here destroys something the person may
+    // not have decided about yet, and doing nothing is the one outcome that is
+    // never wrong.
+    return ANSWERS[options.buttons[result.response] ?? ''] ?? 'keep';
+  });
+
+  /**
+   * The book is somewhere the user did not choose, or is newer than the copy they
+   * did — the question this dialog has always asked, unchanged.
+   */
+  function aboutTheCopy(warning: CloseWarning): ClosingQuestion {
     const shared =
       'Every edit went straight into Foundry\'s working copy of the book as you made it, '
       + `so nothing is lost — the project is in ${projectsDir()} and Home will still list it.`;
-    const options = {
-      type: 'question' as const,
-      buttons: ['Close tab', 'Keep it open'],
+    return {
+      type: 'question',
+      buttons: [CLOSE, KEEP],
       defaultId: 1,
       cancelId: 1,
       title: warning.unsaved ? 'Close without saving it anywhere?' : 'Close with edits unsaved?',
@@ -995,11 +1167,90 @@ function registerIpc(): void {
         : `${shared} The copy you saved at ${warning.savedPath ?? 'your chosen location'} is the `
           + 'older version. Save (Ctrl+S) to bring it up to date.',
     };
-    const result = win
-      ? await dialog.showMessageBox(win, options)
-      : await dialog.showMessageBox(options);
-    return result.response === 0;
-  });
+  }
+
+  /**
+   * THE SENTENCE THAT MUST NOT LIE.
+   *
+   * "You have unsaved changes that will be lost" is what every editor says here
+   * and it is false in this app, twice over. The block editor has no unsaved
+   * state: a strike is written whole into the live curation the instant it is
+   * made, so closing discards nothing and every correction is exactly where it was
+   * left when the book is opened again. Saying otherwise would be frightening
+   * somebody about work that is not in danger, which is how a person learns to
+   * dismiss the next warning without reading it.
+   *
+   * What is actually at stake is a RESTORE POINT. Foundry's step-by-step undo
+   * lasts only as long as the document is open, so closing is the moment
+   * "undoable" quietly becomes "permanent" — the corrections survive, and the
+   * ability to walk back through them does not. A save is the only thing that
+   * replaces it, which is why the offer to make one is a button rather than
+   * advice: a dialog whose only route to keeping the work is *cancel, hunt for
+   * Save, close again* has made the user do the app's job.
+   *
+   * SO THE THREE STATEMENTS ARE: nothing is lost; what ends is the way back to
+   * this state; here is the one gesture that keeps it. In that order, because the
+   * reassurance has to come before the cost or the cost reads as a threat.
+   *
+   * The count is named as a DIFFERENCE from the save when there is one ("stand
+   * differently now than they do in …"), because "you have 23 corrections" is true
+   * of a book that was saved with all 23 of them and is the wrong thing to say
+   * about it. See `UncommittedCuration.blocks`.
+   */
+  function aboutTheCorrections(
+    warning: CloseWarning,
+    at: UncommittedCuration,
+  ): ClosingQuestion {
+    /*
+     * THE SAVE IS NAMED ONCE AND THEN REFERRED TO. With both a block count and a
+     * spine to report, naming the row twice in one sentence reads as two different
+     * saves; with only one of them, "that save" refers to nothing the reader has
+     * been told about yet. So whichever clause comes first carries the name.
+     */
+    const blocks = at.blocks === 1 ? '1 block' : `${at.blocks} blocks`;
+    const drift = at.since === null
+      ? `${blocks} corrected and no save of them`
+      : `${blocks} that stand differently now than they do in “${at.since}”`;
+    const spine = !at.chapters
+      ? null
+      : at.since === null
+        ? 'a chapter list no save of this book holds'
+        : at.blocks === 0
+          ? `a chapter list that differs from “${at.since}”`
+          : 'a chapter list that differs from that save';
+    const message = at.blocks === 0 && spine !== null
+      ? `“${warning.title}” has ${spine}.`
+      : `“${warning.title}” has ${drift}${spine === null ? '' : `, and ${spine}`}.`;
+
+    // The file-copy warning, when this tab owes that one as well. Kept to a
+    // sentence and put last: it is a second, smaller loss, and the corrections are
+    // what the buttons are about.
+    const alsoTheCopy = warning.unsaved
+      ? ' This book has also not been saved anywhere you chose; Ctrl+S puts a copy somewhere '
+        + 'you will find it.'
+      : warning.modified
+        ? ` The copy you saved at ${warning.savedPath ?? 'your chosen location'} is also older `
+          + 'than this one; Ctrl+S brings it up to date.'
+        : '';
+
+    return {
+      type: 'question',
+      buttons: [SAVE, CLOSE, KEEP],
+      defaultId: 0,
+      cancelId: 2,
+      title: 'Close without a save to come back to?',
+      message,
+      detail:
+        'Nothing here is lost by closing. Every one of these corrections is already written into '
+        + 'this book’s curation, and all of them will be exactly where you left them the next time '
+        + 'you open it.\n\n'
+        + 'What closing ends is the way back to this state. Foundry’s step-by-step undo lasts only '
+        + 'as long as the book is open; a save is what turns the corrections as they stand into a '
+        + 'row in Steps that you can click back to afterwards. Saving now makes this moment one of '
+        + 'those rows. Closing without it keeps every correction and keeps no way back to this '
+        + `point in them.${alsoTheCopy}`,
+    };
+  }
 
   /**
    * "You deleted this footnote's last reference. Should the footnote go too?"
@@ -1909,6 +2160,27 @@ function registerIpc(): void {
    */
   ipcMain.handle('overlay:commit', (_event, filePath: string) =>
     commitOverlay(admittedPdf(filePath)));
+  /**
+   * What this book holds that no save of it does — asked on the way out of a
+   * document, so it must never do anything but read.
+   *
+   * IT ANSWERS NULL FOR EVERY REFUSAL rather than rejecting, and that is the whole
+   * of the error handling on purpose. Every sentence `locateOverlay` throws is
+   * about a book that has nothing at stake here — a document outside the library,
+   * a scan nobody has read — and a rejection would have to become either a dialog
+   * saying something a person closing a tab cannot act on, or a silence that
+   * closed anyway. Null is that silence, said deliberately.
+   *
+   * Through `admittedPdf` like the rest of the family: the renderer names a scan
+   * it already has open, and main decides which project that is.
+   */
+  ipcMain.handle('overlay:uncommitted', async (_event, filePath: string) => {
+    try {
+      return await uncommittedIn(admittedPdf(filePath));
+    } catch {
+      return null;
+    }
+  });
 
   // ── The step ledger ──────────────────────────────────────────────────────
   /*
@@ -2290,6 +2562,20 @@ app.on('window-all-closed', () => {
  */
 let quitting = false;
 app.on('before-quit', (event) => {
+  /*
+   * THE DOCUMENTS ARE ASKED BEFORE ANYTHING IS SHUT DOWN, and the order is the
+   * whole reason this is here rather than only on the window's `close`. Cmd+Q,
+   * File→Quit and the app being asked to exit all reach this event FIRST, before
+   * any window is told to close — so a guard that lived only on the window would
+   * raise its dialog after the lines below had already aborted every running job
+   * and stopped the reading server. Somebody who then answered "keep it open"
+   * would have kept their window and lost the three-hour run in it.
+   */
+  if (!letGo) {
+    event.preventDefault();
+    letTheWindowGo(() => app.quit());
+    return;
+  }
   queue.shutdown();
   // The open-book registry, emptied. Nothing on disk goes with it — a working
   // tree lives in its project and is the newest version of that book, which is

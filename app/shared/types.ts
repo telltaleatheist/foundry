@@ -1172,11 +1172,14 @@ export interface EpubChapter {
 /**
  * What a tab has to say for itself before it closes.
  *
- * TWO FACTS, kept apart because they are different losses. `unsaved` is "no copy
- * of this exists anywhere you chose" — the Chrome dot. `modified` is "you have
- * edited this since the copy you chose was written", which only means anything
- * once there IS such a copy. Main writes a different sentence for each, and a
- * tab that is neither closes without a question.
+ * THREE FACTS, kept apart because they are three different losses. `unsaved` is
+ * "no copy of this exists anywhere you chose" — the Chrome dot. `modified` is
+ * "you have edited this since the copy you chose was written", which only means
+ * anything once there IS such a copy. `corrections` is neither: nothing about a
+ * scan's block corrections is unwritten (they land on disk as they are made), and
+ * what is missing is a RESTORE POINT — see `UncommittedCuration`. Main writes a
+ * different sentence for each, and a tab that is none of them closes without a
+ * question.
  */
 export interface CloseWarning {
   title: string;
@@ -1184,6 +1187,60 @@ export interface CloseWarning {
   modified: boolean;
   /** Where a copy was last written, when there is one. */
   savedPath: string | null;
+  /**
+   * The corrections this book has no save of, or null when there is nothing to
+   * ask about — which is the ordinary answer for every book and every EPUB.
+   */
+  corrections: UncommittedCuration | null;
+}
+
+/**
+ * How a closing document's question was answered.
+ *
+ * THREE ANSWERS AND NOT A BOOLEAN, because "proceed or cancel" is not enough for
+ * a question about work the user would rather keep. A dialog whose only way to
+ * keep the corrections is *cancel, find Save, close again* has made the person do
+ * the app's job for it, and the way that ends is that they stop reading the box
+ * and press the button that makes it go away. `save` is the offer to commit and
+ * then close; a commit main refuses leaves the tab open, because a close that
+ * happened anyway would have thrown away the very thing the answer asked to keep.
+ */
+export type CloseAnswer = 'close' | 'save' | 'keep';
+
+/**
+ * Corrections a book holds that no save of it does — what closing actually costs.
+ *
+ * ── This is NOT "unsaved changes", and the difference is the whole point ────
+ *
+ * There is no unsaved state in the block editor. Every strike, reclassification
+ * and chapter edit is written whole into the live curation the instant it is
+ * made, so closing discards nothing and every correction is exactly where it was
+ * left when the book is opened again. What a person can lack is a RESTORE POINT:
+ * a curation step they could step back to. Foundry's step-by-step undo lasts only
+ * as long as the document is open, so closing is the moment "undoable" becomes
+ * "permanent" — and a save is the only thing that replaces it.
+ *
+ * Composed by `uncommittedCuration` (shared/uncommitted.ts), which returns null —
+ * and asks nothing — for a book nobody has corrected and for a book whose
+ * corrections a save already holds.
+ */
+export interface UncommittedCuration {
+  /**
+   * How many blocks stand differently now than they do in that save.
+   *
+   * A DIFFERENCE AND NOT A TOTAL: a block corrected since, corrected differently,
+   * or corrected and then put back all count, and none of the blocks the save
+   * already agrees about do. With no save to measure against it is simply how many
+   * blocks this book has decisions about.
+   */
+  blocks: number;
+  /** True when the chapter list differs from that save's — a spine is labour too. */
+  chapters: boolean;
+  /**
+   * What the save is called — "Saved corrections (23)" — or null when this book
+   * has none that these corrections could be measured against.
+   */
+  since: string | null;
 }
 
 /**

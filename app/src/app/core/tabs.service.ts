@@ -1212,34 +1212,6 @@ export class TabsService {
   }
 
   /**
-   * Close a tab, warning first when it is the only copy anywhere the user chose.
-   *
-   * The warning is main's native box (it is modal to the window, and every other
-   * dialog in this app is main's). The book is NOT deleted either way — see
-   * electron/workspace.ts — so the question is only whether they meant to stop
-   * tracking it.
-   *
-   * A PENDING EDIT IS FLUSHED FIRST, before the question is asked. The editor
-   * writes 700 ms after the last keystroke, and a close inside that window used
-   * to lose the sentence being typed and then ask about a `modified` flag that
-   * had not been set yet — the dialog would say the book was untouched while
-   * the last edit evaporated.
-   *
-   * CLOSING A BOOK CLOSES ITS EDITOR. They are one document with two faces, and
-   * an editor pane left holding a book that is no longer open is a pane with
-   * nothing it can do.
-   *
-   * `ask: false` FOR A CLOSE THAT IS PART OF A DELETE, and it is the difference
-   * between one question and two. This warning's whole subject is a copy the
-   * user might want to keep track of — "nothing is lost, the working copy is in
-   * the project" — and a document being deleted is one where that sentence is
-   * false and the offer to save it is an offer to write bytes into a file about
-   * to be unlinked. The delete's own confirmation asked the only question there
-   * is; a second box on top of it, in the OS's own chrome, asking about saving
-   * the thing they just told the app to destroy, is the app arguing with an
-   * answer it already has.
-   */
-  /**
    * Close every tab showing one of these files — the window letting go of what is
    * about to be erased.
    *
@@ -1266,6 +1238,128 @@ export class TabsService {
     for (const id of ids) await this.close(id, false);
   }
 
+  /**
+   * The window is going — every open document gets the question first.
+   *
+   * ── Why quitting comes back to this class ───────────────────────────────────
+   *
+   * Quit used to skip closing altogether: the window was destroyed and the tabs
+   * went with it, so nothing was asked about any of them. That was survivable
+   * while the only thing at stake was a copy of a file the user had been warned
+   * about, and it stopped being survivable the moment closing a scan became the
+   * event that ends a session's undo history — quitting with four books open
+   * converted "undoable" into "permanent" four times over, silently. Main cannot
+   * ask on its own: it knows which files were ever opened, not which documents
+   * are open now, and that is renderer state.
+   *
+   * THE SAME QUESTION, DOCUMENT BY DOCUMENT, and not a summary of all of them.
+   * Every one of these losses is about a particular book — its corrections, its
+   * save, its copy — and a dialog that pooled four books into one number would be
+   * asking somebody to make four decisions with one button. `keep` on any of them
+   * stops the quit where it stands: the person said they wanted that book, and
+   * carrying on to ask about the next one would be the app negotiating.
+   *
+   * NOTHING IS CLOSED HERE. The tabs are asked about and left exactly as they are;
+   * main destroys the window if the answer is yes. Closing them one by one first
+   * would leave a cancelled quit with a window somebody had emptied on their way
+   * to changing their mind.
+   */
+  async letGo(): Promise<boolean> {
+    // A copy, because a save made from the dialog can repaint the list underneath
+    // this loop, and an iteration over the live signal would be walking an array
+    // that moved.
+    for (const tab of [...this.all()]) {
+      if (await this.questionBefore(tab.id) === 'stay') return false;
+    }
+    return true;
+  }
+
+  /**
+   * What this document has to say for itself before it goes, asked once.
+   *
+   * ── ONE QUESTION FOR THREE LOSSES ───────────────────────────────────────────
+   *
+   * A book's copy can be unfiled, a book's copy can be out of date, and a scan's
+   * corrections can have no save to come back to. Main composes whichever of the
+   * three are true into one box, because this codebase has already ruled that a
+   * closing document is asked about once (`closeShowing`): a second dialog on top
+   * of the first is the app arguing with an answer it already has.
+   *
+   * A PENDING EDIT IS FLUSHED FIRST. The editor writes 700 ms after the last
+   * keystroke, and a close inside that window used to lose the sentence being
+   * typed and then ask about a `modified` flag that had not been set yet — the
+   * dialog would say the book was untouched while the last edit evaporated.
+   *
+   * ── And the offer to save is a button, not advice ───────────────────────────
+   *
+   * A dialog whose only route to keeping the work is *cancel, hunt for Save, close
+   * again* has made the user do the app's job, and the way that ends is that they
+   * stop reading the box. So the answer can be "save these corrections, then
+   * close" — and it goes through `saveCorrections`, the same path the Steps
+   * accordion's Save button takes, rather than a second commit written for this
+   * dialog. A COMMIT MAIN REFUSES LEAVES THE TAB OPEN: closing anyway would have
+   * thrown away the very thing the answer asked to keep, and main's own sentence
+   * is already in the notice strip saying why it would not freeze.
+   */
+  private async questionBefore(id: string): Promise<'go' | 'stay'> {
+    const doomed = this.byId(id);
+    if (doomed === null || !api) return 'go';
+    await this.flushPending(doomed.kind === 'editor' ? doomed.id : this.editorFor(doomed.id)?.id ?? null);
+
+    // Re-read: the flush may have set `modified`, which is the whole reason the
+    // question is asked after it rather than before.
+    const current = this.byId(id);
+    if (current === null) return 'go';
+    /*
+     * ASKED OF MAIN, EVERY TIME, AND NOT READ OFF THE BLOCK VIEW. The live
+     * curation is only in this window while the Blocks mode is on — turning it off
+     * drops the state, because the overlay is on disk and holding a book's worth
+     * of boxes for a mode nobody is in is memory spent on nothing. So a person who
+     * corrected forty blocks, left Blocks, and closed would have been asked
+     * nothing at all, which is precisely the person this whole question exists
+     * for. Main has the files; main answers. It is null for everything that is not
+     * a scan in a project with a reading behind it.
+     */
+    const corrections = current.kind === 'pdf'
+      ? await api.overlay.uncommitted(current.path).catch(() => null)
+      : null;
+    if (!current.unsaved && !current.modified && corrections === null) return 'go';
+
+    const answered = await api.confirmClose({
+      title: current.title,
+      unsaved: current.unsaved,
+      modified: current.modified,
+      savedPath: current.savedPath,
+      corrections,
+    });
+    if (answered === 'keep') return 'stay';
+    if (answered === 'save') return await this.saveCorrections(id) ? 'go' : 'stay';
+    return 'go';
+  }
+
+  /**
+   * Close a tab, asking first when it has something to lose.
+   *
+   * The question is `questionBefore` above, and it is main's native box — modal
+   * to the window, like every other dialog in this app. THE BOOK IS NOT DELETED
+   * EITHER WAY (see electron/workspace.ts) and neither are its corrections, so
+   * what closing costs is a copy the user can find again and a state they can
+   * come back to, never the work itself.
+   *
+   * CLOSING A BOOK CLOSES ITS EDITOR. They are one document with two faces, and
+   * an editor pane left holding a book that is no longer open is a pane with
+   * nothing it can do.
+   *
+   * `ask: false` FOR A CLOSE THAT IS PART OF A DELETE, and it is the difference
+   * between one question and two. The question's whole subject is work the user
+   * might want to keep — a copy to keep track of, corrections to keep a way back
+   * to — and a document being deleted is one where all of that is false and the
+   * offer to save it is an offer to write bytes into a file about to be
+   * unlinked. The delete's own confirmation asked the only question there is; a
+   * second box on top of it, in the OS's own chrome, asking about saving the
+   * thing they just told the app to destroy, is the app arguing with an answer it
+   * already has.
+   */
   async close(id: string, ask = true): Promise<void> {
     const doomed = this.all().find((candidate) => candidate.id === id);
     if (!doomed) return;
@@ -1277,15 +1371,7 @@ export class TabsService {
     // question is asked after it rather than before.
     const current = this.all().find((candidate) => candidate.id === id);
     if (!current) return;
-    if (ask && (current.unsaved || current.modified) && api) {
-      const go = await api.confirmClose({
-        title: current.title,
-        unsaved: current.unsaved,
-        modified: current.modified,
-        savedPath: current.savedPath,
-      });
-      if (!go) return;
-    }
+    if (ask && await this.questionBefore(id) === 'stay') return;
 
     // The list is re-read AFTER the dialog: that box is modal to the window but
     // not to the app, and a conversion can finish and open a tab while it is up.
@@ -1823,17 +1909,24 @@ export class TabsService {
    * main wrote it rather than pre-empted by a disabled button. A dead Save teaches
    * nobody why it is dead; main's sentence says what to correct first and what
    * pressing this will then keep.
+   *
+   * IT SAYS WHETHER IT LANDED, for the one caller that cannot go on without
+   * knowing: the closing question's "save these corrections, then close" has to
+   * leave the tab open when the commit was refused, because closing anyway would
+   * throw away the exact thing that answer asked to keep. The button in the Steps
+   * accordion ignores the answer and reads the notice strip, which is where every
+   * one of these sentences goes.
    */
-  async saveCorrections(tabId: string): Promise<void> {
+  async saveCorrections(tabId: string): Promise<boolean> {
     const tab = this.byId(tabId);
-    if (!api || tab === null || tab.kind !== 'pdf') return;
+    if (!api || tab === null || tab.kind !== 'pdf') return false;
     const dir = this.projectDirOf(tab);
     if (dir === null) {
       this.notice.set(
         `${tab.title} is not in Foundry's library yet, so there is no history to keep a save in. `
         + 'Opening it from Home imports it and gives this book a project of its own.',
       );
-      return;
+      return false;
     }
     try {
       // The whole updated history comes back — ledger and rows — so the new row
@@ -1856,8 +1949,10 @@ export class TabsService {
         + 'change it. Carry on correcting — you are still on your live corrections, and this save '
         + 'stays exactly as it is until you click its row in Steps to stand on it.',
       );
+      return true;
     } catch (err) {
       this.notice.set(err instanceof Error ? err.message : String(err));
+      return false;
     }
   }
 

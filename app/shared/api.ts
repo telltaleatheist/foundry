@@ -9,6 +9,7 @@
  */
 import type {
   BackendSettingsPatch,
+  CloseAnswer,
   CloseWarning,
   ConversionKind,
   DeletionPrompt,
@@ -48,6 +49,7 @@ import type {
   StepDeletion,
   StepRow,
   TranslateRequest,
+  UncommittedCuration,
   UnlinkedNote,
   UnlinkedNoteAnswer,
   UnlinkedNoteStanding,
@@ -109,14 +111,21 @@ export interface FoundryApi {
   documentSaveCopy(absolutePath: string, suggestedName: string): Promise<string | null>;
   reveal(target: string): Promise<void>;
   /**
-   * The native box asked before a tab with something to lose closes. True means
-   * close it. Native rather than an in-app modal because the question is modal
-   * to the WINDOW, and because main already owns every other dialog in this app.
+   * The native box asked before a tab with something to lose closes. Native
+   * rather than an in-app modal because the question is modal to the WINDOW, and
+   * because main already owns every other dialog in this app.
    *
-   * Main picks the wording from the two flags — "no copy anywhere you chose" and
-   * "the copy you chose is older than this" are different warnings.
+   * ONE QUESTION FOR ALL THREE REASONS, and that is deliberate rather than
+   * economical. This app has already ruled that stacking dialogs about one
+   * closing document is wrong (see `closeShowing` in tabs.service.ts): a person
+   * shutting a book should be asked once, about everything that closing it costs,
+   * and a second box on top of the first is the app arguing with an answer it
+   * already has. Main picks the wording from the flags — "no copy anywhere you
+   * chose", "the copy you chose is older than this", and "there is no save of
+   * these corrections to come back to" are three different warnings, and a tab
+   * can owe more than one of them at once.
    */
-  confirmClose(warning: CloseWarning): Promise<boolean>;
+  confirmClose(warning: CloseWarning): Promise<CloseAnswer>;
   /**
    * The native box asked when an in-place edit deleted a footnote's LAST
    * reference. Three answers, and the caller writes something different for each
@@ -501,6 +510,21 @@ export interface FoundryApi {
      * before its own commit.
      */
     commit(pdfPath: string): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
+    /**
+     * What this book holds that no save of it does — the closing question's one
+     * fact, asked of main because main is the side that has the files.
+     *
+     * NULL IS THE ORDINARY ANSWER, and it is null for far more than "nothing has
+     * been corrected": a document outside the library, a scan nobody has read, a
+     * book whose corrections a save already holds. Every one of those is a book
+     * with nothing at stake on the way out, and the caller asks nothing.
+     *
+     * IT NEVER REJECTS AND NEVER WRITES. This runs on the way out of a document,
+     * where a rejection would have to become either a dialog nobody can act on or
+     * a silence that closes anyway — and where a side effect would mean asking a
+     * question rearranged somebody's project folder.
+     */
+    uncommitted(pdfPath: string): Promise<UncommittedCuration | null>;
   };
 
   /**
@@ -867,4 +891,24 @@ export interface FoundryApi {
   onNavigate(listener: (route: string) => void): () => void;
   /** File→Save As / Close Tab, which are accelerators on the menu. */
   onMenuAction(listener: (action: MenuAction) => void): () => void;
+  /**
+   * The window is about to go — the ✕, Quit, the OS logging out — and every open
+   * document gets asked what closing it costs before it does.
+   *
+   * ── Why quitting has to come back here at all ───────────────────────────────
+   *
+   * Quit bypassed per-tab closing entirely. The window was destroyed, the tabs
+   * went with it, and none of them was ever asked the question the ✕ on a tab
+   * asks — which did not matter while the only thing at stake was a file copy the
+   * user had already been warned about, and matters now that closing a scan is
+   * what turns "undoable" into "permanent". Main cannot ask on its own: it knows
+   * which files were ever opened, not which documents are open NOW, and open
+   * documents are renderer state.
+   *
+   * The listener must answer through `letWindowClose` exactly once — false keeps
+   * the window, and keeps whatever quit was in progress from happening.
+   */
+  onWindowClosing(listener: () => void): () => void;
+  /** The answer to `onWindowClosing`. True lets the window go. */
+  letWindowClose(go: boolean): Promise<void>;
 }

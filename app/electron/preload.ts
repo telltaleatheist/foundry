@@ -83,6 +83,7 @@ const api: FoundryApi = {
     loadLedger: (pdfPath) => ipcRenderer.invoke('overlay:ledger-load', pdfPath),
     saveLedger: (pdfPath, stacks) => ipcRenderer.invoke('overlay:ledger-save', pdfPath, stacks),
     commit: (pdfPath) => ipcRenderer.invoke('overlay:commit', pdfPath),
+    uncommitted: (pdfPath) => ipcRenderer.invoke('overlay:uncommitted', pdfPath),
   },
 
   ledger: {
@@ -178,6 +179,11 @@ const api: FoundryApi = {
     subscribe<{ from: string; to: string }>('document:relocated', listener),
   onNavigate: (listener) => subscribe<string>('navigate', listener),
   onMenuAction: (listener) => subscribe<MenuAction>('menu:action', listener),
+  // The window is going and the documents in it have not been asked yet. The
+  // payload is nothing — what is open is the renderer's own business, and this
+  // says only that the question is now due.
+  onWindowClosing: (listener) => subscribe<void>('window:closing', () => listener()),
+  letWindowClose: (go) => ipcRenderer.invoke('window:let-go', go),
 };
 
 contextBridge.exposeInMainWorld('foundry', api);
