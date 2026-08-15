@@ -2,136 +2,133 @@ import { NgTemplateOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 
-import { documentNames, qualify, typeLabel } from '@shared/documents';
-import type { ProjectDocumentKind } from '@shared/types';
+import { qualify, typeLabel } from '@shared/documents';
+import type { LedgerStep, ProjectDocumentKind, ProjectSummary } from '@shared/types';
 
 import { api } from '../../core/foundry';
+import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';
 import { TabsService, type Tab } from '../../core/tabs.service';
 import { UiService } from '../../core/ui.service';
 
 /**
- * The open documents, down the left — VS Code's explorer, and its gestures.
+ * The LIBRARY, down the left — one provenance tree per open book.
  *
- * IT REPLACES A CHROME-STYLE STRIP PER PANE. Five columns on a 1920-wide window
- * gave each strip about 370 pixels, and three tabs in one of them were stubs
- * with two letters of a title on each: the one thing a document list has to do
- * is let you tell one book from another, and that strip stopped doing it exactly
- * when a fifth column made it matter. A vertical list does not degrade that way
- * — a row is as wide as the panel however many columns are open — and every pane
- * got its 44px strip back as page.
+ * ── It was a documents list, and that was one selector too many ──────────────
  *
- * A ROW IS A DOCUMENT, NOT A COLUMN. Clicking one puts it in front of you: in
- * its own column if it is already on screen (only the focus moves), otherwise in
- * the focused column, replacing what was there. Nothing is closed by any of
- * that; the displaced document keeps its unpack, its edits and its place in this
- * list, one click from coming back.
+ * *"i feel like the available documents (on the left sidebar) and the steps
+ * (right sidebar) are confusing. i could have a document open, the epub, but
+ * have the pdf import step selected, and id never know that i just ran translate
+ * against the original pdf rather than the generated epub because i had the
+ * wrong step selected, since the right document was open."*
  *
- * ── The indent ───────────────────────────────────────────────────────────────
+ * The diagnosis was two selectors pretending to be one: this panel picked a
+ * FILE, the inspector's Steps section picked a POSITION, and the actions keyed
+ * off a mixture of both. So the two are merged here, into the shape the user
+ * asked for — *"maybe we merge them and top level things get arrows that expand
+ * down. steps applied to [x] document. the original document can be the root
+ * since thats where it all started"* — and the Steps section left the inspector
+ * for good. docs/WORKBENCH.md §6c is the ruling; this file is the half of it
+ * that draws.
  *
- * An `editor` row sits UNDER the book it is a face of, which the horizontal
- * strip could never show — there, a book and its HTML were two peers with
- * similar names, in whichever two panes they had landed in. The service's list
- * stays flat (one identity per tab, see TabsService); the nesting is worked out
- * here, where it is a matter of drawing.
+ * ── The ledger was always a tree; this stops hiding it ───────────────────────
  *
- * ── The groups ───────────────────────────────────────────────────────────────
+ * Every step records the step it was made FROM (`LedgerStep.parent`), and
+ * shared/types.ts:2385 says out loud that the flat chronological list was that
+ * tree with the indentation taken off. The flattening was the right call for a
+ * 260px accordion that had to say "what have I done to this book" in one
+ * column; it is the wrong call for a navigator, because the one question a
+ * navigator has to answer is "what was this made FROM" — which is exactly the
+ * fact the flattening threw away. So: the import is the root, the reading hangs
+ * under it, curation saves hang under the reading, and a translation is a new
+ * book that nests and grows saves of its own.
  *
- * A DOCUMENT OPENED OUT OF A PROJECT BRINGS ITS PROJECT WITH IT. The group
- * header names the book, and under it are that project's ARTEFACTS — the PDF,
- * the EPUB — whether or not they are open. One row per thing the user asked to
- * exist, never one per file: a converted project holds the archived original,
- * the live PDF, the origin it was promoted from and several rotated
- * predecessors, and the person who asked for a searchable book is owed "the
- * PDF", once. So flipping from the PDF to the book made from it is one click,
- * where it used to mean going back to Home and expanding a row that is no longer
- * there. That listing is `listProjects`' own (electron/projects.ts), which is
- * why it moved here rather than being rebuilt: one function decides what a
- * project contains, and this is now its reader.
+ * NOTHING IS RE-DERIVED FROM A FILE HERE. The parent chain is the ledger's own
+ * (`LedgerService.historyFor`); the exports are `listProjects`' own; the labels
+ * are the ones main wrote when the step was made. This component owns the
+ * indentation and nothing else about the shape.
  *
- * ── And under those, the EXPORTS ─────────────────────────────────────────────
+ * ── The rows that died with the flattening ───────────────────────────────────
  *
- * *"under the project and indented, there will be terminal files i generated
- * from the project. pdf facsimile, epub, whatever i exported."* An export is not
- * a document row and must not be drawn as one: a document row is one per TYPE
- * and is a base for further work, and there can be four exported EPUBs of one
- * book with nothing made from any of them. So they are their own run, indented a
- * step further in, at the bottom of the group where the newest is first.
+ * THE PER-PROJECT DOCUMENT ROWS ARE GONE — the "PDF" row, the "EPUB" row, the
+ * available-but-not-open rows, the missing ones. They were a second inventory of
+ * the same project alongside the steps, listed one-per-type, and every one of
+ * them was reachable as a POSITION instead: the scan is the import row, the
+ * flowing book is the reading, a translation is its own step. Two lists of one
+ * thing is how somebody translates the scan while looking at the book.
  *
- * NAMED BY PRODUCT AND DATE — "Facsimile PDF · 14 Aug" — because that is the
- * pair of facts that tells two of them apart, and because a project's exports all
- * share the book's stem the way its documents do. `.txt` is listed and INERT:
- * this app has no tab that reads plain text, so the row dims itself and offers
- * Show in file manager instead of pretending a click will do something.
+ * AND "EPUB" DIED WITH THEM as a name for a working document. *"im thinking we
+ * shouldnt call the working files 'epub' until we export."* The evolving thing
+ * you read, curate and translate is **the Book**; the word EPUB now appears in
+ * exactly two places in this app — the export modal's card, and an export row's
+ * label — and it means "finished". `typeLabel` survives because it still names
+ * FILES: a loose tab from outside the library, and a copy somebody opened by
+ * hand out of a project folder.
  *
- * ── A ROW IS NOT A FILENAME ──────────────────────────────────────────────────
+ * ── What still hangs off a root, and why ─────────────────────────────────────
  *
- * THE HEADER NAMES THE BOOK AND THE ROWS NAME ITS FACES: "PDF", "EPUB", "text".
- * They were basenames until now, and a project's documents all share one stem by
- * construction, so the panel read as the same unpronounceable string three times
- * with the only distinguishing fact in the extension. The names come from
- * `documentNames` (shared/documents.ts), which is also what decides how two rows
- * that would otherwise read alike are told apart — by what was last DONE to each,
- * never by the file.
+ * EXPORTS ARE CHILDREN OF THE ROOT, at the same indent as the Book, with no
+ * expand arrow and nothing ever under them. *"it wont go into the working files
+ * as a step because it isnt the base for new steps. its a terminal step."* They
+ * are not top-level: with three books open, exports floating at the root of the
+ * panel would have lost their parentage, and "Facsimile PDF · 14 Aug" names a
+ * product and a day, not a book. Named by product and date, never by filename,
+ * because that is the pair of facts that tells two of them apart.
  *
- * THE FILE IS STILL HERE, in the tooltip, and that is deliberate rather than a
- * leftover: "which copy is this, actually" is a real question, asked rarely, and
- * a hover is the right price for a rare question. It is one of exactly two places
- * in this app where a path is still shown to a person; the other is the OS save
- * dialog, where the thing being named really is a file.
+ * AN HTML FACE hangs off the root too. It is a face of a document rather than a
+ * step, so it has no place in the parent chain; it is still a tab somebody has
+ * open and a tab nobody can close is worse than a tab in an odd place.
  *
- * AN AVAILABLE DOCUMENT IS A ROW THAT IS NOT OPEN YET, and the difference from
- * an open one is deliberately quiet — the same list, the same shape, dimmed and
- * without the accent bar that means "on screen". Making it loud would turn a
- * convenience into a second inventory competing with the tabs; making it
- * invisible would be the drop-down again.
+ * "A COPY YOU OPENED" IS NOW A NARROWER THING, and better for it. It used to be
+ * every open file the catalogue did not list; now the catalogue's OWN files are
+ * spoken for by the tree — a step is what the scan and the Book are — so this
+ * row is left meaning exactly what it says: something inside the project folder
+ * that the project does not claim. An archived copy, a file reached by hand.
  *
- * A FILE OPENED FROM ANYWHERE ELSE stays a plain row at the bottom, ungrouped.
- * Not everything a person opens is in the library, and inventing a group for a
- * one-off PDF would be this list having an opinion about where files should
- * live.
+ * ── A STEP NODE IS NOT A TAB, and does not wear a tab's marks ────────────────
  *
- * ── The two ✕ do not mean what they used to ─────────────────────────────────
+ * No ✕, no middle-click close, no column badge, no accent bar for "on screen".
+ * A step is a POSITION — clicking it moves where the project stands and the
+ * panes follow — and the panel's statement about it is `.current`, one row in
+ * the tree drawn in the accent. Marking step rows as "showing in column 3" as
+ * well would put the second selector straight back: *"Tabs are windows onto the
+ * selection, never a second selector"* (§6c). The rows that ARE tabs — exports,
+ * HTML faces, copies, loose files — keep every one of those marks, because for
+ * them the mark is the truth.
  *
- * PEOPLE CLOSE PROJECTS, NOT DOCUMENTS. That is the model, and it reverses an
- * earlier call recorded here — that a group header should offer no close-all,
- * because the nav's idiom was one row, one ✕, naming exactly one thing. The
- * reasoning was sound about a list of documents and wrong about what a person is
- * actually doing: they finish with a BOOK. Closing its scan and leaving its
- * cast EPUB and its plain text open is not a state anybody wants, and doing
- * it three times by hand is not a gesture, it is bookkeeping.
+ * ── The two ✕, and the one that left ─────────────────────────────────────────
  *
- * So the header's ✕ closes the project — every open tab belonging to it. The
- * objection that a close-all hides its own blast radius does not survive the
- * layout: the group lists its open rows directly under the button, so the count
- * is not a number to be trusted, it is a thing to be looked at. And it destroys
- * nothing — the documents are on disk and one click from coming back, which is
- * why it asks nothing first.
+ * THE ROW'S ✕ STILL DELETES, on an export and on a copy inside a project, behind
+ * the app's one confirmation. Outside a project it still CLOSES: a file opened
+ * from elsewhere is not main's to erase and `documents:delete` refuses it.
  *
- * THE ROW'S ✕ DELETES THAT DOCUMENT, behind the app's one confirmation. That is
- * what makes the header's job coherent: if both closed things, one of them would
- * be redundant. Every document row has it, open or merely available — the
- * earlier "nothing to close about a row that is not open" is gone, because there
- * is always something to delete. Deleting the ORIGINAL is a different question
- * and the modal asks it as one: it takes the project with it (shared/original).
+ * THE GROUP HEADER'S ✕ IS GONE, and its job moved rather than went. The header
+ * itself is gone — the import root took its place, which is what the user asked
+ * for — and *"Right-click the import root → Close project"* is where closing a
+ * book lives now. A step row wears no ✕ (see above), and the root is a step row;
+ * putting one there anyway would be the one exception that teaches people to
+ * look for ✕ on rows that must never have one. The tooltip names the gesture so
+ * it is not something to be discovered.
  *
- * EXCEPT ON AN UNGROUPED ROW, where the ✕ still closes. A file opened from
- * outside the library is not main's to erase — `documents:delete` refuses any
- * path that is not inside a project, and it is right to. The tooltip says so
- * rather than leaving a button that behaves differently for no visible reason.
+ * MIDDLE-CLICK STAYS CLOSE on every row that is a tab, unchanged. It is the
+ * gesture people bring from every other application, and it cannot destroy
+ * anything.
  *
- * MIDDLE-CLICK STAYS CLOSE, on every row. It is the tab-strip gesture people
- * bring with them from every other application, and every one of those closes.
- * A middle-click that deleted a file would be the most expensive muscle memory
- * in the app — and the ✕ moving jobs is exactly the reason to leave the gesture
- * that cannot destroy anything where it was.
+ * ── Collapse is a session, not a setting ─────────────────────────────────────
+ *
+ * Every node starts expanded, and a collapse lives in this component and dies
+ * with the window. A persisted collapse would be a book that opens with its own
+ * history hidden, for a reason the reader took three sessions ago and has no
+ * memory of; a tree five rows deep is not a thing anybody needs saved.
  *
  * ── Dragging ─────────────────────────────────────────────────────────────────
  *
- * A row dragged WITHIN this list reorders it — the only place a document's order
- * exists now. A row dragged onto the workspace lands in a column: the middle of
- * a pane shows it there, an edge band opens a new column beside it (the
- * workspace owns that half of the gesture and the arithmetic behind it).
+ * A row dragged WITHIN this list reorders the loose files — the only place a
+ * document's order still exists. Rows inside a project cannot be reordered:
+ * their order is the ledger's and the catalogue's, and a line drawn above one
+ * would promise a move the next redraw undoes. A row dragged onto the workspace
+ * lands in a column (the workspace owns that half of the gesture). Step rows are
+ * not draggable at all: there is no tab to carry.
  *
  * Native HTML5 drag and drop, with the same custom MIME the strips used, and the
  * window's own file-drop veil still tells the two apart by looking for `Files`
@@ -153,16 +150,17 @@ import { UiService } from '../../core/ui.service';
     -->
     @if (!ui.documentsShown()) {
       <div class="stub">
-        <button class="collapse" title="Show the open documents (Ctrl+B)" (click)="ui.toggleDocuments()">»</button>
+        <button class="collapse" title="Show the library (Ctrl+B)" (click)="ui.toggleDocuments()">»</button>
       </div>
     } @else {
     <div class="panel">
       <header class="head">
-        <button class="collapse" title="Hide the open documents (Ctrl+B)" (click)="ui.toggleDocuments()">«</button>
-        <!-- "Open" alone read as a verb — a button you press — beside a book's
-             own title in the chapter list next to it. It is a noun: these are
-             the documents that are open. -->
-        <span class="label">Open documents</span>
+        <button class="collapse" title="Hide the library (Ctrl+B)" (click)="ui.toggleDocuments()">«</button>
+        <!-- "Open documents" was the name of a list of files. This is the books
+             themselves and everything that has been done to them, which is a
+             library — and Final Cut's word for the same shelf, which is where
+             the whole arrangement comes from (docs/WORKBENCH.md §6c). -->
+        <span class="label">Library</span>
         <span class="count">{{ tabs.tabs().length }}</span>
       </header>
 
@@ -179,31 +177,12 @@ import { UiService } from '../../core/ui.service';
       >
         @for (group of groups(); track group.key) {
           <!--
-            role=group with the book's name on it, so the documents inside
-            are announced as belonging to something rather than as a run of
-            unrelated rows. The header itself is not focusable: it opens nothing
-            and closes nothing, and a tab stop that does neither is a tab stop
-            people learn to skip.
+            role=group with the book's name on it, so the tree inside is
+            announced as belonging to something rather than as a run of
+            unrelated rows. There is no header element any more: the first row
+            IS the book — its import, the thing it all started from.
           -->
-          <div class="group" role="group" [attr.aria-label]="'Project: ' + group.title">
-            <div class="group-head" [title]="group.dir">
-              <span class="group-name">{{ group.title }}</span>
-              <!--
-                Closes the BOOK — every tab open from this project. Nothing on
-                disk, so no confirmation: the rows it closes are listed directly
-                underneath, which is a better account of what will happen than
-                any count in a warning. Hidden until the group is hovered, like
-                every other ✕ in this list.
-              -->
-              @if (group.open > 0) {
-                <button
-                  class="x"
-                  (click)="closeProject(group)"
-                  [title]="'Close ' + group.title + ' — ' + group.open + ' open document(s)'"
-                  [attr.aria-label]="'Close all ' + group.open + ' open documents in ' + group.title"
-                >✕</button>
-              }
-            </div>
+          <div class="group" role="group" [attr.aria-label]="'Book: ' + group.title">
             @for (row of group.rows; track row.key) {
               <ng-container [ngTemplateOutlet]="line" [ngTemplateOutletContext]="{ $implicit: row }" />
             }
@@ -216,20 +195,23 @@ import { UiService } from '../../core/ui.service';
       </div>
 
       <!--
-        ONE ROW TEMPLATE FOR BOTH, because a grouped document and a loose one are
-        the same thing in two places, and two copies of this markup would drift
-        the first time a mark was added to one of them.
+        ONE ROW TEMPLATE FOR ALL FOUR KINDS, because a step, an export, an open
+        file and a loose one are the same drawn line with different gestures
+        behind it, and four copies of this markup would drift the first time a
+        mark was added to one of them. What differs is carried on the row.
       -->
       <ng-template #line let-row>
         <div
           class="row"
-          [class.child]="row.indent"
-          [class.grouped]="row.grouped"
-          [class.terminal]="row.terminal"
+          [style.padding-left.px]="10 + row.depth * 14"
+          [class.node]="row.kind === 'root' || row.kind === 'step'"
+          [class.root]="row.kind === 'root'"
+          [class.current]="row.current"
+          [class.stale]="row.stale"
           [class.inert]="row.tab === null && row.openable === false"
           [class.on]="row.column !== null"
           [class.focused]="row.focused"
-          [class.available]="row.tab === null"
+          [class.available]="row.kind === 'export' && row.tab === null"
           [class.before]="before() === row.key"
           [title]="row.tooltip"
           [attr.draggable]="row.tab !== null"
@@ -241,6 +223,23 @@ import { UiService } from '../../core/ui.service';
           (dragover)="onRowOver($event, row)"
           (drop)="onDrop($event, row)"
         >
+          <!--
+            THE ARROW IS A SLOT EVEN WHEN THERE IS NO ARROW. A twist that
+            appeared and disappeared would shift every name in the panel
+            sideways by nine pixels depending on whether the book above had been
+            translated. An export never gets one — it is terminal, and an arrow
+            on it would promise something under it.
+          -->
+          @if (row.expanded !== null) {
+            <button
+              class="twist"
+              [attr.aria-expanded]="row.expanded"
+              [title]="row.expanded ? 'Collapse' : 'Expand'"
+              (click)="toggle($event, row)"
+            >{{ row.expanded ? '▾' : '▸' }}</button>
+          } @else {
+            <span class="twist"></span>
+          }
           <span class="kind">{{ row.glyph }}</span>
           <span class="name">{{ row.title }}</span>
           <!--
@@ -254,34 +253,40 @@ import { UiService } from '../../core/ui.service';
           @if (row.tab?.modified) {
             <span class="pencil" title="Edited since it was last saved">✎</span>
           }
+          <!-- WHEN, for the rows that are a moment in a book's history. -->
+          @if (row.tally) {
+            <span class="tally">{{ row.tally }}</span>
+          }
           <!--
             WHICH column it is in, and only once there are two. With one column
             open the number is the only number it could be, and a badge that
             always says 1 is a badge that teaches people to stop reading it.
+
+            NEVER ON A STEP ROW: a step is a position and not a tab, and a
+            column number on one would be the second selector this tree exists
+            to abolish.
           -->
           @if (row.column !== null && multi()) {
             <span class="column" [title]="'Showing in column ' + row.column">{{ row.column }}</span>
           }
           <!--
-            DELETES, inside a project — CLOSES, outside one. The header above
-            took over closing, so this became the destructive one; but a file
-            opened from outside the library is not this app's to erase, and the
-            tooltip says which of the two the button is about to do rather than
-            leaving it to be discovered.
+            DELETES, inside a project — CLOSES, outside one. A file opened from
+            outside the library is not this app's to erase, and the tooltip says
+            which of the two the button is about to do rather than leaving it to
+            be discovered.
 
-            "Delete the PDF" and not "Delete Kershaw-1993.pdf": the row's name is
-            what the thing IS now, so the sentence takes an article — and the
-            project that "from this project" refers to is named in the header
-            directly above, which is where the book is named.
+            NEITHER, ON A STEP. Deleting a step is not deleting a file — it takes
+            everything made from it — and that lives behind the right-click,
+            with main's own accounting of what it costs.
           -->
-          @if (row.grouped) {
+          @if (row.kind === 'export' || (row.kind === 'document' && row.dir !== null)) {
             <button
               class="x danger"
               (click)="remove($event, row)"
-              [title]="'Delete the ' + row.title + ' — permanently, from this project'"
+              [title]="'Delete the ' + row.title + ' — permanently, from this book'"
               [attr.aria-label]="'Delete the ' + row.title"
             >✕</button>
-          } @else if (row.tab !== null) {
+          } @else if (row.kind === 'document' && row.tab !== null) {
             <button
               class="x"
               (click)="close($event, row.tab)"
@@ -299,6 +304,12 @@ import { UiService } from '../../core/ui.service';
         surface is drawn here. It is also the only kind that can be built without
         a second IPC round trip per row.
 
+        FOUR MENUS IN ONE CARD, because a row's kind decides entirely what can be
+        done to it: a book can be closed, a step can be split out or deleted, an
+        export and a copy can be revealed or erased. Offering all of them and
+        greying most would be a card whose shape says nothing about what it is
+        over.
+
         A full-window scrim under it, so the next click anywhere dismisses it
         exactly once and cannot also land on whatever was underneath.
       -->
@@ -312,12 +323,33 @@ import { UiService } from '../../core/ui.service';
           [style.top.px]="open.y"
           (keydown.escape)="menu.set(null)"
         >
-          <button role="menuitem" (click)="fromMenu(open.row, 'reveal')">Show in file manager</button>
-          @if (open.row.tab !== null) {
-            <button role="menuitem" (click)="fromMenu(open.row, 'close')">Close</button>
-          }
-          @if (open.row.grouped) {
-            <button class="danger" role="menuitem" (click)="fromMenu(open.row, 'delete')">Delete…</button>
+          @if (open.row.kind === 'root') {
+            <!--
+              GOING HOME. Closes every tab this book has open, through the
+              ordinary close, so a document with uncommitted work still gets its
+              one question. Nothing on disk; the book is one click from coming
+              back, on Home's own shelf.
+            -->
+            <button role="menuitem" (click)="fromMenu(open.row, 'close-project')">Close book</button>
+            <button role="menuitem" (click)="fromMenu(open.row, 'reveal')">Show in file manager</button>
+          } @else if (open.row.kind === 'step') {
+            <!--
+              *"they can right-click a different step and click open, and itll
+              split the screens between the one they just opened and the one they
+              already had open."* The ordinary click already stands there and
+              shows the document; what the menu adds is the arrangement —
+              beside, rather than instead.
+            -->
+            <button role="menuitem" (click)="fromMenu(open.row, 'split')">Open in split</button>
+            <button class="danger" role="menuitem" (click)="fromMenu(open.row, 'discard')">Delete this step…</button>
+          } @else {
+            <button role="menuitem" (click)="fromMenu(open.row, 'reveal')">Show in file manager</button>
+            @if (open.row.tab !== null) {
+              <button role="menuitem" (click)="fromMenu(open.row, 'close')">Close</button>
+            }
+            @if (open.row.dir !== null) {
+              <button class="danger" role="menuitem" (click)="fromMenu(open.row, 'delete')">Delete…</button>
+            }
           }
         </div>
       }
@@ -397,7 +429,9 @@ import { UiService } from '../../core/ui.service';
       display: flex;
       align-items: center;
       gap: 6px;
-      padding: 6px 8px 6px 10px;
+      /* The left padding is the DEPTH and is bound per row; only the other three
+         sides are settled here. */
+      padding: 6px 8px;
       color: var(--text-secondary);
       font-size: 12px;
       cursor: default;
@@ -411,40 +445,35 @@ import { UiService } from '../../core/ui.service';
     }
     .row:hover { background: var(--bg-hover); color: var(--text-primary); }
 
-    /* An editor is a face of the book above it, not a document beside it. */
-    .row.child { padding-left: 26px; }
-    .row.child .name { font-style: italic; }
+    /* Each book is a run; the space between two of them is what says where one
+       ends. Heavier chrome would make the panel read as several lists. */
+    .group { margin-bottom: 6px; }
 
     /*
-      THE GROUP. A hairline down the left edge is the whole of the container —
-      the rows inside keep their own shape, and the rule is what says where the
-      project begins and ends. Heavier chrome (a box, a fill) would make the
-      panel read as two lists rather than as one list with a heading in it.
+      THE ROOT IS THE BOOK. It is a row like every other — clickable, and what it
+      shows is the original import — so it is not given a header's uppercase
+      shouting; it is given the weight a title has among its own contents.
     */
-    .group { margin-bottom: 2px; }
-    .group-head {
-      display: flex; align-items: center; gap: 6px;
-      padding: 8px 8px 3px 10px;
-      color: var(--text-tertiary);
-      font-size: 10px; font-weight: 600;
-      text-transform: uppercase; letter-spacing: 0.06em;
-      user-select: none;
-    }
-    .group-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    /* Indented as a run, so the group's documents sit visibly inside it. The
-       editor's own indent stacks on top of this, which is the nesting it means. */
-    .row.grouped { padding-left: 20px; box-shadow: inset 1px 0 0 0 var(--border-subtle); }
-    .row.grouped.child { padding-left: 36px; }
+    .row.root .name { color: var(--text-primary); font-weight: 600; }
 
     /*
-      AN EXPORT SITS UNDER THE DOCUMENTS, one step further in. It is a fact about
-      the project the same way they are, and it is NOT one of them: a document row
-      is one per type and is a base for further work, an export is terminal and
-      there can be four of them. The indent is the whole of what says so — a
-      second visual language for a row that behaves like every other row would be
-      chrome making a distinction the gestures do not.
+      THE STANDING ROW, in the same accent and the same faint wash the inspector
+      marks its current category with. One word for "this is the one you are on"
+      across the whole app; inventing a second is how a palette stops meaning
+      anything. This is the panel's ONLY statement about selection — see the
+      class docblock on why a step row wears no on-screen marks.
     */
-    .row.grouped.terminal { padding-left: 32px; }
+    .row.node.current { background: var(--accent-faint); }
+    .row.node.current .name { color: var(--accent); font-weight: 500; }
+
+    /*
+      A STALE STEP IS DIMMED AND STILL CLICKABLE, which was the ruling. Its
+      payload is a true record of what was made — a translation of a bank that
+      has since been re-read still holds the blocks it translated — so it opens,
+      it renders, and only its currency is in question. The reason is on hover,
+      where an explanation nobody needs stays out of the way of a list.
+    */
+    .row.stale .name, .row.stale .tally, .row.stale .kind { opacity: 0.55; }
 
     /*
       PLAIN TEXT HAS NO TAB IN THIS APP, and the row says so by not lighting up.
@@ -455,11 +484,9 @@ import { UiService } from '../../core/ui.service';
     .row.inert:hover { background: transparent; color: var(--text-tertiary); }
 
     /*
-      AVAILABLE, NOT OPEN — dimmed and nothing else. The list's existing language
+      AN EXPORT NOBODY HAS OPENED — dimmed and nothing else. The list's language
       for "on screen" is the accent bar (.on / .focused), so the honest opposite
-      is simply not having it: an available row is a row without the mark rather
-      than a row with a mark of its own. Loud styling here would turn a
-      convenience into a second inventory competing with the tabs.
+      is simply not having it.
     */
     .row.available { color: var(--text-tertiary); }
     .row.available:hover { color: var(--text-primary); }
@@ -485,10 +512,30 @@ import { UiService } from '../../core/ui.service';
     .row.on.before,
     .row.on.focused.before { box-shadow: inset 0 2px 0 0 var(--accent); }
 
+    /*
+      THE ARROW, AND THE SPACE WHERE AN ARROW WOULD BE. Both are 9px wide so the
+      names in one book line up whether or not a node has anything under it.
+    */
+    .twist {
+      flex: 0 0 auto;
+      width: 9px; height: 14px;
+      padding: 0; margin: 0;
+      background: transparent; border: none;
+      color: var(--text-tertiary); font-size: 9px; line-height: 14px;
+      text-align: left;
+    }
+    button.twist { cursor: pointer; }
+    button.twist:hover { color: var(--text-primary); }
+
     .kind { flex: 0 0 auto; opacity: 0.6; font-size: 11px; }
     .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .dot { flex: 0 0 auto; color: var(--accent); font-size: 9px; line-height: 1; }
     .pencil { flex: 0 0 auto; color: var(--warn); font-size: 11px; line-height: 1; }
+    .tally {
+      flex: 0 0 auto;
+      color: var(--text-tertiary); font-size: 10px;
+      font-variant-numeric: tabular-nums;
+    }
     .column {
       flex: 0 0 auto;
       min-width: 12px;
@@ -512,8 +559,6 @@ import { UiService } from '../../core/ui.service';
       transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1);
     }
     .row:hover .x, .x:focus-visible { visibility: visible; }
-    .group-head .x { visibility: hidden; }
-    .group:hover .group-head .x, .group-head .x:focus-visible { visibility: visible; }
     .x:hover { background: var(--bg-hover); color: var(--text-primary); }
     /* The button that ends something wears the error colour on hover, and only
        on hover — the same rule Home's delete follows. A permanently red control
@@ -548,6 +593,7 @@ import { UiService } from '../../core/ui.service';
 export class OpenDocumentsComponent {
   protected readonly tabs = inject(TabsService);
   protected readonly projects = inject(ProjectsService);
+  private readonly ledger = inject(LedgerService);
   /** Public to the template AND to the host binding above, which is a template too. */
   protected readonly ui = inject(UiService);
   private readonly router = inject(Router);
@@ -567,6 +613,28 @@ export class OpenDocumentsComponent {
       this.tabs.tabs().map((tab) => tab.path).join('\u0000');
       void this.projects.refresh();
     });
+
+    /*
+     * THE HISTORY OF EVERY OPEN BOOK, ASKED FOR ONCE.
+     *
+     * Until this panel drew trees, the only surfaces that needed a ledger were
+     * the inspector — which asks for the FOCUSED document's project — and the
+     * block editor, which asks when the mode comes up (`loadBlockView`,
+     * tabs.service.ts). Neither of those covers this one: five books can be open
+     * with one focused, and the four unfocused ones would have drawn a root with
+     * nothing under it until somebody clicked into them. So the library asks for
+     * its own, for every book it is about to draw.
+     *
+     * `ensure` IS IDEMPOTENT AND SILENT BY CONTRACT (LedgerService) — a project
+     * already held or already in flight is a no-op — which is what makes it safe
+     * from an effect that re-runs whenever a tab opens. It also reads no signal
+     * this effect writes: `openProjects` is composed from the tabs and the
+     * catalogue, never from the held ledgers, so nothing here can chase its own
+     * tail.
+     */
+    effect(() => {
+      for (const project of this.openProjects()) this.ledger.ensure(project.dir);
+    });
   }
 
   /** The row a drop would land in front of, and whether the end of the list is the target. */
@@ -575,10 +643,35 @@ export class OpenDocumentsComponent {
   /** The open context menu: which row it is about, and where it was asked for. */
   protected readonly menu = signal<{ row: Row; x: number; y: number } | null>(null);
 
+  /**
+   * The nodes somebody has folded shut, by row key.
+   *
+   * COLLAPSED RATHER THAN EXPANDED, so a step that appears while you are looking
+   * at the tree appears OPEN — a new save arriving folded under its reading
+   * would be the panel hiding the thing that just happened. Session-only: see
+   * the class docblock.
+   */
+  private readonly collapsed = signal<ReadonlySet<string>>(new Set());
+
   protected readonly multi = computed(() => this.tabs.panes().length > 1);
 
   /**
-   * The list as it is drawn: every document, with its editor tucked under it.
+   * The books this panel is about: a project is OPEN while one of its documents
+   * is, which is the existing ruling and unchanged (docs/WORKBENCH.md §6c,
+   * "Going home"). Closed books live on Home's shelf, not in the library.
+   *
+   * SEPARATE FROM `groups()` because the ensure effect above must not read a
+   * ledger to decide which ledgers to ask for. This is composed from the open
+   * tabs and main's catalogue and nothing else.
+   */
+  private readonly openProjects = computed<readonly ProjectSummary[]>(() => {
+    const paths = this.tabs.tabs().map((tab) => fold(tab.path));
+    return this.projects.items().filter((project) => project.problem === null
+      && paths.some((path) => path.startsWith(`${fold(project.dir)}/`)));
+  });
+
+  /**
+   * Every open tab as a drawable row, with its editor tucked under it.
    *
    * The column number is the pane's INDEX, which is what Ctrl+1…5 counts and
    * what a person reads off the screen left to right — not the pane's id, which
@@ -600,14 +693,19 @@ export class OpenDocumentsComponent {
        */
       const at = panes.findIndex((pane) => pane.activeTabId === tab.id);
       out.push({
+        ...blank,
         key: tab.id,
+        kind: 'document',
         tab,
         path: tab.path,
         title: tab.title,
         glyph: glyphFor(tab),
         tooltip: this.tooltip(tab),
-        indent,
-        grouped: false,
+        // AN EDITOR IS A FACE OF THE BOOK ABOVE IT, not a document beside it —
+        // one step in, wherever the row ends up. Inside a book's tree it is
+        // re-seated as a child of the root; out in the loose list it keeps this
+        // indent under the book it belongs to.
+        depth: indent ? 1 : 0,
         column: at < 0 ? null : at + 1,
         focused: at >= 0 && panes[at]!.id === focusedPaneId,
       });
@@ -626,178 +724,225 @@ export class OpenDocumentsComponent {
   });
 
   /**
-   * The open documents, gathered under the projects they came out of.
+   * ONE TREE PER OPEN BOOK — the panel, flattened for drawing.
    *
-   * A PROJECT IS "OPEN" WHEN ONE OF ITS DOCUMENTS IS, which is the only
-   * definition that does not need a second piece of state: the group appears
-   * because you opened something out of it and goes when you close the last of
-   * them. Nothing here decides what a project CONTAINS — `listProjects` does
-   * (electron/projects.ts), and this reads its answer, so the scan, the cast
-   * book and the translation are listed by the same code that lists them
-   * anywhere else.
+   * ── Why it is flattened here rather than drawn recursively ──────────────────
    *
-   * The order inside a group is the CATALOGUE'S, not the tabs': the live
-   * document first and then what has been made from it, which is stable while
-   * you open and close things. Ordering by tab would make the list reshuffle
-   * itself under the pointer every time a row was clicked.
+   * A recursive template would need a component or a self-referencing
+   * ng-template per level, and every gesture on a row — the drop insertion
+   * point, the menu, the middle-click — is written against a flat list of keys.
+   * Flattening at the source keeps ONE row template, one `track`, and one place
+   * that decides what is visible: a collapsed node simply does not emit its
+   * children, which is also what makes collapse cost nothing.
+   *
+   * ── What is claimed, and what is left over ──────────────────────────────────
+   *
+   * The catalogue's own files — the scan, the cast Book, a translation — are
+   * SPOKEN FOR BY THE TREE and are not drawn a second time as tabs. That is the
+   * whole point of the merge: the step is the document. Their tabs are still
+   * counted in `tabIds`, because closing the book has to close them and the
+   * loose list must not pick them up as strays from nowhere.
+   *
+   * What is genuinely left over — an HTML face, a copy somebody opened out of an
+   * archive folder — hangs off the root, because that is where it is on disk and
+   * a row nobody can close is worse than a row in an odd place.
    */
   protected readonly groups = computed<Group[]>(() => {
     const open = this.rows();
+    const collapsed = this.collapsed();
     const out: Group[] = [];
 
-    for (const project of this.projects.items()) {
-      if (project.problem !== null) continue;
+    for (const project of this.openProjects()) {
       const mine = open.filter((row) => fold(row.path).startsWith(`${fold(project.dir)}/`));
       if (mine.length === 0) continue;
 
-      /*
-       * THE HEADER NAMES THE BOOK, SO A ROW NAMES WHAT IT IS.
-       *
-       * These rows used to be FILENAMES, and every document in one project
-       * shares a stem by construction (`ProjectManifest.stem`) — so under a
-       * header already reading "Working Towards the Führer" the list said the
-       * same string twice more, in the spelling a filesystem needs rather than
-       * the one a person reads, with the only fact that differed hiding in the
-       * last four characters. "PDF" and "EPUB" is the whole of what a row here
-       * has left to say, and `documentNames` is where that is decided — shared,
-       * so the qualifier that tells two alike rows apart is the same qualifier
-       * the pickers use, and tested, so it can never quietly fall back to the
-       * filename again.
-       */
-      const names = documentNames(project.documents);
-      const nameOf = (at: number): string => names[at] ?? typeLabel(project.documents[at]!.kind);
+      const history = this.ledger.historyFor(project.dir);
+      const problem = this.ledger.problemFor(project.dir);
+      const standing = this.ledger.standingIn(project.dir)?.id ?? null;
 
-      const rows: Row[] = [];
-      const claimed = new Set<string>();
-      for (const [at, document] of project.documents.entries()) {
-        const already = mine.find((row) => fold(row.path) === fold(document.path));
-        if (already !== undefined) {
-          rows.push({ ...already, grouped: true, title: nameOf(at) });
-          claimed.add(already.key);
-          // An editor open on this book belongs directly under it, inside the
-          // group — the same nesting the flat list gives, one level further in.
-          //
-          // AND IT IS CALLED "HTML" HERE AND NOWHERE ELSE. Its tab is titled
-          // "<book> — HTML", which is right in the flat list where nothing else
-          // names the book; inside a group the header has said the book and the
-          // row above has said EPUB, so repeating both is two thirds of a row
-          // spent on what the reader can already see.
-          for (const row of mine) {
-            if (row.indent && row.tab?.sourceTabId === already.tab?.id) {
-              rows.push({ ...row, grouped: true, title: 'HTML' });
-              claimed.add(row.key);
-            }
-          }
+      /*
+       * THE PARENT CHAIN, INDEXED ONCE. `ProjectLedger.steps` is in creation
+       * order and `parseLedger` refuses a file where it is not, so the children
+       * of any node come out in the order they were made without a sort — which
+       * matters, because a sort here would be this component holding a second
+       * opinion about the shape of somebody's history.
+       */
+      const steps = history?.ledger.steps ?? [];
+      const kids = new Map<string, LedgerStep[]>();
+      let origin: LedgerStep | null = null;
+      for (const step of steps) {
+        if (step.parent === null) {
+          origin ??= step;
           continue;
         }
-        /*
-         * NOT OPEN, AND STILL LISTED. This is the whole point of the group: the
-         * book cast from the scan you are reading is one click away, and until
-         * now the only way to reach it was a screen you had to leave this one to
-         * see. A missing file is listed too, plainly marked and inert — it is a
-         * fact about the project, and hiding it would make a document that
-         * vanished off the disk indistinguishable from one that never existed.
-         */
-        rows.push({
-          key: `${project.key}:${document.path}`,
-          tab: null,
-          path: document.path,
-          title: nameOf(at),
-          glyph: document.kind === 'epub' ? '▤' : document.kind === 'pdf' ? '▦' : '≡',
-          /*
-           * AND THE FILE IS HERE, which is the other half of taking it off the
-           * row. A path is the answer to a question a person asks about once a
-           * month — where does this actually live, which of these is the copy my
-           * sync client keeps eating — and a tooltip is exactly the right price
-           * for it: free to the reader who is not asking, one hover for the one
-           * who is. The lead line says what pressing the row would do, because
-           * an available row's whole point is that it can be opened.
-           */
-          tooltip: document.missing
-            ? `${document.path}\nNot there any more.`
-            : document.kind === 'txt'
-              ? `${document.path}\nPlain text — Foundry has no tab that reads one.`
-              : `Open this ${nameOf(at)}\n${document.path}`,
-          indent: false,
-          grouped: true,
-          missing: document.missing,
-          openable: !document.missing && document.kind !== 'txt',
-          // Main is what knows where a file came from, so the dot rides on the
-          // document rather than being worked out from the path here.
-          managed: document.managed,
-          column: null,
-          focused: false,
-        });
+        const already = kids.get(step.parent);
+        if (already === undefined) kids.set(step.parent, [step]);
+        else already.push(step);
       }
 
       /*
-       * THE TERMINAL FILES — the exports, indented a step further in, under the
-       * documents they were made from.
+       * A STEP THE CHAIN DOES NOT REACH IS STILL DRAWN, hanging off the root.
+       *
+       * The ledger's rule is one parentless step and every other parent present
+       * (`LedgerStep.parent`, shared/types.ts), and `parseLedger` holds it — so
+       * this is a branch that should never run. It exists because the failure it
+       * prevents is the worst one a navigator has: a step that is in the file, is
+       * standing in the position, and is on nobody's screen, so it cannot be
+       * clicked, split or deleted. The flat list could not have this bug; a tree
+       * can, and it costs one filter not to.
+       */
+      const ids = new Set(steps.map((step) => step.id));
+      const stranded = steps.filter((step) => step !== origin
+        && (step.parent === null || !ids.has(step.parent)));
+
+      /*
+       * THE TERMINAL FILES — the exports, children of the root, at the Book's
+       * own indent and with no arrow.
        *
        * Main sends them newest first with a PROJECT-RELATIVE path
        * (`ProjectSummary.exports`), which is this codebase's oldest house rule
        * reaching the nav: a project holds `archive/Book.pdf`, `working/Book.pdf`
-       * and `final/Book.pdf` at once, so nothing may ever be matched or joined by
-       * its last segment. The path is rebuilt against the project's own directory
-       * — in the project's own separator, so a Windows tooltip does not read half
-       * in slashes — and it is never on screen as a name.
+       * and `final/Book.pdf` at once, so nothing may ever be matched or joined
+       * by its last segment. The path is rebuilt against the project's own
+       * directory — in the project's own separator, so a Windows tooltip does
+       * not read half in slashes — and it is never on screen as a name.
        *
        * An export whose file has gone is not listed at all: main drops those
        * before it sends the list, because `final/` is the user's own tray and a
        * row that opens nothing is worse than no row.
-       *
-       * BEFORE the unclaimed sweep below, because an export that is OPEN is a tab
-       * inside this project's folder and the sweep would otherwise draw it a
-       * second time as "a copy you opened" — one file, two rows, one of them
-       * lying about what it is.
        */
+      const claimed = new Set<string>();
+      const terminals: Row[] = [];
       for (const made of project.exports) {
         const path = joinIn(project.dir, made.file);
         const label = exportLabel(made.kind);
-        const open = mine.find((row) => fold(row.path) === fold(path)) ?? null;
-        if (open !== null) claimed.add(open.key);
-        rows.push({
+        const already = mine.find((row) => fold(row.path) === fold(path)) ?? null;
+        if (already !== null) claimed.add(already.key);
+        terminals.push({
+          ...blank,
           key: `${project.key}:final:${made.file}`,
-          tab: open?.tab ?? null,
+          kind: 'export',
+          tab: already?.tab ?? null,
           path,
-          title: `${label} · ${exportWhen(made.madeAt)}`,
+          title: label,
+          tally: whenOn(made.madeAt),
           glyph: made.kind === 'epub' ? '▤' : made.kind === 'pdf' ? '▦' : '≡',
           tooltip: made.kind === 'txt'
             ? `${path}\nPlain text — Foundry has no tab that reads one. Right-click to show it in the file manager.`
             : `Open this ${label}\nExported ${new Date(made.madeAt).toLocaleString()}\n${path}`,
-          indent: false,
-          grouped: true,
-          terminal: true,
+          depth: 1,
+          dir: project.dir,
           // A finished thing this app made, so it wears the dot when it is opened:
           // it lives in the library and nowhere the user filed it themselves.
           managed: true,
           openable: made.kind !== 'txt',
-          column: open?.column ?? null,
-          focused: open?.focused ?? false,
+          column: already?.column ?? null,
+          focused: already?.focused ?? false,
         });
       }
 
       /*
-       * A document open from inside the project folder that the catalogue does
-       * not list — an archived copy, something a user reached by hand. It is in
-       * the group because that is where it is on disk, and dropping it would be
-       * a row nobody could close.
+       * THE TABS THE TREE DOES NOT SPEAK FOR.
        *
-       * IT SAYS WHAT MAKES IT DIFFERENT, which is that the project does not
-       * claim it. Its tab is titled after the book, and under a header already
-       * reading the book's name that would be a row saying nothing at all —
-       * worse, a row indistinguishable from the catalogue's own row for the same
-       * kind. The old answer was the filename, which is the one thing this list
-       * is no longer allowed to fall back to; the honest answer is that this is
-       * a copy the reader went and opened themselves, with the path one hover
-       * away as always.
+       * An HTML face first, because it shares its book's path exactly and would
+       * otherwise be swallowed by the catalogue test one line below — one file,
+       * two tabs, and the one that is a separate document is the one that would
+       * have gone missing.
+       *
+       * AND IT IS CALLED "HTML" HERE AND NOWHERE ELSE. Its tab is titled
+       * "<book> — HTML", which is right in the loose list where nothing else
+       * names the book; inside a book's own tree the root above has already said
+       * it, so repeating it is two thirds of a row spent on what the reader can
+       * already see.
        */
+      const catalogue = new Set(project.documents.map((document) => fold(document.path)));
+      const extras: Row[] = [];
       for (const row of mine) {
         if (claimed.has(row.key)) continue;
-        const said = row.tab === null ? row.title
-          : row.tab.kind === 'editor' ? 'HTML'
-            : typeLabel(row.tab.kind);
-        rows.push({ ...row, grouped: true, title: qualify(said, null, 'a copy you opened') });
+        if (row.tab?.kind === 'editor') {
+          extras.push({ ...row, title: 'HTML', depth: 1, dir: project.dir });
+          claimed.add(row.key);
+          continue;
+        }
+        // A step already names this document. See the docblock: the merge is the
+        // whole point, and drawing it again as a file is the confusion §6c is
+        // about.
+        if (catalogue.has(fold(row.path))) {
+          claimed.add(row.key);
+          continue;
+        }
+        /*
+         * IT SAYS WHAT MAKES IT DIFFERENT, which is that the project does not
+         * claim it. Its tab is titled after the book, and under a root already
+         * reading the book's name that would be a row saying nothing at all. The
+         * old answer was the filename, which is the one thing this list is not
+         * allowed to fall back to; the honest answer is that this is a copy the
+         * reader went and opened themselves, with the path one hover away.
+         */
+        const said = row.tab === null ? row.title : typeLabel(row.tab.kind);
+        extras.push({
+          ...row,
+          title: qualify(said, null, 'a copy you opened'),
+          depth: 1,
+          dir: project.dir,
+        });
+        claimed.add(row.key);
+      }
+
+      // ── The tree itself, root first ──────────────────────────────────────
+      const rootKey = `${project.key}:root`;
+      const rootKids = origin === null
+        ? stranded
+        : [...kids.get(origin.id) ?? [], ...stranded];
+      const rootHasChildren = rootKids.length + terminals.length + extras.length > 0;
+      const rootOpen = !collapsed.has(rootKey);
+      const rows: Row[] = [{
+        ...blank,
+        key: rootKey,
+        kind: 'root',
+        // The project's directory, because Show in file manager on a book means
+        // the book's folder — and because the root names a book, not a file.
+        path: project.dir,
+        title: project.title,
+        glyph: origin === null ? '▦' : glyphForPayload(origin.payload),
+        tally: origin === null ? null : whenOn(origin.createdAt),
+        tooltip: this.rootTitle(project, origin, problem),
+        depth: 0,
+        dir: project.dir,
+        step: origin,
+        current: origin !== null && origin.id === standing,
+        stale: origin?.stale === true,
+        expanded: rootHasChildren ? rootOpen : null,
+      }];
+
+      if (rootOpen) {
+        const walk = (step: LedgerStep, depth: number): void => {
+          const under = kids.get(step.id) ?? [];
+          const key = `${project.key}:step:${step.id}`;
+          const shown = !collapsed.has(key);
+          rows.push({
+            ...blank,
+            key,
+            kind: 'step',
+            path: project.dir,
+            // THE READING IS "THE BOOK" AND NOT ITS LABEL, because that is what
+            // the row IS: the flowing document you read, curate and translate.
+            // Everything else says what main wrote when the step was made.
+            title: step.action === 'read' ? 'Book' : step.label,
+            glyph: glyphForStep(step),
+            tally: whenOn(step.createdAt),
+            tooltip: stepTitle(step, standing),
+            depth,
+            dir: project.dir,
+            step,
+            current: step.id === standing,
+            stale: step.stale === true,
+            expanded: under.length === 0 ? null : shown,
+          });
+          if (shown) for (const kid of under) walk(kid, depth + 1);
+        };
+        for (const step of rootKids) walk(step, 1);
+        rows.push(...terminals, ...extras);
       }
 
       out.push({
@@ -805,29 +950,30 @@ export class OpenDocumentsComponent {
         title: project.title,
         dir: project.dir,
         rows,
-        // What the header's ✕ would close, and what its label counts.
-        open: rows.filter((row) => row.tab !== null).length,
+        /*
+         * EVERY TAB IN THE BOOK, AND NOT EVERY TAB IN THE ROWS. The tree draws
+         * fewer rows than the project has open documents — the scan and the
+         * Book are steps now — so a close-the-book that walked the drawn rows
+         * would leave open exactly the two tabs the reader most wanted shut.
+         * This is also what keeps the loose list from picking them up.
+         */
+        tabIds: mine.map((row) => row.tab?.id).filter((id): id is string => id !== undefined),
       });
     }
     return out;
   });
 
   /**
-   * Everything open that no group claimed — a file opened from anywhere else.
+   * Everything open that no book claimed — a file opened from anywhere else.
    *
-   * BY TAB AND NOT ONLY BY KEY. An export row carries a key of its own
-   * (`<project>:final:<file>`) rather than the tab's, because the row exists
-   * whether or not anything opened it — so a group holding an OPEN export claims
-   * a tab under a key this filter would never have seen, and the document would
-   * be listed twice: once as the export it is, and once at the bottom of the
-   * panel as a stray file from nowhere.
+   * BY TAB AND NOT ONLY BY KEY. A tree row carries a key of its own and most of
+   * a book's tabs are not drawn as rows at all, so the tab ids a group holds are
+   * the only complete account of what it has spoken for.
    */
   protected readonly loose = computed<Row[]>(() => {
     const groups = this.groups();
     const keys = new Set(groups.flatMap((group) => group.rows.map((row) => row.key)));
-    const taken = new Set(groups.flatMap((group) => group.rows
-      .map((row) => row.tab?.id)
-      .filter((id): id is string => id !== undefined)));
+    const taken = new Set(groups.flatMap((group) => group.tabIds));
     return this.rows().filter((row) => !keys.has(row.key)
       && !(row.tab !== null && taken.has(row.tab.id)));
   });
@@ -844,28 +990,33 @@ export class OpenDocumentsComponent {
   }
 
   /**
-   * A click on any of the three kinds of row: reveal what is open, open what is
-   * not, and do nothing at all for a file this app has no tab for.
+   * A click on any kind of row.
    *
-   * The first two gestures are deliberately the same one. From the user's side
-   * both rows say "put this document in front of me", and whether that costs a
-   * tab or merely a focus change is this app's bookkeeping, not their question.
+   * A STEP MOVES THE POSITION and everything else follows: main resolves what
+   * that step shows and the panes are told (`ledger:go` → `showPosition`). It
+   * costs nothing, asks nothing and throws nothing away — the promise every
+   * history panel makes by looking like one, now made by the navigator itself.
+   *
+   * A FILE ROW puts a document in front of you: revealing it if it is open,
+   * opening it if it is not, and doing nothing at all for a file this app has no
+   * tab for. The first two are deliberately the same gesture — from the user's
+   * side both rows say "put this in front of me", and whether that costs a tab
+   * or merely a focus change is bookkeeping, not their question.
    *
    * ── AND IT REPLACES WHAT THE COLUMN WAS SHOWING ─────────────────────────────
    *
    * *"clicking another file will automatically close the one i was looking at and
    * open the one i just clicked, unless i pin the file by right-clicking the
-   * chrome-style tab at the top."* This panel is the list that ruling is about —
-   * it is where somebody browses a project's faces and its exports — so the
-   * `replace` flag is passed HERE and nowhere else. A drop, a finished job and a
-   * step's own document all join the strip instead, because none of them is a
-   * person saying "that one instead of this one".
-   *
-   * The displaced tab is closed through the ordinary close, so a document with
-   * unsaved work still gets its question and a "keep" leaves it in the strip
-   * beside the new one. A pinned one is not touched at all.
+   * chrome-style tab at the top."* This panel is the list that ruling is about,
+   * so the `replace` flag is passed HERE and nowhere else. A drop, a finished job
+   * and a step's own document all join the strip instead, because none of them is
+   * a person saying "that one instead of this one".
    */
   protected pickRow(row: Row): void {
+    if (row.kind === 'root' || row.kind === 'step') {
+      void this.stand(row);
+      return;
+    }
     if (row.tab !== null) {
       this.pick(row.tab);
       return;
@@ -876,15 +1027,55 @@ export class OpenDocumentsComponent {
   }
 
   /**
-   * Close every tab this project has open. Nothing on disk.
+   * Stand on the step this row names — the gesture that used to live on a Steps
+   * row in the inspector (docs/WORKBENCH.md §6c: the section moved here whole).
    *
-   * A COPY OF THE LIST FIRST, because closing mutates the very rows this is
+   * FREE, INSTANT AND UNCONFIRMED — one line of the manifest, no job, no
+   * rendering, no question asked.
+   *
+   * The row already being current is not a no-op worth guarding: main answers
+   * with the same ledger and the panel repaints to the same thing, and a click
+   * that did nothing is cheaper than a branch that has to be kept true.
+   */
+  private async stand(row: Row): Promise<void> {
+    if (row.dir === null || row.step === null) return;
+    // A position is a thing to LOOK at, so the workspace has to be on screen for
+    // it to mean anything — the same reason a document row navigates.
+    void this.router.navigateByUrl('/');
+    try {
+      await this.ledger.go(row.dir, row.step.id);
+    } catch (err) {
+      // Main's words. It refuses an id this project does not hold, which means
+      // the two sides are looking at different ledgers — not something to smooth
+      // over.
+      this.tabs.notice.set(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /** Fold a node shut, or open it. The click must not also stand on the row. */
+  protected toggle(event: MouseEvent, row: Row): void {
+    event.stopPropagation();
+    this.collapsed.update((shut) => {
+      const next = new Set(shut);
+      if (!next.delete(row.key)) next.add(row.key);
+      return next;
+    });
+  }
+
+  /**
+   * Close every tab this book has open. Nothing on disk.
+   *
+   * *"Right-click the import root → Close project."* Through the ORDINARY close,
+   * one tab at a time, so a document holding uncommitted work still gets its one
+   * question and a "keep" leaves it where it was. With the last of them gone the
+   * book leaves the library and the workspace shows its empty state — home.
+   *
+   * A COPY OF THE LIST FIRST, because closing mutates the very group this is
    * iterating: `groups()` is a computed over the tabs, so reading it inside the
    * loop would be reading a list that is being emptied underneath.
    */
   protected closeProject(group: Group): void {
-    const ids = group.rows.map((row) => row.tab?.id).filter((id): id is string => id !== undefined);
-    for (const id of ids) void this.tabs.close(id);
+    for (const id of [...group.tabIds]) void this.tabs.close(id);
   }
 
   /**
@@ -921,24 +1112,102 @@ export class OpenDocumentsComponent {
     }
   }
 
-  /** Right-click: the same three actions the row's own controls offer. */
+  /**
+   * "Open in split" — stand on that step, and put what it shows in a column of
+   * its own beside what is already there. Moved here from the inspector's Steps
+   * section with its reasoning intact (docs/WORKBENCH.md §6c).
+   *
+   * ── Two acts that have to arrive as one ─────────────────────────────────────
+   *
+   * WHAT A STEP SHOWS IS NOT KNOWN HERE. Main resolves it (`ledger:document-at`)
+   * and only for the position the project is standing ON, so there is no way to
+   * ask "what would that row show" without moving there first. So the intention
+   * is left with `TabsService` before the pointer moves, and the answer — which
+   * arrives asynchronously, inside the effect that watches the position — picks
+   * it up and opens into a new column instead of into the one in front.
+   *
+   * THE ROW ALREADY BEING CURRENT IS THE CASE THAT NEEDS SAYING. `go` on the
+   * position you are on produces the same ledger and the same picture, so nothing
+   * moves and nothing would ever consume that intention — the menu would appear
+   * to do nothing and then split the NEXT step somebody clicked. So that row asks
+   * the service to do it outright, and the flag is dropped rather than left lying
+   * for a move it was not set for.
+   */
+  private async openInSplit(row: Row): Promise<void> {
+    if (row.dir === null || row.step === null) return;
+    if (row.current) {
+      await this.tabs.splitAtPosition(row.dir);
+      return;
+    }
+    this.tabs.splitNextIn(row.dir);
+    try {
+      await this.ledger.go(row.dir, row.step.id);
+    } catch (err) {
+      this.tabs.forgetSplitIn(row.dir);
+      this.tabs.notice.set(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /**
+   * Delete this step. Main says what it costs, the app's own card asks, main
+   * does it. Moved here from the inspector's Steps ✕ (docs/WORKBENCH.md §6c),
+   * where it was a button on the row; it is behind the right-click now because a
+   * step row wears no ✕ — the visible ✕ in this panel closes or deletes a FILE,
+   * and one glyph meaning "and everything made from this" as well would be the
+   * most expensive ambiguity in the panel.
+   *
+   * Never offered on the root: deleting the import is deleting the book, and
+   * main refuses it by name anyway. A cancel is silence; a refusal is main's
+   * sentence, as written.
+   */
+  private async discard(row: Row): Promise<void> {
+    if (row.dir === null || row.step === null) return;
+    try {
+      /*
+       * THE BOOKS THIS IS ABOUT TO ERASE ARE CLOSED FIRST, between the confirm
+       * and the delete — the document delete's shape and its reason. Main
+       * refuses to unlink a working tree this window is still reading (it cannot
+       * be done on Windows and would leave half an unpacked book behind), so
+       * without this, deleting a translation whose book is open would meet a
+       * refusal one line after the user said yes. Main cannot do it: tabs are
+       * the renderer's.
+       */
+      await this.ledger.remove(row.dir, row.step.id, (files) => this.tabs.closeShowing(files));
+    } catch (err) {
+      this.tabs.notice.set(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /** Right-click: whatever this kind of row can be asked to do. */
   protected onMenu(event: MouseEvent, row: Row): void {
     event.preventDefault();
     event.stopPropagation();
     this.menu.set({ row, x: event.clientX, y: event.clientY });
   }
 
-  protected fromMenu(row: Row, action: 'reveal' | 'close' | 'delete'): void {
+  protected fromMenu(row: Row, action: MenuAction): void {
     this.menu.set(null);
-    if (action === 'reveal') {
-      void api?.reveal(row.path);
-      return;
+    switch (action) {
+      case 'reveal':
+        void api?.reveal(row.path);
+        return;
+      case 'close':
+        if (row.tab !== null) void this.tabs.close(row.tab.id);
+        return;
+      case 'close-project': {
+        const group = this.groups().find((one) => fold(one.dir) === fold(row.path));
+        if (group !== undefined) this.closeProject(group);
+        return;
+      }
+      case 'split':
+        void this.openInSplit(row);
+        return;
+      case 'discard':
+        void this.discard(row);
+        return;
+      case 'delete':
+        void this.remove(new MouseEvent('click'), row);
     }
-    if (action === 'close') {
-      if (row.tab !== null) void this.tabs.close(row.tab.id);
-      return;
-    }
-    void this.remove(new MouseEvent('click'), row);
   }
 
   protected close(event: MouseEvent, tab: Tab | null): void {
@@ -959,8 +1228,8 @@ export class OpenDocumentsComponent {
   // ── Dragging a row ───────────────────────────────────────────────────────
 
   protected onDragStart(event: DragEvent, tab: Tab | null): void {
-    // An available document has no tab to carry, and the workspace's drop
-    // handler is written against a tab id. Nothing to drag until it is opened.
+    // A step row has no tab to carry, and the workspace's drop handler is
+    // written against a tab id. Standing on the step is what puts it on screen.
     if (tab === null) {
       event.preventDefault();
       return;
@@ -995,12 +1264,13 @@ export class OpenDocumentsComponent {
     event.preventDefault();
     event.stopPropagation();
     /*
-     * A GROUPED ROW IS NOT AN INSERTION POINT. Its order is the catalogue's, so
-     * a line drawn above it would promise a move the redraw undoes a frame
-     * later. `none` rather than `move` says so with the cursor, before the drop
-     * — the refusal in `onDrop` is the sentence for somebody who tried anyway.
+     * A ROW INSIDE A BOOK IS NOT AN INSERTION POINT. Its order is the ledger's
+     * and the catalogue's, so a line drawn above it would promise a move the
+     * redraw undoes a frame later. `none` rather than `move` says so with the
+     * cursor, before the drop — the refusal in `onDrop` is the sentence for
+     * somebody who tried anyway.
      */
-    if (row.grouped) {
+    if (row.dir !== null) {
       if (event.dataTransfer) event.dataTransfer.dropEffect = 'none';
       this.before.set(null);
       this.landing.set(false);
@@ -1033,20 +1303,19 @@ export class OpenDocumentsComponent {
    * moving it would change a number nobody can see and leave the row exactly
    * where it was — a gesture that appears to work and does not.
    *
-   * A DOCUMENT IN A PROJECT CANNOT EITHER, and for the same reason one step out.
-   * Its position is the catalogue's — the live document first, then what has
-   * been made from it — and that order is redrawn from the project on every
-   * change, so a reorder would be undone before the pointer was lifted. The
-   * gesture that IS available to a grouped row is the one that goes somewhere
-   * else: dragging it onto the workspace still puts it in a column, because the
-   * workspace reads the same drag and nothing here refuses that half.
+   * A DOCUMENT IN A BOOK CANNOT EITHER, and for the same reason one step out.
+   * Its position is the ledger's and the catalogue's, and that order is redrawn
+   * from the project on every change, so a reorder would be undone before the
+   * pointer was lifted. The gesture that IS available is the one that goes
+   * somewhere else: dragging it onto the workspace still puts it in a column,
+   * because the workspace reads the same drag and nothing here refuses that half.
    */
   protected onDrop(event: DragEvent, row: Row | null): void {
     const id = event.dataTransfer?.getData(DOCUMENT_MIME);
     // Where it lands was worked out on the way in, and is READ BEFORE the drag
     // state is cleared — clearing first would drop every row at the end of the
     // list and quietly undo the insertion point the user was just shown.
-    const target = this.before() ?? (row === null || row.grouped ? null : this.landingFor(event, row));
+    const target = this.before() ?? (row === null || row.dir !== null ? null : this.landingFor(event, row));
     const onto = row;
     this.onDragEnd();
     if (!id) return;
@@ -1058,10 +1327,10 @@ export class OpenDocumentsComponent {
       this.tabs.notice.set('An HTML editor sits with the book it belongs to — drag the book instead.');
       return;
     }
-    if (onto?.grouped === true || this.groupedTab(moving.id)) {
+    if ((onto !== null && onto.dir !== null) || this.inBook(moving.id)) {
       this.tabs.notice.set(
-        'Documents in a project are listed in the order the project holds them, so they cannot be '
-        + 'reordered here. Drag one onto a column to open it there.',
+        'Documents in a book are listed in the order it holds them, so they cannot be reordered '
+        + 'here. Drag one onto a column to open it there.',
       );
       return;
     }
@@ -1070,18 +1339,18 @@ export class OpenDocumentsComponent {
     this.tabs.reorder(id, this.anchor(target));
   }
 
-  /** Is this open tab drawn inside a project group rather than in the loose list? */
-  private groupedTab(id: string): boolean {
-    return this.groups().some((group) => group.rows.some((row) => row.tab?.id === id));
+  /** Is this open tab one of a book's, rather than a loose file? */
+  private inBook(id: string): boolean {
+    return this.groups().some((group) => group.tabIds.includes(id));
   }
 
   /**
    * The tab a drop before `target` really lands in front of.
    *
    * An editor row is drawn under its book, so "before this editor" means before
-   * the GROUP — the book itself. Without this, dropping a document onto the top
-   * half of an editor row would put it between a book and its own HTML in the
-   * flat list, where the grouping would immediately draw it somewhere else.
+   * the book itself. Without this, dropping a document onto the top half of an
+   * editor row would put it between a book and its own HTML in the flat list,
+   * where the grouping would immediately draw it somewhere else.
    */
   private anchor(target: string | null): string | null {
     const tab = target === null ? null : this.tabs.byId(target);
@@ -1091,10 +1360,10 @@ export class OpenDocumentsComponent {
 
   /**
    * Which row a drop over this one lands in front of — by the half the pointer
-   * is in, over the UNGROUPED list.
+   * is in, over the LOOSE list.
    *
    * The loose rows are the only ones a reorder can touch (see `onDrop`), so they
-   * are the only ones this has to index into: a drop over a grouped row is
+   * are the only ones this has to index into: a drop over a book's row is
    * refused before it gets here.
    */
   private landingFor(event: DragEvent, row: Row): string | null {
@@ -1117,8 +1386,33 @@ export class OpenDocumentsComponent {
   }
 
   /**
-   * What the row says when you rest on it — the whole of what a document's
+   * What the root says on hover: the book, where it lives, and the one gesture
+   * that is only in the menu.
+   *
+   * MAIN'S REFUSAL RIDES HERE when the ledger will not parse. It used to be
+   * printed where the Steps rows would have been; with that section gone the
+   * inspector's standing strip says it in full, and this is the second place the
+   * same sentence reaches the same person — beside the book it is about, rather
+   * than only beside whatever document happens to be focused.
+   */
+  private rootTitle(project: ProjectSummary, origin: LedgerStep | null, problem: string | null): string {
+    const lines = [project.title, project.dir];
+    if (problem !== null) lines.push(problem);
+    else if (origin === null) lines.push('Reading this book’s history…');
+    else lines.push('Click to stand on the original — everything else was made from it.');
+    lines.push('Right-click to close this book.');
+    return lines.join('\n');
+  }
+
+  /**
+   * What a file row says when you rest on it — the whole of what a document's
    * flags mean, in the one place there is room to spell it out.
+   *
+   * THE FILE IS STILL HERE, and that is deliberate rather than a leftover:
+   * "which copy is this, actually" is a real question, asked rarely, and a hover
+   * is the right price for a rare question. It is one of exactly two places in
+   * this app where a path is still shown to a person; the other is the OS save
+   * dialog, where the thing being named really is a file.
    */
   protected tooltip(tab: Tab): string {
     if (tab.kind === 'editor') {
@@ -1132,37 +1426,46 @@ export class OpenDocumentsComponent {
   }
 }
 
+/** What a right-click can offer, across the four kinds of row. */
+type MenuAction = 'reveal' | 'close' | 'delete' | 'close-project' | 'split' | 'discard';
+
 /**
- * One drawn line of the list — a document that is open, or one that could be.
+ * One drawn line of the library.
  *
- * `tab` is what separates them, and everything else is drawn the same. An open
- * row carries its tab and can be revealed, closed, dragged and reordered; an
- * available one carries only what the catalogue knows and can be opened. The two
- * share a shape so the template can share a row.
+ * FOUR KINDS, ONE SHAPE. A `root` and a `step` are POSITIONS — clicking one
+ * moves where the book stands — and carry a `step`; an `export` and a
+ * `document` are FILES and carry a tab when something has opened them. The
+ * template draws them all and the gestures fork on `kind`, which is the one
+ * fact that decides everything else about a row.
  */
 interface Row {
-  /** Unique in the list: the tab's id, or the project's key and the path. */
+  /** Unique in the list: a tab id, or the book's key and what the row names. */
   key: string;
-  /** The open tab, or null for a document the project lists and nobody opened. */
+  kind: RowKind;
+  /** The open tab, for the rows that are files. Always null on a position. */
   tab: Tab | null;
+  /** A file for the rows that are files; the book's own directory for a position. */
   path: string;
   title: string;
   glyph: string;
   tooltip: string;
-  /** True for an editor drawn under its book. */
-  indent: boolean;
-  /** True when the row is inside a project group, which indents the whole run. */
-  grouped: boolean;
-  /**
-   * True for an EXPORT — a terminal file in `final/`, indented one step further
-   * under the documents it was made from and never a base for anything.
-   */
-  terminal?: boolean;
-  /** Available rows only: the file the catalogue lists is not on the disk. */
-  missing?: boolean;
-  /** Available rows only: false for a missing file and for `.txt`. */
+  /** How far in the tree. 0 for a root and for a loose file. */
+  depth: number;
+  /** The book this row belongs to. Null for a loose file, and only for that. */
+  dir: string | null;
+  /** The step a root or a step row names, when the history has arrived. */
+  step: LedgerStep | null;
+  /** The date on the right, for a row that is a moment in a book's history. */
+  tally: string | null;
+  /** True on the one row the book is standing on. */
+  current: boolean;
+  /** True for a step made from something that has been replaced since. */
+  stale: boolean;
+  /** Null when the row can never have children; otherwise whether it is open. */
+  expanded: boolean | null;
+  /** File rows only: false for a missing file and for `.txt`. */
   openable?: boolean;
-  /** Available rows only: whether the tab it opens wears the unsaved dot. */
+  /** File rows only: whether the tab it opens wears the unsaved dot. */
   managed?: boolean;
   /** 1…5 while it is on screen, counted left to right. Null when it is not. */
   column: number | null;
@@ -1170,19 +1473,97 @@ interface Row {
   focused: boolean;
 }
 
-/** A project, and every document in it — open or merely available. */
+type RowKind = 'root' | 'step' | 'export' | 'document';
+
+/**
+ * The fields every row has and most rows do not set.
+ *
+ * ONE DEFAULT AND NOT FOUR LITERALS: a row is built in five places here, and
+ * without this each of them would have to remember to say `stale: false` — which
+ * they would, until somebody added a field, and then exactly one of them would
+ * be missing it and exactly one kind of row would draw wrong.
+ */
+const blank = {
+  tab: null,
+  step: null,
+  tally: null,
+  depth: 0,
+  dir: null,
+  current: false,
+  stale: false,
+  expanded: null,
+  column: null,
+  focused: false,
+} satisfies Partial<Row>;
+
+/** One book, and the tree drawn for it. */
 interface Group {
   key: string;
   title: string;
   dir: string;
   rows: Row[];
-  /** How many of those rows are actually open — what the header's ✕ closes. */
-  open: number;
+  /** Every tab open inside this book — what Close book closes. */
+  tabIds: string[];
 }
 
 function glyphFor(tab: Tab): string {
   if (tab.kind === 'editor') return '</>';
   return tab.kind === 'epub' ? '▤' : '▦';
+}
+
+/**
+ * The root's glyph, from the import's own payload.
+ *
+ * BY EXTENSION AND NOT BY NAME. The house rule forbids matching a basename
+ * across directories; reading the last few characters of `archive/Book.pdf` to
+ * decide between two shapes is not matching anything, and it is the only fact
+ * about the original this panel needs.
+ */
+function glyphForPayload(payload: string): string {
+  const dot = payload.lastIndexOf('.');
+  const ext = dot < 0 ? '' : payload.slice(dot + 1).toLowerCase();
+  return ext === 'epub' ? '▤' : ext === 'txt' ? '≡' : '▦';
+}
+
+/**
+ * What a step LOOKS like in the tree — the action, at a glance.
+ *
+ * The reading wears the book's own mark because the reading IS the book; a save
+ * wears the pencil the app uses everywhere for "edited"; a translation wears the
+ * two ways it goes. Nothing here is load-bearing: the name beside it says the
+ * same thing in words, and the glyph is what makes a tree of twenty rows
+ * scannable.
+ */
+function glyphForStep(step: LedgerStep): string {
+  if (step.action === 'read') return '▤';
+  if (step.action === 'curate') return '✎';
+  if (step.action === 'translate') return '⇄';
+  return '▦';
+}
+
+/**
+ * What a step row says on hover — including the STALE REASON, which is the whole
+ * of why a dimmed row is dimmed.
+ *
+ * A step goes stale when something it was made from was replaced under it: the
+ * blocks a curation named by `(page, order)` mean different blocks after a
+ * re-read, and a translation of those blocks was a translation of paragraphs
+ * that have moved. It is a display state and not a deletion — the payload is
+ * still a true record of what was made, so the row still opens and still
+ * renders. Saying that on hover is what keeps a dimmed row from reading as a
+ * broken one.
+ */
+function stepTitle(step: LedgerStep, standing: string | null): string {
+  const full = new Date(step.createdAt).toLocaleString();
+  if (step.stale === true) {
+    return `${step.label} — ${full}. What this was made from has been replaced since, so it `
+      + 'describes an earlier pass over the pages. It still opens, exactly as it was recorded.';
+  }
+  if (step.id === standing) {
+    return `${step.label} — ${full}. You are standing here: this is what the panes show and `
+      + 'what the next thing you do is made from.';
+  }
+  return `${step.label} — ${full}. Click to stand here. Nothing after it is thrown away.`;
 }
 
 /**
@@ -1193,6 +1574,9 @@ function glyphFor(tab: Tab): string {
  * recognisably the thing they chose. A `pdf` under `final/` is never anything
  * else in this app — a real-text reprint is a `generated/` rendering and a step's
  * document, not an export — so the word is not a guess.
+ *
+ * AND IT IS THE ONLY PLACE IN THIS PANEL THE WORD "EPUB" APPEARS. The working
+ * document is the Book; EPUB means finished (docs/WORKBENCH.md §6c, Naming).
  */
 function exportLabel(kind: ProjectDocumentKind): string {
   if (kind === 'epub') return 'EPUB';
@@ -1202,16 +1586,16 @@ function exportLabel(kind: ProjectDocumentKind): string {
 
 /**
  * WHEN, in as few characters as a row can spare — the Steps section's rule, for
- * the Steps section's reason.
+ * the Steps section's reason, now applied to every row in the tree.
  *
- * The year is dropped for anything from this one, which is nearly every export
+ * The year is dropped for anything from this one, which is nearly everything
  * anybody looks at, and kept for the rest: two rows both reading "14 Aug" would
- * be this panel quietly claiming they were made together.
+ * be this panel quietly claiming they happened together.
  */
-function exportWhen(madeAt: number): string {
-  const at = new Date(madeAt);
-  const sameYear = at.getFullYear() === new Date().getFullYear();
-  return at.toLocaleDateString(undefined, sameYear
+function whenOn(at: number): string {
+  const on = new Date(at);
+  const sameYear = on.getFullYear() === new Date().getFullYear();
+  return on.toLocaleDateString(undefined, sameYear
     ? { day: 'numeric', month: 'short' }
     : { day: 'numeric', month: 'short', year: 'numeric' });
 }

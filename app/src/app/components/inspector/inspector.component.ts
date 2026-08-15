@@ -12,12 +12,7 @@ import {
 
 import { BLOCK_CATEGORIES, PDF_BLOCK_CATEGORIES, UNKNOWN_CATEGORY_COLOUR } from '@shared/categories';
 import { targetKey, type OverlayChapter } from '@shared/overlay';
-import type {
-  EpubChapter,
-  LedgerStep,
-  StepRow,
-  UncommittedCuration,
-} from '@shared/types';
+import type { EpubChapter, UncommittedCuration } from '@shared/types';
 
 import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';
@@ -77,129 +72,80 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
           <p class="frozen">{{ held.why }}</p>
         }
 
-        <!-- ── Steps ────────────────────────────────────────────────────── -->
+        <!-- ── Standing on ──────────────────────────────────────────────── -->
         <!--
-          THE RUNNING ORDER IS FIXED AND THIS IS THE TOP OF IT: Steps, then the
-          book's divisions (Contents for a cast book, Chapters for a scan — one
-          question asked of two kinds of document, so they share the one slot and
-          the slot does not move), then Category, then anything about a single
-          block. Sections that have nothing to say are still absent; what is fixed
-          is that a section never overtakes another one.
+          THE RUNNING ORDER IS FIXED AND THIS IS THE TOP OF IT: the standing
+          strip, then the book's divisions (Contents for a cast book, Chapters
+          for a scan — one question asked of two kinds of document, so they share
+          the one slot and the slot does not move), then Category, then anything
+          about a single block. Sections that have nothing to say are still
+          absent; what is fixed is that a section never overtakes another one.
 
           THE PANEL IS FURNITURE AND FURNITURE DOES NOT WALK. Almost everything
           here is conditional, and when the order was "whatever the guards happen
           to admit" the same section sat in a different place depending on what
           was focused and whether a block was picked — so every glance began by
-          re-finding it. Steps is first because it is the section somebody reaches
-          for most while moving through their history, and because it is the one
-          that belongs to the PROJECT rather than to whatever pane is in front:
-          it is the most nearly always-present thing in the panel, which is what
-          makes it the only honest anchor. Keep new sections BELOW these three.
+          re-finding it. Keep new sections BELOW these.
+
+          ── STEPS USED TO BE THIS SLOT, AND IT HAS LEFT THE PANEL ─────────────
+
+          It was an accordion of every step in the project, first in the running
+          order for the reasons above: the most nearly always-present thing here,
+          and the only one belonging to the BOOK rather than to whatever pane was
+          in front. That is exactly why it had to go. Two selectors were
+          pretending to be one — the left panel picked a file, this section
+          picked a position — and the user found the seam: *"i could have a
+          document open, the epub, but have the pdf import step selected, and id
+          never know that i just ran translate against the original pdf rather
+          than the generated epub."* The steps are the LIBRARY now, drawn as the
+          tree they always were, one selector on the left
+          (docs/WORKBENCH.md §6c; open-documents.component.ts holds the whole of
+          the reasoning and the rows).
+
+          WHAT STAYED IS WHAT WAS NEVER A SELECTOR: the one line saying where
+          this book is standing, and the Apply changes button that turns the
+          decisions on the page into a step. This side is the inspector in the
+          Final Cut sense — details and actions for the selected thing, never a
+          competing selection.
+
+          A STRIP AND NOT AN ACCORDION, because there is one line in it. An
+          accordion header over a single row would be furniture wrapped around
+          furniture, and it must not take a share of the panel's height the way
+          \`.accordion\` does — the sections below it need every pixel.
         -->
-        <!--
-          A LIST AND NOT A TREE, deliberately, and the whole design turns on it.
-          The steps form a parent chain — every one records which step it was made
-          FROM — but nobody wants to reason about a graph of their book; they want
-          to see what they have done and click back to any of it. So the rows are
-          in the order main sends them, which is creation order, and the ONE
-          concession to the tree is the quiet "from Read" that main puts on a row
-          whose parent is not the row above it. No rails, no indentation, no depth.
+        @if (projectDir() !== null) {
+          <section class="standing">
+            <div class="strip">
+              <span class="label">Standing on</span>
+              <span class="name" [title]="standingTitle()">{{ standingName() }}</span>
+            </div>
 
-          NOTHING HERE IS RE-DERIVED. The order and the annotation both arrive
-          composed (\`chronological\`, shared/ledger.ts) precisely so this template
-          cannot become a second implementation of the one rule that decides
-          whether a flat list is misleading about what was made from what.
-        -->
-        @if (projectDir(); as dir) {
-          <section class="accordion" [class.shut]="!stepsOpen()">
-            <button class="head" (click)="stepsOpen.set(!stepsOpen())">
-              <span class="twist">{{ stepsOpen() ? '▾' : '▸' }}</span>
-              <span class="label">Steps</span>
-              <span class="count">{{ stepRows().length }}</span>
-            </button>
-            @if (stepsOpen()) {
-              <div class="body">
-                @if (stepsProblem(); as reason) {
-                  <!-- Main's own sentence about a catalogue it would not read,
-                       drawn where the rows would have been. A section that went
-                       silently empty would be indistinguishable from a book
-                       nothing has happened to. -->
-                  <p class="hint">{{ reason }}</p>
-                } @else {
-                  <p class="hint">
-                    Everything that has been done to this book. Click any step to stand there —
-                    it costs nothing, and nothing after it is thrown away.
-                  </p>
-                }
+            <!-- Main's own sentence about a ledger it would not read. It used to
+                 be drawn where the step rows were; with the rows gone this is
+                 where it lands, because "nowhere" with no account of why would
+                 be the panel refusing to say what it knows. -->
+            @if (stepsProblem(); as reason) {
+              <p class="applying">{{ reason }}</p>
+            }
 
-                <ul>
-                  @for (row of stepRows(); track row.step.id) {
-                    <li
-                      class="step"
-                      [class.current]="row.step.id === standingId()"
-                      [class.stale]="row.step.stale === true"
-                      (contextmenu)="onStepMenu($event, row)"
-                    >
-                      <button class="pick step-pick" [title]="rowTitle(row)" (click)="stand(row)">
-                        <span class="dot"></span>
-                        <span class="what">
-                          <span class="name">{{ row.step.label }}</span>
-                          @if (row.from) {
-                            <!-- The entire concession to the tree. Only on the rows
-                                 where the flat list would otherwise be misleading. -->
-                            <span class="from">from {{ row.from }}</span>
-                          }
-                        </span>
-                        <span class="tally">{{ when(row.step) }}</span>
-                      </button>
-                      <!--
-                        NO ✕ ON THE ORIGIN. Deleting the import is deleting the
-                        project — everything else in the folder was made from it —
-                        and the project's own ✕ does that with its own ceremony and
-                        its own accounting of what it costs. Main refuses it by
-                        name as well; this is so nobody is offered the button.
-                      -->
-                      @if (row.step.parent !== null) {
-                        <button
-                          class="strike"
-                          title="Delete this step, and everything made from it"
-                          (click)="discard(dir, row)"
-                        >✕</button>
-                      }
-                    </li>
-                  }
-                  @if (stepRows().length === 0 && stepsProblem() === null) {
-                    <!-- Two states that look alike and are not: a book whose
-                         history has not arrived yet, and one that genuinely has
-                         none. Saying "nothing has happened to this book" while
-                         the answer is still in flight would be the panel
-                         asserting something it has not been told. -->
-                    <li class="none">
-                      {{ stepsRead() ? 'Nothing has been recorded for this book yet.' : 'Reading this book’s history…' }}
-                    </li>
-                  }
-                </ul>
-
-                <!--
-                  APPLY IS OFFERED WHERE THE STEP WILL APPEAR, which is most of
-                  what teaches what it does: press it and the row shows up two
-                  lines above. It appears only when there is something to apply
-                  (see unkept) rather than standing there dead — the whole
-                  reason it exists is that edits on the page were going nowhere,
-                  and a button that is always there says nothing about whether
-                  they have.
-                -->
-                @if (unkept(); as pending) {
-                  <div class="acts">
-                    <button
-                      class="act"
-                      title="Add these changes to the history as a step nothing later can change"
-                      (click)="applyChanges()"
-                    >Apply changes</button>
-                  </div>
-                  <p class="applying">{{ applyLine(pending) }}</p>
-                }
+            <!--
+              APPLY IS OFFERED BESIDE THE POSITION IT APPLIES TO, which is most
+              of what teaches what it does: press it and the step appears in the
+              library, under the row named directly above. It appears only when
+              there is something to apply (see unkept) rather than standing there
+              dead — the whole reason it exists is that edits on the page were
+              going nowhere, and a button that is always there says nothing about
+              whether they have.
+            -->
+            @if (unkept(); as pending) {
+              <div class="acts">
+                <button
+                  class="act"
+                  title="Add these changes to the history as a step nothing later can change"
+                  (click)="applyChanges()"
+                >Apply changes</button>
               </div>
+              <p class="applying">{{ applyLine(pending) }}</p>
             }
           </section>
         }
@@ -207,12 +153,13 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
         <!--
           EVERYTHING THIS PANEL SAYS ABOUT THE DOCUMENT, which needs one. The
           sections below are about a book that is open and readable or a scan
-          being corrected; Steps, above, is about the PROJECT, and a scan that has
-          never been in block view has one of those and none of these. Which is
-          the whole reason Steps sits outside this block rather than inside it —
-          it must hold the top of the panel in states where nothing down here
-          draws at all. The block closes at the brace marked "end of the
-          document's sections", which is the last thing in the panel.
+          being corrected; the standing strip, above, is about the BOOK, and a
+          scan that has never been in block view has one of those and none of
+          these. Which is the whole reason the strip sits outside this block
+          rather than inside it — it must hold the top of the panel in states
+          where nothing down here draws at all. The block closes at the brace
+          marked "end of the document's sections", which is the last thing in the
+          panel.
         -->
         @if (subject(); as panel) {
         <!-- ── Contents ─────────────────────────────────────────────────── -->
@@ -474,33 +421,15 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
         } <!-- end of the document's sections -->
 
         <!--
-          RIGHT-CLICK ON A STEP ROW — the second half of the user's rule about
-          opening steps: *"they can right-click a different step and click open,
-          and itll split the screens between the one they just opened and the one
-          they already had open."*
-
-          ONE ITEM, because there is one thing right-clicking a step is for. The
-          ordinary click already stands there and shows the document; ✕ is on the
-          row. What the menu adds is the arrangement — beside, rather than instead
-          — and a menu of one is honest where a menu padded out to three would be
-          two items nobody wants next to the one they came for.
-
-          The same scrim-and-card shape the documents list and the tab strips use.
-          There is one context-menu idiom in this app.
+          THERE IS NO CONTEXT MENU IN THIS PANEL ANY MORE. It held one item —
+          "Open in split" on a step row — which was the second half of the user's
+          rule about opening steps: *"they can right-click a different step and
+          click open, and itll split the screens between the one they just opened
+          and the one they already had open."* Step rows live in the library now,
+          and so does the menu, beside "Delete this step…" which used to be a ✕ on
+          the row (docs/WORKBENCH.md §6c). One context-menu idiom in this app, and
+          it is drawn where the rows it is about are.
         -->
-        @if (menu(); as open) {
-          <div class="menu-scrim" (click)="menu.set(null)" (contextmenu)="menu.set(null)"></div>
-          <div
-            class="menu"
-            role="menu"
-            [attr.aria-label]="'Actions for ' + open.row.step.label"
-            [style.left.px]="open.x"
-            [style.top.px]="open.y"
-            (keydown.escape)="menu.set(null)"
-          >
-            <button role="menuitem" (click)="openInSplit(open.row)">Open in split</button>
-          </div>
-        }
       </div>
     }
   `,
@@ -755,13 +684,12 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
     .words:focus { outline: none; box-shadow: var(--focus-ring); border-color: var(--accent); }
     .words:disabled { opacity: 0.6; }
 
-    /* ── Steps ─────────────────────────────────────────────────────────── */
+    /* ── The two things at the top that are not sections ───────────────── */
 
     /*
-      THE ONE THING IN THIS PANEL THAT IS NOT A SECTION. It is a state the whole
-      column is in — every control under it is dead — so it sits above them all,
-      in the warning colour the notice strip uses, and it does not scroll away
-      with any one section's rows.
+      A STATE THE WHOLE COLUMN IS IN — every control under it is dead — so it
+      sits above them all, in the warning colour the notice strip uses, and it
+      does not scroll away with any one section's rows.
     */
     .frozen {
       flex: 0 0 auto;
@@ -773,67 +701,44 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
       font-size: 11px; line-height: 1.45;
     }
 
-    .step { display: flex; align-items: center; }
     /*
-      THE POSITION ROW IS VISIBLY CURRENT, in the same accent and the same faint
-      wash the Category section marks its current row with. One word for "this is
-      the one you are on" across the whole panel; inventing a second is how a
-      palette stops meaning anything.
-    */
-    .step.current { background: var(--accent-faint); }
+      THE STANDING STRIP — the new fixed top of the panel, where the Steps
+      accordion used to be.
 
-    .step-pick { align-items: flex-start; gap: 7px; padding: 6px 8px; }
-    .dot {
+      \`flex: 0 0 auto\` is the whole difference from a section: it takes the
+      height of its own contents and never a share of the column, because it is
+      one line and a button that comes and goes, and giving it \`flex: 1 1 0\`
+      would hand a third of the panel to a sentence.
+    */
+    .standing {
       flex: 0 0 auto;
-      width: 7px; height: 7px; margin-top: 4px;
-      border-radius: 50%;
-      box-shadow: inset 0 0 0 1px var(--border-strong);
+      border-bottom: 1px solid var(--border-subtle);
     }
-    .step.current .dot { background: var(--accent); box-shadow: none; }
-
-    .what { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-    .step.current .name { color: var(--accent); font-weight: 500; }
     /*
-      The quiet "from Read", and quiet is the specification. It is the only
-      admission this list makes that the steps are a tree, and it appears on the
-      one row in a hundred where somebody stepped back and acted from an earlier
-      state — a project worked straight through carries none at all.
+      THE LABEL AND THE NAME ON ONE LINE, in the accordion headers' own
+      typography, so the top of the panel reads as furniture of the same make —
+      without the twist, because there is nothing to open.
     */
-    .from { font-size: 10px; font-style: italic; color: var(--text-tertiary); }
-
+    .strip {
+      display: flex; align-items: baseline; gap: 8px;
+      padding: 10px 12px 8px;
+    }
+    .strip .label {
+      flex: 0 0 auto;
+      font-size: 10px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--text-tertiary);
+    }
     /*
-      A STALE STEP IS DIMMED AND STILL CLICKABLE, which was the ruling. Its
-      payload is a true record of what was made — a translation of a bank that has
-      since been re-read still holds the blocks it translated — so it opens, it
-      renders, and only its currency is in question. The reason is on hover, where
-      an explanation nobody needs stays out of the way of a list.
+      THE STANDING STEP, IN THE ACCENT — the same word for "this is the one you
+      are on" that the library's current row uses, so the two panels are visibly
+      saying one thing about one position rather than two things about two.
     */
-    .step.stale .name { opacity: 0.55; }
-    .step.stale .tally { opacity: 0.55; }
-    .step.stale .dot { opacity: 0.4; }
-
-    /* Above the panel and below the dialogs; the scrim is what makes the next
-       click dismiss it exactly once. The documents list's menu, to the pixel. */
-    .menu-scrim { position: fixed; inset: 0; z-index: 1000; }
-    .menu {
-      position: fixed;
-      z-index: 1001;
-      min-width: 150px;
-      padding: 4px;
-      display: flex; flex-direction: column;
-      background: var(--bg-elevated);
-      border: 1px solid var(--border-default);
-      border-radius: var(--radius-md);
-      box-shadow: 0 10px 20px -6px rgba(0, 0, 0, 0.35);
+    .strip .name {
+      flex: 1; min-width: 0;
+      color: var(--accent); font-size: 12px; font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .menu button {
-      display: block; width: 100%;
-      padding: 6px 10px;
-      background: transparent; border: none; border-radius: var(--radius-sm);
-      color: var(--text-secondary);
-      font-size: 12px; text-align: left; cursor: pointer;
-    }
-    .menu button:hover { background: var(--bg-hover); color: var(--text-primary); }
   `],
 })
 export class InspectorComponent {
@@ -853,7 +758,6 @@ export class InspectorComponent {
   protected readonly categoryOpen = signal(true);
   protected readonly chaptersOpen = signal(true);
   protected readonly blockOpen = signal(true);
-  protected readonly stepsOpen = signal(true);
 
   /** Which chapter row is being renamed, and the text in its box. */
   protected readonly renamingHref = signal<string | null>(null);
@@ -1217,17 +1121,17 @@ export class InspectorComponent {
     await this.tabs.renameHeading(tab.id, chapter.href, label);
   }
 
-  // ── Steps ────────────────────────────────────────────────────────────────
+  // ── Standing on ──────────────────────────────────────────────────────────
 
   /**
    * The project the focused document belongs to, or null for a file opened from
    * somewhere this app has never imported.
    *
-   * THE SECTION IS ABOUT THE PROJECT AND NOT ABOUT THE TAB, which is why this is a
-   * separate question from `subject()`. A book's history is the same history
-   * whether you are looking at the scan, at the EPUB that was cast from it or at
-   * one of its translations — they are all one project — and a Steps section that
-   * came and went with the mode a pane happens to be in would be a history that
+   * THE STRIP IS ABOUT THE BOOK AND NOT ABOUT THE TAB, which is why this is a
+   * separate question from `subject()`. A book's position is the same position
+   * whether you are looking at the scan, at the flowing book cast from it or at
+   * one of its translations — they are all one project — and a strip that came
+   * and went with the mode a pane happens to be in would be a position that
    * belongs to a viewer rather than to a book.
    */
   protected readonly projectDir = computed<string | null>(() => {
@@ -1240,24 +1144,53 @@ export class InspectorComponent {
     return project === null || project.problem !== null ? null : project.dir;
   });
 
-  /**
-   * The rows, exactly as main composed them.
-   *
-   * NEVER SORTED AND NEVER ANNOTATED HERE. The order is creation order and the
-   * "from …" is set only where a row's parent is not the row above it; both
-   * decisions are made once, in `chronological`, and a template that made them
-   * again would be a second opinion about the shape of somebody's history.
-   */
-  protected readonly stepRows = computed<readonly StepRow[]>(() =>
-    this.ledger.historyFor(this.projectDir())?.rows ?? []);
-
-  /** Main's sentence for a ledger it would not read, drawn instead of rows. */
+  /** Main's sentence for a ledger it would not read, drawn under the strip. */
   protected readonly stepsProblem = computed<string | null>(() =>
     this.ledger.problemFor(this.projectDir()));
 
-  /** The step the pointer stands on — the row drawn as current. */
-  protected readonly standingId = computed<string | null>(() =>
-    this.ledger.standingIn(this.projectDir())?.id ?? null);
+  /**
+   * WHERE THIS BOOK IS STANDING, in one line.
+   *
+   * ── Why it says two things about a reading and one about everything else ────
+   *
+   * The library calls a read step "the Book", because in a tree of provenance
+   * that is what the node IS — the flowing document you read, curate and
+   * translate — and *"we shouldnt call the working files 'epub' until we
+   * export"*. The step's own label says something else and something useful:
+   * "Read (317 pages)", which is what was actually done and how much of it. A
+   * strip that said only "Book" would leave somebody standing on one of two
+   * readings with no way to tell which; one that said only "Read (317 pages)"
+   * would name a row the panel beside it calls something different. So it says
+   * both, in that order — the thing, then what was done to make it.
+   *
+   * THREE STATES THAT LOOK ALIKE AND ARE NOT: a ledger that refused to parse
+   * (the sentence below the strip says which), a history still in flight, and a
+   * book with a position. Saying "nowhere" while the answer is on its way would
+   * be the panel asserting something it has not been told.
+   */
+  protected readonly standingName = computed<string>(() => {
+    const dir = this.projectDir();
+    if (dir === null) return '';
+    if (this.ledger.problemFor(dir) !== null) return 'Nowhere';
+    const step = this.ledger.standingIn(dir);
+    if (step === null) return this.stepsRead() ? 'Nowhere' : 'Reading this book’s history…';
+    return step.action === 'read' ? `Book · ${step.label}` : step.label;
+  });
+
+  /**
+   * The strip on hover — the full timestamp, and where the rest of the story is.
+   *
+   * IT POINTS AT THE LIBRARY, because that is the panel that moves this. The
+   * strip is a readout and deliberately not a control: one selector
+   * (docs/WORKBENCH.md §6c), and it is on the left.
+   */
+  protected standingTitle(): string {
+    const dir = this.projectDir();
+    const step = dir === null ? null : this.ledger.standingIn(dir);
+    if (step === null) return 'Where this book stands. Click a step in the library to move it.';
+    return `${step.label} — ${new Date(step.createdAt).toLocaleString()}. This is what the panes `
+      + 'show and what the next thing you do is made from. Click a step in the library to move it.';
+  }
 
   /**
    * Why the block editor's controls are dead, or null — and IT IS ABOUT THE BLOCK
@@ -1334,141 +1267,6 @@ export class InspectorComponent {
     return pending.since === null
       ? `${what} — not in this book’s history yet. Applying adds a step you can come back to.`
       : `${what} — changed since “${pending.since}”. Applying adds a step of its own.`;
-  }
-
-  /**
-   * WHEN, in as few characters as a row can spare.
-   *
-   * The year is dropped for anything from this one, which is nearly every row
-   * anybody looks at, and kept for the rest — a project imported two years ago and
-   * read last week is a real thing, and two rows both reading "14 Aug" would be
-   * this panel quietly claiming they happened together.
-   */
-  protected when(step: LedgerStep): string {
-    const at = new Date(step.createdAt);
-    const sameYear = at.getFullYear() === new Date().getFullYear();
-    return at.toLocaleDateString(undefined, sameYear
-      ? { day: 'numeric', month: 'short' }
-      : { day: 'numeric', month: 'short', year: 'numeric' });
-  }
-
-  /**
-   * What a row says on hover — including the STALE REASON, which is the whole of
-   * why a dimmed row is dimmed.
-   *
-   * A step goes stale when something it was made from was replaced under it: the
-   * blocks a curation named by `(page, order)` mean different blocks after a
-   * re-read, and a translation of those blocks was a translation of paragraphs
-   * that have moved. It is a display state and not a deletion — the payload is
-   * still a true record of what was made, so the row still opens and still
-   * renders. Saying that on hover is what keeps a dimmed row from reading as a
-   * broken one.
-   */
-  protected rowTitle(row: StepRow): string {
-    const full = new Date(row.step.createdAt).toLocaleString();
-    if (row.step.stale === true) {
-      return `${row.step.label} — ${full}. What this was made from has been replaced since, so it `
-        + 'describes an earlier pass over the pages. It still opens, exactly as it was recorded.';
-    }
-    if (row.step.id === this.standingId()) {
-      return `${row.step.label} — ${full}. You are standing here: this is what the panes show and `
-        + 'what the next thing you do is made from.';
-    }
-    return `${row.step.label} — ${full}. Click to stand here. Nothing after it is thrown away.`;
-  }
-
-  /**
-   * Clicking a row. FREE, INSTANT AND UNCONFIRMED — one line of the manifest, no
-   * job, no rendering, no question asked. That is the promise every history panel
-   * makes by looking like one.
-   *
-   * The row already being current is not a no-op worth guarding: main answers with
-   * the same ledger and the panel repaints to the same thing, and a click that did
-   * nothing is cheaper than a branch that has to be kept true.
-   */
-  protected async stand(row: StepRow): Promise<void> {
-    const dir = this.projectDir();
-    if (dir === null) return;
-    try {
-      await this.ledger.go(dir, row.step.id);
-    } catch (err) {
-      // Main's words. It refuses an id this project does not hold, which means the
-      // two sides are looking at different ledgers — not something to smooth over.
-      this.tabs.notice.set(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  /** The open step context menu: which row it is about, and where it was asked for. */
-  protected readonly menu = signal<{ row: StepRow; x: number; y: number } | null>(null);
-
-  protected onStepMenu(event: MouseEvent, row: StepRow): void {
-    event.preventDefault();
-    event.stopPropagation();
-    this.menu.set({ row, x: event.clientX, y: event.clientY });
-  }
-
-  /**
-   * "Open in split" — stand on that step, and put what it shows in a column of
-   * its own beside what is already there.
-   *
-   * ── Two acts that have to arrive as one ─────────────────────────────────────
-   *
-   * WHAT A STEP SHOWS IS NOT KNOWN HERE. Main resolves it (`ledger:document-at`)
-   * and only for the position the project is standing ON, so there is no way to
-   * ask "what would that row show" without moving there first. So the intention
-   * is left with `TabsService` before the pointer moves, and the answer — which
-   * arrives asynchronously, inside the effect that watches the position — picks
-   * it up and opens into a new column instead of into the one in front.
-   *
-   * THE ROW ALREADY BEING CURRENT IS THE CASE THAT NEEDS SAYING. `go` on the
-   * position you are on produces the same ledger and the same picture, so nothing
-   * moves and nothing would ever consume that intention — the menu would appear
-   * to do nothing and then split the NEXT step somebody clicked. So that row asks
-   * the service to do it outright, and the flag is dropped rather than left lying
-   * for a move it was not set for.
-   */
-  protected async openInSplit(row: StepRow): Promise<void> {
-    this.menu.set(null);
-    const dir = this.projectDir();
-    if (dir === null) return;
-    if (row.step.id === this.standingId()) {
-      await this.tabs.splitAtPosition(dir);
-      return;
-    }
-    this.tabs.splitNextIn(dir);
-    try {
-      await this.ledger.go(dir, row.step.id);
-    } catch (err) {
-      this.tabs.forgetSplitIn(dir);
-      this.tabs.notice.set(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  /**
-   * The ✕. Main says what it costs, the app's own card asks, main does it.
-   *
-   * Never offered on the origin (the template does not draw the button) and
-   * refused by name there anyway. A cancel is silence; a refusal is main's
-   * sentence, as written.
-   */
-  protected async discard(dir: string, row: StepRow): Promise<void> {
-    try {
-      /*
-       * THE BOOKS THIS IS ABOUT TO ERASE ARE CLOSED FIRST, between the confirm and
-       * the delete — the document delete's shape and its reason. Main refuses to
-       * unlink a working tree this window is still reading (it cannot be done on
-       * Windows and would leave half an unpacked book behind), so without this,
-       * deleting a translation whose EPUB is open would meet a refusal one line
-       * after the user said yes. Main cannot do it: tabs are the renderer's.
-       *
-       * WITHOUT ASKING, and returned rather than voided so the delete waits for
-       * this window to let go: the delete's own card is the question and it has
-       * already been answered yes.
-       */
-      await this.ledger.remove(dir, row.step.id, (files) => this.tabs.closeShowing(files));
-    } catch (err) {
-      this.tabs.notice.set(err instanceof Error ? err.message : String(err));
-    }
   }
 
   /**
