@@ -1,195 +1,270 @@
-# The derived book — one truth, every output a projection
+# The derived book — the settled architecture, and the plan to build it
 
-DRAFT for review, 2026-08-15. Not build-ready: the decisions marked ⚖ are the
-user's to confirm. Grounded in a full trace of the assembler, the EPUB editors,
-`history.ts`, `epub-final` and the translate engine; file:line citations are in
-the scout notes this distils. Builds on `docs/STEP-LEDGER.md`,
-`docs/BANK-LIFECYCLE.md`, `docs/TRANSLATION-STEPS.md` as landed.
-
-**The proposition, in one paragraph.** The readings bank is the only truth a
-book has. Everything else — the curated book, the translation, the simplified
-edition, the EPUB, the txt, the facsimile PDF — is a projection computed from
-it by deterministic passes plus recorded human decisions. Decisions are
-recorded against SOURCE BLOCK ADDRESSES, so a decision made anywhere applies
-everywhere; per-page truth is never destroyed, so the facsimile is never lost;
-and "advanced operations" (translate, simplify) are per-block text records
-keyed to the same addresses, which is what makes ten translations ten cheap
-projections instead of ten forked books.
+Settled with the user 2026-08-15. This document is the handoff: it carries the
+whole design so a fresh session can build from it. It supersedes the earlier
+draft of this file and, where they disagree, every older document. Background
+that still binds: `docs/STEP-LEDGER.md` (the step model),
+`docs/BANK-LIFECYCLE.md` (banks swap on success, per-step paths, per-step
+generations), `docs/TRANSLATION-STEPS.md` (translate steps, the pipeline —
+which §6 below retires in place). The scout trace grounding the facts here
+(assembler, editors, `history.ts`, `epub-final`, translate extraction) is in
+the session notes; every "today the code does X" claim below was verified
+against the tree at commit `f03a50c`.
 
 ---
 
-## 1. What the trace established (facts, not design)
+## 1. The model, in one page
 
-1. **The overlay already applies before everything.** Strikes, recategorisations
-   and text overrides land on parse-time blocks `(page, order, part)` one line
-   after parsing, before any merge, reflow or emission. Every output format is
-   downstream of the curated block list. This is the foundation and it is
-   already right.
+**The readings bank is the only truth a book has.** Everything else is a
+projection: computed from the bank by deterministic passes, plus recorded
+human decisions, plus recorded transform answers.
 
-2. **A cross-page paragraph is NOT one block.** The halves keep separate
-   `(page, order)` identities to the end; the join happens as string surgery on
-   the emitted `<p>` inside chapter-body building. `part` is the markdown
-   sub-split index, not a cross-page part. Consequences: each half is
-   separately strikeable (striking one drops half a paragraph), and the merged
-   paragraph's emitted element carries only the FIRST half's stamp.
-
-3. **The join is deterministic given bank + PDF, not bank alone.** The textual
-   test (`continuesTextually`) is bank-pure; the fallback (`carriesOver`)
-   samples the page raster's ink extent at the pinned DPI. Same bank + same
-   PDF → same joins. No model, no randomness.
-
-4. **Two identity spaces exist and do not line up.** `(page, order, part)`
-   addresses a parse-time block (the overlay's space). `data-bf-id = p<page>-<n>`
-   addresses an emitted ELEMENT — a per-page counter that shifts whenever a
-   strike, a recategorisation or a merge changes what is emitted before it.
-   The one place both are in hand at once is the emitter's `stamp()`.
-
-5. **EPUB edits are already operations — in the wrong address space.** The
-   in-place block editor records `{member, target, field, before, after}` rows
-   (fields: cut, category, html, note-cut, nav-label, page-heading) into
-   `history/<tree>.json`, generation-bound, replayable. `target` is the
-   emitted-element id, so the rows die with the working tree. The raw textarea
-   editor is the one write that can be anything at all, and is deliberately
-   outside the ledger.
-
-6. **Save never applies cuts.** The app's Save repacks the working tree
-   verbatim — `data-bf-cut` marks included. `epub-final`, the engine command
-   that removes cut elements and tidies orphaned notes/nav, is never spawned by
-   the app. `recordFinal` records `manifest.final` only; no ledger step. The
-   step kind `'edit'` exists in the type and is constructed nowhere.
-
-7. **The translation unit today is an XHTML byte range.** `findBlocks` keys on
-   `data-bf-cat` in an emitted chapter; masking protects inline apparatus
-   (noterefs, `<sup>`, pagebreak spans, formatting tags). The per-block text
-   *before* emission (`DotsBlock.text`) is plain text with markdown and
-   superscript digits — no markers exist yet at that stage. The translation
-   bank keys on the MASKED text hash.
-
----
-
-## 2. The design
-
-### 2.1 Join groups — the assembled block becomes a first-class unit
-
-A new deterministic pass, hoisted from the emitter, runs after overlay
-application and produces the book's **join groups**: each group a list of
-parts `[(page, order, part), …]`, almost always length 1, length ≥2 exactly
-where today's emitter would have joined paragraphs. The emitter then consumes
-groups instead of re-deriving joins, so the grouping and the rendering cannot
-disagree.
-
-- The group is the unit the UI strikes, the unit translation translates, and
-  the unit a text override overrides. Striking a group strikes all its parts
-  (the overlay stays part-addressed on disk — no format change — the UI just
-  stops offering half a paragraph as a target).
-- The grouping is pinned by tests as part of the contract: same bank + same
-  PDF + same overlay → same groups. A version that changes the join rule
-  changes groups DETECTABLY (records carry their parts; a record whose parts
-  no longer describe a group is stale, never misapplied).
-- ⚖ **Decision**: the block editor's display should show a spanned group as
-  one selectable thing across the page boundary. (Recommended; the alternative
-  — keep half-paragraph striking — preserves today's behaviour but makes the
-  "strike it everywhere" promise subtly false at page turns.)
-
-### 2.2 Transforms — translation (and simplify, and whatever is next) as records
-
-A transform run consumes join groups and produces **records**:
+**Two sources, forked at the start, both trustworthy, mutually incompatible:**
 
 ```
-{ parts: [(page, order, part), …],   ← which source blocks this is about
-  generation,                        ← dies with a re-read, like every decision
-  key,                               ← hash of (transform, params, source text)
-  text }                             ← the transformed text, model-dialect
+                       readings bank  (per-page model answers — the truth)
+                        /          \
+        facsimile PDF              REFLOW (deterministic, bank-only)
+        (paginated branch,          → the flowing HTML base
+         terminal: produce            (paragraphs joined, hyphens fixed,
+         facsimile and stop)           pagination erased, provenance kept)
+                                          |
+                                    ops + transforms (the ledger)
+                                          |
+                                    Generate, from any step
+                                          → the final document
 ```
 
-- Source text for the model is the group's merged, dehyphenated, reflowed
-  plain text — complete thoughts, no OCR artifacts — with a TEXT-LEVEL mask
-  for what must survive verbatim (superscript note digits, markdown emphasis;
-  the design successor of `maskBlock`, one level earlier).
-- The existing question-keyed bank remains the cost layer: same text, same
-  params → cache hit, across branches and re-reads alike.
-- Records per language/transform live beside the reading
-  (`readings/<key>.<tag>.records.jsonl` — exact naming at build time), owned
-  by their step, swept with it, seeded by copy exactly as translation banks
-  are today.
-- **Strikes are never in the records.** Strike a group — from the source view
-  or while reading any translation — and the strike lands in the overlay at
-  the parts; every projection drops the group on next render. This is the
-  "one strike applies to all translations" property, and it holds because
-  nothing downstream stores its own copy of the decision.
-- ⚖ **Decision**: translated-text OVERRIDES (fixing an awkward sentence in
-  the Hungarian) are per-record, stored with that language's records; source
-  text overrides invalidate the record (text changed → key changed → re-ask).
-  Deletes/restores/categories are always source-level.
-- Rendering a transform = the same emitter, fed the records' text instead of
-  the groups' text, through the same inline pass (notes, pagebreaks, ids) —
-  which is what retires the EPUB round-trip: `translate` stops parsing
-  emitted books and starts answering for groups. Reflow outputs only (epub,
-  txt); the facsimile belongs to the source language, permanently.
-
-### 2.3 The id bridge — EPUB edits move into the source address space
-
-The emitter's `stamp()` — the one place both identities exist — additionally
-writes a **manifest of `data-bf-id → parts`** beside the rendering. Then:
-
-- The in-place editor's ops (cut, category, html, note-cut) are recorded
-  against PARTS via the bridge, into the overlay/decision system, instead of
-  against emitted ids into `history/<tree>.json`. A cut in the book view IS a
-  strike; a recategorisation in the book view IS the overlay's category; an
-  html edit becomes the group's text override (word-level validation already
-  exists and comes along).
-- Ops recorded at source level survive re-renders, re-casts and format
-  changes by construction — the whole reason `history.ts` needed generation
-  archaeology disappears for them.
-- `history/<tree>.json` then holds only what cannot map upstream: nav-label
-  and page-heading edits (document-level facts of one rendering), and nothing
-  else. ⚖ **Decision**: the raw textarea editor stays as the escape hatch —
-  its writes are outside provenance, marked as such (the working tree becomes
-  "derived + your hand edits"), OR it is retired. Recommended: keep it,
-  labelled honestly; retiring it costs real capability.
-
-### 2.4 Save applies the cuts — the `epub-final` gap closes
-
-Independent of everything above and wanted regardless: the app's Save runs
-`epub-final` over the working tree into the chosen destination (the engine
-command exists, takes a directory, and is spawned like any other), so a saved
-book no longer contains every block the user cut, merely marked. The repack-
-verbatim path remains for "save the working copy as-is" if a second verb is
-wanted (⚖ — recommended: one verb, cuts applied; the marks are an
-implementation detail no reader should ever see).
-
-### 2.5 What this retires, eventually
-
-- `translate`'s EPUB parsing/masking/splicing (§2.2 renders records instead).
-- `history.ts`'s html/cut/category rows and their generation archaeology
-  (§2.3 moves them upstream); the file stays for nav/page-heading rows.
-- The two-stage Generate pipeline's intermediate EPUB (the translate stage
-  stops needing an EPUB input at all). The pipeline shipped and works; it is
-  the bridge, not the destination.
+- **The PDF has exactly one function: produce the facsimile.** No PDF-surface
+  editing now (maybe down the line). Per-page geometry belongs to the source
+  language and to that branch alone.
+- **All work happens on the flowing HTML base.** It is laid out exactly as the
+  EPUB will be — an EPUB is effectively HTML — so the user edits the thing
+  they will get. Deletions, text edits, joins, chapter markers: all made on
+  the flowing page, all recorded as ops.
+- **Save adds to the ledger; Generate executes it.** A save is a curate step
+  holding the ops as they stand. Generate, from WHICHEVER step the user
+  selects — the three block deletions, the translate step, or all the way
+  back at facsimile production — replays that step's ancestry and produces
+  the FINAL document in the requested format: ops applied, cuts really
+  removed, footnotes tidied, zipped, opened for viewing. Generate is the one
+  materialization verb; there is no separate "save as final".
 
 ---
 
-## 3. Sequencing (proposal)
+## 2. The reflow — bank → flowing base
 
-1. **Join groups** (engine): the pass, the contract tests, the emitter
-   consuming groups. No behaviour change to any output.
-2. **Group-aware striking** (app): the block editor treats a group as one
-   target. Small, visible, independently shippable.
-3. **Cuts-on-save** (app): the `epub-final` gap. Independent of everything.
-4. **Records + text-level mask** (engine): translation as records; `translate`
-   gains the bank→bank mode; the app's pipeline switches to it.
-5. **The id bridge** (engine emitter + app): EPUB in-place ops land upstream.
-6. **Simplify** (or the next transform): arrives nearly free as a second
-   params set on §2.2's machinery — the proof the abstraction earned itself.
+Runs as soon as the reading lands ("as soon as it's placed by the vlm").
+Deterministic and **bank-only** — this is a hard ruling:
 
-Each phase lands green through the five gates; 1 and 3 can start the moment
-this draft is confirmed.
+**THE INK TEST IS DEAD.** Today's cross-page paragraph join falls back to
+sampling the page raster's ink extent (`carriesOver`,
+`src/vlm/dots-book.ts:1142`). The user's ruling: *"the ink test is not
+trustworthy — footnotes are often at the bottom of pages. We rely on the vlm
+to tell us or do it mostly deterministically. Too many eggs in one basket."*
+So the reflow joins on what the bank says, or does not join at all:
+
+- **Join rule**: the textual test only — previous block does not end in
+  terminal punctuation, next page's first prose block opens lowercase
+  (`continuesTextually`, `src/vlm/dots.ts:681`), plus the hyphen-carry case.
+  Both are pure functions of banked text.
+- **Ambiguous cases do not join.** The cost is an occasional paragraph seam
+  at a page turn. The fix is a **manual join op** — the user sees the seam on
+  the flowing page, joins it, and the ledger records labour like any other
+  decision. Machine passes are conservative; judgment is recorded, never
+  guessed.
+- Dehyphenation stays as built (`BookLexicon`, bank-pure). Running-head and
+  page-furniture suppression stays. `consumeMarkdown` sub-splits stay.
+- **Pagination is erased as structure; provenance is kept as metadata.**
+  Every flowing block remembers its source parts `[(page, order, part), …]`.
+  Invisible in the text; it is what keeps "which page did this come from"
+  answerable, keeps records and ops stable, and keeps a future PDF-side
+  feature possible.
+- **Footnotes go to the end of the chapter** (the emitter already does this;
+  the reflow owns it now).
+- The flowing base is a REGENERABLE projection (bank + join ops → base), not
+  a payload. The read step stays the payload-bearing row; the base is
+  rebuilt deterministically whenever needed and may be cached.
+
+**Chapters are proposed by the machine and owned by the user.** Detection
+seeds the markers (today's `proposeSections`); the user approves or redefines
+them, and redefining must be EASY and FAST because *"they'll likely have to
+do it a lot — it doesn't often get it exactly right."* Chapter set/move/
+remove are first-class ops on the flowing page (the overlay's `chapters`
+spine already exists and carries over as their record).
 
 ---
 
-## 4. Open questions for review (the ⚖ list, gathered)
+## 3. Ops — every edit is a ledger entry
 
-1. Spanned groups as one selectable unit in the block editor? (Recommended: yes.)
-2. Translated-text overrides per-record, source overrides invalidate? (Recommended: yes.)
-3. Raw textarea editor: keep as labelled escape hatch, or retire? (Recommended: keep.)
-4. Save: one verb with cuts applied, or two verbs? (Recommended: one.)
+The op vocabulary IS the editor's vocabulary. Everything the user can do to
+the flowing page is one of these, keyed by source parts, recorded in the
+live decision set (today's overlay, generalized), snapshotted by a save:
+
+| op | notes |
+|---|---|
+| delete block / restore block | the strike, as today |
+| edit block text | source-level: invalidates that block's transform records (the source changed → re-asked) |
+| edit transformed text | per-record, per-language: fixing an awkward sentence in the Hungarian touches the Hungarian only |
+| set category | as today |
+| join blocks | the manual paragraph join across a seam (§2) |
+| set/move/remove chapter marker | the user owning the spine (§2) |
+| nav label / heading text | document-level ops, same ledger |
+
+- Deletes, restores, categories, joins, chapters: **source-level, universal**
+  — made while reading any translation, applied to every projection, because
+  nothing downstream stores its own copy of a decision.
+- **The raw textarea editor is retired** (user ruling). A freeform byte
+  editor has nothing to write to when the surface is derived. The in-place
+  block editor's machinery (word-level validation, `refuseUnlessWordEdit`)
+  survives as the text-edit op's guard.
+- Undo/redo is **in-memory, per session**; commits are the durable history
+  (NEXT-WORK §6, already specced — the close-with-uncommitted-corrections
+  dialog that makes it safe is built and landed). `history.ts` and the
+  working-tree persistence retire WITH the old editor, not before it.
+
+---
+
+## 4. Steps and Generate — the loop, stated by the user
+
+*"If the user translates and then deletes 3 blocks, then saves: the translate
+step is logged, and the save-changes step is logged with three removals. If
+they click Generate sitting on that step, it generates a document that has
+been translated (that happened before the deletions) and has the deletions
+applied. Generate produces the final document they intend to use — the full
+record of what they did is applied, and it's zipped and prepared for
+download/use/viewing."*
+
+This is the step model as built (`STEP-LEDGER.md`), completed:
+
+- Every step keeps its identity rules, retention, staleness, per-step
+  payloads and banks, and the replace/branch landing machinery — all landed
+  this week, all kept.
+- **Facsimile production is a generate-able point too**: standing at the
+  start and generating produces the facsimile PDF. Reflow-descended
+  positions produce reflowed formats (epub/txt). Translate-descended
+  positions produce the translation. No step picker — the row is the picker,
+  as ruled.
+- **Generate's output is FINAL**: ops executed, deleted blocks really absent
+  (not marked — the `data-bf-cut`-marks-survive-Save gap closes here),
+  orphaned footnotes and nav entries tidied (`epub-final`'s logic runs as
+  part of materialization), zipped, opened. The queue rules stand: a
+  generate that can spend model time (a transform with cache misses) is
+  held; a pure replay runs at once.
+
+---
+
+## 5. Transforms — translation, simplify, whatever is next
+
+A transform consumes the flowing base's blocks (complete thoughts, no OCR
+artifacts — the reflow guarantees it) and produces **records**:
+
+```
+{ parts: [(page, order, part), …], generation, key, text }
+```
+
+- `key` = hash of (transform, params, masked source text) — the existing
+  question-keyed bank remains the cost layer: unchanged text is never asked
+  twice, across branches, saves, and re-generates.
+- Masking moves to text level (the successor of `maskBlock` one stage
+  earlier): superscript note digits and emphasis survive verbatim.
+- Records live per step (`readings/<key>.<tag>.records.jsonl`-shaped), owned
+  by their step, swept with it, seeded by copy on a branch — all exactly the
+  bank lifecycle already built.
+- Strikes are never in the records; a strike is source-level and every
+  language drops the block on replay.
+- Translate-of-translate chains and showing translated text on the flowing
+  page both fall out of block-keyed records for free.
+- Transforms output reflowed formats only. (`TRANSLATION-STEPS.md`'s
+  EPUB→EPUB pipeline shipped and works; it is the bridge and §6's phase D
+  retires it.)
+
+---
+
+## 6. The plan — phases for build agents
+
+Rules of engagement (unchanged all week): agents never commit — the lead
+verifies and commits; five gates before any report (`bun test`; root
+`bunx tsc --noEmit`; from `app/`: `tsconfig.electron.json`,
+`tsconfig.app.json`, `bunx ng build`); long WHY comments in the codebase's
+voice; escape backticks as \` in Angular template prose; never a raw control
+byte (write ` `); never match basenames across directories; pure logic
+in `app/shared/` for bun tests. Read the docs named at the top before
+writing a line.
+
+**Ordering constraint that shapes everything: the current PDF block editor is
+the only editing surface until the flowing surface exists.** Build the new
+surface first; demote the PDF view after. Never leave a gap where nothing
+can edit.
+
+- **Phase 0 — undo goes in-memory** (small, standalone, fully specced in
+  NEXT-WORK §6): delete `overlays/<key>.ledger.json` persistence and the
+  `overlay:ledger-load/save` IPC; stacks in-memory, fresh per open and per
+  generation change, NOT per position move; `history.ts` untouched (it
+  retires later, in phase E, not now). Deletes code the later phases would
+  otherwise have to carry.
+
+- **Phase A — the reflow pass (engine)**: bank → flowing blocks with
+  provenance; bank-only joins (ink test removed); furniture suppression,
+  dehyphenation, footnote collection, chapter seeds — hoisted from the
+  emitter into a pass that PRODUCES the base rather than a side effect of
+  writing XHTML. Contract tests: same bank → same base, byte for byte.
+  The emitter consumes the base (no output change expected — pin with
+  fixture comparisons, EXCEPT joins that only the ink test made, which now
+  stay split; count and log them).
+
+- **Phase B — the flowing surface (app)**: render the base in a tab; the op
+  vocabulary of §3 wired as gestures (delete/restore, text edit with the
+  word-level guard, category, join, chapter markers); ops recorded against
+  source parts in the live decision set; in-memory undo; Save = the existing
+  curate commit. The PDF view keeps its editor UNTIL this lands (constraint
+  above), then phase E demotes it.
+
+- **Phase C — Generate materializes anywhere**: any step → final document;
+  facsimile as a generate-able point; cuts really removed and apparatus
+  tidied at materialization (fold `epub-final`'s logic in); zipped, opened.
+  Queue rules as landed (held when model time is possible).
+
+- **Phase D — transforms as records (engine + app)**: text-level masking;
+  record files with the bank-lifecycle ownership rules; `translate` gains
+  the records mode; the app's two-stage pipeline switches to it; chains and
+  translated-text-on-the-page arrive with it.
+
+- **Phase E — retire the old surfaces**: textarea editor gone; working-tree
+  truth and `history.ts` gone (their one surviving duty — nav/page-heading
+  ops — moved into §3's ledger); PDF view reduced to: view, and produce
+  facsimile.
+
+- **Phase F — compare, side by side** (NEXT-WORK §3, unchanged by all of
+  this): a step's rendering read-only in the second pane; a view, not a
+  position move; original beside translation.
+
+- **Phase G — the user's hand-test.** Nothing this week has been through
+  their hands. The walkthrough: import → read → reflow appears → strike and
+  join on the flowing page → save → translate → strike more → save →
+  Generate at each of three steps → three correct final documents; plus the
+  facsimile from the start row. Not automatable; listed so it is not skipped.
+
+Phases 0, A are independent and can run in parallel. B needs A. C needs B
+(ops must exist to execute). D needs A (the base is the transform input) and
+benefits from C. E needs B+C+D. F is independent of everything after 0.
+
+---
+
+## 7. Standing decisions carried forward (so nobody re-litigates)
+
+- Two-level text overrides (source invalidates records; per-language record
+  overrides) — user, 2026-08-15.
+- Textarea editor retired — user, 2026-08-15.
+- No ink sampling anywhere, ever — user, 2026-08-15.
+- Provenance kept, pagination erased — user, 2026-08-15.
+- Chapter markers: machine proposes, user owns, redefinition must be cheap —
+  user, 2026-08-15.
+- PDF: facsimile only, for now — user, 2026-08-15.
+- Generate = the final document, from any selected step — user, 2026-08-15.
+- Snapshots display themselves and lock; everything else edits live —
+  landed (`f03a50c`).
+- The queue is where expense happens; held when model time is possible —
+  landed (`b5a7264`).
+- Banks swap on success; steps own their payloads; generations are
+  per-step — landed (`BANK-LIFECYCLE.md`, six commits).
