@@ -97,14 +97,19 @@ wrong, and the next survey should be trusted over the next memory too.
 
 Fences are disjoint within a wave; a wave lands before the next starts.
 
-### Wave 2 — Unit D1 LANDED (`cd919d0`); Unit M running
+### Wave 2 — LANDED (D1 `cd919d0`, M `55d40f7`)
 
-- **Unit M — metadata joins the ledger, and a curate step casts its own
-  book.** Spec: WORKBENCH §9. Closes two deferrals from §3/§6 of that file
-  AND a hole the survey found: exports silently lose metadata edits today,
-  because the export casts fresh from the bank and the edit lives in the
-  working tree's OPF. Also fixes `canEditMetadata`, which never got the
-  import-row gate its own comment says it has.
+- ~~Unit M~~ — landed. Metadata is a step; a save casts its own book;
+  exports carry the metadata chain; `canEditMetadata` got the import-row
+  gate its own comment had claimed for weeks. **The spec's ancestry rule
+  was wrong and the builder caught it**: an Apply leaves the pointer put,
+  so a metadata row is a CHILD of the position, never an ancestor, and
+  the specced upward walk would have found nothing in the ordinary case —
+  reintroducing the exact silence the unit exists to end. The rule built
+  instead: a patch is in effect when the step it was made from is on the
+  path from the import to where you stand. Also routed by the lead
+  (outside the unit's fence): the per-save cast must not open itself, or
+  every Apply drops a tab in front of work in progress.
 - ~~Unit D1~~ — landed. The format it wrote is the contract D2 consumes;
   it is spelled out in WORKBENCH §10 rather than left in a report.
   Grouping came free rather than being rebuilt: the cast's own container
