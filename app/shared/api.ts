@@ -497,6 +497,23 @@ export interface FoundryApi {
   projects: {
     list(): Promise<ProjectSummary[]>;
     /**
+     * The library changed — a project made, a reading landed, an output
+     * recorded. Returns its own unsubscribe.
+     *
+     * NO PAYLOAD, deliberately. Composing the listing is a directory walk and
+     * main does not do one on the chance that somebody is looking; this says
+     * only that something moved, and the mirror asks for the list.
+     *
+     * IT EXISTS BECAUSE A DROPPED FILE HAD NO OTHER WAY TO ANNOUNCE ITSELF. The
+     * import that turns somebody's scan into a project runs in the background,
+     * behind the tab that already opened, and the renderer's project list used
+     * to re-read only on three occasions that a background import is not one of.
+     * So the app went on saying a book was not in the library while its folder
+     * sat on the disk — and every question asked of "the project this document
+     * is in" was answered from that.
+     */
+    onChanged(listener: () => void): () => void;
+    /**
      * What deleting this project would destroy, in sentences worth reading.
      *
      * THE QUESTION MOVED TO THE RENDERER AND THE FACTS DID NOT. Main used to ask
@@ -671,6 +688,29 @@ export interface FoundryApi {
   };
 
   onDocumentOpened(listener: (absolutePath: string) => void): () => void;
+  /**
+   * A document this app opened has MOVED to the copy it actually works on.
+   *
+   * ── The working-copy model, finally true of the tab as well ────────────────
+   *
+   * A file from outside the library is imported: copied into `archive/` as the
+   * untouched original and again into the live layer, which is what "the PDF"
+   * means everywhere else in this app. The tab, though, kept the path the open
+   * came in on — because the import is deliberately not awaited (a 400 MB sha256
+   * must not sit between a person and their document), so at the moment the tab
+   * is made there is nothing else to name.
+   *
+   * THAT COST A USER THEIR WHOLE PIPELINE. Their scan opened off `E:\\…`, the
+   * project was built, the reading ran and landed — and Generate said "this book
+   * has not been read yet", because `projectFor(E:\\…)` is null and every
+   * question this app asks about the document in front of you is asked of the
+   * tab's path. Restarting did not help: it was identity, not staleness.
+   *
+   * So main says where the document went as soon as it knows, and the tab MOVES
+   * — the same tab, not a second one. A document that was already inside a
+   * project never fires this, because there is nowhere for it to go.
+   */
+  onDocumentRelocated(listener: (move: { from: string; to: string }) => void): () => void;
   onNavigate(listener: (route: string) => void): () => void;
   /** File→Save As / Close Tab, which are accelerators on the menu. */
   onMenuAction(listener: (action: MenuAction) => void): () => void;

@@ -85,6 +85,7 @@ import {
   isManaged,
   listProjects,
   noteProjectTitle,
+  onProjectsChanged,
   projectsDir,
   promoteStrandedReprints,
   recordFinal,
@@ -474,6 +475,51 @@ async function openDocument(candidate: string): Promise<string | null> {
     // sentence to the notice strip, where somebody will read it.
     if (imported.notice !== null) console.warn(`[projects] ${imported.notice}`);
     /*
+     * ── AND THE TAB MOVES ONTO THE WORKING COPY ────────────────────────────
+     *
+     * THE BUG THIS EXISTS FOR COST A USER THEIR WHOLE PIPELINE, and it was
+     * invisible because everything about it looked right. They opened their own
+     * scan off `E:\Shared\…\archive\Working Towards The Fuhrer…pdf`; the import
+     * made the project, the OCR read landed, the bank and its completion marker
+     * were on the disk and the catalogue recorded them. Then Generate said "this
+     * book has not been read yet" — because the TAB was still pointed at the
+     * `E:\` file, `projectFor()` on that path answers null, and every question
+     * this app asks about "the document in front of you" is asked of the tab's
+     * path. Restarting did not help: it was never staleness, it was identity.
+     *
+     * THE WORKING-COPY MODEL IS THE ANSWER AND IT WAS ALREADY THE MODEL. A file
+     * from outside the library is imported, and what the user then holds is the
+     * PROJECT's copy — "the PDF" — with their own file untouched where they put
+     * it. The one place that was not true was the tab, which kept the path the
+     * open came in on because that is what the fast path had in its hand.
+     *
+     * So the fast open stays exactly as it is — a 400 MB sha256 must not sit
+     * between somebody and their document — and the tab is MOVED when the import
+     * lands. `imported.entry` is the live layer's own file (`working/<stem>.pdf`,
+     * `generated/<stem>.epub`), which is the same answer `epub:open` reaches by
+     * its own route, so both kinds end up naming what this app actually works on.
+     *
+     * MAIN OPENS IT, SO MAIN ADMITS IT: the renderer is about to name this path
+     * to the viewer, the metadata dialog and the block editor, and every one of
+     * those doors asks the allow-list.
+     */
+    const working = path.join(imported.dir, ...imported.entry.split('/'));
+    if (working.toLowerCase() !== resolved.toLowerCase() && await stillThere(working)) {
+      openable.add(working);
+      /*
+       * AND RECENTS FOLLOWS IT. The row is what Home and the reopen path use, so
+       * a row naming the outside original would send somebody straight back into
+       * the state this fixes. The outside row is forgotten rather than left
+       * beside the new one: they are one book, and two rows for it is a list
+       * that asks a question with no right answer.
+       */
+      forgetRecent(resolved);
+      rememberRecent(working, kind, path.basename(working), true);
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send('document:relocated', { from: resolved, to: working });
+      }
+    }
+    /*
      * The PDF's own idea of its title, noted the way a cast EPUB's `dc:title`
      * is when it is first opened (epub-reader.ts) — because for a project that
      * is only ever a PDF, this import is the ONLY moment anything asks. Behind
@@ -492,6 +538,16 @@ async function openDocument(candidate: string): Promise<string | null> {
     console.error(`[projects] ${resolved} could not be imported into a project: ${err.message}`);
   });
   return resolved;
+}
+
+/** Is it on the disk? A missing working copy is a swap that must not happen. */
+async function stillThere(target: string): Promise<boolean> {
+  try {
+    await fsp.access(target);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -1846,6 +1902,21 @@ function registerIpc(): void {
     writeAppSettings({ keepServerWarmMinutes: minutes }).keepServerWarmMinutes);
 
   queue.onQueueChanged((jobs) => broadcast('queue:changed', jobs));
+  /*
+   * THE LIBRARY CHANGED, said out loud, which it never used to be.
+   *
+   * The renderer's project list re-read on three occasions — it was constructed,
+   * Home appeared, or a queue job landed — and a BACKGROUND IMPORT is none of
+   * them. A dropped scan therefore became a project on the disk that the app went
+   * on denying the existence of until something unrelated happened to refresh
+   * the list, and everything that asks "which project is this document in?" was
+   * reading that denial.
+   *
+   * No payload. The listing is main's to compose and re-composing it costs a
+   * directory walk, so this says only THAT something moved; the renderer asks
+   * for the list itself, the same way the queue's mirror asks for jobs on boot.
+   */
+  onProjectsChanged(() => broadcast('projects:changed', null));
   vllm.onServerStatus((status) => broadcast('vllm:status-changed', status));
   // Published beside the job row, not instead of it: the shelf reads the queue,
   // the settings card reads this, and neither of them owns the run.

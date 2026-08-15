@@ -421,6 +421,7 @@ export class TabsService {
 
   constructor() {
     api?.onDocumentOpened((absolutePath) => { this.adopt(absolutePath); });
+    api?.onDocumentRelocated(({ from, to }) => { this.relocate(from, to); });
 
     /**
      * A finished conversion opens itself.
@@ -524,6 +525,79 @@ export class TabsService {
     this.all.update((tabs) => [...tabs, tab]);
     this.place(tab.id, ownPane);
     if (kind === 'epub') void this.unpack(tab.id, absolutePath);
+  }
+
+  /**
+   * The document this tab is showing has moved to the copy this app works on.
+   *
+   * ── What this fixes ─────────────────────────────────────────────────────────
+   *
+   * A file opened from outside the library is IMPORTED — copied into the
+   * project's `archive/` untouched, and again into the live layer, which is what
+   * "the PDF" means in every other sentence this app says. The tab kept the
+   * outside path, because the import is deliberately not awaited and there was
+   * nothing else to name at the moment the tab was made.
+   *
+   * Everything then asked the wrong question. `projectFor(tab.path)` answers
+   * null for a path outside the library, so Generate said a book that had just
+   * been read had not been read, the dock's waiting light stayed lit on a
+   * finished project, the nav could not group the document under its own book,
+   * and the block editor had no bank to fetch. One stale string, six broken
+   * features, and nothing on screen to explain any of it.
+   *
+   * ── The same tab, never a second one ────────────────────────────────────────
+   *
+   * `adopt` would make a new tab for the new path, which is exactly the failure
+   * this exists to prevent: two viewers onto one document, two scroll positions,
+   * and the user watching their book apparently open twice. So this PATCHES —
+   * the tab keeps its id, its pane, its ledger, its selection and its place in
+   * the list, and only its idea of where the file is changes.
+   *
+   * A PDF pane reloads by itself: `app-pdf-view` watches `tab.path` through a
+   * computed and re-opens when the string changes, which is a repaint of the
+   * same pages from the same bytes. A book does not reload at all — it is
+   * already unpacked, and it is unpacked from the SAME project, because the
+   * import is keyed by the file's content and both paths reach it.
+   *
+   * `savedPath` IS DELIBERATELY NOT TOUCHED. It is a grant: for a book opened
+   * from the user's own disk it names their file, and Save updating the copy they
+   * chose is the behaviour they asked for by opening it. Moving the tab onto the
+   * working copy does not withdraw that.
+   *
+   * Silent when nothing matches — the tab was closed inside the import's own
+   * round trip, which is a race with no consequence.
+   */
+  private relocate(from: string, to: string): void {
+    const was = normalise(from);
+    const now = normalise(to);
+    if (was === now) return;
+    const moving = this.all().find(
+      (tab) => normalise(tab.path) === was && tab.kind !== 'editor');
+    if (!moving) return;
+    // Already there — a second import of the same file landing behind the first.
+    if (this.all().some((tab) => normalise(tab.path) === now && tab.id !== moving.id)) return;
+    this.patch(moving.id, {
+      path: to,
+      /*
+       * THE TITLE ONLY IF NOBODY HAS SET A BETTER ONE. A book's title becomes
+       * its `dc:title` when it unpacks — "Working Towards the Führer" rather
+       * than the filename it arrived under — and overwriting that with a
+       * basename because the file moved between folders would undo the one
+       * piece of naming this app does on the user's behalf.
+       */
+      ...(moving.title === baseName(moving.path) ? { title: baseName(to) } : {}),
+      /*
+       * A conversion's output arrives `unsaved` and this is not one: it is the
+       * user's own file, imported, and the copy they chose is still on their
+       * disk exactly where they left it. Clearing the dot would be wrong for a
+       * managed book and setting it would be wrong here, so the flag simply does
+       * not move — the same reason `savedPath` does not.
+       */
+    });
+    // The editor tab that is a face of this book points at the same file.
+    const editor = this.all().find(
+      (tab) => tab.kind === 'editor' && tab.sourceTabId === moving.id);
+    if (editor) this.patch(editor.id, { path: to });
   }
 
   private blankTab(kind: TabKind, path: string, title: string): Tab {

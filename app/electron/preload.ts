@@ -102,6 +102,7 @@ const api: FoundryApi = {
 
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
+    onChanged: (listener) => subscribe<null>('projects:changed', listener),
     describe: (dir) => ipcRenderer.invoke('projects:describe', dir),
     delete: (dir) => ipcRenderer.invoke('projects:delete', dir),
   },
@@ -164,6 +165,8 @@ const api: FoundryApi = {
   },
 
   onDocumentOpened: (listener) => subscribe<string>('document:opened', listener),
+  onDocumentRelocated: (listener) =>
+    subscribe<{ from: string; to: string }>('document:relocated', listener),
   onNavigate: (listener) => subscribe<string>('navigate', listener),
   onMenuAction: (listener) => subscribe<MenuAction>('menu:action', listener),
 };

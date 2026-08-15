@@ -106,6 +106,44 @@ import { spokenStem } from '../shared/documents';
 import { STEP_LABELS, migrateToSteps, readTypeRecords } from '../shared/steps';
 import { GENERATED_ROLE_FOR } from '../shared/documents';
 
+/**
+ * Somebody has to be told when the library changes, and this is how.
+ *
+ * ── The failure this exists for ─────────────────────────────────────────────
+ *
+ * The renderer's project list had exactly three reasons to re-read: it was
+ * constructed, Home came on screen, or a queue job landed. A BACKGROUND IMPORT
+ * IS NONE OF THOSE. So a user who dropped a scan on the window got a tab
+ * immediately, a project on the disk a few seconds later, and a library screen
+ * that went on insisting the book was not there until something unrelated
+ * happened to refresh it. Everything downstream that asks "which project is this
+ * document in?" — the Generate dialog, the dock's waiting light, the nav's
+ * grouping — was reading that same empty list.
+ *
+ * ONE LISTENER, SET BY MAIN, exactly as `onQueueChanged` is. This module knows
+ * when a project changed and knows nothing about windows; main knows about
+ * windows and would otherwise have to guess at the moments. A no-op default
+ * means the tests and any other importer of this file are unaffected.
+ */
+let notifyProjects: () => void = () => { /* set by main */ };
+
+export function onProjectsChanged(listener: () => void): void {
+  notifyProjects = listener;
+}
+
+/**
+ * The library changed — said after the change has LANDED, never before.
+ *
+ * Every caller announces once its own write is on the disk, so a listener that
+ * re-reads the directory the moment it hears this cannot see the state the
+ * change was made from. It is deliberately not called from `writeManifest`,
+ * which would be the one place impossible to forget and also the one that fires
+ * three times for a single conversion recording its output.
+ */
+function announceProjects(): void {
+  notifyProjects();
+}
+
 /** Refusals from this module, named so a caller can tell them from an fs error. */
 export class ProjectError extends Error {
   constructor(message: string) {
@@ -817,6 +855,9 @@ export async function importDocument(
       }, { onlyIfEmpty: true });
     }
     await writeManifest(dir, manifest);
+    // A project was made or grown. The library screen has no other way to hear
+    // about a drop that landed while somebody was looking at something else.
+    announceProjects();
     return { dir, entry: `${live}/${liveFile}`, key, stem: manifest.stem, notice };
   });
 }
@@ -966,6 +1007,9 @@ export async function rotateGenerated(dir: string, file: string): Promise<string
     manifest.working.trees = manifest.working.trees.filter((entry) => entry.from !== from);
     await writeManifest(dir, manifest);
   });
+  // A document moved out of the live layer and into an archive folder, which is
+  // a listing that has changed even though nothing was made.
+  announceProjects();
   // Where it went, so a run whose own input is the copy being replaced can read
   // it there — see `planTranslation`.
   return movedTo;
@@ -1060,7 +1104,7 @@ export async function recordGenerated(
       const live = await refreshLivePdf(dir, manifest, file);
       await writeManifest(dir, manifest);
       return live;
-    });
+    }).finally(announceProjects);
   } catch (err) {
     console.error(`[projects] ${path.join(dir, MANIFEST)} could not record ${file}: ${(err as Error).message}`);
     return null;
@@ -1134,6 +1178,7 @@ export async function recordFinal(destination: string): Promise<void> {
       ];
       await writeManifest(dir, manifest);
     });
+    announceProjects();
   } catch (err) {
     console.error(`[projects] ${path.join(dir, MANIFEST)} could not record ${file}: ${(err as Error).message}`);
   }
@@ -1372,6 +1417,10 @@ export async function recordReading(readingsPath: string): Promise<void> {
       };
       await writeManifest(dir, manifest);
     });
+    // The one that puts the waiting light out. Home and the dock are drawn from
+    // the listing, and until this is heard they both go on asking for a step
+    // that has just been taken.
+    announceProjects();
   } catch (err) {
     console.error(
       `[projects] ${path.basename(dir)} could not record its reading (${(err as Error).message}). `
@@ -1513,6 +1562,10 @@ export async function noteProjectTitle(dir: string, title: string): Promise<void
       if (manifest.title === trimmed) return;
       manifest.title = trimmed;
       await writeManifest(dir, manifest);
+      // Only when it MOVED. This is called on every open of every book, and a
+      // listing re-read per open would be a directory walk for a title that was
+      // already right.
+      announceProjects();
     });
   } catch (err) {
     // A display name is not worth failing an open over; it is still named.

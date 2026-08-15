@@ -45,6 +45,21 @@ export class ProjectsService {
     void this.refresh();
 
     /*
+     * MAIN SAYS WHEN THE LIBRARY MOVED, which is the trigger that was missing.
+     *
+     * A dropped file becomes a project in the BACKGROUND, behind the tab that
+     * has already opened — and none of the three reasons this list used to
+     * re-read (constructed, Home appeared, a job landed) is a background import
+     * finishing. So the app went on insisting a book was not in the library
+     * while its folder sat on the disk, and every question answered from this
+     * list was answered wrongly.
+     *
+     * The event carries nothing: composing the listing is a directory walk, main
+     * does not do one on the chance somebody is watching, and this asks for it.
+     */
+    api?.projects.onChanged(() => { void this.refresh(); });
+
+    /*
      * AND AGAIN WHENEVER A JOB LANDS, which is the reason this class's own
      * header said somebody would eventually have to notice.
      *
