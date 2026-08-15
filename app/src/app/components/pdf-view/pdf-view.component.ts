@@ -1408,6 +1408,17 @@ export class PdfViewComponent implements OnDestroy {
       return 'The model has not read this document yet, so there are no blocks to correct. '
         + 'Run OCR / Convert on it first.';
     }
+    /*
+     * STANDING ON A FROZEN SAVE, said BEFORE anybody presses Delete rather than
+     * after. The mode is read-only there — every rendering at that position is
+     * made with the snapshot while a correction would be written into the live
+     * curation, so an edit would land in a book the user is not looking at — and
+     * an editor that had quietly stopped responding, with the explanation only
+     * arriving once somebody tried, would be an app that looks broken to the
+     * person it is protecting. The sentence names the row to click to get back.
+     */
+    const held = this.tabs.lockOn(tab.id);
+    if (held !== null) return held.why;
     return null;
   });
 

@@ -1,7 +1,9 @@
-import { Injectable, computed, effect, inject, signal } from '@angular/core';
+import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 
 import type { FoundryApi } from '@shared/api';
 import { categoryLabel, pdfCategoryLabel } from '@shared/categories';
+import type { CurationLock } from '@shared/curation-lock';
+import { fold } from '@shared/original';
 import {
   amendOverlay,
   chaptersText,
@@ -31,6 +33,7 @@ import type {
   UnlinkedNote,
 } from '@shared/types';
 
+import { LedgerService } from './ledger.service';
 import { ProjectsService } from './projects.service';
 import { QueueService } from './queue.service';
 import { api } from './foundry';
@@ -362,6 +365,24 @@ export class TabsService {
    */
   private readonly projects = inject(ProjectsService);
 
+  /**
+   * The step ledger, read for ONE question this service has to answer for itself:
+   * may this document be corrected right now?
+   *
+   * Standing on a frozen save means every rendering at that position is made with
+   * the snapshot, while `overlay.save` writes the LIVE curation — so a gesture
+   * made there would land somewhere other than the book on screen. The three doors
+   * into a curation all ask before they write (see `heldByASave`), and the reason
+   * the gate is in this class rather than in the panel is that a panel is not the
+   * only way in: the Delete key, the undo chord and the menu reach the same
+   * setters.
+   *
+   * The dependency runs ONE WAY. `LedgerService` knows about projects and the
+   * confirm card and nothing about tabs; everything this side wants to happen to a
+   * pane after a step changed is arranged here.
+   */
+  private readonly ledger = inject(LedgerService);
+
   private readonly all = signal<Tab[]>([]);
   private readonly columns = signal<Pane[]>([]);
   private readonly focused = signal<string | null>(null);
@@ -529,6 +550,43 @@ export class TabsService {
         const want = this.nameFor(tab.path);
         if (want !== tab.title) this.patch(tab.id, { title: want });
       }
+    });
+
+    /**
+     * A STEP WAS DELETED, so the panes showing that book read their state again.
+     *
+     * ── Why this fires for a delete and not for a pointer move ────────────────
+     *
+     * Clicking a row is free — one line of the manifest, no file touched — and
+     * everything on screen that depends on where the user is standing is derived
+     * from the ledger signal, so it repaints for nothing. Reloading here would put
+     * a spawn of the engine and a re-measure of five hundred pages behind the one
+     * gesture in this app that is genuinely instant, which is precisely the
+     * ceremony a history panel promises it does not have.
+     *
+     * A delete is the other thing entirely: it UNLINKS PAYLOADS. An open block
+     * editor may be drawing a readings bank that has just stopped existing, and a
+     * mode left holding ten thousand boxes off a deleted file is a mode where the
+     * next strike is written against blocks nothing can render. So the whole state
+     * is read again through the one path that reads it — which is also where the
+     * refusal ("has not been read yet") is already written, so a project whose
+     * reading was just deleted says so in its own words rather than going blank.
+     *
+     * ONLY THE TABS OF THAT PROJECT. A delete in one book must not make the four
+     * other panes re-read banks nothing happened to.
+     */
+    effect(() => {
+      const destroyed = this.ledger.payloadsDestroyed();
+      if (destroyed === null) return;
+      untracked(() => {
+        const gone = fold(destroyed.dir);
+        for (const tab of this.all()) {
+          if (tab.kind !== 'pdf' || !tab.blockView) continue;
+          const dir = this.projectDirOf(tab);
+          if (dir === null || fold(dir) !== gone) continue;
+          void this.loadBlockView(tab.id, tab.path);
+        }
+      });
     });
   }
 
@@ -1399,6 +1457,15 @@ export class TabsService {
    */
   private async loadBlockView(tabId: string, pdfPath: string): Promise<void> {
     if (!api) return;
+    /*
+     * THE HISTORY IS ASKED FOR BEFORE THE BLOCKS, because whether this mode may
+     * WRITE depends on it. Standing on a frozen save makes the editor read-only —
+     * see `heldByASave` — and a mode that came up editable and then locked itself
+     * a moment later, after the bank had been read, would hand somebody a window
+     * in which a Delete key does the one thing this design exists to prevent.
+     * `ensure` is silent and idempotent: a project already held is a no-op.
+     */
+    this.ledger.ensure(this.projects.projectFor(pdfPath)?.dir ?? null);
     this.setBlockView(tabId, { pages: [], detected: [], overlay: null, problem: null, loading: true });
     try {
       const blocks = await api.overlay.blocks(pdfPath);
@@ -1525,6 +1592,112 @@ export class TabsService {
     return this.blocksFor(tabId)?.byKey.get(target) ?? null;
   }
 
+  // ── Standing on a save: the one state where this mode does not write ─────
+  //
+  // A curation step is a COPY OF SOMEBODY'S CORRECTIONS THAT NEVER CHANGES
+  // AGAIN, which is the whole of what makes it worth keeping and the whole of
+  // what makes clicking its row worth anything. Main protects that on the disk
+  // side by keeping two paths apart rather than resolving one: `locateOverlay.file`
+  // is always the LIVE curation, because that is where a correction goes, and
+  // `.rendering` is the snapshot when the position stands on one, because that is
+  // what a Generate reads. Its own comment says the rest — resolving `file` to the
+  // snapshot would mean the next strike anybody made while standing on a save
+  // silently rewrote that save.
+  //
+  // WHAT THAT LEAVES IS THIS SIDE'S JOB. This service writes through
+  // `overlay.save`, which writes the live file, while the pages at that position
+  // are being rendered from the frozen one. Somebody striking a paragraph there
+  // would be correcting a book they are not looking at, and the first they would
+  // hear of it is a Generate that comes back without their strike in it. So the
+  // mode is READ-ONLY exactly where the two diverge.
+
+  /** The project this document belongs to, or null for a file opened from elsewhere. */
+  private projectDirOf(tab: Tab): string | null {
+    return this.projects.projectFor(tab.path)?.dir ?? null;
+  }
+
+  /**
+   * Why this document cannot be corrected right now, or null — the whole gate.
+   *
+   * AT THE THREE DOORS AND NOT AT THE WRITE. `putOverlay` is the single function
+   * every correction goes through and would be the tempting place to put this, and
+   * it is the wrong one: its refusals are reported as "that correction could not
+   * be written to disk", which is a sentence about a failing filesystem, and this
+   * is not a failure at all — it is the app declining to do something on purpose
+   * and owing an explanation of how to get back to editing. The doors are
+   * `amendBlocks` (every block gesture), `writeChapters` (the spine) and `replay`
+   * (undo and redo), and between them they are every way a curation is changed.
+   */
+  private heldByASave(tabId: string): string | null {
+    const tab = this.byId(tabId);
+    if (tab === null) return null;
+    return this.ledger.lockIn(this.projectDirOf(tab))?.why ?? null;
+  }
+
+  /**
+   * The same answer, for the surfaces that have to DRAW the state rather than
+   * refuse a gesture: the strip across the pages and the Steps accordion's hint.
+   *
+   * A refusal that only arrives after somebody has pressed Delete is a refusal
+   * they meet by being surprised. This is what lets the mode say so first.
+   */
+  lockOn(tabId: string | null): CurationLock | null {
+    const tab = tabId === null ? null : this.byId(tabId);
+    return tab === null ? null : this.ledger.lockIn(this.projectDirOf(tab));
+  }
+
+  /**
+   * Save: freeze the corrections as they stand, as a step in the history.
+   *
+   * ── This is not the Save people are used to, and the difference is the point ─
+   *
+   * The live curation is already on disk — written whole and atomically after
+   * every gesture, which is what `commitOverlay` above is — so there is no unsaved
+   * work for this to rescue and a button that claimed to be rescuing some would be
+   * lying about the file it was writing. What it makes is a COPY THAT WILL NEVER
+   * CHANGE AGAIN, with a step of its own, clickable in Steps and renderable from.
+   * It is the difference between a document that autosaves and one you can name a
+   * version of.
+   *
+   * A COMMIT WITH NOTHING IN IT IS REFUSED BY MAIN, and the refusal is shown as
+   * main wrote it rather than pre-empted by a disabled button. A dead Save teaches
+   * nobody why it is dead; main's sentence says what to correct first and what
+   * pressing this will then keep.
+   */
+  async saveCorrections(tabId: string): Promise<void> {
+    const tab = this.byId(tabId);
+    if (!api || tab === null || tab.kind !== 'pdf') return;
+    const dir = this.projectDirOf(tab);
+    if (dir === null) {
+      this.notice.set(
+        `${tab.title} is not in Foundry's library yet, so there is no history to keep a save in. `
+        + 'Opening it from Home imports it and gives this book a project of its own.',
+      );
+      return;
+    }
+    try {
+      // The whole updated ledger comes back, so the row appears from the answer
+      // rather than from a second question asked of a catalogue that has moved on.
+      await this.ledger.adopt(dir, await api.overlay.commit(tab.path));
+      /*
+       * IT SAYS THAT CORRECTING HAS STOPPED, because it has, and finding that out
+       * by pressing Delete and being refused would make a successful Save read as
+       * a fault. Main moves the pointer onto the step a run just made — that is
+       * `appendStep`'s rule and it is right, because what you just made is what
+       * the panes should be showing — and the pointer now standing on a frozen
+       * save is exactly the state the editor must not write in. The way back is
+       * one click, and this names it.
+       */
+      this.notice.set(
+        'Saved. That copy of your corrections is in this book’s history now and nothing later can '
+        + 'change it — which is why correcting is off while you are standing on it. Click the '
+        + 'reading in Steps to carry on where you left off; the save stays exactly as it is.',
+      );
+    } catch (err) {
+      this.notice.set(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   // ── The gestures ─────────────────────────────────────────────────────────
 
   /**
@@ -1626,6 +1799,15 @@ export class TabsService {
     const view = this.blocksFor(tabId);
     const tab = this.byId(tabId);
     if (view === null || view.overlay === null || !tab) return null;
+
+    // The first of the three doors. See `heldByASave`: standing where a rendering
+    // is made from a frozen save, this gesture would be written into the LIVE
+    // curation, which is not the book on screen.
+    const held = this.heldByASave(tabId);
+    if (held !== null) {
+      this.notice.set(held);
+      return null;
+    }
 
     const ledgerField = LEDGER_FIELD_OF[field];
     const rows: LedgerRow[] = [];
@@ -1744,6 +1926,14 @@ export class TabsService {
     const view = this.blocksFor(tabId);
     const tab = this.byId(tabId);
     if (view === null || view.overlay === null || !tab) return;
+    // The second door. A chapters list is one statement about the whole book and
+    // is exactly as much of somebody's judgement as a strike; it goes into the
+    // same file, so it meets the same gate.
+    const held = this.heldByASave(tabId);
+    if (held !== null) {
+      this.notice.set(held);
+      return;
+    }
     const before = chaptersText(view.overlay.chapters ?? null);
     const after = chaptersText(chapters);
     if (before === after) return;
@@ -2780,6 +2970,20 @@ export class TabsService {
           `There is nothing to undo in ${tab.title}. Press Blocks to correct what the model read `
           + 'off its pages.',
         );
+        return;
+      }
+      /*
+       * THE THIRD DOOR, and the one it would be easiest to forget. An undo is a
+       * write like any other — it puts the rows of an action back into the live
+       * curation and saves the whole file — so taking a correction BACK while
+       * standing on a frozen save changes the live state under a book being
+       * rendered from the snapshot, exactly as making one would. The stacks are
+       * left where they are, so the chord works again the moment the user steps
+       * back to the reading.
+       */
+      const held = this.heldByASave(tab.id);
+      if (held !== null) {
+        this.notice.set(held);
         return;
       }
     } else if (tab.book === null) {

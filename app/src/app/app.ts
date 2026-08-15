@@ -12,6 +12,7 @@ import { MetadataDialogComponent } from './components/metadata-dialog/metadata-d
 import { TranslateDialogComponent } from './components/translate-dialog/translate-dialog.component';
 import { QueueShelfComponent } from './components/queue-shelf/queue-shelf.component';
 import { ToolRailComponent } from './components/tool-rail/tool-rail.component';
+import { ProjectsService } from './core/projects.service';
 import { TabsService } from './core/tabs.service';
 import { UiService } from './core/ui.service';
 import { api } from './core/foundry';
@@ -141,6 +142,12 @@ import { api } from './core/foundry';
 })
 export class App {
   private readonly tabs = inject(TabsService);
+  /**
+   * The library, read for one question: has this app imported the document in
+   * front of the user? A scan with a project behind it has a history worth a
+   * panel; one dropped from a folder of somebody's own has nothing at all.
+   */
+  private readonly projects = inject(ProjectsService);
   protected readonly ui = inject(UiService);
   private readonly router = inject(Router);
 
@@ -169,16 +176,28 @@ export class App {
    * rows with the same colours, a chapter list, and whatever one block is
    * selected.
    *
-   * NOT beside a PDF that is merely open. Out of the mode there is still nothing
-   * to inspect, and 260 pixels of empty accordions is what this test exists to
-   * prevent. It follows `activeDocument`, so with the HTML editor focused it
-   * still shows the book that editor is a face of.
+   * AND BESIDE ANY DOCUMENT THIS APP HAS IMPORTED, which is the Steps section's
+   * doing and is a real widening of the old rule rather than a slip past it. The
+   * rule was "nothing to inspect out of the mode", and a project's HISTORY is
+   * something to inspect about a scan that has never been in block view: what was
+   * imported, what has been read, what was saved and what each of those was made
+   * from. It is also the panel where somebody steps back to an earlier state, and
+   * making them enter a correction mode first to reach their own history would be
+   * the app hiding the one thing that explains why their book looks as it does.
+   *
+   * A PDF DROPPED FROM OUTSIDE THE LIBRARY still gets nothing, which is what keeps
+   * the old rule's promise: no project, no history, no accordions, and 260 pixels
+   * of window that Home wanted. It follows `activeDocument`, so with the HTML
+   * editor focused it still shows the book that editor is a face of.
    */
   protected readonly inspectorUp = computed(() => {
     const tab = this.tabs.activeDocument();
     if (tab === null) return false;
     if (tab.kind === 'epub') return tab.book !== null;
-    return tab.kind === 'pdf' && tab.blockView;
+    if (tab.kind !== 'pdf') return false;
+    if (tab.blockView) return true;
+    const project = this.projects.projectFor(tab.path);
+    return project !== null && project.problem === null;
   });
 
   protected readonly dropping = signal(false);

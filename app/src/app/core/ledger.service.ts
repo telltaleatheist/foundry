@@ -1,0 +1,339 @@
+import { Injectable, inject, signal } from '@angular/core';
+
+import { curationLock, standingOn, type CurationLock } from '@shared/curation-lock';
+import { fold } from '@shared/original';
+import type { LedgerStep, ProjectLedger, StepRow } from '@shared/types';
+
+import { ConfirmService } from './confirm.service';
+import { api } from './foundry';
+
+/**
+ * One project's history, as this window holds it.
+ *
+ * `rows` IS MAIN'S ANSWER AND IS NEVER RECOMPUTED HERE. The chronological order
+ * and the quiet "from Read" annotation are the whole of this design's concession
+ * to the tree, and a renderer deriving them would be a second implementation of
+ * the one rule that decides whether the flat list is misleading about what was
+ * made from what (`chronological`, shared/ledger.ts).
+ */
+export interface StepHistory {
+  ledger: ProjectLedger;
+  rows: StepRow[];
+}
+
+/** What this window knows about one project's history, including "it will not read". */
+interface Holding {
+  /**
+   * The directory AS MAIN SPELLS IT, kept beside the folded key it is stored
+   * under.
+   *
+   * The key is folded because on Windows one path arrives spelled three ways and
+   * two spellings of one project would be two holdings. What must NOT be folded is
+   * what goes back over IPC: main proves the directory is one of Home's projects
+   * before it reads a byte, and handing it a lowercased path is handing it a path
+   * that is a project on this filesystem and a stranger to a string comparison.
+   */
+  dir: string;
+  history: StepHistory | null;
+  /**
+   * Main's own sentence for a catalogue that will not parse, drawn where the rows
+   * would have been.
+   *
+   * KEPT RATHER THAN THROWN AWAY, because a Steps section that silently drew
+   * nothing for a project whose ledger is malformed would be indistinguishable
+   * from a project with no history — and one of those is a book somebody needs to
+   * fix a file for.
+   */
+  problem: string | null;
+}
+
+/**
+ * The step ledger, mirrored from main — the brain behind the Steps accordion.
+ *
+ * A MIRROR AND NOT A STORE, exactly as `ProjectsService` and `QueueService` are.
+ * Main owns the manifest, composes the rows, proves the directory on all four
+ * calls and unlinks the payloads a delete names; this class holds what main last
+ * said and asks again whenever something announces that a project moved. Nothing
+ * here edits a step.
+ *
+ * ── Why it is keyed by project rather than being one current ledger ──────────
+ *
+ * The window shows up to five panes and they are allowed to be five different
+ * books. The accordion draws the FOCUSED document's project, but the block
+ * editor's read-only gate is a question about whichever tab a gesture landed in —
+ * so a single "current" ledger would answer the safety question about the wrong
+ * project the moment somebody has two scans open, which is the one place in this
+ * app where the wrong answer means an edit written where it was not wanted.
+ *
+ * ── And why refreshes come from `projects:changed` ───────────────────────────
+ *
+ * Every ledger write in main ends with `announceProjects()` — a pointer move, a
+ * delete, a curation commit, a job landing and appending its step. That is
+ * already the one way anything in this window hears that a project moved, and
+ * `ProjectsService` is subscribed to it for the same reason. A second channel
+ * would be a second thing to remember to fire.
+ */
+@Injectable({ providedIn: 'root' })
+export class LedgerService {
+  private readonly confirm = inject(ConfirmService);
+
+  /** Keyed by the folded directory, because on Windows one path arrives spelled three ways. */
+  private readonly held = signal<ReadonlyMap<string, Holding>>(new Map());
+
+  /**
+   * The read this holding is waiting on, per directory — a ticket, so a slow
+   * answer cannot overwrite a fast one that was asked LATER.
+   *
+   * ── The race this exists for, which is not hypothetical ─────────────────────
+   *
+   * A delete asks main to read again, and main's own `projects:changed` — fired by
+   * that same delete — asks for a read too. Two calls, two round trips, and no
+   * promise about which resolves first. Without a ticket the older answer is
+   * allowed to land last, and the older answer is the one composed BEFORE the
+   * delete: the accordion would settle showing rows for steps whose payloads have
+   * just been unlinked, and it would stay that way until something else happened
+   * to the project. Only the newest question's answer is ever painted.
+   *
+   * It doubles as the "has anybody asked at all" flag `ensure` needs, so a
+   * component calling it from a repaint does not make a call per frame.
+   */
+  private readonly issued = new Map<string, number>();
+
+  /**
+   * A delete that took payload files off the disk, announced to whoever is
+   * drawing them.
+   *
+   * ── Why a delete is announced and a pointer move is not ─────────────────────
+   *
+   * Moving the pointer is FREE: no job, no rendering, no file written. Everything
+   * on screen that depends on it — the current row, the read-only gate, what a
+   * Generate would say it is rendering — is derived from the ledger signal above,
+   * so it repaints for nothing the instant the answer lands. Re-reading the
+   * readings bank on every click would turn the one gesture in this app that is
+   * genuinely instant into a spawn of the engine, which is exactly the ceremony
+   * a history panel promises you it does not have.
+   *
+   * A DELETE IS THE OTHER THING ENTIRELY. It unlinks payloads, and an open block
+   * editor is drawing a bank that may have just stopped existing. So this bumps,
+   * `TabsService` hears it, and the panes showing that project read their state
+   * again — which is where they find out, with main's own sentence, that there is
+   * nothing behind them any more.
+   */
+  readonly payloadsDestroyed = signal<{ dir: string; seq: number } | null>(null);
+  private destroyedSeq = 0;
+
+  constructor() {
+    // The one channel. Main announces after its write is on the disk, so by the
+    // time this asks, the answer is the state a reader would see.
+    api?.projects.onChanged(() => { void this.refreshAll(); });
+  }
+
+  /**
+   * This project's history, or null while nothing has read it yet.
+   *
+   * A GETTER OVER A SIGNAL and not a signal per project: the map is one signal, so
+   * a component reading it inside a `computed` is subscribed to any change to any
+   * project — which is what an accordion following the focused document actually
+   * wants, and is a handful of entries rather than a per-book graph of them.
+   */
+  historyFor(projectDir: string | null): StepHistory | null {
+    return this.holdingFor(projectDir)?.history ?? null;
+  }
+
+  /** Main's sentence for a ledger it would not read, or null. */
+  problemFor(projectDir: string | null): string | null {
+    return this.holdingFor(projectDir)?.problem ?? null;
+  }
+
+  /** The step the pointer stands on, for a surface that wants to name it. */
+  standingIn(projectDir: string | null): LedgerStep | null {
+    const history = this.historyFor(projectDir);
+    return history === null ? null : standingOn(history.ledger);
+  }
+
+  /**
+   * Whether the block editor must be read-only in this project, and the sentence
+   * that says why.
+   *
+   * THE ONE PLACE THE APP ASKS. See shared/curation-lock.ts for the whole of the
+   * reasoning: standing where a rendering is made from a frozen save means an
+   * edit would land in the live curation instead, and the person would be
+   * correcting a book they are not looking at.
+   */
+  lockIn(projectDir: string | null): CurationLock | null {
+    const history = this.historyFor(projectDir);
+    return history === null ? null : curationLock(history.ledger);
+  }
+
+  /**
+   * Read this project's history if nobody has yet — the call every surface makes
+   * before it draws.
+   *
+   * IDEMPOTENT AND SILENT. It runs from a repaint (the accordion following the
+   * focused document, the block editor opening), so it must be safe to call on
+   * every frame: a directory already held or already in flight is a no-op, and a
+   * refusal is kept as the holding's `problem` rather than thrown at a template.
+   */
+  ensure(projectDir: string | null): void {
+    if (projectDir === null || this.issued.has(fold(projectDir))) return;
+    void this.refresh(projectDir);
+  }
+
+  /** Ask main again. The answer replaces whatever was here, refusal included. */
+  async refresh(projectDir: string): Promise<void> {
+    if (!api) return;
+    const key = fold(projectDir);
+    const ticket = (this.issued.get(key) ?? 0) + 1;
+    this.issued.set(key, ticket);
+    try {
+      const view = await api.ledger.read(projectDir);
+      if (this.issued.get(key) !== ticket) return;
+      this.put(key, { dir: projectDir, history: { ledger: view.ledger, rows: view.rows }, problem: null });
+    } catch (err) {
+      if (this.issued.get(key) !== ticket) return;
+      // Main's words, kept as main wrote them. The accordion prints this where the
+      // rows would have been — the same refusal that is already on the project's
+      // row on Home, reaching the same person a second way.
+      this.put(key, {
+        dir: projectDir,
+        history: null,
+        problem: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * Stand on a different step — the click on a row.
+   *
+   * FREE, INSTANT AND UNCONFIRMED, which is the promise a history panel makes by
+   * looking like one. One line of the manifest; no job, no rendering, no
+   * confirmation and no spinner.
+   *
+   * THE ANSWER IS PAINTED WITHOUT A SECOND READ, and that is allowed here for a
+   * reason worth stating rather than as an optimisation: `go` changes the POSITION
+   * and nothing else, so the steps and their order are the ones main already sent,
+   * and the "from …" annotations are still the ones main composed. Nothing is
+   * re-derived. `projects:changed` follows and replaces the whole holding anyway,
+   * so a disagreement could only last one turn of the loop.
+   *
+   * A refusal throws with main's sentence: the caller clicked a row this app drew,
+   * so an id main does not hold means the two are looking at different ledgers,
+   * and standing somewhere plausible instead would show somebody a book they did
+   * not ask for.
+   */
+  async go(projectDir: string, stepId: string): Promise<void> {
+    if (!api) return;
+    const ledger = await api.ledger.go(projectDir, stepId);
+    this.paint(projectDir, ledger);
+  }
+
+  /**
+   * The ✕ on a row: ask main what it costs, ask the user in the app's own card,
+   * then do it.
+   *
+   * THREE STEPS AND MAIN OWNS TWO OF THEM — the shape `ProjectsService.remove`
+   * established and for its reason. `describeDelete` composes the facts AND proves
+   * the delete is allowed, so a card is never put on screen for something that
+   * would be refused a click later; the card is ours because a question about a
+   * book should look like it came from the program the book is in; `delete` proves
+   * it again and destroys the payloads.
+   *
+   * Resolves true when it ran, false for a cancel — a cancel is silence. A refusal
+   * throws with main's own sentence, which the caller shows as written.
+   */
+  async remove(projectDir: string, stepId: string): Promise<boolean> {
+    if (!api) return false;
+    const deletion = await api.ledger.describeDelete(projectDir, stepId);
+    const casualties = deletion.casualties;
+    const named = casualties.map((one) => `“${one.label}”`).join(', ');
+    const answered = await this.confirm.ask({
+      message: casualties.length > 1
+        ? `Delete “${deletion.label}” and everything made from it?`
+        : `Delete “${deletion.label}”?`,
+      detail: [
+        // THE CASCADE IS NAMED BEFORE THE COSTS, because the number is the
+        // surprise. Somebody deleting a reading is deleting the translations made
+        // from it, and the only version of that which is not a shock is the one
+        // where they read the list first.
+        ...(casualties.length > 1
+          ? [`This takes ${casualties.length} steps with it, because each of them was made from `
+            + `another: ${named}.`]
+          : []),
+        // Main's sentences, verbatim and in creation order. Every one of them says
+        // what THIS loss is in the retention rule's own terms — user labour that no
+        // run remakes, or a payload that costs a paid run to get back — because an
+        // "Are you sure?" over a list of four teaches somebody to click through the
+        // one that was about their curation.
+        ...casualties.map((one) => one.cost),
+        'It really deletes: nothing is moved aside and there is no copy anywhere else.',
+      ],
+      confirm: casualties.length > 1 ? `Delete these ${casualties.length} steps` : 'Delete this step',
+    });
+    if (!answered) return false;
+    await api.ledger.delete(projectDir, stepId);
+    /*
+     * ASKED AGAIN RATHER THAN PAINTED FROM THE ANSWER, which is the opposite of
+     * what `go` does and is right for the opposite reason. A delete CHANGES THE
+     * SHAPE of the list — steps are gone — and rows are main's to compose, so the
+     * answer's ledger against the rows this window is holding would draw rows for
+     * steps that no longer exist, complete with ✕ buttons for them. One round
+     * trip, and what appears is the list as it now is.
+     */
+    await this.refresh(projectDir);
+    this.destroyedSeq += 1;
+    this.payloadsDestroyed.set({ dir: projectDir, seq: this.destroyedSeq });
+    return true;
+  }
+
+  /**
+   * A ledger that arrived from somewhere other than this class — the answer to a
+   * curation commit, which `TabsService` makes because it is the side holding the
+   * document's path.
+   *
+   * PAINTED AND THEN RE-READ, and both halves earn their place. The paint is what
+   * makes the new POSITION take effect in the same turn as the gesture — a commit
+   * moves the pointer onto the step it just made, and that is what decides whether
+   * the block editor may still be written to, so a window that learned it one
+   * round trip later would have an editor that was briefly live over a book being
+   * rendered frozen. The read is what makes the ROW appear, because a commit mints
+   * a step and rows are main's to compose.
+   *
+   * The rows are one turn behind the ledger in between, and that is the safe
+   * direction to be wrong in: a list missing its newest row for a few milliseconds
+   * costs nothing, and an editor that is live for the same few milliseconds is the
+   * failure this whole design exists to prevent.
+   */
+  async adopt(projectDir: string, ledger: ProjectLedger): Promise<void> {
+    this.paint(projectDir, ledger);
+    await this.refresh(projectDir);
+  }
+
+  // ── Keeping the map ──────────────────────────────────────────────────────
+
+  private holdingFor(projectDir: string | null): Holding | null {
+    return projectDir === null ? null : this.held().get(fold(projectDir)) ?? null;
+  }
+
+  /** The steps main already sent, standing somewhere new. See `go`. */
+  private paint(projectDir: string, ledger: ProjectLedger): void {
+    const key = fold(projectDir);
+    const holding = this.held().get(key);
+    if (holding === undefined || holding.history === null) return;
+    this.put(key, { dir: holding.dir, history: { ledger, rows: holding.history.rows }, problem: null });
+  }
+
+  private put(key: string, holding: Holding): void {
+    this.held.update((map) => new Map(map).set(key, holding));
+  }
+
+  /**
+   * Everything this window is holding, asked again.
+   *
+   * ONLY WHAT IS ALREADY HELD, never a walk of the library: this fires whenever
+   * any project in the app changes, and reading the history of every book on the
+   * disk because one of them moved would be a directory walk per landed job.
+   */
+  private async refreshAll(): Promise<void> {
+    await Promise.all([...this.held().values()].map((holding) => this.refresh(holding.dir)));
+  }
+}

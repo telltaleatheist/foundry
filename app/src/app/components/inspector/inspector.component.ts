@@ -12,8 +12,10 @@ import {
 
 import { BLOCK_CATEGORIES, PDF_BLOCK_CATEGORIES, UNKNOWN_CATEGORY_COLOUR } from '@shared/categories';
 import { targetKey, type OverlayChapter } from '@shared/overlay';
-import type { EpubChapter } from '@shared/types';
+import type { EpubChapter, LedgerStep, StepRow } from '@shared/types';
 
+import { LedgerService } from '../../core/ledger.service';
+import { ProjectsService } from '../../core/projects.service';
 import { TabsService, type BlockElement } from '../../core/tabs.service';
 
 /**
@@ -55,8 +57,29 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
   selector: 'app-inspector',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    @if (subject(); as panel) {
+    @if (subject() !== null || projectDir() !== null) {
       <div class="panel">
+        <!--
+          STANDING ON A FROZEN SAVE, said once, at the top, before anything else
+          in this panel is reached for. Every control below it is dead in this
+          state — see \`curationLock\` — and a panel full of greyed buttons with no
+          account of itself is an app that looks broken to the person it is
+          protecting. It is here rather than repeated in each section because a
+          person who read it over the chapters and again over the categories would
+          be reading two answers to one question.
+        -->
+        @if (lock(); as held) {
+          <p class="frozen">{{ held.why }}</p>
+        }
+
+        <!--
+          EVERYTHING THIS PANEL SAYS ABOUT THE DOCUMENT, which needs one. The
+          sections below are about a book that is open and readable or a scan
+          being corrected; Steps, at the bottom, is about the PROJECT, and a scan
+          that has never been in block view has one of those and none of these.
+          The block closes at the brace marked "end of the document's sections".
+        -->
+        @if (subject(); as panel) {
         <!-- ── Contents ─────────────────────────────────────────────────── -->
         @if (book(); as current) {
         <section class="accordion" [class.shut]="!contentsOpen()">
@@ -158,8 +181,8 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
                           <span class="ch-title">{{ row.title }}</span>
                           <span class="ch-at">{{ row.where }}</span>
                         </button>
-                        <button class="pencil" title="Rename" (click)="startChapterRename(row)">✎</button>
-                        <button class="pencil" title="Not a chapter" (click)="dropChapter(row.target)">✕</button>
+                        <button class="pencil" title="Rename" [disabled]="frozen()" (click)="startChapterRename(row)">✎</button>
+                        <button class="pencil" title="Not a chapter" [disabled]="frozen()" (click)="dropChapter(row.target)">✕</button>
                       }
                     </li>
                   }
@@ -171,7 +194,7 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
                 <div class="acts">
                   <button
                     class="act"
-                    [disabled]="onlyBlock() === null || onlyBlockIsChapter()"
+                    [disabled]="onlyBlock() === null || onlyBlockIsChapter() || frozen()"
                     [title]="chapterAddTitle()"
                     (click)="makeChapter()"
                   >Chapter starts here</button>
@@ -185,7 +208,7 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
                   -->
                   <button
                     class="act"
-                    [disabled]="!spine().confirmed"
+                    [disabled]="!spine().confirmed || frozen()"
                     title="Throw this list away and let Foundry work the chapters out again"
                     (click)="resetChapters()"
                   >Use Foundry's</button>
@@ -236,7 +259,7 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
                     <button
                       class="pick"
                       [title]="row.note"
-                      [disabled]="!panel.live"
+                      [disabled]="!panel.live || frozen()"
                       (click)="relabel(row.id)"
                     >
                       <span class="swatch" [style.background]="row.colour"></span>
@@ -258,7 +281,7 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
                     -->
                     <button
                       class="strike"
-                      [disabled]="!panel.live || row.total === null || row.total === 0"
+                      [disabled]="!panel.live || frozen() || row.total === null || row.total === 0"
                       [title]="strikeTitle(row)"
                       (click)="strike(row.id)"
                     >{{ row.total !== null && row.total > 0 && row.struck === row.total ? '↺' : '⌦' }}</button>
@@ -322,7 +345,7 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
                     class="words"
                     rows="5"
                     spellcheck="false"
-                    [disabled]="block.parts.length > 1"
+                    [disabled]="block.parts.length > 1 || frozen()"
                     [value]="draft()"
                     (input)="draft.set(words.value)"
                     [attr.aria-label]="'What ' + block.key + ' says'"
@@ -330,15 +353,121 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
                   <div class="acts">
                     <button
                       class="act"
-                      [disabled]="block.parts.length > 1 || draft().trim() === reading()"
+                      [disabled]="block.parts.length > 1 || frozen() || draft().trim() === reading()"
                       (click)="applyWords()"
                     >Apply</button>
                     <button
                       class="act"
-                      [disabled]="!corrected()"
+                      [disabled]="!corrected() || frozen()"
                       title="Put the model's own reading back"
                       (click)="revertWords()"
                     >Model's reading</button>
+                  </div>
+                }
+              </div>
+            }
+          </section>
+        }
+        } <!-- end of the document's sections -->
+
+        <!-- ── Steps ────────────────────────────────────────────────────── -->
+        <!--
+          A LIST AND NOT A TREE, deliberately, and the whole design turns on it.
+          The steps form a parent chain — every one records which step it was made
+          FROM — but nobody wants to reason about a graph of their book; they want
+          to see what they have done and click back to any of it. So the rows are
+          in the order main sends them, which is creation order, and the ONE
+          concession to the tree is the quiet "from Read" that main puts on a row
+          whose parent is not the row above it. No rails, no indentation, no depth.
+
+          NOTHING HERE IS RE-DERIVED. The order and the annotation both arrive
+          composed (\`chronological\`, shared/ledger.ts) precisely so this template
+          cannot become a second implementation of the one rule that decides
+          whether a flat list is misleading about what was made from what.
+        -->
+        @if (projectDir(); as dir) {
+          <section class="accordion" [class.shut]="!stepsOpen()">
+            <button class="head" (click)="stepsOpen.set(!stepsOpen())">
+              <span class="twist">{{ stepsOpen() ? '▾' : '▸' }}</span>
+              <span class="label">Steps</span>
+              <span class="count">{{ stepRows().length }}</span>
+            </button>
+            @if (stepsOpen()) {
+              <div class="body">
+                @if (stepsProblem(); as reason) {
+                  <!-- Main's own sentence about a catalogue it would not read,
+                       drawn where the rows would have been. A section that went
+                       silently empty would be indistinguishable from a book
+                       nothing has happened to. -->
+                  <p class="hint">{{ reason }}</p>
+                } @else {
+                  <p class="hint">
+                    Everything that has been done to this book. Click any step to stand there —
+                    it costs nothing, and nothing after it is thrown away.
+                  </p>
+                }
+
+                <ul>
+                  @for (row of stepRows(); track row.step.id) {
+                    <li
+                      class="step"
+                      [class.current]="row.step.id === standingId()"
+                      [class.stale]="row.step.stale === true"
+                    >
+                      <button class="pick step-pick" [title]="rowTitle(row)" (click)="stand(row)">
+                        <span class="dot"></span>
+                        <span class="what">
+                          <span class="name">{{ row.step.label }}</span>
+                          @if (row.from) {
+                            <!-- The entire concession to the tree. Only on the rows
+                                 where the flat list would otherwise be misleading. -->
+                            <span class="from">from {{ row.from }}</span>
+                          }
+                        </span>
+                        <span class="tally">{{ when(row.step) }}</span>
+                      </button>
+                      <!--
+                        NO ✕ ON THE ORIGIN. Deleting the import is deleting the
+                        project — everything else in the folder was made from it —
+                        and the project's own ✕ does that with its own ceremony and
+                        its own accounting of what it costs. Main refuses it by
+                        name as well; this is so nobody is offered the button.
+                      -->
+                      @if (row.step.parent !== null) {
+                        <button
+                          class="strike"
+                          title="Delete this step, and everything made from it"
+                          (click)="discard(dir, row)"
+                        >✕</button>
+                      }
+                    </li>
+                  }
+                  @if (stepRows().length === 0 && stepsProblem() === null) {
+                    <!-- Two states that look alike and are not: a book whose
+                         history has not arrived yet, and one that genuinely has
+                         none. Saying "nothing has happened to this book" while
+                         the answer is still in flight would be the panel
+                         asserting something it has not been told. -->
+                    <li class="none">
+                      {{ stepsRead() ? 'Nothing has been recorded for this book yet.' : 'Reading this book’s history…' }}
+                    </li>
+                  }
+                </ul>
+
+                <!--
+                  SAVE IS OFFERED WHERE THE STEP WILL APPEAR, which is most of what
+                  teaches what it does: press it and the row shows up two lines
+                  below. It is NOT disabled when there is nothing to freeze — main
+                  refuses that with a sentence saying what to correct first, and a
+                  dead button teaches nobody why it is dead.
+                -->
+                @if (canSave()) {
+                  <div class="acts">
+                    <button
+                      class="act"
+                      title="Keep a copy of these corrections that nothing later can change"
+                      (click)="saveCorrections()"
+                    >Save corrections</button>
                   </div>
                 }
               </div>
@@ -562,10 +691,69 @@ import { TabsService, type BlockElement } from '../../core/tabs.service';
     }
     .words:focus { outline: none; box-shadow: var(--focus-ring); border-color: var(--accent); }
     .words:disabled { opacity: 0.6; }
+
+    /* ── Steps ─────────────────────────────────────────────────────────── */
+
+    /*
+      THE ONE THING IN THIS PANEL THAT IS NOT A SECTION. It is a state the whole
+      column is in — every control under it is dead — so it sits above them all,
+      in the warning colour the notice strip uses, and it does not scroll away
+      with any one section's rows.
+    */
+    .frozen {
+      flex: 0 0 auto;
+      margin: 0;
+      padding: 8px 12px;
+      background: var(--warn-soft);
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--warn);
+      font-size: 11px; line-height: 1.45;
+    }
+
+    .step { display: flex; align-items: center; }
+    /*
+      THE POSITION ROW IS VISIBLY CURRENT, in the same accent and the same faint
+      wash the Category section marks its current row with. One word for "this is
+      the one you are on" across the whole panel; inventing a second is how a
+      palette stops meaning anything.
+    */
+    .step.current { background: var(--accent-faint); }
+
+    .step-pick { align-items: flex-start; gap: 7px; padding: 6px 8px; }
+    .dot {
+      flex: 0 0 auto;
+      width: 7px; height: 7px; margin-top: 4px;
+      border-radius: 50%;
+      box-shadow: inset 0 0 0 1px var(--border-strong);
+    }
+    .step.current .dot { background: var(--accent); box-shadow: none; }
+
+    .what { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .step.current .name { color: var(--accent); font-weight: 500; }
+    /*
+      The quiet "from Read", and quiet is the specification. It is the only
+      admission this list makes that the steps are a tree, and it appears on the
+      one row in a hundred where somebody stepped back and acted from an earlier
+      state — a project worked straight through carries none at all.
+    */
+    .from { font-size: 10px; font-style: italic; color: var(--text-tertiary); }
+
+    /*
+      A STALE STEP IS DIMMED AND STILL CLICKABLE, which was the ruling. Its
+      payload is a true record of what was made — a translation of a bank that has
+      since been re-read still holds the blocks it translated — so it opens, it
+      renders, and only its currency is in question. The reason is on hover, where
+      an explanation nobody needs stays out of the way of a list.
+    */
+    .step.stale .name { opacity: 0.55; }
+    .step.stale .tally { opacity: 0.55; }
+    .step.stale .dot { opacity: 0.4; }
   `],
 })
 export class InspectorComponent {
   protected readonly tabs = inject(TabsService);
+  private readonly projects = inject(ProjectsService);
+  private readonly ledger = inject(LedgerService);
 
   protected readonly fallback = UNKNOWN_CATEGORY_COLOUR;
 
@@ -579,6 +767,7 @@ export class InspectorComponent {
   protected readonly categoryOpen = signal(true);
   protected readonly chaptersOpen = signal(true);
   protected readonly blockOpen = signal(true);
+  protected readonly stepsOpen = signal(true);
 
   /** Which chapter row is being renamed, and the text in its box. */
   protected readonly renamingHref = signal<string | null>(null);
@@ -719,6 +908,16 @@ export class InspectorComponent {
       const words = this.reading();
       untracked(() => this.draft.set(words));
     });
+
+    /*
+     * THE HISTORY IS ASKED FOR WHEN THE PANEL LANDS ON A BOOK, and never again for
+     * the same one: `ensure` is a no-op for a project already held or already in
+     * flight, and everything after the first read arrives through
+     * `projects:changed`, which is how anything in this window hears that a
+     * project moved. Without this the section would be empty for a book opened
+     * from Home until something else happened to it.
+     */
+    effect(() => { this.ledger.ensure(this.projectDir()); });
   }
 
   protected tallyTitle(row: CategoryRow): string {
@@ -840,6 +1039,10 @@ export class InspectorComponent {
   }
 
   protected startChapterRename(row: ChapterRow): void {
+    // The double-click reaches this even with the pencil disabled, and a box that
+    // opens, takes a new name and then refuses to keep it is a worse refusal than
+    // one that never opened. The banner above already says why.
+    if (this.frozen()) return;
     this.renameText.set(row.title);
     this.renamingHref.set(row.target);
   }
@@ -926,6 +1129,169 @@ export class InspectorComponent {
     this.renamingHref.set(null);
     if (!tab || label.length === 0 || label === chapter.label) return;
     await this.tabs.renameHeading(tab.id, chapter.href, label);
+  }
+
+  // ── Steps ────────────────────────────────────────────────────────────────
+
+  /**
+   * The project the focused document belongs to, or null for a file opened from
+   * somewhere this app has never imported.
+   *
+   * THE SECTION IS ABOUT THE PROJECT AND NOT ABOUT THE TAB, which is why this is a
+   * separate question from `subject()`. A book's history is the same history
+   * whether you are looking at the scan, at the EPUB that was cast from it or at
+   * one of its translations — they are all one project — and a Steps section that
+   * came and went with the mode a pane happens to be in would be a history that
+   * belongs to a viewer rather than to a book.
+   */
+  protected readonly projectDir = computed<string | null>(() => {
+    const tab = this.tabs.activeDocument();
+    if (tab === null) return null;
+    const project = this.projects.projectFor(tab.path);
+    // A catalogue that will not parse has no history to draw and its refusal is
+    // already on its row on Home. `ProjectsService` treats it as no project at
+    // all for exactly this reason, and so does this.
+    return project === null || project.problem !== null ? null : project.dir;
+  });
+
+  /**
+   * The rows, exactly as main composed them.
+   *
+   * NEVER SORTED AND NEVER ANNOTATED HERE. The order is creation order and the
+   * "from …" is set only where a row's parent is not the row above it; both
+   * decisions are made once, in `chronological`, and a template that made them
+   * again would be a second opinion about the shape of somebody's history.
+   */
+  protected readonly stepRows = computed<readonly StepRow[]>(() =>
+    this.ledger.historyFor(this.projectDir())?.rows ?? []);
+
+  /** Main's sentence for a ledger it would not read, drawn instead of rows. */
+  protected readonly stepsProblem = computed<string | null>(() =>
+    this.ledger.problemFor(this.projectDir()));
+
+  /** The step the pointer stands on — the row drawn as current. */
+  protected readonly standingId = computed<string | null>(() =>
+    this.ledger.standingIn(this.projectDir())?.id ?? null);
+
+  /**
+   * Why the block editor's controls are dead, or null — and IT IS ABOUT THE BLOCK
+   * EDITOR AND NOTHING ELSE.
+   *
+   * A curation snapshot freezes the SCAN's overlay: strikes, categories, text
+   * overrides and the chapters list, all of them lines in one file beside the
+   * readings bank. An unpacked book's select mode writes somewhere else entirely —
+   * `data-bf-cat` attributes inside somebody's chapter markup — and has no more to
+   * do with a frozen curation than a translation does. So the banner is not drawn
+   * and nothing is disabled beside a book, even when that book's project is
+   * standing on a save: greying out the Category rows of an EPUB because a scan in
+   * the same folder has a snapshot would be this panel refusing a gesture for a
+   * reason that is not about it.
+   */
+  protected readonly lock = computed(() =>
+    (this.subject()?.kind === 'pdf' ? this.ledger.lockIn(this.projectDir()) : null));
+
+  /** True when a gesture in this panel would be refused for standing on a save. */
+  protected readonly frozen = computed(() => this.lock() !== null);
+
+  /** False only in the moment between the panel landing on a book and main answering. */
+  protected readonly stepsRead = computed(() =>
+    this.ledger.historyFor(this.projectDir()) !== null);
+
+  /**
+   * Save is offered over a SCAN BEING CORRECTED and nowhere else.
+   *
+   * What it freezes is the block editor's curation, so a pane that is not in that
+   * mode has nothing to freeze — and it is not offered while standing on a save
+   * either, because correcting is off there and a Save that kept a copy of
+   * corrections nobody was allowed to make would be a button with nothing behind
+   * it. The way back is named in the banner above it.
+   */
+  protected canSave(): boolean {
+    const panel = this.subject();
+    return panel !== null && panel.kind === 'pdf' && panel.live && !this.frozen();
+  }
+
+  /**
+   * WHEN, in as few characters as a row can spare.
+   *
+   * The year is dropped for anything from this one, which is nearly every row
+   * anybody looks at, and kept for the rest — a project imported two years ago and
+   * read last week is a real thing, and two rows both reading "14 Aug" would be
+   * this panel quietly claiming they happened together.
+   */
+  protected when(step: LedgerStep): string {
+    const at = new Date(step.createdAt);
+    const sameYear = at.getFullYear() === new Date().getFullYear();
+    return at.toLocaleDateString(undefined, sameYear
+      ? { day: 'numeric', month: 'short' }
+      : { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
+  /**
+   * What a row says on hover — including the STALE REASON, which is the whole of
+   * why a dimmed row is dimmed.
+   *
+   * A step goes stale when something it was made from was replaced under it: the
+   * blocks a curation named by `(page, order)` mean different blocks after a
+   * re-read, and a translation of those blocks was a translation of paragraphs
+   * that have moved. It is a display state and not a deletion — the payload is
+   * still a true record of what was made, so the row still opens and still
+   * renders. Saying that on hover is what keeps a dimmed row from reading as a
+   * broken one.
+   */
+  protected rowTitle(row: StepRow): string {
+    const full = new Date(row.step.createdAt).toLocaleString();
+    if (row.step.stale === true) {
+      return `${row.step.label} — ${full}. What this was made from has been replaced since, so it `
+        + 'describes an earlier pass over the pages. It still opens, exactly as it was recorded.';
+    }
+    if (row.step.id === this.standingId()) {
+      return `${row.step.label} — ${full}. You are standing here: this is what the panes show and `
+        + 'what the next thing you do is made from.';
+    }
+    return `${row.step.label} — ${full}. Click to stand here. Nothing after it is thrown away.`;
+  }
+
+  /**
+   * Clicking a row. FREE, INSTANT AND UNCONFIRMED — one line of the manifest, no
+   * job, no rendering, no question asked. That is the promise every history panel
+   * makes by looking like one.
+   *
+   * The row already being current is not a no-op worth guarding: main answers with
+   * the same ledger and the panel repaints to the same thing, and a click that did
+   * nothing is cheaper than a branch that has to be kept true.
+   */
+  protected async stand(row: StepRow): Promise<void> {
+    const dir = this.projectDir();
+    if (dir === null) return;
+    try {
+      await this.ledger.go(dir, row.step.id);
+    } catch (err) {
+      // Main's words. It refuses an id this project does not hold, which means the
+      // two sides are looking at different ledgers — not something to smooth over.
+      this.tabs.notice.set(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /**
+   * The ✕. Main says what it costs, the app's own card asks, main does it.
+   *
+   * Never offered on the origin (the template does not draw the button) and
+   * refused by name there anyway. A cancel is silence; a refusal is main's
+   * sentence, as written.
+   */
+  protected async discard(dir: string, row: StepRow): Promise<void> {
+    try {
+      await this.ledger.remove(dir, row.step.id);
+    } catch (err) {
+      this.tabs.notice.set(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /** Freeze the corrections as a step. The refusal for an empty one is main's. */
+  protected saveCorrections(): void {
+    const panel = this.subject();
+    if (panel !== null && panel.kind === 'pdf') void this.tabs.saveCorrections(panel.id);
   }
 }
 
