@@ -404,10 +404,43 @@ emptiness, doing something plausible and wrong.
    rule. Re-covering it needs an EPUB built by hand with a cover in it,
    since nothing in this program writes one any more.
 
+6. ~~**Type sizes in the reflowed book.**~~ FIXED. User: *"everything
+   should be a uniform, set size. chapter headers, titles, section
+   headers, etc. should all be set to the median size of the blocks in
+   the original document so it doesnt all look ridiculous"* — and, on
+   scope, *"im more worried about making the text sizes correct in the
+   reflowed html and the eventual epub that gets generated"*.
+
+   `typography.ts` already measured a median per category and wrote it
+   into the stylesheet once. What it ALSO did was write an inline
+   `font-size` on any block measuring more than 25% off its category's
+   median, so a paragraph could sit at `1.48em` in the middle of the
+   page. That was defended as preserving a printer's emphasis; against
+   a rectangle divided by a line count it is at least as often a box
+   the model drew generously, and the wrong version is invisible in the
+   report and unmistakable on the page. Gone: the outlier pass, the
+   `sizes` map, `TypeMeasurement.counted` (which existed only to gate
+   it), and `sized()` in the emitter.
+
+   Second half, and it is the one that made headings look worst:
+   `h1`/`h2` were the only selectors in the base sheet naming no size,
+   so a book with fewer than four Titles fell through to the reading
+   system's own 2em/1.5em — a size chosen by nobody, on the loudest
+   element in the book. They now state 1.5em and 1.15em, which a
+   measured rule still overrides wherever there are enough blocks to
+   measure.
+
+   **THE FACSIMILE IS UNTOUCHED**, deliberately: `pdf-text.ts` keeps
+   its own per-block sizing because there the type must fit the box it
+   came out of. That route is a picture of the page; this one is a book.
+
 Left standing, and said out loud rather than quietly done:
 
 - **Chapter rename from the inspector still throws** (4b item 3). Not
   touched this sitting.
+- **Books already cast carry the old typography**, exactly as they
+  carry the old cover. A cast is only remade when something changes;
+  deleting the file in `generated/` is what forces it.
 - **`docs/REFLOW.md` still says crops exist "for picture and cover
   crops"** in two places. Left as written: it is a completed phase's
   plan, one of the two lines is inside a block quote of an earlier

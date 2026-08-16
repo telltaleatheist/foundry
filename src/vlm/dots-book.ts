@@ -135,7 +135,6 @@ import {
   deriveTypography,
   measureTypeSizes,
   typeSize,
-  type BookTypography,
   type TypographyReport,
 } from './typography.js';
 
@@ -1430,18 +1429,6 @@ export interface DotsChapterOptions {
    */
   split: ReadonlySet<string>;
   /**
-   * The inline `font-size` an OUTLIER block keeps, pre-formatted (`1.48em`),
-   * keyed by block identity — `BookTypography.sizes`, and nothing else ever.
-   *
-   * Only the blocks that measured a different size from the rest of their
-   * category are in it, so the ordinary case is a lookup that misses and an
-   * element written exactly as it always was. The map is passed rather than the
-   * measurements because the decision — whether this block is an outlier, and
-   * what its size is as a ratio of the body — belongs to `typography.ts`, which
-   * has the whole book to compare against; a chapter has one chapter.
-   */
-  sizes?: ReadonlyMap<DotsBlock, string>;
-  /**
    * The curation, for the ONE decision that could not be applied at the parse:
    * a struck NOTE.
    *
@@ -1670,23 +1657,6 @@ export function buildChapterBody(
   };
 
   /**
-   * The size this block keeps, when it is not the size the rest of its category
-   * is. Empty for every block that is, which is nearly all of them.
-   *
-   * NOT WRITTEN ON EVERY ELEMENT KIND, and the omissions are deliberate. A
-   * `List-item` block is a whole run of items in one box, so its measured line
-   * height is the list's leading rather than any item's type; a `Table`'s text
-   * is the model's own HTML and nothing in this file reaches inside it to style
-   * a cell; a `Formula`'s box is its own layout and not a line of type; a
-   * `Picture` has no type in it. None of those four is a size that could be
-   * measured, so none of them is a size that gets written.
-   */
-  const sized = (block: DotsBlock): string => {
-    const em = opts.sizes?.get(block);
-    return em === undefined ? '' : ` style="font-size:${em}"`;
-  };
-
-  /**
    * `data-bf-page`, `data-bf-cat`, `data-bf-id` and `data-bf-src` — see this
    * file's header, and `stampSrc` for the last of them.
    *
@@ -1842,7 +1812,7 @@ export function buildChapterBody(
           }
         }
         out.push(
-          `<${tag}${anchor}${classOf(align)}${sized(block)}${stamp(block, src, cat)}>`
+          `<${tag}${anchor}${classOf(align)}${stamp(block, src, cat)}>`
           + `${marker(block)}${xhtml}</${tag}>`,
         );
         // The section's own name, flattened for the contents the same way an
@@ -1853,7 +1823,7 @@ export function buildChapterBody(
       }
       case 'Quote':
         out.push(
-          `<blockquote${stamp(block, src)}><p${sized(block)}${stamp(block, src)}>`
+          `<blockquote${stamp(block, src)}><p${stamp(block, src)}>`
           + `${marker(block)}${inline(words, block.page)}</p></blockquote>`,
         );
         break;
@@ -1892,7 +1862,7 @@ export function buildChapterBody(
       }
       case 'Caption':
         out.push(
-          `<p class="caption"${sized(block)}${stamp(block, src)}>`
+          `<p class="caption"${stamp(block, src)}>`
           + `${marker(block)}${inline(words, block.page)}</p>`,
         );
         break;
@@ -1958,7 +1928,7 @@ export function buildChapterBody(
         }
         if (substituted) written.push(inline(words, block.page));
         out.push(
-          `<p${classOf(align)}${sized(block)}${stamp(block, src)}>${written.join('')}</p>`,
+          `<p${classOf(align)}${stamp(block, src)}>${written.join('')}</p>`,
         );
       }
     }
@@ -2067,7 +2037,7 @@ export function buildChapterBody(
         : ` data-bf-note="${note.ordinal}"${note.struck ? ' data-bf-cut="1"' : ''}`;
       out.push(
         `<aside class="footnote" epub:type="footnote" role="doc-footnote" id="fn${note.seq}"`
-        + `${sized(note.block)}${stamp(note.block, sourceOfBlock(note.block))}`
+        + `${stamp(note.block, sourceOfBlock(note.block))}`
         + `${editing}>`
         + `${number}${inline(rest)}</aside>`,
       );
@@ -2229,14 +2199,37 @@ export function reflowWrappedProse(blocks: readonly DotsBlock[]): DotsBlock[] {
  * every category the measurement stayed silent about. A book with three
  * captions in it gets `0.9em` captions, exactly as it always did.
  *
+ * ── AND THAT IS WHY `h1` AND `h2` NOW STATE A SIZE ──────────────────────────
+ *
+ * They were the only two selectors in this sheet that named none, so a book
+ * whose Titles or Section-headers came up short of four samples fell through to
+ * whatever the reading system does with a heading — 2em and 1.5em in every
+ * browser engine, and a further step up in some of them for a heading inside a
+ * `<section>`. That is a size chosen by nobody, and it is the loudest thing on
+ * the page: *"chapter headers, titles, section headers, etc. should all be set
+ * to the median size of the blocks in the original document so it doesnt all
+ * look ridiculous."* Where the book can be measured it now is, exactly as asked;
+ * where it cannot, a STATED default is the honest floor — modest, uniform, and
+ * the same in every reader, which is more than the inherited value ever was.
+ *
+ * 1.5 and 1.15 rather than 2 and 1.5 because these are books rather than web
+ * pages: a scanned chapter opener runs about half again the body and a section
+ * head only just above it, which is where the measured ratios land whenever
+ * there are enough of them to land anywhere.
+ *
  * Still no point sizes and still no font families: everything derived is an
  * `em` against the reader's own body size, so the reader decides how big the
  * book is and the book decides what is bigger than what.
+ *
+ * AND NOTHING IS SET PER BLOCK. Every rule here is one line for a whole
+ * category; `TypographyReport` carries the ruling that ended the inline
+ * `font-size` an unusually-boxed block used to keep.
  */
 const STYLESHEET_BASE = `/* Foundry — vlm-convert, dots.ocr. Sizes are the book's own, as em ratios. */
 html { font-size: 100%; }
 body { margin: 0 5%; line-height: 1.5; }
-h1, h2 { line-height: 1.2; margin: 1.4em 0 0.8em; }
+h1 { font-size: 1.5em; line-height: 1.2; margin: 1.4em 0 0.8em; }
+h2 { font-size: 1.15em; line-height: 1.2; margin: 1.4em 0 0.8em; }
 h1.centered, h2.centered { text-align: center; }
 p { margin: 0 0 0.4em; text-indent: 1.4em; }
 p.centered, p.caption, p.formula { text-indent: 0; text-align: center; }
@@ -2259,10 +2252,11 @@ th { border-bottom: 1px solid currentColor; }
 /**
  * Where each measured category writes itself, and there are only five.
  *
- * Each selector already carries a font-size in the base sheet, or — for the two
- * headings — carries none and inherits one from the reading system. Both are
- * things the book itself can now answer better, and neither is a place where a
- * wrong number could do anything but make a heading the wrong size.
+ * Each selector carries a font-size in the base sheet already — including the
+ * two headings, which used to carry none and inherit one from the reading
+ * system (see `STYLESHEET_BASE`). All five are things the book itself can answer
+ * better, and none is a place where a wrong number could do anything but make a
+ * heading the wrong size.
  */
 const DERIVED_RULES: ReadonlyArray<readonly [DotsCategory, string]> = [
   ['Footnote', '.footnotes'],
@@ -2295,9 +2289,8 @@ export function dotsStylesheet(typography: TypographyReport | null): string {
       : [`${selector} { font-size: ${measured.ratio.toFixed(2)}em; }`];
   });
   if (derived.length === 0) return STYLESHEET_BASE;
-  return `${STYLESHEET_BASE}\n/* Measured from this book: `
-    + `${typography!.bodyPx.toFixed(1)}px body line, `
-    + `${typography!.outliers.length} block(s) kept at their own size. */\n`
+  return `${STYLESHEET_BASE}\n`
+    + `/* Measured from this book: ${typography!.bodyPx.toFixed(1)}px body line. */\n`
     + `${derived.join('\n')}\n`;
 }
 
@@ -2461,7 +2454,7 @@ export interface FlowBook {
   reflowed: DotsBlock[];
   column: BodyColumn;
   lexicon: BookLexicon;
-  typography: BookTypography | null;
+  typography: TypographyReport | null;
   /**
    * The pages whose opening paragraph WOULD have been joined onto the previous
    * page's if this program still read ink, and now is not.
@@ -3163,7 +3156,6 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
       elementNumbers,
       split,
       openers: openingHeadings(span, kind),
-      ...(typography !== null ? { sizes: typography.sizes } : {}),
       // The strikes and the categories were applied at the parse; what is left
       // for the emitter is the one decision that could not be — a struck NOTE,
       // which had no existence until `splitNotes` ran. See
@@ -3275,12 +3267,7 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
     suppressedHeads: flow.suppressedHeads.map((b) => ({ page: b.page, text: b.text, why: b.why })),
     foldedSections: flow.folded,
     mergedHeadings: flow.mergedHeadings,
-    // The working map of per-block sizes stays out of the report: it is keyed
-    // by block identity, which means nothing once the blocks are gone, and
-    // everything a reader of the report wants about it is in `outliers`.
-    typography: typography === null
-      ? null
-      : { bodyPx: typography.bodyPx, categories: typography.categories, outliers: typography.outliers },
+    typography,
     reflowedBlocks: flow.reflowed.length,
     lexiconWords: flow.lexicon.size,
     xhtmlSeconds,

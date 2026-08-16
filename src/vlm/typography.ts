@@ -31,6 +31,12 @@
  * three captions in it keeps the static default for captions and nothing here
  * says a word about them. The alternative — a whole book's caption size set by
  * one loosely-drawn box — is a decision that looks measured and is not.
+ *
+ * WHAT COMES OUT IS ONE SIZE PER CATEGORY AND NOTHING PER BLOCK. Every footnote
+ * in the book is the size this book's footnotes are; every chapter title is the
+ * size its titles are. There is no path from here to an element carrying a size
+ * of its own — `TypographyReport` records the pass that used to, and the ruling
+ * that ended it.
  */
 import { lineHeight, widthFraction, type DotsBlock, type DotsCategory } from './dots.js';
 
@@ -88,29 +94,6 @@ const RATIO_FLOOR = 0.5;
 const RATIO_CEILING = 3.0;
 
 /**
- * How far a single block may sit from its category's median before it keeps its
- * own size.
- *
- * The measurements that reach this comparison are COUNTED — box height over
- * newlines the model kept (see `TypeMeasurement.counted`) — so what the
- * tolerance absorbs is not the 40-pixel estimate's wobble but the boxes
- * themselves: the model draws a rectangle around each block, and how tight it
- * draws the top and bottom edges varies by a few pixels either way, amortised
- * over however many lines the block has. Measured on the Dannenmann bank, a
- * book of uniform body type: 48 counted paragraphs spread 45.5 to 51.5 px
- * around a 47.1 median — ±9%. 25% is comfortably outside the drawing noise and
- * comfortably inside the real target.
- *
- * What survives the tolerance is what it exists for: the user's own case is a
- * paragraph set at 12 pt in an 8 pt book — 1.5× — which the printer made bigger
- * ON PURPOSE, and which a book-wide `1em` silently flattens back to the size of
- * everything around it. A flattened emphasis is invisible in the finished
- * EPUB — nothing about the page says the paragraph used to stand out — so the
- * outlier is preserved AND recorded.
- */
-const OUTLIER_TOLERANCE = 0.25;
-
-/**
  * The longest a line the PRINTER set actually gets, in characters.
  *
  * Off the same measurement `JUSTIFIED_LINE_CHARS` in `dots-book.ts` is off —
@@ -123,9 +106,6 @@ const OUTLIER_TOLERANCE = 0.25;
  */
 const PRINTED_LINE_CHARS = 90;
 
-/** Enough of the block to recognise it in a report, and not a paragraph of it. */
-const SNIPPET_CHARS = 60;
-
 /** One category's measured size, as a fact and as a ratio. */
 export interface TypographyCategory {
   /** The median line height of this category's blocks, in render pixels. */
@@ -136,36 +116,42 @@ export interface TypographyCategory {
   samples: number;
 }
 
-/** A block that is not the size the rest of its category is, kept at its own. */
-export interface TypographyOutlier {
-  page: number;
-  category: DotsCategory;
-  /** The first `SNIPPET_CHARS` characters, on one line — enough to find it. */
-  text: string;
-  /** Its own size, relative to the body median. Two decimals, as written. */
-  em: number;
-}
-
-/** What the book's type says about itself. Nothing here is a point size. */
+/**
+ * What the book's type says about itself. Nothing here is a point size, and
+ * NOTHING HERE IS ABOUT A SINGLE BLOCK.
+ *
+ * ── The per-block sizes that used to ride along, and why they are gone ───────
+ *
+ * This carried a `sizes` map as well: an inline `font-size` for every block that
+ * measured more than 25% away from its category's median, so that a paragraph
+ * the printer set at 12 pt in an 8 pt book stayed bigger in the finished EPUB.
+ * The argument was that flattening it is invisible — nothing on the page says
+ * the paragraph used to stand out.
+ *
+ * The argument was answered by looking at one: *"everything should be a
+ * uniform, set size. chapter headers, titles, section headers, etc. should all
+ * be set to the median size of the blocks in the original document so it doesnt
+ * all look ridiculous."* A reflowed book is not a photograph of a page. Every
+ * measurement here is a rectangle divided by a line count, and one that lands
+ * outside a tolerance is at least as likely to be a box the model drew
+ * generously as a decision the printer made — but the FIRST kind is invisible in
+ * the report and unmistakable on the page, where it is a paragraph half again
+ * the size of the ones either side of it for no reason a reader can see.
+ *
+ * So the medians stand alone, and they are what the whole file was for: a
+ * footnote is the size this book's footnotes are, a title is the size this
+ * book's titles are, and every block of a category is the same size as every
+ * other block of it. `dotsStylesheet` writes each of them ONCE.
+ *
+ * THE FACSIMILE IS NOT THIS AND IS UNAFFECTED. There, type must fit the box it
+ * was measured out of, so `pdf-text.ts` keeps its own per-block sizing and its
+ * own reasons for it. That route is a picture of the page; this one is a book.
+ */
 export interface TypographyReport {
   /** The median line height of the book's body column, in render pixels. */
   bodyPx: number;
   /** Keyed by dots category, and only the ones with enough blocks to calibrate. */
   categories: Record<string, TypographyCategory>;
-  outliers: TypographyOutlier[];
-}
-
-export interface BookTypography extends TypographyReport {
-  /**
-   * The inline `font-size` an OUTLIER block keeps, pre-formatted (`1.48em`),
-   * keyed by block identity.
-   *
-   * Only outliers are in here. A block that measures the size its category
-   * measures gets no inline style at all — the stylesheet already says what
-   * size it is, and an attribute repeating that on every paragraph in the book
-   * is a hundred kilobytes of noise that says nothing.
-   */
-  sizes: ReadonlyMap<DotsBlock, string>;
 }
 
 /**
@@ -208,29 +194,6 @@ export function typeSize(block: DotsBlock): number {
   return block.box.y2 - block.box.y1;
 }
 
-/** One block's measured size, and how much the measurement can be trusted for. */
-export interface TypeMeasurement {
-  /** The block's line height in render pixels — `typeSize`'s answer. */
-  px: number;
-  /**
-   * Was the line count COUNTED — off newlines the model kept — or estimated?
-   *
-   * The two uncounted cases are the two the box cannot answer precisely: a
-   * one-line block's height is a line of type plus whatever slack the model
-   * drew around it, and a reflowed paragraph's height is divided by a
-   * one-line-per-40-pixels guess. Both are good enough to sit in a MEDIAN,
-   * where their errors cancel across the population — and neither is good
-   * enough to ACCUSE a single block of being a different size from its peers.
-   * Measured on the Dannenmann bank: the model reflowed every paragraph on one
-   * page of nine, the estimate put two of them past the outlier tolerance, and
-   * both were ordinary body paragraphs; a one-line line of letterspaced
-   * emphasis measured 1.27× the body off nothing but the slack in its box.
-   * Four false claims of intent, all from uncounted measurements, none from
-   * counted ones — so the outlier rule reads this flag.
-   */
-  counted: boolean;
-}
-
 /**
  * Every block's type size, measured NOW.
  *
@@ -246,12 +209,20 @@ export interface TypeMeasurement {
  * text does not.
  *
  * A Picture is skipped: it has a box and no type in it.
+ *
+ * PIXELS AND NOTHING ELSE. Each entry used to carry a `counted` flag beside the
+ * number — whether the line count came off newlines the model kept or off the
+ * 40-pixel estimate — which existed to decide whether a measurement was solid
+ * enough to ACCUSE one block of being a different size from its peers. Nothing
+ * accuses any more (`TypographyReport`): every measurement's only job is to sit
+ * in a median, where an estimate's error is one voice in a population and the
+ * distinction the flag drew does not change any answer.
  */
-export function measureTypeSizes(blocks: readonly DotsBlock[]): Map<DotsBlock, TypeMeasurement> {
-  const measured = new Map<DotsBlock, TypeMeasurement>();
+export function measureTypeSizes(blocks: readonly DotsBlock[]): Map<DotsBlock, number> {
+  const measured = new Map<DotsBlock, number>();
   for (const block of blocks) {
     if (block.category === 'Picture') continue;
-    measured.set(block, { px: typeSize(block), counted: block.text.includes('\n') });
+    measured.set(block, typeSize(block));
   }
   return measured;
 }
@@ -331,66 +302,26 @@ function isParagraph(block: DotsBlock): boolean {
  */
 export function deriveTypography(
   blocks: readonly DotsBlock[],
-  measured: ReadonlyMap<DotsBlock, TypeMeasurement>,
-): BookTypography | null {
-  const bodyPx = bodyTypeSize(blocks, (block) => measured.get(block)?.px);
+  measured: ReadonlyMap<DotsBlock, number>,
+): TypographyReport | null {
+  const bodyPx = bodyTypeSize(blocks, (block) => measured.get(block));
   if (bodyPx === null) return null;
 
   const categories: Record<string, TypographyCategory> = {};
   for (const category of CALIBRATED) {
     const samples = blocks
       .filter((b) => b.category === category)
-      .map((b) => measured.get(b)?.px)
+      .map((b) => measured.get(b))
       .filter((px): px is number => px !== undefined && px > 0);
     if (samples.length < CALIBRATION_SAMPLES) continue;
     const medianPx = median(samples);
     categories[category] = { medianPx, ratio: clamp(medianPx / bodyPx), samples: samples.length };
   }
 
-  const outliers: TypographyOutlier[] = [];
-  const sizes = new Map<DotsBlock, string>();
-  for (const block of blocks) {
-    const measurement = measured.get(block);
-    if (measurement === undefined || measurement.px <= 0) continue;
-    /*
-     * ONLY A COUNTED MEASUREMENT CAN ACCUSE. An outlier claim is a statement
-     * of the printer's intent — "this block was set bigger on purpose" — and
-     * an inline font-size in the finished book on the strength of it. The two
-     * uncounted branches of `typeSize` cannot carry that weight, and the
-     * Dannenmann bank is the proof (see `TypeMeasurement.counted`): every
-     * false outlier it produced was an estimate, and every counted block
-     * measured inside the tolerance. An estimate still serves the medians
-     * above, where its error is one voice in a population; here it would be
-     * the whole verdict.
-     */
-    if (!measurement.counted) continue;
-    const px = measurement.px;
-    /*
-     * What this block is compared against, and there are only two answers.
-     *
-     * A Text block is compared against the body, because Text IS the body and
-     * a paragraph that is not body-sized is the case this whole rule exists
-     * for. Anything else is compared against its OWN category's median, and
-     * only when that category was calibrated — a footnote is not an outlier
-     * for being smaller than the prose, it is a footnote.
-     */
-    const reference = block.category === 'Text' ? bodyPx : categories[block.category]?.medianPx;
-    if (reference === undefined) continue;
-    if (Math.abs(px - reference) <= OUTLIER_TOLERANCE * reference) continue;
-    // Clamped by the same bounds and for the same reason as a category ratio:
-    // past them the number is a box that went wrong, not type.
-    const em = clamp(px / bodyPx);
-    const written = em.toFixed(2);
-    sizes.set(block, `${written}em`);
-    outliers.push({
-      page: block.page,
-      category: block.category,
-      text: snippet(block.text),
-      em: Number(written),
-    });
-  }
-
-  return { bodyPx, categories, outliers, sizes };
+  // And that is the whole answer. One size per category, taken over the whole
+  // book — see `TypographyReport` for the per-block pass that used to follow
+  // this loop and the ruling that removed it.
+  return { bodyPx, categories };
 }
 
 /** The same median every other measurement in this dialect takes. */
@@ -401,9 +332,4 @@ function median(values: readonly number[]): number {
 
 function clamp(ratio: number): number {
   return Math.min(RATIO_CEILING, Math.max(RATIO_FLOOR, ratio));
-}
-
-function snippet(text: string): string {
-  const line = text.replace(/\s+/g, ' ').trim();
-  return line.length <= SNIPPET_CHARS ? line : `${line.slice(0, SNIPPET_CHARS)}…`;
 }

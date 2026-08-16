@@ -10,9 +10,9 @@
  *    it exists to measure;
  *  - the SILENCE, because a category with three blocks in it must produce no
  *    rule at all rather than a rule taken from one loosely-drawn box;
- *  - the OUTLIER, because the defect this was built for is a paragraph the
- *    printer set at 12 pt in an 8 pt book, which every book-wide font-size
- *    silently flattens back to the size of the prose around it.
+ *  - the UNIFORMITY, because the whole output of this file is one size per
+ *    category and a book where any single block carries a size of its own is
+ *    the defect it was rebuilt to prevent (`TypographyReport`).
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -146,94 +146,6 @@ test('a ratio no book could have printed is clamped to one it could', () => {
   assert.equal(type.categories['Footnote'].ratio, 3);
 });
 
-// ── the block that is not the size the rest of it is ────────────────────────
-
-test('a paragraph the printer set bigger stays bigger, and is named', () => {
-  // The case this exists for: a body paragraph set at 12 pt in an 8 pt book.
-  // The printer made it bigger on purpose; a book-wide `1em` flattens it back
-  // and nothing in the finished EPUB says it ever stood out.
-  const blocks = [
-    ...Array.from({ length: 8 }, (_, i) => typed({ px: 40, lines: 5, page: i + 1 })),
-    typed({ px: 60, lines: 4, page: 9, text: 'The letter was read aloud\nto the whole court\nthat morning\nin silence.' }),
-  ];
-  const type = deriveTypography(blocks, measureTypeSizes(blocks))!;
-  assert.deepEqual(type.outliers, [{
-    page: 9,
-    category: 'Text',
-    text: 'The letter was read aloud to the whole court that morning in…',
-    em: 1.5,
-  }]);
-  assert.equal(type.sizes.get(blocks[8]), '1.50em');
-  // And every ordinary paragraph carries nothing at all: the stylesheet already
-  // says what size a paragraph is, and an attribute repeating that on every one
-  // of them is a hundred kilobytes that says nothing.
-  assert.equal(type.sizes.size, 1);
-});
-
-test('the tolerance is wider than the estimate\'s own wobble', () => {
-  // A reflowed paragraph is measured as `height / round(height / 40)`, which
-  // lands anywhere in 40 ± 20/n for a block read as n lines however uniform the
-  // printed type is. 190 px over 5 lines is 38 and 210 over 5 is 42; both are
-  // that wobble and neither is a size the printer chose.
-  const blocks = [
-    ...Array.from({ length: 8 }, () => typed({ px: 40, lines: 5 })),
-    typed({ px: 38, lines: 5, page: 9 }),
-    typed({ px: 47, lines: 5, page: 10 }),
-  ];
-  assert.deepEqual(deriveTypography(blocks, measureTypeSizes(blocks))!.outliers, []);
-});
-
-test('an estimated size can sit in a median, but never accuse a block', () => {
-  /*
-   * Both halves of this are the Dannenmann bank, where the first run of this
-   * pass produced four outliers and every one of them was false.
-   *
-   * The model reflowed every paragraph on one page of nine, so their sizes are
-   * the `height / round(height / 40)` estimate — and the estimate is BIASED,
-   * not merely noisy, when the book's true line is not 40: it put two ordinary
-   * body paragraphs just past the tolerance at 0.71 and 0.75. Here, the same
-   * shape: a reflowed block (no breaks, over 90 characters) whose 59 px box
-   * reads as one 59 px line. It measures 1.48× the body and it is NOT an
-   * outlier, because nothing counted its lines.
-   */
-  const reflowed = typed({ px: 59, page: 9, text: 'word '.repeat(22) });
-  const blocks = [
-    ...Array.from({ length: 8 }, (_, i) => typed({ px: 40, lines: 5, page: i + 1 })),
-    reflowed,
-  ];
-  const type = deriveTypography(blocks, measureTypeSizes(blocks))!;
-  assert.deepEqual(type.outliers, []);
-  assert.equal(type.sizes.has(reflowed), false);
-});
-
-test('a one-line block\'s slack is not a size the printer chose', () => {
-  // "Wir sehen darin heilige Gottesgesetze!" — one letterspaced line of
-  // EMPHASIS, same type as the prose around it, in a box the model drew 60 px
-  // tall against a 47 px body. The height is type plus slack and nothing
-  // divides the slack down, so a one-line block can never be an outlier: its
-  // measurement is uncounted and the rule above refuses it.
-  const emphatic = typed({ px: 60, page: 3, text: 'Wir sehen darin heilige Gottesgesetze!' });
-  const blocks = [
-    ...Array.from({ length: 8 }, (_, i) => typed({ px: 40, lines: 5, page: i + 1 })),
-    emphatic,
-  ];
-  const type = deriveTypography(blocks, measureTypeSizes(blocks))!;
-  assert.deepEqual(type.outliers, []);
-});
-
-test('a footnote is judged against the other footnotes, never against the prose', () => {
-  // A footnote is not an outlier for being smaller than the body — that is what
-  // a footnote is. It is an outlier for being a different size from the book's
-  // other footnotes.
-  const blocks = [
-    ...Array.from({ length: 8 }, () => typed({ px: 40, lines: 5 })),
-    ...Array.from({ length: 5 }, () => typed({ category: 'Footnote', px: 30, lines: 3 })),
-    typed({ category: 'Footnote', px: 60, lines: 2, page: 12, text: 'A note in the\neditor’s own type.' }),
-  ];
-  const type = deriveTypography(blocks, measureTypeSizes(blocks))!;
-  assert.deepEqual(type.outliers.map((o) => [o.page, o.em]), [[12, 1.5]]);
-});
-
 // ── the stylesheet ──────────────────────────────────────────────────────────
 
 test('the stylesheet writes a rule only where the book was measured', () => {
@@ -242,10 +154,16 @@ test('the stylesheet writes a rule only where the book was measured', () => {
   // Footnotes and titles had enough blocks; captions, quotes and section
   // headers had none at all, so nothing is said about them and the base sheet's
   // own values stand.
-  assert.match(css, /\.footnotes \{ font-size: 0\.75em; \}/);
-  assert.match(css, /h1 \{ font-size: 2\.00em; \}/);
-  assert.equal(/h2 \{ font-size/.test(css), false);
-  assert.equal(/blockquote p \{ font-size: \d/.test(css), false);
+  //
+  // ASSERTED AGAINST THE DERIVED TAIL rather than the whole sheet, because the
+  // base sheet states an `h2` size of its own now — the browser default it used
+  // to inherit was a size nobody chose, on the loudest element in the book. The
+  // question this test asks is unchanged: what did the MEASUREMENT say.
+  const measured = css.slice(css.indexOf('Measured from this book'));
+  assert.match(measured, /\.footnotes \{ font-size: 0\.75em; \}/);
+  assert.match(measured, /h1 \{ font-size: 2\.00em; \}/);
+  assert.equal(/h2 \{ font-size/.test(measured), false);
+  assert.equal(/blockquote p \{ font-size/.test(measured), false);
   // The base sheet is still in front of the derived rules, so a category that
   // was not measured keeps the static default at the same specificity.
   assert.ok(css.indexOf('p.caption { font-size: 0.9em;') < css.indexOf('.footnotes { font-size: 0.75em; }'));

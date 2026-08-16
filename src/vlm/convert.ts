@@ -900,14 +900,17 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
         );
       }
       /*
-       * What the book's own type measures, and what was done about it.
+       * What the book's own type measures.
        *
        * The stylesheet this run wrote is not the stylesheet the last one wrote:
        * every ratio in it came off this book's boxes (`typography.ts`). A
        * program that silently sizes a book differently from the book beside it
-       * is a program whose output nobody can compare, so the medians, the
-       * categories that had enough blocks to be measured at all, and the blocks
-       * that kept a size of their own are all said out loud.
+       * is a program whose output nobody can compare, so the body median and
+       * every category that had enough blocks to be measured are said out loud.
+       *
+       * There is no longer a third clause counting the blocks that kept a size
+       * of their own, because no block does: one size per category, over the
+       * whole book. `TypographyReport` carries the ruling.
        */
       const typography = built.typography;
       if (typography === null) {
@@ -922,8 +925,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
           `vlm-convert: body type measures ${typography.bodyPx.toFixed(1)}px per line; `
           + (derived.length === 0
             ? 'no category had enough blocks to calibrate, so the stylesheet\'s own sizes stand'
-            : `derived — ${derived.join(', ')}`)
-          + `; ${typography.outliers.length} block(s) kept a size of their own`,
+            : `derived — ${derived.join(', ')}`),
         );
       }
       // What the pages said they were. Printed even when the answer is nothing,
