@@ -242,12 +242,18 @@ Rules of engagement are PLAN.md §1's, unchanged — five gates every unit,
 Angular gates only in the main checkout, agents never commit, no new tests
 unless asked, an honest partial beats a bent whole.
 
-- **R1 (engine):** book file v2 — ref markers, split ids, chapter seed;
-  `vlm-book` regeneration keeps ids; derived-book-file materialization
-  (`vlm-book --from <book> --ops <file> --records <file>` or equivalent).
-- **R2 (app spine):** read-landing orchestration (facsimile → book file);
-  book file + ops over IPC; renderer skeleton READ-ONLY — blocks, virtual
-  scroll, selection, proper chrome, chapters panel rewired.
+- **R1 (engine):** book file v2 — ref markers, chapter seed, version bump;
+  `vlm-book` regeneration keeps ids. **Materialization is NOT here**: the
+  replay lives once, in `app/shared` (the renderer needs it in-process), so
+  MAIN materializes derived book files and the engine never replays ops —
+  one implementation, not two. The engine learns to COMPILE FROM a book
+  file in R5, which is when export needs it.
+- **R2 (app spine):** book file + ops over IPC; renderer skeleton READ-ONLY —
+  blocks, virtual scroll, selection, proper chrome per RENDERER-DESIGN.md.
+  Opening a read position ENSURES the book file (main spawns `vlm-book` if
+  absent), which doubles as the migration for existing projects.
+  Facsimile-at-read-landing is split out as **R2b** — small, separate, after
+  the skeleton proves the pipeline.
 - **R3 (ops core):** the shared replay; the in-memory stack; strike/restore
   (with derived ref removal), text edit, category; Apply → step; standing on
   any step renders its chain; branch-on-edit-at-old-step.
@@ -265,7 +271,9 @@ the main checkout.
 
 ## 10. Deferred out loud (with reasons)
 
-- Crop adjustment; table grid editor — *"talk more about it later."*
+- Crop adjustment — WANTED, back-burner by ruling (2026-08-16): *"im going
+  to want crop adjustment but i think we should get the system nailed down
+  first."* Table grid editor — *"talk more about it later."*
 - Ops-timeline UI — the data model provides it whenever wanted; no UI now.
 - Bulk fix / OCR suspicion — no OCR errors (ruling 7).
 - Re-read-a-block at higher resolution — build only if garbling ever appears.
