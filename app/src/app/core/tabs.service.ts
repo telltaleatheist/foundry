@@ -1506,8 +1506,24 @@ export class TabsService {
      * changes were made on, which is the tab this whole wave exists to stop being
      * the answer.
      */
-    const onTheSheet = view.step !== null
-      && (view.step.action === 'read' || view.step.action === 'edit');
+    /*
+     * AND AN IMPORTED EPUB'S ORIGIN ROW OPENS IT AS WELL, which is the third door
+     * onto the same surface and the one this wave owed. A project that arrived as
+     * an EPUB has no read step and will never have one — a bank models pages and
+     * an EPUB has none, so its book is exploded straight out of the container
+     * (docs/RENDERER.md §6, the refinement paragraph) — and the import is
+     * therefore the row that book belongs to. Without this the click lands in
+     * `showDocument` and opens the archived EPUB in the iframe reader, which is
+     * the surface the whole wave exists to replace.
+     *
+     * THE TEST ITSELF MOVED INTO `positionView`. It was spelled here and again,
+     * differently, at the split-pane door below, and two doors onto one surface
+     * that disagree about who may come through is a bug with no symptom until
+     * somebody uses the second one. `sheet` is now the one answer to "is the
+     * picture at this position the proof sheet", asked in the module that already
+     * owns every other question about a position.
+     */
+    const onTheSheet = view.sheet;
     const swapped = onTheSheet
       ? this.showBook(move)
       : await this.showDocument(move, target);
@@ -1863,13 +1879,19 @@ export class TabsService {
     this.forgetSplitIn(projectDir);
     const at = this.indexOfPane(this.focusedPane());
     /*
-     * A READ ROW SPLITS THE BOOK, for `showPosition`'s reason and so that the two
-     * gestures cannot disagree. Asking main which document this position names
-     * would answer with the cast EPUB — the surface the sheet replaces — and put
-     * it in a column of its own beside a book somebody was reading, which is the
-     * "one tab, not two" rule broken by the one door that went round it.
+     * A ROW WHOSE PICTURE IS THE SHEET SPLITS THE BOOK, for `showPosition`'s
+     * reason and so that the two gestures cannot disagree. Asking main which
+     * document this position names would answer with the cast EPUB — the surface
+     * the sheet replaces — and put it in a column of its own beside a book
+     * somebody was reading, which is the "one tab, not two" rule broken by the one
+     * door that went round it.
+     *
+     * IT IS `view.sheet` AND NO LONGER `action === 'read'`, which is the same
+     * expression the click uses and is why it is one expression now. This door had
+     * already drifted: an edit row opened the sheet on a click and the cast EPUB
+     * on a split, and nothing said so.
      */
-    if (this.pictureIn(projectDir)?.view.step?.action === 'read') {
+    if (this.pictureIn(projectDir)?.view.sheet === true) {
       this.openInNewPane(this.bookTabIn(projectDir), at + 1);
       return;
     }

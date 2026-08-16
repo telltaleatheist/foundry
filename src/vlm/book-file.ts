@@ -465,6 +465,50 @@ export function figureName(src: string): string {
 }
 
 /**
+ * The core image types an EPUB may carry, by the extension a figure's NAME ends
+ * with — and the one place this program turns the one into the other.
+ *
+ * ── Why a constant became a table ──────────────────────────────────────────
+ *
+ * The bank route cuts every figure itself, with one rasteriser, into one format,
+ * so `image/png` was not a guess: it was a description of a file this program had
+ * just written. The imported-EPUB route does not cut anything. It COPIES the
+ * publisher's own file (docs/RENDERER.md §6, the refinement paragraph: the
+ * publisher's data is retained, not rediscovered), and that file is a JPEG about
+ * as often as it is a PNG. Declaring it `image/png` in the package manifest would
+ * be a lie in the one document a reading system consults before it draws
+ * anything, told about a file this program did not make.
+ *
+ * The list is EPUB 3's core image set — GIF, JPEG, PNG, SVG — plus WebP, which
+ * 3.3 added. An extension outside it is not a picture an EPUB may legally carry,
+ * so it is refused BY NAME at the explode rather than carried and mislabelled:
+ * a reader given a media type its parser rejects shows a hole where the figure is
+ * and says nothing about why.
+ */
+const FIGURE_TYPES: ReadonlyMap<string, string> = new Map(Object.entries({
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  svg: 'image/svg+xml',
+  webp: 'image/webp',
+}));
+
+/** The media type a figure of this name is, or a refusal naming what is known. */
+export function figureMediaType(name: string): string {
+  const dot = name.lastIndexOf('.');
+  const found = dot < 0 ? undefined : FIGURE_TYPES.get(name.slice(dot + 1).toLowerCase());
+  if (found === undefined) {
+    throw new BookFileError(
+      `"${name}" is named as a figure and this program has no media type for it. An EPUB carries `
+      + `pictures as ${[...FIGURE_TYPES.keys()].join(', ')}, and a package that declared the wrong `
+      + 'type for one would draw a hole where the picture is.',
+    );
+  }
+  return found;
+}
+
+/**
  * The box a merged block gets — the user's rule, applied part by part.
  *
  * ORIGIN FROM THE FIRST PART, HEIGHT FROM ALL OF THEM, WIDTH THE UNION. A block
@@ -1117,8 +1161,29 @@ export class BookFileError extends Error {
  * it is accepted here because a parser that refused it would refuse every book
  * anybody had edited. Which is the whole reason the grammar is written down
  * once, in a place both minters can be checked against.
+ *
+ * ── AND `e-<n>`, WHICH IS AN IMPORTED EPUB'S OWN NAME FOR A BLOCK ───────────
+ *
+ * A book minted from a publisher's EPUB has no bank and never will
+ * (docs/RENDERER.md §6, the refinement: an EPUB is never OCR'd into a bank —
+ * a bank models pages and an EPUB has none). So `b<page>-<order>` has nothing to
+ * be made of: there is no page and no banked answer, and inventing a page number
+ * to name a block after would be the one thing this format has never done. What
+ * an EPUB has instead is an ORDER — the spine, then document order inside each
+ * spine document — and that order is total, is the publisher's own, and does not
+ * move when this program's explode improves. `e-<n>` is that ordinal, counted
+ * from 1 across the whole book, and `#`/`/` ride on it exactly as they ride on a
+ * banked name.
+ *
+ * THE FORMAT VERSION DOES NOT MOVE FOR IT, and that is the version discipline of
+ * §2 applied rather than dodged. A version bump says "a reader of the old shape
+ * would read this file WRONG"; this change invalidates nothing that has ever been
+ * written — no file anywhere carries an `e-` id yet — and admits names an older
+ * build has never had to mean anything by. An older build that meets one refuses
+ * it with the id-grammar sentence below, which is the correct answer from a build
+ * that cannot draw a book it has no explode for.
  */
-const ROW_ID = /^b\d+-\d+(?:-\d+)?(?:#\d+)?(?:\/\d+)*$/;
+const ROW_ID = /^(?:b\d+-\d+(?:-\d+)?|e-\d+)(?:#\d+)?(?:\/\d+)*$/;
 
 /**
  * Read one back, or say exactly what about it is not a book.
@@ -1248,8 +1313,9 @@ export function parseBookFile(text: string): BookFile {
     if (!ROW_ID.test(row.id)) {
       throw new BookFileError(
         `block ${at + 1} is called "${row.id}", which is not a name this format mints: they are `
-        + 'b<page>-<order>, optionally -<part> for a cut answer, #<ordinal> for a note, and /<n> for '
-        + 'a block somebody split',
+        + 'b<page>-<order> for a block read off a page, optionally -<part> for a cut answer, or '
+        + 'e-<n> for a block exploded out of an imported EPUB, with #<ordinal> for a note and /<n> '
+        + 'for a block somebody split',
       );
     }
     // Two blocks of one name is the failure every op in the project would

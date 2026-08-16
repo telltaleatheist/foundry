@@ -68,7 +68,13 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { ensureDir } from '../fsdirs.js';
-import { parseBookFile, BookFileError, type BookFile, type BookRow } from './book-file.js';
+import {
+  figureMediaType,
+  parseBookFile,
+  BookFileError,
+  type BookFile,
+  type BookRow,
+} from './book-file.js';
 import {
   alignmentClass,
   bodyColumn,
@@ -440,9 +446,19 @@ function chapterBody(
     });
   };
 
-  /** The page marker this row's part owes, if it opens a page. Consumed once. */
+  /**
+   * The page marker this row's part owes, if it opens a page. Consumed once.
+   *
+   * PAGE 0 OWES NOTHING, and that is the no-page frame reaching the writer.
+   * A book exploded out of an imported EPUB has no pages at all (docs/BOOK-FILE.md
+   * §3): every row is `page: 0`, which is the number that is not a page. A
+   * `<span epub:type="pagebreak" id="pb-0">` at the head of such a book would be
+   * a print-source citation to a leaf that was never printed — the one kind of
+   * claim page provenance exists to make truthfully — and a reading system's
+   * page-list would offer somebody a page to turn to that does not exist.
+   */
   const marker = (page: number): string => {
-    if (pagesSeen.has(page)) return '';
+    if (page === 0 || pagesSeen.has(page)) return '';
     pagesSeen.add(page);
     return pageMarker(page);
   };
@@ -810,10 +826,19 @@ export function compileBook(opts: CompileOptions): CompileReport {
     identifier: `urn:foundry:bank:${book.source.bankSha}`,
   };
 
+  /*
+   * THE MEDIA TYPE IS READ OFF THE NAME AND IS NO LONGER A CONSTANT. Every figure
+   * the bank route produces is a PNG, because this program cut it with one
+   * rasteriser — so `image/png` was a description rather than a guess. The
+   * imported-EPUB route COPIES the publisher's own file (docs/RENDERER.md §6),
+   * and that is a JPEG about as often as a PNG; declaring it `image/png` would
+   * put a lie in the one document a reading system consults before it draws
+   * anything. `figureMediaType` is the one table, beside the format it belongs to.
+   */
   const resources: VlmResource[] = [...images.entries()].map(([name, file], index) => ({
     id: `img${index}`,
     href: `images/${name}`,
-    mediaType: 'image/png',
+    mediaType: figureMediaType(name),
     data: new Uint8Array(fs.readFileSync(file)),
   }));
 

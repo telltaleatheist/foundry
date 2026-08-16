@@ -33,6 +33,22 @@ detection). No user decision is ever written into it — decisions are ops in th
 project ledger, keyed by block id. This purity is what every future capability
 stands on: `f` can improve forever, and regeneration is seconds.
 
+**AND THE RECEIPT IS NOT ALWAYS A BANK.** A project imported as an EPUB has no
+bank and never will: a bank models pages and an EPUB has none, and reading real
+text back through a vision model would trade exact data for a guess at it
+(RENDERER.md §6, the refinement). For such a project the receipt is **the
+container itself** — archived immutable, `book = f(epub)` — and `f` is the
+engine's explode (spine order, semantic markup → categories, the publisher's own
+noteref anchors → refs, nav → chapters, figures copied). Everything the two
+routes produce is one format, one set of readers, one kind of op:
+
+```
+readings/<key>.jsonl          THE RECEIPT, read from pages      → f = reflow
+archive/<book>.epub           THE RECEIPT, imported as a book   → f = explode
+readings/<key>.book.jsonl     THE BOOK FILE, either way
+readings/<key>.images/        THE CUT ASSETS (cut, or copied)
+```
+
 **Ids are stable under regeneration by construction** (§4). That is the load-
 bearing property: ops, chapter markers, and translation records survive a
 better `f`.
@@ -79,6 +95,20 @@ field — so a reorder op is a move, not a renumbering.
            "notes": ["b6-5#0", …]}}
 ```
 
+On the **imported-EPUB route** the same header fields say the same kinds of
+thing about a different receipt: `source.pages` is the count of SPINE DOCUMENTS
+(the format has one field for "how much source was there", and a document is
+that book's unit of it); `source.unreadable` is always `[]`, because a spine
+document that will not parse stops the run rather than being skipped — an EPUB
+either explodes whole or does not explode; `source.bankSha` is the first 16 hex
+of a sha-256 over the **EPUB's own bytes**, which is the receipt in exactly the
+bank's sense; and `language` is the package's `dc:language`, declared by the
+publisher, which `--language` may override and never silently defaults over.
+`chapters` is the publisher's nav (or NCX) verbatim, entry by entry, resolved to
+the row each href lands on. A `Footnote` row on this route carries no `note`
+ordinal — there is no banked block for it to be the nth note of — and carries
+`refs` like every other note row, `[]` included.
+
 ### Row
 
 ```jsonc
@@ -103,18 +133,74 @@ field — so a reorder op is a move, not a renumbering.
 ranges and the fused words). `src` coordinates remain the re-keying bridge for
 anything recorded before ids existed.
 
+### The no-page frame — an EPUB-sourced row's geometry
+
+A book exploded out of an imported EPUB has **no pages at all**, so every one of
+its rows wears the same documented frame and no reader has to ask which kind of
+book it is holding:
+
+```jsonc
+"page": 0, "pages": [0],
+"box": {"x1": 0, "y1": 0, "x2": 0, "y2": 0},
+"pageWidth": 0, "pageHeight": 0,
+"parts": [{"src": "e:<n>", "page": 0, "chars": [0, <len>]}]
+```
+
+and the header's `"typography": null`, `"seams": []`.
+
+**Page 0 is not a page.** It is the number that names none, and writing it costs
+nothing precisely because *nothing in this format is addressed by a page* — the
+rule the whole file has been under since v1. A row on this route also has exactly
+ONE part, because nothing was ever broken across anything to be joined; `src` is
+`e:<n>`, the same ordinal the id carries.
+
+**`typography` is null because there is nothing to measure**, not because the
+measurement was skipped. The report is medians over BOXES (type size is a box's
+height over its line count) and there are no boxes; null is the contract's own
+spelling of "the base sheet's type rules stand", which is the documented silence
+rather than a guess dressed as a measurement.
+
+**No facsimile is ever made from such a book**, and `vlm-compile` writes no
+`epub:type="pagebreak"` anchor for page 0 — a print-source citation to a leaf
+that was never printed is the one claim page provenance exists to make truthfully.
+
 ## 4. Ids
 
 - Minted from the FIRST banked answer a block is made of:
   `b<page>-<order>[-<part>][#<noteOrdinal>]`. A merge consumes the second
   block and leaves the first where it was, so a better join rule changes which
   ids exist and never what an existing id means.
-- User splits (ops, not `f`) mint `b2-3/1`, `b2-3/2` — derived, deterministic,
-  collision-free with bank-derived names. The book file's parser accepts the
-  grammar; only replay mints them.
+- **`e-<n>` for a block exploded out of an imported EPUB** — the spine-order
+  element ordinal, 1-based across the whole book (spine order, then document
+  order inside each spine document). There is no bank under such a book, so
+  there is no `b<page>-<order>` to mint and no page number may be invented to
+  stand in for one. What an EPUB has instead is an ORDER, it is total, it is the
+  publisher's own, and it does not move when the explode improves — which is the
+  only property an id has to have. `#` and `/` ride on it exactly as they ride on
+  a banked name.
+- User splits (ops, not `f`) mint `b2-3/1`, `b2-3/2` — and `e-7/1`, `e-7/2` —
+  derived, deterministic, collision-free with both minters' names. The book
+  file's parser accepts the grammar; only replay mints them.
 - Shelved rows mint ids exactly like flow rows. Restoring one to the flow is
-  an op against its id.
+  an op against its id. (The explode shelves nothing: an EPUB has no page
+  furniture and no running heads to suppress.)
 - An id is never reused, including across regenerations.
+
+### Why `e-<n>` did not move the version
+
+The version bump rule of §2 says a field is never renamed or repurposed without
+one. This renames nothing and repurposes nothing: it ADMITS NEW NAMES into a
+field whose grammar was already open on both ends, and it invalidates no file
+that has ever been written — no `e-` id exists anywhere until the first EPUB is
+exploded by a build that has this grammar. An older build that meets one refuses
+it by name with the id-grammar sentence, which is the **correct** answer from a
+build that has no explode and could not draw such a book anyway. Bumping the
+version instead would have made every existing book file unreadable by the new
+build for a change that affects none of them.
+
+The two regexes that state this grammar — `ROW_ID` in `src/vlm/book-file.ts` and
+the prose statement on `BookRow.id` in `app/shared/book.ts` — grow in the same
+commit, always, by the mirror rule at the head of this document.
 
 ## 5. The shelf — nothing is ever silently gone
 
@@ -139,6 +225,19 @@ files instead of re-cropping per cast. Cutting requires the page renders, so
 that carry Picture blocks; without `--pdf` it writes no images and says so
 (the imported-EPUB route has no pages to cut). The directory is regenerable
 and swept with the book file.
+
+**On the EPUB route the figures are COPIED, not cut** — into the same directory,
+which the engine derives from `--out` (`<stem>.book.jsonl` → `<stem>.images/`),
+the exact inverse of the app's `bookFileFor`/`imagesDirFor` pair so the two agree
+by construction. A publisher's figure is already a file somebody made; re-encoding
+it would produce a different file that means the same thing. Names are the Picture
+row's own id with the source extension (`e11.png` for row `e-11`) — deterministic,
+collision-free, and a name no other row claims. The extension must be one an EPUB
+may legally carry (GIF, JPEG, PNG, SVG, WebP); anything else is refused BY NAME at
+the explode, because the media type declared in a package manifest is the one
+thing a reading system consults before it draws a picture. `figureMediaType`
+(`src/vlm/book-file.ts`) is the single table both the explode and `vlm-compile`
+read it from.
 
 ## 7. What stays out, deliberately
 

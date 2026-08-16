@@ -174,8 +174,19 @@ export interface BookRow {
    * several, `#<ordinal>` for a note cut out of a footnote block, `/<n>` for a
    * half of a user split.
    *
+   * OR `e-<n>`, WHEN THE BOOK WAS EXPLODED OUT OF AN IMPORTED EPUB. There is no
+   * bank under one and never will be (docs/RENDERER.md §6, the refinement: a bank
+   * models pages and an EPUB has none), so there is no `b<page>-<order>` to mint —
+   * what an EPUB has instead is the publisher's own order, the spine and then
+   * document order inside it, and `n` is that ordinal counted from 1 across the
+   * whole book. `#` and `/` ride on it exactly as they ride on a banked name, so
+   * every op, every chapter marker and every records entry works on one without
+   * knowing which kind of book it is holding (docs/BOOK-FILE.md §4).
+   *
    * IDENTITY IS THIS AND ONLY THIS. `page` below is an estimate and addresses
-   * nothing; see the engine's own header for the whole of that argument.
+   * nothing; see the engine's own header for the whole of that argument. On an
+   * EPUB-sourced row it is not even an estimate — it is 0, the no-page frame,
+   * because nothing page-shaped exists to estimate.
    */
   id: string;
   /**

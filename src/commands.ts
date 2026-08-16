@@ -41,6 +41,7 @@ import { dumpBlocks } from './vlm/blocks-dump.js';
 import { buildBookFile } from './vlm/book-run.js';
 import { compileBook } from './vlm/compile.js';
 import { vlmConvert } from './vlm/convert.js';
+import { explodeEpub } from './vlm/epub-explode.js';
 import { replaysCompletedBank, vlmRead } from './vlm/read.js';
 import { DEFAULT_VLM_CONCURRENCY } from './vlm/endpoint.js';
 import { DEFAULT_VLM_MODEL_ID, VLM_MODELS } from './vlm/models.js';
@@ -304,6 +305,23 @@ const BOOK_READINGS: OptionSpec = {
   type: 'string',
   placeholder: '<file.jsonl>',
   describe: 'The bank of page answers to reflow. Read, never written.',
+};
+
+/**
+ * THE OTHER SOURCE A BOOK CAN BE MADE OF — a publisher's own container.
+ *
+ * An imported EPUB is never read by a model into a bank: a bank models pages and
+ * an EPUB has none, and re-reading real text through a vision model would trade
+ * exact data for a guess at it (docs/RENDERER.md §6). What it becomes instead is
+ * the same book file, exploded straight out of the spine — which is why this
+ * lives on `vlm-book` rather than in a command of its own. One book file, one
+ * command that writes it, two things it can be written from.
+ */
+const BOOK_EPUB: OptionSpec = {
+  name: 'epub',
+  type: 'string',
+  placeholder: '<file.epub>',
+  describe: 'An imported EPUB to explode into the book file instead of a bank. Read, never written.',
 };
 
 const BOOK_OUT: OptionSpec = {
@@ -1093,9 +1111,48 @@ async function runVlmBlocks(args: ParsedArgs): Promise<void> {
 async function runVlmBook(args: ParsedArgs): Promise<void> {
   const pdfPath = optionalString(args, 'pdf');
   const python = optionalString(args, 'python');
+  /*
+   * ── WHICH SOURCE, and exactly one of them ──────────────────────────────────
+   *
+   * `runTranslate`'s rule, for the same reason one command up: a bank and an
+   * EPUB are two different things to make a book OUT OF, they mint their block
+   * names differently (`b<page>-<order>` against `e-<n>`, docs/BOOK-FILE.md §4),
+   * and a run handed both would silently choose which spelling every op in the
+   * project is keyed to. A run handed neither has nothing to make a book from.
+   */
+  const epubPath = optionalString(args, 'epub');
+  const readingsPath = optionalString(args, 'readings');
+  if (epubPath !== undefined && readingsPath !== undefined) {
+    throw new UsageError(
+      '--readings and --epub are two different books to make: a bank is the model\'s page answers '
+      + 'and an EPUB is a publisher\'s own container, and the blocks they produce do not wear the '
+      + 'same names. Pass one.',
+    );
+  }
+  if (epubPath === undefined && readingsPath === undefined) {
+    throw new UsageError(
+      '--readings <bank.jsonl> or --epub <file.epub>: this run has nothing to make a book from.',
+    );
+  }
+  const outPath = requireString(args, 'out', 'where the book file is written');
+  if (epubPath !== undefined) {
+    const language = optionalString(args, 'language');
+    await explodeEpub({
+      epubPath,
+      outPath,
+      // ABSENT AND NOT DEFAULTED, which is the difference between this route and
+      // the bank's. A bank records no language of its own, so the command states
+      // one and `en` is the documented default; an EPUB's package DECLARES the
+      // language, and defaulting over a publisher's own declaration would be this
+      // program overruling the source it is here to retain.
+      ...(language !== undefined ? { language } : {}),
+      log,
+    });
+    return;
+  }
   await buildBookFile({
     readingsPath: requireString(args, 'readings', 'the bank of page answers to reflow into a book'),
-    outPath: requireString(args, 'out', 'where the book file is written'),
+    outPath,
     // The same default and the same word as vlm-convert's: declared, never
     // detected, and one spelling of the default across the two commands that
     // write a language into a document.
@@ -2081,7 +2138,7 @@ export const COMMANDS: readonly Command[] = [
   {
     name: 'vlm-book',
     summary: 'Reflow a readings bank into the book file: hyphens fused, page turns joined, ids minted.',
-    usage: '--readings <file.jsonl> --out <book.jsonl> [--pdf <file.pdf>] [--language <bcp47>]',
+    usage: '--readings <file.jsonl> | --epub <file.epub>  --out <book.jsonl> [--pdf <file.pdf>] [--language <bcp47>]',
     detail: [
       'THE BANK IS NOT THE BOOK. A bank is one row per PAGE holding the answer the',
       'model gave for it, and it knows nothing about a paragraph: a word the',
@@ -2163,8 +2220,30 @@ export const COMMANDS: readonly Command[] = [
       'row names an image, and the run says so rather than leaving you to notice.',
       '--language is declared and never detected, the same as vlm-convert, and it',
       'defaults to en.',
+      '',
+      'AN IMPORTED EPUB TAKES THE OTHER DOOR: --epub, instead of --readings, and',
+      'the same --out. There is no bank under one and there never will be — a bank',
+      'models pages and an EPUB has none, and reading real text back through a',
+      'vision model would trade exact data for a guess at it. So the container is',
+      'exploded straight into the same book file: the spine is the order and the',
+      'names are e-<n> along it, the publisher\'s markup is the category (h1 a',
+      'Title, blockquote a Quote, figcaption a Caption, li a List-item, anything',
+      'declared epub:type="footnote" a Footnote), the publisher\'s own noteref',
+      'anchors mint the reference markers exactly rather than by matching printed',
+      'numbers, the nav or the NCX becomes the divisions verbatim, and the figures',
+      'are COPIED once beside the book rather than cut, because they are already',
+      'files somebody made. Emphasis folds to the same source markers the model',
+      'writes. Script, style, iframe, object and embed elements are dropped with',
+      'their content at the walk and the count is reported.',
+      '',
+      'THE ROWS OF SUCH A BOOK CARRY NO PAGE AND NO BOX — page 0, a zero',
+      'rectangle, no typography report — because nothing page-shaped exists to',
+      'measure and this format has never addressed anything by a page anyway. No',
+      'facsimile is made from one. On this route --language OVERRIDES the',
+      'package\'s own dc:language rather than defaulting over it, and --pdf has',
+      'nothing to cut.',
     ].join('\n'),
-    options: [BOOK_READINGS, BOOK_OUT, BOOK_PDF, BOOK_LANGUAGE, BOOK_PYTHON],
+    options: [BOOK_READINGS, BOOK_EPUB, BOOK_OUT, BOOK_PDF, BOOK_LANGUAGE, BOOK_PYTHON],
     run: runVlmBook,
   },
   {

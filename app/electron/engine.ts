@@ -462,6 +462,54 @@ export async function writeBookFile(
   return { ok: true, reason: null };
 }
 
+/**
+ * Explode an imported EPUB into the book file:
+ * `foundry vlm-book --epub <archive.epub> --out <book.jsonl>`.
+ *
+ * ── The same command, the other source ──────────────────────────────────────
+ *
+ * A project that arrived as an EPUB has no bank and will never have one: a bank
+ * models pages, an EPUB has none, and reading real text back through a vision
+ * model would trade exact data for a guess at it (docs/RENDERER.md §6, the
+ * refinement paragraph). So the container IS the receipt, `book = f(epub)`, and
+ * the engine writes the same book file out of it — the spine is the order, the
+ * publisher's markup is the category, its own noteref anchors are the reference
+ * markers and its nav is the divisions. Everything downstream — the ops, the
+ * panels, the Edition, the export — is identical by construction.
+ *
+ * NO `--language`, AND THAT IS THE DIFFERENCE FROM `writeBookFile`. The bank
+ * route's language is what the person running the read declared, so this side
+ * passes it on. An EPUB's package DECLARES its language, and the engine reads it
+ * from there; sending a language would overrule the publisher's own statement
+ * with a field this project does not have (`bookAtPosition` answers null for an
+ * EPUB project, because no reading recorded one).
+ *
+ * NO `--pdf` EITHER: the figures are copied out of the container, not cut out of
+ * a page, because they are already files somebody made.
+ *
+ * NEVER THROWS, on `writeBookFile`'s rule and for its reason — this runs on the
+ * way into a pane.
+ */
+export async function writeEpubBook(epubPath: string, outPath: string): Promise<BookOutcome> {
+  const run = runEngine(['vlm-book', '--epub', epubPath, '--out', outPath]);
+  // The same two minutes the reflow allows, for work of the same order: one
+  // container unzipped, a few dozen documents parsed, one file written.
+  const timer = setTimeout(() => run.cancel(), 120_000);
+  const result = await run.done.finally(() => clearTimeout(timer));
+
+  if (result.code !== 0) {
+    const said = result.stderr.trim() || result.stdout.trim();
+    const unknown = result.code === 2 && /unknown (command|option)|--epub/i.test(said);
+    return {
+      ok: false,
+      reason: unknown
+        ? `vlm-book cannot explode an EPUB in this engine build (${engineCommand().source}).`
+        : said || `The engine exited ${result.code} with nothing to say.`,
+    };
+  }
+  return { ok: true, reason: null };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // doctor
 // ─────────────────────────────────────────────────────────────────────────────

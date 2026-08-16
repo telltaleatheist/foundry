@@ -61,7 +61,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
 import * as path from 'node:path';
 
-import { writeBookFile } from './engine';
+import { writeBookFile, writeEpubBook } from './engine';
 import { writeAtomically } from './epub-writer';
 import {
   bookAtPosition,
@@ -262,21 +262,28 @@ async function openBookAtPosition(
      * in a translated file still name blocks of that reading's answers. So a bank
      * that HAS moved invalidates the translation's ids exactly as it invalidates
      * the reading's, and it is caught here, once, for both.
+     *
+     * AND THE RECEIPT IS NOT ALWAYS A BANK. A project that arrived as an EPUB has
+     * none: its book is exploded out of the container, so the CONTAINER is what
+     * `source.bankSha` is a hash of (docs/RENDERER.md §6 — the EPUB is the
+     * receipt, archived immutable, `book = f(epub)`). `bookAtPosition` names
+     * whichever it is, so this check reads one field and stays one check —
+     * splitting it in two would be two answers to "has the foundation moved".
      */
     const sha = createHash('sha256')
-      .update(await fsp.readFile(at.bank))
+      .update(await fsp.readFile(at.receipt))
       .digest('hex')
       .slice(0, 16);
     if (parsed.header.source.bankSha !== sha) {
       console.error(
-        `[book] ${source.path} was made from a bank whose sha-256 began `
-        + `${parsed.header.source.bankSha}, and ${at.bank} now begins ${sha}.`,
+        `[book] ${source.path} was made from a receipt whose sha-256 began `
+        + `${parsed.header.source.bankSha}, and ${at.receipt} now begins ${sha}.`,
       );
       return {
         ok: false,
-        reason: 'The pages underneath this book have changed since the book was made from them, so '
-          + 'its blocks may no longer name what is really there. It is not opened over a moved '
-          + 'foundation; reading the project again remakes it.',
+        reason: 'What this book was made from has changed since it was made, so its blocks may no '
+          + 'longer name what is really there. It is not opened over a moved foundation; making the '
+          + 'book again from the original remakes it.',
       };
     }
     /*
@@ -338,6 +345,38 @@ async function ensureReadingBook(
   at: Awaited<ReturnType<typeof bookAtPosition>>,
 ): Promise<{ ok: true; path: string } | { ok: false; reason: string }> {
   if (await exists(at.book)) return { ok: true, path: at.book };
+  /*
+   * ── A PROJECT THAT ARRIVED AS A BOOK IS EXPLODED, NOT READ ─────────────────
+   *
+   * There is no bank under an imported EPUB and there never will be: a bank
+   * models pages and an EPUB has none, so re-reading its real text through a
+   * vision model would trade exact data for a guess at it (docs/RENDERER.md §6,
+   * the refinement paragraph). The container is the receipt, `book = f(epub)`,
+   * and the engine writes the same book file out of it — same format, same ids,
+   * same everything downstream. It lands at the same path for the same reason:
+   * `bookAtPosition` names it after the bank that would have been there, so
+   * nothing else in this process has to know which kind of book it is holding.
+   */
+  if (at.epub !== null) {
+    if (!await exists(at.epub)) {
+      return {
+        ok: false,
+        reason: 'The book this project was made from is not in its archive, so there is nothing to '
+          + 'open. It is the one file here that cannot be made again.',
+      };
+    }
+    console.warn(`[book] ${at.book} is not there and ${at.epub} is, so the book is being exploded now.`);
+    const made = await writeEpubBook(at.epub, at.book);
+    if (!made.ok) {
+      console.error(`[book] ${at.epub} could not be exploded into ${at.book}: ${made.reason ?? ''}`);
+      return {
+        ok: false,
+        reason: 'The book this project was made from could not be taken apart into blocks. The engine '
+          + 'refused, and its own words are in the terminal.',
+      };
+    }
+    return { ok: true, path: at.book };
+  }
   /*
    * THE BANK IS PROVEN BEFORE THE ENGINE IS SPAWNED, so that "this project has
    * never been read" is answered in words rather than as whatever the command

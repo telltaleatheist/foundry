@@ -2753,6 +2753,30 @@ export interface PositionView {
    */
   own: boolean;
   /**
+   * True when what stands at this position is THE PROOF SHEET rather than a
+   * document — the book file with this row's changes replayed over it.
+   *
+   * ── Why this is one answer and not a test at every door ────────────────────
+   *
+   * A read row and an edit row show the book (docs/RENDERER.md §6): the read
+   * because the cast EPUB stopped being the flowing document the moment there was
+   * a book file, the edit because its payload is a list of changes and what it is
+   * ABOUT is the sheet. Both were spelled `action === 'read' || action === 'edit'`
+   * at the call site, and there are two call sites — clicking a row, and opening
+   * a row in a split — which had already drifted apart by one action. Two doors
+   * onto one surface that disagree about who may come through is exactly the bug
+   * that has no symptom until somebody uses the second one.
+   *
+   * AND AN IMPORTED EPUB'S ORIGIN ROW SHOWS IT TOO, which is the honest door this
+   * wave owed. Such a project has no read step and never will — a bank models
+   * pages and an EPUB has none, so its book is exploded straight out of the
+   * container (§6's refinement, `book = f(epub)`) — and the import IS therefore
+   * the row that book belongs to. Sending it to `showDocument` instead opens the
+   * archived EPUB in the iframe reader, which is the surface this whole wave
+   * exists to stop being the answer.
+   */
+  sheet: boolean;
+  /**
    * The edit steps whose ops are replayed over the book here, oldest first.
    *
    * `editsInEffect`, unwrapped, and it is in the picture for the reason every
@@ -2786,8 +2810,35 @@ export function positionView(ledger: ProjectLedger): PositionView {
     curation: displayedCuration(ledger),
     outlines: reading !== null,
     own: step !== null && A_BOOK_OF_ITS_OWN[step.action],
+    sheet: step !== null && (
+      step.action === 'read'
+      || step.action === 'edit'
+      || (step.action === 'import' && importedAsEpub(ledger))
+    ),
     edits: editsInEffect(ledger),
   };
+}
+
+/**
+ * Did this project arrive as a book — an EPUB rather than a scan?
+ *
+ * ── Read off the ORIGIN's own payload, which is the record of what happened ──
+ *
+ * The manifest's `archive.kind` says the same thing and is main's to read; this
+ * module is shared, has no manifest and must not grow a second way to reach one.
+ * What it has is the ledger, and the ledger's origin row is the import — the only
+ * step whose parent is null (`originStep`) — whose payload IS the archived file
+ * the project was made from. So the question is answered by the record of the act
+ * rather than by a second opinion composed somewhere else, which is this module's
+ * standing rule for every other question about a position.
+ *
+ * The extension and nothing else, because that is what the import wrote: main
+ * decides `kind` by the same test when it copies the file into `archive/`
+ * (`importDocument`, electron/projects.ts), so the two cannot come apart.
+ */
+export function importedAsEpub(ledger: ProjectLedger): boolean {
+  const origin = ledger.steps.find((step) => step.parent === null);
+  return origin !== undefined && origin.payload.toLowerCase().endsWith('.epub');
 }
 
 /**

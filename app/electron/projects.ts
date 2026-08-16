@@ -2373,6 +2373,8 @@ export async function bookAtPosition(dir: string, at: LedgerStep | null = null):
   book: string;
   pdf: string | null;
   language: string | null;
+  epub: string | null;
+  receipt: string;
 }> {
   const resolved = deletableProjectDir(dir);
   const manifest = await readManifest(resolved);
@@ -2382,14 +2384,48 @@ export async function bookAtPosition(dir: string, at: LedgerStep | null = null):
   const pdf = manifest.archive !== null && manifest.archive.kind === 'pdf'
     ? path.join(resolved, ARCHIVE, manifest.archive.file)
     : null;
+  /*
+   * THE ARCHIVED EPUB, WHEN THERE IS ONE AND NOTHING HAS BEEN READ — the other
+   * thing a book can be made of (docs/RENDERER.md §6, the refinement paragraph:
+   * an EPUB is never OCR'd into a bank, `book = f(epub)`).
+   *
+   * `reading === null` IS PART OF THE TEST AND IS NOT DEFENSIVE. A project's
+   * origin never changes, so `archive.kind === 'epub'` alone would answer "explode
+   * the container" for every position in the project, including one standing under
+   * a reading somebody had made of it — and that reading's bank is the receipt of
+   * ITS book. The two routes are decided by which record the position is about,
+   * which is exactly what `readingInEffect` answers.
+   */
+  const epub = reading === null && manifest.archive !== null && manifest.archive.kind === 'epub'
+    ? path.join(resolved, ARCHIVE, manifest.archive.file)
+    : null;
   return {
     dir: resolved,
     manifest,
     reading,
     bank,
+    /*
+     * THE BOOK FILE IS `readings/<key>.book.jsonl` EITHER WAY, and that is not a
+     * coincidence to be tidied up. `readingBank` composes `readings/<key>.jsonl`
+     * for a project with no reading on the path — a file that never exists for an
+     * EPUB project — and `bookFileFor` turns it into the name the book wears. So
+     * an exploded book lands in `readings/` beside where a reflowed one would,
+     * `imagesDirFor` finds its figures at `readings/<key>.images/` by the same
+     * derivation, and the engine reaches the same directory from `--out`
+     * (`epubImagesDir`, src/vlm/epub-explode.ts). One spelling, three readers.
+     */
     book: bookFileFor(bank),
     pdf,
     language: typeof language === 'string' && language.length > 0 ? language : null,
+    epub,
+    /*
+     * WHAT THE BOOK FILE'S `source.bankSha` IS A HASH OF — the receipt, named, so
+     * that the one integrity check in the app has one thing to open. For a read
+     * project that is the bank; for an imported EPUB it is the container itself,
+     * which is the receipt in exactly the bank's sense: immutable, archived, and
+     * the thing the book is a pure function of (docs/BOOK-FILE.md §2).
+     */
+    receipt: epub ?? bank,
   };
 }
 
