@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
+import { LANGUAGE_CHOICES, languageNameFor, tagForLanguageName } from '@shared/languages';
 import { languageTagFor, translationInEffect } from '@shared/ledger';
 import { fold } from '@shared/original';
 import {
@@ -100,31 +101,72 @@ import { api } from '../../core/foundry';
           <div class="pair">
             <label class="field">
               <span class="label">Into</span>
-              <input type="text" placeholder="en" [ngModel]="to()" (ngModelChange)="to.set($event)" name="to">
+              <select [ngModel]="toChoice()" (ngModelChange)="toChoice.set($event)" name="to">
+                @for (choice of languages; track choice.tag) {
+                  <option [value]="choice.tag">{{ choice.name }}</option>
+                }
+                <option value="other">Another language…</option>
+              </select>
             </label>
             @if (sourceLanguage(); as standing) {
               <label class="field">
                 <span class="label">From <em>the translation you are on</em></span>
-                <input type="text" [value]="standing" readonly>
+                <input type="text" [value]="nameOf(standing)" readonly [title]="standing">
               </label>
             } @else {
               <label class="field">
-                <span class="label">From <em>optional</em></span>
-                <input type="text" placeholder="detect" [ngModel]="from()" (ngModelChange)="from.set($event)" name="from">
+                <span class="label">From</span>
+                <select [ngModel]="fromChoice()" (ngModelChange)="fromChoice.set($event)" name="from">
+                  <option value="">Detect from the text</option>
+                  @for (choice of languages; track choice.tag) {
+                    <option [value]="choice.tag">{{ choice.name }}</option>
+                  }
+                  <option value="other">Another language…</option>
+                </select>
               </label>
             }
           </div>
+          @if (toChoice() === 'other') {
+            <label class="field">
+              <span class="label">Which language <em>to translate into</em></span>
+              <input
+                type="text"
+                placeholder="Swahili"
+                maxlength="60"
+                [ngModel]="toTyped()"
+                (ngModelChange)="toTyped.set($event)"
+                name="toTyped">
+            </label>
+            @if (toTyped().trim().length > 0 && to().length === 0) {
+              <p class="problem">
+                Foundry doesn't recognise a language called
+                “{{ toTyped().trim() }}” — check the spelling, in English.
+              </p>
+            }
+          }
+          @if (sourceLanguage() === null && fromChoice() === 'other') {
+            <label class="field">
+              <span class="label">Which language <em>the book is in</em></span>
+              <input
+                type="text"
+                placeholder="Swahili"
+                maxlength="60"
+                [ngModel]="fromTyped()"
+                (ngModelChange)="fromTyped.set($event)"
+                name="fromTyped">
+            </label>
+            @if (fromTyped().trim().length > 0 && from().length === 0) {
+              <p class="problem">
+                Foundry doesn't recognise a language called
+                “{{ fromTyped().trim() }}” — check the spelling, in English.
+              </p>
+            }
+          }
           @if (sourceLanguage(); as standing) {
             <p class="note">
-              Language tags, not names: <code>en</code>, <code>de</code>, <code>pt-BR</code>.
-              This one is translated from the <code>{{ standing }}</code> translation you are
+              This one is translated from the {{ nameOf(standing) }} translation you are
               standing on, paragraph by paragraph, so the words it starts from are the ones that
               row holds rather than the book's own.
-            </p>
-          } @else {
-            <p class="note">
-              Language tags, not names: <code>en</code>, <code>de</code>, <code>pt-BR</code>.
-              Left blank, the source language is the model's to work out from the text.
             </p>
           }
 
@@ -198,7 +240,7 @@ import { api } from '../../core/foundry';
           <button class="ghost" (click)="ui.closeTranslate()">Cancel</button>
           <button
             class="primary"
-            [disabled]="busy() || to().trim().length === 0 || sameLanguage()"
+            [disabled]="busy() || to().length === 0 || fromUnresolved() || sameLanguage()"
             (click)="add()"
           >
             {{ busy() ? 'Working…' : 'Add to queue' }}
@@ -427,8 +469,39 @@ export class TranslateDialogComponent {
     return said !== undefined && said.trim().length > 0 ? said.trim() : null;
   });
 
-  protected readonly to = signal('en');
-  protected readonly from = signal('');
+  /*
+   * THE LANGUAGE IS CHOSEN BY NAME AND TRAVELS AS A TAG. The dropdowns list the
+   * engine's own languages by their names (shared/languages.ts, the engine
+   * table's mirror — the two grow together), and "Another language…" opens a
+   * box that takes a NAME, resolved against the ISO registry the runtime ships
+   * (`tagForLanguageName`). What leaves this dialog is only ever the resolved
+   * tag: a name nobody can resolve leaves `to()` empty, which keeps the button
+   * dark and says so in a sentence — so text a person typed never reaches a
+   * prompt, a filename or a package, which is the whole of the injection
+   * surface a free-text language box could have had.
+   */
+  protected readonly languages = LANGUAGE_CHOICES;
+  protected readonly nameOf = languageNameFor;
+  protected readonly toChoice = signal('en');
+  protected readonly toTyped = signal('');
+  protected readonly fromChoice = signal('');
+  protected readonly fromTyped = signal('');
+  protected readonly to = computed(() => (this.toChoice() === 'other'
+    ? tagForLanguageName(this.toTyped()) ?? ''
+    : this.toChoice()));
+  protected readonly from = computed(() => (this.fromChoice() === 'other'
+    ? tagForLanguageName(this.fromTyped()) ?? ''
+    : this.fromChoice()));
+  /**
+   * A typed FROM that resolves to nothing must hold the button: letting it
+   * through would silently fall back to detection while the card is showing a
+   * sentence about not recognising the language — the button and the sentence
+   * would be describing two different runs.
+   */
+  protected readonly fromUnresolved = computed(() => this.sourceLanguage() === null
+    && this.fromChoice() === 'other'
+    && this.fromTyped().trim().length > 0
+    && this.from().length === 0);
 
   /**
    * Whether the target IS the standing translation's own language.

@@ -13,13 +13,19 @@
  * So `--to` takes a tag, the tag goes into the package, and this table turns it
  * into a name for the prompt.
  *
- * A TAG WHOSE LANGUAGE IS NOT IN THE TABLE IS REFUSED. Passing the raw tag
+ * A TAG NEITHER THE TABLE NOR ICU CAN NAME IS REFUSED. Passing the raw tag
  * through to the prompt would be the fallback, and it is the bad kind: the run
  * would take hours, cost real GPU time, and produce a book that is either
- * untranslated or translated into whatever the model guessed `sq` meant, with
- * nothing anywhere saying a guess happened. Refusing costs the person one
- * lookup and a flag; the alternative costs them an evening and a book they
- * cannot trust. Adding a language is one line here.
+ * untranslated or translated into whatever the model guessed the code meant,
+ * with nothing anywhere saying a guess happened. What softened the refusal —
+ * without touching the rule it protects — is `Intl.DisplayNames`: the runtime
+ * already ships the whole ISO language registry with English names, so a tag
+ * the short table above does not carry (`sw`, `ka`, `ta`) is named by ICU
+ * before it is refused. The table still wins where it speaks, because its
+ * entries are curated wordings the prompt was measured with; ICU is the long
+ * tail. Either way the model is told a LANGUAGE, never a code — the rule this
+ * file exists for — and a code neither source knows still costs one loud
+ * sentence instead of an evening.
  *
  * THE REGION SUBTAG SURVIVES INTO THE PACKAGE AND INTO THE PROMPT. `--to pt-BR`
  * is a real instruction — Brazilian Portuguese is not European Portuguese, and
@@ -85,6 +91,23 @@ const REGIONAL: ReadonlyMap<string, string> = new Map(Object.entries({
 /** A well-formed language tag, loosely: the shape BCP-47 allows, not the registry. */
 const TAG = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
 
+/**
+ * The ISO registry's English name for a primary subtag, or undefined.
+ *
+ * `Intl.DisplayNames` echoes an unknown code back and throws on a malformed
+ * one; both mean the same thing to this file — there is no name, so the
+ * refusal below still stands. The echo test is case-folded because ICU
+ * canonicalises what it echoes.
+ */
+function intlNameOf(primary: string): string | undefined {
+  try {
+    const name = new Intl.DisplayNames(['en'], { type: 'language' }).of(primary);
+    return name !== undefined && name.toLowerCase() !== primary.toLowerCase() ? name : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface NamedLanguage {
   /** Exactly what the caller typed. This is what `dc:language` gets. */
   tag: string;
@@ -113,13 +136,13 @@ export function readLanguage(tag: string, what: string): NamedLanguage {
   if (regional !== undefined) return { tag: trimmed, name: regional };
 
   const primary = trimmed.split('-')[0].toLowerCase();
-  const language = LANGUAGES.get(primary);
+  const language = LANGUAGES.get(primary) ?? intlNameOf(primary);
   if (language === undefined) {
     throw new LanguageError(
-      `${what} "${trimmed}": foundry has no name for the language "${primary}", and it will not `
-      + 'send a model a code where a language should be — a run that guesses costs hours and '
-      + `produces a book nobody can trust. Known: ${[...LANGUAGES.keys()].join(' ')}. `
-      + 'Adding one is a line in src/translate/languages.ts.',
+      `${what} "${trimmed}": neither foundry nor the ISO registry has a name for the language `
+      + `"${primary}", and foundry will not send a model a code where a language should be — a run `
+      + 'that guesses costs hours and produces a book nobody can trust. Check the tag; if it is '
+      + 'genuinely a language ICU does not know, adding it is a line in src/translate/languages.ts.',
     );
   }
   // The region is kept in the prompt even when it is not one of the pairs
