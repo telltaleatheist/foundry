@@ -701,9 +701,19 @@ const SCROLL_SETTLE_MS = 400;
                     (keydown.escape)="abandonChapter(title, $event)"
                   >{{ title }}</span>
                 } @else {
+                  <!--
+                    Drag to move the division (§4: the rule lifts, the candidate
+                    seams glow, the drop settles it) — pointer-captured on the
+                    chip, engaged past the same slop that separates a click from
+                    a marquee, so the double-click rename underneath survives.
+                  -->
                   <span
                     class="chapter-chip"
-                    (pointerdown)="$event.stopPropagation()"
+                    [class.grabbed]="draggingRule()?.id === line.row.id"
+                    (pointerdown)="grabRule($event, line.row.id)"
+                    (pointermove)="dragRule($event)"
+                    (pointerup)="dropRule($event)"
+                    (pointercancel)="dropRule($event)"
                     (dblclick)="rename(line.row.id, $event)"
                   >{{ title }}</span>
                 }
@@ -747,6 +757,7 @@ const SCROLL_SETTLE_MS = 400;
               [class.pulse]="pulse() === line.row.id"
               [class.spanned]="spans(line)"
               [class.twin]="twinned() === line.row.id"
+              [class.drop-target]="draggingRule()?.over === line.row.id"
               (pointerenter)="lightRow(line)"
               (pointerleave)="dim()"
             >
@@ -1464,6 +1475,25 @@ const SCROLL_SETTLE_MS = 400;
       caret-color: var(--ink-edit);
       cursor: text;
       user-select: text;
+    }
+    /* §4 — the rule lifted: the chip in the hand, and the seam it would settle
+       into glowing spruce under the pointer. The glow is drawn at the head of
+       the block the division would land ABOVE, reaching into the gutters the
+       way the rule itself does, and it can only appear where the drop would be
+       honoured — never on a block already carrying a division. */
+    .chapter-chip.grabbed {
+      cursor: grabbing;
+      box-shadow: 0 1px 3px rgb(0 0 0 / .25);
+      touch-action: none;
+    }
+    .block.drop-target::before {
+      content: '';
+      position: absolute;
+      top: -0.35rem;
+      left: -0.9rem;
+      right: -0.9rem;
+      height: 2px;
+      background: color-mix(in srgb, var(--ink-chapter) 35%, transparent);
     }
 
     /* §4 — a reference number is a real element, not a superscript in a string. */
@@ -3780,15 +3810,10 @@ export class BookViewComponent {
    * has none is the panel's gesture, because the block it would go above is the
    * one somebody has selected and that is a thing the panel can say.
    *
-   * ── DRAGGING THE RULE IS DEFERRED, and the op exists anyway ─────────────────
-   *
-   * §4 also asks that a rule be draggable, with candidate seams glowing and the
-   * rule animating into place. `{ op: 'chapter', move, to }` performs that today
-   * and nothing here mints it: the gesture is drop targets, a lift, autoscroll and
-   * a hit test per block, which is the same machinery the deferred reorder mode
-   * needs (see `drag`). Until it is built, a division is moved by taking it off
-   * one block in the panel and setting it on another — two decisions, two rows in
-   * the history, and both of them honest.
+   * The rule is also DRAGGABLE now — `grabRule` and its family below — which
+   * ends the deferral that used to be argued here (user ruling, 2026-08-16:
+   * *drag the marker to where it belongs*). The panel's remove-then-set stays
+   * as the keyboard-honest alternative.
    */
   protected rename(id: string, event: Event): void {
     event.stopPropagation();
@@ -3848,6 +3873,85 @@ export class BookViewComponent {
     const chip = event.target as HTMLElement;
     chip.textContent = was;
     chip.blur();
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Dragging a division — §4's rule lift, landed
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * The division being carried: which one, where its hand is, and the block it
+   * would land above right now. Null between drags, which is almost always.
+   */
+  protected readonly draggingRule = signal<{
+    id: string;
+    over: string | null;
+    /** True once the pointer has cleared the slop — before that it is a click. */
+    live: boolean;
+    startY: number;
+  } | null>(null);
+
+  /**
+   * A press on a chapter chip arms the drag without starting it.
+   *
+   * THE SAME SLOP AS THE MARQUEE separates the three things a chip press can
+   * mean — a click (nothing), a double-click (the rename), a drag (the move) —
+   * so a hand that only wanted to rename never sees the rule twitch. Pointer
+   * capture on the chip itself, which is what lets the drag run the length of
+   * the sheet without the sheet's own gestures waking.
+   */
+  protected grabRule(event: PointerEvent, id: string): void {
+    event.stopPropagation();
+    if (event.button !== 0) return;
+    (event.target as HTMLElement).setPointerCapture(event.pointerId);
+    this.draggingRule.set({ id, over: null, live: false, startY: event.clientY });
+  }
+
+  /**
+   * The carry: find the block whose head is nearest the pointer, and offer it.
+   *
+   * CANDIDATES ARE THE FLOWING BLOCKS THAT COULD HONESTLY TAKE A DIVISION — not
+   * the one it already sits on, and not one already carrying its own, because
+   * the replay would refuse both and a glow the drop cannot honour is a lie in
+   * spruce. The hit test asks the DOM the same question the marquee asks
+   * (`getBoundingClientRect` per block), which a drag's cadence affords.
+   */
+  protected dragRule(event: PointerEvent): void {
+    const held = this.draggingRule();
+    if (held === null) return;
+    if (!held.live) {
+      if (Math.abs(event.clientY - held.startY) < DRAG_SLOP) return;
+    }
+    const divisions = new Set((this.view()?.chapters ?? []).map((chapter) => chapter.id));
+    let nearest: string | null = null;
+    let distance = Number.POSITIVE_INFINITY;
+    const sheet = this.host.nativeElement.querySelector('.bench .sheet');
+    if (sheet === null) return;
+    for (const element of sheet.querySelectorAll('.block[data-id]')) {
+      const id = element.getAttribute('data-id');
+      if (id === null || id === held.id || divisions.has(id)) continue;
+      const gap = Math.abs(element.getBoundingClientRect().top - event.clientY);
+      if (gap < distance) {
+        distance = gap;
+        nearest = id;
+      }
+    }
+    this.draggingRule.set({ ...held, live: true, over: nearest });
+  }
+
+  /**
+   * The drop: one `chapter move` op, or nothing where the hand never cleared
+   * the slop or let go over no honest candidate. The rule settles into place
+   * because the replay recomputes and the chip is drawn at its new block —
+   * the state reads perfectly as a still, which is §6's own standard.
+   */
+  protected dropRule(event: PointerEvent): void {
+    const held = this.draggingRule();
+    this.draggingRule.set(null);
+    if (held === null || !held.live) return;
+    event.stopPropagation();
+    if (held.over === null || held.over === held.id) return;
+    this.push({ op: 'chapter', move: held.id, to: held.over });
   }
 }
 
