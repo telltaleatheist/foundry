@@ -312,6 +312,35 @@ const BOOK_OUT: OptionSpec = {
   describe: 'Where the book file is written. One row per block, in reading order.',
 };
 
+/**
+ * The archived original, and it buys ONE thing.
+ *
+ * Not the pages — those are in the bank — but the pixels of the figures, which
+ * are in no bank and never can be. Optional because a book with no pictures in
+ * it needs nothing from the PDF, and because the imported-EPUB route has no PDF
+ * to name; without it the figures are simply not cut and the run says so.
+ */
+const BOOK_PDF: OptionSpec = {
+  name: 'pdf',
+  type: 'string',
+  placeholder: '<file.pdf>',
+  describe: 'The archived original, for cutting the figures out of. Read, never written.',
+};
+
+const BOOK_LANGUAGE: OptionSpec = {
+  name: 'language',
+  type: 'string',
+  placeholder: '<bcp47>',
+  describe: 'The book\'s language, as a BCP-47 tag. Declared, not detected. Defaults to en.',
+};
+
+const BOOK_PYTHON: OptionSpec = {
+  name: 'python',
+  type: 'string',
+  placeholder: '<path>',
+  describe: 'The interpreter with PyMuPDF in it, for the figure crops. Also FOUNDRY_VLM_PYTHON.',
+};
+
 // ── translate ────────────────────────────────────────────────────────────────
 
 const TR_EPUB_IN: OptionSpec = {
@@ -985,9 +1014,19 @@ async function runVlmBlocks(args: ParsedArgs): Promise<void> {
 }
 
 async function runVlmBook(args: ParsedArgs): Promise<void> {
+  const pdfPath = optionalString(args, 'pdf');
+  const python = optionalString(args, 'python');
   await buildBookFile({
     readingsPath: requireString(args, 'readings', 'the bank of page answers to reflow into a book'),
     outPath: requireString(args, 'out', 'where the book file is written'),
+    // The same default and the same word as vlm-convert's: declared, never
+    // detected, and one spelling of the default across the two commands that
+    // write a language into a document.
+    language: optionalString(args, 'language') ?? 'en',
+    // Passed only where they were asked for, so a run with no figures to cut
+    // hands the engine the options object it has always been handed.
+    ...(pdfPath !== undefined ? { pdfPath } : {}),
+    ...(python !== undefined ? { python } : {}),
     log,
   });
 }
@@ -1898,7 +1937,7 @@ export const COMMANDS: readonly Command[] = [
   {
     name: 'vlm-book',
     summary: 'Reflow a readings bank into the book file: hyphens fused, page turns joined, ids minted.',
-    usage: '--readings <file.jsonl> --out <book.jsonl>',
+    usage: '--readings <file.jsonl> --out <book.jsonl> [--pdf <file.pdf>] [--language <bcp47>]',
     detail: [
       'THE BANK IS NOT THE BOOK. A bank is one row per PAGE holding the answer the',
       'model gave for it, and it knows nothing about a paragraph: a word the',
@@ -1956,8 +1995,32 @@ export const COMMANDS: readonly Command[] = [
       'hundred and ninety-nine. A page turn the rule declines to join is reported',
       'too, and that report is the point — it is a seam somebody has to decide, and',
       'this file is the one that keeps the answer.',
+      '',
+      'VERSION 3 WRITES DOWN WHAT THE BOOK IS MADE OF. Every row now carries its',
+      'parts — which banked answer contributed which characters of its finished',
+      'text, and the word a broken column made whole — so the seam inside a joined',
+      'paragraph is a fact in the file instead of arithmetic every reader repeats.',
+      'The declined page turns are pairs of block names rather than page numbers,',
+      'because joining a seam means joining two paragraphs and "p13" is neither of',
+      'them. NOTHING IS SILENTLY GONE: the page furniture the parse set aside and',
+      'the running heads the reflow suppressed are rows too, sitting where the page',
+      'had them, marked as shelved and each carrying one sentence of evidence — so',
+      'putting one back is an ordinary correction against a name. And the header',
+      'says where the book came from: the foundry that wrote it, the language it',
+      'was read in, the pages, and the first sixteen hex of a sha-256 over the',
+      'bank, which is what lets a later reader know the receipt has not moved',
+      'under the names it is holding.',
+      '',
+      'GIVE IT --pdf AND THE FIGURES ARE CUT ONCE. A Picture block is pixels by',
+      'definition and no bank holds any, so the boxes are cropped out of the',
+      'archived original into readings/<key>.images/, named after the coordinate',
+      'the row was minted at, and every row that has one names its file. Only the',
+      'pages carrying a picture are rasterised. Without --pdf nothing is cut, no',
+      'row names an image, and the run says so rather than leaving you to notice.',
+      '--language is declared and never detected, the same as vlm-convert, and it',
+      'defaults to en.',
     ].join('\n'),
-    options: [BOOK_READINGS, BOOK_OUT],
+    options: [BOOK_READINGS, BOOK_OUT, BOOK_PDF, BOOK_LANGUAGE, BOOK_PYTHON],
     run: runVlmBook,
   },
   {

@@ -17,20 +17,26 @@
  * rather than recomputed, which is what lets the seams it could not decide be
  * fixed by hand and stay fixed.
  *
- * NO PDF, NO RASTERISER, NO MODEL. A bank written by this version records the
- * render size and the pixel budget beside every answer, which is the entire
- * frame a box needs. A bank old enough to lack them is REFUSED BY NAME rather
- * than rendered again behind somebody's back: this command exists to be cheap
- * and instant, and one that quietly spawned a rasteriser over three hundred
- * pages would be neither.
+ * NO MODEL, AND NO RASTERISER UNLESS THERE IS A PICTURE AND A PDF TO CUT IT OUT
+ * OF. A bank written by this version records the render size and the pixel
+ * budget beside every answer, which is the entire frame a box needs; a bank old
+ * enough to lack them is REFUSED BY NAME rather than rendered again behind
+ * somebody's back. What `--pdf` buys is the one thing arithmetic over the bank
+ * cannot produce: a Picture block is pixels by definition, and the pixels are in
+ * the archived original. Only the pages that carry one are rasterised, so a
+ * three-hundred page book with four figures pays for four pages, and a run with
+ * no `--pdf` still costs about as long as reading the bank off the disk.
  */
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { ensureDir } from '../fsdirs.js';
-import { bookFile, formatBookFile, type BookRow } from './book-file.js';
-import { DotsPageError, parseDotsPage, type DotsParsedPage } from './dots.js';
-import { reflowBook } from './dots-book.js';
+import { bookFile, figureName, formatBookFile, type BookRow, type BookSource } from './book-file.js';
+import { cropPageRenders } from './bridge.js';
+import { DotsPageError, parseDotsPage, type DotsBlock, type DotsParsedPage } from './dots.js';
+import { openPageImages, reflowBook, type DotsCrop } from './dots-book.js';
+import { VLM_DPI } from './read.js';
 import { VlmReadings } from './readings.js';
 
 export class BookRunError extends Error {
@@ -43,6 +49,16 @@ export class BookRunError extends Error {
 export interface BookRunOptions {
   readingsPath: string;
   outPath: string;
+  /** The read's declared language, for the header. Declared, never detected. */
+  language: string;
+  /**
+   * The archived original, for the figure crops and for NOTHING else — it is
+   * opened, never written, and a run without it writes a book with no images in
+   * it and says so.
+   */
+  pdfPath?: string;
+  /** The interpreter with PyMuPDF in it, where the crops need one. */
+  python?: string;
   log: (line: string) => void;
 }
 
@@ -63,6 +79,38 @@ export interface BookRunReport {
   unjoinedTurns: number[];
   /** Blocks whose print line breaks were reflowed back into prose. */
   reflowed: number;
+  /** The blocks that are in the file and out of the book — §5, counted. */
+  shelved: { furniture: number; suppressedHeads: number };
+  /** The figures cut out of the page renders. Empty where no PDF was named. */
+  images: string[];
+}
+
+/**
+ * The receipt, identified — the first sixteen hex of a sha-256 over its bytes.
+ *
+ * OVER THE BYTES AND NOT OVER ANYTHING PARSED OUT OF THEM. The point of this
+ * number is to answer "is the file underneath this book the same file", and a
+ * hash of the answers this run happened to read would say yes to a bank that had
+ * grown three pages since. It is the cheapest possible reading of the file that
+ * is also the strictest one, and the file is already being read.
+ */
+function bankSha(bytes: Buffer): string {
+  return crypto.createHash('sha256').update(bytes).digest('hex').slice(0, 16);
+}
+
+/**
+ * Where the figures go: `readings/<key>.images/`, beside the bank they were cut
+ * out of the answers of.
+ *
+ * NAMED AFTER THE BANK AND NOT AFTER `--out`, which is the same pairing rule
+ * `completionMarkerPath` learned the hard way. The book file is regenerable and
+ * can be written anywhere somebody points it; the crops belong to the READING,
+ * they are swept with it, and a second book file written to a temporary
+ * directory must not scatter a second copy of the pictures beside itself.
+ */
+function imagesDir(readingsPath: string): string {
+  const resolved = path.resolve(readingsPath);
+  return `${resolved.replace(/\.jsonl$/i, '')}.images`;
 }
 
 export async function buildBookFile(opts: BookRunOptions): Promise<BookRunReport> {
@@ -78,6 +126,9 @@ export async function buildBookFile(opts: BookRunOptions): Promise<BookRunReport
   // marker is written and nothing is archived, so this is safe to run over a
   // bank in the middle of somebody's reading.
   const readings = VlmReadings.open(readingsPath);
+  // Read as BYTES, once, beside the parse — the identity of the receipt is a
+  // fact about the file and not about what this run made of it. See `bankSha`.
+  const sha = bankSha(fs.readFileSync(readingsPath));
   const pages = readings.pages();
   if (pages.length === 0) {
     throw new BookRunError(
@@ -123,8 +174,30 @@ export async function buildBookFile(opts: BookRunOptions): Promise<BookRunReport
   }
 
   const flow = reflowBook({ pages: parsed });
-  const book = bookFile(flow);
+  /*
+   * THE FURNITURE THE PARSE SET ASIDE, RECOVERED HERE AND NOT IN THE REFLOW.
+   *
+   * `parseDotsPage` sorts the tagged Page-header and Page-footer blocks out of
+   * `blocks` into `furniture`, and `reflowBook` reads that list once (to learn
+   * which running heads the model has attested somewhere) and never carries it
+   * forward, which is correct: they are not the book, and the reflow's product
+   * is the book. They ARE rows of the file (§5 of the contract), so they are
+   * picked up from the pages this function already holds rather than by growing
+   * the reflow a return value it has no use for. Nothing above has moved them —
+   * `suppressRunningHeads` reads the list and `mergeAdjacentHeadings` rewrites
+   * `blocks` — so this is the parse's own answer, in the parse's own order.
+   */
+  const furniture: DotsBlock[] = parsed.flatMap((page) => page.furniture);
+  const source: BookSource = {
+    pages: pages.length,
+    unreadable,
+    // `generation` is deliberately not here: the bank records none, and §2 marks
+    // the field optional by absence precisely so that nothing has to invent one.
+    bankSha: sha,
+  };
+  const book = bookFile({ flow, furniture, language: opts.language, source });
   const rows = book.rows;
+  const shelved = rows.filter((row) => row.shelf !== undefined);
   /*
    * The page turns that WERE joined, counted off the flow blocks themselves.
    *
@@ -140,25 +213,58 @@ export async function buildBookFile(opts: BookRunOptions): Promise<BookRunReport
       if (at > 0 && part.page !== block.parts[at - 1]!.page) joinedPages.push(part.page);
     }
   }
-  if (rows.length === 0) {
+  if (rows.length === shelved.length) {
+    /*
+     * COUNTED AGAINST THE FLOW AND NOT AGAINST THE FILE, which changed with the
+     * shelf. Every block the model answered is a row now, so a book whose every
+     * block was page furniture produces a file full of rows and no book at all —
+     * and the check that asked whether there were any rows would happily have
+     * written it.
+     */
     throw new BookRunError(
       `${readingsPath} parsed, but nothing in it is text a book is made of — every block was page `
       + 'furniture or was struck. There is no book to write.',
     );
   }
 
+  const images = await cutFigures(rows, readingsPath, opts);
+
+  /*
+   * WRITTEN ATOMICALLY: a temp file beside the target, then a rename (§2 of the
+   * contract). Beside it rather than in the system temp directory because a
+   * rename is only atomic within one filesystem, and the one guarantee this is
+   * bought for — a crash leaves the old book or none, never half of one — is
+   * exactly what a cross-device copy would give away.
+   */
   const resolved = path.resolve(opts.outPath);
   ensureDir(path.dirname(resolved));
-  fs.writeFileSync(resolved, formatBookFile(book), 'utf8');
+  const pending = `${resolved}.tmp`;
+  fs.writeFileSync(pending, formatBookFile(book), 'utf8');
+  fs.renameSync(pending, resolved);
 
   opts.log(
-    `vlm-book: ${rows.length} block(s) from ${parsed.length} page(s) — `
+    `vlm-book: ${rows.length - shelved.length} block(s) from ${parsed.length} page(s) — `
     + `${joinedPages.length} paragraph(s) joined across a page turn, `
     + `${flow.reflowed.length} reflowed out of print lines, `
     + `${flow.mergedHeadings.length} heading(s) merged out of two boxes, `
     + `${flow.suppressedHeads.length} running head(s) dropped`
     + (unreadable.length === 0 ? '' : `, ${unreadable.length} page(s) UNREADABLE`),
   );
+  /*
+   * The shelf, tallied — and it is a line of its own rather than a clause of the
+   * one above, because it says something the counts up there cannot. Those are a
+   * description of the book; this is a description of what is NOT in the book and
+   * is still in the file, which is the whole promise of §5. A person who thinks
+   * the run lost thirty-six blocks can go and look at thirty-six rows.
+   */
+  if (shelved.length > 0) {
+    const heads = shelved.filter((row) => row.shelf === 'suppressed-head').length;
+    opts.log(
+      `vlm-book: ${shelved.length} block(s) shelved — ${shelved.length - heads} furniture, `
+      + `${heads} suppressed heads. They are rows of the file at their reading-order position, each `
+      + 'with a sentence saying why, and restoring one is an op against its id.',
+    );
+  }
   /*
    * The apparatus, counted — and the two failures are counted BESIDE the
    * success rather than instead of it, because either number alone is
@@ -191,5 +297,104 @@ export async function buildBookFile(opts: BookRunOptions): Promise<BookRunReport
     joinedPages,
     unjoinedTurns: flow.unjoinedTurns,
     reflowed: flow.reflowed.length,
+    shelved: {
+      furniture: shelved.length - shelved.filter((row) => row.shelf === 'suppressed-head').length,
+      suppressedHeads: shelved.filter((row) => row.shelf === 'suppressed-head').length,
+    },
+    images,
   };
+}
+
+/**
+ * The figures, cut out of the archived original once — §6 of the contract.
+ *
+ * ── WHY THE CROPS MOVED HERE, OUT OF THE EPUB WRITER ────────────────────────
+ *
+ * They used to be cut inside `buildDotsBook`, while a container was being
+ * zipped, because that is where the only consumer was. The consequence was that
+ * a picture existed only inside an export: casting the same book as text cut
+ * nothing, casting it twice cut everything twice, and an editing surface that
+ * wanted to SHOW somebody a figure had no file to point at and no way to make
+ * one without emitting a book. The book file is the document everything reads
+ * now, so the pixels are cut where the document is made, named after the
+ * coordinate the row was minted at, and every later reader — the renderer, an
+ * export, whatever comes after them — opens the same PNG.
+ *
+ * ONLY THE PAGES THAT CARRY A PICTURE ARE RASTERISED. The crop mode of
+ * `vlm_page.py` opens the PDF and takes a pixmap per named box, so a book with
+ * four figures rasterises four pages however long it is — which is what makes
+ * this affordable in a command whose whole promise is that it is instant.
+ *
+ * WITHOUT A PDF IT CUTS NOTHING AND SAYS SO, once, in a sentence that names the
+ * reason. There is no fallback available and none would be wanted: the pixels
+ * are in the original or they are nowhere, and an imported EPUB has no pages to
+ * cut at all. A row simply has no `image`, which is a fact a reader can act on.
+ *
+ * THE DIRECTORY IS MADE FRESH. It is derived, regenerable and swept with the
+ * book file, and a regeneration after the join rule improved must not leave the
+ * crop of a figure that is now named something else sitting beside the one that
+ * is. Deleting it is safe for the same reason writing it is: nothing in it was
+ * anybody's labour.
+ */
+async function cutFigures(
+  rows: readonly BookRow[],
+  readingsPath: string,
+  opts: BookRunOptions,
+): Promise<string[]> {
+  // A shelved row is not in the book, and the shelf holds no pictures anyway —
+  // furniture is a header or a footer and a suppressed head is a heading.
+  const pictures = rows.filter((row) => row.category === 'Picture' && row.shelf === undefined);
+  if (opts.pdfPath === undefined) {
+    if (pictures.length > 0) {
+      opts.log(
+        `vlm-book: ${pictures.length} figure(s) were NOT cut — no --pdf was named, and a figure is `
+        + 'pixels out of the page it was printed on, which only the archived original has. The rows '
+        + 'name no image; pass --pdf and they are cut in seconds.',
+      );
+    }
+    return [];
+  }
+
+  const pdfPath = path.resolve(opts.pdfPath);
+  if (!fs.existsSync(pdfPath)) throw new BookRunError(`no such PDF: ${pdfPath}`);
+  const cropsDir = imagesDir(readingsPath);
+  fs.rmSync(cropsDir, { recursive: true, force: true });
+  ensureDir(cropsDir);
+  if (pictures.length === 0) {
+    opts.log(`vlm-book: no Picture block in this book, so ${cropsDir} is empty`);
+    return [];
+  }
+
+  const requests: DotsCrop[] = pictures.map((row) => ({
+    page: row.page,
+    box: row.box,
+    name: figureName(row.parts[0]!.src),
+  }));
+  /*
+   * Through `openPageImages`, which is the seam the assembler already reaches
+   * for pixels through (`dots-book.ts`). It forwards one function and is worth
+   * going through anyway: everything on this side of it is arithmetic over
+   * banked answers, and everything past it is a subprocess. One boundary, one
+   * place a run stops being pure.
+   */
+  const images = openPageImages((crops) => cropPageRenders({
+    pdfPath,
+    dpi: VLM_DPI,
+    cropsDir,
+    requests: crops.map((crop) => ({ page: crop.page, box: crop.box, name: crop.name })),
+    ...(opts.python !== undefined ? { python: opts.python } : {}),
+  }));
+  const cropped = await images.crop(requests);
+  if (cropped.length !== requests.length) {
+    throw new BookRunError(
+      `${requests.length} figure(s) were asked for and ${cropped.length} came back. A row naming an `
+      + 'image that is not there is a broken picture in every reader of this book.',
+    );
+  }
+  // The name goes on the row only once the pixels are on the disk: a book file
+  // that pointed at a figure a failed crop never wrote would be a document
+  // making a promise about a file, and the file is the promise.
+  for (const [index, row] of pictures.entries()) row.image = requests[index]!.name;
+  opts.log(`vlm-book: ${cropped.length} figure(s) cut into ${cropsDir}`);
+  return requests.map((request) => request.name);
 }
