@@ -214,18 +214,58 @@ const SELECT_CSS = [
    */
   'body,[data-bf-cat]{-webkit-user-select:none;user-select:none}',
   '[data-bf-edit]{-webkit-user-select:text;user-select:text}',
-  '[data-bf-cut]{opacity:.42;text-decoration:line-through;'
-  + 'background-image:'
-  + 'linear-gradient(to top right,transparent 49.5%,rgba(178,54,38,.8) 49.5%,'
-  + 'rgba(178,54,38,.8) 50.5%,transparent 50.5%),'
-  + 'linear-gradient(to bottom right,transparent 49.5%,rgba(178,54,38,.8) 49.5%,'
-  + 'rgba(178,54,38,.8) 50.5%,transparent 50.5%)}',
+  // The cut's own appearance is NOT here — see `CUT_CSS`, which is on whenever
+  // the book is.
   // Doubled and LAST for the same reason the selection rule is doubled: the
   // block being typed into is also selected and also under the pointer, and it
   // has to keep saying "your caret is here" over both of them.
   '[data-bf-cat][data-bf-edit]{outline:2px solid #2f7d4f;outline-offset:2px;'
   + 'background-color:rgba(47,125,79,.09);cursor:text}',
 ].join('\n');
+
+/**
+ * WHAT A CUT LOOKS LIKE — a third sheet, added when the frame loads and never
+ * taken away.
+ *
+ * ── The bug: a book that had been edited looked untouched ───────────────────
+ *
+ * This rule used to sit inside `SELECT_CSS`, which is "added when the mode opens
+ * and removed when it closes". So a struck footnote was crossed out for exactly
+ * as long as somebody was holding the tool that struck it, and the moment select
+ * mode went off — or the moment a person clicked an *Applied changes* row to go
+ * and LOOK at what they had decided — the book drew fifty-one struck notes as
+ * fifty-one ordinary notes. The user's own account of what the row is for:
+ * *"when i click 'applied changes', it should pull up the document with the
+ * items stricken — it should show the footnotes with Xes across them."*
+ *
+ * ── Why a cut is not a mode ─────────────────────────────────────────────────
+ *
+ * The same argument `FLOW_CSS` is separated on. Select mode is a TOOL: outlines,
+ * a marquee, suppressed text selection, all of it there because a hand is on the
+ * work and all of it gone when the hand comes off. A cut is not a tool, it is a
+ * DECISION that is now part of the document — `data-bf-cut="1"` is in the file,
+ * it survives the tab, it is what the next Generate will act on. A decision you
+ * can only see while holding the instrument that made it is a decision you
+ * cannot check.
+ *
+ * AND IT IS NEVER IN AN EDITION, so nothing has to gate it: `generated/` is the
+ * workbench and keeps its marks, while `--final` and `epub-final` remove a
+ * struck element outright and strip the attribute (src/vlm/dots-book.ts). There
+ * is no book in which this rule can paint over something a reader was meant to
+ * read.
+ *
+ * INJECTED RATHER THAN WRITTEN INTO THE BOOK'S OWN STYLESHEET, which was the
+ * other candidate. A cast's stylesheet is Foundry's to write, but an imported
+ * EPUB's is the publisher's, and select mode marks cuts in those too — one rule
+ * here covers both, where a stylesheet rule would have covered one and left the
+ * other silently unmarked.
+ */
+const CUT_CSS = '[data-bf-cut]{opacity:.42;text-decoration:line-through;'
+  + 'background-image:'
+  + 'linear-gradient(to top right,transparent 49.5%,rgba(178,54,38,.8) 49.5%,'
+  + 'rgba(178,54,38,.8) 50.5%,transparent 50.5%),'
+  + 'linear-gradient(to bottom right,transparent 49.5%,rgba(178,54,38,.8) 49.5%,'
+  + 'rgba(178,54,38,.8) 50.5%,transparent 50.5%)}';
 
 /**
  * The CONTINUOUS BOOK's own stylesheet — the chapter line, and the two rules
@@ -422,6 +462,8 @@ export const REPORTER_SOURCE = `(function () {
   // document is XML, and looking an element up by id in one is a question with
   // more history than it is worth when the node is right here.
   var sheet = null;
+  // The cut sheet, held the same way. It goes on once and stays — see \`CUT_CSS\`.
+  var cutSheet = null;
   /*
    * THE SELECTION IS A SET — an array of elements, in the order they joined it.
    *
@@ -566,6 +608,22 @@ export const REPORTER_SOURCE = `(function () {
   function removeStyles() {
     if (sheet && sheet.parentNode) sheet.parentNode.removeChild(sheet);
     sheet = null;
+  }
+
+  /**
+   * The cut mark, added at load and never removed — and there is deliberately no
+   * remover to pair with this.
+   *
+   * A struck block is struck whether or not anybody is holding the tool that
+   * struck it (\`CUT_CSS\`). It is added BEFORE select mode's sheet can be, so
+   * that when both are present the mode's rules are the later ones — which is
+   * what lets a selected block tint over a cross instead of erasing it.
+   */
+  function addCutStyles() {
+    if (cutSheet) return;
+    cutSheet = document.createElement('style');
+    cutSheet.textContent = ${JSON.stringify(CUT_CSS)};
+    (document.head || document.documentElement).appendChild(cutSheet);
   }
 
   /**
@@ -2224,6 +2282,10 @@ export const REPORTER_SOURCE = `(function () {
     if (scrollTimer !== null) clearTimeout(scrollTimer);
     reportScroll();
   });
+
+  // Before the handshake, so that a document arriving with cuts already in it
+  // draws them on its first paint rather than on whatever the parent says next.
+  addCutStyles();
 
   // The handshake. A frame reloads for reasons the parent did not ask for, and
   // it comes back with the mode off; saying so is what lets the parent turn it

@@ -434,6 +434,62 @@ emptiness, doing something plausible and wrong.
    its own per-block sizing because there the type must fit the box it
    came out of. That route is a picture of the page; this one is a book.
 
+7. **Standing on a save, and editing from it.** The user walked the
+   whole gesture: *"i removed footnotes. then i hit apply changes. it
+   correctly entered it in the ledger. when i click 'applied changes',
+   it should pull up the document with the items stricken — it should
+   show the footnotes with Xes across them. if i click them and hit
+   delete again, it should un-delete them. then i click apply, and it
+   becomes a new ledger entry that i can click to and see which changes
+   i applied… then, if i run a translate job or an 'export' job or
+   anything else from that step position, it will render whatever i do
+   WITHOUT the items i excluded."*
+
+   Checked against their own project on disk — import → read →
+   `Applied changes (52)`, position on the curate step, per-step cast
+   carrying 51 `data-bf-cut` attributes:
+
+   | step of the gesture | state |
+   | --- | --- |
+   | strike, Apply, a row in the ledger | works |
+   | the row's cast keeps the cuts in the file | works |
+   | the cuts are VISIBLE on the page | ~~broken~~ FIXED, below |
+   | Delete again to un-cut, from that row | **REFUSED** |
+   | Apply again → a second row | **REFUSED** (button hidden) |
+   | translate/export from there excludes them | works (`curationInEffect`) |
+
+   ~~**The cuts were invisible.**~~ FIXED. `[data-bf-cut]`'s appearance
+   lived inside `SELECT_CSS`, which is *"added when the mode opens and
+   removed when it closes"* — so fifty-one struck notes drew as
+   fifty-one ordinary notes the moment the tool was put down, which is
+   exactly the moment somebody clicks the row to go and look at what
+   they decided. It is now `CUT_CSS`: injected at load, never removed.
+   A cut is not a mode — it is a decision that is in the file — and it
+   can never paint over anything a reader was meant to read, because an
+   edition removes struck elements outright.
+
+   **THE OTHER TWO ARE A DESIGN QUESTION AND ARE NOT FIXED.** Standing
+   on a curate step, the block editor is read-only by construction:
+   `editingIsHeld` is `displayedCuration(ledger) !== null`, and
+   `shared/curation-lock.ts` argues it at length. The fear is real —
+   the pane draws the frozen snapshot while `overlay.save` writes the
+   LIVE overlay, so an edit would land in a different set of decisions
+   from the ones on screen, and the first you would know is a Generate
+   missing your strike.
+
+   What the user is asking for is not "remove the guard", it is CHECK
+   OUT: standing on a save and editing should seed the live overlay
+   FROM that save and carry on there, after which the pane and the
+   edits agree and Apply lands a second row parented to the first.
+   Sketch, not a licence to start — the live overlay records which save
+   it was checked out from; `displayedCuration` answers the snapshot
+   only while live has NOT been checked out from that step; the seed
+   happens on the first edit at a save position; the undo ledger and
+   `marksEditable` follow. That is a unit of work with a file-format
+   field in it, not an inline fix, and it wants the user's ruling on
+   what happens to uncommitted live corrections at the moment of
+   check-out.
+
 Left standing, and said out loud rather than quietly done:
 
 - **Chapter rename from the inspector still throws** (4b item 3). Not
