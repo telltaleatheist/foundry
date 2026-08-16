@@ -295,9 +295,13 @@ unless asked, an honest partial beats a bent whole.
   the pane's stack). Drag-to-reorder and rule-dragging deferred out loud —
   the `move` and chapter-`move` ops exist; the drag machinery waits, with
   comments standing where each would hang.
-- **R5 (projections):** export preview; export pipeline rewired to materialize;
-  aligned translation view + derived book files + records re-key; streaming if
-  it stays a file-tail.
+- **R5 (projections)** — LANDED in three slices: `fb974af` (R5a, the Edition
+  toggle), `de5cd2f` (R5b, materialize + `vlm-compile`, export refusal
+  lifted), `f2b39f6` (R5c, translations through the book file: `--book`
+  source, block-id records, derived files at translate landings, the
+  second edit-walk bound, translate + translated-export refusals lifted).
+  Remaining from this wave: the aligned two-column view + records
+  streaming (R5d, before or beside R6).
 - **R6 (subtraction):** everything in §7 deleted; migration shim; imported-EPUB
   explode; docs updated (WORKBENCH §11 marked superseded).
 
