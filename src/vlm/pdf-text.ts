@@ -95,6 +95,18 @@
  * block's lines always span exactly the rectangle they were printed in — which
  * is what closes the white gap, by construction rather than by tuning.
  *
+ * AND SOME BOOKS STATE IT A THIRD TIME, IN POINTS, AND THAT STATEMENT WINS. A
+ * born-digital PDF — and a scan whose publisher ran real OCR over it, which is
+ * what JSTOR ships — carries a text layer with a size on every span. Both
+ * numbers above are INFERENCES from a rectangle the model drew; the layer is
+ * the page's own record, and where it exists (`TextPdfOptions.layer`) a block
+ * is set at the char-weighted median of the spans under its box, a class at
+ * the median over its blocks, and the width-fit cap does not touch either —
+ * fitting is the squeeze's job, line by line. Measured against one such book,
+ * the inferred sizes ran 4–17% small of the layer's and wobbled block to
+ * block; the layer's ARE the printed sizes, wobbling only where the printer
+ * did.
+ *
  * HORIZONTAL COMPRESSION IS THE PRICE OF NOT OWNING THE BOOK'S FACE, and it is
  * paid openly. DejaVu Serif averages 0.536 em a character; the Kershaw page
  * averages about 0.45. Set at the size its leading implies, our type does not
@@ -435,6 +447,19 @@ const LINE_OVERRUN = 0.03;
 /** How many blocks a class needs before its size is measured over the class. */
 const CLASS_SAMPLES = 8;
 
+/**
+ * The least leading a truth-sized block may be set on, as a multiple of its
+ * size — the point where spending leading stops and shrinking starts again.
+ *
+ * `LINE_FACTOR`'s 1.2 is the printer's convention; 1.05 is five per cent of
+ * air left between one line's descenders and the next line's ascenders.
+ * Between the two, a wrap that came out a line long keeps the printed SIZE —
+ * the thing the eye actually reads — and pays in tightness, which is how the
+ * page itself absorbs a long paragraph. Below it the glyphs would start to
+ * touch, and no printed page does that.
+ */
+const LEADING_FLOOR = 1.05;
+
 /** A paragraph's first-line indent, in ems. The printer's default. */
 const INDENT_EM = 1;
 
@@ -603,6 +628,25 @@ export interface PdfCropped {
   data: Uint8Array;
 }
 
+/**
+ * One piece of type the source PDF itself reports — `VlmLayerSpan`, shaped
+ * here so this file keeps taking seams rather than importing the bridge.
+ *
+ * `x`/`y` are the span's centre on the displayed page in POINTS, top-left
+ * origin — the frame the renders are made in, so a span lands inside a block's
+ * box under nothing more than the dpi scale. `size` is the font size in
+ * points, and points are frame-independent: whatever the render's resolution,
+ * the size the layer states is the size to set. `chars` is how much text the
+ * span carries, kept so a median over a block can be WEIGHTED by it — a
+ * two-character superscript must not outvote the paragraph it annotates.
+ */
+export interface PdfLayerSpan {
+  x: number;
+  y: number;
+  size: number;
+  chars: number;
+}
+
 export interface TextPdfOptions {
   /** The original PDF. Read for page geometry and metadata; never written. */
   pdfBytes: Uint8Array;
@@ -619,6 +663,24 @@ export interface TextPdfOptions {
    * spawned once for the whole book however many pictures are in it.
    */
   crop: (requests: readonly PdfCropRequest[]) => Promise<readonly PdfCropped[]>;
+  /**
+   * The source's own text layer, keyed by page — the book's THIRD statement
+   * of its size, and the only one made in points by whoever set the page.
+   *
+   * A born-digital PDF, and a scan a publisher ran real OCR over (JSTOR ships
+   * exactly this), records a size for every run of type it carries. Where a
+   * block of the reading has such spans under its box, that size wins over
+   * everything solved from the box: the leading and the width-fit are both
+   * INFERENCES from a rectangle the model drew, and each carries the model's
+   * generosity and our face's width inside it, where the layer carries
+   * neither. Measured against one such book, the inferred sizes ran 4–17%
+   * small and wobbled per block; the layer's are the printed sizes.
+   *
+   * Absent — a pure scan, or a caller that did not ask — nothing changes:
+   * the measured sizes stand, as they always did. Absence of evidence, not a
+   * fallback (`typography.ts`'s pattern).
+   */
+  layer?: ReadonlyMap<number, readonly PdfLayerSpan[]>;
 }
 
 export interface TextPdfResult {
@@ -644,6 +706,13 @@ export interface TextPdfResult {
   facsimilePages: number[];
   /** The size each class was set at, in points. A class not measured is absent. */
   classSizes: Record<string, number>;
+  /**
+   * Blocks whose size came straight from the source's own text layer, out of
+   * the blocks set at all. Zero-of-N for a pure scan, and the report says so:
+   * how much of the book's sizing is the publisher's own statement is the
+   * first thing to know about why a facsimile looks right or wrong.
+   */
+  layerSized: { blocks: number; of: number };
   /**
    * How the book's lines were decided — the single most useful number about a
    * facsimile, because it says how much of it is the printer's own setting.
@@ -944,7 +1013,7 @@ export async function buildTextPdf(opts: TextPdfOptions): Promise<TextPdfResult>
    * measured. This is also where the substitution tally is filled, once, off the
    * same text the drawing pass will use.
    */
-  const planned = planBlocks(opts.pages, geometry, faces, tally, opts.dpi);
+  const planned = planBlocks(opts.pages, geometry, faces, tally, opts.dpi, opts.layer);
   const sizes = classSizes(planned);
 
   for (let number = 1; number <= pageCount; number += 1) {
@@ -1049,6 +1118,10 @@ export async function buildTextPdf(opts: TextPdfOptions): Promise<TextPdfResult>
     pictures,
     facsimilePages,
     classSizes: Object.fromEntries(sizes),
+    layerSized: {
+      blocks: planned.filter((block) => block.truthPt !== null).length,
+      of: planned.length,
+    },
     lineForLine,
     emphasis: planned.reduce((sum, block) => sum + block.emphasis, 0),
     superscripts: planned.reduce((sum, block) => sum + block.superscripts, 0),
@@ -1400,6 +1473,14 @@ interface PlannedBlock {
   leadPt: number;
   /** The largest size at which this block's widest line fits the measure. */
   fitPt: number;
+  /**
+   * What the source's own text layer says this block's type measured, or null
+   * where the source carries no spans under this box. The char-weighted median
+   * over the spans whose centres fall inside the block — weighted so the
+   * paragraph outvotes its own superscripts, and a median so one span the
+   * box's edge clipped from a neighbour cannot move the answer.
+   */
+  truthPt: number | null;
   indent: boolean;
   centre: boolean;
   /**
@@ -1421,6 +1502,7 @@ function planBlocks(
   faces: FaceSet,
   tally: SubstitutionTally,
   dpi: number,
+  layer?: ReadonlyMap<number, readonly PdfLayerSpan[]>,
 ): PlannedBlock[] {
   const planned: PlannedBlock[] = [];
   const columns: { centre: number; width: number }[] = [];
@@ -1522,6 +1604,7 @@ function planBlocks(
         lines: trusted ? segments.length : 0,
         leadPt: trusted ? rect.height / segments.length : 0,
         fitPt: 0,
+        truthPt: layerTruth(layer?.get(reading.page), block.box, dpi),
         indent,
         centre: false,
         marker,
@@ -1575,9 +1658,20 @@ function planBlocks(
        * own character width: n lines of s points hold `width / (charEm · s)`
        * characters each, and n lines fill the box, so `s = √(H·W / (C·charEm·λ))`.
        */
-      const lead = bodyLead !== null && block.cls === 'body'
-        ? bodyLead
-        : Math.max(MIN_FONT_SIZE, block.rect.height / impliedLines(block, charEm));
+      /*
+       * The layer's size settles the line count too, where it exists. The
+       * body's median leading is the right guess for a body-sized paragraph
+       * and a wrong one for everything set smaller inside the body class —
+       * an extract, a source line, the small type of a title page — which
+       * got a line budget a fifth short and then shrank to meet it. A block
+       * whose printed size is KNOWN was printed on lines of that size, and
+       * `LINE_FACTOR` is the same convention the class sizes already assume.
+       */
+      const lead = block.truthPt !== null
+        ? block.truthPt * LINE_FACTOR
+        : bodyLead !== null && block.cls === 'body'
+          ? bodyLead
+          : Math.max(MIN_FONT_SIZE, block.rect.height / impliedLines(block, charEm));
       block.lines = Math.max(1, Math.round(block.rect.height / lead));
       block.leadPt = block.rect.height / block.lines;
     }
@@ -1658,6 +1752,46 @@ function impliedLines(block: PlannedBlock, charEm: number): number {
 }
 
 /**
+ * What the source's own layer says the type inside this box measured.
+ *
+ * A span belongs to the block whose box holds its CENTRE, with two points of
+ * slack for the disagreement between a hand of OCR and a model's rectangle
+ * about where ink exactly ends. The median is weighted by each span's
+ * character count so that the size most of the block's TEXT is set at wins —
+ * a footnote's raised mark, an italic word the layer split out, a fragment of
+ * a neighbouring block caught at the edge, all are outvoted by the words.
+ *
+ * The comparison happens in render pixels because the boxes already live
+ * there; the SIZE never converts at all, because a point is a point at any
+ * dpi — which is the whole reason the layer's statement transfers to fresh
+ * paper unchanged.
+ */
+function layerTruth(
+  spans: readonly PdfLayerSpan[] | undefined,
+  box: DotsBox,
+  dpi: number,
+): number | null {
+  if (spans === undefined || spans.length === 0) return null;
+  const scale = dpi / 72;
+  const slack = 2 * scale;
+  const hits = spans.filter((span) => {
+    const x = span.x * scale;
+    const y = span.y * scale;
+    return x >= box.x1 - slack && x <= box.x2 + slack
+      && y >= box.y1 - slack && y <= box.y2 + slack;
+  });
+  if (hits.length === 0) return null;
+  const sorted = [...hits].sort((a, b) => a.size - b.size);
+  const total = sorted.reduce((sum, span) => sum + span.chars, 0);
+  let seen = 0;
+  for (const span of sorted) {
+    seen += span.chars;
+    if (seen * 2 >= total) return span.size;
+  }
+  return sorted[sorted.length - 1].size;
+}
+
+/**
  * How wide the BOOK's characters are, in ems, measured off its own set lines.
  *
  * Only line-for-line blocks can answer: they are the only ones where the number
@@ -1733,15 +1867,38 @@ function lineWidthAt1(words: readonly Word[], faces: FaceSet): number {
 function classSizes(planned: readonly PlannedBlock[]): Map<SizeClass, number> {
   const leads = new Map<SizeClass, number[]>();
   const fits = new Map<SizeClass, number[]>();
+  const byClass = new Map<SizeClass, PlannedBlock[]>();
   for (const block of planned) {
     if (block.cls === null) continue;
     (leads.get(block.cls) ?? leads.set(block.cls, []).get(block.cls)!).push(block.leadPt);
     (fits.get(block.cls) ?? fits.set(block.cls, []).get(block.cls)!).push(block.fitPt);
+    (byClass.get(block.cls) ?? byClass.set(block.cls, []).get(block.cls)!).push(block);
   }
 
   const sizes = new Map<SizeClass, number>();
   for (const [cls, lead] of leads) {
     if (lead.length < CLASS_SAMPLES) continue;
+    /*
+     * THE LAYER'S STATEMENT BEATS BOTH INFERENCES, class-wide as well as per
+     * block. Where enough of a class's blocks sit over the source's own text
+     * layer, the class is set at the median of what the layer says those
+     * blocks measured — and the width-fit cap does not apply to it. The cap
+     * exists because a size solved from leading might not FIT our wider face,
+     * and capping it traded size for fit across the whole class; but the fit
+     * machinery already pays for width line by line (the spaces, then `Tz`,
+     * then `LINE_OVERRUN`), so applying the cap to a size that is KNOWN right
+     * would shrink the entire book below its printed size to spare a few
+     * lines a squeeze they can afford. Measured against a book whose layer
+     * was checked by hand, the cap is exactly where the missing tenth of the
+     * body size had gone.
+     */
+    const truths = (byClass.get(cls) ?? [])
+      .map((block) => block.truthPt)
+      .filter((pt): pt is number => pt !== null);
+    if (truths.length >= CLASS_SAMPLES) {
+      sizes.set(cls, Math.max(MIN_FONT_SIZE, medianOf(truths)!));
+      continue;
+    }
     const byLead = medianOf(lead);
     const byFit = quantileOf(fits.get(cls) ?? [], FIT_QUANTILE);
     if (byLead === null || byFit === null) continue;
@@ -1893,7 +2050,24 @@ function layOut(
   sizes: ReadonlyMap<SizeClass, number>,
   faces: FaceSet,
 ): { lines: Line[]; size: number; leading: number; indent: number; hang: number; tight: boolean } {
-  const wanted = (block.cls !== null ? sizes.get(block.cls) : undefined)
+  /*
+   * The block's own truth first, the class second, the box-solved size last.
+   *
+   * PER BLOCK BEFORE PER CLASS, and only for the truth — which reverses the
+   * uniformity the class sizes exist for, deliberately. A class is one size
+   * because sizes SOLVED from boxes wobble with the model's generosity, and
+   * a median across the book is how the wobble cancels; the layer's sizes
+   * are not solved, they are the printed page's own, so their variation is
+   * the printer's (a title page's mixed sizes, a source line set small) and
+   * flattening it to the class median would erase exactly the thing a
+   * facsimile is for. Where the layer is silent the old order stands
+   * unchanged. Everything downstream — the squeeze, the overrun, the floor,
+   * the rewrap — treats the truth like any other wanted size, so a box the
+   * model drew too narrow still pays in tightness, visibly, rather than in
+   * words.
+   */
+  const wanted = block.truthPt
+    ?? (block.cls !== null ? sizes.get(block.cls) : undefined)
     ?? Math.max(MIN_FONT_SIZE, Math.min(block.leadPt / LINE_FACTOR, block.fitPt / TZ_MIN));
 
   const hangAt = (size: number): number => block.marker.length === 0
@@ -1930,11 +2104,28 @@ function layOut(
     );
     const fitted = widest <= 0 ? wanted : Math.min(wanted, roomy / (widest * TZ_MIN));
     if (fitted >= wanted * TRUSTED_SIZE_FLOOR) {
+      /*
+       * A KNOWN size is held; a solved one gives way. `fitted` shaves a block
+       * whose widest line outruns the measure in our face, and when the size
+       * was solved from the box that shave is the honest answer — the size
+       * was a guess and the line is evidence against it. When the size is
+       * the LAYER's, the line is not evidence of anything except DejaVu
+       * being wider than the book's face, and shaving a few per cent off
+       * block after block is precisely the wobble a page of one-size type
+       * turns into: every paragraph its own size, none of them the page's.
+       * So the block keeps the printed size and its widest line pays where
+       * a line can — spaces first, then `Tz`, then a reach into the margin
+       * (`fitLine` compresses to `TZ_MIN` and past that lets the line run
+       * long rather than clipping a word). `TRUSTED_SIZE_FLOOR` still
+       * guards above: a block asking for HALF its size is a merged line,
+       * not a wide one, and it re-wraps as before.
+       */
+      const size = block.truthPt !== null ? wanted : fitted;
       return {
         lines,
-        size: fitted,
+        size,
         leading: block.rect.height / lines.length,
-        indent: block.indent ? INDENT_EM * fitted : 0,
+        indent: block.indent ? INDENT_EM * size : 0,
         // A line the printer set is already positioned by its own text; hanging
         // it under the mark would indent a line the page did not indent.
         hang: 0,
@@ -1958,22 +2149,61 @@ function layOut(
    */
   const flat = joinSegments(block.segments);
   const allowed = Math.max(1, block.lines);
+  /*
+   * A truth-sized block wraps into the measure a line is ACTUALLY permitted
+   * to occupy — the squeeze plus the same `LINE_OVERRUN` the trusted path
+   * grants a printed line. The distinction matters at the margin, and the
+   * margin is where whole paragraphs were being lost: a bulleted paragraph
+   * whose text needs 2.04 lines' width in a two-line box wraps to three lines
+   * at the strict measure, and the shrink loop then prices three-into-two at
+   * two-thirds of the printed size — 6.8 pt in a 10.2 pt book, for four per
+   * cent of overflow the overrun absorbs without anyone seeing it. A block
+   * with no truth keeps the strict measure and the old arithmetic untouched:
+   * its `wanted` is a guess solved from its own box, over-generous exactly
+   * when the box is (a 35 pt "size" from a box drawn far too tall), and the
+   * aggressive count-ratio shrink is what walks a guess like that back down.
+   */
+  const wrapWidth = block.truthPt === null
+    ? block.rect.width / TZ_MIN
+    : (block.rect.width * (1 + LINE_OVERRUN)) / TZ_MIN;
   let size = wanted;
   let indent = block.indent ? INDENT_EM * size : 0;
   let hang = hangAt(size);
   let lines = wrapWords(flat, block.rect.width, size, faces, indent, hang);
   if (lines.length > allowed) {
-    const squeezed = wrapWords(flat, block.rect.width / TZ_MIN, size, faces, indent, hang);
-    if (squeezed.length <= allowed) lines = squeezed;
+    const squeezed = wrapWords(flat, wrapWidth, size, faces, indent, hang);
+    // For a truth-sized block the squeezed wrap is adopted whenever it is the
+    // better of the two — the loop below starts from its count, and starting
+    // from the unsqueezed count overshoots. Without truth, the historical
+    // rule stands: adopted only when it settles the matter outright.
+    if (block.truthPt !== null ? squeezed.length < lines.length : squeezed.length <= allowed) {
+      lines = squeezed;
+    }
   }
+  /*
+   * A block whose size is the LAYER's spends its leading before its size.
+   * Our face squeezed to `TZ_MIN` sits within a few per cent of the widths
+   * these books are set in, so a wrap that misses the printed line count
+   * misses it by a line — and the page's own remedy for one line too many is
+   * never to print the paragraph smaller, it is to set the lines closer. The
+   * leading floor is where that stops: below five per cent of air between
+   * lines, descenders and ascenders start to meet, and past THAT point the
+   * box genuinely cannot hold the text at the printed size — a box the model
+   * drew too small, or two blocks' text in one box — and shrinking is the
+   * honest answer again, exactly as it is for a block with no truth at all.
+   */
+  const ceiling = block.truthPt === null
+    ? allowed
+    : Math.max(allowed, Math.floor(block.rect.height / (block.truthPt * LEADING_FLOOR)));
   let tight = block.trusted;
-  for (let attempt = 0; attempt < 4 && lines.length > allowed && size > MIN_FONT_SIZE; attempt += 1) {
-    size = Math.max(MIN_FONT_SIZE, size * (allowed / lines.length));
+  for (let attempt = 0; attempt < 4 && lines.length > ceiling && size > MIN_FONT_SIZE; attempt += 1) {
+    size = Math.max(MIN_FONT_SIZE, size * (ceiling / lines.length));
     indent = block.indent ? INDENT_EM * size : 0;
     hang = hangAt(size);
-    lines = wrapWords(flat, block.rect.width / TZ_MIN, size, faces, indent, hang);
+    lines = wrapWords(flat, wrapWidth, size, faces, indent, hang);
     tight = true;
   }
+  if (block.truthPt !== null && lines.length > allowed) tight = true;
   return {
     lines,
     size,

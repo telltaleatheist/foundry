@@ -40,7 +40,7 @@ import * as path from 'node:path';
 
 import { ensureDir } from '../fsdirs.js';
 import { TranslationRecords } from '../translate/records.js';
-import { cropPageRenders, type VlmPage, type VlmUnreadablePage } from './bridge.js';
+import { cropPageRenders, readPdfTextLayer, type VlmPage, type VlmUnreadablePage } from './bridge.js';
 import { parsePage } from './dialect.js';
 import { DotsPageError, parseDotsPage, renderScale, smartResize, type DotsParsedPage } from './dots.js';
 import {
@@ -699,6 +699,15 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
         pdfBytes: fs.readFileSync(pdfPath),
         dpi: VLM_DPI,
         crop: (requests) => cropRenders(requests, pdfPath, rendersDir, opts.python),
+        /*
+         * The source's own text layer, read before anything is typeset. A
+         * born-digital PDF and a publisher-OCR'd scan both state the size of
+         * every span of type they carry, and `pdf-text.ts` sets its type at
+         * those sizes wherever they exist — the one statement about the
+         * book's type that is a record rather than an inference. A pure scan
+         * answers with an empty map and costs one short subprocess.
+         */
+        layer: await readPdfTextLayer({ pdfPath, python: opts.python }),
         pages: geometryPages.map((page) => {
           const render = sizes.get(page.page)!;
           return {
@@ -752,6 +761,20 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
           `vlm-convert: set at ${named.map(([cls, pt]) => `${cls} ${pt.toFixed(1)} pt`).join(', ')}`
           + ' — one size per class, measured off the book\'s own leading and column rather than off'
           + ' what the font can fit, so the type comes out the size the page was printed at',
+        );
+      }
+      /*
+       * How much of the sizing is the publisher's own statement. The single
+       * best predictor of whether the facsimile's type matches the scan next
+       * to it: a block sized from the layer is set at the size the page
+       * records, and a book with none is set entirely from what the boxes
+       * imply.
+       */
+      if (built.layerSized.blocks > 0) {
+        opts.log(
+          `vlm-convert: ${built.layerSized.blocks} of ${built.layerSized.of} block(s) sized `
+          + 'straight from the source\'s own text layer — the size the publisher recorded for '
+          + 'that very type, which beats anything measured off a box',
         );
       }
       /*

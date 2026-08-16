@@ -48,11 +48,12 @@ arriving as a list rather than as a re-written PDF so that the file's sha256
 (and with it the readings cache) survives the curation. Every page that does
 survive keeps its own page number; nothing is renumbered around the gap.
 
-Three modes, one script:
+Four modes, one script:
 
-    read      render every page and read it with the model  (the MLX path)
-    render    render every page and read none of them       (the endpoint path)
-    crop      cut named boxes out of named pages            (Picture blocks)
+    read       render every page and read it with the model  (the MLX path)
+    render     render every page and read none of them       (the endpoint path)
+    crop       cut named boxes out of named pages            (Picture blocks)
+    textlayer  report every text span the PDF itself carries (facsimile sizing)
 
 Protocol — one JSON object per line on stdout, flushed:
 
@@ -223,13 +224,66 @@ def run_crop(config):
         emit({'event': 'crop', 'name': crop['name'], 'path': path})
 
 
+def run_textlayer(config):
+    """Every text span the PDF already carries: where it sits, how big it is.
+
+    A born-digital PDF — and a scan a publisher ran real OCR over, which is
+    what JSTOR ships — states the size of every piece of type on every page,
+    in points, in its own text layer. That statement is a MEASUREMENT of the
+    printed page by whoever set or OCR'd it, and the facsimile route uses it
+    to size its type instead of solving sizes back out of the model's boxes
+    (`pdf-text.ts`). A pure scan has no layer, emits nothing here, and the
+    facsimile falls back on its own measurements; nothing about this mode is
+    required for a book to come out.
+
+    One event per page that has spans, spans as compact arrays: centre-x,
+    centre-y (points, top-left origin, the displayed page's frame — the same
+    frame the renders are made in), font size in points, and how many
+    characters the span carries. The characters ride along so the reader can
+    take a median WEIGHTED by them: a two-character superscript must not
+    outvote the paragraph it annotates.
+    """
+    fitz = import_fitz()
+    doc = fitz.open(config['pdf'])
+    for index in range(doc.page_count):
+        page = doc[index]
+        spans = []
+        for block in page.get_text('dict')['blocks']:
+            if block.get('type') != 0:
+                continue
+            for line in block.get('lines', []):
+                for span in line.get('spans', []):
+                    text = span.get('text', '').strip()
+                    size = span.get('size', 0)
+                    if not text or size <= 0:
+                        continue
+                    rect = fitz.Rect(span['bbox'])
+                    if page.rotation:
+                        # get_text answers in the unrotated page's frame; the
+                        # renders — and so the model's boxes — are of the page
+                        # as DISPLAYED. One matrix moves the span into the
+                        # frame everything else already shares.
+                        rect = rect * page.rotation_matrix
+                    spans.append([
+                        round((rect.x0 + rect.x1) / 2, 2),
+                        round((rect.y0 + rect.y1) / 2, 2),
+                        round(size, 2),
+                        len(text),
+                    ])
+        if spans:
+            emit({'event': 'layer', 'page': index + 1, 'spans': spans})
+    emit({'event': 'done'})
+
+
 def main():
     config = json.loads(sys.stdin.read())
     mode = config.get('mode', 'read')
     if mode == 'crop':
         return run_crop(config)
+    if mode == 'textlayer':
+        return run_textlayer(config)
     if mode not in ('read', 'render'):
-        fail('mode "%s" is not one of read, render, crop' % mode)
+        fail('mode "%s" is not one of read, render, crop, textlayer' % mode)
 
     pdf_path = config['pdf']
     repo = config['repo']

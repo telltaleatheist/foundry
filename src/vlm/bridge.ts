@@ -563,3 +563,90 @@ export async function cropPageRenders(opts: {
     data: new Uint8Array(fs.readFileSync(entry.path)),
   }));
 }
+
+// ── reading the PDF's own text layer ────────────────────────────────────────
+
+/**
+ * One piece of type the PDF itself reports: where its centre sits on the
+ * displayed page (points, top-left origin — the frame the renders are made
+ * in), the size it is set at, and how many characters it carries.
+ */
+export interface VlmLayerSpan {
+  x: number;
+  y: number;
+  /** Font size in points — frame-independent, which is why no dpi rides along. */
+  size: number;
+  chars: number;
+}
+
+/**
+ * Every text span the PDF already carries, page by page.
+ *
+ * A born-digital PDF, and a scan whose publisher ran real OCR over it, states
+ * the size of every run of type in its own text layer — a measurement of the
+ * printed page made by whoever set it, which no formula over the model's
+ * boxes can beat. The facsimile route asks for it here and sizes its type
+ * from it where it exists (`pdf-text.ts`).
+ *
+ * A pure scan has no layer and comes back as an EMPTY map, and that is an
+ * absence rather than an error: the facsimile's own measurements stand, as
+ * they always did. The one hard failure is the subprocess itself dying —
+ * a Python without PyMuPDF, an unopenable PDF — because that is a machine
+ * problem, not a fact about the book.
+ */
+export async function readPdfTextLayer(opts: {
+  pdfPath: string;
+  python?: string;
+}): Promise<Map<number, VlmLayerSpan[]>> {
+  const python = resolvePython(opts.python);
+  const script = scriptPath();
+  const config = JSON.stringify({ mode: 'textlayer', pdf: path.resolve(opts.pdfPath) });
+
+  const proc = spawn(python, [script], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const layer = new Map<number, VlmLayerSpan[]>();
+  const stderrTail: string[] = [];
+
+  const finished = new Promise<void>((resolve, reject) => {
+    let stdout = '';
+    proc.stdout.setEncoding('utf8');
+    proc.stdout.on('data', (chunk: string) => {
+      stdout += chunk;
+      let nl = stdout.indexOf('\n');
+      while (nl !== -1) {
+        const line = stdout.slice(0, nl);
+        stdout = stdout.slice(nl + 1);
+        nl = stdout.indexOf('\n');
+        if (line.trim().length === 0) continue;
+        const event = JSON.parse(line) as Record<string, unknown>;
+        if (event['event'] === 'layer') {
+          const spans = (event['spans'] as [number, number, number, number][])
+            .map(([x, y, size, chars]) => ({ x, y, size, chars }));
+          layer.set(event['page'] as number, spans);
+        }
+      }
+    });
+    proc.stderr.setEncoding('utf8');
+    proc.stderr.on('data', (chunk: string) => {
+      for (const line of chunk.split('\n')) {
+        if (line.length === 0) continue;
+        stderrTail.push(line);
+        if (stderrTail.length > 40) stderrTail.shift();
+      }
+    });
+    proc.on('error', (err) => reject(new VlmBridgeError(`could not start ${python}: ${err.message}`)));
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        return reject(new VlmBridgeError(
+          `${path.basename(script)} exited ${code} while reading the PDF's text layer. Its last output:\n`
+          + stderrTail.map((l) => `  ${l}`).join('\n'),
+        ));
+      }
+      resolve();
+    });
+  });
+
+  proc.stdin.write(config);
+  proc.stdin.end();
+  await finished;
+  return layer;
+}
