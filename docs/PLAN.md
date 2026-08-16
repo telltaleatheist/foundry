@@ -374,16 +374,45 @@ emptiness, doing something plausible and wrong.
    FAILURE notices keep their paths: there the file is the actionable
    half of the sentence.
 
+5. ~~**The cover.**~~ REMOVED, feature and all. The first fix took it
+   out of the contents list and left it rendering, which is how the
+   user met it again: *"why does the translation still have page 2 of
+   the book as the first page of the translation"* — an untranslatable
+   image of an English scan at the front of a German book. Ruling:
+   *"dont insert the book cover, and dont infer what the book cover
+   might be. we'll set the book cover through metadata later. just
+   remove the feature that adds book covers since it's apparently
+   incorrect most of the time."*
+
+   The word is INFER. The old rule — the first page the book CONTAINS,
+   not page 1, because `--skip-pages 1-6` is ordinary — was a good
+   guess and still a guess, and a wrong cover looks exactly as
+   convincing as a right one. Gone from `packageVlmEpub`, from
+   `buildDotsBook` (`DotsCover`, the crop, the report field), from
+   `vlm-convert`'s report and log lines, and from `epub-final`'s
+   every-run "this book declares NO COVER" warning — that sentence
+   advised re-running a feature that no longer exists.
+
+   **KEPT ON PURPOSE:** `epub-final` still *preserves* a cover it finds,
+   and its image sweep still refuses to drop one. A book somebody
+   imported may have a real cover and that one is theirs. The app's
+   contents list keeps excluding a declared cover for the same reason.
+
+   Debt, recorded rather than hidden: deleting the cover tests took
+   `epub-final FINDS the cover foundry wrote` with them, which was the
+   only exercise of `declaresCover` and of the sweep's keep-the-cover
+   rule. Re-covering it needs an EPUB built by hand with a cover in it,
+   since nothing in this program writes one any more.
+
 Left standing, and said out loud rather than quietly done:
 
-- **The cover is cut from the first page the book CONTAINS, not page
-  1** — which is why the user saw page 2: page 1 carried no blocks.
-  That is `buildDotsBook`'s documented rule and it is working. Their
-  note — *"we can put the book COVER ART as the first page if we want,
-  but i didnt ask for that"* — is a standing question about whether
-  casts should have covers at all, not a bug report. Nothing changed.
 - **Chapter rename from the inspector still throws** (4b item 3). Not
   touched this sitting.
+- **`docs/REFLOW.md` still says crops exist "for picture and cover
+  crops"** in two places. Left as written: it is a completed phase's
+  plan, one of the two lines is inside a block quote of an earlier
+  spec, and its actual argument — crops are a different job from ink
+  sampling — is untouched by any of this.
 
 ### Wave 5
 

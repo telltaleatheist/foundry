@@ -2022,16 +2022,17 @@ export async function openEpub(filePath: string): Promise<EpubBook> {
    * cannot happen inside the `flatMap` below without turning the chapter list
    * into a list of promises. Only the documents the nav is silent about are read,
    * so a book with a complete table of contents reads none — and a cover is
-   * ALWAYS one of those, because no engine puts the cover in the table of
-   * contents (`packageVlmEpub`, src/vlm/epub.ts: *"the nav is built from
-   * `documents` and the cover is not one of them"*). So the one loop that was
-   * already reading exactly the right files can answer both.
+   * ALWAYS one of those, because a cover is not a chapter and no sane table of
+   * contents opens with a line saying "Cover". So the one loop that was already
+   * reading exactly the right files can answer both.
    *
-   * `epub:type="cover"` IS THE DECLARATION AND NOT A HEURISTIC. This app's own
-   * casts wrap the picture in `<div epub:type="cover">`; the alternative tests —
-   * "it is the first spine item", "its name contains cover" — are guesses about
-   * somebody's book, and a guess that fires wrongly deletes a chapter from the
-   * contents.
+   * THE COVERS THIS MEETS ARE OTHER PEOPLE'S. Foundry's own casts carry none —
+   * `packageVlmEpub` stopped inferring one — so every book this branch fires on
+   * is a publisher's EPUB somebody imported, where the cover is real and is
+   * theirs. Which is exactly why `epub:type="cover"` is read as a DECLARATION
+   * and never guessed at: the alternative tests — "it is the first spine item",
+   * "its name contains cover" — are opinions about a stranger's book, and one
+   * that fires wrongly takes a chapter out of their contents.
    */
   const ownTitles = new Map<string, string | null>();
   for (const item of spine) {

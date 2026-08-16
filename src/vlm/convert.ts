@@ -21,7 +21,7 @@
  * answers with prose gets the emitter that builds a book out of prose. A
  * dialect that answers with BOXES gets the one that can use them, and takes
  * three things with it that the prose route has no way to obtain: the page
- * renders are kept (a Picture and the cover are cut out of them), the pixel
+ * renders are kept (a Picture is cut out of them), the pixel
  * budget is pinned and travels to the parser (the boxes are in the model's
  * frame, not the render's), and a page the model could not answer for is
  * RECORDED BY NAME rather than stopping the book.
@@ -47,7 +47,6 @@ import {
   buildDotsBook,
   openPageImages,
   type DotsChapterProposal,
-  type DotsCover,
   type DotsCrop,
   type DotsCropped,
   type DotsFold,
@@ -234,16 +233,6 @@ export interface VlmConvertReport {
    * this run WROTE, so they are named the loudest of the three.
    */
   mergedHeadings: DotsHeadingMerge[];
-  /**
-   * Which page of the scan became the cover, or why nothing did.
-   *
-   * NULL WHERE THE FORMAT HAS NO COVER TO HAVE — a text file has nowhere to put
-   * an image, and a PDF opens on its own first page, so a cover pasted in front
-   * of it would be a leaf the book does not have. There is no absence to explain
-   * on either route. A non-null value always answers the question one way or the
-   * other (`DotsCover`).
-   */
-  cover: DotsCover | null;
   timings: {
     loadSeconds: number;
     renderSeconds: number;
@@ -657,7 +646,6 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     let suppressedHeads: { page: number; text: string; why: FurnitureEvidence }[] = [];
     let foldedSections: DotsFold[] = [];
     let mergedHeadings: DotsHeadingMerge[] = [];
-    let cover: DotsCover | null = null;
     /** Set on the PDF route only, and what its phase line is made of. */
     let typeset: { pages: number; lines: number } | null = null;
 
@@ -844,26 +832,6 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       pictures = built.pictures;
       joinedPages = built.joinedPages;
       unjoinedTurns = built.unjoinedTurns;
-      /*
-       * WHICH PAGE THE READER SEES FIRST, or why they will see a grey
-       * rectangle.
-       *
-       * Printed on every run that could have one, including the ordinary
-       * success, because the page is not predictable from the command line: it
-       * is the first page the book CONTAINS, which under `--skip-pages 1-6` is
-       * page 7 and under a first leaf the model read nothing on is page 8. A
-       * cover somebody cannot check is a cover nobody can correct.
-       */
-      cover = built.cover;
-      if (cover !== null) {
-        opts.log(
-          cover.why === null
-            ? `vlm-convert: cover — page ${cover.page} of the PDF, rendered whole; the first page `
-              + 'this run kept'
-            : `vlm-convert: NO COVER — ${cover.why}. The book is written anyway: a grey thumbnail `
-              + 'is worse than nothing on a shelf, and a book that was not produced is worse than both',
-        );
-      }
       opts.log(
         `vlm-convert: ${built.lexiconWords} words in the book's own lexicon, `
         + `${joinedPages.length} paragraph(s) joined across a page turn, `
@@ -990,22 +958,6 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       chapters = built.chapters;
       xhtmlSeconds = built.xhtmlSeconds;
       zipSeconds = built.zipSeconds;
-      /*
-       * The prose route has no cover and cannot have one, SAID rather than left
-       * to be discovered on a shelf. A cover is a crop out of a page render by a
-       * box, and this route has neither: the emitter here is handed blocks with
-       * no geometry at all (`epub.ts`), so there is nothing to cut and nothing
-       * that knows how big the page was. It is the same absence `--format pdf`
-       * is refused for, one file earlier.
-       */
-      if (format === 'epub') {
-        cover = {
-          page: null,
-          why: `${model.id} answers in the ${model.dialect} dialect, which is prose: it reports what `
-            + 'a page says and never where on the page it says it, so no page can be cut into a cover',
-        };
-        opts.log(`vlm-convert: NO COVER — ${cover.why}`);
-      }
     }
 
     const writeStarted = Date.now();
@@ -1110,7 +1062,6 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       suppressedHeads,
       foldedSections,
       mergedHeadings,
-      cover,
       timings: {
         loadSeconds: run.loadSeconds,
         renderSeconds: run.renderSeconds,

@@ -459,8 +459,4 @@ test('the help says what is kept, what is stripped, and what is never removed', 
   assert.match(command.detail, /THE FILE IS WRITTEN ANYWAY/);
   // The rule that keeps this command honest: it tidies what THIS run orphaned.
   assert.match(command.detail, /pointed nowhere BEFORE the run is left exactly as it was/);
-  // The cover line moved from "nothing writes one yet" to what a missing one
-  // now MEANS, because vlm-convert writes one and the old sentence would send
-  // somebody looking for a feature that is there.
-  assert.match(command.detail, /vlm-convert --format epub writes one/);
 });

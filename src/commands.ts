@@ -1235,24 +1235,21 @@ async function runEpubFinal(args: ParsedArgs): Promise<void> {
     + `plain <sup> the emitter could not match; ${many(report.notes, 'note', 'notes')}, `
     + `${report.unreferencedNotes} with nothing pointing at ${report.unreferencedNotes === 1 ? 'it' : 'them'}`,
   );
-  if (!report.cover) {
-    /*
-     * Stated rather than left to be noticed: a book with no cover is a grey
-     * rectangle on every shelf. It is an absence to report and not a defect in
-     * this command — nothing here can invent one, because the cover is a crop
-     * out of the SCAN and this command has only the converted book.
-     *
-     * `vlm-convert --format epub` writes one now, so a book that reaches here
-     * without one is one of three things: cast before covers existed, cast from
-     * a run whose crop refused (that run said so by name), or a publisher's
-     * EPUB imported without one.
-     */
-    log(
-      'epub-final: this book declares NO COVER — it was cast before foundry wrote covers, or its '
-      + 'conversion could not cut one. Re-run vlm-convert to give it one; nothing here can, because '
-      + 'a cover comes off the scan',
-    );
-  }
+  /*
+   * NOTHING IS SAID ABOUT A MISSING COVER, and the line that used to be here is
+   * gone with the feature that made the sentence true.
+   *
+   * It read "this book declares NO COVER … Re-run vlm-convert to give it one",
+   * which was fair advice while `vlm-convert` cut one out of the scan. It does
+   * not any more (`packageVlmEpub` carries the ruling), so every book cast by
+   * this program now reaches here without one — and a warning printed on every
+   * single run, advising a fix that no longer exists, is worse than silence by
+   * both measures a log line is judged on.
+   *
+   * `report.cover` SURVIVES, because the sweep below still needs it: a cover in
+   * an imported book is the user's own and is never dropped for going
+   * unmentioned by the prose (src/epub/final.ts).
+   */
   if (report.pagesLost.length > 0) {
     // Last, and loud: a page that is no longer in the book's own pagination is
     // the one thing here that a later citation cannot recover.
@@ -1759,18 +1756,13 @@ export const COMMANDS: readonly Command[] = [
       'list over-includes on purpose, because an extra costs a click and a missed',
       'chapter cannot be recovered.',
       '',
-      'THE COVER IS THE FIRST PAGE THE BOOK CONTAINS, rendered whole — not',
-      'necessarily page 1. Under --skip-pages 1-6 those pages are never rasterised',
-      'at all, so the cover is page 7; and a page that survived the skip but',
-      'carried nothing is skipped over too, because a blank leaf makes a white',
-      'cover. It is declared three ways, since readers disagree about which they',
-      'honour: a cover-image manifest property, the old <meta name="cover">, and a',
-      'cover document first in the spine so the cover is VISIBLE when the book is',
-      'opened rather than only a thumbnail in a library grid. It gets no contents',
-      'entry: it is not a chapter. A run that cannot cut one writes the book',
-      'anyway and says which page it failed on. EPUB only — a text file has',
-      'nowhere to put an image, and a PDF opens on its own first page, so a',
-      'cover pasted in front of it would be a leaf the book does not have.',
+      'NO COVER IS WRITTEN, and that is deliberate. This command used to cut one',
+      'out of the first page the book contained and declare it three ways. Which',
+      'page a printer meant as the front of a book is not a thing a converter can',
+      'know — page 1, the first page not skipped and the first page carrying text',
+      'are three different guesses and each is confidently wrong on some scans —',
+      'so the book opens on its first chapter, which is never wrong. A cover is a',
+      'fact to be stated alongside the title and the author, not inferred here.',
       '',
       '--format txt writes readable plain text instead: chapter titles ruled with',
       '=, section headings with -, paragraphs separated by blank lines and never',
@@ -1897,9 +1889,9 @@ export const COMMANDS: readonly Command[] = [
       '',
       'THE SECOND AND THIRD COMMANDS READ NO PAGE. With a complete bank and',
       '--reuse-readings no model is loaded and no server is contacted; the pages',
-      'are still rasterised, because a rendering measures the ink of a page turn,',
-      'cuts figures out of the scan and takes the cover from it, but nothing',
-      'infers anything. --reuse-readings is not optional there: without it the',
+      'are still rasterised, because a rendering measures the ink of a page turn',
+      'and cuts figures out of the scan, but nothing infers anything.',
+      '--reuse-readings is not optional there: without it the',
       'book is READ AGAIN — into a pending bank that replaces the completed one',
       'only when the new reading finishes — because ordering a conversion means',
       'ordering the work. That rule is not weakened by this command; it is the',
@@ -2273,9 +2265,7 @@ export const COMMANDS: readonly Command[] = [
       'believe. How many reference numbers link to a note; how many stayed a plain',
       '<sup> because the emitter could not match one — that is deliberate, a',
       'marker is matched to a note by page and printed number and no link beats a',
-      'wrong one; how many notes nothing points at; whether the book declares a',
-      'cover — vlm-convert --format epub writes one, so a book with none was cast',
-      'before covers existed or its conversion could not cut one.',
+      'wrong one; and how many notes nothing points at.',
       '',
       'THE FILE IS WRITTEN ANYWAY. None of those numbers stops the run: they are',
       'facts about the scan, and a book somebody cannot produce is worse than one',
