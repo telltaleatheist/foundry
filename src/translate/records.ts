@@ -17,13 +17,25 @@
  *
  *     {"key":"…","parts":"12:3 13:0","generation":"g7","text":"The state was…"}
  *
- *  - `parts` is WHERE, in the only spelling this program has ever had for a
- *    position: `page:order[:part]`, space-joined when the reflow made one
- *    paragraph out of blocks from two pages, plus `#note` for one note of a
- *    Footnote block. It is `data-bf-src`'s value exactly (`dots-book.ts`) and
- *    `parseTargetKey`'s grammar exactly (the app's `overlay.ts`) — one spelling,
- *    three readers, no translation table. Materialization looks a block up by
- *    this and writes the record's words in place of the source's.
+ *  - `parts` is WHERE, and it has TWO spellings because it has two sources.
+ *
+ *    A run over a CAST writes the only spelling this program used to have:
+ *    `page:order[:part]`, space-joined when the reflow made one paragraph out of
+ *    blocks from two pages, plus `#note` for one note of a Footnote block. It is
+ *    `data-bf-src`'s value exactly (`dots-book.ts`) and `parseTargetKey`'s
+ *    grammar exactly (the app's `overlay.ts`) — one spelling, three readers, no
+ *    translation table. Materialization looks a block up by this and writes the
+ *    record's words in place of the source's.
+ *
+ *    A run over a BOOK FILE (`--book`, `bookrows.ts`) writes the ROW'S ID:
+ *    `b12-3`, `b12-3#1`, `b2-3/1`. It is not a coordinate at all, it is the
+ *    block's name — which is what lets the app materialise a derived book file
+ *    in the target language with the parent's ids kept verbatim
+ *    (docs/RENDERER.md §4), so the source and the translation agree about what
+ *    every paragraph is called. Nothing in THIS file distinguishes them: a
+ *    position is a string, last row wins, and the reader that has a book in hand
+ *    is where the two are told apart (`shared/records.ts`, which bridges the old
+ *    spelling through the book file's own `src` column).
  *  - `key` is WHAT WAS ASKED: `bankKey` over the masked source text, the model,
  *    the two languages and the instructions (`bank.ts`). It is what makes this
  *    file its own cost cache — an unchanged block has an unchanged key, and a

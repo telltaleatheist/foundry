@@ -95,6 +95,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { readAppSettings } from './app-settings';
+import { materializeTranslation } from './book';
 import { parseProgressLine, runEngine, writeBookFile } from './engine';
 import { ENV_SPECS } from './env-catalog';
 import { destFor, installEnv } from './env-install';
@@ -521,7 +522,10 @@ export function cancel(id: string): void {
  * because a scratch file would not unlink, and a cancel is not a failure at all.
  */
 async function sweepDerivedBook(request: EngineRequest | undefined): Promise<void> {
-  if (request === undefined || request.kind === 'read' || request.kind === 'translate') return;
+  if (request === undefined || request.kind === 'read') return;
+  // A TRANSLATION HAS ONE TOO, and it always has one: the book it read is the
+  // position materialised (`TranslateRequest.bookPath`), scratch on exactly the
+  // terms an export's is. It was excluded here while a translation read a cast.
   if (request.bookPath === undefined) return;
   try {
     await fsp.rm(request.bookPath, { force: true });
@@ -623,31 +627,39 @@ function argsFor(
      */
     const args = [
       'translate',
-      // The CAST, and never an edition: records mode reads `data-bf-src` off
-      // every translatable block and `data-bf-note` off every aside, and refuses
-      // a book carrying neither by name — which is exactly what `--final`
-      // withholds. What the dialog hands over is the position's own document,
-      // and the position's own document is the cast.
-      '--epub', request.inputPath,
+      /*
+       * THE BOOK, AND NOT A RENDERING OF IT. `--epub` used to be here, pointed at
+       * the position's cast, and everything about that was one hop too far: the
+       * words came back out of markup they had been written into, and each block
+       * was named by the `data-bf-src` stamped on it rather than by the name it
+       * already had. This is the position's book file with its whole chain of
+       * changes replayed into it by main (`materializeBook`, electron/book.ts) —
+       * so a struck row is not in it, and the records that come back are keyed by
+       * the ROWS' OWN IDS, which is what the derived book in the target language
+       * is materialised against when this lands (docs/RENDERER.md §4).
+       *
+       * NO `--source-records` ANY MORE, and the engine refuses it beside this
+       * flag: a book file at a position under a translation already holds the
+       * parent's words, so a chain is a fact about the file rather than a second
+       * path on the command line.
+       */
+      '--book', request.bookPath,
       '--records', request.recordsPath,
       '--to', request.to,
       '--model', request.model,
       '--ollama', request.ollama,
     ];
-    if (request.from && request.from.trim().length > 0) args.push('--from', request.from.trim());
     /*
-     * ── THE CHAIN, WHICH IS TWO FLAGS AND NO NEW MACHINERY ────────────────────
+     * ── THE CHAIN, WHICH IS NOW ONE FLAG AND NO MACHINERY AT ALL ──────────────
      *
-     * `--source-records` makes each block's question about the PARENT'S answer
-     * rather than about the book's own words, and `--from` above says which
-     * language those answers are in. Both are composed by the plan off the
-     * ledger (`planTranslation`, electron/workspace.ts): nothing reads a language
-     * out of a records file, because a file of sentences is not a declaration and
-     * a guess would put "German → Hungarian" on a prompt holding English.
+     * `--from` says which language the words in that book file are in, and the
+     * words themselves are the parent translation's because the file IS its
+     * derived book. Composed by the plan off the ledger (`planTranslation`,
+     * electron/workspace.ts): nothing reads a language out of a file of
+     * sentences, and a guess would put "German → Hungarian" on a prompt holding
+     * English.
      */
-    if (request.sourceRecords !== undefined && request.sourceRecords.length > 0) {
-      args.push('--source-records', request.sourceRecords);
-    }
+    if (request.from && request.from.trim().length > 0) args.push('--from', request.from.trim());
     /*
      * The reading these answers are about, written into every row and read by
      * nobody in the engine — `Overlay.generation`'s contract, one folder over. It
@@ -1413,8 +1425,12 @@ async function pump(): Promise<void> {
     }
   }
 
-  // And the book main materialised for this export, whichever way it ended —
-  // `sweepDerivedBook` carries the whole argument.
+  // And the book main materialised for this export or this translation,
+  // whichever way it ended — `sweepDerivedBook` carries the whole argument. It
+  // is swept BEFORE the landings below and that is safe by construction: what
+  // the run read is not what the landing writes, and the translation's own
+  // derived book is built from the ledger and the records rather than from this
+  // scratch copy of them.
   await sweepDerivedBook(request);
 
   if (result.code === 0) {
@@ -1541,6 +1557,24 @@ async function pump(): Promise<void> {
       });
       next.message = `Translated ${path.basename(next.inputPath)} — the book follows.`;
       changed();
+      /*
+       * AND THE BOOK OF IT, WHICH IS THE PART THAT IS NOT A RENDERING. *"When a
+       * translate lands, main materializes parent book file + chain ops + records
+       * → readings/<key>.<lang>.book.jsonl."* (docs/RENDERER.md §4.) It is made
+       * HERE, at the landing, rather than at the first open, for the reason every
+       * derived file in this app is made where its inputs are known to be
+       * settled: the records have just been written, the step naming them exists,
+       * and the row the translation was made FROM is what the book is materialised
+       * over — a fact about the ledger that is answered once, now, rather than
+       * re-derived by every pane that ever draws this step.
+       *
+       * BEFORE THE CAST, because the cast is a courtesy and this is the document.
+       * Every position under this translation reads the derived book
+       * (`openBookAtPosition`); the EPUB after it is what the old viewer opens.
+       * Neither is fatal to a landing that has already put hours of GPU safely on
+       * disk, and each says so in the terminal in its own words.
+       */
+      await materializeTranslation(next.outputPath);
       await ensureTranslateCast(next.outputPath);
       void pump();
       return;

@@ -2431,6 +2431,71 @@ export function editsInEffect(
 }
 
 /**
+ * WHERE A WALK FOR A REPLAY STOPS — one place further down than every other one.
+ *
+ * ── Why a transform is a boundary here and nowhere else ─────────────────────
+ *
+ * `BOUNDS_THE_WALK` answers "which bank" and "which curation", and a translate
+ * row says nothing about either — it is transparent there, correctly, because a
+ * translation of a reading is still about that reading's pages.
+ *
+ * THE REPLAY IS A DIFFERENT QUESTION, and it is not about provenance at all: it
+ * is *"what has been done to the book file I am about to draw"*. When a translate
+ * lands, main materialises a DERIVED book file — parent book file + chain ops +
+ * records, same ids, struck rows already absent, text already replaced
+ * (docs/RENDERER.md §4) — and every position under that translation reads it,
+ * *"so replay is always one short hop"*. The ops above the translation are IN
+ * that file. Replaying them again over it would strike rows that are already
+ * gone, retype paragraphs the derived file already carries in another language,
+ * and report the rest as missing: the same edits applied twice, on a document
+ * that was made by applying them once.
+ *
+ * So the boundary is a fact about what is BAKED IN, and it belongs to the walk
+ * that feeds a replay rather than to the one that names a bank. A table of its
+ * own, spread from the other so that a new action gets a decision in both places
+ * rather than a default in one, and `translate` is the single line that differs.
+ */
+const BOUNDS_THE_REPLAY: Readonly<Record<StepAction, boolean>> = {
+  ...BOUNDS_THE_WALK,
+  translate: true,
+};
+
+/**
+ * The ops still to be replayed at a position — every edit made SINCE the nearest
+ * book file on the way up, oldest first.
+ *
+ * ── The difference from `editsInEffect`, which is not a subset relation ─────
+ *
+ * `editsInEffect` answers "what has this person applied on the way here", and
+ * that is the right question for a refusal: a rendering built from the bank
+ * carries none of those changes whether a translation stands between them or not,
+ * so `refuseOverEdits` counts them all. This answers "what does the book file at
+ * this position not already know", which is the question a REPLAY asks — and the
+ * two differ by exactly the edits that were materialised into a derived file when
+ * a transform landed.
+ *
+ * A POSITION WITH NO TRANSLATION ON ITS PATH GETS THE SAME LIST FROM BOTH, which
+ * is every position in a project nobody has translated: the walks are identical
+ * until a translate row appears.
+ */
+export function editsSinceTransform(
+  ledger: ProjectLedger,
+  /** The step to walk up from, or null for the position. See `nearestUpward`. */
+  at: LedgerStep | null = null,
+): LedgerStep[] {
+  const standing = at ?? positionOf(ledger);
+  if (standing === null) return [];
+  const chain = ancestry(ledger, standing.id);
+  const found: LedgerStep[] = [];
+  for (let walker = chain.length - 1; walker >= 0; walker -= 1) {
+    const step = chain[walker]!;
+    if (step.action === 'edit') found.unshift(step);
+    else if (BOUNDS_THE_REPLAY[step.action]) break;
+  }
+  return found;
+}
+
+/**
  * EVERY METADATA EDIT MADE ANYWHERE ON THE WAY TO WHERE YOU ARE STANDING, in the
  * order they were made.
  *

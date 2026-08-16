@@ -2268,6 +2268,41 @@ export function bookFileFor(bank: string): string {
 }
 
 /**
+ * WHERE A TRANSLATION'S OWN BOOK FILE IS — its records file with `.book` where
+ * `.records` was, and the whole of the app's knowledge of THAT spelling.
+ *
+ * ── Why it is named after the records and not after the bank ────────────────
+ *
+ * `bookFileFor` above names the reading's reflow after the bank it is a pure
+ * function of. This one is the same idea one transform along: when a translate
+ * lands, main materialises `parent book file + chain ops + records` into a
+ * DERIVED book file (docs/RENDERER.md §4), and the one input of those three that
+ * is unique to this step is the records file — which is also the step's payload,
+ * so the file is named after the row that owns it and can never drift from it.
+ * `readings/<key>.hu.records.jsonl` becomes `readings/<key>.hu.book.jsonl`, and a
+ * branch's `<key>.hu.<id8>.records.jsonl` becomes `<key>.hu.<id8>.book.jsonl`:
+ * one translation, one book, no collision with the reading's own `<key>.book.jsonl`
+ * because the language tag is always between them.
+ *
+ * IT REFUSES ANY OTHER SPELLING, on `bookFileFor`'s rule and for its reason. A
+ * translate step made before records kept its words inside an EPUB in
+ * `generated/` (`translationRecordsOf` answers null for one), and appending
+ * `.book.jsonl` to whatever it was handed would put a derived book beside a book,
+ * named after nothing, that no sweep would ever find again.
+ */
+export function translationBookFileFor(records: string): string {
+  const suffix = '.records.jsonl';
+  if (!records.toLowerCase().endsWith(suffix)) {
+    throw new ProjectError(
+      `${records} is not a translation's records file — those are the .records.jsonl files the `
+      + 'engine writes, and the derived book is named after one. Refusing to guess at where the '
+      + 'translated book would live.',
+    );
+  }
+  return `${records.slice(0, -suffix.length)}.book.jsonl`;
+}
+
+/**
  * WHERE THE BOOK'S CUT FIGURES ARE — the bank's own path with `.images` in place
  * of its extension, and the whole of the app's knowledge of that spelling.
  *
@@ -2320,8 +2355,17 @@ export function imagesDirFor(bank: string): string {
  * between. Null is the honest answer for a project with no reading on the path,
  * and it is what makes `bank` above a composed fallback rather than a payload —
  * a caller that must be sure it is holding a real reading tests for it.
+ *
+ * `at` IS `readingBank`'s OWN PARAMETER, PASSED THROUGH, and it exists here for
+ * its reason: a landing works on ONE STEP while the pointer is wherever the
+ * person happens to be standing. A translation's derived book file is
+ * materialised at the moment the run lands (docs/RENDERER.md §4), by which time
+ * somebody may have clicked onto a branch under a different reading — and a book
+ * built for that step out of this position's bank would be the other reading's
+ * pages under that step's name. Null and absent both mean the position, which is
+ * what every viewer asks.
  */
-export async function bookAtPosition(dir: string): Promise<{
+export async function bookAtPosition(dir: string, at: LedgerStep | null = null): Promise<{
   dir: string;
   manifest: ProjectManifest;
   reading: LedgerStep | null;
@@ -2332,8 +2376,8 @@ export async function bookAtPosition(dir: string): Promise<{
 }> {
   const resolved = deletableProjectDir(dir);
   const manifest = await readManifest(resolved);
-  const bank = readingBank(resolved, manifest);
-  const reading = readingInEffect(ledgerOf(manifest));
+  const bank = readingBank(resolved, manifest, at);
+  const reading = readingInEffect(ledgerOf(manifest), at);
   const language = reading?.params?.language ?? null;
   const pdf = manifest.archive !== null && manifest.archive.kind === 'pdf'
     ? path.join(resolved, ARCHIVE, manifest.archive.file)
@@ -2813,7 +2857,16 @@ export async function recordTranslationEdit(
    * main, which composes the door, holds both.
    */
   busy: (recordsFile: string) => string | null = () => null,
-): Promise<void> {
+  /*
+   * ANSWERS WITH THE FILE IT WROTE, which is not decoration: the derived book in
+   * this translation's language is a pure function of that file (docs/RENDERER.md
+   * §4), so a correction appended here leaves it stale until somebody makes it
+   * again. This module cannot make it — the materializer walks the ledger and
+   * lives in electron/book.ts, which imports this one — so it hands back the path
+   * and main, which holds both, remakes the book. Exactly the arrangement `busy`
+   * above already is, in the other direction.
+   */
+): Promise<string> {
   const step = await translateStepForDocument(dir, absolutePath);
   if (step === null) {
     throw new ProjectError(
@@ -2875,7 +2928,7 @@ export async function recordTranslationEdit(
     if (recordEditWrites.get(key) === settled) recordEditWrites.delete(key);
   });
   recordEditWrites.set(key, settled);
-  return write;
+  return write.then(() => file);
 }
 
 async function appendHumanRow(file: string, parts: string, text: string): Promise<void> {

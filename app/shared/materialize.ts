@@ -54,6 +54,7 @@
  * left to say.
  */
 import type {
+  BookChapter,
   BookFile,
   BookLoose,
   BookLooseMarker,
@@ -276,5 +277,233 @@ export function materialize(book: BookFile, ops: readonly BookOp[]): Materialize
       rows: derived,
     },
     missing: replayed.missing,
+  };
+}
+
+/**
+ * The heading label a title is a copy OF — the engine's own fold, mirrored.
+ *
+ * A chapter opening is routinely two boxes, the number on one line and the name
+ * on the next, and the seed's title is those lines joined with a separator the
+ * printer never set (`headingLabel`, src/vlm/dots-book.ts, which owns the whole
+ * argument for the colon). Mirrored here rather than approximated because this is
+ * the string a title has to be compared against to prove it IS one, and a
+ * comparison against a different normalisation would prove nothing about
+ * anything — on `shared/book.ts`'s grow-together rule.
+ */
+const ALREADY_PUNCTUATED = /[.,:;!?…—–-]$/;
+
+function headingLabel(text: string): string {
+  const lines = text.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+  if (lines.length === 0) return text.trim();
+  return lines.reduce((joined, line) =>
+    `${joined}${ALREADY_PUNCTUATED.test(joined) ? ' ' : ': '}${line}`);
+}
+
+/** A derived book in another language, and everything it could not carry. */
+export interface Translated {
+  book: BookFile;
+  /**
+   * Flowing rows this translation answers nothing for, by id.
+   *
+   * REPORTED, AND THEIR SOURCE TEXT KEPT, which is the established rule for a
+   * position with no record and not a decision taken here: *"A POSITION WITH NO
+   * RECORD KEEPS ITS SOURCE TEXT. A partial translation is rendered honestly —
+   * the blocks that came back are in the target language and the blocks that did
+   * not are in the book exactly as it was read"* (`buildChapterBody`'s `worded`,
+   * src/vlm/dots-book.ts). What is new is only that the ids are SAID: the cast
+   * route dropped through a `??` in silence, and this side already names every op
+   * a replay could not perform (`Materialized.missing`), so a book that comes out
+   * with forty paragraphs still in German says which forty.
+   */
+  untranslated: string[];
+  /**
+   * Chapter titles left in the source language, by the id of the division — a
+   * title that could not be PROVEN to be a copy of a heading this translation
+   * answers for. See `titledFrom`.
+   */
+  untitled: string[];
+}
+
+/**
+ * Which row a chapter's title was taken from, when it can be proved.
+ *
+ * `relabelNav`'s rule (src/translate/run.ts), which is the house's standing
+ * answer to this exact question one format over: *"a label is replaced only where
+ * it can be PROVEN to be a copy… the label reads exactly as that heading's own
+ * text did before translation. Then the translated heading is already the right
+ * answer and no second question is asked. Anything else is LEFT IN THE SOURCE
+ * LANGUAGE and counted, because a guess here is a guess that ships in the one
+ * part of the book everybody reads first."*
+ *
+ * The seed's own rule is what makes the proof available: a chapter title is
+ * `sectionName`'s answer over the division's span — the first Title or
+ * Section-header in it, folded by `headingLabel` — or, where the span has no
+ * heading at all, a label from the page classifier, which is not a row and can
+ * therefore never be proved to be a copy of one. So this looks in the same place
+ * and compares the same string.
+ */
+function titledFrom(
+  chapter: BookChapter,
+  rows: readonly BookRow[],
+  starts: ReadonlyMap<string, number>,
+  nextStart: number,
+): BookRow | null {
+  const from = starts.get(chapter.id);
+  if (from === undefined) return null;
+  for (const row of rows.slice(from, nextStart)) {
+    if (row.category !== 'Title' && row.category !== 'Section-header') continue;
+    return headingLabel(row.text) === chapter.title ? row : null;
+  }
+  return null;
+}
+
+/**
+ * THE DERIVED BOOK IN THE TARGET LANGUAGE — §4, and the second half of what a
+ * transform's landing produces.
+ *
+ * *"When a translate lands, main materializes parent book file + chain ops +
+ * records → readings/<key>.<lang>.book.jsonl — same format, parent ids kept
+ * verbatim, struck rows absent, text replaced from records."* (docs/RENDERER.md
+ * §4.) `materialize` above is the first two terms; this is the third. They are
+ * separate functions because they are separate transformations of one document
+ * and each is a whole argument of its own — and because the first is what every
+ * export already goes through, unchanged by this existing.
+ *
+ * IDS ARE NOT TOUCHED, WHICH IS THE POINT. A translated row is the same block as
+ * the row it was translated from, wearing different words, so the aligned view is
+ * two files with one set of names and a strike on either side is the same op
+ * (§5). Boxes, pages, parts and categories are the parent's for the same reason:
+ * they are facts about the PAGE the words were printed on, and translating the
+ * words did not move the ink.
+ *
+ * ── WHAT A TRANSLATED FILE CANNOT SAY, AND THEREFORE DOES NOT ───────────────
+ *
+ * `refs` AND `loose` COME OUT EMPTY. A ref is a character range inside another
+ * row's text — *"AN OFFSET AND A LENGTH, NOT A STRING TO SEARCH FOR"* — resolved
+ * by the engine at reflow with the page in front of it. Those offsets address the
+ * SOURCE string. Nothing in a translation stands at the same character position
+ * as anything in its source, and there is no arithmetic that maps one onto the
+ * other: a model rewrote the sentence, and where the fourteenth note's number now
+ * falls in it is not a fact anybody holds. The three available spellings are
+ * therefore a lie with a number in front of it (carry the offsets), a lie with a
+ * search in front of it (find the digits again, which lands on whichever
+ * occurrence came first — the failure `compile.ts` refuses by name), and silence.
+ * Silence is the only true one, and it costs less than it looks: the parent file
+ * still holds every ref, keyed by the ids this file keeps verbatim, so the
+ * apparatus is one short hop away for anything that wants it — and the reference
+ * NUMBERS are still in the prose, because they are Unicode superscript runs in
+ * the text and the model is asked to place them (`textmask.ts`). `compile.ts`
+ * draws a run no note claims as the plain `<sup>` the emitter gives an unmatched
+ * marker: no link beats a wrong one. An aligned apparatus is a later wave's;
+ * until it lands, this file says nothing rather than something false.
+ *
+ * `seams` IS ALREADY EMPTY on everything `materialize` writes, and the argument
+ * there covers this one whole: a seam is an offer to join two paragraphs, made to
+ * somebody holding the ops to act on it.
+ */
+export function translated(
+  book: BookFile,
+  /** Block id → its translation. `shared/records.ts` resolves the file to this. */
+  words: ReadonlyMap<string, string>,
+  /** The language the words are IN — the transform's target, stated by the app. */
+  language: string,
+): Translated {
+  const untranslated: string[] = [];
+  const rows = book.rows.map((row) => {
+    const said = words.get(row.id);
+    /*
+     * A SHELVED ROW IS NOT ASKED FOR AND IS NOT COUNTED AS MISSING. It is out of
+     * the flow, so nothing translated it and nothing should have — and in a book
+     * `materialize` produced there are none at all, which makes this a guard
+     * about the format rather than a branch anything reaches today.
+     */
+    if (said === undefined) {
+      /*
+       * A ROW WITH NO WORDS IN IT IS NOT A MISSING TRANSLATION. A Picture row's
+       * text is the empty string — the picture is the row — and the transform
+       * writes no record for a block it found nothing to ask about ("IN RECORDS
+       * MODE A WORDLESS BLOCK GETS NO ROW AT ALL", src/translate/run.ts). Counting
+       * those would put every figure in the book on a list a person is meant to
+       * read as "these came back in the source language".
+       */
+      if (row.shelf === undefined && row.text.trim().length > 0) untranslated.push(row.id);
+      return row.refs === undefined ? row : { ...row, refs: [] };
+    }
+    /*
+     * AND ITS PARTS COLLAPSE TO ONE, through `partsFor` — the same rule, and the
+     * same function, that a row somebody retyped goes through above.
+     *
+     * `chars` is a claim about ANOTHER field of the same row: these characters of
+     * this text came from that banked answer. A translation makes that claim false
+     * in the sharpest way the format admits — the ranges no longer even TILE the
+     * text, which both parsers prove rather than trust, so a file that carried
+     * them would not be a book file at all. And nothing recovers the true division
+     * of a translated sentence between two banked answers: where the German that
+     * came from page 12 ends inside an English paragraph is not a fact anybody
+     * holds. So the row says the one thing that is still true, which is where it
+     * STARTED.
+     */
+    const next = row.refs === undefined
+      ? { ...row, text: said }
+      : { ...row, text: said, refs: [] };
+    return { ...next, parts: partsFor(next, true) };
+  });
+
+  /*
+   * THE PROOF IS AGAINST THE BOOK AS IT CAME IN, and that is the whole of what
+   * makes it a proof. A title is a copy of a heading's SOURCE text — that is what
+   * the seed wrote — so comparing it against the row above, whose words have just
+   * been replaced, would ask whether an English title is a copy of a German
+   * heading and answer no every time. The rows are the same rows in the same
+   * order, so the id found here is the id looked up in `words`.
+   */
+  const starts = new Map<string, number>();
+  for (const [index, row] of book.rows.entries()) starts.set(row.id, index);
+  const untitled: string[] = [];
+  const chapters = book.header.chapters.map((chapter, which) => {
+    const next = book.header.chapters[which + 1];
+    const at = next === undefined ? book.rows.length : starts.get(next.id) ?? book.rows.length;
+    const heading = titledFrom(chapter, book.rows, starts, at);
+    const said = heading === null ? undefined : words.get(heading.id);
+    if (said === undefined) { untitled.push(chapter.id); return chapter; }
+    return { ...chapter, title: headingLabel(said) };
+  });
+
+  return {
+    book: {
+      header: {
+        // The engine that wrote the parent, carried and not restamped — this is a
+        // materialisation of that reflow, and provenance is a fact about where the
+        // words came from. `materialize` above makes the same choice, in full.
+        engine: book.header.engine,
+        /*
+         * AND THE ONE FIELD THAT IS NOT THE PARENT'S. The header's `language` is
+         * *"the read's declared language. Declared, never detected."* — and it is
+         * declared here by the app, which is the only party that knows it: the
+         * person asked for this language, the ledger recorded it on the step, and
+         * nothing reads a language out of a file of sentences (`planTranslation`).
+         * It is what `vlm-compile` writes as `dc:language` and onto every
+         * chapter's `xml:lang`, which is the whole reason a translated book must
+         * carry it — a document declaring the wrong language hyphenates by the
+         * wrong rules and reads aloud in the wrong voice.
+         */
+        language,
+        // The receipt is still the parent's, sha and all. The bank underneath did
+        // not move because somebody translated the words that came out of it, and
+        // a loader standing at this position checks that sha against that bank,
+        // which is exactly the check that should still pass here.
+        source: book.header.source,
+        chapters,
+        // Measured off the boxes, and the boxes are the parent's: this says what
+        // size the type was set in on the page, which translating did not change.
+        typography: book.header.typography,
+        seams: [],
+        loose: { markers: [], notes: [] },
+      },
+      rows,
+    },
+    untranslated,
+    untitled,
   };
 }

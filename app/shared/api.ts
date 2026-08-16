@@ -360,19 +360,19 @@ export interface FoundryApi {
      * format to choose and no `generated/` predecessor to rotate, and the language
      * rather than a format decides the name.
      *
-     * IT MAY ALSO ANSWER WITH A CHAIN. Standing under a translation, this run's
-     * questions are asked of that row's own answers (`sourceRecords`) in the
-     * language that row recorded (`from`) — the user's *"german to english to
-     * hungarian"*. Both are composed by main off the ledger, never by this window:
-     * a source language taken from a mirror is a prompt that can be told the wrong
-     * thing about what it is holding.
+     * IT MAY ALSO ANSWER WITH A CHAIN, and a chain is now a fact about the BOOK
+     * it answers with. Standing under a translation, `bookPath` is that row's own
+     * derived book — the words already in its language — and `from` is the
+     * language the ledger recorded for it: the user's *"german to english to
+     * hungarian"*, with no second file to point at. Composed by main off the
+     * ledger, never by this window: a source language taken from a mirror is a
+     * prompt that can be told the wrong thing about what it is holding.
      *
-     * It also answers back with the input the job must READ. Main exports the
-     * book's working copy first, because an edit no longer repacks and the
-     * engine is a separate process handed a path — so the file to translate is
-     * the export, not the file the tab happens to be pointed at. Use
-     * `inputPath` verbatim; a request that named the tab's own path would be
-     * translating the book as it was before the curation.
+     * IT ANSWERS WITH THE BOOK THE JOB READS. `bookPath` is the position
+     * materialised — every applied change replayed in — and it is what the run is
+     * handed. `inputPath` comes back too and is the job's identity rather than its
+     * input: main admitted it, the queue re-checks it, and the settle names it.
+     * Use both verbatim; neither is a path this window may compose.
      */
     planTranslation(
       inputPath: string,

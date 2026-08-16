@@ -31,7 +31,7 @@ import {
 
 import { readAppSettings, writeAppSettings } from './app-settings';
 import { cancelSetup, setupWslEnv } from './backend-setup';
-import { applyBookOps, bookFigureFile, loadBook } from './book';
+import { applyBookOps, bookFigureFile, loadBook, materializeTranslation } from './book';
 import { injectReporter, REPORTER_ID, REPORTER_MEMBER, REPORTER_SOURCE, sanitizeChapter } from './click-reporter';
 import {
   engineInfo,
@@ -48,7 +48,6 @@ import { planProvisioning } from './env-provision';
 import {
   closeAllEpubs,
   closeEpub,
-  exportWorkingCopy,
   isFoundryBook,
   navEchoForBlock,
   openBookIn,
@@ -1822,36 +1821,31 @@ function registerIpc(): void {
     (_event, inputPath: string, kind: ConversionKind) => planExport(inputPath, kind),
   );
   /*
-   * A translation reads a file the renderer already has open, so the input is
-   * checked against the SAME allow-list every other read is. Without it this
-   * handler would hash — and then hand the engine — any path a compromised
+   * A translation is asked ABOUT a file the renderer already has open, so the
+   * path is checked against the SAME allow-list every other read is. Without it
+   * this handler would resolve — and then plan against — any path a compromised
    * renderer named.
    *
-   * `exportWorkingCopy` FIRST, and it is the one thing that keeps translation
-   * honest now that an edit no longer repacks: the engine is a separate process
-   * handed a path, so a book edited since it was cast would be translated as it
-   * was before the edits, silently. The export writes a zip of the working tree
-   * into `working/` — never into `generated/`, which is the record of what the
-   * model read — and the job reads THAT. It is one of the two places this app
-   * zips at all (electron/epub-reader.ts).
+   * ── `exportWorkingCopy` USED TO RUN FIRST, AND ITS REASON IS GONE ──────────
    *
-   * The exported path is what the job is given, so it is admitted here too: the
-   * queue re-checks `inputPath` against the same allow-list, and a path that
-   * only main knows about would be refused by main's own gate a moment later.
+   * It repacked the open book's working tree into `working/` and handed the job
+   * THAT, because the engine is a separate process given a path and a book edited
+   * since it was cast would otherwise have been translated as it was before the
+   * edits. The run does not read an EPUB any more: `planTranslation` materialises
+   * the position's own book file — every applied change replayed into it — and
+   * that is what the engine is handed (`TranslateRequest.bookPath`). So the
+   * repack bought nothing, and the refusal inside it ("that is not the book
+   * Foundry has open in that project") had become a refusal about a file nothing
+   * in the run would ever open. A guard whose premise has been removed is not a
+   * safety margin; it is a stop sign in a field.
+   *
+   * The path that comes back is the one admitted here, so the queue's re-check of
+   * `inputPath` against the same allow-list finds exactly what this admitted.
    */
   ipcMain.handle('workspace:plan-translation', async (_event, inputPath: string, targetLanguage: string) => {
     const source = admitted(inputPath);
     if (source === null) throw new Error(`${inputPath} was never opened in this app.`);
-    const readable = await exportWorkingCopy(source);
-    openable.add(path.resolve(readable));
-    const plan = await planTranslation(readable, targetLanguage);
-    // `plan.sourcePath` is the export admitted two lines up — planning moved
-    // nothing since the rotation went to spawn time (`pump()`), and the
-    // moved-aside path a self-overwriting re-translation reads exists only on
-    // the spawn-time copy of the request, past every admission gate, never in
-    // the renderer's hands. Re-adding the same path is harmless and kept so a
-    // future plan that returns a different source is admitted the day it does.
-    openable.add(path.resolve(plan.sourcePath));
+    const plan = await planTranslation(source, targetLanguage);
     return { ...plan, inputPath: plan.sourcePath };
   });
 
@@ -3077,14 +3071,27 @@ function registerIpc(): void {
     translationWorldOf(projectDir, filePath));
   ipcMain.handle(
     'translation:record-edit',
-    (_event, projectDir: string, filePath: string, parts: string, text: string) =>
-      recordTranslationEdit(projectDir, filePath, parts, text, (recordsFile) => (
+    async (_event, projectDir: string, filePath: string, parts: string, text: string) => {
+      const records = await recordTranslationEdit(projectDir, filePath, parts, text, (recordsFile) => (
         queue.producing(recordsFile)
           ? 'A translation is writing this book\'s records right now, so the correction was not '
             + 'recorded — the edit is on screen and in this copy of the book. Let the run finish '
             + '(or cancel it) and make the edit again.'
           : null
-      )),
+      ));
+      /*
+       * AND THE BOOK IS REMADE, because the correction is only in the payload
+       * until it is. A translation's derived book file is a pure function of its
+       * records and the ledger (docs/RENDERER.md §4), and every position under
+       * that translation is drawn from it — so a paragraph corrected here and a
+       * proof sheet still showing the machine's words would be the same
+       * translation saying two things at once. It is `regenerable` retention, and
+       * this is the second of the two doors that regenerates it (the first is the
+       * landing); a failure is a console line and never a lost correction, which
+       * is on disk in the file this returned.
+       */
+      await materializeTranslation(records);
+    },
   );
   /*
    * THE BOOK ITSELF — the rows the renderer draws, off the file the reflow made.

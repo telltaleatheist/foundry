@@ -421,34 +421,34 @@ export async function planExport(
  * model first read them — and nothing on screen saying so. That is the worst
  * outcome available: silent, plausible, and discovered in a finished file.
  *
- * ── AND WHAT THE ROOT FIX TOOK OFF IT ───────────────────────────────────────
+ * ── AND WHAT THE ROOT FIX TOOK OFF IT, TWICE ────────────────────────────────
  *
  * *"A person who struck forty running heads and pressed Export would file a book
- * that still has them."* Not any more: an EXPORT of an untranslated book to EPUB
- * or to plain text goes through the compile now (`planExport`), so the sentence
+ * that still has them."* Not any more: an EXPORT to EPUB or to plain text goes
+ * through the compile now (`planExport`), in either language, so the sentence
  * this refusal was written to prevent is prevented by making the book properly
- * instead. What still comes here is everything that route cannot carry, and each
- * of them for a reason rather than for the want of a wave:
+ * instead. And a TRANSLATION no longer comes here at all: `planTranslation`
+ * materialises the position's book and the engine translates that file
+ * (`translate --book`), so the strikes reach the model's input rather than being
+ * faithfully translated into an edition of paragraphs somebody deleted.
+ *
+ * What still comes here is everything neither route can carry, each for a reason
+ * rather than for the want of a wave:
  *
  *  - GENERATE, whose product is the `generated/` CAST — a workbench book carrying
- *    the very editing stamps an edition withholds, which is what `translate`
- *    reads and what select mode addresses. Compiling one is a different question
- *    and is R6's, when the two collapse into one route.
+ *    the very editing stamps an edition withholds, and what select mode still
+ *    addresses. Compiling one is a different question and is R6's, when the two
+ *    collapse into one route.
  *  - A FACSIMILE, which reprints the scan's own photographed lines page for page.
  *    It is a record of the READING and compiles from the raw bank by definition
  *    (§6); there is nothing about an edit for it to carry.
- *  - AN EXPORT STANDING UNDER A TRANSLATION, whose words come out of a records
- *    file keyed to the bank's own positions. Putting those words into a book file
- *    the ops have restructured is the derived-book half of R5 and is not this
- *    unit; until it lands, the refusal is the honest answer.
  *
  * ── ONE CHOKE POINT, NOT ONE PER BUTTON ─────────────────────────────────────
  *
  * `planRendering` is where every rendering in this app is composed — Generate,
- * Export, a landing's own cast, a facsimile — and `planTranslation` is where the
- * only other engine run is. Two calls, and every door in the UI goes through one
- * of them. Refusing at the buttons instead would be five copies of this rule and
- * a sixth door somebody adds without it.
+ * Export, a landing's own cast, a facsimile — and every door in the UI goes
+ * through it. Refusing at the buttons instead would be five copies of this rule
+ * and a sixth door somebody adds without it.
  *
  * ── ASKED OF THE STEP WHEN THE PLAN IS ABOUT ONE ────────────────────────────
  *
@@ -556,27 +556,37 @@ async function planRendering(
    */
   const pipeline = renderPipeline(ledger, forStep);
   /*
-   * ── WHICH ROUTE THIS RENDERING TAKES, AND IT IS FOUR FACTS ─────────────────
+   * ── WHICH ROUTE THIS RENDERING TAKES, AND IT IS THREE FACTS ────────────────
    *
-   * An EXPORT of an untranslated book to EPUB or to plain text, FROM A POSITION
-   * THAT CARRIES APPLIED CHANGES, is compiled from a materialised book file —
-   * the one route that can carry what a person did on the proof sheet
-   * (docs/RENDERER.md §6). Everything else is the bank route, and everything else
-   * therefore still refuses over an edit chain; `refuseOverEdits` below carries
-   * the argument for each of the three cases it still fires on.
+   * An EXPORT to EPUB or to plain text, FROM A POSITION THAT CARRIES APPLIED
+   * CHANGES, is compiled from a materialised book file — the one route that can
+   * carry what a person did on the proof sheet (docs/RENDERER.md §6). Everything
+   * else is the bank route, and everything else therefore still refuses over an
+   * edit chain; `refuseOverEdits` below carries the argument for each case it
+   * still fires on.
    *
-   * A BOOK NOBODY HAS EDITED KEEPS THE LEGACY PATH, deliberately and for now. The
-   * two routes produce the same edition out of the same reading when there is
-   * nothing to replay — `vlm-convert --final` and `vlm-compile` write the same
-   * elements through the same emitter — so nothing is bought by moving it today
-   * and one thing is risked: every export in the library changing command at once.
-   * R6 COLLAPSES THEM, and it is the wave that can, because it is where the cast
-   * in `generated/` stops being a file anybody unpacks. Until then this condition
-   * is a line that gets deleted rather than a branch that grows.
+   * A TRANSLATION USED TO BE THE FOURTH FACT AND IS NOT ANY MORE. The clause was
+   * `pipeline.translate === null`, because a translation's words lived in a
+   * records file keyed to the bank's own positions and there was no way to put
+   * them into a book file the ops had restructured. There is now: a translate
+   * landing materialises its own derived book — same ids, struck rows absent, the
+   * words in the language that was asked for (§4) — and `materializeBook` opens
+   * THAT at any position under it. So an export from under a translation with
+   * edits on the way to it compiles the translated book with the edits in it,
+   * which is a document neither route could produce before this wave.
+   *
+   * A BOOK NOBODY HAS EDITED KEEPS THE LEGACY PATH, deliberately and for now, in
+   * both languages. The two routes produce the same edition out of the same
+   * answers when there is nothing to replay — `vlm-convert --records` substitutes
+   * the same words into the same emitter `vlm-compile` writes through — so
+   * nothing is bought by moving it today and one thing is risked: every export in
+   * the library changing command at once. R6 COLLAPSES THEM, and it is the wave
+   * that can, because it is where the cast in `generated/` stops being a file
+   * anybody unpacks. Until then this condition is a line that gets deleted rather
+   * than a branch that grows.
    */
   const compiles = layer === FINAL
     && (kind === 'epub' || kind === 'txt')
-    && pipeline.translate === null
     && editsInEffect(ledger, forStep).length > 0;
   // A no-op for the export that just took the compile route, and for every
   // position with nothing applied on the way to it — which is most of them.
@@ -986,11 +996,21 @@ export async function planTranslation(
    * for hours, and minting a second id at the landing would leave it named after a
    * row nobody created.
    */
-  // The same refusal `planRendering` makes, at the other engine door — a
-  // translation reads a CAST of the position's book, and a cast of a position
-  // with applied changes on its path is the document those changes are missing
-  // from. See `refuseOverEdits`.
-  refuseOverEdits(ledger, null);
+  /*
+   * ── AND IT NO LONGER REFUSES OVER APPLIED CHANGES ──────────────────────────
+   *
+   * It used to, in `refuseOverEdits`'s own words: a translation read a CAST of
+   * the position's book, and a cast of a position with applied changes on its
+   * path is the document those changes are missing from — so the run would
+   * faithfully translate the paragraphs somebody had struck and hand back a
+   * German edition of them.
+   *
+   * The root fix is the same one the export took (docs/RENDERER.md §9, R5): main
+   * materialises the position's book — every op on the way to it replayed in, so
+   * a struck row is simply not in the file — and the engine translates THAT
+   * (`translate --book`). Nothing about a strike, an overlay or a curation
+   * crosses the boundary; what crosses is a document.
+   */
   const planned = await recordsForTranslation(dir, targetLanguage);
   /*
    * ── WHAT THIS RUN IS ASKED OF, WHICH IS TWO SEPARATE FACTS ────────────────
@@ -1046,7 +1066,24 @@ export async function planTranslation(
     );
   }
   const source = parentLanguage.length > 0 ? parentLanguage : null;
-  const sourceRecords = parent === null || source === null ? null : translationRecordsOf(parent);
+  /*
+   * ── `--source-records` IS GONE FROM THIS PLAN, AND THE CHAIN IS NOT ────────
+   *
+   * That flag existed because the engine read a CAST: the cast is a rendering of
+   * the SOURCE book, so a chain had to be told where the parent's words were and
+   * to prefer them per position. A book file at a position under a translation
+   * IS the parent's words — main materialised it that way when that translation
+   * landed (docs/RENDERER.md §4) — so the words this run is handed are already
+   * English, and the question keys already hash English. The precision the flag
+   * bought is unchanged and now falls out of the file: correcting one English
+   * record changes one row of the derived book, which changes one question, which
+   * re-asks exactly the Hungarian block that record feeds.
+   *
+   * The engine refuses the pair by name for the same reason (`--book` with
+   * `--source-records`), so this cannot be got wrong from either side. `--from`
+   * stays: which language the words are IN is a fact the ledger holds and a file
+   * of sentences does not declare.
+   */
   /*
    * ── AND THE SEED: WHAT THIS RUN STARTS LIFE HOLDING ───────────────────────
    *
@@ -1092,27 +1129,54 @@ export async function planTranslation(
    * admit", which is what main's allow-list adds and what the queue re-checks
    * (`queue:enqueue-translate`).
    *
-   * AND IT IS THE CAST RATHER THAN THE EDITION, which the engine enforces and this
-   * app must not be able to get wrong: records mode reads `data-bf-src` off every
-   * translatable block and refuses a book that carries none, and `--final`
-   * withholds exactly those. What the dialog hands over is the position's own
-   * document, which is the cast.
+   * IT IS NO LONGER WHAT THE ENGINE READS, and that is worth stating rather than
+   * quietly leaving true-looking. The run is handed a materialised BOOK FILE
+   * (below); the document this names is the one the person had open, which is how
+   * main resolved the project and what the allow-list is about. The cast dies in
+   * R6 with everything else in §7, and this field goes with it.
    */
   const sourcePath = inputPath;
   const generation = readingGenerationOf(ledger, manifest);
   await fsp.mkdir(path.join(dir, 'readings'), { recursive: true });
+
+  /*
+   * ── THE BOOK THE ENGINE ACTUALLY TRANSLATES ────────────────────────────────
+   *
+   * The position's book file with its whole chain replayed into it — the nearest
+   * ancestor book file, which under a translation is that translation's derived
+   * one, plus every edit made since (`openBookAtPosition`, electron/book.ts). So a
+   * struck row is not in it, a retyped paragraph is in it as the person left it,
+   * and a chain's parent words are in it because they are what that file holds.
+   *
+   * AT PLAN TIME, on `planExport`'s rule and for its reason: which state of the
+   * book this is is the state the person chose when they pressed the button, and
+   * materialising at spawn would let a pointer move made while the job waited
+   * translate a different book than the dialog said it would.
+   *
+   * INTO THE OS TEMP DIRECTORY under a folder of foundry's own — the same place
+   * an export's derived book goes, and swept by the same hand when the job
+   * settles (`sweepDerivedBook`, electron/job-queue.ts). It is scratch: a pure
+   * function of a file on disk and a chain in the ledger.
+   */
+  const derived = await materializeBook(dir, path.join(os.tmpdir(), 'foundry'));
+  /*
+   * A REFUSAL HERE IS THE PERSON'S OWN SENTENCE, `planExport`'s rule again:
+   * `materializeBook` answers in words for everything somebody can be told about,
+   * and what it will not do is queue hours of GPU against a book it could not
+   * read. A translation of a book this app could not assemble would be answers
+   * keyed to blocks nobody can put back.
+   */
+  if (!derived.ok) throw new ProjectError(derived.reason);
+
   return {
     key,
     sourcePath,
+    bookPath: derived.path,
     recordsPath: planned.recordsPath,
     stepId: planned.stepId,
-    // Two fields, two facts: the language the words are IN, said for any parent
-    // translation, and the file they come OUT of, said only for one that keeps its
-    // words as records. See the note above them both.
+    // The language the words are IN, said for any parent translation. Where they
+    // come OUT of is the book file above — see the note on `--source-records`.
     ...(source !== null ? { from: source } : {}),
-    ...(sourceRecords !== null
-      ? { sourceRecords: path.join(dir, ...sourceRecords.split('/')) }
-      : {}),
     ...(seed !== null ? { seedRecords: path.join(dir, ...seed.split('/')) } : {}),
     /*
      * THE READING THESE ANSWERS ARE ABOUT, carried into every row and interpreted

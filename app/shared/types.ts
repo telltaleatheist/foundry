@@ -392,14 +392,40 @@ export interface GenerateRequest {
 export interface TranslateRequest {
   kind: 'translate';
   /**
-   * The CAST to read — the flowing book this app made, stamped.
+   * The document the person had open when they asked.
    *
-   * Never written to, and never an EDITION: records mode reads `data-bf-src` off
-   * every translatable block and `data-bf-note` off every aside, and refuses a
-   * book that carries neither by name (`--final` withholds exactly those). The
-   * position's own document is what the dialog hands over, which is the cast.
+   * IT IS THE JOB'S IDENTITY AND NOT ITS INPUT any more. The engine reads
+   * `bookPath` below; this is what main admitted, what the queue re-checks
+   * against the same allow-list, and what the settle names in its message. The
+   * cast it points at dies in R6 with the rest of §7.
    */
   inputPath: string;
+  /**
+   * `--book`: THE BOOK THIS RUN TRANSLATES — the position's book file, with every
+   * op on the way to it already replayed in by main.
+   *
+   * ── Why the source stopped being an EPUB ────────────────────────────────────
+   *
+   * A cast is a RENDERING of the book: the words have to be recovered from the
+   * markup they were written into, and every block is named by the `data-bf-src`
+   * stamped on it — a coordinate in the reading bank rather than a name for the
+   * paragraph. A book file is one row per block with an id that IS its name
+   * (docs/BOOK-FILE.md), so the records this run writes are keyed by that id, and
+   * the derived book the landing materialises from them keeps the same ids
+   * (docs/RENDERER.md §4). Source and translation are then two files that agree
+   * about what every paragraph is called, which is what an aligned view is made
+   * of and what makes a strike on either side the same op.
+   *
+   * AND IT IS WHY TRANSLATING AN EDITED BOOK WORKS AT ALL. A struck row is not in
+   * a materialised book file, so nothing about a strike crosses the boundary and
+   * nothing on the far side has to know what one is. `planTranslation` used to
+   * refuse this position outright.
+   *
+   * SCRATCH, AND THE QUEUE'S TO SWEEP: a uuid in the OS temp directory, made when
+   * the button was pressed and remade for nothing whenever it is wanted again
+   * (`sweepDerivedBook`).
+   */
+  bookPath: string;
   /**
    * `--records`: WHERE THE ANSWERS GO, and the whole product of this job.
    *
@@ -441,24 +467,21 @@ export interface TranslateRequest {
    * records file, because a file of sentences is not a declaration.
    */
   from?: string;
-  /**
-   * `--source-records`: THE PARENT TRANSLATION'S ANSWERS — the chain.
+  /*
+   * `sourceRecords` USED TO BE HERE — `--source-records`, the chain.
    *
-   * The user's own case: *"if they click the english translation and then click
-   * translate to hungarian, it translates from english to hungarian, thus creating
-   * a chain of translations: german to english to hungarian."*
-   *
-   * With this, each block's question is asked of the parent's answer rather than
-   * of the book's own words: per position, the source text is the parent records
-   * file's newest row, and the book's own text is the fallback for a position the
-   * parent never answered. The key hashes the masked PARENT text, so correcting
-   * one English record re-asks exactly the Hungarian blocks that record feeds and
-   * nothing else — which is the precision that made a chain records-native and
-   * unbuildable over EPUBs, where "the source" is a whole file.
-   *
-   * Absent for a translation made straight from the book, which is most of them.
+   * The user's own case is unchanged: *"if they click the english translation and
+   * then click translate to hungarian, it translates from english to hungarian,
+   * thus creating a chain of translations: german to english to hungarian."* What
+   * changed is that it needs no flag. The flag existed because the engine read a
+   * cast of the SOURCE book and had to be told, per position, to prefer the
+   * parent's answer; the book file at a position under a translation IS the
+   * parent's answers, materialised (docs/RENDERER.md §4), so the words this run
+   * translates are already the parent's and its question keys already hash them.
+   * The re-ask precision is the same and now falls out of the file: correcting one
+   * English record changes one row of the derived book, which changes one
+   * question. The engine refuses `--book` beside `--source-records` by name.
    */
-  sourceRecords?: string;
   /**
    * `--generation`: the reading this records file is about, carried into every row
    * and never interpreted by the engine.
@@ -969,8 +992,25 @@ export interface ReadingPlan {
  */
 export interface TranslationPlan {
   key: string;
-  /** The cast the engine reads. Never written to. */
+  /**
+   * The document the person had open when they asked — how main resolved the
+   * project, and what the allow-list is about. NOT what the engine reads: see
+   * `bookPath`.
+   */
   sourcePath: string;
+  /**
+   * THE BOOK THE ENGINE TRANSLATES — the position's book file with its whole
+   * chain replayed into it, written into the OS temp directory at plan time
+   * (`planTranslation`, electron/workspace.ts).
+   *
+   * A struck row is not in it, a retyped paragraph is in it as the person left
+   * it, and under a translation it is that translation's derived book — so a
+   * chain's source words are the parent's without a second file being named. The
+   * records this run writes are keyed by the ROWS' OWN IDS, which is what lets
+   * the landing materialise a derived book in the target language with those same
+   * ids (docs/RENDERER.md §4).
+   */
+  bookPath: string;
   /**
    * The per-block answers this run writes, and the whole of what it produces:
    * `readings/<key>.<tag>.records.jsonl` for the first translation into a
@@ -983,14 +1023,13 @@ export interface TranslationPlan {
    * afterwards. See `TranslateRequest.recordsPath`.
    */
   recordsPath: string;
-  /**
-   * The parent translation's answers, when this one is a CHAIN — `--source-records`.
-   *
-   * Composed by main because it is a fact about the ledger: the nearest translate
-   * step above where the person is standing. The renderer displays the language it
-   * implies and carries this back; it never works out which file that is.
+  /*
+   * `sourceRecords` USED TO BE HERE and is gone with the flag it carried. A chain
+   * needed to be told where the parent's words were while the engine read a CAST
+   * of the SOURCE book; the book file at a position under a translation IS the
+   * parent's words, so the question is answered by the file rather than by a
+   * second path (`planTranslation`, and the engine refuses the pair by name).
    */
-  sourceRecords?: string;
   /**
    * `--from` for a chain: the language the parent translation is IN.
    *

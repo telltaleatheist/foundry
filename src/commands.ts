@@ -396,6 +396,37 @@ const TR_EPUB_IN: OptionSpec = {
   describe: 'The foundry-converted EPUB to translate. Never written to.',
 };
 
+/**
+ * ── THE BOOK FILE AS THE SOURCE ─────────────────────────────────────────────
+ *
+ * `--epub` hands this command a RENDERING of the book and asks it to find the
+ * words again: unzip, walk the elements `dots-book.ts` stamped, read each
+ * block's provenance off the `data-bf-src` attribute it wrote. `--book` hands it
+ * the book (docs/BOOK-FILE.md) — one row per block, each with its own text and
+ * with an ID that is that block's name for as long as the book exists.
+ *
+ * WHAT CHANGES IS THE KEY OF EVERY RECORD. On this route a record's position is
+ * the ROW'S ID rather than a coordinate in the reading bank, which is what lets
+ * the app materialise a derived book file in the target language with the
+ * parent's ids kept verbatim (docs/RENDERER.md §4) — the same names on both
+ * sides of the translation, so an aligned view is two files that agree and
+ * striking a translated paragraph is the same op as striking the source one.
+ *
+ * IT IS THE MATERIALISED STATE OF A POSITION, and that is what makes translating
+ * from an edited book possible at all: the app replays the ops into a book file
+ * and hands that over, so a struck row is simply not in what this command reads.
+ *
+ * `--records` IS REQUIRED BESIDE IT and `--source-records` is refused: a chain's
+ * parent words are already IN a book file at a position under a translation, so
+ * the question keys hash them without a second file being consulted.
+ */
+const TR_BOOK_IN: OptionSpec = {
+  name: 'book',
+  type: 'string',
+  placeholder: '<book.jsonl>',
+  describe: 'Translate the rows of this book file instead of an EPUB. Read, never written.',
+};
+
 const TR_TO: OptionSpec = {
   name: 'to',
   type: 'string',
@@ -1120,7 +1151,26 @@ export function defaultTranslationOut(epubPath: string, to: string): string {
 }
 
 async function runTranslate(args: ParsedArgs): Promise<void> {
-  const epubPath = requireString(args, 'epub', 'the EPUB to translate');
+  /*
+   * ── WHICH SOURCE, and exactly one of them ──────────────────────────────────
+   *
+   * `--epub` is a rendering of the book and `--book` is the book (see
+   * `TR_BOOK_IN`). They do not name their blocks the same way, so a run handed
+   * both would silently choose which spelling every record in the file gets, and
+   * a run handed neither has nothing to translate. Refused here, at the argv
+   * layer, and again in the engine for a caller that is not this one.
+   */
+  const bookPath = optionalString(args, 'book');
+  const epubPath = optionalString(args, 'epub');
+  if (bookPath !== undefined && epubPath !== undefined) {
+    throw new UsageError(
+      '--epub and --book are two spellings of the same book — the EPUB is a rendering of the rows '
+      + 'the book file holds — and they name their blocks differently. Pass one.',
+    );
+  }
+  if (bookPath === undefined && epubPath === undefined) {
+    throw new UsageError('--epub <book.epub> or --book <book.jsonl>: this run has nothing to translate.');
+  }
   const to = requireString(args, 'to', 'the language to translate into');
 
   /*
@@ -1136,7 +1186,19 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
       + 'A path this command accepts and does not write to is a file somebody goes looking for.',
     );
   }
-  const outPath = recordsPath !== undefined
+  /*
+   * A BOOK FILE WRITES NO BOOK. There is no derived book file for this command
+   * to write — the app materialises that one, out of these records and the parent
+   * book together (docs/RENDERER.md §4) — so an `--out` on this route names a
+   * file nothing would ever put anything in, and a default one would invent it.
+   */
+  if (bookPath !== undefined && recordsPath === undefined) {
+    throw new UsageError(
+      '--book needs --records: this command writes no book file, so a run reading one has nowhere '
+      + 'to put what it produces. The derived book in the target language is made by the app.',
+    );
+  }
+  const outPath = recordsPath !== undefined || epubPath === undefined
     ? undefined
     : named ?? defaultTranslationOut(epubPath, to);
 
@@ -1147,7 +1209,8 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
    * copy of the thing being translated — including the source text every
    * refusal message would have pointed at.
    */
-  if (outPath !== undefined && path.resolve(outPath) === path.resolve(epubPath)) {
+  const input = epubPath ?? bookPath!;
+  if (outPath !== undefined && path.resolve(outPath) === path.resolve(input)) {
     throw new UsageError(
       `--out ${outPath} is the input itself. foundry reads the one and writes the other; a book `
       + 'overwritten by its own translation is the single input this command cannot get back.',
@@ -1157,9 +1220,11 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
    * The same refusal for the records file, and it is a sharper one: the input
    * is a book and the output is JSONL, so this is not a mistake anybody makes
    * by accident — but the cost of it is the converted book itself, and this
-   * command's whole promise is that the input is never written to.
+   * command's whole promise is that the input is never written to. It is sharper
+   * again for `--book`, where BOTH files are JSONL and the input is a book
+   * somebody's whole chain of edits was replayed into.
    */
-  if (recordsPath !== undefined && path.resolve(recordsPath) === path.resolve(epubPath)) {
+  if (recordsPath !== undefined && path.resolve(recordsPath) === path.resolve(input)) {
     throw new UsageError(
       `--records ${recordsPath} is the input itself. The records file is written to; the book is not.`,
     );
@@ -1192,6 +1257,14 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
     );
   }
   const sourceRecords = optionalString(args, 'source-records');
+  if (sourceRecords !== undefined && bookPath !== undefined) {
+    throw new UsageError(
+      '--source-records and --book: a book file at a position under a translation already HOLDS the '
+      + 'parent\'s answers — the app materialises it that way (docs/RENDERER.md §4) — so the words '
+      + 'this run translates are the parent\'s and the question keys already hash them. The parent\'s '
+      + 'records file is keyed by the reading\'s coordinates and would answer for none of these ids.',
+    );
+  }
   if (sourceRecords !== undefined && recordsPath === undefined) {
     throw new UsageError(
       '--source-records names the parent translation this one is a chain from, and only a --records '
@@ -1214,7 +1287,8 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
   }
 
   const report = await translateEpub({
-    epubPath,
+    ...(epubPath !== undefined ? { epubPath } : {}),
+    ...(bookPath !== undefined ? { bookPath } : {}),
     ...(outPath !== undefined ? { outPath } : {}),
     ...(recordsPath !== undefined ? { recordsPath } : {}),
     ...(sourceRecords !== undefined ? { sourceRecordsPath: sourceRecords } : {}),
@@ -2483,9 +2557,32 @@ export const COMMANDS: readonly Command[] = [
       'else. The run says how many of the book\'s blocks the parent actually',
       'answered for, before the GPU is spent, because a chain that chained nothing',
       'is the one failure of this feature nobody can see in the output.',
+      '',
+      '--book READS THE BOOK ITSELF, and it is the source everything after this',
+      'wave uses. An EPUB is a RENDERING of the book: the words have to be',
+      'recovered from the markup they were written into, and each block is named',
+      'by the data-bf-src stamped on it, which is a coordinate in the reading bank',
+      'rather than a name for the paragraph. A book file (docs/BOOK-FILE.md) is one',
+      'row per block, its own text, and an ID that is that block\'s name for as',
+      'long as the book exists. So a record written on this route is keyed by the',
+      'ROW\'S ID — and the derived book file the app materialises from those',
+      'records keeps those same ids, which is what makes the source and the',
+      'translation two files that agree about what every paragraph is called.',
+      '',
+      'It requires --records and refuses --epub and --source-records. The first',
+      'because this command writes no book file: the derived one is materialised by',
+      'the app, from these records and the parent book together. The second because',
+      'the two name their blocks differently and a run handed both would silently',
+      'pick one. The third because the book file at a position under a translation',
+      'IS the parent\'s answers already — a chain needs no second file here.',
+      '',
+      'A STRUCK ROW IS NOT IN A MATERIALISED BOOK FILE, which is why this route is',
+      'the one that can translate a book somebody has edited. The app replays the',
+      'ops into the file it hands over, so nothing here has to know what a strike',
+      'is, and nothing here consults an overlay to find out.',
     ].join('\n'),
     options: [
-      TR_EPUB_IN, TR_TO, TR_FROM, TR_OUT, TR_MODEL, TR_OLLAMA, TR_INSTRUCTIONS,
+      TR_EPUB_IN, TR_BOOK_IN, TR_TO, TR_FROM, TR_OUT, TR_MODEL, TR_OLLAMA, TR_INSTRUCTIONS,
       TR_BANK, TR_FRESH_BANK, TR_CONCURRENCY, TR_KEEP_MODEL,
       TR_RECORDS, TR_SOURCE_RECORDS, TR_GENERATION,
     ],

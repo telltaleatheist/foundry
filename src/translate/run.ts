@@ -10,6 +10,29 @@
  * source language echoed back untouched. All three look like text. None of them
  * is a translation of anything.
  *
+ * ────────────────────────────────────────────────────────────────────────────
+ * AND WHY IT NOW READS A BOOK FILE TOO — `--book`, the second door.
+ *
+ * The argument above is about the SIZE of what travels, and a book file wins it
+ * on the same terms an EPUB does: its rows are whole paragraphs, rejoined across
+ * page turns by the same reflow. What it wins on top is identity. An EPUB is a
+ * rendering — the words have to be recovered from the markup they were written
+ * into, and each block is named by the `data-bf-src` stamped on it, a coordinate
+ * in the reading bank rather than a name for the paragraph. A book file is one
+ * row per block with an ID that IS its name (docs/BOOK-FILE.md), so a record on
+ * that route is keyed by the row's id and the derived book the app materialises
+ * from those records keeps the same ids (docs/RENDERER.md §4).
+ *
+ * The file the app hands over is a POSITION, MATERIALISED: every op on the way
+ * to it already replayed in, struck rows simply absent. That is what makes
+ * translating a book somebody has edited possible at all, and it is why nothing
+ * on this route consults an overlay, a curation or any other record of what was
+ * decided. Everything below — the masking, the chunking, the verification, the
+ * bank, the records file — is one implementation shared by both doors; what
+ * differs is which list of words and names the plan is built from. R6 collapses
+ * them (docs/RENDERER.md §9).
+ *
+ * ────────────────────────────────────────────────────────────────────────────
  * A foundry EPUB has already solved that, which is the whole reason this
  * command reads one instead of reading pages. `dots-book.ts` rejoins a
  * paragraph that runs over a page turn — by the words when the words say so,
@@ -136,8 +159,9 @@ import * as fs from 'node:fs';
 import { decodeEntities } from '../epub/xml.js';
 import { writeZip, zipText, type ZipEntry } from '../export/zip.js';
 import { bankKey, openTranslationBank, swapPendingBankIntoPlace } from './bank.js';
-import { findBlocks, retagLanguage, spliceAll, type BlockGroup, type BlockSite } from './blocks.js';
+import { findBlocks, retagLanguage, spliceAll, type BlockSite, type GroupKind } from './blocks.js';
 import { languageRange, navLabels, readFoundryBook, resolveHref, type FoundryBook } from './book.js';
+import { bookRowPlan, readBookFile } from './bookrows.js';
 import { flowTextOf } from './flowtext.js';
 import { readLanguage, type NamedLanguage } from './languages.js';
 import {
@@ -244,7 +268,47 @@ export type ChunkShape =
   };
 
 export interface TranslateOptions {
-  epubPath: string;
+  /**
+   * The stamped EPUB to translate. Absent only on the book-file route below,
+   * which reads the book instead of a rendering of it.
+   */
+  epubPath?: string;
+  /**
+   * ── THE SOURCE IS A BOOK FILE — `--book <book.jsonl>` ───────────────────────
+   *
+   * WHAT IT REPLACES. Everything above this line describes translating a
+   * rendered document: an EPUB is unzipped, `blocks.ts` walks the elements
+   * `dots-book.ts` stamped, and each block is named by the `data-bf-src` the
+   * emitter wrote on it. That is one hop too many in each direction. The words
+   * are recovered from markup that was written from the words, and the NAME is a
+   * coordinate in the reading bank rather than a name for the paragraph — so
+   * everything downstream of the translation has to be re-keyed through
+   * `data-bf-src` to find out which block a record is about.
+   *
+   * A BOOK FILE IS THE SAME BOOK WITH NEITHER HOP (docs/BOOK-FILE.md): one row
+   * per block, its own text in the dialect the vision model answers in, and an id
+   * that is that block's name for as long as the book exists (docs/RENDERER.md
+   * §2). So the records this route writes are KEYED BY BLOCK ID, and the derived
+   * book file main materialises from them keeps the parent's ids verbatim (§4) —
+   * which is what makes an aligned view two files with one set of names, and what
+   * makes striking a translated paragraph the same op as striking the source one.
+   *
+   * AND THE FILE IT IS HANDED IS A POSITION, MATERIALISED. Main replays the ops
+   * into a book file and hands it over, exactly as it does for `vlm-compile`
+   * (`materializeBook`, app/electron/book.ts). A struck row is not in the file, so
+   * nothing here consults an overlay or a curation to find out what was struck;
+   * an edited row carries the words the person left, so a re-run re-asks exactly
+   * the blocks whose text moved. The old route's plumbing is not consulted on
+   * this one at all.
+   *
+   * THE EPUB ROUTE STAYS FOR NOW, and R6 collapses the two (docs/RENDERER.md §9)
+   * — the wave where the cast in `generated/` stops being a file anybody unpacks.
+   * Until then this is a second door onto the same machinery rather than a fork
+   * in it: the masking, the chunking, the verification, the bank and the records
+   * file are one implementation, and what differs is which list of words and
+   * names the plan is built from.
+   */
+  bookPath?: string;
   /**
    * Where the translated BOOK is written. Absent only in records mode, which
    * writes no book — see `recordsPath`.
@@ -443,7 +507,20 @@ interface PendingBlock {
   documentPath: string;
   /** 1-based, over the whole book, which is what the progress line counts. */
   ordinal: number;
-  site: BlockSite;
+  /**
+   * The element this block's words came out of — NULL for a row of a book file,
+   * which has no document behind it and needs none: the words are the row's own
+   * and the answer is written down as a record rather than spliced anywhere.
+   *
+   * Everything a REFUSAL needs is beside this rather than inside it (`category`,
+   * `where`), because a sentence naming the block a person has to go and look at
+   * is owed on both routes and only one of them has an element to name.
+   */
+  site: BlockSite | null;
+  /** The dots category, in whichever spelling this route's source states it. */
+  category: string;
+  /** Where to go and look: a page number, or a block id. Null where neither. */
+  where: string | null;
   masked: MaskedBlock;
   /**
    * RECORDS MODE ONLY: where this block lives in the bank, in `data-bf-src`'s
@@ -867,9 +944,9 @@ export function chunkAmbiguity(
 
 /** How a block is named in a log line and in a refusal. */
 function describe(block: PendingBlock, sourceText: string): string {
-  const page = block.site.page === null ? '' : `, page ${block.site.page}`;
+  const where = block.where === null ? '' : `, ${block.where}`;
   const snippet = stripMarkers(sourceText).slice(0, 60);
-  return `${block.documentPath} block ${block.ordinal} (${block.site.category}${page}): "${snippet}…"`;
+  return `${block.documentPath} block ${block.ordinal} (${block.category}${where}): "${snippet}…"`;
 }
 
 /** Which marker kinds anything in this request carries — see `markerRules`. */
@@ -927,7 +1004,18 @@ function cutToBudget<T>(items: readonly T[], weigh: (item: T) => number): T[][] 
  * because that is what carries the header row into the prompt.
  */
 function planChunks(
-  group: BlockGroup,
+  /**
+   * WHAT THE PARTS CAME OUT OF, and the cells per row where it was a table —
+   * the two fields of a `BlockGroup` this function reads, passed as themselves.
+   *
+   * They are passed rather than the group because a group is a fact about a
+   * DOCUMENT and this decision is not: the book-file route (`bookrows.ts`) finds
+   * the same kinds of run among rows that were never rendered into elements, and
+   * handing this function an empty `parts` list to satisfy a shape would be a
+   * value that lies about itself.
+   */
+  groupKind: GroupKind,
+  rowSizes: number[],
   parts: PendingBlock[],
   log: (message: string) => void,
 ): Chunk[] {
@@ -935,13 +1023,13 @@ function planChunks(
   const alone = (part: PendingBlock): Chunk => ({
     kind: 'single', of: 'block', documentPath, ordinal: 0, parts: [part], rowSizes: [], header: null,
   });
-  if (group.kind === 'single') return [alone(parts[0]!)];
+  if (groupKind === 'single') return [alone(parts[0]!)];
 
-  const kind = group.kind === 'table' ? 'table' : 'lines';
-  const trouble = chunkAmbiguity(kind, parts.map((p) => p.masked.text), group.rowSizes);
+  const kind = groupKind === 'table' ? 'table' : 'lines';
+  const trouble = chunkAmbiguity(kind, parts.map((p) => p.masked.text), rowSizes);
   if (trouble !== null) {
     log(
-      `translate: the ${group.kind} at ${documentPath} block ${parts[0]!.ordinal} is sent one block `
+      `translate: the ${groupKind} at ${documentPath} block ${parts[0]!.ordinal} is sent one block `
       + `per request rather than whole — ${trouble}`,
     );
     return parts.map(alone);
@@ -949,8 +1037,8 @@ function planChunks(
 
   const weigh = (part: PendingBlock): number => stripMarkers(part.masked.text).length;
 
-  if (group.kind !== 'table') {
-    const of = group.kind;
+  if (groupKind !== 'table') {
+    const of = groupKind;
     return cutToBudget(parts, weigh).map((run) => (run.length === 1
       ? alone(run[0]!)
       : {
@@ -972,7 +1060,7 @@ function planChunks(
    */
   const rows: PendingBlock[][] = [];
   let at = 0;
-  for (const size of group.rowSizes) {
+  for (const size of rowSizes) {
     rows.push(parts.slice(at, at + size));
     at += size;
   }
@@ -1067,6 +1155,41 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
    * parent's records that nothing reads.
    */
   const wantsRecords = opts.recordsPath !== undefined;
+  /*
+   * ── WHICH SOURCE THIS RUN READS, refused before a byte of either ───────────
+   *
+   * Two doors onto one machinery (see `bookPath`), and every way of asking for
+   * both or neither is a request this command would otherwise half-honour.
+   */
+  if (opts.bookPath !== undefined && opts.epubPath !== undefined) {
+    throw new TranslateError(
+      'bookPath and epubPath were both given, and they are two spellings of the same book: the '
+      + 'EPUB is a rendering of the rows the book file holds. Translating one while being handed '
+      + 'the other would silently pick a source, and the two do not name their blocks the same way '
+      + '— so the records would be keyed to whichever one this command chose.',
+    );
+  }
+  if (opts.bookPath === undefined && opts.epubPath === undefined) {
+    throw new TranslateError('no epubPath and no bookPath: this run has nothing to translate.');
+  }
+  if (opts.bookPath !== undefined && !wantsRecords) {
+    throw new TranslateError(
+      'bookPath was given without recordsPath. A book file is a list of blocks and this command '
+      + 'writes no book file — the derived one is materialised by the app, from these records and '
+      + 'the parent book together (docs/RENDERER.md §4) — so a run reading one has nowhere to put '
+      + 'what it produces.',
+    );
+  }
+  if (opts.bookPath !== undefined && opts.sourceRecordsPath !== undefined) {
+    throw new TranslateError(
+      'bookPath and sourceRecordsPath were both given. A chain needs neither flag on this route: '
+      + 'the book file at a position under a translation IS the parent\'s answers, materialised '
+      + '(docs/RENDERER.md §4), so the words this run translates are already the parent\'s and the '
+      + 'question keys already hash them. Pointing at the parent\'s records as well would look up '
+      + 'this book\'s block ids in a file keyed by the reading\'s coordinates and answer for none '
+      + 'of them.',
+    );
+  }
   if (wantsRecords && opts.outPath !== undefined) {
     throw new TranslateError(
       'recordsPath and outPath were both given. A records run produces records and no book, so '
@@ -1119,8 +1242,18 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
   const to = readLanguage(opts.to, '--to');
   const from = opts.from === undefined ? null : readLanguage(opts.from, '--from');
 
-  const bytes = new Uint8Array(fs.readFileSync(opts.epubPath));
-  const book = readFoundryBook(bytes);
+  /*
+   * THE SOURCE, WHICHEVER OF THE TWO IT IS, read before the server is proved for
+   * `readFoundryBook`'s own reason: a book with nothing translatable in it is a
+   * refusal that costs nothing to reach, and reaching it after a model has been
+   * loaded is twenty gigabytes spent on a sentence.
+   */
+  const book = opts.epubPath === undefined
+    ? null
+    : readFoundryBook(new Uint8Array(fs.readFileSync(opts.epubPath)));
+  const bookFile = opts.bookPath === undefined
+    ? null
+    : readBookFile(fs.readFileSync(opts.bookPath, 'utf8'), opts.bookPath);
 
   /*
    * The server is proved BEFORE the blocks are masked, and the model with it.
@@ -1251,7 +1384,87 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     return `${site.src}#${site.note}`;
   };
 
-  for (const document of book.documents) {
+  /*
+   * ── THE BOOK-FILE ROUTE'S PLAN, which is the same plan from a shorter road ──
+   *
+   * `bookrows.ts` does here what `findBlocks` does below: it says which rows have
+   * words in them, which are skipped and counted, which are left in the source
+   * language and named, and which of them travel together. What it does NOT have
+   * to do is recover the words from markup or work out a position from a stamp —
+   * a row's text is the block's text and a row's id is its name — so this loop is
+   * the masking, the `PendingBlock` and `planChunks`, and nothing else.
+   *
+   * THE ROUND TRIP IS CHECKED, NOT TRUSTED, exactly as it is on the records
+   * route: a block whose masking does not put it back byte for byte is left in
+   * the source language and named, rather than translated into a record holding
+   * this program's own token characters.
+   */
+  if (bookFile !== null) {
+    const where = opts.bookPath!;
+    const plan = bookRowPlan(bookFile, where);
+    for (const [category, count] of plan.skipped) {
+      skipped.set(category, (skipped.get(category) ?? 0) + count);
+    }
+    /*
+     * Said at the moment it happens AND put in `keptUntranslated`, which is the
+     * rule every other route here obeys: a block that came out in the source
+     * language reaches the completion line by name, because a count with nothing
+     * behind it is a number nobody can act on (ARCHITECTURE §8).
+     */
+    for (const one of plan.kept) {
+      kept.push(one);
+      opts.log(`translate: LEFT IN THE SOURCE LANGUAGE — ${one}`);
+    }
+
+    for (const group of plan.groups) {
+      /*
+       * ONE COUNTER FOR THE WHOLE GROUP — `⟦e1⟧` has to mean one thing across
+       * every part that may arrive in one answer. See `MarkerCounter`.
+       */
+      const counter: MarkerCounter = { paired: 0, atomic: 0 };
+      let masked: MaskedBlock[];
+      try {
+        masked = group.parts.map((part) => {
+          const block = maskText(part.text, counter);
+          const trouble = roundTrips(part.text, block);
+          if (trouble !== null) throw new MarkerError(trouble);
+          return block;
+        });
+      } catch (error) {
+        if (!(error instanceof MarkerError)) throw error;
+        const category = group.parts[0]!.category;
+        skipped.set(category, (skipped.get(category) ?? 0) + 1);
+        const name = `${where} ${group.parts.map((part) => part.id).join(', ')} (${category})`;
+        kept.push(`${name} — ${error.message}`);
+        opts.log(
+          `translate: ${name} LEFT IN THE SOURCE LANGUAGE — its words carry the characters this `
+          + `stage sends markers in, so they never travelled: ${error.message}`,
+        );
+        continue;
+      }
+
+      const parts = group.parts.map((part, i) => {
+        const block: PendingBlock = {
+          documentPath: where,
+          ordinal: pending.length + 1,
+          site: null,
+          category: part.category,
+          where: `block ${part.id}, page ${part.page}`,
+          masked: masked[i]!,
+          // THE POSITION IS THE ROW'S OWN ID, which is the whole point of this
+          // route: a record keyed by the name the block already has, on both
+          // sides of the translation (docs/RENDERER.md §4).
+          parts: part.id,
+          wordless: stripMarkers(masked[i]!.text).length === 0 && masked[i]!.markers.length === 0,
+        };
+        pending.push(block);
+        return block;
+      });
+      chunks.push(...planChunks(group.kind, [], parts, opts.log));
+    }
+  }
+
+  for (const document of book?.documents ?? []) {
     if (!document.stamped) continue;
     const found = findBlocks(document.source, document.path);
     perDocument.set(document.path, {
@@ -1420,6 +1633,8 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
           documentPath: document.path,
           ordinal: pending.length + 1,
           site,
+          category: site.category,
+          where: site.page === null ? null : `page ${site.page}`,
           masked: masked[i]!,
           parts: positions[i]!,
           wordless: stripMarkers(masked[i]!.text).length === 0 && masked[i]!.markers.length === 0,
@@ -1427,14 +1642,17 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
         pending.push(block);
         return block;
       });
-      chunks.push(...planChunks(group, parts, opts.log));
+      chunks.push(...planChunks(group.kind, group.rowSizes, parts, opts.log));
     }
   }
 
   if (pending.length === 0) {
     throw new TranslateError(
-      'this book carries foundry\'s stamps but not one of them is a category with words in it — '
-      + 'there is nothing here to translate.',
+      bookFile === null
+        ? 'this book carries foundry\'s stamps but not one of them is a category with words in it — '
+          + 'there is nothing here to translate.'
+        : 'not one row of this book file is a category with words in it — there is nothing here to '
+          + 'translate.',
     );
   }
 
@@ -1448,10 +1666,14 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
   const skippedNote = skipped.size === 0
     ? ''
     : `; skipping ${[...skipped].map(([c, n]) => `${n} ${c}${n === 1 ? '' : 's'}`).join(', ')}`;
+  // ONE, for a book file, and it is a fact rather than a rounding: a book file
+  // holds the whole book, and the chapter divisions in its header are where the
+  // documents would be cut if anything were writing documents. Nothing is.
+  const documents = bookFile === null ? perDocument.size : 1;
   opts.log(
     `translate: ${pending.length} blocks in ${chunks.length} `
-    + `request${chunks.length === 1 ? '' : 's'} across ${perDocument.size} `
-    + `document${perDocument.size === 1 ? '' : 's'}${skippedNote}`,
+    + `request${chunks.length === 1 ? '' : 's'} across ${documents} `
+    + `document${documents === 1 ? '' : 's'}${skippedNote}`,
   );
   opts.log(
     `translate: ${model} at ${endpoint}, ${from === null ? 'detected source' : from.name} → ${to.name}`
@@ -2041,7 +2263,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     return {
       blocks: pending.length,
       chunks: chunks.length,
-      documents: perDocument.size,
+      documents,
       skipped,
       answered,
       fromBank,
@@ -2067,6 +2289,20 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
 
   // ── the book ──────────────────────────────────────────────────────────────
 
+  /*
+   * UNREACHABLE, AND ASSERTED RATHER THAN ASSUMED. A run with no EPUB is a run
+   * that was handed a book file, a book file may only be read with `--records`
+   * (see this file's refusals), and a records run returned two lines above. What
+   * follows splices a document, so this is the one place the impossibility has to
+   * be written down rather than carried as a `!` on every line of it.
+   */
+  if (book === null) {
+    throw new TranslateError(
+      'this run has no EPUB to write a translation into, and it was not a records run either. '
+      + 'That combination is refused before anything is read; reaching it is a defect in foundry.',
+    );
+  }
+
   const rewritten = new Map<string, string>();
   const headings = new Map<string, DocumentHeadings>();
   const headingsBefore = new Map<string, DocumentHeadings>();
@@ -2086,14 +2322,20 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
 
     for (const block of pending) {
       if (block.documentPath !== document.path) continue;
+      const site = block.site;
+      // A block with no site is a row of a book file, and this route never holds
+      // one: `documentPath` is that file's own path there, so the test above has
+      // already skipped it. Written as a narrowing rather than a `!` because the
+      // next four lines are all offsets into a document.
+      if (site === null) continue;
       const text = translated.get(block);
       if (text === undefined) continue;
-      edits.push({ start: block.site.innerStart, end: block.site.innerEnd, text });
-      if (!block.site.heading) continue;
-      const was = plainOf(document.source.slice(block.site.innerStart, block.site.innerEnd));
+      edits.push({ start: site.innerStart, end: site.innerEnd, text });
+      if (!site.heading) continue;
+      const was = plainOf(document.source.slice(site.innerStart, site.innerEnd));
       const now = plainOf(text);
       if (before.first === null) { before.first = was; after.first = now; }
-      if (block.site.id !== null) { before.byId.set(block.site.id, was); after.byId.set(block.site.id, now); }
+      if (site.id !== null) { before.byId.set(site.id, was); after.byId.set(site.id, now); }
     }
     headings.set(document.path, after);
     headingsBefore.set(document.path, before);
@@ -2164,7 +2406,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
   return {
     blocks: pending.length,
     chunks: chunks.length,
-    documents: perDocument.size,
+    documents,
     skipped,
     answered,
     fromBank,

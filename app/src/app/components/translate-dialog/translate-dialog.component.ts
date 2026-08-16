@@ -487,6 +487,14 @@ export class TranslateDialogComponent {
       const request: TranslateRequest = {
         kind: 'translate',
         inputPath: plan.inputPath,
+        /*
+         * THE BOOK THE RUN READS, composed by main and carried back untouched.
+         * It is the position's own book file with every change on the way to it
+         * already replayed in, written into the OS temp directory when the plan
+         * was made — which is why a book somebody has been editing can be
+         * translated at all, and why this window has no opinion about it.
+         */
+        bookPath: plan.bookPath,
         to,
         model: this.model().trim() || DEFAULT_MODEL,
         ollama: this.ollama().trim() || DEFAULT_OLLAMA,
@@ -499,13 +507,13 @@ export class TranslateDialogComponent {
          */
         recordsPath: plan.recordsPath,
         /*
-         * AND THE CHAIN, COMPOSED BY MAIN AND CARRIED BACK — the parent
-         * translation's answers, and the language they are in. This window holds a
-         * mirror of the ledger and shows what it says (`sourceLanguage` above);
-         * WHICH FILE that is, and therefore what the model is actually asked, is a
-         * fact about somebody's history and is decided where the history lives.
+         * AND THE CHAIN, WHICH IS NO LONGER A FILE THIS WINDOW CARRIES. The book
+         * above is the parent translation's own derived book when the position
+         * stands under one, so the words the model is asked about are already that
+         * row's. What is left of the chain here is the language they are in
+         * (`sourceLanguage` below), which is a fact about somebody's history and
+         * is still decided where the history lives.
          */
-        ...(plan.sourceRecords !== undefined ? { sourceRecords: plan.sourceRecords } : {}),
         ...(plan.seedRecords !== undefined ? { seedRecords: plan.seedRecords } : {}),
         ...(plan.generation !== undefined ? { generation: plan.generation } : {}),
         // The step the file is named after, minted by the plan and carried to the
