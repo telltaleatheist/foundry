@@ -303,35 +303,6 @@ export class ToolRailComponent {
   private readonly ledger = inject(LedgerService);
   private readonly router = inject(Router);
 
-  /**
-   * THE DOCUMENT THE POSITION IS SHOWING, for the project the user is in.
-   *
-   * ── What the tab is still allowed to decide, and what it is not ────────────
-   *
-   * Every button here used to ask the same question — "what is the focused tab,
-   * and what kind of file is it" — and that was the second selector
-   * docs/WORKBENCH.md §6c abolished: the tab said one thing, the ledger said
-   * another, and Translate ran against whichever the button happened to read. The
-   * tab now decides ONE fact, the only one it is authoritative about — which
-   * project the user is in — and what is standing there is the position's answer.
-   *
-   * `undefined` FOR A LOOSE FILE, told apart from a project whose position names
-   * no document (`null`), because the two want opposite things from a caller: a
-   * loose file has no ledger and keeps file keying, while a project with nothing
-   * resolved yet has a position and simply has not answered.
-   *
-   * The ledger holding is read and never asked for here — the library sidebar
-   * `ensure`s every open project on every repaint (open-documents), which is a
-   * cheaper place to own that than a dock that repaints on every keystroke.
-   */
-  private shownAt(): string | null | undefined {
-    const tab = this.tabs.activeDocument();
-    if (tab === null) return undefined;
-    const project = this.projects.projectFor(tab.path);
-    if (project === null) return undefined;
-    return this.tabs.documentShownFor(project.dir);
-  }
-
   /** Lit when the panel is actually on screen, which needs both halves of it. */
   protected readonly documentsUp = computed(() =>
     this.ui.documentsShown() && this.tabs.tabs().length > 0);
@@ -453,32 +424,33 @@ export class ToolRailComponent {
   }
 
   /**
-   * Enabled where the position is standing on a BOOK, on the same test the dialog
-   * itself applies.
+   * Enabled where the project HAS a book, on the same test the dialog itself
+   * applies — which is `canExport`'s test, because the two buttons ask the same
+   * question of the same ledger.
    *
-   * The scan has no blocks to translate — the categories a translation replaces
-   * are stamped when foundry builds the book — so the button is dead standing on
-   * the import rather than opening a dialog whose only message is "not from
-   * here". What changed is what "a book is in front of you" MEANS: it was the kind
-   * of the focused tab, and it is now the document the position is showing
-   * (docs/WORKBENCH.md §6c), so the button and the translation it would queue can
-   * no longer be about two different documents.
+   * IT USED TO TEST THE POSITION'S SHOWN DOCUMENT FOR `.epub`, which was the
+   * truth while every book was a cast EPUB in a pane and became its opposite at
+   * the pivot: a read or edit position is drawn natively on the proof sheet and
+   * shows NO document (`documentAtPosition` answers null), so the button was
+   * gray exactly where the book is — the user's own report, standing on their
+   * applied edits. What a translation consumes now is the POSITION'S book,
+   * materialised by main with every op replayed in (`planTranslation`), so the
+   * gate is "a book exists here": the reading landed, or the book arrived as
+   * one — and not the import row, where the user has deliberately stepped back
+   * to the untouched scan, except where the import IS the book.
    *
-   * A LOOSE BOOK KEEPS TAB KEYING, having no ledger to key off instead.
+   * A LOOSE FILE ANSWERS FALSE, unlike Export's benefit of the doubt: what this
+   * app translates is a position read off a ledger, and a file with no ledger
+   * behind it has none.
    */
   protected canTranslate(): boolean {
     const tab = this.tabs.activeDocument();
     if (tab === null) return false;
-    const shown = this.shownAt();
-    /*
-     * A LOOSE DOCUMENT CANNOT BE TRANSLATED, and that is the tab-keyed half of
-     * this test landing where it belongs. It used to answer `kind === 'epub'` —
-     * a book open in the iframe reader, in no project — and there is no such tab
-     * any more: what this app translates is a POSITION, read off the ledger, and
-     * a file with no ledger behind it has none.
-     */
-    if (shown === undefined) return false;
-    return shown !== null && shown.toLowerCase().endsWith('.epub');
+    const project = this.projects.projectFor(tab.path);
+    if (project === null) return false;
+    const arrived = this.projects.arrivedAsBook(project);
+    if (!project.reading.done && !arrived) return false;
+    return arrived || this.ledger.standingIn(project.dir)?.action !== 'import';
   }
 
   protected translate(): void {

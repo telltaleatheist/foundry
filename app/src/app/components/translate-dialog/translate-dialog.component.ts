@@ -206,16 +206,17 @@ import { api } from '../../core/foundry';
         </footer>
       } @else {
         <!--
-          THE EMPTY STATE SPEAKS IN POSITIONS NOW, because the source is a
-          position rather than a tab (docs/WORKBENCH.md §6c). Standing on the
-          scan with the book open in front of you used to be the trap this
-          dialog walked into silently; it is the one sentence it says instead.
+          THE EMPTY STATE NAMES THE TWO WAYS TO GET HERE — no book made yet, or
+          deliberately standing back on the import — because they want different
+          things from the person reading it and one vague sentence would serve
+          neither.
         -->
         <div class="body empty">
           <p>
-            Stand on the book to translate it. Translation replaces the text inside the
-            categories Foundry stamps when it builds a book, so it works on a book Foundry
-            made — not on the scan it was read from.
+            There is no book here to translate. Translation replaces the text inside the
+            categories Foundry stamps when it builds a book, so the pages have to be read
+            first — and standing on the import row is standing before the book: step onto
+            the reading or an edit to translate what is there.
           </p>
         </div>
         <footer class="foot">
@@ -333,68 +334,59 @@ export class TranslateDialogComponent {
   private readonly ledger = inject(LedgerService);
 
   /**
-   * The book this translation is OF — THE POSITION'S DOCUMENT, in a project.
+   * The book this translation is OF — a PROJECT WITH A BOOK IN IT, named by its
+   * original document.
    *
-   * ── It used to be the focused tab, and that was the confusion ───────────────
+   * ── The test used to be "the position shows an .epub", and that went stale ──
    *
-   * "the focused pane's document, when it is a book" was one of the two selectors
-   * this app had while pretending to have one, and it is the one the user was
-   * bitten by: *"i could have a document open, the epub, but have the pdf import
-   * step selected, and id never know that i just ran translate against the
-   * original pdf rather than the generated epub because i had the wrong step
-   * selected, since the right document was open."* The ruling is
-   * docs/WORKBENCH.md §6c — every action keys off the position, and the open tab
-   * stops being an input to anything.
+   * When every book was a cast EPUB in a pane, "the position's document ends in
+   * .epub" and "there is a book here" were one fact. The renderer pivot separated
+   * them: a read or edit position is drawn natively on the proof sheet and shows
+   * NO document at all (`documentAtPosition` answers null, docs/RENDERER.md §7) —
+   * so the old test went dark exactly where the book is, and the user found it:
+   * standing on their applied edits, Translate was gray.
    *
-   * SO THE TAB NAMES THE PROJECT AND NOTHING ELSE. What the position is showing is
-   * `TabsService.documentShownFor`, which is main's own answer to "which document
-   * belongs on screen here" — the same answer the panes obey — so this dialog and
-   * the pane behind it cannot come to disagree about which book is being
-   * translated. Standing on the import answers the scan, which is not a book, so
-   * the dialog goes to its empty state and says where to stand.
+   * SO THIS IS THE EXPORT DIALOG'S SHAPE, deliberately, because the two buttons
+   * answer the same question. The tab names the PROJECT — the one fact it is
+   * authoritative about (docs/WORKBENCH.md §6c) — and whether there is a book to
+   * translate is the ledger's answer: a reading has landed, or the book arrived
+   * as one. What the plan is handed is the project's ORIGINAL, which is the
+   * question main answers anyway (`planTranslation` resolves the project from any
+   * path inside it and materialises the POSITION's book for itself, every op on
+   * the way replayed in — so the strikes made a minute ago are in the file the
+   * model reads).
    *
-   * A LOOSE BOOK KEEPS FILE KEYING. It belongs to no project, so it has no ledger
-   * and no position to key off — the rule for every loose row in this app.
+   * STANDING ON THE IMPORT IS STILL THE EMPTY STATE, for `canExport`'s reason:
+   * the user has deliberately stepped back to the untouched scan, and a live
+   * button there would translate the book they just stepped away from. Except
+   * when the import IS the book — a project that arrived as an EPUB has exactly
+   * one row to stand on, and refusing there would refuse the only position such
+   * a project ever occupies.
    *
-   * The path is a file on disk: for a cast book the managed workspace copy, for a
-   * book the user opened themselves their own file. Either is safe to name here —
-   * the engine never writes to its input, and the OUTPUT is placed by main.
+   * A LOOSE FILE STAYS UNTRANSLATABLE: what this app translates is a position,
+   * and a file with no ledger behind it has none.
    */
   protected readonly source = computed(() => {
     const tab = this.tabs.activeDocument();
     if (tab === null) return null;
     const project = this.projects.projectFor(tab.path);
-    /*
-     * NO PROJECT, NOTHING TO TRANSLATE. A loose file used to be translatable when
-     * it was an `epub` tab — a book open in the iframe reader, outside the
-     * library — and that tab kind is deleted (docs/RENDERER.md §7). What this app
-     * translates is a POSITION, and a file with no ledger behind it has none.
-     */
     if (project === null) return null;
-    const shown = this.tabs.documentShownFor(project.dir);
-    /*
-     * A BOOK AND NOT A SCAN, tested on the position's answer rather than on a tab
-     * kind, because the position is the thing being asked about. `.epub` is what
-     * "this is the flowing book" spells on disk — the same test `showDocument`
-     * makes when it decides which kind of tab a position wants — and the word is
-     * never put on screen for it (§6c Naming: the working document is the Book).
-     */
-    return shown !== null && shown.toLowerCase().endsWith('.epub') ? shown : null;
+    const arrived = this.projects.arrivedAsBook(project);
+    if (!project.reading.done && !arrived) return null;
+    if (!arrived && this.ledger.standingIn(project.dir)?.action === 'import') return null;
+    return this.projects.originalOf(project)?.path ?? null;
   });
 
   /**
    * What that book is CALLED, which is a different question from where it is.
    *
-   * FROM THE TAB SHOWING IT, still — the tab is where this app decides what a
-   * document is named (`Tab.title`): its `dc:title` once the book has been
-   * unpacked, its project's title otherwise, and a dialog that named it a second
-   * way would be a second opinion about the book on screen behind it. What changed
-   * is WHICH tab: the one showing the position's document, which after the focus
-   * mirror is very nearly always the focused one anyway.
-   *
-   * `nameFor` is the fallback for the gap in between — a position whose book this
-   * window has not opened a tab for — and it is the same one every other surface
-   * falls back to, rather than an empty box above a form.
+   * A TAB SHOWING THE ORIGINAL WINS, because the tab is where this app decides
+   * what a document is named (`Tab.title`) and a dialog that named it a second
+   * way would be a second opinion about the book on screen behind it. But the
+   * source is the archived original now, which mostly has no tab of its own —
+   * the panes show the live copy or the proof sheet — so the ordinary answer is
+   * `nameFor`: the project's own title, the same name every other surface calls
+   * it.
    */
   protected readonly name = computed(() => {
     const input = this.source();
