@@ -503,6 +503,67 @@ Left standing, and said out loud rather than quietly done:
   spec, and its actual argument — crops are a different job from ink
   sampling — is untouched by any of this.
 
+### Wave 4e — THE ZIP AT THE START (user, 2026-08-15)
+
+The diagnosis the whole endgame turns on, reached by the user asking
+the same question three times until the answer was the real one:
+*"im still not seeing what's complicating it."*
+
+**The app has no renderer.** Only the engine can turn a bank into a
+document, and its only product was a zipped EPUB. So to put a book on
+screen the app spawned the engine, took an `.epub`, **unzipped it into
+`working/`**, and served the loose XHTML. Once the thing on screen is
+FILES rather than a rendering, every edit has to be written into those
+files — `setBlockCuts` byte-splices `data-bf-cut="1"` into a start tag
+and writes the file back — and every file can drift from the bank.
+
+So one strike was recorded in FOUR places: the attribute in the frame's
+DOM, the splice in `working/…/EPUB/text/c0001.xhtml`, an amendment in
+`overlays/<key>.json`, and a copy of that in `curations/<uuid>.json` at
+Apply. (Verified: the curation snapshot and the live overlay were
+byte-identical, 6038 bytes each.) Generations, snapshots, the read-only
+lock, `locateOverlay`'s two paths, `epub-final`'s cuts-survive-Save gap
+— every one of them is bookkeeping to keep those four agreeing, and
+every one exists because of the zip at the start.
+
+The user's ruling: *"we arent supposed to be rendering the book as an
+epub. it's supposed to be rendered as an html page… an open,
+permanently unzipped html page that's used to display the bank in a
+clear, clean, flowing way to the user. the user isnt reading a book on
+foundry, they're editing the contents of a book… when the user hits
+export, thats when the contents of the bank are compiled into whatever
+format they choose."* And on the frame: *"we dont need to worry about
+safety measures for epubs because we're the ones that generate the
+epubs from pdfs. if the user imports an epub as an original document…
+all javascript is stripped from it… then we can use js to generate a
+wysiwyg style renderer with angular… fully integrated into the angular
+system."*
+
+1. ~~**The engine cannot emit HTML.**~~ DONE, this commit.
+   `vlm-convert --format html --out book.html` writes `book.html`,
+   `style.css` and `images/` in that folder. One page; each chapter a
+   `<section id>`; every `data-bf-*` stamp kept; nothing compressed.
+   Proved against the user's own bank: 17 pages, 125 stamped blocks,
+   51 notes, the picture rewritten from `../images/` to `images/`.
+   `VlmSidecar` is how a packager hands back the files that go beside
+   `--out` without the assembler touching a disk.
+
+2. **The app renders that page and never writes to it.** NOT STARTED.
+   A strike pushes `{at:{page,order,note}, strike}` onto the in-memory
+   stack and the frame paints it; nothing touches a file. Apply writes
+   the stack to the ledger step and clears it; closing without applying
+   scraps it. Standing on any step = base bank + replay of the chain.
+
+3. **Then the deletions.** `working/` trees, `setBlockCuts` and the
+   splicing family, `overlays/*.json`, `curations/*.json`,
+   `curation-lock.ts`, the generation reconciliation, the per-step
+   EPUBs. This is most of Phase E and it is subtractive.
+
+4. **The renderer itself** — the user's direction is Angular-native
+   rather than an iframe of somebody's markup, on the grounds that
+   Foundry generates these books and sanitises the one kind it does
+   not. Not specced yet; it does not block 2 or 3.
+
 ### Wave 5
 
 - **Phase E — retire the old surfaces.** The html-editor machinery (dead

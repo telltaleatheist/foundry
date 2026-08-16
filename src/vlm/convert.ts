@@ -53,7 +53,13 @@ import {
   type DotsHeadingMerge,
   type FurnitureEvidence,
 } from './dots-book.js';
-import { buildVlmEpub, type VlmChapter, type VlmEpubMetadata, type VlmPageBlocks } from './epub.js';
+import {
+  buildVlmEpub,
+  type VlmChapter,
+  type VlmEpubMetadata,
+  type VlmPageBlocks,
+  type VlmSidecar,
+} from './epub.js';
 import { requireVlmModel, type VlmModelDef } from './models.js';
 import { applyOverlay, emptyOverlay, loadOverlay, overlayTally, type Overlay } from './overlay.js';
 import { buildTextPdf } from './pdf-text.js';
@@ -633,6 +639,13 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     };
 
     let bytes: Uint8Array;
+    /*
+     * The files that go BESIDE the one `--out` names — an unzipped book's
+     * stylesheet and its pictures (`packageVlmHtml`), and nothing on any other
+     * route. Declared here with `bytes` because they are written in the same
+     * breath as it, below: one product, however many files it happens to be.
+     */
+    let sidecars: readonly VlmSidecar[] = [];
     let chapters: VlmChapter[];
     let blocks: number;
     let xhtmlSeconds: number;
@@ -823,6 +836,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
         images: openPageImages((requests) => cropRenders(requests, pdfPath, rendersDir, opts.python)),
       });
       bytes = built.bytes;
+      sidecars = built.sidecars;
       chapters = built.chapters;
       xhtmlSeconds = built.xhtmlSeconds;
       zipSeconds = built.zipSeconds;
@@ -957,6 +971,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       );
       const built = buildVlmEpub(metadata, prosePages, format);
       bytes = built.bytes;
+      sidecars = built.sidecars;
       chapters = built.chapters;
       xhtmlSeconds = built.xhtmlSeconds;
       zipSeconds = built.zipSeconds;
@@ -965,6 +980,23 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     const writeStarted = Date.now();
     ensureDir(path.dirname(outPath));
     fs.writeFileSync(outPath, bytes);
+    /*
+     * AND WHATEVER ELSE THE PRODUCT IS MADE OF, beside it.
+     *
+     * An unzipped book is a page, a stylesheet and its pictures; a zipped one is
+     * one file. The difference is confined to this loop because the packagers
+     * hand back the extra files rather than writing them (`DotsBookResult.sidecars`),
+     * so nothing above this line knows or cares which format it built.
+     *
+     * RESOLVED AGAINST `--out`'s OWN DIRECTORY and never against the process's,
+     * which is the same rule every other path in this command follows: the user
+     * named a place for their book and every piece of it goes there.
+     */
+    for (const sidecar of sidecars) {
+      const beside = path.join(path.dirname(outPath), ...sidecar.path.split('/'));
+      ensureDir(path.dirname(beside));
+      fs.writeFileSync(beside, sidecar.data);
+    }
     if (opts.chaptersPath !== undefined) {
       writeProposals(path.resolve(opts.chaptersPath), proposals, chapters, skipped, skipPages);
       opts.log(`vlm-convert: ${proposals.length} chapter proposal(s) written to ${opts.chaptersPath}`);

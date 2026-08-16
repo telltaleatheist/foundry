@@ -94,6 +94,8 @@ export interface VlmNavItem {
 
 export interface VlmEpubResult {
   bytes: Uint8Array;
+  /** The files that go beside `--out`. Empty for every format that writes one. */
+  sidecars: readonly VlmSidecar[];
   chapters: VlmChapter[];
   /**
    * How long the two halves of assembly took.
@@ -172,6 +174,112 @@ export interface VlmResource {
   href: string;
   mediaType: string;
   data: Uint8Array;
+}
+
+/** A file written BESIDE `--out` rather than into it. See `packageVlmHtml`. */
+export interface VlmSidecar {
+  /** Relative to the directory `--out` names, forward slashes. Never absolute. */
+  path: string;
+  data: Uint8Array;
+}
+
+/**
+ * THE WORKBENCH FORMAT — the book as one HTML page, permanently unzipped.
+ *
+ * ── What this is for, in the user's words ───────────────────────────────────
+ *
+ * *"we arent supposed to be rendering the book as an epub. it's supposed to be
+ * rendered as an html page… an open, permanently unzipped html page that's used
+ * to display the bank in a clear, clean, flowing way to the user. the user isnt
+ * reading a book on foundry, they're editing the contents of a book. it should
+ * not be in epub form… when the user hits export, thats when the contents of the
+ * bank are compiled into whatever format they choose."*
+ *
+ * The app has never had a way to turn a bank into something it can show. So it
+ * asked for an EPUB, unzipped it into `working/`, served the loose XHTML, and —
+ * because what was on screen was then FILES rather than a rendering — wrote
+ * every edit back into those files by splicing bytes into their start tags. A
+ * whole apparatus grew to keep the unpacked copy, the live decision set and the
+ * saved snapshot agreeing with one another, and every part of it exists because
+ * of the zip at the start. This is the format that removes the zip.
+ *
+ * ── ONE PAGE, and why not one file per chapter ──────────────────────────────
+ *
+ * Because the surface it feeds already draws every document at once (the
+ * continuous book, docs/WORKBENCH.md §11) and has to stitch the spine back
+ * together to do it. A chapter is a `<section id="…">` here, which is what the
+ * contents needs to scroll to one and the whole of what the split was buying.
+ *
+ * ── Flat, and what that costs ───────────────────────────────────────────────
+ *
+ * A chapter document inside an EPUB sits in `text/` and reaches its pictures as
+ * `../images/…`. There is no `text/` here, so those hrefs are rewritten to
+ * `images/…` — a targeted replacement of a prefix this emitter itself wrote one
+ * function away (`buildChapterBody`), never a general URL rewrite over somebody
+ * else's markup.
+ *
+ * ── HTML5 and not XHTML ─────────────────────────────────────────────────────
+ *
+ * No XML declaration, no `xmlns`, no `epub:` namespace — this page is served to
+ * a browser as `text/html` and none of the three does anything there but invite
+ * a parser into XML rules it will then have to be rescued from. The markup the
+ * emitter writes is already well-formed, so it parses identically either way;
+ * what changes is that a stray tag in a book from anywhere costs a visible
+ * glitch rather than a refusal to render the document at all.
+ *
+ * `epub:type` attributes are the exception and stay as written: they are inert
+ * to a browser, and they are what an export reads to know a noteref from a note.
+ */
+export function packageVlmHtml(
+  metadata: VlmEpubMetadata,
+  documents: readonly VlmDocument[],
+  resources: readonly VlmResource[],
+  stylesheet: string,
+): { bytes: Uint8Array; sidecars: VlmSidecar[]; zipSeconds: number } {
+  if (documents.length === 0) {
+    throw new VlmEpubError('no text survived the pages — there is no book to write');
+  }
+  const sections = documents.map((document) => {
+    /*
+     * The BODY of each chapter and nothing else. `buildChapterBody` hands back
+     * the inner markup and the caller wraps it in `XHTML_HEAD`/`XHTML_TAIL`, so
+     * the wrapper is undone here by finding the same two markers rather than by
+     * re-deriving the body: one emitter, one shape, and if the shape ever
+     * changes this stops finding it instead of quietly emitting a nested
+     * `<html>` into the middle of somebody's book.
+     */
+    const opened = document.xhtml.indexOf('<body>');
+    const closed = document.xhtml.lastIndexOf('</body>');
+    if (opened < 0 || closed < 0) {
+      throw new VlmEpubError(
+        `the chapter "${document.label}" is not shaped like a document this emitter wrote `
+        + '(no <body>), so it cannot be laid into a single page',
+      );
+    }
+    const body = document.xhtml.slice(opened + '<body>'.length, closed);
+    return `<section id="${esc(document.id)}" data-bf-doc="${esc(document.href)}">\n`
+      + `${body.replace(/(<img[^>]+src=")\.\.\/images\//g, '$1images/')}\n</section>`;
+  });
+
+  const page = `<!doctype html>\n<html lang="${esc(metadata.language)}">\n<head>\n`
+    + `<meta charset="utf-8">\n`
+    + `<meta name="viewport" content="width=device-width, initial-scale=1">\n`
+    + `<title>${esc(metadata.title)}</title>\n`
+    + `<link rel="stylesheet" href="style.css">\n</head>\n<body>\n`
+    + `${sections.join('\n')}\n</body>\n</html>\n`;
+
+  const encoder = new TextEncoder();
+  return {
+    bytes: encoder.encode(page),
+    sidecars: [
+      { path: 'style.css', data: encoder.encode(stylesheet) },
+      ...resources.map((resource) => ({ path: resource.href, data: resource.data })),
+    ],
+    // Nothing is compressed and nothing is zipped, which is the point of the
+    // format. Reported as zero rather than omitted so the phase breakdown has
+    // the same shape for every route.
+    zipSeconds: 0,
+  };
 }
 
 /**
@@ -409,8 +517,19 @@ export function buildVlmEpub(
   });
 
   const xhtmlSeconds = (Date.now() - started) / 1000;
-  const packaged = format === 'txt'
+  // The same three-way fork the dots route takes, for its reason: every rule
+  // that makes the book has already run and the format decides only how the
+  // documents are carried. A prose dialect has no pictures, so an unzipped book
+  // from here is a page and a stylesheet.
+  const written = format === 'html' ? packageVlmHtml(metadata, documents, [], STYLESHEET) : null;
+  const packaged = written ?? (format === 'txt'
     ? packageVlmText(metadata, documents)
-    : packageVlmEpub(metadata, documents, [], STYLESHEET);
-  return { bytes: packaged.bytes, chapters, xhtmlSeconds, zipSeconds: packaged.zipSeconds };
+    : packageVlmEpub(metadata, documents, [], STYLESHEET));
+  return {
+    bytes: packaged.bytes,
+    sidecars: written?.sidecars ?? [],
+    chapters,
+    xhtmlSeconds,
+    zipSeconds: packaged.zipSeconds,
+  };
 }

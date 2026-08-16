@@ -58,15 +58,25 @@ export class VlmTextError extends Error {
  * and the rules below — the extension, the contradiction — are about the file
  * rather than about how it was made.
  */
-export type VlmOutputFormat = 'epub' | 'txt' | 'pdf';
+/*
+ * `html` IS THE WORKBENCH and is not an export. It is the book as one unzipped
+ * page beside its stylesheet and its pictures — what the app puts on screen so
+ * that a person can edit the contents of a book rather than read one
+ * (`packageVlmHtml`). It is in this union for the reason the paragraph above
+ * gives about `pdf`: `--format` is one choice about one file, and a page that
+ * has to be named `.html` and refused against a `--out` that says otherwise is
+ * exactly the rule this type carries.
+ */
+export type VlmOutputFormat = 'epub' | 'txt' | 'pdf' | 'html';
 
-export const VLM_OUTPUT_FORMATS: readonly VlmOutputFormat[] = ['epub', 'txt', 'pdf'];
+export const VLM_OUTPUT_FORMATS: readonly VlmOutputFormat[] = ['epub', 'txt', 'pdf', 'html'];
 
 /** The extension a format's own files carry, and the only one it answers to. */
 const FORMAT_EXTENSION: Readonly<Record<VlmOutputFormat, string>> = {
   epub: '.epub',
   txt: '.txt',
   pdf: '.pdf',
+  html: '.html',
 };
 
 /**
@@ -78,6 +88,7 @@ const FORMAT_CONTENT: Readonly<Record<VlmOutputFormat, string>> = {
   epub: 'a zip',
   txt: 'plain text',
   pdf: 'a PDF',
+  html: 'an HTML page',
 };
 
 /**

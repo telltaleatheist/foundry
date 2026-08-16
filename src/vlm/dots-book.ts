@@ -120,10 +120,12 @@ import {
 } from './dots.js';
 import {
   packageVlmEpub,
+  packageVlmHtml,
   XHTML_HEAD,
   XHTML_TAIL,
   type VlmChapter,
   type VlmDocument,
+  type VlmSidecar,
   type VlmEpubMetadata,
   type VlmNavItem,
   type VlmResource,
@@ -3045,6 +3047,15 @@ export interface DotsBookOptions {
 
 export interface DotsBookResult {
   bytes: Uint8Array;
+  /**
+   * The files that go BESIDE `--out` — the stylesheet and the pictures of an
+   * unzipped HTML book, and nothing at all for the formats that write one file.
+   *
+   * They ride the result rather than being written here because this function
+   * does not touch the disk: it is handed a bank and hands back a book, and the
+   * one place that knows where `--out` points is its caller.
+   */
+  sidecars: readonly VlmSidecar[];
   chapters: VlmChapter[];
   proposals: DotsChapterProposal[];
   blocks: number;
@@ -3246,13 +3257,25 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
   for (const block of blocks) categories[block.category] = (categories[block.category] ?? 0) + 1;
 
   const xhtmlSeconds = (Date.now() - started) / 1000;
-  const packaged = opts.format === 'txt'
+  const stylesheet = dotsStylesheet(typography);
+  /*
+   * THREE PACKAGERS, ONE BOOK. Every rule above this line has already run —
+   * the reflow, the joins, the notes, the chapters, the records substitution —
+   * so the format decides only how the finished documents are carried, which is
+   * why `--format txt` and `--format html` are the SAME BOOK and not a lesser
+   * one. `html` is the workbench (`packageVlmHtml`), `epub` and `txt` are what
+   * an export compiles to.
+   */
+  const written = opts.format === 'html'
+    ? packageVlmHtml(opts.metadata, documents, resources, stylesheet)
+    : null;
+  const packaged = written ?? (opts.format === 'txt'
     ? packageVlmText(opts.metadata, documents)
-    : packageVlmEpub(
-      opts.metadata, documents, resources, dotsStylesheet(typography), navTree(chapters),
-    );
+    : packageVlmEpub(opts.metadata, documents, resources, stylesheet, navTree(chapters)));
   return {
     bytes: packaged.bytes,
+    // Empty for every packager that writes one file. See `VlmSidecar`.
+    sidecars: written?.sidecars ?? [],
     chapters,
     proposals: flow.proposals,
     blocks: blocks.length,
