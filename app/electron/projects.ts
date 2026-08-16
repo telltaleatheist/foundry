@@ -2170,7 +2170,7 @@ export function displayedOverlay(dir: string, manifest: ProjectManifest): string
  * A snapshot's file, or the live overlay when there is no snapshot.
  *
  * EXPORTED FOR THE ONE CALLER THAT KNOWS ITS SNAPSHOT WITHOUT ASKING THE
- * POSITION: the per-step cast (`planConversionForStep`, electron/workspace.ts).
+ * POSITION: a rendering keyed to one step (`planFacsimile`, electron/workspace.ts).
  * A curate landing leaves the pointer where it was, so a plan that asked
  * `renderingOverlay` there would render the LIVE overlay under a step-shaped
  * name — the book as it is now, filed as the book as it was then. The step is
@@ -2223,7 +2223,7 @@ export function readingBank(
    * always the same bank, because a project holds one reading; it stops being the
    * same one the moment a re-read branches, and then a cast keyed to a step under
    * one reading would replay the other one's pages. The argument is
-   * `planConversionForStep`'s, in full.
+   * `planFacsimile`'s, in full.
    */
   at: LedgerStep | null = null,
 ): string {
@@ -2570,9 +2570,10 @@ export async function documentAtPosition(dir: string): Promise<string | null> {
      * AND THE ANSWER IS NEVER THE PROJECT'S OWN FLOWING BOOK. Falling back to
      * `castBook` here would show the German book to somebody standing on the row
      * labelled *Translated (hu)* — which is the exact failure this table's own
-     * history is about (`A_BOOK_OF_ITS_OWN`). Null is the honest answer while a
-     * cast is still in flight: the pane keeps what it has, and main asks for the
-     * book to be made (`towardTheFlowingBook`, electron/main.ts).
+     * history is about (`A_BOOK_OF_ITS_OWN`). Null is the honest answer and it is
+     * now the ONLY answer this arm can give: a translate row is drawn on the proof
+     * sheet out of the derived book its landing wrote, so there is no document at
+     * this position for a viewer to be pointed at (docs/RENDERER.md §7).
      */
     if (view.step.action === 'translate') {
       const language = view.step.params?.language ?? '';
@@ -3325,7 +3326,7 @@ export async function readingIsComplete(
   /**
    * THE STEP TO ASK ABOUT, when the question is about one rather than about the
    * position — see `readingBank`, whose argument this is passed straight through
-   * to, and `planConversionForStep`, which is why either of them takes one.
+   * to, and `planFacsimile`, which is why either of them takes one.
    *
    * A test that asked the POSITION while its caller named the STEP'S bank would be
    * the two disagreeing in the one window where a project holds two readings: the
@@ -6171,7 +6172,7 @@ async function adoptLegacyBanks(said: string[]): Promise<void> {
     const key = `${slug}-${hex.toLowerCase()}`;
     const dir = path.join(projectsDir(), key);
     // Named `<key>.jsonl` rather than carried across verbatim, because that is
-    // the exact path `planConversion` will hand the engine as `--readings`. A
+    // the exact path a rendering plan will hand the engine as `--readings`. A
     // bank that landed under a name differing by so much as the case of a hex
     // digit would be a bank the resume never finds — and the whole point of
     // copying these in is that the next run does not read those pages again.

@@ -410,6 +410,26 @@ export interface BookLoad {
    * book that has silently lost somebody's work.
    */
   ops: BookOp[];
+  /**
+   * WHAT AN OLD SAVE ON THIS PATH DECIDED AND THIS BOOK HAS NOWHERE TO PUT —
+   * absent for every project made under the op grammar, which is nearly all of
+   * them.
+   *
+   * A `curate` step froze a file of decisions keyed by the model's own page
+   * coordinates, and those are re-keyed onto block ids when the book is opened
+   * (`rekeyCuration`, shared/curate-bridge.ts). Most of them land. The ones that
+   * cannot — an amendment about an answer this reading no longer has, a manual
+   * page-turn join that is a seam on the sheet now — produce no op, and this is
+   * the list of sentences saying so.
+   *
+   * IT IS A LIST AND NOT A COUNT because the person can act on each one: the
+   * sentence names the block by page and position, which is where they would go
+   * and look. And it is HERE, on the load, rather than raised as a failure,
+   * because the book IS drawable — what it is missing is a handful of decisions
+   * out of somebody's history, and refusing to open a book over that would be
+   * worse than saying which ones they were.
+   */
+  unplaced?: string[];
 }
 
 /**

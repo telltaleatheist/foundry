@@ -63,6 +63,7 @@ import * as path from 'node:path';
 
 import { writeBookFile, writeEpubBook } from './engine';
 import { writeAtomically } from './epub-writer';
+import { CurateBridgeError, rekeyCuration } from '../shared/curate-bridge';
 import {
   bookAtPosition,
   imagesDirFor,
@@ -203,6 +204,12 @@ interface OpenedBook {
    * second opinion about a question this function has already answered.
    */
   transform: LedgerStep | null;
+  /**
+   * What a `curate` step on this path decided and this book has nowhere to put —
+   * absent when there is nothing to say, which is every chain made of `edit`
+   * rows. See `BookLoad.unplaced`, which is where these sentences are going.
+   */
+  unplaced?: string[];
 }
 
 async function openBookAtPosition(
@@ -300,6 +307,14 @@ async function openBookAtPosition(
      * own name, and the sentence keeps the path out of it.
      */
     const chain: BookOp[] = [];
+    /**
+     * WHAT AN OLD SAVE COULD NOT SAY ABOUT THIS BOOK, gathered as the chain is
+     * built and handed up with it. Empty for every project made under the op
+     * grammar, which is why it is a list rather than a flag: the sheet says one
+     * sentence per decision it could not place, and says nothing at all when
+     * there is nothing to say (`rekeyCuration`, shared/curate-bridge.ts).
+     */
+    const unplaced: string[] = [];
     for (const step of editsSinceTransform(ledger, from)) {
       const file = path.join(at.dir, ...step.payload.split('/'));
       let said: string;
@@ -314,6 +329,51 @@ async function openBookAtPosition(
             + 'intact; the file behind that row is not.',
         };
       }
+      /*
+       * ── A SAVE MADE BEFORE THE OP GRAMMAR IS READ THROUGH THE BRIDGE ────────
+       *
+       * A `curate` step's payload is `curations/<uuid>.json`: a frozen curation,
+       * keyed by the model's own `(page, order)` coordinates, written by a system
+       * that no longer exists. Its decisions are the same decisions — struck
+       * blocks, retyped lines, a chapter spine — so they are re-keyed onto this
+       * book through the `src` column the format carries for exactly this and
+       * replayed as ops (docs/RENDERER.md §8; `rekeyCuration`).
+       *
+       * NOTHING IS REWRITTEN ON DISK BY THIS. The snapshot is that row's payload
+       * and it is irreplaceable (`RETENTION_OF`); re-keying at the moment the
+       * book is opened means the ledger keeps saying exactly what it always said
+       * and the person sees the book that row is about. The alternative — walking
+       * everybody's library converting payloads in place — would be this app
+       * editing history to make its own reading easier.
+       */
+      if (step.action === 'curate') {
+        let snapshot: unknown;
+        try {
+          snapshot = JSON.parse(said);
+        } catch (err) {
+          console.error(`[book] ${file} is the payload of step ${step.id} and is not JSON: ${(err as Error).message}`);
+          return {
+            ok: false,
+            reason: `The decisions recorded as “${step.label}” could not be read, so this book cannot `
+              + 'be drawn honestly — everything applied after them depends on them.',
+          };
+        }
+        try {
+          const rekeyed = rekeyCuration(snapshot, parsed);
+          chain.push(...rekeyed.ops);
+          for (const one of rekeyed.unplaced) {
+            unplaced.push(`“${step.label}” holds ${one}.`);
+          }
+        } catch (err) {
+          if (!(err instanceof CurateBridgeError)) throw err;
+          console.error(`[book] ${file} is the payload of step ${step.id}: ${err.message}`);
+          return {
+            ok: false,
+            reason: `“${step.label}” is a row this build cannot read: ${err.message}.`,
+          };
+        }
+        continue;
+      }
       try {
         chain.push(...parseOpsFile(said));
       } catch (err) {
@@ -325,7 +385,12 @@ async function openBookAtPosition(
         };
       }
     }
-    return { ok: true, opened: { at, path: source.path, parsed, ops: chain, transform } };
+    return {
+      ok: true,
+      opened: {
+        at, path: source.path, parsed, ops: chain, transform, ...(unplaced.length > 0 ? { unplaced } : {}),
+      },
+    };
   } catch (err) {
     if (err instanceof BookFileError) {
       console.error(`[book] ${source.path} is not a book this app can read: ${err.message}`);
@@ -681,6 +746,7 @@ export async function loadBook(projectDir: string): Promise<BookOutcome> {
   const read = await openBookAtPosition(projectDir);
   if (!read.ok) return read;
   const { at, parsed, ops, transform } = read.opened;
+  const unplaced = read.opened.unplaced ?? [];
   /*
    * The figures prefix is minted only when a row will ask for one. `null` is the
    * pane's ordinary answer for a book with no cut images — no --pdf at reflow, or
@@ -704,6 +770,12 @@ export async function loadBook(projectDir: string): Promise<BookOutcome> {
     loose: parsed.header.loose,
     figures,
     ops,
+    /*
+     * The sentences an old save left behind, when there are any — carried on the
+     * load so the sheet can say them where the book is, rather than raised as a
+     * failure of a book that opened perfectly well. See `BookLoad.unplaced`.
+     */
+    ...(unplaced.length > 0 ? { unplaced } : {}),
     /*
      * AND THE PAIR, WHEN THERE IS ONE — *"two scroll-locked columns over two book
      * files with the same ids"* (docs/RENDERER.md §5), carried in the one answer

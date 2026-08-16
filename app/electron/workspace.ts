@@ -44,16 +44,16 @@
  * `<project>/readings/<key>.jsonl` composed from the key at both plans, on the
  * belief that a project has one bank — and a re-read asking for a different page
  * range branches by design, so a project can hold two readings and both of them
- * named that one file. Neither plan composes it any more: `planConversion` asks
- * the step at the position which bank its row is about, and `planReading` decides
+ * named that one file. Neither plan composes it any more: a rendering asks the
+ * step at the position which bank its row is about, and `planReading` decides
  * whether this reading replaces one that exists or gets a bank of its own. Both
  * answers come from electron/projects.ts, which is the module that decides where
  * anything lives.
  *
  * WHAT CHANGED IS WHICH JOB IT IS THE PRODUCT OF. There are two plans below
  * because there are two jobs: `planReading` names the bank an OCR run FILLS, and
- * `planConversion` names the file a rendering writes out of a bank that already
- * exists. They were one function while reading and writing were one act, and
+ * the rendering plans name the file written out of a bank that already exists.
+ * They were one function while reading and writing were one act, and
  * that is precisely what made the output format a question somebody had to
  * answer before a single page had been read.
  *
@@ -94,12 +94,10 @@ import {
   rotationRefusal,
 } from './projects';
 import {
-  curateCastFile,
   editsInEffect,
   facsimileFile,
   languageTagFor,
   readingInEffect,
-  translationCastFile,
   translationInEffect,
   translationRecordsOf,
 } from '../shared/ledger';
@@ -118,7 +116,7 @@ import type {
 /**
  * Where this book's ANSWERS go — everything an OCR job needs, and no more.
  *
- * ── Why this is not `planConversion` with a field left out ──────────────────
+ * ── Why this is not a rendering plan with a field left out ──────────────────
  *
  * The two jobs want different things and the difference is the whole point of
  * splitting the front door. A reading has no output file, so there is no name to
@@ -175,103 +173,6 @@ export async function planReading(
 }
 
 /**
- * Where this PDF's RENDERING goes, and which answers it is made from.
- *
- * It used to be the plan for the whole conversion — read the pages and write the
- * book, one act. The reading moved out (`planReading`); what is left is the
- * cheap half: a name for the file, the bank to build it from, and the curation to
- * apply on the way.
- *
- * The directories are created HERE rather than by the engine, because the engine
- * is handed two paths and a path whose parent does not exist is a run that dies
- * after the last page.
- *
- * THE PREVIOUS ORIGIN IS ROTATED ASIDE BY THE QUEUE, not here. It used to happen
- * at plan time on the reasoning that "planned" and "about to run" are the same
- * instant — which is true of a job that runs and false of every other kind, and
- * the false cases left the catalogue pointing into an archive folder for a run
- * that never wrote a byte. See the note at the refusal below.
- *
- * ── AND IT IS NO LONGER ALWAYS ONE RUN ──────────────────────────────────────
- *
- * The position used to reach a Generate through exactly one field — which
- * `--overlay` — and standing on a translation rendered the book it was made FROM,
- * in the language it was made OUT of. That was the honest approximation while
- * there was nothing better available, and it is a German book handed to somebody
- * who clicked the row labelled *Translated (Hungarian)*.
- *
- * So the plan now READS THE ANCESTRY (`renderPipeline`, shared/pipeline.ts) and a
- * position standing under a translation becomes two runs under one job: render
- * the curated book out of the readings bank into a file in the OS temp directory,
- * then translate that file into the row's own EPUB. Nothing about the first three
- * rows of that table changed — a project with no translation on the path cannot
- * reach the second stage at all, and gets exactly the plan it has always got.
- */
-export async function planConversion(
-  inputPath: string,
-  /**
-   * What the output will hold, which is what its extension says.
-   *
-   * The engine refuses an `--out` whose extension contradicts its `--format`
-   * (src/vlm/text-out.ts), and it is right to: a `.epub` full of plain text
-   * opens wrong everywhere. So the kind reaches the NAME rather than only the
-   * command line, and the app cannot construct that contradiction.
-   */
-  kind: ConversionKind = 'epub',
-): Promise<WorkspacePlan> {
-  return (await planRendering(inputPath, kind, GENERATED)).plan;
-}
-
-/**
- * The same rendering, KEYED TO ONE STEP instead of to the position — the plan a
- * landing's own book is cast from.
- *
- * ── The bug this shape exists to avoid ──────────────────────────────────────
- *
- * A save does not move the pointer (`RETAINED_BESIDE_YOU`, shared/ledger.ts):
- * pressing Apply leaves the user standing exactly where they were, which is
- * almost always the reading. So `planConversion` here would ask the position
- * which corrections are in effect, get the LIVE overlay, and write it out under
- * the save's name — the book as it is right now, filed as the book as it was
- * then, and indistinguishable from the real thing forever after. The step is
- * handed in instead, and every question below is asked of IT.
- *
- * ── TWO KINDS OF LANDING CAST A BOOK, AND THE SECOND IS WHY THIS GENERALIZED ─
- *
- * A CURATE step's book is the project's flowing book with that snapshot applied.
- * A TRANSLATE step's book is the project's flowing book with that step's RECORDS
- * substituted into the blocks — because a translation writes records and no
- * document at all now, so the row has nothing to show until one is cast. Both are
- * `<stem>…<id8>.epub` in `generated/`, both are renderings that are nobody's
- * payload, both are swept when their step is deleted, and both are planned here
- * so that the overlay, the bank and the records are read off the STEP.
- *
- * ── EPUB, always, and not a parameter ───────────────────────────────────────
- *
- * What either row shows is the flowing book (`documentAtPosition`), which is the
- * one format everything downstream of a reading works on. A facsimile of a save is
- * a thing somebody can ask for through Export, from the row, at any time.
- *
- * ── A save under a translation is NOT declined any more ─────────────────────
- *
- * It used to be, and the refusal was right about the pipeline it was written for:
- * casting that book meant running the translator, which is model time, and this
- * plan is made by a landing rather than by a person pressing a button. Casting it
- * now means reading the ancestral translation's records — arithmetic over a file
- * that is already on disk — so the justification for doing it unasked ("it takes
- * seconds, it is free") is true again, and the row shows the translated book as of
- * that save. What is still declined is a save under a translation made BEFORE
- * records existed: there is no file to read, and the only way to get one is a run
- * that spends the model.
- */
-export async function planConversionForStep(
-  inputPath: string,
-  step: LedgerStep,
-): Promise<WorkspacePlan> {
-  return (await planRendering(inputPath, 'epub', GENERATED, step)).plan;
-}
-
-/**
  * Where this READING's page-for-page record goes — the same rendering, aimed at
  * `generated/` as a PDF and keyed to the read step that made the bank.
  *
@@ -285,7 +186,7 @@ export async function planConversionForStep(
  * model, no socket, seconds — which is the whole of why it can happen without
  * anybody pressing anything.
  *
- * ── PDF, always, and keyed to the step for `planConversionForStep`'s reason ──
+ * ── PDF, always, and keyed to the step rather than to the position ──────────
  *
  * A facsimile is the only thing this plan can be: `--format pdf` reprints the
  * scan's own photographed lines, which is a statement about the READING and not
@@ -432,16 +333,18 @@ export async function planExport(
  * (`translate --book`), so the strikes reach the model's input rather than being
  * faithfully translated into an edition of paragraphs somebody deleted.
  *
- * What still comes here is everything neither route can carry, each for a reason
- * rather than for the want of a wave:
+ * What still comes here is ONE rendering, and after R6 it is the only one left:
  *
- *  - GENERATE, whose product is the `generated/` CAST — a workbench book carrying
- *    the very editing stamps an edition withholds, and what select mode still
- *    addresses. Compiling one is a different question and is R6's, when the two
- *    collapse into one route.
  *  - A FACSIMILE, which reprints the scan's own photographed lines page for page.
  *    It is a record of the READING and compiles from the raw bank by definition
  *    (§6); there is nothing about an edit for it to carry.
+ *
+ * GENERATE used to be the other, and it is not a case this function lost — it is
+ * a product that no longer exists. Its output was the `generated/` CAST, a
+ * workbench EPUB carrying the very editing stamps an edition withholds, made so
+ * that a pane had a file to unpack and show. The workbench renders the book file
+ * directly now, so nothing needs a cast and the button that asked for one went
+ * with the surface it fed (docs/RENDERER.md §7).
  *
  * ── ONE CHOKE POINT, NOT ONE PER BUTTON ─────────────────────────────────────
  *
@@ -492,7 +395,7 @@ function refuseOverEdits(ledger: ProjectLedger, forStep: LedgerStep | null): voi
 const GENERATED = 'generated';
 const FINAL = 'final';
 
-/** The layer a rendering writes into. See `planConversion` and `planExport`. */
+/** The layer a rendering writes into. See `planFacsimile` and `planExport`. */
 type RenderingLayer = typeof GENERATED | typeof FINAL;
 
 /**
@@ -518,7 +421,7 @@ async function planRendering(
   layer: RenderingLayer,
   /**
    * THE STEP THIS RENDERING IS ABOUT, when it is about one rather than about the
-   * position. See `planConversionForStep`, which is the only caller that passes it
+   * position. See `planFacsimile`, which is the only caller that passes it
    * and the header that argues for it.
    *
    * It changes exactly three of the answers below — which corrections are applied,
@@ -547,7 +450,7 @@ async function planRendering(
   /*
    * THE PIPELINE, WHICH IS THE ANCESTRY READ AS A PLAN — and asked of the STEP
    * when this plan is about one, because a landing casts a book while the pointer
-   * is somewhere else entirely (`planConversionForStep`).
+   * is somewhere else entirely (`planFacsimile`).
    *
    * IT NO LONGER REFUSES ANYTHING. It used to throw for a translation of a
    * translation, one hop being what the two-stage pipeline could run; a chain is
@@ -575,21 +478,34 @@ async function planRendering(
    * edits on the way to it compiles the translated book with the edits in it,
    * which is a document neither route could produce before this wave.
    *
-   * A BOOK NOBODY HAS EDITED KEEPS THE LEGACY PATH, deliberately and for now, in
-   * both languages. The two routes produce the same edition out of the same
-   * answers when there is nothing to replay — `vlm-convert --records` substitutes
-   * the same words into the same emitter `vlm-compile` writes through — so
-   * nothing is bought by moving it today and one thing is risked: every export in
-   * the library changing command at once. R6 COLLAPSES THEM, and it is the wave
-   * that can, because it is where the cast in `generated/` stops being a file
-   * anybody unpacks. Until then this condition is a line that gets deleted rather
-   * than a branch that grows.
+   * A BOOK NOBODY HAS EDITED USED TO KEEP THE LEGACY PATH, and R6 is the wave
+   * that collapsed it. The clause was `editsInEffect(...).length > 0`: an
+   * unedited book went out through `vlm-convert --overlay --final` on the
+   * grounds that the two routes produce the same edition out of the same
+   * answers when there is nothing to replay, so nothing was bought by moving it
+   * and one thing was risked — every export in the library changing command at
+   * once. That risk was worth taking exactly once, deliberately, and this is it.
+   * What paid for it: the second route was reachable only through a curation
+   * file, and there are no curation files any more (docs/RENDERER.md §7), so
+   * keeping the clause would have meant keeping the overlay system alive to
+   * serve the case where it makes no difference. EVERY epub and txt export
+   * materialises and compiles now, edited or not, in either language.
    */
-  const compiles = layer === FINAL
-    && (kind === 'epub' || kind === 'txt')
-    && editsInEffect(ledger, forStep).length > 0;
-  // A no-op for the export that just took the compile route, and for every
-  // position with nothing applied on the way to it — which is most of them.
+  const compiles = kind === 'epub' || kind === 'txt';
+  /*
+   * WHICH LEAVES THE FACSIMILE, and it is the only rendering that still comes
+   * here. `--format pdf` reprints the scan's own photographed lines from the raw
+   * bank (§6) and there is nothing about an edit for it to carry, so a request
+   * for one from a position with applied changes is refused in words rather than
+   * answered with a document that quietly has none of them in it.
+   *
+   * The layer is not asked any more and that is not a loosening. The two callers
+   * that reach this line are `planFacsimile`, which is `pdf` into `generated/`
+   * and keyed to its read step (whose ancestry cannot hold an edit made after
+   * it), and `planExport`, which is any of the three formats into `final/`. So
+   * `kind` alone separates them, and a `layer === FINAL` beside it would be a
+   * condition that has never once changed an answer.
+   */
   if (!compiles) refuseOverEdits(ledger, forStep);
   /*
    * ── THE READING HAS TO BE FINISHED, AND THIS IS EVERY RENDERING ────────────
@@ -644,18 +560,14 @@ async function planRendering(
     ? null
     : { step: pipeline.translate, ...translatedWords(dir, pipeline.translate, kind) };
   /*
-   * THE NAME IS THE BOOK'S EITHER WAY, and the layer is the whole of what changes
-   * about it.
+   * THE NAME IS THE BOOK'S EITHER WAY, and what this plan is FOR is the whole of
+   * what changes about it.
    *
-   * A TRANSLATED BOOK IN `generated/` IS THAT TRANSLATION'S CAST, whoever asked for
-   * it — the landing that casts one unasked and a person asking for the book by
-   * file format are the same rendering of the same records, so they must be the
-   * same file. Naming it `<book> (hu).epub` instead would be two different books
-   * one filename apart: that name is the PAYLOAD of every translate step made
-   * before records, and `rotateGenerated` — which takes a basename and knows
-   * nothing about the ledger — would move that row's own book into an archive
-   * folder to make room for this one. Named for the row, nothing ever collides,
-   * and a second ask rotates only its own previous copy.
+   * A FACSIMILE IS NAMED FOR ITS READ STEP — `<stem>.<id8>.pdf` — the scheme
+   * readings already use, composed by the ledger (`facsimileFile`) so that the
+   * plan, the resolution that draws the row and the sweep that removes it when
+   * the reading goes cannot come to three answers. It is the only rendering that
+   * still passes a step, and `planFacsimile` is the only caller that does.
    *
    * AN EXPORT KEEPS THE HUMAN NAME, because `final/` is a tray a person opens and
    * nothing in it is anybody's payload: `<book> (hu).epub`, beside `<book>.epub`.
@@ -663,19 +575,16 @@ async function planRendering(
    * second rotates the first aside, which is exactly what `rotateFinal` exists for
    * wherever a name is composed rather than chosen.
    *
-   * AND A PER-STEP CAST IS NAMED FOR ITS STEP — `<stem>.<id8>.epub` for a save,
-   * `<stem> (hu).<id8>.epub` for a translation — the scheme readings already use,
-   * composed by the ledger (`curateCastFile`, `translationCastFile`) so that the
-   * plan, the resolution that shows the file and the sweep that removes it cannot
-   * come to three answers.
+   * THE THIRD ARM IS GONE WITH THE THING IT NAMED. A per-step CAST — a save's or
+   * a translation's own EPUB in `generated/` — was a document made so a pane had
+   * files to unpack; the proof sheet replays the step instead, so there is no file
+   * to name (docs/RENDERER.md §7).
    */
   const file = forStep !== null
-    ? castNameFor(stem, forStep, translated?.language ?? '')
+    ? facsimileFile(stem, forStep.id)
     : translated === null
       ? generatedFileFor(stem, kind)
-      : layer === GENERATED
-        ? translationCastFile(stem, translated.language, translated.step.id)
-        : generatedFileFor(`${stem} (${languageTagFor(translated.language)})`, kind);
+      : generatedFileFor(`${stem} (${languageTagFor(translated.language)})`, kind);
   const outputPath = path.join(dir, layer, file);
   /*
    * THE SOURCE IS THE APP'S TO CHOOSE, and that is the whole correction here.
@@ -817,30 +726,6 @@ async function planRendering(
       : { records: translated.records, language: translated.language }),
     },
   };
-}
-
-/**
- * What a landing's own document is called — one composition, chosen by what kind
- * of row made it.
- *
- * All three names come from shared/ledger.ts rather than being spelled here, for
- * the reason every path in this app is composed where the ledger can see it: the
- * plan that writes the file, the resolution that shows it and the sweep that
- * removes it when the step goes must not be three answers.
- *
- * THE FORMAT IS DECIDED WITH THE NAME AND NOT BESIDE IT, which is the one thing
- * to be careful of here: a read step's document is a PDF and the other two are
- * EPUBs, so the extension this composes is a fact about the ACTION rather than
- * about the `kind` the plan was called with. The two agree because there is one
- * door per row — `planFacsimile` is the only caller that hands over a read step
- * and it is the only one that asks for `pdf` — and a third door that paired them
- * differently would be asking the engine for a format its own `--out` refuses.
- */
-function castNameFor(stem: string, step: LedgerStep, language: string): string {
-  if (step.action === 'read') return facsimileFile(stem, step.id);
-  return step.action === 'translate'
-    ? translationCastFile(stem, language, step.id)
-    : curateCastFile(stem, step.id);
 }
 
 /**
@@ -1285,7 +1170,7 @@ function readingGenerationOf(ledger: ProjectLedger, manifest: ProjectManifest): 
  * Two invariants replace it, and both are properties of how paths are BUILT:
  *
  *   THE ARCHIVE IS NEVER A WRITE TARGET. Every output path in this app is
- *   composed by `planConversion` or `planTranslation`, and both compose into
+ *   composed by `planExport` or `planTranslation`, and both compose into
  *   `generated/`. Nothing anywhere composes one into `archive/`.
  *
  *   THE USER IS ALWAYS IN A WORKING COPY. What they point at is a copy the app

@@ -292,11 +292,14 @@ export interface FoundryApi {
   /**
    * The managed workspace: where a conversion writes.
    *
-   * A conversion never asks the user where to put anything — `plan` hands the
-   * dialog the two paths a job needs, and both land inside the PROJECT for the
-   * document being converted (`<libraryDir>/projects/<key>/`). Getting a book
-   * out of there is `epub.save` below, which repacks the working tree rather
-   * than copying a file, because by then the book may have been edited.
+   * A job never asks the user where to put anything — a plan hands the dialog
+   * the paths a job needs, and they land inside the PROJECT for the document
+   * being converted (`<libraryDir>/projects/<key>/`).
+   *
+   * THERE WERE FOUR PLANS HERE AND THERE ARE THREE. `plan` composed a Generate
+   * — a rendering into `generated/` that a person asked for by file format —
+   * and both the button and the product are gone: the workbench reads the book
+   * file, so nothing needs a cast EPUB (docs/RENDERER.md §7).
    */
   workspace: {
     /**
@@ -315,8 +318,6 @@ export interface FoundryApi {
      * AND the step id it belongs to; the request carries both onward.
      */
     planReading(inputPath: string, asked?: ReadAsk): Promise<ReadingPlan>;
-    /** The kind decides the output's EXTENSION, not just its `--format`. */
-    plan(inputPath: string, kind: ConversionKind): Promise<WorkspacePlan>;
     /**
      * The same rendering, aimed at `final/` — where a TERMINAL document goes.
      *

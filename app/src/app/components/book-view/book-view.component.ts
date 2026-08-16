@@ -518,6 +518,23 @@ const SCROLL_SETTLE_MS = 400;
         <div class="sheet"><p class="waiting">Opening the book…</p></div>
       } @else {
         <!--
+          WHAT AN OLD SAVE COULD NOT SAY ABOUT THIS BOOK — one line per decision,
+          and nothing at all in the ordinary case. See \`unplaced\` for why this is
+          on the paper rather than on the notice strip, and why it is a list of
+          sentences rather than a count.
+        -->
+        @if (unplaced().length > 0) {
+          <div class="sheet unplaced">
+            <p class="lede">
+              This row was saved before Foundry recorded changes against blocks, and most of what
+              it decided is on the page. These could not be placed:
+            </p>
+            <ul>
+              @for (said of unplaced(); track said) { <li>{{ said }}</li> }
+            </ul>
+          </div>
+        }
+        <!--
           THE TWO REGISTERS — *"a two-segment control … \`Workbench | Edition\`,
           styled like the app's existing acts"* (RENDERER-DESIGN.md §5).
 
@@ -1088,6 +1105,15 @@ const SCROLL_SETTLE_MS = 400;
 
     .waiting, .failure { margin: 0; text-indent: 0; color: var(--ink-muted); }
     .waiting { text-align: center; }
+    /*
+      The unplaced strip sits above the paper as a sheet of its own, in the
+      muted register the sheet already uses for what the app is telling you
+      about the book rather than what the book says.
+    */
+    .unplaced { margin-bottom: 0.75rem; }
+    .unplaced .lede { margin: 0 0 0.4rem; text-indent: 0; color: var(--ink-muted); }
+    .unplaced ul { margin: 0; padding-left: 1.1rem; color: var(--ink-muted); }
+    .unplaced li { text-indent: 0; }
 
     /* A fact about the chain, not a decision to make — so it is \`--ink-muted\`
        and not the amber the gutter flags wear. It sits above the first block,
@@ -1738,6 +1764,20 @@ export class BookViewComponent {
   private readonly book = signal<BookLoad | null>(null);
   protected readonly loading = signal(true);
   protected readonly problem = signal<string | null>(null);
+
+  /**
+   * WHAT AN OLD SAVE ON THIS PATH DECIDED AND THIS BOOK HAS NOWHERE TO PUT.
+   *
+   * Empty for every project made under the op grammar. A `curate` step froze its
+   * decisions in the coordinates the bank uses, and they are re-keyed onto block
+   * ids when the book is opened; the handful that cannot be placed come back as
+   * sentences (`BookLoad.unplaced`). They are drawn ON THE PAPER rather than
+   * pushed to the notice strip, because the strip is for what a gesture would not
+   * do and this is a standing fact about the book in front of the person — it is
+   * true for as long as they stand on that row, and a strip that said it once
+   * would have said it to somebody who was still reading the title.
+   */
+  protected readonly unplaced = computed<readonly string[]>(() => this.book()?.unplaced ?? []);
 
   /** The blocks the user has picked. Purely visual, and purely this pane's. */
   protected readonly chosen = signal<ReadonlySet<string>>(new Set());

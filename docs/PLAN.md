@@ -626,8 +626,17 @@ renderer skeleton), **R1b landed** (`d9c222a`, book file v3 —
 provenance, parts, seams, shelf, figures, atomic writes), and the
 **v3 mirror landed** (`7f234e4` — app parser to v3, bankSha checked
 on open, `--pdf`/`--language` through the ensure step, seams and
-shelf and plates on the pane). R2b (facsimile + book file at
-read-landing) is in flight; R3–R6 wait their turns.
+shelf and plates on the pane). R2b, R3, R4, R5a–R5d and **R6a**
+(`65b150b`, the imported-EPUB explode) all landed since.
+
+**R6 is landing in slices and R6b is the second of three.** R6b took
+the casts out whole, collapsed the legacy export branch so every epub
+and txt export now materialises and compiles, made the proof sheet the
+answer for `curate` and `translate` rows, and built §8's re-key as a
+read-time bridge. **R6c is the deletion the wave is named for** and
+has not started: the overlay system and the iframe stack are still on
+disk and still operable, so the app still carries two editing surfaces.
+RENDERER.md §7 and §9 carry the item-by-item marks.
 
 Supersessions, so nothing dangles:
 
@@ -642,6 +651,14 @@ Supersessions, so nothing dangles:
   with the surfaces that host them; they are not fixed, they are
   removed with their bug class. If either surface survives past R6,
   the items come back on this list.
+  **Checked at R6b, and the answer is: the surface has NOT died yet.**
+  4b item 3 is the inspector's Contents rename hunting for a nav
+  anchor in `epub-reader.ts`, and `epub-reader.ts` is still on disk
+  and still reachable — R6b deleted the casts and collapsed the
+  export, and left the iframe stack for R6c (RENDERER.md §7/§9). So
+  by this list's own rule the item **comes back**: it is live, it is
+  unfixed, and it dies with `epub-reader.ts` in R6c rather than
+  being repaired first. Nothing about the diagnosis changed.
 
 ### Wave 5 — ABSORBED into RENDERER.md (kept for the record)
 

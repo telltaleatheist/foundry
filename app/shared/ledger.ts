@@ -1466,7 +1466,7 @@ export function translationTarget(
  * The whole point of clicking an old save is to see the book AS IT WAS THEN, so a
  * landing casts its own book and the row shows that. The pointer does not move
  * for a save (`RETAINED_BESIDE_YOU`), which is precisely why the plan has to be
- * keyed to the STEP rather than to the position — see `planConversionForStep`
+ * keyed to the STEP rather than to the position — see `planFacsimile`
  * (electron/workspace.ts), where getting this wrong would render the live overlay
  * under a step-shaped name.
  *
@@ -2489,7 +2489,31 @@ export function editsSinceTransform(
   const found: LedgerStep[] = [];
   for (let walker = chain.length - 1; walker >= 0; walker -= 1) {
     const step = chain[walker]!;
-    if (step.action === 'edit') found.unshift(step);
+    /*
+     * ── A `curate` ROW IS ON THIS WALK, AND IT IS THE ONE PLACE IT IS ──────────
+     *
+     * This is the only walk in the app that asks *"what has been done to the book
+     * file I am about to draw"*, and a save made before the op grammar existed is
+     * an answer to it: a file of decisions about the same blocks, written in the
+     * coordinates the bank uses instead of in block ids. The reader re-keys it
+     * through the book file's own `src` column and replays it as ops
+     * (`rekeyCuration`, shared/curate-bridge.ts; docs/RENDERER.md §8).
+     *
+     * IT IS NOT ADDED TO `editsInEffect` BESIDE IT, deliberately. That one feeds
+     * a REFUSAL — a rendering built from the bank carries none of these changes —
+     * and a facsimile is the only rendering left that it refuses. A facsimile
+     * reprints the scan's photographed pages and has never carried a curation
+     * either: the old route dropped `--overlay` on the floor for exactly that
+     * reason. So making a save count there would refuse a reprint that was always
+     * allowed, on the strength of a change of spelling.
+     *
+     * A CURATE ROW IS ONLY EVER ON AN ANCESTRY SOMEBODY CHOSE. A save does not
+     * move the pointer (`RETAINED_BESIDE_YOU`), so it hangs BESIDE the reading
+     * rather than above it, and this walk finds one only when the person is
+     * standing on that row or on something below it — which is when they have
+     * asked to see the book as that save left it.
+     */
+    if (step.action === 'edit' || step.action === 'curate') found.unshift(step);
     else if (BOUNDS_THE_REPLAY[step.action]) break;
   }
   return found;
@@ -2810,9 +2834,23 @@ export function positionView(ledger: ProjectLedger): PositionView {
     curation: displayedCuration(ledger),
     outlines: reading !== null,
     own: step !== null && A_BOOK_OF_ITS_OWN[step.action],
+    /*
+     * AND AT R6b IT IS EVERY ROW A BOOK CAN BE SEEN AT, which is the assumption
+     * the whole plan was built on coming true (docs/RENDERER.md §0, A1: *"one
+     * editing surface"*). A `curate` row and a `translate` row used to show a
+     * per-step CAST — an EPUB written into `generated/` at the landing so a pane
+     * had files to unpack — and those casts are gone with the reader that opened
+     * them (§7). What replaced them is not another document: a save's decisions
+     * are re-keyed and replayed like any other step's, and a translation's words
+     * are already in the derived book file its landing wrote (§4). So both rows
+     * are answered by the sheet, computed when somebody stands there rather than
+     * frozen into a file beside the row.
+     */
     sheet: step !== null && (
       step.action === 'read'
       || step.action === 'edit'
+      || step.action === 'curate'
+      || step.action === 'translate'
       || (step.action === 'import' && importedAsEpub(ledger))
     ),
     edits: editsInEffect(ledger),

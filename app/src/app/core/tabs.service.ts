@@ -1096,14 +1096,14 @@ export class TabsService {
      * is synchronous. So a project standing still while its document changes
      * underneath is invisible to that key by construction.
      *
-     * And it changes, on the one path this app cares most about. Standing on a
-     * read row in a project whose book has not been cast resolves to the working
-     * PDF, and main answers that fallback by making the book (`towardTheFlowingBook`,
-     * electron/main.ts) — so seconds later the same position resolves to an EPUB.
-     * Nothing in the ledger moved. Without this effect the pane would sit on the
-     * scan until something else happened to move the pointer, which is the exact
-     * complaint the position effect was built for in the first place: *"i wanted
-     * the document to show."*
+     * And it changed, on the path this app cared most about, for as long as a
+     * position could resolve to one document and then to another: main answered a
+     * read row that came back as the scan by casting the book, so seconds later
+     * the same position resolved to an EPUB with nothing in the ledger having
+     * moved. There are no casts now (docs/RENDERER.md §7) and a read row is drawn
+     * on the sheet, so that particular swap cannot happen — but the effect stays,
+     * because the reason it was built is the complaint it was built for: *"i
+     * wanted the document to show."*
      *
      * ── An effect of its own, on the delete effect's precedent ─────────────────
      *
@@ -1487,14 +1487,15 @@ export class TabsService {
      * two tabs for one instruction, and the second of them would be the surface
      * this wave exists to replace.
      *
-     * CURATE AND TRANSLATE ROWS ARE UNTOUCHED THIS WAVE. Their surfaces still
-     * strike, relabel and edit through machinery the book has none of yet (R3
-     * builds the ops; R6 deletes what they replace), and moving them now would be
-     * taking working gestures away and giving nothing back. The main process still
-     * answers `document-at` for a read row exactly as it did — the answer is simply
-     * not what the panes are pointed at — which is what keeps the pointer
-     * bookkeeping (`rememberShown`, `standForTab`'s guard, the sweep) reading one
-     * fact rather than two.
+     * CURATE AND TRANSLATE ROWS COME HERE TOO, AS OF R6b, and that sentence used
+     * to say the opposite: they were left alone while their surfaces still struck
+     * and relabelled through machinery the book had none of yet. It has all of it
+     * now, and the surfaces they used are gone — a save's decisions are re-keyed
+     * onto block ids and replayed like any other step's, and a translation's words
+     * are in the derived book its landing wrote. Neither row has a document of its
+     * own any more, because the per-step casts that were those documents are
+     * deleted (docs/RENDERER.md §7). The test is `view.sheet` and it is asked in
+     * one place, so there is no second door to drift from this one.
      */
     /*
      * AN EDIT ROW SHOWS THE BOOK TOO, and it is the same seam one action further

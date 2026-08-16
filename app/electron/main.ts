@@ -126,7 +126,7 @@ import {
 } from './recents';
 import { readSettings, writeSettings } from './settings';
 import * as vllm from './vllm-server';
-import { planConversion, planExport, planReading, planTranslation } from './workspace';
+import { planExport, planReading, planTranslation } from './workspace';
 import { detectEnvTooling, listDistros } from './wsl';
 import { fold, isBook } from '../shared/original';
 import { OverlayError, type OverlayFile } from '../shared/overlay';
@@ -1097,108 +1097,6 @@ function sizeOnDisk(bytes: number): string {
   return unit === 0 ? `${bytes} bytes` : `${value.toFixed(1)} ${units[unit]}`;
 }
 
-/**
- * The projects a fallback has already sent to the caster in this run of the app.
- *
- * ONE ASK PER PROJECT, and it is a stop rather than an optimisation. Everything
- * downstream converges — `enqueue` joins a duplicate row, `ensureCast` covers the
- * window before it, and a landed cast makes the fallback stop firing because the
- * position resolves to the book instead — but the shape underneath is a cycle: a
- * landing announces the projects, the renderer re-asks which document is at the
- * position, and this handler answers. If a cast ever landed WITHOUT the position
- * coming to resolve to it, that cycle would spawn the engine once per repaint,
- * forever, for a project this app has already demonstrated it cannot cast. So the
- * app tries once, says so in the terminal if it fails, and leaves the person with
- * their scan and an Export button rather than with a machine that will not stop.
- *
- * A reading that lands casts its own book (`job-queue.ts`) and is not gated by
- * this — that path is the one that is SUPPOSED to run again for a new reading.
- */
-const castAsked = new Set<string>();
-
-/**
- * THE POSITION SHOULD ALWAYS BE MOVING TOWARD THE FLOWING BOOK.
- *
- * ── The ruling, and what the fallback was quietly doing instead ─────────────
- *
- * User, 2026-08-15: *"if i click the ocr/read step, it should show the reflowed
- * html. it should always move toward the html, since thats a format we can work
- * with."* `documentAtPosition` (electron/projects.ts) answers a read or curate
- * row with the cast book and falls back to the working PDF when there is none —
- * which is correct as an ANSWER (a pane must show something that exists) and is
- * the wrong place to stop. The projects that take the fallback are the ones that
- * were read before casting was automatic, and the ones whose cast was rotated or
- * deleted; for all of them the bank is on disk, complete, and a book out of it is
- * seconds of arithmetic. Settling for the photograph is the app declining to make
- * the one format everything after this step works on.
- *
- * ── The two fallbacks, and how each is identified ───────────────────────────
- *
- * A READ OR A SAVE THAT CAME BACK AS A PDF. Two facts, both read off the same
- * catalogue the resolution read: the position is NOT a book of its own (so it is a
- * read or a curate, not the import and not a translation), and what came back is a
- * PDF. The flowing book is never a PDF, so those two together are the fallback and
- * nothing else is.
- *
- * A TRANSLATION THAT CAME BACK AS NOTHING AT ALL, which is the same shape one
- * action later. A translate step retains its records and the book is cast from
- * them, so between the landing and the cast — and after any cast that failed —
- * there is no document at that position and the resolution honestly answers null.
- * Asking for the book is exactly what the ruling above says to do about it, and it
- * is the same free run: the records are on disk and the bank is complete.
- *
- * THE BANK HAS TO BE MARKED COMPLETE FOR EITHER — the same test every rendering
- * asks (`readingIsComplete`) — because a resume is a reading, and a reading is
- * hours of a model spent by a click on a history row.
- */
-async function towardTheFlowingBook(projectDir: string, resolved: string | null): Promise<void> {
-  const dir = resolved === null ? projectDirOf(projectDir) : projectDirOf(resolved);
-  if (dir === null) return;
-  if (resolved !== null && path.extname(resolved).toLowerCase() !== '.pdf') return;
-  try {
-    const manifest = await readManifest(dir);
-    const view = positionView(ledgerOf(manifest));
-    if (view.step === null || view.reading === null) return;
-    /*
-     * A ROW THAT IS A BOOK OF ITS OWN reaches this function in exactly one state:
-     * a translation whose records have landed and whose book has not been cast
-     * yet. The import is the other such row and is never it — the scan is on disk
-     * by definition, so that position always resolves.
-     */
-    if (view.own && (resolved !== null || view.step.action !== 'translate')) return;
-    if (!await readingIsComplete(dir, manifest)) return;
-    /*
-     * ONE ASK PER PROJECT for the project's own book, and one per STEP for a
-     * translation's, because there is one of the first and as many of the second
-     * as there are translate rows. Keyed with the step id so that asking for the
-     * Hungarian book does not silence the ask for the English one.
-     */
-    const asked = view.own ? `${dir.toLowerCase()}\u0000${view.step.id}` : dir.toLowerCase();
-    if (castAsked.has(asked)) return;
-    castAsked.add(asked);
-    /*
-     * A step's own book is asked for by its STEP; the project's is asked for by
-     * any path inside the project, and `resolved` is only sometimes one. A read
-     * row in a project with no cast and no live PDF resolves to NOTHING — which is
-     * the fallback at its most complete, and the case where making the book
-     * matters most — so the directory stands in for the document that is not
-     * there. Both callers resolve the pixels out of `archive/` for themselves and
-     * only need to be told which project this is.
-     */
-    if (view.own) await queue.ensureStepCast(dir, view.step);
-    else await queue.ensureCast(resolved ?? dir);
-  } catch (err) {
-    // Never thrown at the caller: it asked which document is at the position and
-    // it has a correct answer, or an honest absence. This is the app trying to
-    // improve on that answer, and a catalogue it could not read is a line in the
-    // terminal.
-    console.error(
-      `[ledger] the flowing book for ${path.basename(dir)} could not be asked for: `
-      + `${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
-
 function registerIpc(): void {
   ipcMain.handle('dialog:open-document', () => promptForDocument());
 
@@ -1800,10 +1698,6 @@ function registerIpc(): void {
    */
   ipcMain.handle('workspace:plan-reading', (_event, inputPath: string, asked?: ReadAsk) =>
     planReading(inputPath, asked ?? {}));
-  ipcMain.handle(
-    'workspace:plan',
-    (_event, inputPath: string, kind: ConversionKind) => planConversion(inputPath, kind),
-  );
   /*
    * THREE PLANS NOW, and the third one is the same rendering with a different
    * destination. An export is a Generate that lands in the project's tray rather
@@ -1814,7 +1708,7 @@ function registerIpc(): void {
    * book unpacked out of it and being read in a tab. See `planExport`.
    *
    * NO ALLOW-LIST CHECK, exactly as `workspace:plan` has none, and the reason is
-   * the same: `planConversion` and `planExport` do not read the path they are
+   * the same: the rendering plans do not read the path they are
    * given. They resolve which PROJECT it belongs to and then compose every path
    * they return out of the project's own catalogue — the pixels come from
    * `archive/`, the bank from the position's read step — so a renderer naming a
@@ -2875,32 +2769,18 @@ function registerIpc(): void {
    * the notice strip through the renderer's ordinary catch rather than looking
    * like a commit that quietly did nothing.
    *
-   * ── AND THE SAVE CASTS ITS OWN BOOK, FROM HERE ─────────────────────────────
+   * ── THE SAVE NO LONGER CASTS A BOOK, AND NOTHING REPLACED THAT ─────────────
    *
-   * Standing on a save has to show the book AS OF THAT SAVE, and nothing else in
-   * the app is in a position to make one: `overlays.ts` and `projects.ts` cannot
-   * import the queue (the cycle is real — the queue imports both), so the cast is
-   * fired where the queue is already reachable. `queue.ensureCast` sits four
-   * hundred lines above on exactly this precedent.
-   *
-   * THE ROW COMES OUT OF THE ANSWER rather than being read back off the disk: the
-   * commit hands back the ledger it just wrote, and the newest `curate` row in it
-   * is the step that was landed a moment ago. Re-reading the manifest would be a
-   * second answer about a catalogue that may have moved.
-   *
-   * FIRE AND FORGET, AND A FAILURE IS A CONSOLE LINE. The save is already on disk
-   * and in the ledger — that is what the user pressed the button for — and holding
-   * their gesture for a rendering, or failing it because one could not be planned,
-   * would be this app calling an afternoon's corrections lost over a file it can
-   * make again for nothing.
+   * Standing on a save has to show the book AS OF THAT SAVE, and the way that was
+   * done was to spawn the engine here and leave an EPUB in `generated/` named
+   * after the step. The proof sheet answers it without a file: a save's decisions
+   * are replayed onto the book file the way every other step's are
+   * (docs/RENDERER.md §3), so the state of the book at that row is computed when
+   * somebody stands there rather than frozen into a document beside it.
    */
   ipcMain.handle('overlay:commit', async (_event, filePath: string) => {
     const pdf = admittedPdf(filePath);
-    const view = await commitOverlay(pdf);
-    let landed: LedgerStep | null = null;
-    for (const step of view.ledger.steps) if (step.action === 'curate') landed = step;
-    if (landed !== null) void queue.ensureStepCast(pdf, landed);
-    return view;
+    return await commitOverlay(pdf);
   });
   /**
    * What this book holds that no save of it does — asked on the way out of a
@@ -3050,16 +2930,14 @@ function registerIpc(): void {
     const resolved = await documentAtPosition(projectDir);
     if (resolved !== null) openable.add(path.resolve(resolved));
     /*
-     * Fire and forget, deliberately — see `towardTheFlowingBook`. The answer is
-     * the document that exists NOW; a pane held blank while a rendering runs
-     * would be this handler waiting for a job the caller never asked for.
-     *
-     * ASKED EVEN WHEN THE ANSWER WAS NULL, which it did not used to be. A null is
-     * not always "this position names no document": standing on a translation
-     * whose book has not been cast yet, it means the document is one free run
-     * away, and that is the case this whole function exists for.
+     * A NULL IS AN ORDINARY ANSWER AND NOTHING IS FIRED AT IT ANY MORE. There
+     * used to be a `towardTheFlowingBook` here: when a position resolved to the
+     * scan, or to nothing, this handler asked the queue to cast the project's
+     * flowing book so the pane would have an EPUB to unpack. The pane reads the
+     * book file now — a read, a save and a translation all open the proof sheet
+     * — so a position that names no separate document names none, and the panes
+     * correctly keep what they have (docs/RENDERER.md §7).
      */
-    void towardTheFlowingBook(projectDir, resolved);
     return resolved;
   });
   /*
@@ -3123,8 +3001,8 @@ function registerIpc(): void {
    * IT MAY SPAWN THE ENGINE, and that is the whole of what makes opening a read
    * position work on a library written before this format existed
    * (electron/book.ts says why the ensure and the migration are one path). It is
-   * awaited rather than fired and forgotten, unlike `towardTheFlowingBook`: the
-   * caller is a pane with `Opening the book…` on it and nothing else to show, so
+   * awaited rather than fired and forgotten: the caller is a pane with
+   * `Opening the book…` on it and nothing else to show, so
    * a promise that resolved before the file existed would be a blank sheet with
    * no sentence on it.
    *

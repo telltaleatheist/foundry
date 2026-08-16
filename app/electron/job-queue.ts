@@ -44,7 +44,8 @@
  *
  * ── One job in here starts another, and only this one ────────────────────────
  *
- * A READING THAT LANDS MAKES ITS DOCUMENTS (`landReadProducts`, `castFlowingBook`).
+ * A READING THAT LANDS MAKES ITS DOCUMENTS (`landReadProducts`: the book file,
+ * then the facsimile).
  * Everything else in this queue arrives from a person pressing something; these
  * arrive from the previous job finishing, because the product of a reading is a
  * bank and a bank is not a thing anybody can look at. The user: "from that bank, we
@@ -120,7 +121,7 @@ import {
 } from './projects';
 import { readSettings } from './settings';
 import { ensureServer, isLocalVllmEndpoint, noteQueueBusy, noteQueueIdle } from './vllm-server';
-import { planConversion, planConversionForStep, planFacsimile } from './workspace';
+import { planFacsimile } from './workspace';
 import type {
   ConversionKind, EnvInstallRequest, Job, JobRequest, LedgerStep, TranslateRequest,
 } from '../shared/types';
@@ -815,7 +816,7 @@ function argsFor(
   }
   // Passed only when it is not the default, so an EPUB job's command line is the
   // one it has always been and a diff of two runs shows what actually differed.
-  // The extension `planConversion` chose already agrees with it; the engine
+  // The extension the plan chose already agrees with it; the engine
   // refuses the pair outright if it ever stops agreeing.
   if (request.kind !== 'epub') args.push('--format', request.kind);
   /*
@@ -1509,12 +1510,16 @@ async function pump(): Promise<void> {
        * anything else in this app is allowed to start a child.
        *
        * IT IS AWAITED AND IT CANNOT FAIL THE READING. Every way it can go wrong
-       * is a console line inside it, for `ensureCast`'s reason immediately below:
-       * the bank is on disk, it is complete, and both documents are made from it
-       * for nothing whenever they are asked for.
+       * is a console line inside it: the bank is on disk, it is complete, and
+       * both documents are made from it for nothing whenever they are asked for.
+       *
+       * THERE WAS A THIRD LINE HERE AND IT IS GONE. `ensureCast` cast the
+       * project's flowing book — an EPUB in `generated/` that the app unpacked so
+       * a pane had files to show. The pane reads the book file directly now, so
+       * the cast was a document made for a reader that no longer exists
+       * (docs/RENDERER.md §7).
        */
       await landReadProducts(next.outputPath, next.inputPath);
-      await ensureCast(next.inputPath);
       void pump();
       return;
     }
@@ -1568,14 +1573,14 @@ async function pump(): Promise<void> {
        * over — a fact about the ledger that is answered once, now, rather than
        * re-derived by every pane that ever draws this step.
        *
-       * BEFORE THE CAST, because the cast is a courtesy and this is the document.
-       * Every position under this translation reads the derived book
-       * (`openBookAtPosition`); the EPUB after it is what the old viewer opens.
-       * Neither is fatal to a landing that has already put hours of GPU safely on
-       * disk, and each says so in the terminal in its own words.
+       * AND IT IS THE ONLY ONE NOW. There was a cast after this — an EPUB made
+       * from the records so the old viewer had a file to open — and standing on a
+       * translate row shows the derived book on the proof sheet instead, which is
+       * the document this line writes. It is not fatal to a landing that has
+       * already put hours of GPU safely on disk, and it says so in the terminal
+       * in its own words.
        */
       await materializeTranslation(next.outputPath);
-      await ensureTranslateCast(next.outputPath);
       void pump();
       return;
     }
@@ -1762,228 +1767,6 @@ async function putBack(
 }
 
 /**
- * The projects a cast is being planned for RIGHT NOW — one per project, at most.
- *
- * ── The window `enqueue` cannot cover ──────────────────────────────────────
- *
- * `pendingFor` already refuses a second job writing the same file, and it is the
- * dedup that matters: it survives reloads, it covers the whole life of the run,
- * and it joins a re-read's cast to one already waiting. What it cannot see is the
- * gap BEFORE the enqueue. `castFlowingBook` awaits `planConversion` first — which
- * reads a catalogue, resolves the archive, and asks the disk whether the bank is
- * marked — so five clicks on a read row inside that window are five calls that
- * have not reached `enqueue` yet, and every one of them would find nothing
- * pending and add a row.
- *
- * Keyed by PROJECT rather than by the path that was named, because the two
- * callers name different files — the read landing names the scan it was handed,
- * a click names the working copy the position resolved to — and both mean the one
- * flowing book of one project. Released the moment the plan has been enqueued or
- * refused, because from there `pendingFor` is a better answer than this is.
- */
-const casting = new Set<string>();
-
-/**
- * MAKE SURE THIS PROJECT HAS ITS FLOWING BOOK — the one door, for both reasons.
- *
- * Called by the reading's own landing (the book exists the moment the bank does)
- * and by main, when somebody stands on a read or curate row and the position
- * still resolves to a PDF. That second caller is the ruling: *"if i click the
- * ocr/read step, it should show the reflowed html. it should always move toward
- * the html, since thats a format we can work with."* A resolution that falls back
- * to the scan is the app settling for the format it can do least with, and the
- * answer is to MAKE the book rather than to show the photograph again.
- *
- * FIRE AND FORGET, and it must stay that way: the caller is answering "which
- * document is at the position", the honest answer is the one that exists right
- * now, and holding that answer for a rendering would leave a pane blank while a
- * job it was never told about ran.
- */
-export async function ensureCast(readFrom: string): Promise<void> {
-  const key = (projectDirOf(readFrom) ?? path.resolve(readFrom)).toLowerCase();
-  if (casting.has(key)) return;
-  casting.add(key);
-  try {
-    await castFlowingBook(readFrom);
-  } finally {
-    casting.delete(key);
-  }
-}
-
-/**
- * MAKE SURE THIS STEP HAS ITS OWN BOOK — the one door for both landings that cast
- * one, called by the commit in main the instant a `curate` step lands and by this
- * file's own settle the instant a `translate` step does.
- *
- * A SAVE'S BOOK exists so that standing on that row shows the book AS IT WAS THEN
- * rather than the project's one cast wearing today's marks (docs/WORKBENCH.md §9).
- * A TRANSLATION'S BOOK exists because the run wrote no book at all: what it left is
- * per-block answers, and until they are cast the row has nothing a pane can show.
- *
- * KEYED BY PROJECT **AND** STEP, which is the one line that differs from
- * `ensureCast` above and the reason this is not a parameter on it. That set answers
- * "this project is already having its flowing book planned", and it is exactly
- * right there: there is one such book and a second planner would be a second row
- * for it. There are as many per-step books as there are steps, and two commits in
- * one project are two different files — a project-keyed guard would silently drop
- * the second one, which is a step with no book of its own and no way to notice.
- *
- * FIRE AND FORGET, and here it matters more than it does above: the callers are a
- * commit and a landing. A save must land whatever the caster does and a translation
- * must be recorded whatever the caster does, so no way this can fail is allowed to
- * reach either of them, and every one of them is a console line.
- */
-export async function ensureStepCast(readFrom: string, step: LedgerStep): Promise<void> {
-  const project = (projectDirOf(readFrom) ?? path.resolve(readFrom)).toLowerCase();
-  // NUL-joined for the reason every composite key in this app is: it is the one
-  // byte that cannot appear in a path or a uuid, so no pair of them can run
-  // together into a third spelling that collides with an honest one.
-  const key = `${project}\u0000${step.id}`;
-  if (casting.has(key)) return;
-  casting.add(key);
-  try {
-    await castStepBook(readFrom, step);
-  } finally {
-    casting.delete(key);
-  }
-}
-
-/**
- * A TRANSLATION LANDED, SO ITS BOOK CAN EXIST — the same door, named by the file
- * the run wrote rather than by a step the caller is holding.
- *
- * The settle has the records path and nothing else: the step was minted by
- * `recordTranslation` a moment earlier, inside a manifest write this file
- * deliberately does not reach into. So the row is looked up by the payload it
- * names, which is the same whole-project-relative-path rule every other lookup in
- * this app obeys — and emphatically not by reading the `<id8>` back out of the
- * filename, which is what the house rule forbids.
- *
- * NOTHING HAPPENS FOR A LANDING WHOSE ROW COULD NOT BE WRITTEN (a console line of
- * its own, in `recordTranslation`), and that is the honest answer rather than a
- * fallback: a book cast for a step that does not exist is a file no screen in this
- * app would ever mention and no delete would ever sweep.
- */
-export async function ensureTranslateCast(recordsPath: string): Promise<void> {
-  const dir = projectDirOf(recordsPath);
-  if (dir === null) {
-    console.error(
-      `[job] ${path.basename(recordsPath)} finished outside any project, so no book was cast from it.`,
-    );
-    return;
-  }
-  try {
-    const view = await readStepLedger(dir);
-    const relative = path.relative(dir, path.resolve(recordsPath)).split(path.sep).join('/');
-    const step = view?.ledger.steps.find(
-      (row) => row.action === 'translate' && row.payload === relative,
-    );
-    if (step === undefined) {
-      console.warn(
-        `[job] the translation of ${path.basename(dir)} landed, but no step in that project's history `
-        + 'names those answers, so no book was cast from them.',
-      );
-      return;
-    }
-    // The records file rather than the directory: every plan resolves the pixels
-    // out of `archive/` for itself and only needs to be told WHICH project, and a
-    // real file inside one is what the resolution is written to take.
-    await ensureStepCast(recordsPath, step);
-  } catch (err) {
-    console.error(
-      `[job] the translation of ${path.basename(dir)} landed, but its history could not be read `
-      + `(${err instanceof Error ? err.message : String(err)}), so no book was cast from it.`,
-    );
-  }
-}
-/**
- * A READING LANDED, SO THE BOOK EXISTS — cast it, now, without being asked.
- *
- * ── The gap this closes ─────────────────────────────────────────────────────
- *
- * A reading's product is a BANK: hours of GPU, and nothing anybody can look at. So
- * the moment OCR finished, a person had a project whose only readable document was
- * the photograph they started with, and the flowing book they had actually paid for
- * did not exist until they found a dialog and asked for it by file format. The
- * user's account of what should happen is the whole specification: "from that bank,
- * we create an html page of the document - a proto epub. that's the step that
- * appears automatically the moment i OCR something."
- *
- * ── Why this costs almost nothing, which is what makes it automatic ─────────
- *
- * The cast is `vlm-convert --format epub --reuse-readings` over a bank that was
- * marked complete one line ago. It loads no model, opens no socket, reads no page
- * and takes seconds — so it is not held (the hold exists so that hours of GPU are
- * never spent by the act of configuring them, and there are no hours here), and it
- * does not wait for the reading server (`endpointFor` answers only for a `read`).
- * Both of those fall out of rules that already existed; nothing here argues for an
- * exception.
- *
- * ── THE LOOP GUARD, AND WHERE IT ACTUALLY LIVES ────────────────────────────
- *
- * A conversion landing must never enqueue anything, or a cast would cast a cast
- * forever. That is guaranteed structurally rather than by a flag: this is called
- * from the `read` arm of the settle and from nowhere else, and the `read` arm
- * returns before any conversion landing is reached. The second guard is
- * `enqueue`'s own dedup — a job already waiting or running to write this exact
- * file returns that row instead of a second one — so a re-read that lands while
- * the first cast is still queued joins it rather than racing it.
- *
- * ── Every refusal is a console line, never a failed reading ────────────────
- *
- * The plan can decline: a book whose previous cast is open in a tab (the rotation
- * would move a working tree out from under a reader), a bank whose marker did not
- * survive, a project directory that has gone. NONE of those is a reason to report
- * a three-hour reading as anything but the success it was — the bank is on disk,
- * it is complete, and the book can be asked for at any time for nothing. So the
- * reading lands, the reason is named in full in the terminal, and the person is
- * left with exactly what they paid for.
- *
- * A PIPED PLAN IS DECLINED TOO, and that one is a guard rather than an error. The
- * position is the reading this landing just recorded — `recordReading` moves the
- * pointer onto it — whose ancestry is the import, so `renderPipeline` finds no
- * translation and there is no second stage to compose. If one ever appeared here
- * it would mean the pointer is somewhere this function did not expect, and a
- * two-stage job would be HELD and would sit in the shelf waiting for a Start that
- * nobody knows to press — a translation of the book, run automatically, behind a
- * button labelled OCR. Skipping says so out loud instead.
- */
-async function castFlowingBook(readFrom: string): Promise<void> {
-  try {
-    const plan = await planConversion(readFrom, 'epub');
-    if (plan.records !== undefined) {
-      console.warn(
-        `[job] the flowing book for ${path.basename(readFrom)} was not cast automatically: the `
-        + 'project\'s position stands under a translation, so this plan is about the translated '
-        + 'book rather than about the one the reading just made. Stand on the reading for that.',
-      );
-      return;
-    }
-    enqueue(
-      {
-        kind: 'epub',
-        inputPath: plan.sourcePath,
-        outputPath: plan.outputPath,
-        readingsPath: plan.readingsPath,
-        overlayPath: plan.overlayPath,
-      },
-      // The reading this cast is made from, which `recordReading` has just left
-      // the pointer standing on. Nothing downstream spends it — `recordGenerated`
-      // reads `parentStep` only for a translation — but the shelf's row says which
-      // step a job was started from, and "from nowhere" would be untrue of the one
-      // job in this app that is started by another job landing.
-      await parentOf(plan.outputPath),
-    );
-  } catch (err) {
-    console.error(
-      `[job] the reading of ${path.basename(readFrom)} landed, but the flowing book could not be `
-      + `planned: ${err instanceof Error ? err.message : String(err)}. The bank is complete, so `
-      + 'generating an EPUB from it is free whenever it is asked for.',
-    );
-  }
-}
-
-/**
  * Everything `bookAtPosition` answers, named once so the two halves of a read
  * landing hand each other one shape rather than five arguments. Inferred rather
  * than declared, because the shape is electron/projects.ts's and a copy of it
@@ -2099,20 +1882,21 @@ async function remakeBookFile(at: BookAtPosition): Promise<void> {
  *
  * ── What it costs, which is what makes it automatic ─────────────────────────
  *
- * `castFlowingBook`'s three arguments, unchanged and unrepeated: a
+ * The three arguments every landing-made rendering rests on, unrepeated: a
  * `--reuse-readings` pass over a bank marked complete a moment ago loads no
  * model, opens no socket and takes seconds, so it is not held and does not wait
  * for the reading server; and it cannot loop, because a conversion landing
  * enqueues nothing and this is called from the `read` arm alone.
  *
- * ── NO GUARD SET, and that is the difference from `ensureCast` ──────────────
+ * ── NO GUARD SET, AND IT NO LONGER NEEDS ONE ───────────────────────────────
  *
- * That one is keyed by project because it has TWO callers — this settle and main,
- * when somebody stands on a read row — and five clicks inside the window before
- * an enqueue are five rows. This has one caller, inside a serial queue, so the
- * window `casting` exists to cover cannot open. `enqueue`'s dedup on the output
- * path is still underneath it, which is what joins a re-read's facsimile to one
- * already waiting.
+ * There used to be a `casting` set beside this, keyed by project, because the
+ * flowing book had TWO callers — a settle and a click on a read row — and five
+ * clicks inside the window before an enqueue were five rows. Both of those
+ * callers are gone with the cast (docs/RENDERER.md §7). This has one caller,
+ * inside a serial queue, so the window that set existed to cover cannot open.
+ * `enqueue`'s dedup on the output path is still underneath it, which is what
+ * joins a re-read's facsimile to one already waiting.
  *
  * ── `forStep`, WHICH IS WHAT MAKES THE LANDING TERMINAL ─────────────────────
  *
@@ -2159,83 +1943,6 @@ async function castFacsimile(readFrom: string, reading: LedgerStep): Promise<voi
   }
 }
 
-/**
- * A STEP LANDED, SO THAT STEP'S BOOK CAN EXIST — cast it, without being asked.
- *
- * ── The two gaps this closes, in the user's terms ───────────────────────────
- *
- * A curate row showed the project's ONE cast, so every save in a book's history
- * showed the same document: the live tree wearing today's marks. Clicking a save
- * from last week showed the present, which makes a restore point a row you can
- * stand on and learn nothing from. The ruling (docs/WORKBENCH.md §9): a curate
- * landing casts its own book, and standing on an older save shows the book as of
- * that save.
- *
- * A translate row is the same gap arrived at from the other side. The run writes
- * per-block ANSWERS and no book at all, so without this the row a person just
- * created would have nothing on screen behind it until they went and ordered a
- * rendering by file format — which is exactly the state the automatic cast after a
- * reading was built to end, one action later.
- *
- * ── The same three arguments `castFlowingBook` makes, unchanged ─────────────
- *
- * It costs nothing (a `--reuse-readings` pass over a completed bank, with the
- * translation's words read out of a file: no model, no socket, seconds); it is
- * therefore not held and does not wait for the reading server; and it cannot loop,
- * because a conversion landing enqueues nothing and this is called from a commit
- * or from the settle of a job that is not a conversion.
- *
- * ── Every refusal is a console line, never a failed save or a lost translation ─
- *
- * That is the whole of the error handling and it is deliberate. The thing the user
- * pressed the button for has already happened: the snapshot is on disk, or the
- * records are, and the row is in the ledger. Reporting failure because a rendering
- * could not be planned would be this app calling somebody's work lost over a file
- * it can make again for nothing.
- */
-async function castStepBook(readFrom: string, step: LedgerStep): Promise<void> {
-  try {
-    const plan = await planConversionForStep(readFrom, step);
-    enqueue(
-      {
-        kind: 'epub',
-        inputPath: plan.sourcePath,
-        outputPath: plan.outputPath,
-        readingsPath: plan.readingsPath,
-        /*
-         * THE SNAPSHOT, AND NOT THE LIVE OVERLAY. `planConversionForStep` is the
-         * whole of that decision and its header is the argument; carried here the
-         * way every other plan's answers are, so that a correction made while this
-         * job waits cannot change the book a step is about.
-         */
-        overlayPath: plan.overlayPath,
-        /*
-         * AND THE TRANSLATION'S OWN WORDS, when this step is one or stands under
-         * one. The plan composed both or neither, so a book cast in a language it
-         * does not hold is not a state this call can construct.
-         */
-        ...(plan.records !== undefined ? { records: plan.records } : {}),
-        ...(plan.language !== undefined ? { language: plan.language } : {}),
-        /*
-         * WHICH STEP THIS IS THE BOOK OF. It stops the landing cataloguing the
-         * file as one of the project's documents — see `GenerateRequest.forStep`,
-         * where the reason is that `castBook` must go on meaning the project's one
-         * flowing book however many saves have been pressed.
-         */
-        forStep: step.id,
-      },
-      // The step this book is of. Nothing downstream spends it; the shelf's row
-      // says which step a job was started from, and this one genuinely was.
-      step.id,
-    );
-  } catch (err) {
-    console.error(
-      `[job] “${step.label}” landed, but the book at that step could not be planned: `
-      + `${err instanceof Error ? err.message : String(err)}. The step itself is recorded, and `
-      + 'that row goes on showing whatever it showed before.',
-    );
-  }
-}
 /**
  * The position of the project a job is about to write into.
  *

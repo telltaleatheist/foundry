@@ -989,6 +989,21 @@ the every-hop case.
 ## 11. The continuous book, and chapters as lines you can hold
 (user-ruled 2026-08-15; execute with the D waves)
 
+> **SUPERSEDED by docs/RENDERER.md — marked at R6b, not silently.** The
+> RULINGS below stand and were built: the book flows start to finish in
+> one scroll, a chapter is a line you can hold, and that line is the
+> definitive chapter info. What is superseded is the MECHANISM this
+> section chose for them. Unit K's two routes were both routes through
+> an EPUB — stack the cast's spine documents in an iframe, or fork the
+> cast format — and there is no cast to stack any more: the workbench
+> renders the BOOK FILE through Angular components (RENDERER.md §5), the
+> chapter spine is the book file's `chapters` header owned by `chapter`
+> ops (§3), and the overlay door this section routed the three gestures
+> through (`setChapters`/`mirrorChapterMarks`) was deleted with the
+> overlay system at R6b (§7). Read RENDERER.md §3 and §5 for the grammar
+> and the surface that replaced them; nothing below is a build
+> instruction any more.
+
 The user, verbatim, in two rulings:
 
 > "Instead of splitting chapters the way we currently do, let's have

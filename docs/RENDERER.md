@@ -242,6 +242,39 @@ folders); the html-editor machinery; the PDF block editor's WRITE half (A1).
 Wave-6 "branched-read overlay ping-pong" (PLAN.md) is **superseded** — there
 are no overlay files to ping-pong.
 
+**Landed at R6b, with the deletion proven by grep and the gates:**
+
+- **The cast EPUBs — DONE.** `ensureCast`, `castFlowingBook`, `ensureStepCast`,
+  `castStepBook`, `ensureTranslateCast`, `towardTheFlowingBook`,
+  `planConversion`, `planConversionForStep`, `castNameFor` and the
+  `workspace:plan` door are deleted whole. A reading's landing makes the book
+  file and the facsimile and nothing else; a save's landing and a translation's
+  landing make no document at all, because the row they mint is answered by the
+  sheet. `planRendering` composes exactly two things now: a facsimile into
+  `generated/`, and an export into `final/`.
+- **The legacy export branch — DONE.** `compiles` was three conjuncts and is
+  now one (`kind === 'epub' || kind === 'txt'`): EVERY epub and txt export
+  materialises and compiles, edited or not, in either language. The facsimile
+  is the only rendering that still goes down the bank route, which is what it
+  has always been a record of.
+- **Standing on a `curate` row — DONE, and it is §8's re-key.** See §8.
+
+**NOT landed at R6b, and named rather than implied:** `working/`, the whole of
+`epub-reader.ts`/`epub-writer.ts`'s pack half/`click-reporter.ts`,
+`overlays.ts`, `shared/overlay.ts`, `curation-lock.ts`, `uncommitted.ts`,
+`history.ts`, the epub-view and html-editor components, the `epub` and `editor`
+tab kinds, `ProjectSummary.renderings`, `castForCurateStep`/`castForTranslateStep`/
+`castBook` and `documentAtPosition`'s cast arms, and the PDF block editor's
+write half. **The overlay system is still live and still operable**: the PDF
+block editor turns on wherever a reading exists (`positionView.outlines`), its
+strikes still write `overlays/<key>.json`, and Apply changes still freezes a
+new `curate` step. So the app carries TWO editing surfaces at once — which is
+the state R5 left it in, not one R6b created — and R6c is where the second one
+goes. What R6b did change about it is that a curate row now opens the SHEET
+rather than a cast that will never be made again, so the row is honest about the
+book even while the machinery behind it is still standing. The maps that make
+R6c mechanical are in the R6b report.
+
 Stays: the ledger model whole (steps, payloads, retention, staleness, deletes,
 the tree, one-selection), the queue, Home, imports, metadata steps, exports
 into `final/`, the Ollama teardown, the engine's every command.
@@ -254,6 +287,38 @@ records through the book file's `src` mapping; archive `overlays/` and
 `curations/` aside (never deleted). The user's library is small and
 dev-stage; the re-key is mechanical because `src` records exactly the old
 coordinates.
+
+**As built at R6b, and the one place the built thing differs from the sentence
+above — deliberately.** The re-key is NOT a pass that rewrites anything on
+disk; it happens when the book is opened, every time, in
+`shared/curate-bridge.ts`. Two reasons, and both are this plan's own rules:
+
+1. **A curate step's payload is that row's record and it is `irreplaceable`**
+   (`RETENTION_OF`, shared/ledger.ts). Converting payloads in place would be
+   this app editing somebody's history to make its own reading easier, and the
+   invariant everything else here rests on is that no step is deleted from
+   anybody's ledger and no step's payload is deleted by migration. So
+   `curations/<uuid>.json` stays exactly where and as it was written.
+2. **Ensuring the book file was already the migration** (§9, R2). There is no
+   "first open under the new model" hook to hang a one-shot pass on, and adding
+   one would be a second thing that has to stay true.
+
+So: `editsSinceTransform` admits `curate` rows onto the replay walk;
+`openBookAtPosition` reads the snapshot and re-keys it through `parts[].src`;
+the decisions replay as ordinary ops. `strike`/`restore`, `category` and `text`
+map one to one. The chapter spine is stated in FULL — every seeded division the
+save did not keep is `remove`d and every division it named is `set` — because
+the old format's list was definitive where the op grammar's takeover rule starts
+from the engine's seed, and saying it in full is what makes the two agree.
+
+**What does not map is said on the paper, never guessed at** (§3). An amendment
+whose coordinate is in no row of this book, a text override whose banked answer
+this reflow reads as several blocks, and every `join` — a manual page-turn join,
+which is a SEAM on the sheet now and is joined against the two ids the seam
+names — produce no op and one sentence each, carried on the load as
+`BookLoad.unplaced` and drawn above the sheet. `archive overlays/ aside` was
+NOT built and is not needed by any of this; it belongs with the deletion of the
+overlay system in R6c.
 
 ## 9. Execution order
 
@@ -323,8 +388,23 @@ unless asked, an honest partial beats a bent whole.
   stay where they already were — above the translation, where changing the
   words changes the question the cost cache is keyed on. **Records streaming
   did not land**; §10 says why.
-- **R6 (subtraction):** everything in §7 deleted; migration shim; imported-EPUB
-  explode; docs updated (WORKBENCH §11 marked superseded).
+- **R6 (subtraction)** — landing in slices:
+  - **R6a — LANDED `65b150b`:** the imported-EPUB explode. The container is the
+    receipt, `book = f(epub)`, the publisher's nav and semantics kept.
+  - **R6b — LANDED (this commit):** the cast EPUBs deleted whole; the legacy
+    `vlm-convert --overlay --final` export branch collapsed, so every epub and
+    txt export materialises and compiles; the proof sheet made the answer for
+    `curate` and `translate` rows; §8's re-key built as a read-time bridge so an
+    old save replays as ops and says out loud what it cannot place. WORKBENCH
+    §11 marked superseded. §7's remaining list is annotated with what landed and
+    what did not.
+  - **R6c — NOT STARTED:** the actual deletion of the overlay system and the
+    iframe stack — `working/`, `epub-reader.ts`, `click-reporter.ts`,
+    `overlays.ts`, `shared/overlay.ts`, `curation-lock.ts`, `uncommitted.ts`,
+    `history.ts`, the epub-view and html-editor components, the `epub`/`editor`
+    tab kinds, `ProjectSummary.renderings`, `documentAtPosition`'s cast arms and
+    the PDF block editor's write half (A1). This is the wave that leaves ONE
+    editing surface; until it lands there are two.
 
 Each wave lands and pushes before the next starts. R1 and R2 can run in
 parallel (disjoint trees: `src/` vs `app/`); everything after is serial through
