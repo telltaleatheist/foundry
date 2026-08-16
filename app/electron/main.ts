@@ -31,6 +31,7 @@ import {
 
 import { readAppSettings, writeAppSettings } from './app-settings';
 import { cancelSetup, setupWslEnv } from './backend-setup';
+import { loadBook } from './book';
 import { injectReporter, REPORTER_ID, REPORTER_MEMBER, REPORTER_SOURCE, sanitizeChapter } from './click-reporter';
 import {
   engineInfo,
@@ -2974,6 +2975,32 @@ function registerIpc(): void {
           : null
       )),
   );
+  /*
+   * THE BOOK ITSELF — the rows the renderer draws, off the file the reflow made.
+   *
+   * ONE CALL AND NO PATH CROSSES IT IN EITHER DIRECTION, which is the difference
+   * from `document-at` one door up and is worth saying plainly. That handler
+   * ANSWERS with a path a viewer then opens, so it admits it to the allow-list;
+   * this one answers with the BOOK — blocks, chapters, measured type — and the
+   * renderer never learns where any of it lives. There is nothing for it to open,
+   * so there is nothing to admit.
+   *
+   * IT MAY SPAWN THE ENGINE, and that is the whole of what makes opening a read
+   * position work on a library written before this format existed
+   * (electron/book.ts says why the ensure and the migration are one path). It is
+   * awaited rather than fired and forgotten, unlike `towardTheFlowingBook`: the
+   * caller is a pane with `Opening the book…` on it and nothing else to show, so
+   * a promise that resolved before the file existed would be a blank sheet with
+   * no sentence on it.
+   *
+   * IT ANSWERS A FAILURE RATHER THAN REJECTING ONE, and the sentence it carries
+   * is composed to be READ — it lands on the paper (RENDERER-DESIGN.md §5). The
+   * paths that make a refusal actionable go to the terminal instead, which is the
+   * house rule for every sentence in this app. The one thing that still rejects
+   * is a directory that is not one of Home's projects: that is the gate refusing,
+   * not the book being unavailable.
+   */
+  ipcMain.handle('book:load', (_event, projectDir: string) => loadBook(projectDir));
   ipcMain.handle('ledger:describe-delete', async (_event, projectDir: string, stepId: string) => {
     // Proven BEFORE the card is composed, so a warning is never put on screen for
     // something the delete would refuse a click later.

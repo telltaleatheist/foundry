@@ -2124,6 +2124,61 @@ export async function bankForPosition(dir: string): Promise<string> {
 }
 
 /**
+ * WHERE THE BOOK FILE IS — the bank's own path with `.book` in front of its
+ * extension, and the whole of the app's knowledge of that spelling.
+ *
+ * ── Why it is derived from the bank and not composed from the key ───────────
+ *
+ * For `readingBank`'s reason exactly, one layer up: a project can hold two banks
+ * (a re-read asking for a different page range branches by design), and a book
+ * file composed from the project key would be the reflow of whichever reading
+ * happened to be newest, filed under the row somebody is standing on. The bank at
+ * the position is the answer to "which reading is this branch of the story
+ * about"; the book file is that bank, reflowed, so it is named after it and can
+ * never drift from it.
+ *
+ * IT REFUSES A BANK THAT IS NOT A `.jsonl` rather than appending to whatever it
+ * was given. There is no second spelling to fall back to and guessing one would
+ * put the reflow of somebody's reading in a file nothing will ever look for
+ * again — the engine writes banks as JSONL and nothing else does.
+ */
+export function bookFileFor(bank: string): string {
+  if (!bank.toLowerCase().endsWith('.jsonl')) {
+    throw new ProjectError(
+      `${bank} is not a readings bank — those are the .jsonl files the engine writes, and the `
+      + 'book file is named after one. Refusing to guess at where the book would live.',
+    );
+  }
+  return `${bank.slice(0, -'.jsonl'.length)}.book.jsonl`;
+}
+
+/**
+ * The bank at the position and the book file made from it, with the directory
+ * PROVEN to be one of Home's projects first.
+ *
+ * THE GATE IS `deletableProjectDir`'s, on the step-ledger family's rule: every
+ * call that takes a directory named by the renderer asks the same question, so
+ * that none of them is the lenient way in. This one only reads — but what it
+ * reads is handed to a SPAWN of the engine with `--out` pointed at the answer
+ * (electron/book.ts), and a path this process never agreed to is not a path
+ * anything gets to write into.
+ *
+ * The manifest rides back with it because every caller needs it anyway — the
+ * project's title is the only thing the book file itself cannot say.
+ */
+export async function bookAtPosition(dir: string): Promise<{
+  dir: string;
+  manifest: ProjectManifest;
+  bank: string;
+  book: string;
+}> {
+  const resolved = deletableProjectDir(dir);
+  const manifest = await readManifest(resolved);
+  const bank = readingBank(resolved, manifest);
+  return { dir: resolved, manifest, bank, book: bookFileFor(bank) };
+}
+
+/**
  * WHICH DOCUMENT THE PANES SHOW AT THE POSITION — the last third of the pointer's
  * promise, and the one that was never built.
  *

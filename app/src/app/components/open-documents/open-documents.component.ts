@@ -704,9 +704,9 @@ export class OpenDocumentsComponent {
    * tabs and main's catalogue and nothing else.
    */
   private readonly openProjects = computed<readonly ProjectSummary[]>(() => {
-    const paths = this.tabs.tabs().map((tab) => fold(tab.path));
+    const paths = this.tabs.tabs().map((tab) => tab.path);
     return this.projects.items().filter((project) => project.problem === null
-      && paths.some((path) => path.startsWith(`${fold(project.dir)}/`)));
+      && paths.some((path) => inProject(path, project.dir)));
   });
 
   /**
@@ -792,7 +792,7 @@ export class OpenDocumentsComponent {
     const out: Group[] = [];
 
     for (const project of this.openProjects()) {
-      const mine = open.filter((row) => fold(row.path).startsWith(`${fold(project.dir)}/`));
+      const mine = open.filter((row) => inProject(row.path, project.dir));
       if (mine.length === 0) continue;
 
       const history = this.ledger.historyFor(project.dir);
@@ -923,6 +923,21 @@ export class OpenDocumentsComponent {
         if (claimed.has(row.key)) continue;
         if (row.tab?.kind === 'editor') {
           extras.push({ ...row, title: 'HTML', depth: 1, dir: project.dir });
+          claimed.add(row.key);
+          continue;
+        }
+        /*
+         * THE BOOK IS THE READ STEP, and the read step is already a row up
+         * there — the one called "Book", which is what standing on it opens
+         * (`showBook`, core/tabs.service.ts). It cannot be claimed by the
+         * catalogue test below because it is not a file in the catalogue: its
+         * path is the PROJECT's own directory, which is the whole of how a tab
+         * for something that is not a file names what it is about. Without this
+         * it would fall through to the loose row at the bottom of the tree,
+         * announcing itself as a copy the reader went and opened by hand — the
+         * exact confusion the merge of steps and documents exists to end.
+         */
+        if (row.tab?.kind === 'book') {
           claimed.add(row.key);
           continue;
         }
@@ -1588,7 +1603,27 @@ interface Group {
 
 function glyphFor(tab: Tab): string {
   if (tab.kind === 'editor') return '</>';
+  // The book wears the reading's own mark, because the book IS the reading — the
+  // same glyph `glyphForStep` gives the row that opens it, one line above it in
+  // this tree.
+  if (tab.kind === 'book') return '▤';
   return tab.kind === 'epub' ? '▤' : '▦';
+}
+
+/**
+ * Is this open document inside this project — or IS it this project?
+ *
+ * THE SECOND HALF IS THE BOOK TAB, and it is the one tab in this app whose path
+ * is a directory rather than a file (`TabKind`, core/tabs.service.ts). Every
+ * other row here is a file somewhere under the project, so the prefix test with
+ * the separator appended is the whole rule — and the separator is what stops
+ * `Kershaw-a1b2c3d4` from claiming the documents of `Kershaw-a1b2c3d4-notes`
+ * sitting beside it, which is why it cannot simply be dropped.
+ */
+function inProject(filePath: string, dir: string): boolean {
+  const root = fold(dir);
+  const target = fold(filePath);
+  return target === root || target.startsWith(`${root}/`);
 }
 
 /**

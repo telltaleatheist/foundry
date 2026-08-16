@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 
+import { BookViewComponent } from '../book-view/book-view.component';
 import { EpubViewComponent } from '../epub-view/epub-view.component';
 import { HtmlEditorComponent } from '../html-editor/html-editor.component';
 import { PdfViewComponent } from '../pdf-view/pdf-view.component';
@@ -36,16 +37,24 @@ import type { Tab } from '../../core/tabs.service';
  * not a file at all: an `editor` tab is a book's chapter source, which lives in
  * a pane of its own so the rendered page can sit beside it.
  *
+ * AND THE FOURTH IS NOT A FILE EITHER, and is the one the app is moving toward:
+ * a `book` tab is the project's reflowed blocks drawn on a proof sheet
+ * (app-book-view, docs/RENDERER.md §5), which is what a read row shows now. It
+ * is not deferred like the PDF engine because there is no chunk to defer — it is
+ * this app's own components over rows that arrive on an IPC call.
+ *
  * The empty state is Home's job now, not this component's: this only ever runs
  * with a tab, and a viewer with nothing in it is a screen the workspace does not
  * render.
  */
 @Component({
   selector: 'app-viewer',
-  imports: [EpubViewComponent, HtmlEditorComponent, PdfViewComponent],
+  imports: [BookViewComponent, EpubViewComponent, HtmlEditorComponent, PdfViewComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    @if (tab().kind === 'epub') {
+    @if (tab().kind === 'book') {
+      <app-book-view [tab]="tab()" />
+    } @else if (tab().kind === 'epub') {
       <app-epub-view [tab]="tab()" />
     } @else if (tab().kind === 'editor') {
       <app-html-editor [tab]="tab()" />
@@ -68,7 +77,7 @@ import type { Tab } from '../../core/tabs.service';
   `,
   styles: [`
     :host { display: block; width: 100%; height: 100%; background: var(--bg-sunken); }
-    app-epub-view, app-pdf-view, app-html-editor { display: block; width: 100%; height: 100%; }
+    app-book-view, app-epub-view, app-pdf-view, app-html-editor { display: block; width: 100%; height: 100%; }
     .waiting { width: 100%; height: 100%; background: var(--bg-sunken); }
   `],
 })

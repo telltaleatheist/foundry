@@ -204,6 +204,10 @@ const api: FoundryApi = {
     delete: (projectDir, stepId) => ipcRenderer.invoke('ledger:delete', projectDir, stepId),
   },
 
+  book: {
+    load: (projectDir) => ipcRenderer.invoke('book:load', projectDir),
+  },
+
   translation: {
     ofDocument: (projectDir, filePath) =>
       ipcRenderer.invoke('translation:of-document', projectDir, filePath),

@@ -392,6 +392,64 @@ export async function finalizeEpub(epubPath: string, outPath: string): Promise<F
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// vlm-book
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** What `foundry vlm-book` did, or the sentence saying why it would not. */
+export interface BookOutcome {
+  ok: boolean;
+  /** The engine's own words, when it refused. Never paraphrased. */
+  reason: string | null;
+}
+
+/**
+ * Reflow a readings bank into the book file:
+ * `foundry vlm-book --readings <bank.jsonl> --out <book.jsonl>`.
+ *
+ * WHAT THE COMMAND IS FOR, in one line: the bank is one row per PAGE holding the
+ * model's answer for it, and it knows nothing about a paragraph — so this is the
+ * pass that fuses the hyphens, joins the paragraphs the printer broke across a
+ * leaf, cuts the footnote areas into notes and mints an id for every block. The
+ * result is the document every op in the project is keyed to (docs/RENDERER.md
+ * §1), and it is REGENERABLE: the bank is the reset point, and running this again
+ * over the same bank produces the same ids for the same blocks.
+ *
+ * `--out` MAY NOT BE `--readings`. The bank is the irreplaceable thing in a
+ * project — hours of GPU with no second copy anywhere — and the engine writes the
+ * book beside it under a name of its own (`bookFileFor`, electron/projects.ts).
+ *
+ * NEVER THROWS, on `stampEpub`'s and `finalizeEpub`'s rule: this runs on the way
+ * into a pane, and a bank the engine could not reflow is a fact about that
+ * project that belongs on the sheet in words. What the CALLER MUST NOT DO is
+ * treat a refusal as a success — there is no book file after one, so parsing what
+ * is at the path would either fail on nothing or read a stale file from an
+ * earlier run, and both are worse than the sentence.
+ */
+export async function writeBookFile(readingsPath: string, outPath: string): Promise<BookOutcome> {
+  const run = runEngine(['vlm-book', '--readings', readingsPath, '--out', outPath]);
+  /*
+   * The same two minutes `stampEpub` and `finalizeEpub` allow, for work of the
+   * same order over the same book — a few hundred pages of banked answers parsed,
+   * reflowed and written once. Past that nothing is happening and a pane is
+   * waiting on it with `Opening the book…` on screen.
+   */
+  const timer = setTimeout(() => run.cancel(), 120_000);
+  const result = await run.done.finally(() => clearTimeout(timer));
+
+  if (result.code !== 0) {
+    const said = result.stderr.trim() || result.stdout.trim();
+    const unknown = result.code === 2 && /unknown command/i.test(said);
+    return {
+      ok: false,
+      reason: unknown
+        ? `vlm-book is not in this engine build (${engineCommand().source}).`
+        : said || `The engine exited ${result.code} with nothing to say.`,
+    };
+  }
+  return { ok: true, reason: null };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // doctor
 // ─────────────────────────────────────────────────────────────────────────────
 

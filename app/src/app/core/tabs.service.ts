@@ -129,7 +129,21 @@ import { api } from './foundry';
  * that bumps the source's revision and reloads whatever pane is rendering it.
  */
 
-export type TabKind = 'pdf' | 'epub' | 'editor';
+/**
+ * `book` IS THE FOURTH KIND, AND IT IS THE ONLY ONE THAT IS NOT A FILE.
+ *
+ * The other three are a document on disk and a face of one. A `book` tab is the
+ * project's BOOK — the reflowed blocks the renderer draws on the proof sheet
+ * (docs/RENDERER.md §5) — which does not live in any one file the user opens: it
+ * is made from the bank at the position, main decides which bank that is, and the
+ * renderer never learns where it is kept. So the tab carries the PROJECT
+ * DIRECTORY in `path` and asks main for the rows by naming it.
+ *
+ * That is why `projectDirOf` has a case for this kind and nothing else does: for
+ * every other tab the project is the folder the file is IN, and for this one the
+ * path IS the project.
+ */
+export type TabKind = 'pdf' | 'epub' | 'editor' | 'book';
 
 export interface Tab {
   id: string;
@@ -139,6 +153,11 @@ export interface Tab {
    * anywhere, that is the copy in the managed workspace — and it stays that even
    * after Save As, because the saved file is a byte-for-byte copy and re-opening
    * it would throw away an unpack for nothing.
+   *
+   * FOR A `book` TAB THIS IS THE PROJECT DIRECTORY and not a file at all — see
+   * `TabKind`. Everything that treats a path as bytes to open is gated on the
+   * kind, and the two prefix tests that group a project's tabs together accept
+   * the directory itself for exactly this one.
    */
   path: string;
   /**
@@ -787,7 +806,7 @@ export class TabsService {
       this.projects.items();
       for (const tab of this.all()) {
         if (tab.named) continue;
-        const want = this.nameFor(tab.path);
+        const want = this.titleFor(tab);
         if (want !== tab.title) this.patch(tab.id, { title: want });
       }
     });
@@ -1134,6 +1153,18 @@ export class TabsService {
     // document, two faces, and the position is about the document.
     const subject = tab.kind === 'editor' ? this.byId(tab.sourceTabId) : tab;
     if (subject === null) return;
+    /*
+     * THE BOOK MOVES NOTHING, because it cannot disagree with the pointer. This
+     * mirror exists so that a pane and a position can never describe two different
+     * things — it answers "which step is this FILE" — and the book tab is not a
+     * file: it is put on screen BY a read row and shows whatever reading that row
+     * is about (`showBook`). Asking main which step it belongs to would be asking
+     * about a directory, and the honest answer for a directory is nothing. A book
+     * open under a project standing on a curate or translate row is showing that
+     * chain's own reading, which is the same book — so there is nothing to correct
+     * there either.
+     */
+    if (subject.kind === 'book') return;
     const dir = this.projectDirOf(subject);
     if (dir === null) return;
     const key = fold(dir);
@@ -1350,7 +1381,36 @@ export class TabsService {
      * anywhere else would be recording an intention rather than what happened.
      */
     this.rememberShown(move.key, target);
-    const swapped = await this.showDocument(move, target);
+    /*
+     * ── A READ ROW SHOWS THE BOOK, AND THAT IS THE SEAM MOVING AGAIN ──────────
+     *
+     * `documentAtPosition` answers a read row with the EPUB cast from its reading,
+     * and every word of its own comment about why is still true — right up to the
+     * ruling this wave is built on: *"we arent supposed to be rendering the book as
+     * an epub… the user isnt reading a book on foundry, they're editing the
+     * contents of a book"* (docs/RENDERER.md §0). The cast was the flowing document
+     * while there was nothing else that flowed. There is now: the book file, drawn
+     * as blocks on a proof sheet, which is the surface every op in R3 and after is
+     * written against.
+     *
+     * SO A READ ROW OPENS THE BOOK TAB AND NOT THE CAST, and it is EITHER/OR
+     * rather than both — one project, one column, one thing on screen. A row that
+     * opened the sheet and then let `showDocument` put the EPUB beside it would be
+     * two tabs for one instruction, and the second of them would be the surface
+     * this wave exists to replace.
+     *
+     * CURATE AND TRANSLATE ROWS ARE UNTOUCHED THIS WAVE. Their surfaces still
+     * strike, relabel and edit through machinery the book has none of yet (R3
+     * builds the ops; R6 deletes what they replace), and moving them now would be
+     * taking working gestures away and giving nothing back. The main process still
+     * answers `document-at` for a read row exactly as it did — the answer is simply
+     * not what the panes are pointed at — which is what keeps the pointer
+     * bookkeeping (`rememberShown`, `standForTab`'s guard, the sweep) reading one
+     * fact rather than two.
+     */
+    const swapped = view.step !== null && view.step.action === 'read'
+      ? this.showBook(move)
+      : await this.showDocument(move, target);
     const readingMoved = (move.was?.view.reading?.id ?? null) !== (view.reading?.id ?? null);
     const curationMoved = (move.was?.view.curation?.id ?? null) !== (view.curation?.id ?? null);
     for (const tab of this.all()) {
@@ -1519,6 +1579,62 @@ export class TabsService {
   }
 
   /**
+   * Put the project's BOOK on screen — the proof sheet, not a file.
+   *
+   * ── One per project, forever ────────────────────────────────────────────────
+   *
+   * There is exactly one book in a project and one tab for it. Everything else in
+   * this file that opens something has to decide between a swap and a second tab,
+   * because two paths can be two documents of one project; here there is nothing
+   * to decide, because the tab does not name a file at all — it names the project,
+   * and main answers with whatever the position's reading reflowed to. A book tab
+   * that is already open is therefore already correct for any read row of that
+   * project, and revealing it is the whole of the work.
+   *
+   * IT LANDS IN THE COLUMN THE PROJECT IS ALREADY BEING READ IN, which is
+   * `showDocument`'s rule and for `showDocument`'s reason: a project's documents
+   * belong together, and a person reading two books must not have this one arrive
+   * in the other one's column. "Open in split" is consumed here too — the flag
+   * rides on a position move and this is now one of the two places a move lands.
+   *
+   * ANSWERS FALSE, ALWAYS: the boolean its caller wants is "did the PAGES under
+   * the block editor move", and nothing here points a PDF pane anywhere.
+   */
+  private showBook(move: PositionMove): boolean {
+    const mine = this.all().filter((tab) => {
+      if (tab.kind === 'editor') return false;
+      const dir = this.projectDirOf(tab);
+      return dir !== null && fold(dir) === move.key;
+    });
+    const home = this.paneAmong(mine);
+    const split = this.splitNext.delete(move.key);
+    const id = this.bookTabIn(move.dir);
+    if (split) this.openInNewPane(id, this.indexOfPane(home) + 1);
+    else this.reveal(id, false, home?.id ?? null);
+    return false;
+  }
+
+  /**
+   * This project's book tab, made if it has none yet. Never a second one.
+   *
+   * MADE HERE RATHER THAN THROUGH `openFile`, and that is not a shortcut past a
+   * gate. Every other tab in this app is made by `adopt`, on main's own
+   * `document:opened` announcement, because main is what decides whether a path
+   * may be opened at all. There is no path here to decide about: the tab is the
+   * PROJECT, its rows arrive over an IPC that admits nothing (`book.load`,
+   * shared/api.ts), and a door answering "yes, you may open this directory" would
+   * be a door granting access to a folder for being asked about it.
+   */
+  private bookTabIn(projectDir: string): string {
+    const key = fold(projectDir);
+    const already = this.all().find((tab) => tab.kind === 'book' && fold(tab.path) === key);
+    if (already !== undefined) return already.id;
+    const made = this.blankTab('book', projectDir, this.projectTitleOf(projectDir));
+    this.all.update((tabs) => [...tabs, made]);
+    return made.id;
+  }
+
+  /**
    * The column one of these documents is in — the focused one for preference.
    *
    * "For preference" is the whole of it: with two of a project's faces on screen
@@ -1572,8 +1688,19 @@ export class TabsService {
    */
   async splitAtPosition(projectDir: string): Promise<void> {
     this.forgetSplitIn(projectDir);
-    const target = await this.ledger.documentAt(projectDir);
     const at = this.indexOfPane(this.focusedPane());
+    /*
+     * A READ ROW SPLITS THE BOOK, for `showPosition`'s reason and so that the two
+     * gestures cannot disagree. Asking main which document this position names
+     * would answer with the cast EPUB — the surface the sheet replaces — and put
+     * it in a column of its own beside a book somebody was reading, which is the
+     * "one tab, not two" rule broken by the one door that went round it.
+     */
+    if (this.pictureIn(projectDir)?.view.step?.action === 'read') {
+      this.openInNewPane(this.bookTabIn(projectDir), at + 1);
+      return;
+    }
+    const target = await this.ledger.documentAt(projectDir);
     if (target === null) {
       // The position names no document of its own, so the honest thing to put in
       // the new column is this book — the same fallback `showDocument` makes.
@@ -1619,6 +1746,41 @@ export class TabsService {
    */
   private nameFor(filePath: string): string {
     return this.projects.nameFor(filePath);
+  }
+
+  /**
+   * What to call this TAB — one step above `nameFor`, which answers about a path.
+   *
+   * The two are the same question for every tab that is a file. A `book` tab is
+   * not one (see `TabKind`): its path is the project's own directory, and
+   * `nameFor` would answer with the folder said aloud — a slug with a hash on the
+   * end — for the one document in this app whose name is never in doubt. It is
+   * the project's title, which is what Home, the library and every other surface
+   * already call this book.
+   *
+   * IT IS RE-DERIVED RATHER THAN FROZEN AT BIRTH, which is why this is a function
+   * and not a flag: a metadata step can change a book's title while it is open,
+   * and the naming effect above exists precisely so that every tab that did not
+   * have a name CHOSEN for it follows.
+   */
+  private titleFor(tab: Tab): string {
+    return tab.kind === 'book' ? this.projectTitleOf(tab.path) : this.nameFor(tab.path);
+  }
+
+  /**
+   * The title of the project AT this directory, or the folder said aloud.
+   *
+   * The fallback is `nameFor`'s own last resort rather than a second one: a
+   * directory no project claims is a book that has left the library while a tab
+   * was open, and the honest thing to say about it is whatever its folder is
+   * called.
+   */
+  private projectTitleOf(dir: string): string {
+    const key = fold(dir);
+    const project = this.projects.items().find((one) => fold(one.dir) === key) ?? null;
+    return project === null || project.problem !== null || project.title.length === 0
+      ? this.nameFor(dir)
+      : project.title;
   }
 
   // ── Opening ──────────────────────────────────────────────────────────────
@@ -3206,9 +3368,20 @@ export class TabsService {
   // some blocks after translating, save, generate that row — is a thing a person
   // can do.
 
-  /** The project this document belongs to, or null for a file opened from elsewhere. */
+  /**
+   * The project this document belongs to, or null for a file opened from elsewhere.
+   *
+   * A `book` TAB NAMES ITS PROJECT DIRECTLY (see `TabKind`), so it is answered
+   * from the tab rather than looked up: `projectFor` asks which project a FILE is
+   * inside, and a directory is not inside itself. Asked of the catalogue anyway,
+   * so that a directory this window no longer has a project for answers null like
+   * anything else — the alternative is a tab claiming to belong to a book that has
+   * left the library.
+   */
   private projectDirOf(tab: Tab): string | null {
-    return this.projects.projectFor(tab.path)?.dir ?? null;
+    if (tab.kind !== 'book') return this.projects.projectFor(tab.path)?.dir ?? null;
+    const key = fold(tab.path);
+    return this.projects.items().find((project) => fold(project.dir) === key)?.dir ?? null;
   }
 
   /**
@@ -6085,6 +6258,17 @@ export class TabsService {
       return;
     }
     /*
+     * THE BOOK HAS NO STACK YET, and saying so is the rule this whole function
+     * obeys: a chord that quietly did nothing is indistinguishable from a chord
+     * that is broken. Its ops and their in-memory stack are the next wave's
+     * (docs/RENDERER.md §9, R3) — until they exist there is nothing on that
+     * surface for an undo to take back.
+     */
+    if (tab.kind === 'book') {
+      this.notice.set(`There is nothing to undo in ${tab.title}: the book is read-only on this surface for now.`);
+      return;
+    }
+    /*
      * A SCAN GOES THROUGH THIS FUNCTION AND NOT AROUND IT. Its rows name a block
      * in a readings bank instead of an element in a chapter and its setter is a
      * line of the overlay instead of a call into somebody's markup, but an action
@@ -6924,6 +7108,19 @@ export class TabsService {
   async saveAs(id: string): Promise<void> {
     const tab = this.byId(id);
     if (!api || !tab) return;
+    /*
+     * THE BOOK IS NOT A FILE, so there is nothing for a picker to write. It is
+     * made from the pages this project was read from and it is remade from them at
+     * will; what a person actually wants from Save here is a finished copy, which
+     * is Export — the door that renders the position through the whole ledger and
+     * files the result. Said rather than silently ignored, because a chord that
+     * does nothing reads as a broken app.
+     */
+    if (tab.kind === 'book') {
+      this.notice.set(
+        `${tab.title} is the book itself, not a file — Export files a finished copy of it.`);
+      return;
+    }
     if (tab.kind === 'editor') {
       await this.flushPending(tab.id);
       if (tab.sourceTabId !== null) await this.saveAs(tab.sourceTabId);

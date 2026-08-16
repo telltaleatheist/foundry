@@ -7,6 +7,7 @@
  * mismatch. So the interface lives here: preload.ts implements it, and the
  * renderer's `window.foundry` is typed as it.
  */
+import type { BookOutcome } from './book';
 import type { ReadAsk } from './ledger';
 import type { ReReadPrompt } from './reread';
 import type {
@@ -836,6 +837,43 @@ export interface FoundryApi {
      * else; a payload that survives is one another step still names.
      */
     delete(projectDir: string, stepId: string): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
+  };
+
+  /**
+   * THE BOOK — the one document this app edits, as the renderer draws it.
+   *
+   * ── Why a project directory and not a file ────────────────────────────────
+   *
+   * Because the renderer has no business knowing which file the book is in.
+   * Which bank a position's reading left, where the reflow of that bank lives,
+   * and whether it has been made yet are all main's records — the same records
+   * `ledger.documentAt` reads one door up, resolved in the same place so the two
+   * cannot come to disagree. A renderer that composed the path would be a second
+   * opinion about which of two readings a branch is about, which is the failure
+   * `readingBank` (electron/projects.ts) exists to end.
+   *
+   * ── It can be slow exactly once, and the sheet says so ────────────────────
+   *
+   * A project whose bank has never been reflowed has its book file MADE on this
+   * call — main spawns the engine and waits — which doubles as the migration for
+   * every project in the library, since they all predate the format
+   * (docs/RENDERER.md §9, R2). It is seconds of arithmetic over a file that is
+   * already on disk, it happens once per reading, and the pane shows
+   * `Opening the book…` while it runs.
+   *
+   * IT ANSWERS WITH A SENTENCE RATHER THAN REJECTING, on `overlay.blocks`'s rule
+   * and for its reason: a book that has not been read yet, a bank the engine
+   * would not reflow and a file whose grammar this build does not know are all
+   * states a person should meet as words on the paper (RENDERER-DESIGN.md §5)
+   * rather than as a broken tab. The sentences carry no paths, and the pane
+   * renders whichever one comes back verbatim — the alternative to a sentence is
+   * an empty sheet that looks exactly like a book with nothing in it.
+   *
+   * IT DOES REJECT for a directory that is not one of Home's projects, which is
+   * the security gate refusing rather than the book being unavailable.
+   */
+  book: {
+    load(projectDir: string): Promise<BookOutcome>;
   };
 
   /**
