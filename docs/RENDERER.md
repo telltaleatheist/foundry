@@ -248,6 +248,16 @@ unless asked, an honest partial beats a bent whole.
   MAIN materializes derived book files and the engine never replays ops —
   one implementation, not two. The engine learns to COMPILE FROM a book
   file in R5, which is when export needs it.
+- **R1b (engine):** book file v3 per **docs/BOOK-FILE.md** — the format
+  contract, written as an architect would: receipt/book wall, purity
+  (`book = f(receipt)`), atomic writes, bankSha integrity, deliberate-only
+  regeneration, forward-compatible versioning, `parts` with char ranges,
+  the shelf (furniture + suppressed heads as restorable rows), seams as
+  block-id pairs, figure crops cut once into `readings/<key>.images/`.
+  User ruling 2026-08-16: *"i want to do this right, even if it takes up a
+  little bit more disk space."* The app mirror (`app/shared/book.ts`)
+  updates to v3 in the same commit that lands R1b or the one immediately
+  after R2 — never later.
 - **R2 (app spine):** book file + ops over IPC; renderer skeleton READ-ONLY —
   blocks, virtual scroll, selection, proper chrome per RENDERER-DESIGN.md.
   Opening a read position ENSURES the book file (main spawns `vlm-book` if
