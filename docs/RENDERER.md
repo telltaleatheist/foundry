@@ -267,7 +267,7 @@ unless asked, an honest partial beats a bent whole.
   absent), which doubles as the migration for existing projects.
   Facsimile-at-read-landing is split out as **R2b** — small, separate, after
   the skeleton proves the pipeline.
-- **R3 (ops core):** the shared replay; the in-memory stack; strike/restore
+- **R3 (ops core)** — LANDED `b82b2a8`: the shared replay; the in-memory stack; strike/restore
   (with derived ref removal), text edit, category; Apply → step; standing on
   any step renders its chain; branch-on-edit-at-old-step.
 - **R4 (structure ops):** merge/split/move/join; chapter ops + lines; furniture
