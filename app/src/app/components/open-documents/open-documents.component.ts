@@ -390,6 +390,12 @@ import { UiService } from '../../core/ui.service';
             <button class="danger" role="menuitem" (click)="fromMenu(open.row, 'discard')">Delete this step…</button>
           } @else {
             <button role="menuitem" (click)="fromMenu(open.row, 'reveal')">Show in file manager</button>
+            @if (open.row.kind === 'export') {
+              <!-- The same door the finished shelf row presses — an OS save
+                   dialog over a copy, so the export reaches the hand from
+                   either surface it is met on. -->
+              <button role="menuitem" (click)="fromMenu(open.row, 'save-copy')">Save a copy…</button>
+            }
             @if (open.row.tab !== null) {
               <button role="menuitem" (click)="fromMenu(open.row, 'close')">Close</button>
             }
@@ -868,8 +874,8 @@ export class OpenDocumentsComponent {
           glyph: made.kind === 'epub' ? '▤' : made.kind === 'pdf' ? '▦' : '≡',
           tooltip: made.kind === 'pdf'
             ? `Open this ${label}\nExported ${new Date(made.madeAt).toLocaleString()}\n${path}`
-            : `${path}\nExported ${new Date(made.madeAt).toLocaleString()}\nFoundry has no tab that `
-              + 'reads one — right-click to show it in the file manager.',
+            : `Show this ${label} in the file manager\nExported `
+              + `${new Date(made.madeAt).toLocaleString()}\nRight-click to save a copy.\n${path}`,
           depth: 1,
           dir: project.dir,
           // A finished thing this app made, so it wears the dot when it is opened:
@@ -1158,7 +1164,19 @@ export class OpenDocumentsComponent {
       this.pick(row.tab);
       return;
     }
-    if (row.openable !== true) return;
+    if (row.openable !== true) {
+      /*
+       * A ROW THIS APP HAS NO TAB FOR STILL ANSWERS THE CLICK. An EPUB or txt
+       * export used to eat the press — no viewer, so nothing happened — and a
+       * person who just exported clicked it expecting to be taken to the file
+       * (user report, 2026-08-16). "Put this in front of me" for a finished
+       * file with no tab means the file manager: the same reveal the context
+       * menu offers, promoted to the click, because a dead left-click teaches
+       * people the row is furniture.
+       */
+      if (row.kind === 'export') void api?.reveal(row.path);
+      return;
+    }
     void this.router.navigateByUrl('/');
     void this.tabs.openFromList(row.path, row.managed === true);
   }
@@ -1345,6 +1363,11 @@ export class OpenDocumentsComponent {
     switch (action) {
       case 'reveal':
         void api?.reveal(row.path);
+        return;
+      case 'save-copy':
+        void api?.saveExport(row.path).catch((err: unknown) => {
+          this.tabs.notice.set(err instanceof Error ? err.message : String(err));
+        });
         return;
       case 'close':
         if (row.tab !== null) void this.tabs.close(row.tab.id);
@@ -1561,7 +1584,7 @@ export class OpenDocumentsComponent {
 }
 
 /** What a right-click can offer, across the four kinds of row. */
-type MenuAction = 'reveal' | 'close' | 'delete' | 'close-project' | 'split' | 'discard';
+type MenuAction = 'reveal' | 'save-copy' | 'close' | 'delete' | 'close-project' | 'split' | 'discard';
 
 /**
  * One drawn line of the library.
