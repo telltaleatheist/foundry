@@ -548,6 +548,46 @@ system."*
    `VlmSidecar` is how a packager hands back the files that go beside
    `--out` without the assembler touching a disk.
 
+1b. ~~**The bank is not the book.**~~ DONE. `foundry vlm-book
+   --readings <bank> --out <book.jsonl>` runs the reflow ONCE and writes
+   it down. User's ruling: *"lets render a facsimile pdf the moment the
+   vlm finishes, and then reflow the bank immediately. fix hyphenated
+   words, join paragraphs split across pages, etc… merge the bank into a
+   single file, merge blocks that were split by pages, and keep page
+   numbers as a rough estimate IF WE CAN. give each block a unique ID
+   after merging the split ones back together, and make sure we have
+   their position on the page."*
+
+   Proved on the real bank: 17 pages → **90 blocks**, 11 of them joined
+   across a leaf, 39 reflowed out of print lines, ids unique, no broken
+   word left in prose.
+
+   - **Ids are derived, not counted** — `b<page>-<order>` off the first
+     banked answer. A sequential number would renumber the whole book the
+     day a better join merged one more pair, and every op after that
+     point would silently point one block back. A merge consumes the
+     SECOND block and leaves the first where it was, so re-running
+     changes which ids exist and never what an existing id means.
+   - **Pages kept, nothing addressed by them** — *"they just shouldnt be
+     trusted."* `page` is where a block started, `pages` is every leaf it
+     touches, and identity is `id` alone.
+   - **The box survives the merge**, exactly as ruled: first part's
+     origin, height the sum, width the union. Verified — a two-page
+     paragraph came out 527px tall, the sum of its parts. It is a
+     rectangle on no page and is still right about the two things
+     anything asks it (type size, column width), because both are ratios.
+
+   **KNOWN GAP, not deferred silently: notes are not split yet.** A
+   Footnote row can still hold several notes with newlines between them
+   — `splitNotes` runs at assembly, as it always has. The user's op
+   grammar is note-level (`{at:{page,order,note}, strike}`), so either
+   the book file splits them into rows of their own (`b14-2#0`) or an op
+   keys `id#ordinal`. Wants a ruling before it is built.
+
+   **Also not built: the facsimile-first orchestration.** The engine can
+   already do it (`vlm-convert --format pdf`); what is missing is the app
+   firing it, then `vlm-book`, when a reading lands.
+
 2. **The app renders that page and never writes to it.** NOT STARTED.
    A strike pushes `{at:{page,order,note}, strike}` onto the in-memory
    stack and the frame paints it; nothing touches a file. Apply writes

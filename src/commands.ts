@@ -38,6 +38,7 @@ import { pdfMeta, PDF_META_FIELDS, type PdfMetaField } from './pdf/meta.js';
 import { probeEndpoint, probeLocalPython, probeVllmLocal, probeWslVllm } from './backend/probe.js';
 import { loadSettings, settingsPath, type FoundrySettings } from './backend/settings.js';
 import { dumpBlocks } from './vlm/blocks-dump.js';
+import { buildBookFile } from './vlm/book-run.js';
 import { vlmConvert } from './vlm/convert.js';
 import { replaysCompletedBank, vlmRead } from './vlm/read.js';
 import { DEFAULT_VLM_CONCURRENCY } from './vlm/endpoint.js';
@@ -295,6 +296,20 @@ const VB_PDF_IN: OptionSpec = {
   type: 'string',
   placeholder: '<file.pdf>',
   describe: 'Only for a bank that recorded no render sizes: the pages are measured again. Never written to.',
+};
+
+const BOOK_READINGS: OptionSpec = {
+  name: 'readings',
+  type: 'string',
+  placeholder: '<file.jsonl>',
+  describe: 'The bank of page answers to reflow. Read, never written.',
+};
+
+const BOOK_OUT: OptionSpec = {
+  name: 'out',
+  type: 'string',
+  placeholder: '<book.jsonl>',
+  describe: 'Where the book file is written. One row per block, in reading order.',
 };
 
 // ── translate ────────────────────────────────────────────────────────────────
@@ -967,6 +982,14 @@ async function runVlmBlocks(args: ParsedArgs): Promise<void> {
   // command exists to be spawned. Fields are added, never renamed, without a
   // version bump, exactly as for epub-meta --json.
   process.stdout.write(`${JSON.stringify(dump, null, 2)}\n`);
+}
+
+async function runVlmBook(args: ParsedArgs): Promise<void> {
+  await buildBookFile({
+    readingsPath: requireString(args, 'readings', 'the bank of page answers to reflow into a book'),
+    outPath: requireString(args, 'out', 'where the book file is written'),
+    log,
+  });
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1871,6 +1894,61 @@ export const COMMANDS: readonly Command[] = [
       VLM_OVERLAY, VLM_CHAPTERS, VLM_STRIP_MARKERS, VLM_FINAL, VLM_RECORDS,
     ],
     run: runVlmConvert,
+  },
+  {
+    name: 'vlm-book',
+    summary: 'Reflow a readings bank into the book file: hyphens fused, page turns joined, ids minted.',
+    usage: '--readings <file.jsonl> --out <book.jsonl>',
+    detail: [
+      'THE BANK IS NOT THE BOOK. A bank is one row per PAGE holding the answer the',
+      'model gave for it, and it knows nothing about a paragraph: a word the',
+      'column broke is two halves with a hyphen between them, and a paragraph the',
+      'printer broke across a leaf is two blocks on two pages. Every rule that',
+      'fixes those used to run at ASSEMBLY, freshly, on every render of the book,',
+      'for the whole life of the project.',
+      '',
+      'This command runs them ONCE and writes the answer down. The running heads',
+      'the model mistagged are dropped, a heading printed on two lines becomes one',
+      'heading, the text is dehyphenated against the book\'s own lexicon, print',
+      'lines are reflowed back into prose, and a paragraph broken across a leaf',
+      'becomes one paragraph. It adds no rule of its own: these are exactly the',
+      'passes vlm-convert has always applied, and the product is what they produce.',
+      '',
+      'EVERY BLOCK GETS A NAME, minted here and never reused: b<page>-<order>, off',
+      'the FIRST banked answer the block was made of. Derived rather than counted,',
+      'because a sequential number would renumber the whole book the day a better',
+      'join merged one more pair — and every correction, chapter marker and',
+      'translation record keyed to a name after that point would silently point one',
+      'block further back. A merge consumes the SECOND block and leaves the first',
+      'exactly where it was, so re-running this changes which names exist and never',
+      'what an existing name means.',
+      '',
+      'PAGE NUMBERS ARE KEPT AND ARE NOT TRUSTED. Every row records the page it',
+      'started on and every page it touches, and NOTHING is addressed by either: a',
+      'block joined across a leaf did not come from one page, and the number is an',
+      'approximation of where it began. The page-for-page record is the facsimile',
+      'PDF, which is made from the bank before this runs.',
+      '',
+      'THE BOX SURVIVES THE MERGE. A joined paragraph keeps the first part\'s',
+      'origin and grows by the height of every part after it, with the width taken',
+      'as the union — a rectangle that is on no page and is right about the two',
+      'things anything asks it, which are how tall a line of this type is and how',
+      'wide the text sits. Both are ratios, and both survive the addition.',
+      '',
+      'NO PDF, NO RASTERISER, NO MODEL, and it takes about as long as reading the',
+      'file. A bank written by this version records the render size and the pixel',
+      'budget beside every answer, which is the whole frame a box needs; a bank old',
+      'enough to lack them is refused by name rather than rasterised again behind',
+      'your back.',
+      '',
+      'A page whose answer will not parse is NAMED AND SKIPPED, the same promise',
+      'every command over a bank makes: one bad page must not cost the other two',
+      'hundred and ninety-nine. A page turn the rule declines to join is reported',
+      'too, and that report is the point — it is a seam somebody has to decide, and',
+      'this file is the one that keeps the answer.',
+    ].join('\n'),
+    options: [BOOK_READINGS, BOOK_OUT],
+    run: runVlmBook,
   },
   {
     name: 'vlm-read',
