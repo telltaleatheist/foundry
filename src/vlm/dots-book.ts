@@ -1537,6 +1537,46 @@ function printedNumber(run: string): number {
 }
 
 /**
+ * An ASCII note number at the head of a line: one to three digits, then a
+ * space. See `noteLeadOf` for why plain digits are admitted here at all, and
+ * `splitNotes` for the sequence guard that keeps them from cutting prose.
+ * Three digits because no real apparatus runs to a thousand and a four-digit
+ * lead is a year — "1942 was the last…" must never read as note 1942.
+ */
+const ASCII_NOTE_LEAD = /^(\d{1,3})[ \t]/;
+
+/** A note's printed number as the page set it: the characters, and the value. */
+interface NoteLead {
+  /** Exactly the characters the number was set in, so a caller can cut them off. */
+  run: string;
+  printed: number;
+}
+
+/**
+ * The number at the head of a note's text — superscript, or plain digits — or
+ * null where it printed none.
+ *
+ * PLAIN DIGITS ARE A TRANSCRIPTION OF THE SAME INK. The model is supposed to
+ * answer a note's number as a superscript run, and usually does; measured on
+ * the book in hand, three footnote areas of six came back with the numbers as
+ * ordinary digits instead ("20 *Ibid.*…" for a printed ²⁰) — same page, same
+ * ink, different spelling, varying run to run. Refusing the ASCII spelling
+ * cost those pages their entire apparatus: the block never split, the notes
+ * never matched their markers, and nineteen linking flags stood where zero
+ * belonged. The number is the book's fact, not the model's formatting, so
+ * both spellings of it are read here — in ONE place, because the splitter,
+ * the marker match and the emitter all ask what a note's number is, and two
+ * answers to that question is how an apparatus falls apart.
+ */
+function noteLeadOf(text: string): NoteLead | null {
+  const sup = LEADING_SUPERSCRIPT.exec(text);
+  if (sup !== null) return { run: sup[0], printed: printedNumber(sup[0]) };
+  const ascii = ASCII_NOTE_LEAD.exec(text);
+  if (ascii !== null) return { run: ascii[1]!, printed: Number.parseInt(ascii[1]!, 10) };
+  return null;
+}
+
+/**
  * The number the BOOK printed on a note, read off the note's own first
  * characters — or null where it printed none.
  *
@@ -1551,8 +1591,7 @@ function printedNumber(run: string): number {
  * inside the note's own prose — the same distinction `splitNotes` cuts on.
  */
 export function printedNoteNumber(text: string): number | null {
-  const lead = LEADING_SUPERSCRIPT.exec(text);
-  return lead === null ? null : printedNumber(lead[0]);
+  return noteLeadOf(text)?.printed ?? null;
 }
 
 /**
@@ -2012,13 +2051,17 @@ export function buildChapterBody(
        * number is written from `printed` above and a note reading "¹ ¹ See the
        * work of yesterday" is what happens if both are trusted.
        */
-      const lead = opts.stripNoteMarkers ? null : LEADING_SUPERSCRIPT.exec(note.text);
-      const printed = lead ? printedNumber(lead[0]) : null;
+      // Through `noteLeadOf`, so a number the model spelled in plain digits is
+      // the same fact as one it spelled superscript — the note's number is cut
+      // off its text and written back as the linked <sup> either way, instead
+      // of an ASCII "20" sitting doubled in front of the emitted number.
+      const lead = opts.stripNoteMarkers ? null : noteLeadOf(note.text);
+      const printed = lead === null ? null : lead.printed;
       const words = note.translated ?? note.text;
       const cut = note.translated === null
         ? lead
-        : opts.stripNoteMarkers ? null : LEADING_SUPERSCRIPT.exec(words);
-      const rest = cut ? words.slice(cut[0].length).replace(/^\s+/, '') : words;
+        : opts.stripNoteMarkers ? null : noteLeadOf(words);
+      const rest = cut ? words.slice(cut.run.length).replace(/^\s+/, '') : words;
       const number = printed === null
         ? ''
         : note.refId !== null
@@ -2087,15 +2130,40 @@ function classOf(align: string): string {
  * Each begins with its own superscript number, so that is where they are split
  * — and only at a LINE START, because a superscript in the middle of a note is
  * a reference inside the note's own text.
+ *
+ * ── AND AT AN ASCII NUMBER, BUT ONLY WHERE THE SEQUENCE VOUCHES FOR IT ──────
+ *
+ * The model sometimes answers a footnote area's numbers as plain digits (see
+ * `noteLeadOf`), and a splitter that only knew the superscript spelling left
+ * those areas as one long note that matched nothing. But plain digits at a
+ * line start are not evidence on their own the way a superscript is: a note's
+ * own prose wraps, and the wrapped line can open with a page number, a year,
+ * or a date — "21 Nov. 1942" at the head of a line is the middle of note 57,
+ * not note 21. What tells the two apart is the thing the printer guaranteed:
+ * notes on a page are CONSECUTIVE. So an ASCII lead cuts only when it is
+ * exactly the previous note's number plus one — which reads the page the way
+ * a person does, and makes the date-at-line-start failure need a coincidence
+ * (the wrapped number equal to the very next note's) instead of an accident.
+ * The superscript cut stays unconditional; it has never false-fired, because
+ * prose is not set in superscript.
  */
 export function splitNotes(text: string): string[] {
   const parts: string[] = [];
   let current: string[] = [];
+  /** The current note's own printed number, read off its opening line. */
+  let printed: number | null = null;
   for (const line of text.split('\n')) {
-    if (/^[⁰¹²³⁴⁵⁶⁷⁸⁹]/.test(line) && current.length > 0) {
-      parts.push(current.join('\n').trim());
-      current = [];
+    if (current.length > 0) {
+      const ascii = ASCII_NOTE_LEAD.exec(line);
+      const cut = /^[⁰¹²³⁴⁵⁶⁷⁸⁹]/.test(line)
+        || (ascii !== null && printed !== null
+          && Number.parseInt(ascii[1]!, 10) === printed + 1);
+      if (cut) {
+        parts.push(current.join('\n').trim());
+        current = [];
+      }
     }
+    if (current.length === 0) printed = noteLeadOf(line)?.printed ?? null;
     current.push(line);
   }
   if (current.length > 0) parts.push(current.join('\n').trim());
