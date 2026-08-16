@@ -42,35 +42,28 @@
  * rather than run beside whatever is going: one engine at a time is a fact about
  * the machine, and it holds however cheap the job is.
  *
- * ── One job in here starts another, and only this one ────────────────────────
+ * ── NO JOB IN HERE STARTS ANOTHER ONE ────────────────────────────────────────
  *
- * A READING THAT LANDS MAKES ITS DOCUMENTS (`landReadProducts`: the book file,
- * then the facsimile).
- * Everything else in this queue arrives from a person pressing something; these
- * arrive from the previous job finishing, because the product of a reading is a
- * bank and a bank is not a thing anybody can look at. The user: "from that bank, we
+ * Every row in this queue arrives from a person pressing something. A reading
+ * that lands makes ONE document nobody asked for — its book file — and even that
+ * is not a job: `vlm-book` is arithmetic over a bank already on the disk, no
+ * model, no GPU, no server, so `landReadProducts` spawns it and awaits it inside
+ * the settle, which is the same posture `loadBook` (electron/book.ts) takes when
+ * a pane opens a book nothing has reflowed. The user: "from that bank, we
  * create an html page of the document - a proto epub. that's the step that appears
  * automatically the moment i OCR something."
  *
- * THE FACSIMILE ARRIVES THE SAME WAY AND FOR THE SAME REASON — *"from the bank,
- * pdf facsimile can be generated. that's a terminal item"* (docs/RENDERER.md §0
- * A3): the pages as they were printed, set back as real text, made once when the
- * reading lands. It carries `forStep`, so the settle files it nowhere, and it is
- * drawn as a leaf under the book rather than as a step.
- *
- * THE READ ARM IS THE ONLY PLACE THAT DOES THIS, and that has to stay true: a
- * conversion landing that enqueued anything would be a cast casting a cast,
- * forever. The guard is structural rather than a flag — the `read` arm of the
- * settle is the only caller and it returns before any conversion landing runs —
- * and `enqueue`'s dedup on the output path is the second line, so two readings
- * landing near each other join one cast rather than racing two.
- *
- * THE BOOK FILE IS THE ONE PRODUCT THAT DOES NOT COME THROUGH HERE. `vlm-book` is
- * arithmetic over a bank on the disk — no model, no GPU, no server — so it is
- * spawned and awaited inside the settle rather than queued, which is the same
- * posture `loadBook` (electron/book.ts) already takes when a pane opens a book
- * nothing has reflowed. It goes FIRST, before anything is enqueued, because
- * `enqueue` pumps and a job started beside it would be a second child.
+ * THE FACSIMILE USED TO ARRIVE HERE TOO, enqueued by the read arm the instant a
+ * bank was marked complete, and it was there as insurance rather than as a
+ * convenience. It dates from before the bank was kept unconditionally: a
+ * page-for-page reprint already on the disk was the one record of a reading that
+ * nothing downstream could invalidate. The bank is now kept whatever happens, so
+ * the thing that reprint was standing in for is the thing that survives, and
+ * making the reprint again is seconds of offline arithmetic over answers that are
+ * still there. That turns it into a document somebody ASKS for — Export →
+ * Facsimile PDF, or any other door onto `planRendering` — rather than one a
+ * landing leaves in a folder, and it leaves this queue with nothing in it that
+ * starts a job of its own.
  *
  * ── Environment installs share this queue, and are NOT held ──────────────────
  *
@@ -121,9 +114,8 @@ import {
 } from './projects';
 import { readSettings } from './settings';
 import { ensureServer, isLocalVllmEndpoint, noteQueueBusy, noteQueueIdle } from './vllm-server';
-import { planFacsimile } from './workspace';
 import type {
-  ConversionKind, EnvInstallRequest, Job, JobRequest, LedgerStep, TranslateRequest,
+  ConversionKind, EnvInstallRequest, Job, JobRequest, TranslateRequest,
 } from '../shared/types';
 
 /**
@@ -1473,25 +1465,21 @@ async function pump(): Promise<void> {
       next.message = `Read ${path.basename(next.inputPath)} — the answers are banked.`;
       changed();
       /*
-       * ── AND THE TWO DOCUMENTS THE BANK IS FOR, NEITHER OF THEM A STEP ────────
+       * ── AND THE ONE DOCUMENT THE BANK IS FOR, WHICH IS NOT A STEP ────────────
        *
-       * The book file and the facsimile, in that order, both recorded as this
-       * reading's products (docs/RENDERER.md §6). Ordered rather than fired
-       * together for one reason that matters: `landReadProducts` SPAWNS the
-       * reflow and awaits it, while the facsimile is ENQUEUED — and `enqueue`
-       * pumps, so a facsimile added first would have an engine of its own running
-       * beside `vlm-book`. It goes first, on its own, and comes back before
-       * anything else in this app is allowed to start a child.
+       * The book file, recorded as this reading's product (docs/RENDERER.md §6).
        *
        * IT IS AWAITED AND IT CANNOT FAIL THE READING. Every way it can go wrong
-       * is a console line inside it: the bank is on disk, it is complete, and
-       * both documents are made from it for nothing whenever they are asked for.
+       * is a console line inside it: the bank is on disk, it is complete, and the
+       * reflow is made from it for nothing whenever it is asked for.
        *
-       * THERE WAS A THIRD LINE HERE AND IT IS GONE. `ensureCast` cast the
+       * TWO OTHER LINES USED TO BE HERE AND BOTH ARE GONE. `ensureCast` cast the
        * project's flowing book — an EPUB in `generated/` that the app unpacked so
-       * a pane had files to show. The pane reads the book file directly now, so
-       * the cast was a document made for a reader that no longer exists
-       * (docs/RENDERER.md §7).
+       * a pane had files to show — and the pane reads the book file directly now
+       * (docs/RENDERER.md §7). The facsimile was the other, and it left for a
+       * different reason: it was protecting a reading against a re-read that could
+       * take its answers away, and banks are kept now, so the protection is the
+       * bank and the reprint is something a person asks for.
        */
       await landReadProducts(next.outputPath, next.inputPath);
       void pump();
@@ -1746,9 +1734,8 @@ async function putBack(
 type BookAtPosition = Awaited<ReturnType<typeof bookAtPosition>>;
 
 /**
- * A READING LANDED, SO ITS TWO DOCUMENTS CAN EXIST — the book file, then the
- * facsimile. Neither is a step, and both are recorded as this reading's products
- * (docs/RENDERER.md §6).
+ * A READING LANDED, SO ITS ONE DOCUMENT CAN EXIST — the book file. It is not a
+ * step; it is recorded as this reading's product (docs/RENDERER.md §6).
  *
  * ── WHICH READING, PROVEN RATHER THAN ASSUMED ───────────────────────────────
  *
@@ -1762,23 +1749,20 @@ type BookAtPosition = Awaited<ReturnType<typeof bookAtPosition>>;
  *
  * AND IT IS CHECKED, because `recordReading` NEVER THROWS. A catalogue it could
  * not write is a console line of its own and a bank that is still on disk — and
- * the position then still names the reading BEFORE this one, whose book file and
- * facsimile are about a different pass over the pages. Remaking those would
- * quietly re-cut another reading's figures and rotate another reading's reprint
- * aside on the strength of this run finishing. So the two answers are put side by
- * side: the position must name a reading at all, and that reading's bank must be
- * the file this run filled. Anything else is a sentence in the terminal and
- * nothing touched — which is a refusal, not a fallback: there is no second guess
- * at which reading this is, and the products stay as they were until somebody
- * opens the book (`loadBook` ensures the book file) or asks for a facsimile.
+ * the position then still names the reading BEFORE this one, whose book file is
+ * about a different pass over the pages. Remaking that would quietly re-cut
+ * another reading's figures on the strength of this run finishing. So the two
+ * answers are put side by side: the position must name a reading at all, and that
+ * reading's bank must be the file this run filled. Anything else is a sentence in
+ * the terminal and nothing touched — which is a refusal, not a fallback: there is
+ * no second guess at which reading this is, and the reflow stays as it was until
+ * somebody opens the book, which ensures it (`loadBook`).
  */
 async function landReadProducts(bankPath: string, readFrom: string): Promise<void> {
   const dir = projectDirOf(bankPath);
   if (dir === null) {
-    console.error(
-      `[job] ${bankPath} was filled outside any project, so no book file and no facsimile were `
-      + 'made from it.',
-    );
+    console.error(`[job] ${bankPath} was filled outside any project, so no book file was made `
+      + 'from it.');
     return;
   }
   let at: BookAtPosition;
@@ -1787,8 +1771,8 @@ async function landReadProducts(bankPath: string, readFrom: string): Promise<voi
   } catch (err) {
     console.error(
       `[job] the reading of ${path.basename(readFrom)} landed, but ${dir} could not say which `
-      + `reading is in effect (${err instanceof Error ? err.message : String(err)}), so neither `
-      + 'the book nor the facsimile was made from it.',
+      + `reading is in effect (${err instanceof Error ? err.message : String(err)}), so no book `
+      + 'was made from it.',
     );
     return;
   }
@@ -1796,13 +1780,12 @@ async function landReadProducts(bankPath: string, readFrom: string): Promise<voi
     console.error(
       `[job] the reading that filled ${bankPath} is not the one ${dir} now stands on `
       + `(${at.reading === null ? 'no reading is recorded there' : at.bank}), so nothing was `
-      + 'remade from it — the bank is complete and both documents are free to make from it '
-      + 'whenever they are asked for.',
+      + 'remade from it — the bank is complete and the book is free to make from it whenever it '
+      + 'is asked for.',
     );
     return;
   }
   await remakeBookFile(at);
-  await castFacsimile(readFrom, at.reading);
 }
 
 /**
@@ -1843,70 +1826,6 @@ async function remakeBookFile(at: BookAtPosition): Promise<void> {
     console.error(
       `[job] ${at.bank} could not be reflowed into ${at.book}: ${made.reason ?? ''}\n`
       + 'The bank is complete and the reading stands; opening the book makes it again.',
-    );
-  }
-}
-
-/**
- * THE FACSIMILE, ENQUEUED — the page-for-page record of the pages that were just
- * read, and a TERMINAL product.
- *
- * ── What it costs, which is what makes it automatic ─────────────────────────
- *
- * The three arguments every landing-made rendering rests on, unrepeated: a
- * `--reuse-readings` pass over a bank marked complete a moment ago loads no
- * model, opens no socket and takes seconds, so it is not held and does not wait
- * for the reading server; and it cannot loop, because a conversion landing
- * enqueues nothing and this is called from the `read` arm alone.
- *
- * ── NO GUARD SET, AND IT NO LONGER NEEDS ONE ───────────────────────────────
- *
- * There used to be a `casting` set beside this, keyed by project, because the
- * flowing book had TWO callers — a settle and a click on a read row — and five
- * clicks inside the window before an enqueue were five rows. Both of those
- * callers are gone with the cast (docs/RENDERER.md §7). This has one caller,
- * inside a serial queue, so the window that set existed to cover cannot open.
- * `enqueue`'s dedup on the output path is still underneath it, which is what
- * joins a re-read's facsimile to one already waiting.
- *
- * ── `forStep`, WHICH IS WHAT MAKES THE LANDING TERMINAL ─────────────────────
- *
- * It says "this document is one step's own", and three things the plan orders
- * fall out of it rather than being arranged separately. The settle files it
- * NOWHERE — no `recordGenerated`, so no row on the PDF chain beside the scan, no
- * promotion to the project's live PDF, no place to stand. The renderer's
- * auto-open effect skips it (`OPENS_ITSELF`), so three hours of OCR do not end by
- * throwing a reprint into a column over whatever the person was reading. And the
- * shelf's row says which step the job was started from, which this one genuinely
- * was. What draws it is `ProjectSummary.facsimiles`, composed from this same
- * step's id — the name is never read back out of the file.
- *
- * NOTHING BUT THE BANK, DELIBERATELY. A facsimile reprints what was READ; it
- * compiles from the raw bank and from nothing else (docs/RENDERER.md §6). Making
- * the record of a reading depend on decisions taken after it would produce a
- * page-for-page reprint of pages that were never like that.
- */
-async function castFacsimile(readFrom: string, reading: LedgerStep): Promise<void> {
-  try {
-    const plan = await planFacsimile(readFrom, reading);
-    enqueue(
-      {
-        kind: 'pdf',
-        inputPath: plan.sourcePath,
-        outputPath: plan.outputPath,
-        readingsPath: plan.readingsPath,
-        forStep: reading.id,
-      },
-      // The reading this reprint is of, which is also where the pointer is
-      // standing. Nothing downstream spends it; the shelf's row says which step a
-      // job was started from, and this one is that step's own product.
-      reading.id,
-    );
-  } catch (err) {
-    console.error(
-      `[job] the reading of ${path.basename(readFrom)} landed, but its facsimile could not be `
-      + `planned: ${err instanceof Error ? err.message : String(err)}. The bank is complete, so `
-      + 'the pages can be reprinted from it whenever that is asked for.',
     );
   }
 }

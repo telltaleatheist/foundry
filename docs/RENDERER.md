@@ -56,9 +56,18 @@ Assumptions the user can veto (stated here so they are vetoed BEFORE the build):
 - **A2 — transport is Electron IPC**, not websockets. Websockets buy nothing
   inside one Electron app; revisit only if a browser/remote client becomes a
   goal.
-- **A3 — the facsimile is auto-produced at read-landing** and drawn as a
-  terminal row under the import (the user's own tree: *"from the bank, pdf
-  facsimile can be generated. that's a terminal item"*).
+- **A3 — the facsimile is a terminal row under the import** (the user's own
+  tree: *"from the bank, pdf facsimile can be generated. that's a terminal
+  item"*).
+  **Superseded in part, user ruling 2026-08-16: it is produced ON DEMAND, not
+  at read-landing.** The automatic production was protection from before the
+  bank was kept unconditionally — a reprint on the disk was the one record of a
+  reading nothing downstream could invalidate. The bank is always kept now, so
+  the bank IS the protection and a facsimile needs none: it is `vlm-convert
+  --format pdf --reuse-readings`, offline, seconds, repeatable forever. A read
+  landing produces the book file and nothing else; the reprint is made when
+  somebody asks (Export → Facsimile PDF), and its row is deletable exactly as an
+  export's is.
 
 ---
 
@@ -68,8 +77,8 @@ Assumptions the user can veto (stated here so they are vetoed BEFORE the build):
 archive/<scan>.pdf                the untouched original (irreplaceable)
 readings/<key>.jsonl              RAW BANK: model answers per page (expensive)
     │
-    ├─► facsimile PDF             made ONCE at read-landing (vlm-convert
-    │   (generated/, terminal)     --format pdf); the page-for-page record
+    ├─► facsimile PDF             made ON DEMAND (vlm-convert --format pdf);
+    │   (terminal, deletable)      the page-for-page record
     │
     └─► readings/<key>.book.jsonl BOOK FILE: one row per block, ids minted,
         (regenerable)              hyphens fused, page turns joined, notes split
@@ -199,9 +208,10 @@ animated where it helps.
 
 ## 6. Orchestration and export
 
-- **Read lands →** main runs facsimile (`vlm-convert --format pdf`, into
-  `generated/`, drawn as a terminal row under the import) **then** `vlm-book`.
-  Both recorded as the read step's products, neither is a step of its own.
+- **Read lands →** main runs `vlm-book` and nothing else. It is the read step's
+  product and is not a step of its own. **(Amended, user ruling 2026-08-16: the
+  facsimile no longer lands with it — see §0 A3. It is produced when asked, and
+  a facsimile already on disk is deletable from its row like an export.)**
 - **Open a book →** renderer over the position's book file + ops. No unzip, no
   `working/`, no cast EPUBs.
 - **Export →** materialize (replay) → engine compiles EPUB/txt; facsimile
@@ -248,10 +258,11 @@ are no overlay files to ping-pong.
   `castStepBook`, `ensureTranslateCast`, `towardTheFlowingBook`,
   `planConversion`, `planConversionForStep`, `castNameFor` and the
   `workspace:plan` door are deleted whole. A reading's landing makes the book
-  file and the facsimile and nothing else; a save's landing and a translation's
-  landing make no document at all, because the row they mint is answered by the
-  sheet. `planRendering` composes exactly two things now: a facsimile into
-  `generated/`, and an export into `final/`.
+  file and nothing else (the facsimile stopped landing with it on the 2026-08-16
+  ruling, §0 A3); a save's landing and a translation's landing make no document
+  at all, because the row they mint is answered by the sheet. `planRendering`
+  composes exactly two things now: a facsimile into `generated/`, and an export
+  into `final/`.
 - **The legacy export branch — DONE.** `compiles` was three conjuncts and is
   now one (`kind === 'epub' || kind === 'txt'`): EVERY epub and txt export
   materialises and compiles, edited or not, in either language. The facsimile

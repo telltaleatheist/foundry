@@ -905,11 +905,19 @@ export class OpenDocumentsComponent {
        * ARE — *"from the bank, pdf facsimile can be generated. that's a terminal
        * item"* (docs/RENDERER.md §0 A3).
        *
-       * A reading makes two documents: the Book, which is the read step's row up
-       * in the tree and the thing everything downstream is made from, and the
+       * A reading has two documents in it: the Book, which is the read step's row
+       * up in the tree and the thing everything downstream is made from, and the
        * page-for-page record, which nothing is ever made from. So it is a leaf
        * beside the exports rather than a step of its own — no arrow, no position,
        * and clicking it opens the PDF exactly as clicking an export opens one.
+       *
+       * AND IT IS ONLY EVER HERE BECAUSE SOMEBODY ASKED FOR IT. A reading used to
+       * leave one of these in `generated/` on its own, back when a re-read could
+       * take the previous pass's answers with it and a reprint on the disk was the
+       * only thing about a reading that could not be invalidated. Banks are kept
+       * now, so a project reads without gaining a row here and the row appears
+       * when a person makes the reprint. Which is also why the list can be empty
+       * for a fully read book and that is the ordinary state, not a hole.
        *
        * DRAWN UNDER THE IMPORT, at the Book's own indent, because that is where
        * the ruling puts it and because the alternative is worse than it looks: a
@@ -947,8 +955,8 @@ export class OpenDocumentsComponent {
           tally: whenOn(made.madeAt),
           glyph: '▦',
           tooltip: 'Open this facsimile\nThe pages of this book as they were '
-            + 'printed, reprinted as real text when the reading landed. Nothing is '
-            + `made from it.\n${path}`,
+            + 'printed, reprinted as real text from what the reading found. Nothing '
+            + `is made from it.\n${path}`,
           depth: 1,
           dir: project.dir,
           managed: true,

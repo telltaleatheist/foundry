@@ -105,6 +105,7 @@ import type {
   MetadataPatch,
   MetadataWriteOutcome,
   ProjectDocument,
+  ProjectFacsimile,
   ProjectFinal,
   ProjectLedger,
   ProjectSummary,
@@ -1572,6 +1573,52 @@ function registerIpc(): void {
     return null;
   }
 
+  /**
+   * And the same question asked of the FACSIMILES, which is a third catalogue —
+   * or rather a third listing, since nothing catalogues these at all.
+   *
+   * ── The same bug, one row further down the tree ─────────────────────────────
+   *
+   * The nav draws a ✕ on facsimile rows exactly as it draws one on exports, and
+   * every one of them threw the sentence written for a path somebody typed from
+   * outside the library. A facsimile is in NEITHER of the two lookups above it:
+   * `project.documents` is the chain and `project.exports` is `manifest.final`,
+   * while `ProjectSummary.facsimiles` is composed by scanning `generated/` for
+   * the name each read step's id makes (`facsimilesOf`, electron/projects.ts).
+   * Three listings, and the delete knew two.
+   *
+   * ── Why a third door and not a branch in either of the others ───────────────
+   *
+   * `findExport`'s argument, and it applies harder here. An export at least has a
+   * row in the manifest; a facsimile has nothing — no steps, no retention, no
+   * origin, nothing made FROM it, and no catalogue entry to strike out. Every
+   * question the document path asks (`isBook`, `documentAssets`, the original's
+   * refusal) is a question with no answer for a page-for-page reprint, and the
+   * first one to guess would be the bug nobody sees coming.
+   *
+   * AND IT IS THE CHEAPEST THING IN THE PROJECT TO LOSE, which is why its card is
+   * one line shorter than an export's: the bank it reprints is kept whatever
+   * happens, so the reprint is seconds of offline arithmetic away for as long as
+   * the reading exists.
+   */
+  async function findFacsimile(filePath: string): Promise<{
+    project: ProjectSummary;
+    made: ProjectFacsimile;
+    label: string;
+  } | null> {
+    const target = fold(filePath);
+    for (const project of await listProjects()) {
+      for (const made of project.facsimiles) {
+        // Whole paths with their layer, never basenames — the same rule spelled
+        // out above `findExport`, and a facsimile lives in `generated/` beside a
+        // cast and a rotated predecessor of itself.
+        if (fold(path.join(project.dir, ...made.file.split('/'))) !== target) continue;
+        return { project, made, label: path.basename(made.file) };
+      }
+    }
+    return null;
+  }
+
   ipcMain.handle('documents:describe', async (_event, filePath: string): Promise<DocumentDeletion> => {
     /*
      * THE TRAY IS ASKED FIRST, and the question it gets is its own. Removing an
@@ -1603,6 +1650,41 @@ function registerIpc(): void {
         },
         original: false,
         projectDir: filed.project.dir,
+        missing: gone,
+      };
+    }
+
+    /*
+     * THEN THE REPRINTS, and their card is the shortest one in this app because
+     * there is genuinely almost nothing to warn anybody about. A facsimile is a
+     * rendering of a bank that is kept whatever else happens: no step points at
+     * it, nothing was made from it, and the reading it reprints is untouched by
+     * its going. Saying so plainly is the honest card — the document card's
+     * paragraph about the bank surviving reads as reassurance about a danger that
+     * was never on the table, which is how people learn to skip these.
+     */
+    const reprint = await findFacsimile(filePath);
+    if (reprint !== null) {
+      // The listing stats before it draws a row, so this is the window between
+      // that stat and this click — somebody tidying `generated/` by hand, a
+      // window holding a tree from a minute ago. A row to clear, not an error.
+      const gone = await fsp.access(filePath).then(() => false, () => true);
+      return {
+        prompt: {
+          message: `“${reprint.label}” will be deleted from “${reprint.project.title}”.`,
+          detail: [
+            gone
+              ? 'That file is no longer on the disk — moved or deleted somewhere else — so this '
+                + 'clears the row that still lists it.'
+              : 'The file is deleted from the disk. Foundry keeps no copy of it anywhere else.',
+            'The readings bank and every step in this project stay exactly as they are. This is '
+            + 'the pages of one reading reprinted, nothing is made from it, and you can make it '
+            + 'again from that reading at any time — it costs seconds and no GPU.',
+          ],
+          confirm: gone ? 'Remove this row' : 'Delete this facsimile',
+        },
+        original: false,
+        projectDir: reprint.project.dir,
         missing: gone,
       };
     }
@@ -1701,6 +1783,32 @@ function registerIpc(): void {
       return removed.wasMissing
         ? `Removed “${filed.label}” from “${filed.project.title}” — the file was already gone.`
         : `Deleted “${filed.label}” from “${filed.project.title}”.`;
+    }
+
+    /*
+     * The reprints, asked again for the same reason the tray is: this is the call
+     * that unlinks something and the listing may have moved under it.
+     *
+     * `deleteDocument` is already right for a `generated/` facsimile, and it is
+     * right by construction rather than by luck. THE MANIFEST NEEDS NOTHING DONE
+     * TO IT: a facsimile is in no list in `project.json`, so the documents filter
+     * matches no chain (nothing names this file as a step's payload), and
+     * `working.files` and `final` are asked only about their own layers. THE ROW
+     * GOES BECAUSE THE FILE DOES: `facsimilesOf` composes the name from the read
+     * step's id and stats it, so the listing is the directory's answer and a
+     * deleted file is a listing with one fewer row in it the next time anything
+     * asks. And the SWEEP is exactly what it should be: the archived copies of
+     * this same name beside it, which for a name carrying a step's own id can
+     * only be earlier reprints of that same reading.
+     */
+    const reprint = await findFacsimile(filePath);
+    if (reprint !== null) {
+      refuseBusyJob(await inspectProject(reprint.project.dir));
+      const removed = await deleteDocument(filePath);
+      forgetRecentsUnder(filePath);
+      return removed.wasMissing
+        ? `Removed “${reprint.label}” from “${reprint.project.title}” — the file was already gone.`
+        : `Deleted “${reprint.label}” from “${reprint.project.title}”.`;
     }
 
     const { project, document } = await findDocument(filePath);

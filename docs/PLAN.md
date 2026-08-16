@@ -614,7 +614,10 @@ system."*
 ### Wave 4f — THE RENDERER PLAN OF RECORD (user, 2026-08-16)
 
 **`docs/RENDERER.md` is the endgame plan now.** It carries the rulings
-(no EPUB as working form; facsimile-then-reflow at read landing; one
+(no EPUB as working form; reflow at read landing and the facsimile on
+demand — RENDERER §0 A3, amended by the user 2026-08-16, because the
+bank is kept unconditionally and is therefore the protection the
+automatic reprint used to be; one
 book file with minted ids; ops keyed by id; derived book files at
 transform commits; no OCR errors; tier-2 structure ops and export
 preview as the priorities), the formats, the renderer architecture,
