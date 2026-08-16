@@ -130,7 +130,9 @@ by block id only:
 {"op":"move","id":"b4-2","before":"b4-6"}    — reading-order repair
 {"op":"chapter","set":"b5-1","title":"…"}    — also move/remove/rename/reset
 {"op":"link","block":"b2-3","at":214,"len":1,"note":"b2-4#0"}
-{"op":"restore-furniture","src":"3:0"}       — un-drop a running head
+{"op":"restore-furniture","id":"b3-0"}       — un-drop a shelved row (keyed by id
+                                               since v3 made the shelf ROWS; the
+                                               src spelling predated that)
 ```
 
 - Replay is a pure function `blocks → blocks` in `shared/`, used identically by
