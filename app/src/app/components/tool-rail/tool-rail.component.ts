@@ -120,6 +120,22 @@ import { UiService } from '../../core/ui.service';
           <span class="rail-label">Translate</span>
         </button>
 
+        <!-- Simplify, beside Translate because it is the same act aimed at the
+             same book: the model says every paragraph again, checked block by
+             block, landing as a step of its own. What differs is the destination
+             — a reader rather than a language — which is why it is a second
+             button and not a checkbox inside the first. -->
+        <button
+          class="rail-item"
+          [class.active]="ui.simplifyOpen()"
+          [disabled]="!canSimplify()"
+          title="Say this book again in its own language: plainer, more natural, or for a learner"
+          (click)="simplify()"
+        >
+          <span class="rail-icon">≈</span>
+          <span class="rail-label">Simplify</span>
+        </button>
+
         <!-- Metadata. Enabled standing on the scan as well as on the book,
              unlike everything else here that needs a book to have been cast: a
              scan has an Info dictionary and correcting it is exactly as useful
@@ -456,6 +472,20 @@ export class ToolRailComponent {
   protected translate(): void {
     void this.router.navigateByUrl('/');
     this.ui.openTranslate();
+  }
+
+  /**
+   * The two doors open onto one fact — the project has a book at its position —
+   * so this asks the question by asking the button beside it, rather than by
+   * keeping a second copy of a test that has already gone stale once.
+   */
+  protected canSimplify(): boolean {
+    return this.canTranslate();
+  }
+
+  protected simplify(): void {
+    void this.router.navigateByUrl('/');
+    this.ui.openSimplify();
   }
 
   /**

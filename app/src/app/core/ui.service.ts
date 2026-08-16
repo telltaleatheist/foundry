@@ -30,6 +30,16 @@ export class UiService {
   readonly exportOpen = signal(false);
   /** The Translate dialog. */
   readonly translateOpen = signal(false);
+  /**
+   * The Simplify dialog — say the book again, in the language it is already in.
+   *
+   * ITS OWN SIGNAL RATHER THAN A MODE ON THE ONE ABOVE, even though what it
+   * enqueues is a translate job. The two dialogs ask different questions of a
+   * person: one asks which language, the other asks which of three rewrites and
+   * for whom. A single card that switched half its fields on a toggle would be
+   * asking somebody to configure a job before they have said which job it is.
+   */
+  readonly simplifyOpen = signal(false);
   /** The Metadata dialog — the book's own record, not the app's idea of it. */
   readonly metadataOpen = signal(false);
   /**
@@ -126,6 +136,7 @@ export class UiService {
     this.ocrOpen,
     this.exportOpen,
     this.translateOpen,
+    this.simplifyOpen,
     this.metadataOpen,
     this.confirmOpen,
   ] as const;
@@ -156,6 +167,14 @@ export class UiService {
 
   closeTranslate(): void {
     this.translateOpen.set(false);
+  }
+
+  openSimplify(): void {
+    this.only(this.simplifyOpen);
+  }
+
+  closeSimplify(): void {
+    this.simplifyOpen.set(false);
   }
 
   openMetadata(): void {

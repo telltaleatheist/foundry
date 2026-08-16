@@ -51,7 +51,9 @@ import {
   DEFAULT_OLLAMA_ENDPOINT,
   DEFAULT_TRANSLATE_CONCURRENCY,
   DEFAULT_TRANSLATE_MODEL,
+  REWRITE_MODES,
   translateEpub,
+  type RewriteMode,
 } from './translate/run.js';
 import { versionString } from './version.js';
 
@@ -485,6 +487,33 @@ const TR_INSTRUCTIONS: OptionSpec = {
   type: 'string',
   placeholder: '<text>',
   describe: 'Appended to the system prompt verbatim — terminology rules for THIS book.',
+};
+
+/**
+ * ── REWRITE, NOT TRANSLATE ──────────────────────────────────────────────────
+ *
+ * The same run with a different charter (see `RewriteMode`): the model is asked
+ * to rewrite each block IN THE BOOK'S OWN LANGUAGE rather than to carry it into
+ * another one. `dejargon` unpicks over-built prose, `destiffen` takes the
+ * translationese out of something that was translated once already, and
+ * `learner` trades the vocabulary down to what a B1-B2 reader can carry. Three
+ * flags rather than one "simplify" because the three fixes contradict each
+ * other, and one prompt asked for all of them would be guessing which complaint
+ * somebody actually had.
+ *
+ * `--to` STILL CARRIES THE LANGUAGE, and it is the language the text is in and
+ * stays in. Nothing moves, so there is nothing for a second tag to name.
+ *
+ * IT NEEDS `--book`, because a rewrite is only ever worth having as a step in
+ * the app: the product is records keyed by the row ids the derived book keeps
+ * (docs/RENDERER.md §4), which is what makes a simplified edition a position
+ * somebody can read beside the original rather than a second file.
+ */
+const TR_REWRITE: OptionSpec = {
+  name: 'rewrite',
+  type: 'string',
+  placeholder: '<mode>',
+  describe: 'Rewrite in the book\'s own language instead of translating: dejargon, destiffen, learner.',
 };
 
 const TR_BANK: OptionSpec = {
@@ -1328,6 +1357,37 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
       + 'run can consume one: without it this command translates the words in the book it was given.',
     );
   }
+  /*
+   * ── THE OTHER QUESTION THIS COMMAND CAN ASK ────────────────────────────────
+   *
+   * `--rewrite` swaps the charter at the top of the prompt and leaves the whole
+   * of the rest of the run alone (see `TR_REWRITE`). Two things are refused here.
+   *
+   * A MODE NOBODY IMPLEMENTED IS NOT A DEFAULT. There are three charters, they
+   * ask for three different things, and a typo silently falling back to "just
+   * translate it" would spend hours of GPU producing a book that looks like the
+   * one that was asked for. So the value is checked against the list and the
+   * refusal names all three.
+   *
+   * AND IT NEEDS `--book`. A rewrite is a step in the app, and a step's product
+   * is records keyed by the row ids the derived book keeps — which only the book
+   * file route mints. On `--epub` the answers would be keyed to coordinates in a
+   * reading, and the simplified edition nobody could align against the original
+   * is exactly the file this flag exists to avoid making.
+   */
+  const rewrite = optionalString(args, 'rewrite');
+  if (rewrite !== undefined && !REWRITE_MODES.includes(rewrite as RewriteMode)) {
+    throw new UsageError(
+      `--rewrite takes ${REWRITE_MODES.join(', ')}, not "${rewrite}"`,
+    );
+  }
+  if (rewrite !== undefined && bookPath === undefined) {
+    throw new UsageError(
+      '--rewrite needs --book: a rewrite keeps the book in its own language, so its answers are only '
+      + 'worth anything keyed by the row ids the derived book keeps (docs/RENDERER.md §4). Point it '
+      + 'at the book file, not at a rendering of one.',
+    );
+  }
   const generation = optionalString(args, 'generation');
   if (generation !== undefined && recordsPath === undefined) {
     throw new UsageError(
@@ -1361,6 +1421,7 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
     ...(optionalString(args, 'instructions') !== undefined
       ? { instructions: optionalString(args, 'instructions')! }
       : {}),
+    ...(rewrite !== undefined ? { rewrite: rewrite as RewriteMode } : {}),
     log,
   });
 
@@ -2428,7 +2489,8 @@ export const COMMANDS: readonly Command[] = [
     name: 'translate',
     summary: 'Translate a foundry EPUB with a local Ollama model: EPUB in, a second EPUB out.',
     usage: '--epub <book.epub> --to <lang> [--from <lang>] [--out <path>|--records <file.jsonl>]'
-      + ' [--model <name>] [--instructions <text>] [--bank <file.jsonl>] [--concurrency <n>]',
+      + ' [--model <name>] [--instructions <text>] [--rewrite <mode>] [--bank <file.jsonl>]'
+      + ' [--concurrency <n>]',
     detail: [
       'Reads a book foundry converted and writes a SECOND BOOK beside it with the',
       'same structure, the same pictures and the same page provenance, and the',
@@ -2659,10 +2721,36 @@ export const COMMANDS: readonly Command[] = [
       'the one that can translate a book somebody has edited. The app replays the',
       'ops into the file it hands over, so nothing here has to know what a strike',
       'is, and nothing here consults an overlay to find out.',
+      '',
+      '--rewrite REWRITES THE BOOK IN ITS OWN LANGUAGE INSTEAD OF TRANSLATING IT.',
+      'Everything above still happens exactly as described — the same masking, the',
+      'same chunks, the same count contract, the same records — and the only thing',
+      'that changes is the charter at the top of the prompt. --to still carries the',
+      'language, and it is the language the text is in and stays in; --from is not',
+      'consulted. Three modes, because the three complaints contradict each other:',
+      '',
+      '  dejargon   over-built prose made plain — big words swapped for short ones,',
+      '             nominalisations turned back into verbs, hedging cut, long',
+      '             sentences broken up. The argument is not softened or dumbed',
+      '             down and genuine technical terms stay.',
+      '  destiffen  translationese made natural — foreign word order undone, the',
+      '             register lowered, contractions and everyday connectors allowed.',
+      '             How it sounds changes and what it says does not.',
+      '  learner    the same story at B1-B2 vocabulary — rare, archaic and formal',
+      '             words replaced, archaic grammar modernised, dialogue kept as',
+      '             direct speech. No event is added, removed or reordered.',
+      '',
+      'It requires --book, and therefore --records. A rewrite is a step in the app,',
+      'and a step\'s product is records keyed by the row ids the derived book keeps',
+      '— which is what puts the simplified text beside the original as two files',
+      'that agree about what every paragraph is called. An unchanged answer is a',
+      'CORRECT answer here and is written as given: a sentence that is already',
+      'plain needs no rewriting, and the prompt says so rather than leaving the',
+      'model to find something to change.',
     ].join('\n'),
     options: [
       TR_EPUB_IN, TR_BOOK_IN, TR_TO, TR_FROM, TR_OUT, TR_MODEL, TR_OLLAMA, TR_INSTRUCTIONS,
-      TR_BANK, TR_FRESH_BANK, TR_CONCURRENCY, TR_KEEP_MODEL,
+      TR_REWRITE, TR_BANK, TR_FRESH_BANK, TR_CONCURRENCY, TR_KEEP_MODEL,
       TR_RECORDS, TR_SOURCE_RECORDS, TR_GENERATION,
     ],
     run: runTranslate,

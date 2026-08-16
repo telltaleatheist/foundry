@@ -9,6 +9,7 @@ import { ExportDialogComponent } from './components/export-dialog/export-dialog.
 import { OcrDialogComponent } from './components/ocr-dialog/ocr-dialog.component';
 import { OpenDocumentsComponent } from './components/open-documents/open-documents.component';
 import { MetadataDialogComponent } from './components/metadata-dialog/metadata-dialog.component';
+import { SimplifyDialogComponent } from './components/simplify-dialog/simplify-dialog.component';
 import { TranslateDialogComponent } from './components/translate-dialog/translate-dialog.component';
 import { QueueShelfComponent } from './components/queue-shelf/queue-shelf.component';
 import { ToolRailComponent } from './components/tool-rail/tool-rail.component';
@@ -66,7 +67,7 @@ import { api } from './core/foundry';
   imports: [
     RouterOutlet, ToolRailComponent, OpenDocumentsComponent, InspectorComponent,
     QueueShelfComponent, OcrDialogComponent, ExportDialogComponent, TranslateDialogComponent,
-    MetadataDialogComponent,
+    SimplifyDialogComponent, MetadataDialogComponent,
     ConfirmDialogComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -97,6 +98,10 @@ import { api } from './core/foundry';
 
       @if (ui.translateOpen()) {
         <app-translate-dialog />
+      }
+
+      @if (ui.simplifyOpen()) {
+        <app-simplify-dialog />
       }
 
       @if (ui.metadataOpen()) {
@@ -332,6 +337,11 @@ export class App {
     if (event.key === 'Escape' && this.ui.translateOpen()) {
       event.preventDefault();
       this.ui.closeTranslate();
+      return;
+    }
+    if (event.key === 'Escape' && this.ui.simplifyOpen()) {
+      event.preventDefault();
+      this.ui.closeSimplify();
       return;
     }
     if (event.key === 'Escape' && this.ui.metadataOpen()) {

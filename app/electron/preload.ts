@@ -127,6 +127,8 @@ const api: FoundryApi = {
     planExport: (inputPath, kind) => ipcRenderer.invoke('workspace:plan-export', inputPath, kind),
     planTranslation: (inputPath, targetLanguage) =>
       ipcRenderer.invoke('workspace:plan-translation', inputPath, targetLanguage),
+    planSimplification: (inputPath, mode) =>
+      ipcRenderer.invoke('workspace:plan-simplify', inputPath, mode),
   },
 
   ledger: {

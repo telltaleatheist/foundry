@@ -267,6 +267,33 @@ export type ChunkShape =
     header: string | null;
   };
 
+/**
+ * ── THE SAME RUN, ASKED A DIFFERENT QUESTION — `--rewrite <mode>` ───────────
+ *
+ * A rewrite is this file, verbatim: the same masking, the same chunking, the
+ * same positional read-back, the same verification, the same records. What
+ * changes is the sentence at the top of the prompt. Instead of "translate this
+ * from German into English" the model is told to rewrite the text IN ITS OWN
+ * LANGUAGE against a charter — plain words for a general reader, natural word
+ * order instead of translationese, or vocabulary a learner can carry.
+ *
+ * IT IS NOT A SECOND PIPELINE, AND THAT IS THE WHOLE DESIGN. Everything below
+ * the charter — the count contract, the marker round trip, the two length
+ * guards, the bank key — is a fact about how an ANSWER is read back rather than
+ * about what was asked for, and none of it cares which of the two questions
+ * produced the words. A rewrite mode that grew its own prompt machinery would
+ * be a second implementation of the alignment rules, drifting quietly out of
+ * step with the one that has been measured against a real book.
+ *
+ * `to` NAMES THE LANGUAGE THE TEXT IS IN AND STAYS IN. There is no target to
+ * move to, so the one language flag this run has left is the book's own, and
+ * `from` — absent, or the same tag — is not consulted for the prompt at all.
+ */
+export type RewriteMode = 'dejargon' | 'destiffen' | 'learner';
+
+/** The three charters, in the spelling the flag takes. */
+export const REWRITE_MODES: readonly RewriteMode[] = ['dejargon', 'destiffen', 'learner'];
+
 export interface TranslateOptions {
   /**
    * The stamped EPUB to translate. Absent only on the book-file route below,
@@ -391,6 +418,12 @@ export interface TranslateOptions {
   endpoint?: string;
   /** Free text appended to the system prompt, verbatim. */
   instructions?: string;
+  /**
+   * Rewrite in the book's own language instead of translating out of it — see
+   * `RewriteMode`. Absent is a translation, byte for byte the run this file has
+   * always been.
+   */
+  rewrite?: RewriteMode;
   /**
    * JSONL of accepted answers, appended as each one lands — `--bank`. Makes a
    * killed run cost the requests that were in flight and nothing else, and
@@ -573,19 +606,39 @@ export function systemPrompt(
   instructions: string | undefined,
   inventory: MarkerInventory = { paired: true, atomic: true },
   shape: ChunkShape = { kind: 'single' },
+  rewrite?: RewriteMode,
 ): string {
   const source = from === null
     ? 'the language it is written in, which you should determine from the text itself'
     : from.name;
   const one = shape.kind === 'single';
+  /*
+   * THE CHARTER IS THE ONLY THING A MODE GETS TO CHANGE.
+   *
+   * What follows it is the structure the answer is read back against — the line
+   * rule, the shape, the markers, the output rule — and every one of those is
+   * about the SHAPE of a reply rather than about what was asked for. So a
+   * rewrite is composed out of the pieces already here rather than beside them:
+   * a mode that wrote its own line rule would be a second alignment contract,
+   * and the alignment is what stops item 4's words landing in item 3's element.
+   *
+   * Two sentences do change, and both are ones that would be false otherwise: a
+   * "not prose" rule that only knows how to say "nothing to translate" here has
+   * to also say "already plain, leave it", and an output rule cannot ask for a
+   * translation of text that was never going anywhere.
+   */
   const lines = [
-    `You are a professional literary translator. Translate the text below from ${source} into ${to.name}.`,
-    '',
-    'RULES:',
-    '- Translate faithfully and COMPLETELY. Every sentence of the source must appear in your answer.',
-    '- Do not summarise, condense, expand, explain, annotate, or comment. Add nothing that is not in the source.',
-    '- Do not soften, sanitise, modernise or euphemise. Render loaded, archaic, technical or offensive'
-    + ' vocabulary literally, as written. This is a historical document; its wording is the evidence.',
+    ...(rewrite === undefined
+      ? [
+        `You are a professional literary translator. Translate the text below from ${source} into ${to.name}.`,
+        '',
+        'RULES:',
+        '- Translate faithfully and COMPLETELY. Every sentence of the source must appear in your answer.',
+        '- Do not summarise, condense, expand, explain, annotate, or comment. Add nothing that is not in the source.',
+        '- Do not soften, sanitise, modernise or euphemise. Render loaded, archaic, technical or offensive'
+        + ' vocabulary literally, as written. This is a historical document; its wording is the evidence.',
+      ]
+      : rewriteCharter(rewrite, to.name)),
     /*
      * THE LINE RULE IS THE STRUCTURE RULE. For a single block, a line break in
      * the answer is the model reformatting somebody's paragraph and is refused
@@ -614,24 +667,47 @@ export function systemPrompt(
      * there. A cell of a table is the same problem in miniature: a column of
      * years has nothing in it to translate, and the model needs to be told that
      * handing one back is right rather than lazy.
+     *
+     * A REWRITE NEEDS THE SAME DOOR TWICE OVER. The stamp and the shelf mark are
+     * still there — nothing about asking for plainer words makes a catalogue code
+     * into prose — and a whole second class joins them: a sentence that is
+     * ALREADY plain, natural and short, which is most of a well-written book. A
+     * model told to rewrite and given no way to say "this is fine as it stands"
+     * will find something to change, and what it finds is a synonym nobody asked
+     * for or a sentence broken in half for no reason. So leaving the text exactly
+     * alone is named as a correct answer here rather than left to be inferred.
      */
-    one
-      ? '- The text is ONE block from a book, given without its context. Some blocks are not prose at all:'
-      + ' a library stamp, an accession number, a shelf mark, a catalogue code, a line of OCR noise from'
-      + ' the front matter. If a block has nothing in it to translate, RETURN IT EXACTLY AS GIVEN.'
-      + ' Returning it unchanged is a correct answer. Never invent a meaning for it, never explain what'
-      + ' you think it might be, and never pad the answer to make it look like a translation.'
-      : '- These lines come from one book, given without the rest of its context. Some of them are not'
-      + ' prose at all: a number, a date, a shelf mark, a catalogue code, a line of OCR noise. If a line'
-      + ' has nothing in it to translate, RETURN IT EXACTLY AS GIVEN. Returning it unchanged is a'
-      + ' correct answer. Never invent a meaning for it and never pad it to make it look like a'
-      + ' translation.',
+    rewrite === undefined
+      ? (one
+        ? '- The text is ONE block from a book, given without its context. Some blocks are not prose at all:'
+        + ' a library stamp, an accession number, a shelf mark, a catalogue code, a line of OCR noise from'
+        + ' the front matter. If a block has nothing in it to translate, RETURN IT EXACTLY AS GIVEN.'
+        + ' Returning it unchanged is a correct answer. Never invent a meaning for it, never explain what'
+        + ' you think it might be, and never pad the answer to make it look like a translation.'
+        : '- These lines come from one book, given without the rest of its context. Some of them are not'
+        + ' prose at all: a number, a date, a shelf mark, a catalogue code, a line of OCR noise. If a line'
+        + ' has nothing in it to translate, RETURN IT EXACTLY AS GIVEN. Returning it unchanged is a'
+        + ' correct answer. Never invent a meaning for it and never pad it to make it look like a'
+        + ' translation.')
+      : (one
+        ? '- The text is ONE block from a book, given without its context. Some blocks are not prose at'
+        + ' all: a number, a shelf mark, a catalogue code, a line of OCR noise. Others are already plain'
+        + ' and natural and need no change at all. In either case, RETURN IT EXACTLY AS GIVEN. Returning'
+        + ' it unchanged is a correct answer. Never pad an answer to make it look rewritten.'
+        : '- These lines come from one book, given without the rest of its context. Some of them are not'
+        + ' prose at all: a number, a shelf mark, a catalogue code, a line of OCR noise. Others are'
+        + ' already plain and natural and need no change at all. In either case, RETURN THE LINE EXACTLY'
+        + ' AS GIVEN. Returning it unchanged is a correct answer. Never pad a line to make it look'
+        + ' rewritten.'),
     ...shapeRules(shape),
     '',
     ...markerRules(inventory),
     '',
-    'OUTPUT ONLY THE TRANSLATION. No preamble, no notes, no explanations, no quotation marks around'
-    + ' it, no code fences.',
+    rewrite === undefined
+      ? 'OUTPUT ONLY THE TRANSLATION. No preamble, no notes, no explanations, no quotation marks around'
+      + ' it, no code fences.'
+      : 'OUTPUT ONLY THE REWRITTEN TEXT. No preamble, no notes, no explanations, no quotation marks'
+      + ' around it, no code fences.',
   ];
   if (instructions !== undefined && instructions.trim().length > 0) {
     lines.push(
@@ -642,6 +718,84 @@ export function systemPrompt(
     );
   }
   return lines.join('\n');
+}
+
+/**
+ * A mode's charter: the opening sentence and the rules that are ABOUT the job.
+ *
+ * THE THREE MODES ARE THREE DIFFERENT COMPLAINTS ABOUT A BOOK, and they are
+ * separate flags rather than one "simplify" because the fixes contradict each
+ * other. `dejargon` is aimed at prose that is over-built — nominalisations,
+ * hedging, a Latinate word where a short one would do — and it must not touch
+ * the argument. `destiffen` is aimed at prose that is grammatical and foreign in
+ * its bones, usually because it was translated once already; the facts are fine
+ * and the word order is not. `learner` is aimed at a reader rather than at the
+ * text, and it is the only one allowed to trade the author's vocabulary away.
+ * Asking one prompt to do all three would be asking the model to guess which
+ * complaint the person actually had.
+ *
+ * WHAT IS COMMON TO ALL THREE IS THE FIRST BULLET, and it is the same promise
+ * the translation prompt opens with: everything in, in order, nothing dropped.
+ * A rewrite that summarises is the failure this whole file exists to refuse,
+ * wearing a friendlier name — and it is the one a length guard alone would let
+ * through, because a summary of a long paragraph is comfortably over a quarter
+ * of its length.
+ */
+function rewriteCharter(mode: RewriteMode, language: string): string[] {
+  const charters: Readonly<Record<RewriteMode, { opening: string; rules: readonly string[] }>> = {
+    dejargon: {
+      opening: 'You are an editor rewriting over-complicated, jargon-heavy prose into plain, direct'
+        + ` ${language} for a general reader.`,
+      rules: [
+        'Rewrite faithfully and COMPLETELY. Every idea, fact, name, date, quote and step of the'
+        + ' argument must appear in your answer, in the same order. Never summarise, condense or skip.',
+        'Replace needless big words with plain ones: "utilize" -> "use", "endeavor" -> "try",'
+        + ' "facilitate" -> "help", "prior to" -> "before", "in order to" -> "to".',
+        'Turn noun-heavy phrasing back into verbs: "the marginalization of" -> "pushing aside",'
+        + ' "made a decision" -> "decided".',
+        'Break sentences over about 25 words into shorter ones. One main idea per sentence, in plain'
+        + ' subject-verb-object order, in the active voice.',
+        'Cut empty hedging and throat-clearing such as "It is worth noting that" and "It can be'
+        + ' observed that".',
+        'Keep genuine technical terms the author relies on. If the original defines a term in passing,'
+        + ' keep the definition.',
+        'Do NOT dumb down the argument, soften precise claims, or add examples or opinions of your own.',
+      ],
+    },
+    destiffen: {
+      opening: 'You are an editor rewriting stiff, translation-flavoured prose into natural, easy'
+        + ` ${language}.`,
+      rules: [
+        'Rewrite faithfully and COMPLETELY. Keep every fact, name, date, quote, event and detail, in'
+        + ' the same order. Change how it sounds, never what it says.',
+        'Put words in natural order. Undo translated word order such as "Not seldom did it happen that"'
+        + ' -> "It often happened that", and verb-final or front-loaded constructions.',
+        'Lower the register from stiff to plain: "whereby" -> "and", "thereby" -> "so", "it is to be'
+        + ' emphasized that" -> just say the thing.',
+        'Use contractions and everyday connectors (and, but, so, because) where a person naturally would.',
+        'Break long wind-up sentences into shorter ones with a clear subject and verb.',
+        'Keep the author\'s meaning and tone. Do NOT add facts, examples, or opinions of your own.',
+      ],
+    },
+    learner: {
+      opening: `You are an editor rewriting text for ${language} learners at B1-B2 level, staying`
+        + ' completely faithful to the original.',
+      rules: [
+        'Rewrite faithfully and COMPLETELY. Keep every event, action and line of dialogue, in the same'
+        + ' order. Simplify the words, never the story.',
+        'Replace rare, archaic or formal words with common modern ones: "perpetually" -> "always",'
+        + ' "hitherto" -> "until now", "whilst" -> "while".',
+        'Modernise archaic grammar: "dost thou revile" -> "do you insult", "wherefore" -> "why".',
+        'Break long sentences into shorter ones. One main idea per sentence, in plain'
+        + ' subject-verb-object order.',
+        'Keep dialogue as direct speech with the same meaning. Do NOT add filler words or explanations'
+        + ' that are not in the original.',
+        'Do NOT add or remove events, change their order, invent motivations, or modernise the setting.',
+      ],
+    },
+  };
+  const charter = charters[mode];
+  return [charter.opening, '', 'RULES:', ...charter.rules.map((rule) => `- ${rule}`)];
 }
 
 /**
@@ -1675,8 +1829,18 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     + `request${chunks.length === 1 ? '' : 's'} across ${documents} `
     + `document${documents === 1 ? '' : 's'}${skippedNote}`,
   );
+  /*
+   * WHAT THIS RUN IS ABOUT TO DO, and the arrow is a claim. "detected source →
+   * English" says the model was told to work out which language it is reading
+   * and to carry the words into another one, and on a rewrite it was told
+   * neither — nothing is detected, nothing moves. So a rewrite names its charter
+   * and the one language involved, which is the whole of the difference.
+   */
   opts.log(
-    `translate: ${model} at ${endpoint}, ${from === null ? 'detected source' : from.name} → ${to.name}`
+    `translate: ${model} at ${endpoint}, `
+    + (opts.rewrite === undefined
+      ? `${from === null ? 'detected source' : from.name} → ${to.name}`
+      : `rewriting in ${to.name} (${opts.rewrite})`)
     + `, up to ${concurrency} request${concurrency === 1 ? '' : 's'} in flight`,
   );
   /*
@@ -1990,7 +2154,9 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     const sourceText = block.masked.text;
     // The prompt teaches ONLY the marker kinds this block carries — see
     // `markerRules`, and the three refusals that made it exist.
-    const system = systemPrompt(from, to, opts.instructions, inventoryOf([block]));
+    const system = systemPrompt(
+      from, to, opts.instructions, inventoryOf([block]), { kind: 'single' }, opts.rewrite,
+    );
     let accepted: string | null = null;
     let lastComplaint = '';
 
@@ -2027,7 +2193,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
   const askGroup = async (chunk: Chunk): Promise<Map<PendingBlock, string> | null> => {
     const payload = renderChunk(chunk.kind, chunk.parts.map((p) => p.masked.text), chunk.rowSizes);
     const system = systemPrompt(
-      from, to, opts.instructions, inventoryOf(chunk.parts), shapeOf(chunk),
+      from, to, opts.instructions, inventoryOf(chunk.parts), shapeOf(chunk), opts.rewrite,
     );
     let lastComplaint = '';
 

@@ -112,6 +112,7 @@ import type {
   ProjectStep,
   ProjectTypeRecord,
   ProjectWorkingFile,
+  RewriteMode,
   StepCasualty,
   StepDeletion,
   StepRow,
@@ -3089,6 +3090,17 @@ export interface PlannedTranslation {
 export async function recordsForTranslation(
   dir: string,
   language: string,
+  /**
+   * The rewrite, when the button pressed was Simplify — absent for a translation.
+   *
+   * A PARAMETER RATHER THAN A SECOND FUNCTION BESIDE THIS ONE, because everything
+   * this decides is decided the same way for both: the parent is still the
+   * position, the answer is still `translationTarget`'s, and the mode is simply
+   * part of the ask it is given. A `recordsForSimplification` would be this
+   * function with one field spread in, and the day the parent rule changed it
+   * would change in one of the two.
+   */
+  rewrite?: RewriteMode,
 ): Promise<PlannedTranslation> {
   const manifest = await readManifest(dir);
   const ledger = ledgerOf(manifest);
@@ -3107,7 +3119,12 @@ export async function recordsForTranslation(
    */
   const target = translationTarget(
     ledger,
-    { parent: positionOf(ledger)?.id ?? null, language, key: manifest.key },
+    {
+      parent: positionOf(ledger)?.id ?? null,
+      language,
+      key: manifest.key,
+      ...(rewrite !== undefined ? { rewrite } : {}),
+    },
     randomUUID(),
   );
   return {
@@ -3495,6 +3512,18 @@ export async function recordTranslation(
      * append, which is `LandedRun.id`'s own rule.
      */
     stepId?: string;
+    /**
+     * `TranslateRequest.rewrite` — which rewrite this was, for a run that said the
+     * book again in its own language.
+     *
+     * IT COMES FROM THE JOB FOR THE LANGUAGE'S OWN REASON, and it is the second
+     * fact nothing on disk can answer afterwards. The mode is in the records file's
+     * NAME, and reading it back out of one is what this codebase's oldest house
+     * rule forbids — so the run that asked says which, exactly as it says which
+     * language it asked for. Absent for every translation, which is what keeps
+     * `translatedInto` composing the params it has always composed.
+     */
+    rewrite?: RewriteMode;
   } = {},
 ): Promise<void> {
   const resolved = path.resolve(recordsPath);
@@ -3539,7 +3568,7 @@ export async function recordTranslation(
          */
         payload: path.relative(dir, resolved).split(path.sep).join('/'),
         params: {
-          ...translatedInto(landed.language),
+          ...translatedInto(landed.language, landed.rewrite),
           ...(from.length > 0 ? { from } : {}),
         },
         createdAt: Date.now(),

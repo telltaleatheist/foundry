@@ -79,6 +79,8 @@ import * as path from 'node:path';
 
 import { materializeBook } from './book';
 
+import { parseBookFile } from '../shared/book';
+
 import {
   ProjectError,
   archiveFileOf,
@@ -107,6 +109,7 @@ import type {
   ProjectLedger,
   ProjectManifest,
   ReadingPlan,
+  RewriteMode,
   TranslationPlan,
   WorkspacePlan,
 } from '../shared/types';
@@ -1049,6 +1052,153 @@ export async function planTranslation(
 }
 
 /**
+ * Where this book's SIMPLIFICATION goes — which is `planTranslation`'s answer to
+ * `planTranslation`'s question, asked about the book's own language.
+ *
+ * ── What a rewrite is, and why it borrows all of this ───────────────────────
+ *
+ * "Say this book again, in the language it is already in, this way." The run is
+ * the translate pipeline with one word changed on the command line: the same
+ * materialised book, the same records file that is its own cache, the same seed,
+ * the same landing, the same derived book afterwards. So this composes the same
+ * plan, and everything downstream of it — the queue, the step, the cast, the
+ * sweep — never learns that a rewrite exists.
+ *
+ * ── AND THERE IS NO SAME-LANGUAGE REFUSAL, WHICH IS THE WHOLE DIFFERENCE ────
+ *
+ * `planTranslation` refuses a target that is the position's own language, because
+ * asking a model to render an English book in English is hours spent to say the
+ * same thing and a row that means nothing. That is exactly what this run asks
+ * for, and it is not the same thing coming back: the words change, the reader
+ * changes, and the point of the exercise is that the language does not. The
+ * refusal is not relaxed here so much as inapplicable — it was never about the
+ * languages matching, it was about a run with no work in it.
+ *
+ * ── WHICH LANGUAGE, WHICH IS THE ONE QUESTION THIS HAS TO ANSWER ────────────
+ *
+ * The rewrite happens IN a language and the engine is told which, so the plan has
+ * to name it, and there are two places it can honestly come from — in this order:
+ *
+ *   THE TRANSLATION IN EFFECT, when the person is standing under one. The words
+ *   at that position are that row's, and the row recorded what language it made
+ *   them in. Nothing else can know it: the derived book's header carries the
+ *   READ's declared language, because a derived book is materialised from the
+ *   source book's header and its rows are the only thing the records replaced.
+ *
+ *   THE BOOK'S OWN HEADER otherwise — `--language` as it was declared to the
+ *   reading, which is the app's one recorded answer to "what language is this
+ *   book in" and is declared, never detected (shared/book.ts).
+ *
+ * AND IF NEITHER SAYS ANYTHING, THIS REFUSES IN WORDS. A book that never declared
+ * its language cannot say what to rewrite it in, and the honest answer is a
+ * sentence naming the gap rather than a guess that spends six hours proving
+ * itself wrong. It is close to unreachable — `parseBookFile` refuses a header
+ * with no language in it — and it is written out because "close to" is where the
+ * expensive failures live.
+ */
+export async function planSimplification(
+  inputPath: string,
+  mode: RewriteMode,
+): Promise<TranslationPlan> {
+  const { dir, key } = await importDocument(inputPath, 'epub');
+  const manifest = await readManifest(dir);
+  const ledger = ledgerOf(manifest);
+
+  /*
+   * THE BOOK COMES FIRST HERE, where a translation names its file first, and the
+   * order is not arbitrary: the book is where the language comes from when the
+   * position is not under a translation, and the language is what the file is
+   * named after. `planTranslation` is handed its language by the person, so it
+   * can name the file before it has read anything.
+   *
+   * Everything else about it is that plan's, verbatim: the position's own book
+   * file with every op on the way to it replayed in, materialised AT PLAN TIME so
+   * a pointer moved while the job waits cannot change which book was meant, into
+   * the OS temp directory and swept by the hand that settles the job.
+   */
+  const derived = await materializeBook(dir, path.join(os.tmpdir(), 'foundry'));
+  if (!derived.ok) throw new ProjectError(derived.reason);
+
+  const standing = translationInEffect(ledger)?.params?.language?.trim() ?? '';
+  const language = standing.length > 0 ? standing : await declaredLanguageOf(derived.path);
+  if (language.length === 0) {
+    throw new ProjectError(
+      'This book has never said what language it is in, and a rewrite happens IN a language — so '
+      + 'there is nothing to tell the model to write. Read the pages again with the language '
+      + 'declared, or translate the book into a language you name, and the rewrite has an answer '
+      + 'to work from.',
+    );
+  }
+
+  const planned = await recordsForTranslation(dir, language, mode);
+  /*
+   * ── THE SEED, WHICH A REWRITE SPENDS WHERE A CHAIN WOULD NOT ───────────────
+   *
+   * `planTranslation` refuses to seed a CHAIN: its questions are asked of the
+   * parent's words, so a sibling's answers about the book's own words are keyed to
+   * questions that run will never ask. A rewrite is never a chain in that sense.
+   * It reads the book at the position and asks about the paragraphs in front of
+   * it, exactly as a first translation does, so a sibling rewrite of the same
+   * language in the same mode holds true answers about the same paragraphs and is
+   * worth every block it saves.
+   *
+   * SAME LANGUAGE AND SAME MODE, and the mode is the half that is new. See
+   * `newestRecordsInto`: the keys hash the source paragraph and not the prompt, so
+   * a plain-terms file seeded into an easy-language run would answer the whole
+   * book with somebody else's rewrite and never ask.
+   */
+  const seed = newestRecordsInto(ledger, language, planned.records, mode);
+  const generation = readingGenerationOf(ledger, manifest);
+  await fsp.mkdir(path.join(dir, 'readings'), { recursive: true });
+
+  return {
+    key,
+    sourcePath: inputPath,
+    bookPath: derived.path,
+    recordsPath: planned.recordsPath,
+    stepId: planned.stepId,
+    /*
+     * BOTH ENDS ARE THE SAME LANGUAGE AND BOTH ARE SAID. `from` is what the words
+     * in that book file are in and `to` is what they are to come back as, and for
+     * a rewrite those are one fact — the dialog reads this field for the request's
+     * `to`, so the two cannot be composed apart. Telling the model what it is
+     * holding is worth a flag even when it can see it: the alternative is inviting
+     * a guess about a fact the ledger recorded.
+     */
+    from: language,
+    ...(seed !== null ? { seedRecords: path.join(dir, ...seed.split('/')) } : {}),
+    ...(generation !== null ? { generation } : {}),
+  };
+}
+
+/**
+ * WHAT LANGUAGE A BOOK FILE SAYS IT IS IN, or the empty string for one that says
+ * nothing.
+ *
+ * READ BACK OFF THE FILE THAT WAS JUST WRITTEN rather than threaded out of
+ * `materializeBook`, because that function's answer is a PATH — it is the seam
+ * between the replay and the engine, and every other caller wants a file to hand
+ * over rather than a fact about the book inside it. Widening it so this one caller
+ * can skip a read would put a book's header in the return type of the thing that
+ * writes books for compilers.
+ *
+ * THROUGH `parseBookFile` AND NOT PAST IT. Taking the first line and reaching for
+ * a key would be this module holding a second opinion about what a book file is,
+ * and the day the header moved it would be the opinion that was wrong. A parse
+ * that refuses answers the empty string: this is asked in order to compose a
+ * refusal sentence, and a book that cannot be read is a book that has not said.
+ */
+async function declaredLanguageOf(bookPath: string): Promise<string> {
+  try {
+    const text = await fsp.readFile(bookPath, 'utf8');
+    return parseBookFile(text).header.language.trim();
+  } catch (err) {
+    console.error(`[workspace] ${bookPath} could not be asked its language: ${(err as Error).message}`);
+    return '';
+  }
+}
+
+/**
  * TWO LANGUAGES, ONE ANSWER — folded the way every filename in this app folds a
  * language, so `EN` and `en` are the same language here as they are there.
  *
@@ -1088,11 +1238,32 @@ function newestRecordsInto(
   ledger: ProjectLedger,
   language: string,
   writing: string,
+  /**
+   * THE REWRITE THIS RUN IS, and a candidate has to be the same one — absent
+   * meaning an ordinary translation, which likewise only ever seeds from another
+   * ordinary translation.
+   *
+   * ── Why a cross-mode seed is not merely wasteful ────────────────────────────
+   *
+   * A record's key hashes the MASKED SOURCE QUESTION — the paragraph as it stands
+   * in the book being read — and not the prompt that was asked about it. So a
+   * German book simplified into plain terms and the same German book simplified
+   * into easy language produce records with THE SAME KEYS AND DIFFERENT ANSWERS,
+   * and seeding one from the other would hand every block of a learner edition an
+   * answer written for a specialist and never ask the model about it. The run
+   * would finish in seconds and be the wrong book.
+   *
+   * The equality is exact rather than folded, unlike the language beside it: a
+   * mode is one of three values this app writes and `readParams` refuses anything
+   * else, where a language tag is somebody's typing.
+   */
+  rewrite?: RewriteMode,
 ): string | null {
   let found: string | null = null;
   for (const step of ledger.steps) {
     const said = step.params?.language ?? '';
     if (said.length === 0 || !sameTag(said, language)) continue;
+    if (step.params?.rewrite !== rewrite) continue;
     const records = translationRecordsOf(step);
     if (records === null || records === writing) continue;
     found = records;

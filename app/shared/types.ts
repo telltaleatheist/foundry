@@ -365,6 +365,30 @@ export interface GenerateRequest {
  */
 
 /**
+ * WHICH REWRITE A SIMPLIFY ASKS FOR — the whole of what makes one different from
+ * another, and the whole of what makes one different from a translation.
+ *
+ * ── Why a rewrite is a translation and not a fifth action ───────────────────
+ *
+ * Because everything the engine does with it is the translate pipeline: a
+ * question per block keyed by that block's own masked text, an answer per block
+ * checked before it is accepted, a records file that is its own cache, and a
+ * derived book materialised from those records when it lands. The one thing that
+ * changes is the prompt — say this paragraph again, in the same language, plainer
+ * — so a simplify step IS a `translate` step, carrying `params.rewrite`, and every
+ * piece of machinery downstream of that (the landing, the cast, the aligned view,
+ * the sweep) was already right about it without being told anything.
+ *
+ * WHAT DISTINGUISHES THE THREE IS WHO THE BOOK IS FOR, which is why they are three
+ * modes rather than a free-text instruction. Dejargon is for a book whose author
+ * hid behind vocabulary; destiffen is for a book a machine has just translated
+ * into a stilted register; learner is for a reader at B1–B2 who wants the same
+ * story in words they have. A person picks one of those three; the wording of the
+ * prompt is the engine's business.
+ */
+export type RewriteMode = 'dejargon' | 'destiffen' | 'learner';
+
+/**
  * Everything the Translate dialog decides before a job is enqueued.
  *
  * A SEPARATE SHAPE from `JobRequest` rather than more optional fields on it,
@@ -446,6 +470,24 @@ export interface TranslateRequest {
   recordsPath: string;
   /** `--to`: the BCP-47 tag to translate INTO. */
   to: string;
+  /**
+   * `--rewrite`: SAY THE BOOK AGAIN IN ITS OWN LANGUAGE, this way.
+   *
+   * Absent for an ordinary translation, which is what nearly every job here is.
+   * Present, it swaps the prompt and nothing else: `to` carries the book's OWN
+   * language, `from` is that same language, and the engine is content with the
+   * pair because a rewrite is same-language by design (docs, and the CLI refuses
+   * this flag without `--book` for the same reason this app has never composed a
+   * translation without one).
+   *
+   * IT TRAVELS AS FAR AS THE LANDING, not just as far as the command line, and
+   * that is the part worth being deliberate about. The step it lands as records
+   * it (`translatedInto`), which is what lets the row say "Simplified — natural
+   * voice (de)" hours later and what lets a second simplify in the SAME mode from
+   * the SAME step replace that row rather than appending a fourth German
+   * translation beside it (`PARAMS_OF`, shared/ledger.ts).
+   */
+  rewrite?: RewriteMode;
   /**
    * `--from`. Absent means the model is told to determine it.
    *
@@ -2252,6 +2294,25 @@ export interface LedgerParams {
    * wonder which question it answers.
    */
   language?: string;
+  /**
+   * `translate` — WHICH REWRITE THIS WAS, for a step that said the book again in
+   * its own language rather than putting it into another one.
+   *
+   * A QUESTION AND NOT AN ANSWER, which is the only interesting decision about
+   * this field and the reason it is NOT in `MINTED_BY_THE_RUN` beside `bank` and
+   * `from`. Somebody chose it in a dialog, out of three cards, and it is as much
+   * of what makes this rewrite this one as the target language is of what makes a
+   * translation that one. So `reRunTarget` compares it: simplifying the same step
+   * into plain terms twice is the same question asked twice and REPLACES, and
+   * asking for easy language instead is a different book for a different reader
+   * and BRANCHES beside it. Left out of the comparison, the second mode would
+   * swap its answers into the first mode's row and destroy them.
+   *
+   * ABSENT ON EVERY ORDINARY TRANSLATION, which is what makes old ledgers safe:
+   * `identityOf` skips a param nobody set, so every translate step already on a
+   * disk asks exactly the question it has always asked.
+   */
+  rewrite?: RewriteMode;
 }
 
 /**

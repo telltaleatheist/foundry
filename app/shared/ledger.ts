@@ -71,6 +71,7 @@ import {
   type ProjectReading,
   type ProjectStep,
   type ProjectTypeRecord,
+  type RewriteMode,
   type StepAction,
   type StepRow,
 } from './types';
@@ -93,6 +94,32 @@ export class StepLedgerError extends Error {
 
 /** Every action there is, in the order a project meets them. */
 export const STEP_ACTIONS = ['import', 'read', 'curate', 'translate', 'metadata', 'edit'] as const;
+
+/**
+ * EVERY REWRITE THERE IS, and the two or three words a row calls it by.
+ *
+ * ONE TABLE FOR TWO JOBS, because they cannot be allowed to disagree. `readParams`
+ * refuses a stored mode this app cannot name — a `rewrite` nobody here has heard
+ * of is a step written by another program, and guessing at it would file somebody's
+ * book under a prompt this build does not have — and `labelFor` prints the row.
+ * Two lists would be one list plus a way for a new mode to be storable and
+ * unprintable.
+ *
+ * THE WORDS ARE THE READER'S AND NOT THE ENGINE'S. `dejargon`, `destiffen` and
+ * `learner` are flag values on a command line; "plain terms", "natural voice" and
+ * "easy language" are what somebody scanning their own history is looking for. The
+ * dialog says the same three phrases above the same three cards, which is what
+ * makes the row recognisable as the thing that was pressed.
+ */
+export const REWRITE_LABELS: Readonly<Record<RewriteMode, string>> = {
+  dejargon: 'plain terms',
+  destiffen: 'natural voice',
+  learner: 'easy language',
+};
+
+function isRewriteMode(said: string): said is RewriteMode {
+  return Object.hasOwn(REWRITE_LABELS, said);
+}
 
 /**
  * WHAT IT WOULD COST TO GET THIS PAYLOAD BACK, per action — the retention rule
@@ -139,10 +166,13 @@ export const RETENTION_OF: Readonly<Record<StepAction, LedgerStep['retention']>>
  * `completedAt` are what came back. Both piles are recorded; only the question is
  * compared. See `MINTED_BY_THE_RUN`, which is where that split is enforced.
  *
- * A TRANSLATE IS THE SAME TWO PILES IN THE SAME ORDER. `language` is the whole of
- * what the Translate dialog decides about which translation this is; `from` is the
- * language a CHAINED run consumed, read off its parent rather than typed; and
- * `bank` is where a run made before records mode put its answers.
+ * A TRANSLATE IS THE SAME TWO PILES IN THE SAME ORDER. `language` and `rewrite`
+ * are the whole of what a dialog decides about which translation this is — the
+ * language for a translation, and for a simplify the mode as well, because saying
+ * a German book plainly and saying it in easy language are two books for two
+ * readers and one of them must never swap its answers into the other's row.
+ * `from` is the language a CHAINED run consumed, read off its parent rather than
+ * typed; and `bank` is where a run made before records mode put its answers.
  *
  * `bank` IS KEPT FOR THE STEPS THAT HAVE ONE AND IS WRITTEN BY NOTHING. A
  * translation's answers are its own records file now, which is the step's PAYLOAD
@@ -156,7 +186,7 @@ export const PARAMS_OF: Readonly<Record<StepAction, readonly (keyof LedgerParams
   import: [],
   read: ['skipPages', 'language', 'generation', 'pages', 'completedAt'],
   curate: ['generation', 'amendments'],
-  translate: ['language', 'bank', 'from'],
+  translate: ['language', 'bank', 'from', 'rewrite'],
   /*
    * A METADATA EDIT IS DESCRIBED BY WHICH FIELDS IT SET, and by nothing else. The
    * values are in the payload, where the thing an export replays belongs
@@ -310,7 +340,7 @@ export const RETAINED_BESIDE_YOU: Readonly<Record<StepAction, boolean>> = {
  * step it was meant to swap into unrecognisable, and the user would get a second
  * English translation beside the one they asked to redo.
  *
- * WHAT IS LEFT IN THE QUESTION IS `language`, ALONE, AND DELIBERATELY SO. A
+ * WHAT IS LEFT IN THE QUESTION IS `language` AND `rewrite`, AND DELIBERATELY SO. A
  * re-translation with different instructions or a different model is the same
  * person refining THIS translation of this book, not asking a new one — they get
  * the row they already have, with better contents in it. What makes a second
@@ -318,6 +348,13 @@ export const RETAINED_BESIDE_YOU: Readonly<Record<StepAction, boolean>> = {
  * ask for it, which `reRunTarget` settles by the parent before it ever reaches
  * these params. (If that ruling chafes, the fix is one line in `PARAMS_OF` — which
  * is the reason the table exists.)
+ *
+ * `rewrite` IS THE LINE THAT RULING PREDICTED, added when a simplify became a
+ * translate step carrying a mode. It is a question in the same sense the language
+ * is: three cards in a dialog, one of them chosen, and the choice is what the book
+ * that comes out is FOR. Two modes sharing a row would mean asking for easy
+ * language destroyed the plain-terms rewrite made from the same step — the exact
+ * false replace this whole table is written to prevent, in the newest folder.
  *
  * `from` IS IN THE ANSWER PILE FOR A SHARPER VERSION OF THE SAME REASON. Nobody
  * typed it: a chained run reads the source language off its parent translate step,
@@ -451,8 +488,23 @@ export function labelFor(action: StepAction, params?: LedgerParams): string {
      * every row already on a disk keeps the words it was stamped with, and the
      * ones that go on being unambiguous keep them for good.
      */
+    /*
+     * A SIMPLIFY SAYS WHICH REWRITE AND NEVER SAYS AN ARROW, which is not a
+     * shortcut — it is the shape of the act. A rewrite happens IN the book's own
+     * language, so both ends of it are the same tag, and "Translated (de → de)"
+     * would be a row describing a run nobody would ever order. What a person is
+     * looking for on this row is which of the three they picked, so that is what
+     * it leads with, and the tag stays in the parentheses where every other
+     * translate row keeps it: a project can hold a German rewrite and an English
+     * one, and they are told apart there.
+     */
     default: {
       const into = params?.language ?? '';
+      const rewrite = params?.rewrite;
+      if (rewrite !== undefined) {
+        const said = `Simplified — ${REWRITE_LABELS[rewrite]}`;
+        return into.length === 0 ? said : `${said} (${into})`;
+      }
       if (into.length === 0) return 'Translated';
       const outOf = params?.from ?? '';
       return outOf.length === 0 ? `Translated (${into})` : `Translated (${outOf} → ${into})`;
@@ -751,7 +803,20 @@ function readParams(value: unknown, id: string, action: StepAction): LedgerParam
     const key = named as keyof LedgerParams;
     const said = record[key];
     if (said === undefined) continue;
-    if (isList(key)) {
+    if (key === 'rewrite') {
+      // CHECKED AGAINST THE THREE THIS BUILD KNOWS rather than admitted as any
+      // word, which is the one place a param earns more than "it is a string". A
+      // mode is not free text a person typed — it is one of three cards — so a
+      // fourth value in a file is a step some other program wrote, and taking it
+      // at face value would leave a row this app can neither name nor re-run.
+      if (typeof said !== 'string' || !isRewriteMode(said)) {
+        throw new StepLedgerError(
+          `Step "${id}" says "rewrite": ${JSON.stringify(said)}, and the rewrites are: `
+          + `${Object.keys(REWRITE_LABELS).join(', ')}`,
+        );
+      }
+      params.rewrite = said;
+    } else if (isList(key)) {
       // EVERY ELEMENT CHECKED, and an empty list refused with the rest: a
       // metadata row that set no fields is a row about nothing, and the label it
       // composes would say the plain word while claiming an edit happened.
@@ -1051,9 +1116,23 @@ export function askedOf(asked: ReadAsk): LedgerParams {
  * because its language survives only inside a filename and this app does not read
  * facts out of those.
  */
-export function translatedInto(language: string | undefined): LedgerParams {
+export function translatedInto(
+  language: string | undefined,
+  /**
+   * THE REWRITE, FOR A SIMPLIFY, AND ABSENT FOR EVERY ORDINARY TRANSLATION.
+   *
+   * It rides here rather than being spread in at the two call sites for the whole
+   * of the paragraph above: the plan and the landing compose one params bag by one
+   * function, so they cannot come to different answers about which row this run is.
+   * A simplify's identity is the language AND the mode, and a mode dropped at
+   * either end would aim easy language at the plain-terms row.
+   */
+  rewrite?: RewriteMode,
+): LedgerParams {
   const said = language?.trim() ?? '';
-  return said.length === 0 ? {} : { language: said };
+  const params: LedgerParams = said.length === 0 ? {} : { language: said };
+  if (rewrite !== undefined) params.rewrite = rewrite;
+  return params;
 }
 
 /** What the user is about to do, before it has an id or a payload. */
@@ -1230,9 +1309,31 @@ export function translationBankFileFor(key: string, language: string, branch?: s
  * made from a different step mints `<id8>` from its own uuid, so the older row
  * goes on naming the answers it is actually about (`translationTarget`).
  */
-export function translationRecordsFileFor(key: string, language: string, branch?: string): string {
+export function translationRecordsFileFor(
+  key: string,
+  language: string,
+  branch?: string,
+  /**
+   * The rewrite, for a simplify — a segment BEFORE the branch id and absent
+   * entirely for a translation.
+   *
+   * BEFORE THE BRANCH, because the branch id is the last thing that distinguishes
+   * two otherwise identical asks and reads as the tie-breaker it is:
+   * `<key>.de.destiffen.a1b2c3d4.records.jsonl` is a second natural-voice German
+   * rewrite, where `<key>.de.a1b2c3d4.destiffen...` would put the tie-breaker
+   * before the thing it breaks a tie about.
+   *
+   * ABSENT ENTIRELY IS THE LOAD-BEARING HALF. Every records file on every disk was
+   * written by a translation, and a mode segment that appeared as an empty string
+   * or a placeholder would rename all of them — leaving the steps that name them
+   * pointing at files that are no longer there. A translation composes exactly the
+   * name it has always composed.
+   */
+  mode?: RewriteMode,
+): string {
   const tag = languageTagFor(language);
-  return `${key}.${tag}${branch === undefined ? '' : `.${branch}`}.records.jsonl`;
+  const rewrite = mode === undefined ? '' : `.${mode}`;
+  return `${key}.${tag}${rewrite}${branch === undefined ? '' : `.${branch}`}.records.jsonl`;
 }
 
 /**
@@ -1324,6 +1425,17 @@ export interface TranslationAsk {
    * obeyed, one file over.
    */
   key: string;
+  /**
+   * The rewrite, when this ask is a SIMPLIFY — absent for a translation.
+   *
+   * It is in the ask rather than only on the command line because it decides both
+   * halves of what this function answers: which step this run belongs to (the
+   * mode is part of the question `reRunTarget` compares) and what its file is
+   * called (a plain-terms rewrite and an easy-language one are two sets of answers
+   * about one book in one language, and one filename holding both is the collision
+   * this whole section exists to have ended).
+   */
+  rewrite?: RewriteMode;
 }
 
 /** Where this translation's answers go, and which step they belong to. */
@@ -1398,19 +1510,21 @@ export function translationTarget(
   /** Spent only on a branch. See `LandedRun.id` for the same arrangement. */
   minted: string,
 ): TranslationTarget {
-  const plain = `readings/${translationRecordsFileFor(ask.key, ask.language)}`;
+  const plain = `readings/${translationRecordsFileFor(ask.key, ask.language, undefined, ask.rewrite)}`;
   const target = reRunTarget(ledger, {
     action: 'translate',
     parent: ask.parent,
-    params: translatedInto(ask.language),
+    params: translatedInto(ask.language, ask.rewrite),
   });
   if (target !== null) {
     return {
       stepId: target.id,
       // The fallback is `plain` by construction rather than by coincidence: a
-      // re-run target matched on the SAME language from the SAME parent, so the
-      // path its language composes is the path this ask composes. It is taken
-      // only by a row that predates records, which had no records file to name.
+      // re-run target matched on the SAME language and the SAME rewrite from the
+      // SAME parent, so the path those compose is the path this ask composes. It
+      // is taken only by a row that predates records, which had no records file
+      // to name — and no such row can be a simplify, because a rewrite has never
+      // existed outside records mode.
       records: translationRecordsOf(target) ?? plain,
       replaces: target,
     };
@@ -1419,7 +1533,7 @@ export function translationTarget(
   if (!taken) return { stepId: minted, records: plain, replaces: null };
   return {
     stepId: minted,
-    records: `readings/${translationRecordsFileFor(ask.key, ask.language, id8(minted))}`,
+    records: `readings/${translationRecordsFileFor(ask.key, ask.language, id8(minted), ask.rewrite)}`,
     replaces: null,
   };
 }

@@ -36,6 +36,7 @@ import type {
   QuestionAnswer,
   ReadingPlan,
   RecentDocument,
+  RewriteMode,
   ServerStatus,
   SettingsView,
   SetupLogEvent,
@@ -314,6 +315,29 @@ export interface FoundryApi {
     planTranslation(
       inputPath: string,
       targetLanguage: string,
+    ): Promise<TranslationPlan & { inputPath: string }>;
+    /**
+     * Where a SIMPLIFICATION of this book goes — the same answer as above, about a
+     * run that says the book again in the language it is already in.
+     *
+     * THE SAME PLAN SHAPE BECAUSE IT IS THE SAME JOB. A rewrite is the translate
+     * pipeline with one word changed on the command line, so it writes the same
+     * kind of records file, is named after the same kind of step, seeds from the
+     * same kind of sibling and is cast into a book the same way. The caller builds
+     * a `TranslateRequest` from this and adds `rewrite` itself, which is the only
+     * field this window contributes that the plan does not.
+     *
+     * THERE IS NO LANGUAGE TO PASS, AND THAT IS THE INTERESTING PART. A rewrite
+     * happens IN a language rather than into one, so main resolves it — the
+     * translation the position stands under, or failing that the language the
+     * reading declared — and hands it back as `from`. The caller puts that same
+     * value in the request's `to`: both ends of a rewrite are one fact, and a
+     * window that composed them separately could tell the model it was holding
+     * something else.
+     */
+    planSimplification(
+      inputPath: string,
+      mode: RewriteMode,
     ): Promise<TranslationPlan & { inputPath: string }>;
   };
 

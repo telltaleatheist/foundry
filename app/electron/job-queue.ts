@@ -114,6 +114,7 @@ import {
 } from './projects';
 import { readSettings } from './settings';
 import { ensureServer, isLocalVllmEndpoint, noteQueueBusy, noteQueueIdle } from './vllm-server';
+import { REWRITE_LABELS } from '../shared/ledger';
 import type {
   ConversionKind, EnvInstallRequest, Job, JobRequest, TranslateRequest,
 } from '../shared/types';
@@ -337,6 +338,24 @@ export function enqueueTranslate(
     kind: 'translate',
     state: 'held',
     progress: null,
+    /*
+     * A REWRITE NAMES ITSELF IN THE SHELF, and a translation goes on naming its
+     * book.
+     *
+     * The row falls back to the project's title, which is the right answer while
+     * a book can only be in the queue for one reason — and it stopped being one
+     * the moment two different buttons produced the same kind of job about the
+     * same book. Somebody who queued a rewrite and a translation of one book, or
+     * queued a rewrite and came back an hour later, would be looking at two rows
+     * with one name on them, deciding which to Start.
+     *
+     * SO THE ACT WINS OVER THE BOOK, for the row that has a choice to explain.
+     * What is on screen is a short list of things somebody is about to spend a
+     * night of GPU on, and "Simplify — natural voice" is the fact they are
+     * checking; the book is one hover away in the row's paths, where every
+     * filename in this shelf already lives.
+     */
+    ...(request.rewrite !== undefined ? { title: `Simplify — ${REWRITE_LABELS[request.rewrite]}` } : {}),
     /*
      * A TRANSLATION IS THE STEP THIS FIELD WAS BUILT FOR. It is the one action a
      * person routinely runs from an earlier row — translate from the reading,
@@ -653,6 +672,17 @@ function argsFor(
      * English.
      */
     if (request.from && request.from.trim().length > 0) args.push('--from', request.from.trim());
+    /*
+     * ── AND THE ONE FLAG THAT MAKES THIS A REWRITE INSTEAD ────────────────────
+     *
+     * `--rewrite` swaps the prompt and touches nothing else on this line: the same
+     * book, the same records file, the same model, the same endpoint. `--to`
+     * carries the book's OWN language beside it and the engine is content with a
+     * pair that matches, because a rewrite is same-language by design — which is
+     * the one thing about this command that would look like a mistake to somebody
+     * reading it in a terminal, and is not one.
+     */
+    if (request.rewrite !== undefined) args.push('--rewrite', request.rewrite);
     /*
      * The reading these answers are about, written into every row and read by
      * nobody in the engine — `Overlay.generation`'s contract, one folder over. It
@@ -1521,8 +1551,19 @@ async function pump(): Promise<void> {
         parentStep: next.parentStep ?? null,
         language: request.to,
         ...(request.stepId !== undefined ? { stepId: request.stepId } : {}),
+        /*
+         * AND WHICH REWRITE, WHEN IT WAS ONE — the second fact nothing on disk can
+         * answer, for the language's own reason. The step's params are what
+         * `labelFor` reads to say "Simplified — natural voice (de)" and what
+         * `reRunTarget` compares hours from now, so a mode that stopped here at
+         * the command line would leave a row calling itself a translation and a
+         * second rewrite in another mode swapping its answers into it.
+         */
+        ...(request.rewrite !== undefined ? { rewrite: request.rewrite } : {}),
       });
-      next.message = `Translated ${path.basename(next.inputPath)} — the book follows.`;
+      next.message = request.rewrite === undefined
+        ? `Translated ${path.basename(next.inputPath)} — the book follows.`
+        : `Simplified ${path.basename(next.inputPath)} — the book follows.`;
       changed();
       /*
        * AND THE BOOK OF IT, WHICH IS THE PART THAT IS NOT A RENDERING. *"When a

@@ -81,7 +81,7 @@ import {
 } from './recents';
 import { readSettings, writeSettings } from './settings';
 import * as vllm from './vllm-server';
-import { planExport, planReading, planTranslation } from './workspace';
+import { planExport, planReading, planSimplification, planTranslation } from './workspace';
 import { detectEnvTooling, listDistros } from './wsl';
 import { fold, isBook } from '../shared/original';
 import type { ReadAsk } from '../shared/ledger';
@@ -110,6 +110,7 @@ import type {
   StepRow,
   RecentKind,
   ReReadAnswer,
+  RewriteMode,
   SetupRequest,
   TranslateRequest,
 } from '../shared/types';
@@ -1275,6 +1276,21 @@ function registerIpc(): void {
     const source = admitted(inputPath);
     if (source === null) throw new Error(`${inputPath} was never opened in this app.`);
     const plan = await planTranslation(source, targetLanguage);
+    return { ...plan, inputPath: plan.sourcePath };
+  });
+
+  /*
+   * A SIMPLIFY IS A TRANSLATION AND IS ADMITTED THE SAME WAY. It is the same
+   * plan, about the same open document, reading the same input to materialise the
+   * same book — so the allow-list check above is not a pattern being copied here,
+   * it is the same check about the same act. The mode is the only thing this door
+   * carries that the other does not, and it is not a path: `planSimplification`
+   * takes it as one of three values and the engine refuses anything else.
+   */
+  ipcMain.handle('workspace:plan-simplify', async (_event, inputPath: string, mode: RewriteMode) => {
+    const source = admitted(inputPath);
+    if (source === null) throw new Error(`${inputPath} was never opened in this app.`);
+    const plan = await planSimplification(source, mode);
     return { ...plan, inputPath: plan.sourcePath };
   });
 
