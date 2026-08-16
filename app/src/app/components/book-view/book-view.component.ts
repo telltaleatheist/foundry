@@ -16,7 +16,7 @@ import {
 
 import { PDF_BLOCK_CATEGORIES, pdfCategoryColour, pdfCategoryLabel } from '@shared/categories';
 import type { BookLoad, BookRow } from '@shared/book';
-import { replayOps, struckNotes, type BookOp, type ReplayedRow } from '@shared/ops';
+import { replayOps, struckNotes, unwritten, type BookOp, type ReplayedRow } from '@shared/ops';
 
 import { api } from '../../core/foundry';
 import { LedgerService } from '../../core/ledger.service';
@@ -2113,6 +2113,24 @@ export class BookViewComponent {
     const destroy = inject(DestroyRef);
     destroy.onDestroy(() => {
       if (registered !== null) tabs.releaseBookStack(registered);
+      /*
+       * UNWRITTEN WORK RIDES THE TAB, NOT THE COMPONENT. This pane dies every
+       * time its pane shows another tab — a glance at the scan — and the stack
+       * used to die with it (user report, 2026-08-16). Anything not yet on
+       * disk (a differing stack, or a redo pile that could put ops back) is
+       * parked with the tab and claimed by the next incarnation; `load` decides
+       * whether it still applies. Nothing is parked when everything is
+       * recorded, so the map stays the size of the abandoned work.
+       */
+      if (registered !== null
+        && (this.waiting() > 0 || this.undone().length > 0)) {
+        tabs.parkBookStack(registered, {
+          revision: this.tab().revision,
+          landed: this.landedOps(),
+          pending: this.pending(),
+          undone: this.undone(),
+        });
+      }
     });
 
     /*
@@ -2299,6 +2317,39 @@ export class BookViewComponent {
         this.landedOps.set(tip);
         this.pending.set([...tip]);
         this.undone.set([]);
+        /*
+         * ── THE PARKED STACK COMES BACK, when it is still about this book ────
+         *
+         * The last incarnation of this pane may have left unwritten work with
+         * the tab (see the destroy hook). It still applies only if nothing
+         * moved while it was parked: the tab's revision is bumped by every
+         * position change, and the recorded tip must read back as what the
+         * stack grew out of. When it applies, the RESTORED lists replace the
+         * hydration above wholesale — including `landedOps`, because
+         * `waiting()` counts past a shared prefix by identity, and the parked
+         * pending's untouched head is the PARKED landed's objects, not this
+         * load's re-parsed ones. When it does not, the loss is said out loud;
+         * silence here would be indistinguishable from a successful return.
+         */
+        const parked = this.tabs.claimBookStack(this.tab().id);
+        if (parked !== null) {
+          const same = parked.revision === this.tab().revision
+            && JSON.stringify(parked.landed) === JSON.stringify(tip);
+          if (same) {
+            this.landedOps.set(parked.landed);
+            this.pending.set([...parked.pending]);
+            this.undone.set([...parked.undone]);
+          } else if (unwritten(parked.landed, parked.pending) > 0) {
+            const lost = unwritten(parked.landed, parked.pending);
+            this.tabs.notice.set(
+              lost === 1
+                ? 'The change waiting on this book was let go — the book here changed while you '
+                  + 'were looking at another tab.'
+                : `The ${lost} changes waiting on this book were let go — the book here changed `
+                  + 'while you were looking at another tab.',
+            );
+          }
+        }
       } else {
         this.landedOps.set([]);
         this.pending.set([]);
@@ -2324,12 +2375,7 @@ export class BookViewComponent {
    * boundary is as much a thing to record as a new strike above it.
    */
   protected waiting(): number {
-    const landed = this.landedOps();
-    const pending = this.pending();
-    let shared = 0;
-    while (shared < landed.length && shared < pending.length
-      && landed[shared] === pending[shared]) shared += 1;
-    return (landed.length - shared) + (pending.length - shared);
+    return unwritten(this.landedOps(), this.pending());
   }
 
   /**
@@ -3450,6 +3496,17 @@ export class BookViewComponent {
    */
   protected cancel(event: Event): void {
     if (this.editingId() !== null) return;
+    /*
+     * A KEY PRESSED INTO ANY EDITABLE ON THE SHEET IS THAT EDITABLE'S. The
+     * block editor is guarded above by its signal, and the chapter chip's
+     * rename was not: its Backspace bubbled here, found the selection still
+     * standing from before the double-click, and un-deleted a struck block
+     * while the person was erasing letters of a title (user report,
+     * 2026-08-16). The target's own word for itself is the general guard —
+     * any contenteditable this sheet ever grows is covered the day it lands.
+     */
+    const target = event.target as HTMLElement | null;
+    if (target !== null && target.isContentEditable) return;
     const chosen = this.chosen();
     if (chosen.size === 0) return;
     event.preventDefault();

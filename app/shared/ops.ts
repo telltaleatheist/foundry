@@ -1590,3 +1590,22 @@ export function struckNotes(rows: readonly ReplayedRow[]): ReadonlySet<string> {
   }
   return out;
 }
+
+/**
+ * How many decisions stand between a recorded list and a working one — the
+ * count every "you have unapplied changes" surface shows.
+ *
+ * MEASURED PAST THE SHARED PREFIX, BY IDENTITY. The working stack begins life
+ * as a copy of the recorded list, so its untouched head is the very same op
+ * objects and identity is the honest test; an undo below the recorded boundary
+ * shortens the working list, and that removal is as much a thing to write down
+ * as a new strike is, which is why both tails count. Shared between the pane's
+ * tray and the closing question (tabs.service), because two counts of one fact
+ * is how a dialog comes to disagree with the button that opened it.
+ */
+export function unwritten(landed: readonly BookOp[], pending: readonly BookOp[]): number {
+  let shared = 0;
+  while (shared < landed.length && shared < pending.length
+    && landed[shared] === pending[shared]) shared += 1;
+  return (landed.length - shared) + (pending.length - shared);
+}

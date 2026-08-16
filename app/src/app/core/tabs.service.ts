@@ -1,7 +1,7 @@
 import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 
 import { positionPicture, positionView, type PositionView } from '@shared/ledger';
-import type { BookOp, Replayed } from '@shared/ops';
+import { unwritten, type BookOp, type Replayed } from '@shared/ops';
 import { fold } from '@shared/original';
 import type { JobKind } from '@shared/types';
 
@@ -1603,6 +1603,52 @@ export class TabsService {
    */
   private readonly bookStacks = signal<ReadonlyMap<string, BookStack>>(new Map());
 
+  /**
+   * A BOOK PANE'S UNWRITTEN STACK, HELD WHILE ITS TAB IS SHOWN ELSEWHERE.
+   *
+   * Switching a pane to another tab DESTROYS the book component (the viewer
+   * renders one tab at a time), and the first draft let the stack die with it —
+   * a glance at the scan cost every strike since the last Apply (user report,
+   * 2026-08-16). The ruling: the stack belongs to the TAB, not to the
+   * component's lifetime. The pane parks it here on destroy and claims it back
+   * on load; it is dropped when the tab closes (after the closing question,
+   * which consults it — see `questionBefore`) and let go with a notice when the
+   * position moved while it was parked, because ops made against the book at
+   * one step are a delta against a state the tab is no longer showing.
+   *
+   * A plain map: written at destroy, read at load and at close, drawn by
+   * nothing.
+   */
+  private readonly parkedStacks = new Map<string, {
+    /** The tab's revision when parked — a move while parked bumps it. */
+    revision: number;
+    landed: readonly BookOp[];
+    pending: readonly BookOp[];
+    undone: readonly BookOp[];
+  }>();
+
+  /** The pane, on destroy, leaving its unwritten work with the tab. */
+  parkBookStack(tabId: string, held: {
+    revision: number;
+    landed: readonly BookOp[];
+    pending: readonly BookOp[];
+    undone: readonly BookOp[];
+  }): void {
+    this.parkedStacks.set(tabId, held);
+  }
+
+  /** The pane, on load, taking it back — a claim, so nothing is answered twice. */
+  claimBookStack(tabId: string): {
+    revision: number;
+    landed: readonly BookOp[];
+    pending: readonly BookOp[];
+    undone: readonly BookOp[];
+  } | null {
+    const held = this.parkedStacks.get(tabId) ?? null;
+    this.parkedStacks.delete(tabId);
+    return held;
+  }
+
   /** The book pane in this tab, announcing itself. Called once, on init. */
   registerBookStack(tabId: string, stack: BookStack): void {
     this.bookStacks.update((held) => new Map(held).set(tabId, stack));
@@ -2694,7 +2740,20 @@ export class TabsService {
      * same book.
      */
     const stack = current.kind === 'book' ? this.bookStackFor(current.id) : null;
-    const edits = stack === null || stack.pending() === 0 ? null : stack.pending();
+    /*
+     * A BACKGROUND BOOK TAB HAS NO LIVE PANE AND STILL HAS A STACK — the parked
+     * one (`parkedStacks`). Closing it from the strip while another tab is up
+     * would otherwise skip this question entirely and drop unwritten work with
+     * no sentence anywhere, which is the one loss this card exists to prevent.
+     */
+    const parked = stack === null && current.kind === 'book'
+      ? this.parkedStacks.get(current.id) ?? null
+      : null;
+    const edits = stack !== null && stack.pending() > 0
+      ? stack.pending()
+      : parked !== null && unwritten(parked.landed, parked.pending) > 0
+        ? unwritten(parked.landed, parked.pending)
+        : null;
     if (!current.modified && edits === null) return 'go';
 
     const answered = await api.confirmClose({
@@ -2710,6 +2769,25 @@ export class TabsService {
      * notice strip saying why it would not land.
      */
     if (answered === 'save' && stack !== null) return await stack.apply() ? 'go' : 'stay';
+    if (answered === 'save' && parked !== null) {
+      /*
+       * APPLYING A PARKED STACK NEEDS NO PANE: the doors are main's
+       * (`book:amend` rewrites the tip the person was standing on;
+       * `book:apply` lands a step), and the pane was only ever the thing that
+       * pressed them. Amend when the parked stack grew out of a recorded tip,
+       * exactly as the pane itself decides.
+       */
+      try {
+        const history = parked.landed.length > 0
+          ? await api.book.amend(current.path, parked.pending)
+          : await api.book.apply(current.path, parked.pending);
+        this.ledger.adopt(current.path, history);
+        return 'go';
+      } catch (err) {
+        this.notice.set(err instanceof Error ? err.message : String(err));
+        return 'stay';
+      }
+    }
     return 'go';
   }
 
@@ -2765,6 +2843,9 @@ export class TabsService {
     if (!tabs.some((candidate) => candidate.id === id)) return;
 
     const going = new Set<string>([id]);
+    // The parked stack goes with the tab — the closing question above already
+    // asked about it, so this is the scrap the person chose.
+    this.parkedStacks.delete(id);
     this.all.set(tabs.filter((candidate) => !going.has(candidate.id)));
     /*
      * NOTHING PER-TAB IS LEFT TO FORGET, and the emptiness is the wave landing.
