@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive } from '@angular/router';
 
+import { hosted } from '../../core/foundry';
 import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';
 import { TabsService } from '../../core/tabs.service';
@@ -34,15 +35,20 @@ import { UiService } from '../../core/ui.service';
       <div class="rail-brand" title="Foundry">⬙</div>
 
       <div class="rail-tools">
-        <button
-          class="rail-item"
-          [class.active]="tabs.activeId() === null"
-          title="Home"
-          (click)="home()"
-        >
-          <span class="rail-icon">⌂</span>
-          <span class="rail-label">Home</span>
-        </button>
+        <!-- Hosted, the host's book list is the library and Home is the one
+             surface that would list the same books from the other side — so the
+             door to it goes, not just the page behind it. -->
+        @if (!hosted()) {
+          <button
+            class="rail-item"
+            [class.active]="tabs.activeId() === null"
+            title="Home"
+            (click)="home()"
+          >
+            <span class="rail-icon">⌂</span>
+            <span class="rail-label">Home</span>
+          </button>
+        }
 
         <!-- The document list. Disabled with nothing open rather than hidden,
              on this rail's usual principle — and because with nothing open the
@@ -313,6 +319,7 @@ import { UiService } from '../../core/ui.service';
   `],
 })
 export class ToolRailComponent {
+  protected readonly hosted = hosted;
   protected readonly ui = inject(UiService);
   protected readonly tabs = inject(TabsService);
   private readonly projects = inject(ProjectsService);

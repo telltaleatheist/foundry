@@ -4,7 +4,7 @@ import { Router } from '@angular/router';
 import { typeLabel } from '@shared/documents';
 import type { ProjectSummary } from '@shared/types';
 
-import { api } from '../../core/foundry';
+import { api, hosted } from '../../core/foundry';
 import { ProjectsService } from '../../core/projects.service';
 import { TabsService } from '../../core/tabs.service';
 import { UiService } from '../../core/ui.service';
@@ -87,6 +87,11 @@ import { UiService } from '../../core/ui.service';
         </div>
       </div>
 
+      <!-- Hosted, the list below IS the host's own book list said again from the
+           other side — the two-answers problem §8 names — so the hero keeps its
+           drop target and Open button (the Import-via-Foundry door needs both)
+           and the library keeps its one home, over there. -->
+      @if (!hosted()) {
       <section class="recents">
         <header>
           <h2>Your books</h2>
@@ -174,6 +179,7 @@ import { UiService } from '../../core/ui.service';
           </ul>
         }
       </section>
+      }
     </div>
   `,
   styles: [`
@@ -346,6 +352,8 @@ import { UiService } from '../../core/ui.service';
   `],
 })
 export class HomeComponent {
+  protected readonly hosted = hosted;
+
   /**
    * The column this is filling, when it is filling one.
    *

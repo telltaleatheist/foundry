@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 
 import type { BackendMode, DoctorReport, EngineInfo, TierReport } from '@shared/types';
 
-import { api } from '../../core/foundry';
+import { api, hosted } from '../../core/foundry';
 import { EnvCardComponent } from './env-card.component';
 import { LibraryCardComponent } from './library-card.component';
 import { WslBackendComponent } from './wsl-backend.component';
@@ -129,9 +129,13 @@ import { WslBackendComponent } from './wsl-backend.component';
           <!--
             Where the books go. Above the environment cards because it is the one
             setting on this screen that is about the user's own files rather than
-            about which Python reads a page.
+            about which Python reads a page. Hosted, it is the HOST's fact about
+            its own data — main refuses library:set anyway — and a control that
+            can only refuse is not a control, so the card goes.
           -->
-          <app-library-card />
+          @if (!hosted()) {
+            <app-library-card />
+          }
 
           <!--
             The prebuilt Pythons. Above the WSL card on purpose: downloading the
@@ -229,6 +233,7 @@ import { WslBackendComponent } from './wsl-backend.component';
   `],
 })
 export class SettingsPageComponent {
+  protected readonly hosted = hosted;
   protected readonly isWindows = api?.platform === 'win32';
 
   protected readonly report = signal<DoctorReport | null>(null);

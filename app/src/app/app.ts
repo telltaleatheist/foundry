@@ -211,6 +211,17 @@ export class App {
     api?.onNavigate((route) => { void this.router.navigateByUrl(route); });
 
     /*
+     * The hosted door onto a book. A press of Edit-in-Foundry in the host
+     * resolves the project in main (`openFoundryWindow`, electron/mount.ts) and
+     * pushes exactly what a click on Home's own row carries — so consuming it
+     * IS that click, made by the same method, landing on the same step the
+     * ledger says the book is standing on. Standalone, nothing sends this.
+     */
+    api?.onProjectOpen((project) => {
+      void this.tabs.openProject(project.dir, project.originalPath, project.managed);
+    });
+
+    /*
      * Export / Close tab / Split right / Documents. Every one of them acts on
      * renderer state — the focused pane, its document, the panel — so main asks
      * rather than does.

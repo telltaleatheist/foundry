@@ -683,29 +683,34 @@ Supersessions, so nothing dangles:
   working corrections back and forth. Half-fixed for months, now
   scheduled: per-read-branch overlay files on the bank scheme.
 
-### Wave 7 — the BookForge hosting seam (ruled 2026-08-16, not yet scheduled)
+### Wave 7 — the BookForge hosting seam (ruled 2026-08-16, LANDED same cycle)
 
 The user ruled the integration: BookForge hosts the Foundry window;
 steps are managed inside it; exports file into BookForge's versions
 list; the two stay separate codebases with Foundry copied in nearly
-verbatim. The design lives in docs/BOOKFORGE-HANDOFF.md §8; BookForge
-implements its side against it. What FOUNDRY owes before the first copy
-— none of it large, none changing standalone behaviour:
+verbatim. The design lives in docs/BOOKFORGE-HANDOFF.md §8, the letter
+of the contract in its `#foundrynotes`. All five obligations landed:
 
-- **The mount seam.** Factor `app/electron/main.ts` so a host imports
-  and mounts it (IPC registration + window creation as calls; lifecycle
-  — window-all-closed → quit, quit aborts jobs/servers — behind the
-  seam).
-- **The export-landed hook.** A main-side callback
-  `{projectDir, path, kind, title}` when an export files into `final/`,
-  beside the existing `webContents.send` announcements.
-- **Deep-link into a project.** Open the window standing in a project,
-  Home skipped (hosted, BookForge's book list is the library).
-- **Settings partition.** `libraryDir` from the host when hosted; the
-  library-location control hidden there; the rest of Roaming stays
-  Foundry's.
-- **A channel audit.** Enumerate both apps' IPC names once before the
-  copy (Foundry's are namespaced; this is a check, not a design).
+- **The mount seam** — `app/electron/mount.ts`
+  (`mountFoundry`/`openFoundryWindow`/`stopFoundry`), with main.ts
+  reduced to the standalone shell over the same calls; the factoring
+  put the IPC doors in `ipc.ts`, the window in `window.ts`, the open
+  door in `documents.ts`, the who-mounted-us record in `host.ts`.
+- **The export-landed hook** — `job-queue.onExportLanded`, fired after
+  `final/` has the file and the tray recorded it; the host's throw is
+  caught.
+- **Deep-link** — `openFoundryWindow(dir)` pushes `project:open`,
+  consumed in App by the same `openProject` Home's row click uses.
+- **Settings partition** — the host's `libraryDir` wins inside
+  `readAppSettings` itself; `library:set`/`library:choose` refuse
+  hosted; the renderer hides Home (dock + the library list on the Home
+  page — the hero's drop target stays for the Import-via-Foundry door)
+  and the settings library card behind `hosted()`
+  (`core/foundry.ts`).
+- **The channel audit** — `docs/IPC-CHANNELS.md`, generated from
+  source; BookForge's keeper test reads it as the authority. Verdict
+  from their side: zero full-name collisions, no prefix on either
+  side.
 
 ### Then — the user's
 
