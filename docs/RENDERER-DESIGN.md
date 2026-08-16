@@ -176,7 +176,12 @@ style — the paper vocabulary stays on the paper. Additions:
   the text, page ghost — with "restore" on hover. Restoring animates the
   block back into the flow.
 - The **Edition toggle**: a two-segment control in the book toolbar,
-  `Workbench | Edition`, styled like the app's existing acts. Switching
+  `Workbench | Final version` (the mode is still called the edition in code
+  and in this document; the UI word is "Final version" — user ruling,
+  2026-08-16, so the label says what the person is looking at). Styled like
+  the app's existing acts. The preview KEEPS THE WORKBENCH'S MEASURE — same
+  ruling: the gutters hold, and what says "finished" is the chrome gone, the
+  leading, and the collected notes, never a narrower column. Switching
   crossfades the sheet over `var(--t-med)`: chrome and gutters fade, struck
   blocks collapse (height animates to 0), demoted refs re-render. Edition is
   read-only; any edit gesture flips back to Workbench with the block focused.

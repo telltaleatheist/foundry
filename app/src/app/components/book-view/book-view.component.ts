@@ -550,7 +550,7 @@ const SCROLL_SETTLE_MS = 400;
               [class.on]="edition()"
               [attr.aria-pressed]="edition()"
               (click)="show('edition')"
-            >Edition</button>
+            >Final version</button>
           </div>
           <!--
             AND THE SECOND CONTROL, WHICH IS NOT A THIRD SEGMENT.
@@ -1017,10 +1017,18 @@ const SCROLL_SETTLE_MS = 400;
       box-shadow: var(--shadow-paper);
 
       font-family: 'Iowan Old Style', 'Palatino Linotype', 'Book Antiqua', Georgia, serif;
-      font-size: 1.05rem;
+      /* --zoom is the loupe — Ctrl+wheel, set natively on the host — and it
+         multiplies the type rather than transforming the box, so every
+         em-derived measure on the paper scales with the words as one thing. */
+      font-size: calc(1.05rem * var(--zoom, 1));
       line-height: 1.62;
       color: var(--ink);
       text-rendering: optimizeLegibility;
+      /* The archival blue at reading strength — the browser's washed default
+         made a selection something to squint at (user report, 2026-08-16). */
+      &::selection, & *::selection {
+        background: color-mix(in srgb, var(--ink-select) 30%, transparent);
+      }
       /* A drag over the sheet is the marquee (§3). A native text selection left
          behind by one would be a second highlight nothing on screen explains, so
          the browser's own is off — copying a block's words is a gesture this
@@ -1124,9 +1132,9 @@ const SCROLL_SETTLE_MS = 400;
      * decisions.
      */
     .block.twin .body { background: color-mix(in srgb, currentColor 5%, transparent); }
-    .block.selected .body { background: color-mix(in srgb, currentColor 9%, transparent); }
+    .block.selected .body { background: color-mix(in srgb, currentColor 16%, transparent); }
     .block.lit .body, .block.pulse .body {
-      background: color-mix(in srgb, var(--ink-note) 9%, transparent);
+      background: color-mix(in srgb, var(--ink-note) 18%, transparent);
     }
 
     .gutter { position: absolute; pointer-events: none; }
@@ -1354,7 +1362,7 @@ const SCROLL_SETTLE_MS = 400;
     .peek-words { margin: 0; color: var(--ink); }
     .peek-words .marker.plain { color: var(--ink-note); }
     .peek-words .marker.hot {
-      background: color-mix(in srgb, var(--ink-note) 22%, transparent);
+      background: color-mix(in srgb, var(--ink-note) 35%, transparent);
       border-radius: 0.45em;
     }
     /* The card is honest about a struck counterpart: cancelled there, cancelled here. */
@@ -1470,7 +1478,7 @@ const SCROLL_SETTLE_MS = 400;
       transition: background var(--t-fast) var(--ease);
     }
     .marker:hover { box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--ink-note) 55%, transparent); }
-    .marker.lit { background: color-mix(in srgb, var(--ink-note) 18%, transparent); }
+    .marker.lit { background: color-mix(in srgb, var(--ink-note) 30%, transparent); }
     .marker.unlinked {
       color: var(--ink-flag);
       text-decoration: underline dotted var(--ink-flag);
@@ -1614,7 +1622,11 @@ const SCROLL_SETTLE_MS = 400;
      * those two things has to be true on its own.
      */
     .bench.edition .sheet {
-      padding-inline: 5%;
+      /* The cast's own margin is 0 5%, and the first draft of this sheet took
+         it — which read as the preview NARROWING against the bench for no
+         reason a reader could see (user ruling, 2026-08-16: the preview keeps
+         the workbench's measure). The gutters hold; what says "finished" is
+         everything else: the chrome gone, the leading, the collected notes. */
       line-height: 1.5;
       /* The marquee is what turned the browser's own selection off (§3), and
          there is no marquee here. A preview somebody can take a sentence out of
@@ -1819,7 +1831,7 @@ export class BookViewComponent {
    */
   protected readonly alignRefusal = computed<string | null>(() => {
     if (this.edition()) {
-      return 'The edition is the finished book, and a finished book has one column. Press Workbench '
+      return 'The final version is the finished book, and a finished book has one column. Press Workbench '
         + 'and the source can stand beside these words.';
     }
     if (!this.roomy()) {
@@ -1882,6 +1894,22 @@ export class BookViewComponent {
     y: number;
     /** The block the press landed in, or null for the paper between them. */
     id: string | null;
+    /**
+     * THE ANCHOR, IN SHEET COORDINATES — where on the PAPER the press landed,
+     * not where on the screen. The first marquee stored only client coordinates,
+     * and a wheel-scroll mid-drag moved the paper under a screen point that
+     * stayed put: the rectangle's origin drifted with the scroll and everything
+     * scrolled past fell out of the sweep (user report, 2026-08-16). Pinned to
+     * the sheet, the origin is the paragraph the hand started at, wherever the
+     * scrollbar has since taken it.
+     */
+    sheetX: number;
+    sheetY: number;
+    /** The pointer's last known place, so a scroll can re-run the sweep. */
+    lastX: number;
+    lastY: number;
+    /** The sheet the marquee is being drawn on, for the scroll re-sweep. */
+    sheet: HTMLElement | null;
     /** True when it landed on a reference number rather than on words. */
     onMarker: boolean;
     /** The note that number belongs to, or null when nothing carries it. */
@@ -2068,16 +2096,45 @@ export class BookViewComponent {
     const scrolled = (event: Event): void => {
       const column = which(event);
       if (column !== null) this.scrolled(column);
+      /*
+       * A WHEEL TURNS MID-MARQUEE and the pointer never moves, so no pointermove
+       * fires and the sweep would freeze while the paper slides past it. The
+       * scroll is the event that says the paper moved; the sweep re-runs with
+       * the pointer where it last was, and the rectangle — anchored to the
+       * PAPER, not the glass (`sweep`) — grows over everything scrolled past.
+       */
+      const held = this.pressed;
+      if (held !== null && held.dragging && held.sheet !== null) {
+        this.sweep(held.sheet, held.lastX, held.lastY);
+      }
     };
     const settled = (event: Event): void => {
       const column = which(event);
       if (column !== null) this.settled(column);
     };
+    /*
+     * CTRL+WHEEL IS THE LOUPE (user ruling, 2026-08-16). It scales the paper's
+     * own type through a custom property the stylesheet multiplies into the
+     * sheet's font-size, so every em-derived measure — the measured ratios, the
+     * gutter marks, the cards — scales with the words as one thing. Set
+     * NATIVELY, no signal and no change-detection pass: zoom is presentation,
+     * exactly like the scroll lock above, and this pane is zoneless. Clamped to
+     * [0.6, 2.2]; the browser's own page-zoom stays on Ctrl+/- untouched.
+     */
+    let zoom = 1;
+    const wheeled = (event: WheelEvent): void => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      zoom = Math.min(2.2, Math.max(0.6, zoom * (event.deltaY < 0 ? 1.08 : 1 / 1.08)));
+      surface.style.setProperty('--zoom', String(zoom));
+    };
     surface.addEventListener('scroll', scrolled, { capture: true, passive: true });
     surface.addEventListener('scrollend', settled, { capture: true, passive: true });
+    surface.addEventListener('wheel', wheeled, { passive: false });
     destroy.onDestroy(() => {
       surface.removeEventListener('scroll', scrolled, { capture: true });
       surface.removeEventListener('scrollend', settled, { capture: true });
+      surface.removeEventListener('wheel', wheeled);
     });
   }
 
@@ -2953,9 +3010,15 @@ export class BookViewComponent {
     // nothing — see the sheet's own `tabindex` in the template.
     if (block === null) sheet.focus({ preventScroll: true });
     sheet.setPointerCapture(event.pointerId);
+    const paper = sheet.getBoundingClientRect();
     this.pressed = {
       x: event.clientX,
       y: event.clientY,
+      sheetX: event.clientX - paper.left,
+      sheetY: event.clientY - paper.top,
+      lastX: event.clientX,
+      lastY: event.clientY,
+      sheet,
       id: block === null ? null : block.getAttribute('data-id'),
       onMarker: marker !== null,
       note: marker === null ? null : marker.getAttribute('data-note'),
@@ -3000,24 +3063,46 @@ export class BookViewComponent {
       }
       from.dragging = true;
     }
-    const sheet = event.currentTarget as HTMLElement;
-    const box = sheet.getBoundingClientRect();
-    const left = Math.min(from.x, event.clientX);
-    const top = Math.min(from.y, event.clientY);
-    const right = Math.max(from.x, event.clientX);
-    const bottom = Math.max(from.y, event.clientY);
-    this.marquee.set({
-      left: left - box.left,
-      top: top - box.top,
-      width: right - left,
-      height: bottom - top,
-    });
+    from.lastX = event.clientX;
+    from.lastY = event.clientY;
+    this.sweep(event.currentTarget as HTMLElement, event.clientX, event.clientY);
+  }
+
+  /**
+   * The marquee's rectangle and its catch, computed IN SHEET COORDINATES.
+   *
+   * The anchor corner is the paper's own point the press landed on (`sheetX`,
+   * `sheetY` — see `pressed`), and the moving corner is the pointer converted
+   * into the same frame at this instant. That is what makes the sweep survive a
+   * wheel-scroll mid-drag: scrolling moves the paper, the anchor is a point ON
+   * the paper, and everything the rectangle grows over on the way is caught —
+   * which is the gesture's whole promise. The scroll listener re-runs this with
+   * the pointer where it last was (`lastX`/`lastY`), because a wheel turns
+   * without the pointer moving and no pointermove ever fires.
+   */
+  private sweep(sheet: HTMLElement, clientX: number, clientY: number): void {
+    const from = this.pressed;
+    if (from === null || !from.dragging) return;
+    const paper = sheet.getBoundingClientRect();
+    const px = clientX - paper.left;
+    const py = clientY - paper.top;
+    const left = Math.min(from.sheetX, px);
+    const top = Math.min(from.sheetY, py);
+    const right = Math.max(from.sheetX, px);
+    const bottom = Math.max(from.sheetY, py);
+    this.marquee.set({ left, top, width: right - left, height: bottom - top });
     const taken = new Set(from.extend ? from.base : []);
     for (const element of sheet.querySelectorAll('.block')) {
       const id = element.getAttribute('data-id');
       if (id === null) continue;
       const at = element.getBoundingClientRect();
-      if (at.bottom >= top && at.top <= bottom && at.right >= left && at.left <= right) taken.add(id);
+      const blockTop = at.top - paper.top;
+      const blockBottom = at.bottom - paper.top;
+      const blockLeft = at.left - paper.left;
+      const blockRight = at.right - paper.left;
+      if (blockBottom >= top && blockTop <= bottom && blockRight >= left && blockLeft <= right) {
+        taken.add(id);
+      }
     }
     this.chosen.set(taken);
   }
