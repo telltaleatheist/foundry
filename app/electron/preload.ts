@@ -95,6 +95,7 @@ const api: FoundryApi = {
   documentSaveCopy: (absolutePath, suggestedName) =>
     ipcRenderer.invoke('document:save-copy', absolutePath, suggestedName),
   reveal: (target) => ipcRenderer.invoke('shell:reveal', target),
+  saveExport: (target) => ipcRenderer.invoke('export:save-copy', target),
   /*
    * ── The two questions, and the safe answer each of them keeps ──────────────
    *

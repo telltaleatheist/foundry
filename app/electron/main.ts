@@ -927,6 +927,43 @@ function registerIpc(): void {
    * the DESTINATION, and only the user's own choice of one, but what may be
    * read out of the workspace remains the allow-list's question.
    */
+  /**
+   * SAVE A COPY OF AN EXPORT — the door the finished shelf row presses.
+   *
+   * Gated on the FINAL TRAY rather than the opened-documents allow-list,
+   * because an export was never "opened": it is a file this app just wrote
+   * into `<project>/final/`, and membership in a project's tray is exactly the
+   * claim being exercised. Anything else — a path outside every project, or
+   * inside one but not in its tray — is refused; this door copies exports and
+   * copies nothing else.
+   */
+  ipcMain.handle('export:save-copy', async (_event, target: string) => {
+    const resolved = path.resolve(target);
+    const dir = projectDirOf(resolved);
+    const inside = dir === null ? null : path.relative(dir, resolved).split(path.sep);
+    if (dir === null || inside === null || inside.length !== 2 || inside[0] !== 'final') {
+      throw new Error('That file is not one of this library’s exports.');
+    }
+    const extension = path.extname(resolved).replace('.', '').toLowerCase();
+    const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
+    const options = {
+      title: 'Save a copy of this export',
+      defaultPath: path.join(app.getPath('downloads'), path.basename(resolved)),
+      filters: extension.length > 0
+        ? [{ name: extension.toUpperCase(), extensions: [extension] }]
+        : [],
+    };
+    const result = win
+      ? await dialog.showSaveDialog(win, options)
+      : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return null;
+    if (path.resolve(result.filePath) === resolved) {
+      throw new Error('That is the file itself. Pick somewhere else to put the copy.');
+    }
+    await fsp.copyFile(resolved, result.filePath);
+    return result.filePath;
+  });
+
   ipcMain.handle('document:save-copy', async (_event, source: string, suggestedName: string) => {
     const resolved = admitted(source);
     if (resolved === null) {

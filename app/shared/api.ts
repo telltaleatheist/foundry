@@ -121,6 +121,13 @@ export interface FoundryApi {
   documentSaveCopy(absolutePath: string, suggestedName: string): Promise<string | null>;
   reveal(target: string): Promise<void>;
   /**
+   * The finished shelf row's Save — an OS save dialog over a file in a
+   * project's final/ tray, defaulting to Downloads. Answers where the copy
+   * went, or null for a cancelled dialog; rejects for a path that is not one
+   * of the library's exports.
+   */
+  saveExport(target: string): Promise<string | null>;
+  /**
    * The question asked before a tab with something to lose closes — main's
    * sentences, drawn in the app's own card (`drawQuestions`).
    *

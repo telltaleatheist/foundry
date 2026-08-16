@@ -147,6 +147,18 @@ import { api } from '../../core/foundry';
                       <button class="open" (click)="open(job)"
                               title="Open this PDF in a tab">Open</button>
                     }
+                    <!--
+                      A FINISHED EXPORT OFFERS ITS FILE, by name. "Exported" with
+                      no handle on the thing exported left people asking where it
+                      went (user report, 2026-08-16): the tray is real but it is
+                      the app's furniture, and the moment of completion is when a
+                      person wants the file in their hand. Save… opens the OS
+                      dialog over a copy; ↗ still shows the original where it is.
+                    -->
+                    @if (filed(job)) {
+                      <button class="open" (click)="saveCopy(job)"
+                              title="Save a copy of this export">Save…</button>
+                    }
                     <button class="x" (click)="reveal(job)" title="Show it in the file manager">↗</button>
                   }
                 </div>
@@ -423,6 +435,25 @@ export class QueueShelfComponent {
      * happened. Focusing a button that is not there yet silently does nothing,
      * which is the failure this ordering exists to avoid.
      */
+    /*
+     * A FINISHED EXPORT UNROLLS THE SHELF. Every other job's completion is
+     * background news — a cast, a facsimile, a translation whose book follows
+     * in a tab — but an export IS the deliverable, and finishing one behind a
+     * collapsed pill was the app whispering "exported" with the file nowhere
+     * in reach (user report, 2026-08-16). The transition is watched per job id
+     * so a shelf the person collapses afterwards stays collapsed; only the
+     * moment of arrival opens it, with the row's Save… and ↗ on it.
+     */
+    const seen = new Map<string, string>();
+    effect(() => {
+      for (const job of this.queue.jobs()) {
+        const was = seen.get(job.id);
+        seen.set(job.id, job.state);
+        if (was !== undefined && was !== 'done' && job.state === 'done' && this.filed(job)) {
+          this.ui.shelfExpanded.set(true);
+        }
+      }
+    });
     effect(() => {
       if (this.ui.focusShelfAt() === 0) return;
       queueMicrotask(() => this.start()?.nativeElement.focus());
@@ -562,7 +593,7 @@ export class QueueShelfComponent {
   }
 
   /** Whether what this job wrote was filed as one of its project's exports. */
-  private filed(job: Job): boolean {
+  protected filed(job: Job): boolean {
     const project = this.projects.projectFor(job.outputPath);
     if (project === null) return false;
     const at = fold(job.outputPath);
@@ -614,6 +645,15 @@ export class QueueShelfComponent {
 
   protected reveal(job: Job): void {
     void api?.reveal(job.outputPath);
+  }
+
+  /** The OS save dialog over the export — a copy in the hand, not a hunt. */
+  protected async saveCopy(job: Job): Promise<void> {
+    try {
+      await api?.saveExport(job.outputPath);
+    } catch (err) {
+      this.tabs.notice.set(err instanceof Error ? err.message : String(err));
+    }
   }
 
   /**
