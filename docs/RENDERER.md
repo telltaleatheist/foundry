@@ -211,6 +211,22 @@ animated where it helps.
   rows (one per element, ids `e-<n>` in spine order, no boxes → no typography
   derivation, no facsimile) → same book file, same ops, same renderer.
   Everything downstream is identical by construction.
+  **Refinement (user ruling, 2026-08-16): the publisher's data is retained,
+  not rediscovered.** The unification layer is the BOOK FILE, not the bank —
+  an EPUB is never OCR'd into a bank (a bank models pages and an EPUB has
+  none; re-reading real text through a vision model would trade exact data
+  for a guess at it). The EPUB itself is the receipt: archived immutable,
+  `book = f(epub)`, regenerable like any reflow. What `f` keeps:
+  the publisher's nav/NCX becomes the chapters header verbatim; semantic
+  markup maps to categories (h1→Title, h2/h3→Section-header,
+  blockquote→Quote, figcaption→Caption, `aside epub:type="footnote"`→
+  Footnote rows, figure/img→Picture, table→Table, li→List-item, p→Text);
+  the publisher's own noteref anchors mint `refs` EXACTLY (no printed-number
+  matching, so no loose markers from a well-made EPUB); images copy once
+  into the `.images/` directory; inline emphasis folds to the same source
+  markers the model writes. `vlm-compile` already exports any book file
+  with no reference to a bank, so the whole downstream — ops, panels,
+  Edition, export — works on day one of the explode.
 
 ## 7. What dies, and what stays
 
