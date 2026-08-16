@@ -75,6 +75,13 @@ import { UiService } from '../../core/ui.service';
  * product and a day, not a book. Named by product and date, never by filename,
  * because that is the pair of facts that tells two of them apart.
  *
+ * THE FACSIMILE IS THERE BESIDE THEM, and it is the one terminal row nobody asked
+ * for: a reading makes it the moment it lands, because the pages as they were
+ * printed are half of what a bank is for (docs/RENDERER.md §0 A3). It is drawn
+ * exactly as an export is — a leaf under the book, no arrow, opens a PDF — because
+ * from the panel's side the two are the same statement: this was made, and nothing
+ * is made from it.
+ *
  * AN HTML FACE hangs off the root too. It is a face of a document rather than a
  * step, so it has no place in the parent chain; it is still a tab somebody has
  * open and a tab nobody can close is worse than a tab in an odd place.
@@ -875,6 +882,64 @@ export class OpenDocumentsComponent {
           // it lives in the library and nowhere the user filed it themselves.
           managed: true,
           openable: made.kind !== 'txt',
+          column: already?.column ?? null,
+          focused: already?.focused ?? false,
+        });
+      }
+
+      /*
+       * AND THE FACSIMILES, WHICH ARE TERMINAL FOR THE SAME REASON THE EXPORTS
+       * ARE — *"from the bank, pdf facsimile can be generated. that's a terminal
+       * item"* (docs/RENDERER.md §0 A3).
+       *
+       * A reading makes two documents: the Book, which is the read step's row up
+       * in the tree and the thing everything downstream is made from, and the
+       * page-for-page record, which nothing is ever made from. So it is a leaf
+       * beside the exports rather than a step of its own — no arrow, no position,
+       * and clicking it opens the PDF exactly as clicking an export opens one.
+       *
+       * DRAWN UNDER THE IMPORT, at the Book's own indent, because that is where
+       * the ruling puts it and because the alternative is worse than it looks: a
+       * facsimile hung under the READ step would be a child of a row that is
+       * itself a position, so folding the reading away would hide a terminal file,
+       * and a project with two readings would draw two rows that look like
+       * versions of one document rather than the records of two different passes.
+       *
+       * CALLED "FACSIMILE" AND NOT "FACSIMILE PDF", which is the export's word.
+       * The two rows can appear together — somebody who exports a facsimile after
+       * one has been made has both — and the distinction they need is that one is
+       * a copy they filed and one is the record this book keeps of its own
+       * reading. The tooltip says which in words; the label carries the difference
+       * a person scanning a tree can use, and neither of them is a filename.
+       *
+       * Main sends only the ones that are ON DISK (`ProjectSummary.facsimiles`),
+       * project-relative, newest reading last — the same rules the exports above
+       * arrive under, for the same reasons.
+       */
+      for (const made of project.facsimiles) {
+        const path = joinIn(project.dir, made.file);
+        const already = mine.find((row) => fold(row.path) === fold(path)) ?? null;
+        if (already !== null) claimed.add(already.key);
+        terminals.push({
+          ...blank,
+          key: `${project.key}:facsimile:${made.file}`,
+          // A FILE ROW AND NOT A FIFTH KIND. Everything the row does — open on
+          // click, wear the column badge, offer a delete behind the danger ✕ — is
+          // what this kind already means, and a `RowKind` per product would be
+          // four template branches to say one thing.
+          kind: 'export',
+          tab: already?.tab ?? null,
+          path,
+          title: 'Facsimile',
+          tally: whenOn(made.madeAt),
+          glyph: '▦',
+          tooltip: 'Open this facsimile\nThe pages of this book as they were '
+            + 'printed, reprinted as real text when the reading landed. Nothing is '
+            + `made from it.\n${path}`,
+          depth: 1,
+          dir: project.dir,
+          managed: true,
+          openable: true,
           column: already?.column ?? null,
           focused: already?.focused ?? false,
         });

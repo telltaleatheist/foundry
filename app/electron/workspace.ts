@@ -92,6 +92,7 @@ import {
 } from './projects';
 import {
   curateCastFile,
+  facsimileFile,
   languageTagFor,
   readingInEffect,
   translationCastFile,
@@ -264,6 +265,45 @@ export async function planConversionForStep(
   step: LedgerStep,
 ): Promise<WorkspacePlan> {
   return planRendering(inputPath, 'epub', GENERATED, step);
+}
+
+/**
+ * Where this READING's page-for-page record goes — the same rendering, aimed at
+ * `generated/` as a PDF and keyed to the read step that made the bank.
+ *
+ * ── Why a reading gets a second product, unasked ────────────────────────────
+ *
+ * Because a bank is not a thing anybody can look at, and the flowing book is
+ * only half of what is in it. The other half is the pages as they were printed,
+ * set back as real text: *"from the bank, pdf facsimile can be generated. that's
+ * a terminal item"* (docs/RENDERER.md §0 A3, §6). It costs what every other cast
+ * costs — `--reuse-readings` over a bank marked complete one line earlier, no
+ * model, no socket, seconds — which is the whole of why it can happen without
+ * anybody pressing anything.
+ *
+ * ── PDF, always, and keyed to the step for `planConversionForStep`'s reason ──
+ *
+ * A facsimile is the only thing this plan can be: `--format pdf` reprints the
+ * scan's own photographed lines, which is a statement about the READING and not
+ * about any state of the book downstream of it. And it is keyed to the step
+ * because a project can hold two readings — a re-read asking for a different
+ * page range branches by design — so a plan that asked the POSITION which bank
+ * to replay would reprint whichever reading the pointer happened to be under
+ * while the name said this one. Both halves of that agreement are made here:
+ * `readingBank` resolves the step's own payload, and `facsimileFile` names the
+ * file after the same step.
+ *
+ * THE CURATION IT RESOLVES IS NOT USED, and the caller says so where it enqueues
+ * (`castFacsimile`, electron/job-queue.ts). A facsimile is the record of what
+ * was read; it compiles from the raw bank and from nothing else (§6), so the
+ * plan's `overlayPath` is deliberately left on the floor rather than carried
+ * onto the request.
+ */
+export async function planFacsimile(
+  inputPath: string,
+  step: LedgerStep,
+): Promise<WorkspacePlan> {
+  return planRendering(inputPath, 'pdf', GENERATED, step);
 }
 
 /**
@@ -592,15 +632,24 @@ async function planRendering(
 }
 
 /**
- * What a landing's own book is called — one composition, chosen by what kind of
- * row cast it.
+ * What a landing's own document is called — one composition, chosen by what kind
+ * of row made it.
  *
- * Both names come from shared/ledger.ts rather than being spelled here, for the
- * reason every path in this app is composed where the ledger can see it: the plan
- * that writes the file, the resolution that shows it and the sweep that removes it
- * when the step goes must not be three answers.
+ * All three names come from shared/ledger.ts rather than being spelled here, for
+ * the reason every path in this app is composed where the ledger can see it: the
+ * plan that writes the file, the resolution that shows it and the sweep that
+ * removes it when the step goes must not be three answers.
+ *
+ * THE FORMAT IS DECIDED WITH THE NAME AND NOT BESIDE IT, which is the one thing
+ * to be careful of here: a read step's document is a PDF and the other two are
+ * EPUBs, so the extension this composes is a fact about the ACTION rather than
+ * about the `kind` the plan was called with. The two agree because there is one
+ * door per row — `planFacsimile` is the only caller that hands over a read step
+ * and it is the only one that asks for `pdf` — and a third door that paired them
+ * differently would be asking the engine for a format its own `--out` refuses.
  */
 function castNameFor(stem: string, step: LedgerStep, language: string): string {
+  if (step.action === 'read') return facsimileFile(stem, step.id);
   return step.action === 'translate'
     ? translationCastFile(stem, language, step.id)
     : curateCastFile(stem, step.id);

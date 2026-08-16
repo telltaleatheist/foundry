@@ -250,8 +250,8 @@ export interface GenerateRequest {
    */
   language?: string;
   /**
-   * THIS IS ONE STEP'S OWN BOOK — the cast a `curate` or `translate` landing makes
-   * of itself, named after the step it belongs to.
+   * THIS IS ONE STEP'S OWN DOCUMENT — what a `curate`, `translate` or `read`
+   * landing makes of itself, named after the step it belongs to.
    *
    * A SAVE'S BOOK is the project's flowing book with that snapshot applied, so
    * standing on an old save shows the book as it was then. A TRANSLATION'S BOOK is
@@ -259,6 +259,14 @@ export interface GenerateRequest {
    * exists for a sharper reason: the run that made the translation wrote per-block
    * answers and no document at all, so without a cast the row would have nothing a
    * pane could show.
+   *
+   * A READING'S FACSIMILE is the third, and it is the one that is not a book: the
+   * scan's own pages reprinted from that reading's answers as real text
+   * (docs/RENDERER.md §0 A3). It is TERMINAL — nothing is made from it and there
+   * is no place to stand on it — so what it wants from this field is precisely
+   * what the other two want: a landing that catalogues nothing. It is drawn as a
+   * leaf under the book from a name composed off the same step
+   * (`ProjectSummary.facsimiles`), never from what is in `generated/`.
    *
    * ── Why the landing has to be told, when the path already says it ──────────
    *
@@ -1102,6 +1110,23 @@ export interface ProjectFinal {
 }
 
 /**
+ * One reading's page-for-page reprint, in `generated/`. See
+ * `ProjectSummary.facsimiles`, which is the only thing that carries these and
+ * where the whole argument for the shape lives.
+ *
+ * NO `kind`, unlike the row above it. A facsimile is a PDF and can be nothing
+ * else — it is the scan's own pages, set back as type — so a field saying so
+ * would be a fact the type system already knows, offered to a reader as though
+ * it might one day say something different.
+ */
+export interface ProjectFacsimile {
+  /** Project-relative, forward slashes: `generated/<book> (facsimile).<id8>.pdf`. */
+  file: string;
+  /** The read step's own moment — see `ProjectSummary.facsimiles`. */
+  madeAt: number;
+}
+
+/**
  * `project.json` — a CATALOGUE, not a store.
  *
  * BookForge put editor state in its manifest and measured 146.6 MB of 148 MB of
@@ -1717,6 +1742,40 @@ export interface ProjectSummary {
    * rendering has been made yet.
    */
   renderings: string[];
+  /**
+   * THE PAGE-FOR-PAGE RECORD EACH READING MADE — one per read step that has one
+   * on disk, project-relative with forward slashes.
+   *
+   * ── Why this is a list of its own and not one of the two above ─────────────
+   *
+   * A facsimile is TERMINAL in exactly the sense an export is: nothing is made
+   * from it, no step takes it as a parent, and there is no place to stand on it
+   * (docs/RENDERER.md §0 A3). So it wants the row an export gets — a leaf under
+   * the book, named by what it is and when it was made — and it fits neither of
+   * the neighbouring fields. `documents` is one row per file TYPE and every row
+   * in it is a base for further work, so filing a facsimile there would put it on
+   * the PDF's chain beside the scan and make Home offer it as the document this
+   * app edits. `renderings` is only a set of paths the tree already speaks for:
+   * it draws nothing, and a facsimile listed there would vanish from the panel
+   * rather than appear in it. `exports` is `final/`, which is the user's own
+   * tray — a file this app made unasked has no business in it.
+   *
+   * COMPOSED, NOT CATALOGUED, which is `castForCurateStep`'s arrangement and its
+   * argument: the name comes off the read step's own id, so the landing writes
+   * nothing, `project.json` grows no row, and the same three parties — the plan
+   * that writes the file, this listing, and the sweep that removes it with its
+   * step — cannot come to three answers. What is on disk is the authority on
+   * whether the row exists at all, which is why main stats each one and drops
+   * the rows it cannot find: a nav row that opens nothing is worse than no row,
+   * and every project reads before this existed has a reading and no facsimile.
+   *
+   * `madeAt` is the READ STEP's own moment rather than the file's mtime. The
+   * facsimile is that reading's product and is remade whenever the reading is,
+   * so the date a person is owed is the day the pages were read — and a stat for
+   * a second opinion about it would be this listing asking the filesystem to
+   * date somebody's history.
+   */
+  facsimiles: ProjectFacsimile[];
   /**
    * Set when `project.json` could not be read. The row is still listed — Home
    * is the only door back to a book — but it offers Reveal and nothing else,

@@ -101,6 +101,7 @@ import type {
   MetadataPatch,
   ProjectDocument,
   ProjectDocumentKind,
+  ProjectFacsimile,
   ProjectFinal,
   ProjectGenerated,
   ProjectGeneratedRole,
@@ -133,6 +134,7 @@ import {
   destroyedBy,
   displayedCuration,
   emptyLedger,
+  facsimileFile,
   generationForLanding,
   generationInEffect,
   id8,
@@ -1549,6 +1551,14 @@ async function planStepSweep(
  * mentions it, and the name is composed from the step's own uuid, so once the row
  * is gone nothing on disk could ever work out what the file was.
  *
+ * AND THE READING'S FACSIMILE, which is that same sentence about the one action
+ * that produces a document without being asked for one. Deleting a read step
+ * already destroys the bank it was made of — this is the reprint of that bank,
+ * uncatalogued for `facsimileForReadStep`'s reasons, and left behind it would be
+ * a whole PDF in `generated/` describing pages nothing in this project reads any
+ * more. `planSweep` takes its rotated predecessors with it, which is where a
+ * re-read that replaced this same step left its earlier reprints.
+ *
  * THE EXISTENCE TEST EARNS ITS STAT. A save from before casting was per-step, a
  * translation from before records (whose book is its payload, and is destroyed as
  * one), one whose cast failed, one whose cast was rotated aside: all of them are
@@ -1565,9 +1575,11 @@ async function castsAmong(
     const language = step.params?.language ?? '';
     const named = step.action === 'curate'
       ? castForCurateStep(manifest, step)
-      : step.action === 'translate' && language.length > 0
-        ? castForTranslateStep(manifest, step, language)
-        : null;
+      : step.action === 'read'
+        ? facsimileForReadStep(manifest, step)
+        : step.action === 'translate' && language.length > 0
+          ? castForTranslateStep(manifest, step, language)
+          : null;
     if (named === null) continue;
     const cast = path.join(dir, ...named.split('/'));
     if (await exists(cast)) casts.push(cast);
@@ -2195,10 +2207,21 @@ export function imagesDirFor(bank: string): string {
  * declared when it ran. Null for either is an ordinary answer the engine has a
  * documented behaviour for (no figures cut and says so; language defaults),
  * not a hole this side papers over.
+ *
+ * AND SO DOES THE READING ITSELF, which is one line here and stops a second
+ * opinion elsewhere. Everything above is derived from that one step — the bank
+ * is its payload and the language is its param — so a caller that needs the ROW
+ * as well (the read landing, which names that reading's facsimile after it) must
+ * not go and ask the ledger a second time for the step these answers came out
+ * of. Two reads of one catalogue is two answers the moment anything lands in
+ * between. Null is the honest answer for a project with no reading on the path,
+ * and it is what makes `bank` above a composed fallback rather than a payload —
+ * a caller that must be sure it is holding a real reading tests for it.
  */
 export async function bookAtPosition(dir: string): Promise<{
   dir: string;
   manifest: ProjectManifest;
+  reading: LedgerStep | null;
   bank: string;
   book: string;
   pdf: string | null;
@@ -2215,6 +2238,7 @@ export async function bookAtPosition(dir: string): Promise<{
   return {
     dir: resolved,
     manifest,
+    reading,
     bank,
     book: bookFileFor(bank),
     pdf,
@@ -2475,7 +2499,11 @@ export async function documentAtPosition(dir: string): Promise<string | null> {
  * AND ANYTHING ELSE MOVES NOTHING. A loose file, a bank, a curation snapshot, a
  * rotated predecessor still on disk, a document from another project: none of them
  * is a row in this ledger, and the caller's tab is none the worse for the pointer
- * staying where the user put it.
+ * staying where the user put it. A READING'S FACSIMILE IS IN THAT LIST BY
+ * DESIGN, and it is the one member of it that has a row in the left nav: it is
+ * terminal, exactly as an export is (docs/RENDERER.md §0 A3), so looking at the
+ * page-for-page record must not move the pointer onto the reading and make the
+ * next thing somebody does be made from a glance.
  *
  * ── Standing still is not a write ───────────────────────────────────────────
  *
@@ -2901,6 +2929,59 @@ function castForTranslateStep(
   language: string,
 ): string {
   return `${GENERATED}/${translationCastFile(manifest.stem, language, step.id)}`;
+}
+
+/**
+ * The page-for-page reprint ONE READ STEP made of its own pages,
+ * project-relative — a name, never a promise that the file is there.
+ *
+ * THE THIRD MEMBER OF THE FAMILY ABOVE, and it belongs to it for their reasons
+ * rather than by resemblance. It is a RENDERING: `vlm-convert --format pdf` over
+ * a bank that is already complete, free, offline, made again at any time, and
+ * emphatically NOT a row in `manifest.documents`. Cataloguing it would do the
+ * same active harm cataloguing a save's book would, one type over — the PDF
+ * chain is where the SCAN lives, and a facsimile filed onto it would put the
+ * reprint where Home means "the book you imported" and would offer it as the
+ * document this app edits.
+ *
+ * WHICH LEAVES THE SAME OBLIGATION, discharged in the same place: a file nothing
+ * catalogues is a file nothing would ever remove, so `castsAmong` composes this
+ * name when a read step is deleted and the sweep takes it — along with any
+ * predecessor a re-read rotated aside, which `planSweep` finds beside it.
+ */
+function facsimileForReadStep(manifest: ProjectManifest, step: LedgerStep): string {
+  return `${GENERATED}/${facsimileFile(manifest.stem, step.id)}`;
+}
+
+/**
+ * Every facsimile this project's readings actually have on disk —
+ * `ProjectSummary.facsimiles`.
+ *
+ * THE ONE PLACE THAT STATS, which is the difference between this and
+ * `renderingsOf` above it and is the whole reason the two are separate
+ * functions. That one answers "would a step show this path", which is true
+ * whether or not the rendering has been made; this one draws a ROW, and a row
+ * for a file that is not there is a nav offering something to click that opens
+ * nothing. Every project read before facsimiles existed is in exactly that
+ * state, and it is the ordinary state rather than an error — the reading is
+ * complete, the bank is on disk, and a facsimile of it is one export away.
+ */
+async function facsimilesOf(
+  dir: string,
+  manifest: ProjectManifest,
+): Promise<ProjectFacsimile[]> {
+  const made: ProjectFacsimile[] = [];
+  for (const step of ledgerOf(manifest).steps) {
+    if (step.action !== 'read') continue;
+    const file = facsimileForReadStep(manifest, step);
+    if (!await exists(path.join(dir, ...file.split('/')))) continue;
+    // The READING's own moment. See `ProjectSummary.facsimiles`: the file is the
+    // reading's product and is remade whenever the reading is, so its date is
+    // that reading's, and an mtime here would be a second opinion about when
+    // something in this book's history happened.
+    made.push({ file, madeAt: step.createdAt });
+  }
+  return made;
 }
 
 /**
@@ -4641,8 +4722,10 @@ async function summarise(dir: string, name: string): Promise<ProjectSummary> {
       // at a tray by reading the directory would offer files this app cannot say
       // it made. The row offers Reveal, which is the honest door into a folder.
       exports: [],
-      // No ledger was read, so no step is claiming anything.
+      // No ledger was read, so no step is claiming anything — and no reading can
+      // be named, so nothing can say which reprint belongs to which pass.
       renderings: [],
+      facsimiles: [],
       problem: (err as Error).message,
     };
   }
@@ -4769,6 +4852,7 @@ async function summarise(dir: string, name: string): Promise<ProjectSummary> {
     filed: manifest.final.length > 0,
     exports: await filedDocuments(dir, manifest),
     renderings: renderingsOf(manifest),
+    facsimiles: await facsimilesOf(dir, manifest),
     problem: null,
   };
 }

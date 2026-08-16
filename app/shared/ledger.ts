@@ -1435,6 +1435,38 @@ export function curateCastFile(stem: string, stepId: string): string {
 }
 
 /**
+ * THE FACSIMILE ONE READ STEP MADE OF ITS OWN PAGES —
+ * `<stem> (facsimile).<id8>.pdf`, project-relative.
+ *
+ * ── What it is, and why the reading makes one without being asked ───────────
+ *
+ * A reading's product is a BANK, and a bank is not a thing anybody can look at.
+ * The flowing book is one of the two documents that come out of it; the other is
+ * the page-for-page record — the scan's own pages, reprinted from the answers as
+ * real text — and the ruling is that it exists the moment the reading does
+ * (docs/RENDERER.md §0 A3, §6). It is TERMINAL: nothing is ever made from it,
+ * there is no place to stand on it, and it is not the project's PDF. It is the
+ * reading, photographed back.
+ *
+ * NAMED FOR ITS READ STEP, which is `curateCastFile`'s scheme applied to the one
+ * action that has two products. A project can hold two readings — a re-read
+ * asking for a different page range branches by design — and a facsimile named
+ * from the project stem alone would be the reprint of whichever bank was newest,
+ * filed under both rows. Named for the step, a branch gets its own file, and a
+ * re-read that REPLACES swaps into the step it re-ran, writes the same path, and
+ * rotates its own predecessor aside exactly as a second Generate does.
+ *
+ * THE TAG IS IN THE NAME FOR `translationCastFile`'s reason: somebody who opens
+ * `generated/` should see `Book (facsimile).a1b2c3d4.pdf` and know what they are
+ * holding. Nothing reads it back out — the plan that writes the file, the listing
+ * that draws its row and the sweep that removes it all ask this function — which
+ * is what keeps this app's oldest house rule intact while the name stays legible.
+ */
+export function facsimileFile(stem: string, stepId: string): string {
+  return `${stem} (facsimile).${id8(stepId)}.pdf`;
+}
+
+/**
  * Everything made from a replaced step, marked stale — and the step itself
  * marked fresh.
  *
