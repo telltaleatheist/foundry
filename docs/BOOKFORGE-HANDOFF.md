@@ -2,12 +2,14 @@
 
 Written 2026-08-16, at the close of the renderer pivot (RENDERER.md waves
 R1–R6, all landed); refreshed later the same cycle after the facsimile
-ruling, the legacy sweep, and the EPUB 2 explode work. This document is for
-the BookForge project: what Foundry is now, how its files are laid out, how
-editing a book actually works, and what each of the two integration routes
-would cost. Everything here describes `main` as of this writing; the format
-contracts cited (BOOK-FILE.md, RENDERER.md) are the living authorities if
-this summary ever drifts.
+ruling, the legacy sweep, and the EPUB 2 explode work — and again when the
+integration question was RULED: BookForge hosts the Foundry window, and §8
+is now that ruling's design rather than a weighing of options. This document
+is for the BookForge project: what Foundry is now, how its files are laid
+out, how editing a book actually works, and what to build. Everything here
+describes `main` as of this writing; the format contracts cited
+(BOOK-FILE.md, RENDERER.md) are the living authorities if this summary ever
+drifts.
 
 ---
 
@@ -59,6 +61,10 @@ app-data directories) no longer exist anywhere, and the one-time migrations
 that adopted them were deleted with them — a project on disk is exactly the
 layout above. Note `working/` is *not* legacy: it is the PDF's live copy, a
 different tenant of a folder the unzipped-EPUB era also used.
+
+Where this folder LIVES is one setting: `<libraryDir>/projects/<key>`, read
+on every call. Standalone that is Foundry's own library; hosted (§8) it is
+a directory inside BookForge's data, and nothing about the layout changes.
 
 ## 3. The two-layer data model — the wall that makes everything else work
 
@@ -167,6 +173,13 @@ frozen files are never rewritten.
   ids, target language — and positions under the translation read it. Chains
   (German→English→Hungarian) are translations of translations of book files.
   Hand corrections append `author:"user"` rows and re-materialize.
+- **Simplifications**: the same pipeline with `--rewrite
+  dejargon|destiffen|learner` — say the book again in its own language,
+  plainer, naturalized after a machine translation, or for a B1–B2 learner
+  (the three modes as BookForge's own simplify pass defines them). A
+  simplify lands as a translate step carrying the mode, files records named
+  `<key>.<lang>.<mode>[.<id8>].records.jsonl`, and chains freely: destiffen
+  after a translation reads the translation's words.
 
 ## 6. EPUB as the starting file
 
@@ -209,49 +222,117 @@ line-buffered. The commands an integrator needs:
 
 Everything the app does goes through these; there is no private channel.
 
-## 8. The two integration options
+## 8. The integration — RULED (2026-08-16): the Foundry window, inside BookForge
 
-### Option A — import Foundry's components into BookForge
+This section used to weigh two options; the user has since ruled, and the
+ruling supersedes both. **BookForge hosts Foundry.** Everything about making
+the text of a book — importing, reading, striking, applying, translating,
+simplifying, exporting — happens inside a Foundry window that BookForge
+opens. BookForge stops managing steps and files on its versions page; that
+page becomes a flat list of finished versions, and an export made in the
+Foundry window is filed into it. All the data lives inside BookForge's own
+domain. And the two stay **separate codebases**: Foundry is structured so
+that its app can be copied into BookForge nearly verbatim — both are
+Electron — with one authoritative repo and a mechanical copy, never a fork
+maintained by hand in two places.
 
-Lift the Angular proof sheet (book-view + flow/edition helpers), the shared
-parsers (`app/shared/book.ts`, `ops.ts`, `materialize.ts`), and the electron
-book/projects modules into BookForge to replace the PDF picker.
+### Why this, given what §8 used to say
 
-- **What it buys**: one process, one UI shell, no window-hopping.
-- **What it costs**: the pane is not a leaf. It leans on the step ledger
-  (`shared/ledger.ts`, ~2k lines of load-bearing rules), the tabs/position
-  machinery, the inspector panels, the IPC doors in `electron/book.ts`, and
-  the project directory contract. Importing the picker means importing the
-  project model — at which point BookForge contains most of Foundry's app and
-  two teams maintain one surface in two repos. Divergence is the certain
-  failure mode; the mirror-file discipline that keeps engine and app agreeing
-  (grow-together rule) would now span three codebases.
+The old Option A analysis found that the proof sheet is not a leaf — pulling
+in the picker pulls in the ledger, the tabs, the inspector, the IPC doors,
+the whole project model. That finding stands, and this plan agrees with it by
+inverting the conclusion: **import the whole app as a sealed unit**, no
+component cherry-picked out of its context, so there is nothing to diverge.
+Option B's cost was two apps on screen and window-hopping between them, and
+that cost is exactly what the ruling rejects. What survives from Option B is
+everything that made it sound: the formats stay the contract, the engine
+stays a spawned CLI, and a project folder on disk stays the whole truth.
 
-### Option B — BookForge drives Foundry (recommended)
+### The shape — three pieces cross, all already separation-clean
 
-BookForge keeps its own UI and treats Foundry as the book-editing station:
-spawn the engine CLI for machine work, open the Foundry app for human work,
-and exchange **files** — the formats above are the contract.
+1. **The engine CLI**, unchanged. It is standalone today (§7): `FOUNDRY_BIN`,
+   a binary beside the packaged app, or the dev checkout. BookForge's
+   existing `foundry-bridge` spawn machinery keeps working for headless runs.
+2. **Foundry's main-process modules** (`app/electron/*`), registered inside
+   BookForge's main process. Every IPC door Foundry owns is namespaced
+   (`workspace:*`, `book:*`, `queue:*`, `projects:*`, `ledger:*`,
+   `document:*`, `export:*`, …), so registration is additive — one function
+   call in BookForge's main, no interleaving with BookForge's own handlers.
+3. **Foundry's renderer bundle and preload**, loaded into a `BrowserWindow`
+   that BookForge opens and owns. The renderer talks only through the preload
+   API (`app/shared/api.ts`) and has no idea who registered the other end.
 
-- BookForge already has a `foundry-bridge` (Foundry's own spawn code was
-  cribbed from it), so the spawn half exists.
-- The handoff is a directory: point Foundry at a project folder (or import
-  the PDF/EPUB through it), let the user read/edit/export there, and BookForge
-  consumes the outputs — `final/` (exports and facsimiles alike), or the book
-  file itself if BookForge wants structured text (it is trivial to parse:
-  JSONL, header + rows, and `app/shared/book.ts` shows exactly how strictly).
-- Everything is regenerable-by-contract and deterministic, so BookForge can
-  cache by `bankSha` and never wonder whether a file is stale.
-- **Costs**: two apps on screen for the editing step; project-folder
-  ownership needs one rule (suggest: Foundry's library is the home;
-  BookForge references it by path).
+### The mount contract (conceptual — exact spelling when Foundry ships it)
 
-The refactor is what makes Option B genuinely good now: the engine is clean,
-every artifact is a documented file format, the book file is a stable
-versioned contract, and the app no longer holds hidden state (no working
-trees, no overlays) — a Foundry project on disk *is* the whole truth. If a
-tighter coupling is ever wanted, the first step is not importing components —
-it is teaching BookForge to read the book file, which is one parser.
+```
+mountFoundry({
+  libraryDir,            // where Foundry's projects/ root lives — inside BookForge's data
+  onExport(landing),     // {projectDir, path, kind, title} — file it into the versions list
+})
+openFoundryWindow(projectDir?)   // opened standing IN a project; Home is skipped when hosted
+```
+
+The window belongs to the host: BookForge opens it from a book's page and
+closing it leaves BookForge — and Foundry's job queue, which lives in main —
+running. The unsaved-work close question stays; the app-quit machinery
+(abort jobs, stop the vLLM server) fires on BookForge's quit, not on the
+window's close.
+
+### Where the data lives
+
+`projectsDir()` is already `<libraryDir>/projects`, and `libraryDir` is
+already a live setting read on every call — the injection seam exists today.
+Hosted, BookForge points it inside its own data (say
+`<bookforge-data>/foundry/`), and every per-book folder in §2 — archive,
+readings, ops, final, the catalogue — lives there, unchanged in shape.
+BookForge's metadata maps each of its books to its Foundry project directory
+by path. Exports keep landing in that project's `final/`, and the versions
+row references the file **in place** — no copy, no second truth about which
+bytes are the version.
+
+### The versions page, after
+
+The indent tree of steps and intermediate files goes. Steps — the history,
+the branching, the undo, the replay — live where they work: the Foundry
+window's inspector. What the versions page lists is FINISHED THINGS, flat:
+the exports Foundry filed (EPUB, txt, facsimile PDF) and BookForge's own
+products made from them (audiobooks, VTT). One truth per concern: BookForge
+owns products and the pipeline that consumes them; the Foundry window owns
+the making of the text.
+
+### What Foundry owes before the copy (tracked in docs/PLAN.md)
+
+The copy is mechanical only after these land in Foundry — none is large, and
+none changes what the app does standalone:
+
+1. **The mount seam.** `app/electron/main.ts` is an app entrypoint today —
+   it registers IPC, creates the window, and owns the lifecycle. Factor it so
+   a host imports and mounts it: registration and window-creation as calls,
+   lifecycle (window-all-closed → quit; quit aborts jobs and stops servers)
+   behind the seam so the standalone app keeps its behaviour and a host keeps
+   its own.
+2. **The export-landed hook.** Landings announce over `webContents.send`
+   today; a host needs a main-side callback carrying `{projectDir, path,
+   kind, title}` when an export files into `final/`.
+3. **Deep-link into a project.** Open the window already standing in a given
+   project, Home skipped — hosted, the library screen is BookForge's book
+   list, and two library screens would be two answers to "what books do I
+   have".
+4. **Settings partition.** `libraryDir` comes from the host when hosted, and
+   the library-location control disappears from Foundry's settings screen
+   there; everything else in Roaming stays Foundry's own.
+5. **A channel audit.** Enumerate both apps' IPC names once before the first
+   copy; Foundry's are namespaced, so this is a check, not a design.
+
+### What BookForge implements against this
+
+1. The versions-page simplification (drop the step/file tree; flat versions).
+2. The book page's door: **Edit in Foundry** (or *Import via Foundry* when no
+   project exists yet), opening the hosted window on that book's project.
+3. The `onExport` handler: register the landed file as a version row.
+4. Its own products keep consuming `final/` and the book file exactly as
+   before — §7's CLI contract and §9's ground rules are unchanged by any of
+   this.
 
 ## 9. Ground rules worth inheriting
 
