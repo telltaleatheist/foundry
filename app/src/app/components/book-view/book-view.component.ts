@@ -3207,11 +3207,43 @@ export class BookViewComponent {
     this.land(id);
   }
 
-  /** The scroll and the pulse, once the list under them is the bench's. */
+  /**
+   * The scroll and the pulse, once the list under them is the bench's.
+   *
+   * ── THE JUMP IS INSTANT, AND IT LANDS TWICE ─────────────────────────────────
+   *
+   * The sheet's bodies sit under `content-visibility: auto` with a 4rem
+   * placeholder, so every block the viewport has never reached is ESTIMATED at
+   * 4rem — a fraction of what a paragraph actually measures. A single
+   * `scrollIntoView` therefore aims at a fiction: the browser scrolls to where
+   * the target would be if the estimates were true, the blocks between here and
+   * there render and take their real heights, and the target slides away —
+   * a click on a chapter-four heading put a reader down in the middle of
+   * chapter two. `smooth` made it worse, not better: the layout keeps growing
+   * UNDER a long animated scroll, so the miss compounds for its whole duration.
+   *
+   * So the jump is a plain center and then a settle: each frame, if the target
+   * has moved since the last one — which is exactly the estimates around it
+   * being replaced by measurements — it is centred again, until two frames
+   * agree. The loop is bounded because it must end even if something else
+   * scrolls the sheet mid-settle; a dozen frames is several times what the
+   * deepest jump needs. The pulse marks the landing either way.
+   */
   private land(id: string): void {
     const element = this.host.nativeElement.querySelector(`[data-id="${CSS.escape(id)}"]`);
     if (element === null) return;
-    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    element.scrollIntoView({ block: 'center' });
+    let last = element.getBoundingClientRect().top;
+    let spins = 0;
+    const settle = (): void => {
+      const top = element.getBoundingClientRect().top;
+      if (Math.abs(top - last) < 1 || spins >= 12) return;
+      last = top;
+      spins += 1;
+      element.scrollIntoView({ block: 'center' });
+      requestAnimationFrame(settle);
+    };
+    requestAnimationFrame(settle);
     if (this.pulseTimer !== null) clearTimeout(this.pulseTimer);
     this.pulse.set(id);
     this.pulseTimer = setTimeout(() => this.pulse.set(null), PULSE_MS);
