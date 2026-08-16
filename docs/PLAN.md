@@ -629,14 +629,16 @@ on open, `--pdf`/`--language` through the ensure step, seams and
 shelf and plates on the pane). R2b, R3, R4, R5a–R5d and **R6a**
 (`65b150b`, the imported-EPUB explode) all landed since.
 
-**R6 is landing in slices and R6b is the second of three.** R6b took
+**R6 landed in three slices and R6c is the last of them.** R6b took
 the casts out whole, collapsed the legacy export branch so every epub
 and txt export now materialises and compiles, made the proof sheet the
 answer for `curate` and `translate` rows, and built §8's re-key as a
-read-time bridge. **R6c is the deletion the wave is named for** and
-has not started: the overlay system and the iframe stack are still on
-disk and still operable, so the app still carries two editing surfaces.
-RENDERER.md §7 and §9 carry the item-by-item marks.
+read-time bridge. **R6c is the deletion the wave is named for and it
+has landed**: the overlay system, the iframe stack, persisted undo, the
+working-TREE lifecycle, the per-step casts' last arms and the PDF block
+editor are off the disk, and **the app has ONE editing surface**.
+RENDERER.md §7 carries the item-by-item marks, §7a says what an old
+project on disk keeps, and §9 records the wave.
 
 Supersessions, so nothing dangles:
 
@@ -651,14 +653,16 @@ Supersessions, so nothing dangles:
   with the surfaces that host them; they are not fixed, they are
   removed with their bug class. If either surface survives past R6,
   the items come back on this list.
-  **Checked at R6b, and the answer is: the surface has NOT died yet.**
-  4b item 3 is the inspector's Contents rename hunting for a nav
-  anchor in `epub-reader.ts`, and `epub-reader.ts` is still on disk
-  and still reachable — R6b deleted the casts and collapsed the
-  export, and left the iframe stack for R6c (RENDERER.md §7/§9). So
-  by this list's own rule the item **comes back**: it is live, it is
-  unfixed, and it dies with `epub-reader.ts` in R6c rather than
-  being repaired first. Nothing about the diagnosis changed.
+  **Checked at R6b: the surface had not died yet, so 4b item 3 came
+  back onto the list. CONFIRMED CLOSED AT R6c.** The item was the
+  inspector's Contents rename hunting for a nav anchor through
+  `renameEpubHeading` in `epub-reader.ts`. That file is deleted whole,
+  the inspector's Contents section is deleted with it, `renameHeading`
+  and the two echo questions it raised are gone from the service, main
+  and the preload, and the standing answers they stored are out of
+  `app-settings.json`'s schema. There is no surface left to host the
+  bug and no code left to throw. It is removed with its bug class,
+  exactly as this list said it would be — not repaired.
 
 ### Wave 5 — ABSORBED into RENDERER.md (kept for the record)
 
@@ -742,8 +746,11 @@ supposed to be, and it exists so the same failure is visible next time.
   every app-side unit and the reason the hand-test is not optional. Not
   scheduled because the standing ruling is no unasked tests — if that
   changes, this is where the work starts.
-- **The bundle is 550 kB against a 500 kB budget.** Pre-existing; Phase
-  E's deletions should move it down rather than up.
+- **The bundle is 552.88 kB against a 500 kB budget.** Pre-existing.
+  R6c's deletions took it from 657.06 kB — the first time it has ever
+  moved down — and it is still a WARNING rather than an ERROR. What is
+  left is Angular plus this app's own components; there is no second
+  editing surface in it to remove.
 - **`epub-final` writes with `Bun.write`**, so the Save-As edition path is
   not atomic where the old repack was. Same as the queue's `final/`
   writes. Flagged when it landed rather than buried.
@@ -765,19 +772,21 @@ supposed to be, and it exists so the same failure is visible next time.
   the model at export time. (2) Home's per-type EPUB list loses
   translation rows for records-mode translations — a translation's
   book is a rendering and renderings are uncatalogued, like a save's;
-  the library tree still shows the step. (3) Re-translating a row
-  whose book is open in a tab leaves the old cast showing until the
-  next cast — the recast is refused while a working tree is held, and
-  logged.
-- **The bundle figure is 573.44 kB** (550.90 → 565.23 with D2's
-  dependency reinstall, → 573.44 with D3's renderer additions and
-  `unrender.ts`). Still a WARNING, not an ERROR; Phase E's deletions
-  should move it down.
-- **`app/shared/unrender.ts` is a deliberate second copy** of the
-  engine's `flowtext.ts` inline table — the app never imports the
-  engine. Verified byte-identical on eight emitter constructs. **If
-  `dotsInline` grows a tag, both tables grow**; there is nothing that
-  will remind you but this line.
+  the library tree still shows the step. (3) ~~Re-translating a row
+  whose book is open in a tab leaves the old cast showing~~ — **CLOSED
+  AT R6c**: there are no casts and no working trees, so there is
+  nothing to be stale and nothing to refuse. A translated position is
+  the proof sheet over the derived book its landing wrote.
+- **The bundle figure was 573.44 kB and is 552.88 kB.** It went
+  657.06 → 552.88 at R6c, which is the first fall in this list's
+  history; the entry above carries the standing figure.
+- ~~**`app/shared/unrender.ts` is a deliberate second copy**~~ —
+  **CLOSED AT R6c.** The file is deleted. Its only consumer was the
+  word-mirror that carried an edit out of a cast book's markup back into
+  the curation, and that whole path went with the iframe reader
+  (RENDERER.md §7). There is one inline table in the app again — the
+  renderer's own, in `shared/ops.ts` via `shared/inline.ts` — so the
+  drift this line was written to warn about cannot happen.
 - **D3 has no independent review.** Every other app-side unit this
   week got a second agent over its diff. This one's was killed by the
   wrap-up. Named here so it is a known debt, not an assumption of

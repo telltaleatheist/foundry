@@ -747,25 +747,12 @@ export class OpenDocumentsComponent {
         title: tab.title,
         glyph: glyphFor(tab),
         tooltip: this.tooltip(tab),
-        // AN EDITOR IS A FACE OF THE BOOK ABOVE IT, not a document beside it —
-        // one step in, wherever the row ends up. Inside a book's tree it is
-        // re-seated as a child of the root; out in the loose list it keeps this
-        // indent under the book it belongs to.
         depth: indent ? 1 : 0,
         column: at < 0 ? null : at + 1,
         focused: at >= 0 && panes[at]!.id === focusedPaneId,
       });
     };
-    for (const tab of tabs) {
-      // An editor is emitted under its book below. One whose book has somehow
-      // gone is emitted at the top level rather than dropped — a row that
-      // exists and is not drawn is a document nobody can close.
-      if (tab.kind === 'editor' && tabs.some((other) => other.id === tab.sourceTabId)) continue;
-      emit(tab, false);
-      for (const other of tabs) {
-        if (other.kind === 'editor' && other.sourceTabId === tab.id) emit(other, true);
-      }
-    }
+    for (const tab of tabs) emit(tab, false);
     return out;
   });
 
@@ -873,15 +860,25 @@ export class OpenDocumentsComponent {
           title: label,
           tally: whenOn(made.madeAt),
           glyph: made.kind === 'epub' ? '▤' : made.kind === 'pdf' ? '▦' : '≡',
-          tooltip: made.kind === 'txt'
-            ? `${path}\nPlain text — Foundry has no tab that reads one. Right-click to show it in the file manager.`
-            : `Open this ${label}\nExported ${new Date(made.madeAt).toLocaleString()}\n${path}`,
+          tooltip: made.kind === 'pdf'
+            ? `Open this ${label}\nExported ${new Date(made.madeAt).toLocaleString()}\n${path}`
+            : `${path}\nExported ${new Date(made.madeAt).toLocaleString()}\nFoundry has no tab that `
+              + 'reads one — right-click to show it in the file manager.',
           depth: 1,
           dir: project.dir,
           // A finished thing this app made, so it wears the dot when it is opened:
           // it lives in the library and nowhere the user filed it themselves.
           managed: true,
-          openable: made.kind !== 'txt',
+          /*
+           * ONLY THE REPRINT OPENS. An export is a FINISHED product and this app
+           * has exactly one viewer left for a file — pdf.js — so a PDF export
+           * opens and an EPUB does not: the iframe reader that used to show one
+           * is deleted (docs/RENDERER.md §7), and pointing pdf.js at a zip would
+           * be a pane with "This PDF would not open" on it. The row stays, wearing
+           * its date and its Reveal, because an export the app made and then would
+           * not admit to is worse than one it will not open.
+           */
+          openable: made.kind === 'pdf',
           column: already?.column ?? null,
           focused: already?.focused ?? false,
         });
@@ -979,18 +976,10 @@ export class OpenDocumentsComponent {
        * `working/Book.pdf` and `generated/Book.pdf` at once and nothing may ever
        * be matched by its last segment.
        */
-      const catalogue = new Set([
-        ...project.documents.map((document) => fold(document.path)),
-        ...project.renderings.map((made) => fold(joinIn(project.dir, made))),
-      ]);
+      const catalogue = new Set(project.documents.map((document) => fold(document.path)));
       const extras: Row[] = [];
       for (const row of mine) {
         if (claimed.has(row.key)) continue;
-        if (row.tab?.kind === 'editor') {
-          extras.push({ ...row, title: 'HTML', depth: 1, dir: project.dir });
-          claimed.add(row.key);
-          continue;
-        }
         /*
          * THE BOOK IS THE READ STEP, and the read step is already a row up
          * there — the one called "Book", which is what standing on it opens
@@ -1483,10 +1472,6 @@ export class OpenDocumentsComponent {
     event.stopPropagation();
     const moving = this.tabs.byId(id);
     if (moving === null) return;
-    if (moving.kind === 'editor') {
-      this.tabs.notice.set('An HTML editor sits with the book it belongs to — drag the book instead.');
-      return;
-    }
     if ((onto !== null && onto.dir !== null) || this.inBook(moving.id)) {
       this.tabs.notice.set(
         'Documents in a book are listed in the order it holds them, so they cannot be reordered '
@@ -1496,26 +1481,12 @@ export class OpenDocumentsComponent {
     }
     // No navigation: a reorder is bookkeeping about the list, not a request to
     // look at something, so it leaves a person on Settings where they were.
-    this.tabs.reorder(id, this.anchor(target));
+    this.tabs.reorder(id, target);
   }
 
   /** Is this open tab one of a book's, rather than a loose file? */
   private inBook(id: string): boolean {
     return this.groups().some((group) => group.tabIds.includes(id));
-  }
-
-  /**
-   * The tab a drop before `target` really lands in front of.
-   *
-   * An editor row is drawn under its book, so "before this editor" means before
-   * the book itself. Without this, dropping a document onto the top half of an
-   * editor row would put it between a book and its own HTML in the flat list,
-   * where the grouping would immediately draw it somewhere else.
-   */
-  private anchor(target: string | null): string | null {
-    const tab = target === null ? null : this.tabs.byId(target);
-    if (tab === null) return null;
-    return tab.kind === 'editor' ? tab.sourceTabId : tab.id;
   }
 
   /**
@@ -1575,9 +1546,6 @@ export class OpenDocumentsComponent {
    * dialog, where the thing being named really is a file.
    */
   protected tooltip(tab: Tab): string {
-    if (tab.kind === 'editor') {
-      return `The HTML of the chapter open in ${tab.title.replace(/ — HTML$/, '')}`;
-    }
     const lines = [tab.path];
     if (tab.savedPath !== null) lines.push(`Saved to ${tab.savedPath}`);
     if (tab.unsaved) lines.push("In Foundry's library workspace only — Ctrl+S files it somewhere.");
@@ -1667,12 +1635,10 @@ interface Group {
 }
 
 function glyphFor(tab: Tab): string {
-  if (tab.kind === 'editor') return '</>';
   // The book wears the reading's own mark, because the book IS the reading — the
   // same glyph `glyphForStep` gives the row that opens it, one line above it in
   // this tree.
-  if (tab.kind === 'book') return '▤';
-  return tab.kind === 'epub' ? '▤' : '▦';
+  return tab.kind === 'book' ? '▤' : '▦';
 }
 
 /**

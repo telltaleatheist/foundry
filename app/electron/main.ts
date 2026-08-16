@@ -11,7 +11,6 @@
  */
 import { randomUUID } from 'node:crypto';
 import { createReadStream, promises as fsp } from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { Readable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
@@ -38,52 +37,15 @@ import {
   loadBook,
   materializeTranslation,
 } from './book';
-import { injectReporter, REPORTER_ID, REPORTER_MEMBER, REPORTER_SOURCE, sanitizeChapter } from './click-reporter';
 import {
   engineInfo,
-  finalizeEpub,
-  readEpubMetadata,
-  readPdfBlocks,
   readPdfMetadata,
   runDoctor,
-  writeEpubMetadata,
   writePdfMetadata,
 } from './engine';
 import { catalogForThisMachine, onEnvInstallProgress } from './env-install';
 import { planProvisioning } from './env-provision';
-import {
-  closeAllEpubs,
-  closeEpub,
-  isFoundryBook,
-  navEchoForBlock,
-  openBookIn,
-  openEpub,
-  projectOf,
-  readEpubMember,
-  renameEpubHeading,
-  renameEpubPageHeading,
-  repackEpub,
-  resolveEpubMember,
-  restoreBlockHtml,
-  setBlockCategories,
-  setBlockCuts,
-  setBlockHtml,
-  setNoteCut,
-  stampBook,
-  workingTreeOf,
-  writeEpubMember,
-} from './epub-reader';
-import { loadLedger, saveLedger } from './history';
 import * as queue from './job-queue';
-import {
-  commitOverlay,
-  loadOverlayFile,
-  loadOverlayLedger,
-  locateOverlay,
-  saveOverlayFile,
-  saveOverlayLedger,
-  uncommittedIn,
-} from './overlays';
 import {
   adoptLegacyLayout,
   deletableStep,
@@ -93,14 +55,12 @@ import {
   describeStepDelete,
   documentAssets,
   documentAtPosition,
-  finalDir,
   goToStep,
   importDocument,
   inspectProject,
   type ProjectInventory,
   isArchived,
   isManaged,
-  ledgerOf,
   listProjects,
   metadataDir,
   noteProjectTitle,
@@ -108,14 +68,9 @@ import {
   positionStepId,
   projectDirOf,
   promoteStrandedReprints,
-  readManifest,
   readStepLedger,
-  readingIsComplete,
-  recordFinal,
   recordMetadata,
-  recordTranslationEdit,
   standForDocument,
-  translationWorldOf,
 } from './projects';
 import {
   clearRecents,
@@ -129,8 +84,6 @@ import * as vllm from './vllm-server';
 import { planExport, planReading, planTranslation } from './workspace';
 import { detectEnvTooling, listDistros } from './wsl';
 import { fold, isBook } from '../shared/original';
-import { OverlayError, type OverlayFile } from '../shared/overlay';
-import { positionView } from '../shared/ledger';
 import type { ReadAsk } from '../shared/ledger';
 import type { BookOp } from '../shared/ops';
 import { RE_READ_CANCEL, RE_READ_PROCEED } from '../shared/reread';
@@ -145,17 +98,10 @@ import type {
   ConversionKind,
   DeletionPrompt,
   DocumentDeletion,
-  EchoAnswer,
-  EchoStanding,
   EnvInstallRequest,
-  HeadingEcho,
   JobRequest,
-  LedgerStacks,
-  LedgerStep,
   MetadataPatch,
   MetadataWriteOutcome,
-  NavEcho,
-  OverlayFileWire,
   ProjectDocument,
   ProjectFinal,
   ProjectLedger,
@@ -165,10 +111,6 @@ import type {
   ReReadAnswer,
   SetupRequest,
   TranslateRequest,
-  UncommittedCuration,
-  UnlinkedNote,
-  UnlinkedNoteAnswer,
-  UnlinkedNoteStanding,
 } from '../shared/types';
 
 const isDev = process.argv.includes('--dev');
@@ -210,28 +152,25 @@ const APPLY = 'Apply these changes, then close';
 const DISCARD = 'Discard them and close';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// foundry-file:// — how a book's chapters reach an <iframe>
+// foundry-file:// — how a book's figures reach the page
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * The renderer is a page on http://localhost:4260 (dev) or file:// (packaged),
- * and neither may point an <iframe> at an arbitrary `file://` URL. So the app
- * serves the bytes itself, on a scheme of its own.
+ * and neither may load an arbitrary `file://` URL as an image. So the app serves
+ * the bytes itself, on a scheme of its own.
  *
- * ONE HOST: `foundry-file://epub/<book id>/<path inside the book>` — a chapter
- * out of an unpacked EPUB. PATH-shaped and not query-shaped because an XHTML
- * document resolves `style.css` and `img/plate-3.png` RELATIVELY: served from a
- * query string, every one of those would resolve to a URL with no `?p=` at all
- * and the book would render unstyled and pictureless.
- *
- * There USED to be a second host — `foundry-file://open/?p=<abs path>`, a whole
- * PDF for Chromium's built-in viewer — and it is gone with the viewer: PDFs go
- * to the app's own pdf.js component through `document:read-bytes` now, and a
- * serving route with no consumer is a door into files on disk kept open for
- * nobody. Members are ALLOW-LISTED, not path-checked: servable only if in the
- * set of files that unpack actually wrote (epub-reader.ts). A renderer that was
- * talked into asking for `C:\Users\…\id_rsa` gets a 403, rather than a cleverer
- * path check that has to stay right forever.
+ * ONE HOST, AND IT IS THE LAST ONE: `foundry-file://book/<token>/<figure name>`
+ * — a crop the engine cut beside the bank, for an open book's proof sheet. Two
+ * others have been retired and both for the same reason, which is that a serving
+ * route with no consumer is a door into files on disk kept open for nobody:
+ * `open` served whole PDFs to Chromium's viewer (PDFs go to the app's own pdf.js
+ * through `document:read-bytes` now), and `epub` served chapters out of an
+ * unpacked working tree to an <iframe> that no longer exists (docs/RENDERER.md
+ * §7). What survives is allow-listed rather than path-checked: `bookFigureFile`
+ * answers only for a token a successful `book:load` minted, so a renderer that
+ * was talked into asking for `C:\Users\…\id_rsa` gets a 403 rather than meeting
+ * a cleverer path check that has to stay right forever.
  */
 const openable = new Set<string>();
 
@@ -261,39 +200,6 @@ function within(dir: string, filePath: string): boolean {
   return fold(filePath).startsWith(`${fold(dir).replace(/\/+$/, '')}/`);
 }
 
-/**
- * Where each open book may be saved. See `epub:open` for the two ways in.
- *
- * AT MODULE SCOPE rather than inside `registerIpc`, because a grant now has to be
- * REVOKED from outside the IPC surface: when a document opened from the user's
- * own disk is relocated onto the project's copy of it, the grant that named their
- * file has to go with it, or Save would go on writing to a path this app no
- * longer claims to be showing. See `revokeSaveGrants`.
- */
-const saveGrants = new Map<string, Set<string>>();
-const grantKey = (destination: string): string => path.resolve(destination).toLowerCase();
-
-/**
- * Take back every grant naming this destination.
- *
- * ── THE APP NEVER SILENTLY WRITES OUTSIDE ITS LIBRARY ──────────────────────
- *
- * A book opened from somewhere else grants plain Save to THAT file, deliberately:
- * it is a copy the user chose, and updating it is what they mean by Save. Then
- * the import lands and the tab moves onto the project's copy — and the grant
- * stayed behind, pointing at a path the tab no longer shows. Save would have
- * repacked the working tree over the user's own EPUB while every label on screen
- * said the document was the library's.
- *
- * So the grant is revoked at the move. The book keeps its edits, its tree and its
- * history; what it loses is a silent write target, and Save As — main's own
- * dialog, which grants what the user picks — is the door out.
- */
-function revokeSaveGrants(destination: string): void {
-  const key = grantKey(destination);
-  for (const grants of saveGrants.values()) grants.delete(key);
-}
-
 function admitted(candidate: string): string | null {
   const resolved = path.resolve(candidate);
   return openable.has(resolved) ? resolved : null;
@@ -307,78 +213,27 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 /**
- * Extension -> content type, for the handful of things a foundry EPUB contains.
+ * Extension -> content type, for the pictures a book file's figures can be.
  *
- * Chromium decides what to DO with a response from this header and nothing else
- * — an XHTML chapter served as octet-stream downloads instead of rendering, and
- * a stylesheet served as text/plain is dropped by the strict MIME check. There
- * is no sniffing fallback on purpose: an unknown extension is served as a
- * download rather than guessed into being executable.
+ * Chromium decides what to DO with a response from this header and nothing else,
+ * and there is no sniffing fallback on purpose: an unknown extension is served
+ * as a download rather than guessed into being executable. The list is the image
+ * formats a crop can come out as, because the one surviving host serves crops.
  */
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
-  '.pdf': 'application/pdf',
-  '.xhtml': 'application/xhtml+xml',
-  '.html': 'text/html',
-  '.htm': 'text/html',
-  '.css': 'text/css',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
   '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-  '.ttf': 'font/ttf',
-  '.otf': 'font/otf',
-  '.opf': 'application/oebps-package+xml',
-  '.ncx': 'application/x-dtbncx+xml',
-  '.xml': 'application/xml',
 };
 
 function contentTypeFor(filePath: string): string {
   return CONTENT_TYPES[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream';
 }
 
-/**
- * The policy imposed on a BOOK's own documents — not on the app's page.
- *
- * The chapters come out of a file the user handed us. They are foundry's own
- * markup in every expected case, but "expected" is not a guarantee, and the
- * viewer's <iframe> also carries `sandbox="allow-scripts"` (opaque origin, no
- * same-origin power). This is the second lock: nothing loads but the book's own
- * files on this scheme, and `default-src 'none'` means an omitted directive is
- * a refusal rather than a hole. `'self'` is deliberately NOT used — a sandboxed
- * frame has an opaque origin that `'self'` can never match, and the stylesheet
- * would silently fail.
- *
- * A caveat this file must not lie about: response-header CSP is MEASURABLY NOT
- * ENFORCED for documents on this custom scheme (eval ran in a frame carrying
- * `script-src 'nonce-…'`), and neither is MIME blocking. What actually keeps a
- * book's own scripts dead is `sanitizeChapter` (electron/click-reporter.ts) —
- * chapters are stripped of active content at serve time and exactly one
- * app-owned script is injected after. The policy below is still sent, nonce
- * and all, because it costs nothing and starts working the day Electron
- * enforces it here.
- */
-const EPUB_CSP = [
-  "default-src 'none'",
-  'style-src foundry-file: \'unsafe-inline\'',
-  'img-src foundry-file: data:',
-  'font-src foundry-file: data:',
-  'media-src foundry-file: data:',
-  "object-src 'none'",
-  "form-action 'none'",
-].join('; ');
-
-/** Every epub-host response carries these; see the CSP note above. */
-const EPUB_HEADERS: Readonly<Record<string, string>> = {
-  'content-security-policy': EPUB_CSP,
-  'cache-control': 'no-store',
-  'x-content-type-options': 'nosniff',
-};
-
-/** Stream a file as a response, or say why not. Shared by both hosts. */
+/** Stream a file as a response, or say why not. */
 async function serveFile(
   resolved: string,
   extraHeaders: Readonly<Record<string, string>>,
@@ -439,80 +294,19 @@ function registerFileProtocol(): void {
       return serveFile(figure, { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
     }
 
-    if (url.host === 'epub') {
-      // `/<book id>/<member path>`. The member path keeps its slashes and is
-      // decoded segment by segment, because a chapter called `Ch 1.xhtml` was
-      // encoded that way and `decodeURIComponent` on the whole path would also
-      // decode an encoded slash into a path separator.
-      const segments = url.pathname.split('/').filter((part) => part.length > 0);
-      const id = segments.shift();
-      if (id === undefined || segments.length === 0) {
-        return new Response('No book and member were named.', { status: 400 });
-      }
-      const member = segments.map(decodeURIComponent).join('/');
-
-      // The app's own support files, on an id no book can have (ids are UUIDs).
-      // The one script the CSP-and-MIME chain lets execute — click-reporter.ts.
-      if (id === REPORTER_ID) {
-        if (member !== REPORTER_MEMBER) return new Response('Not a support file.', { status: 404 });
-        return new Response(REPORTER_SOURCE, {
-          headers: {
-            'content-type': 'text/javascript',
-            'cache-control': 'no-store',
-            'x-content-type-options': 'nosniff',
-          },
-        });
-      }
-
-      const resolved = resolveEpubMember(id, member);
-      if (resolved === null) {
-        return new Response('That book is not open in this app.', { status: 403 });
-      }
-      // `no-store` (in EPUB_HEADERS) because these bytes CHANGE: the HTML editor
-      // writes a chapter and the pane reloads it, and a cached 200 would show
-      // the version from before the edit. The `?v=` on the URL already defeats
-      // the memory cache; this defeats anything else tempted to keep a copy.
-
-      // A chapter document gets the click reporter spliced in ON THE WAY OUT —
-      // buffered rather than streamed, which a few hundred kilobytes of XHTML
-      // can afford. The disk copy, read-member and every repack stay untouched;
-      // everything that is not a chapter still streams.
-      const extension = path.extname(resolved).toLowerCase();
-      if (extension === '.xhtml' || extension === '.html' || extension === '.htm') {
-        try {
-          const nonce = randomUUID().replace(/-/g, '');
-          // Sanitize FIRST, then inject: the reporter must be the one script
-          // the stripping pass never saw. click-reporter.ts owns the argument
-          // for why stripping — not CSP, not MIME — is the enforcement here.
-          const markup = injectReporter(sanitizeChapter(await fsp.readFile(resolved, 'utf8')), nonce);
-          return new Response(markup, {
-            headers: {
-              'content-type': contentTypeFor(resolved),
-              ...EPUB_HEADERS,
-              // The chapter's own policy REPLACES the shared one: same
-              // directives plus the nonce that authorizes exactly one script.
-              'content-security-policy': `${EPUB_CSP}; script-src 'nonce-${nonce}'`,
-            },
-          });
-        } catch (err) {
-          return new Response(`Could not read ${resolved}: ${(err as Error).message}`, { status: 404 });
-        }
-      }
-      return serveFile(resolved, EPUB_HEADERS);
-    }
-
-    // The old `open` host served whole PDFs to Chromium's viewer; the viewer is
-    // gone and so is the route. 404 rather than silence, so a stale URL says
-    // what happened to it.
-    return new Response('This app no longer serves whole files; books only.', { status: 404 });
+    // The old `open` and `epub` hosts are both gone — the first with Chromium's
+    // PDF viewer, the second with the iframe reader. 404 rather than silence, so
+    // a stale URL says what happened to it.
+    return new Response('This app no longer serves whole files; a book\u2019s figures only.', { status: 404 });
   });
 }
 
 /**
  * The renderer's Content-Security-Policy, on the DOCUMENT only.
  *
- * `frame-src foundry-file:` is the whole reason this is written by hand: the
- * viewer's <iframe> is the one cross-scheme thing the page is allowed to load.
+ * `img-src foundry-file:` is the whole reason this is written by hand: a book
+ * file's figure crops are the one cross-scheme thing the page is allowed to load,
+ * and there is no `frame-src` at all any more because there is no frame.
  * `'unsafe-inline'` is on styles alone — Angular emits component styles inline —
  * and never on scripts.
  *
@@ -530,7 +324,6 @@ const CSP = [
   // else on that scheme reachable as an image.
   "img-src 'self' data: blob: foundry-file:",
   "font-src 'self' data:",
-  'frame-src foundry-file:',
   "connect-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
@@ -597,8 +390,8 @@ async function openDocument(candidate: string): Promise<string | null> {
    * project is a full sha256 of the document and importing it is two copies; on
    * a 400 MB scan that is seconds, and a window that sat still for seconds after
    * a drop would read as an app that had missed the file. Nothing downstream
-   * waits on this — `epub:open` imports for itself, and the two calls land on
-   * the same project because the work is serialised per folder (projects.ts).
+   * waits on it: the work is serialised per folder (projects.ts), so whatever
+   * asks about this project next queues behind the import rather than racing it.
    *
    * A failure is a console line naming the file rather than a dialog: the
    * document IS open and readable, and what has been lost is a folder to put its
@@ -650,18 +443,12 @@ async function openDocument(candidate: string): Promise<string | null> {
        */
       forgetRecent(resolved);
       rememberRecent(working, kind, path.basename(working), true);
-      // And the write grant their own file carried goes with it. See
-      // `revokeSaveGrants`: the tab is about to stop showing that path, and a
-      // Save that still wrote to it would be this app editing a document it is
-      // no longer displaying.
-      revokeSaveGrants(resolved);
       for (const win of BrowserWindow.getAllWindows()) {
         win.webContents.send('document:relocated', { from: resolved, to: working });
       }
     }
     /*
-     * The PDF's own idea of its title, noted the way a cast EPUB's `dc:title`
-     * is when it is first opened (epub-reader.ts) — because for a project that
+     * The PDF's own idea of its title, noted here because for a project that
      * is only ever a PDF, this import is the ONLY moment anything asks. Behind
      * the same not-awaited import, for the same reason: it is a spawn, and a
      * display name is not worth making a drop feel missed over. Scans mostly
@@ -1185,31 +972,26 @@ function registerIpc(): void {
   /**
    * The warning before a tab with something to lose closes.
    *
-   * Worded around what is ACTUALLY at risk, which is never the book itself:
-   * every edit lands in the project's own working copy as it is made
-   * (electron/epub-reader.ts) and closing a tab deletes nothing at all, so this
-   * loses track of a book and never loses one. Telling a user their work is
+   * Worded around what is ACTUALLY at risk. Closing a tab deletes nothing on
+   * disk — the project keeps every byte of the book and Home still lists it — so
+   * what a close can cost is a stack of changes nobody applied, and nothing
+   * else. Telling a user their work is
    * about to be destroyed when it is not would teach them to distrust the next
    * warning that matters.
    *
    * ── TWO REASONS, ONE QUESTION ───────────────────────────────────────────────
    *
-   * A book's filed copy can be out of date, and a scan's corrections can have no
-   * save to come back to. They are two different losses and this app has already
-   * ruled that a closing document is asked about once (`closeShowing`,
-   * tabs.service.ts): a second card on top of the first is the app arguing with
-   * an answer it already has. So the sentences are composed from whichever of the
-   * two are true, and a tab can owe both.
+   * A book pane's unapplied changes are genuinely destroyed by closing, and a
+   * book's filed copy can be out of date. They are two different losses and this
+   * app has already ruled that a closing document is asked about once
+   * (`closeShowing`, tabs.service.ts): a second card on top of the first is the
+   * app arguing with an answer it already has.
    *
-   * IT WAS THREE, and the third — "no copy of this exists anywhere you chose" —
-   * is not asked any more at all. See `CloseWarning`: the flag was true from
-   * birth for every book opened out of a project, so it interrupted people who
-   * had lost nothing, and the ruling that retired it is the user's own: *"only
-   * pop up a confirmation alert if changes have been made."*
-   *
-   * The corrections lead when they are there, because they are the only one whose
-   * subject is the user's own judgement about four hundred blocks rather than a
-   * file's whereabouts.
+   * IT WAS THREE. The third — "no copy of this exists anywhere you chose" — went
+   * with the user's own ruling (*"only pop up a confirmation alert if changes have
+   * been made"*), and the fourth, the block editor's uncommitted CURATION, went
+   * with the block editor itself: there is one editing surface now and its
+   * unapplied work is the stack, which is the first arm below.
    */
   ipcMain.handle(
     'document:confirm-close',
@@ -1226,26 +1008,25 @@ function registerIpc(): void {
        */
       question: warning.edits !== null && warning.edits > 0
         ? aboutTheEdits(warning, warning.edits)
-        : warning.corrections === null
-          ? aboutTheCopy(warning)
-          : aboutTheCorrections(warning, warning.corrections),
+        : aboutTheCopy(warning),
     }),
   );
 
   /**
    * THE ONE CARD IN THIS APP THAT IS ALLOWED TO SAY THE WORK WILL BE LOST.
    *
-   * ── Why it is allowed, when its neighbour is forbidden ──────────────────────
+   * ── Why it is allowed, when everything around it was forbidden ──────────────
    *
-   * `aboutTheCorrections` below exists to STOP this app saying "you have unsaved
-   * changes that will be lost", because in the block editor it is false: every
-   * strike is written into the live curation as it is made. The book pane is the
-   * other case and the difference is the design's, not an accident. Changes on the
-   * proof sheet are a LIFO stack held in memory precisely so that undo is cheap
-   * and free of the disk, and the ruling that pays for that is the one this card
-   * reports: Apply writes them and clears the stack; closing without it scraps
-   * them (docs/RENDERER.md §3). So the true sentence here is the frightening one,
-   * and softening it would be the worse lie.
+   * The card this used to sit beside — `aboutTheCorrections` — existed to STOP
+   * this app saying "you have unsaved changes that will be lost", because in the
+   * block editor it was false: every strike was written into the live curation as
+   * it was made. That editor is gone and so is the card. The book pane is the
+   * other case and the difference was always the design's, not an accident.
+   * Changes on the proof sheet are a LIFO stack held in memory precisely so that
+   * undo is cheap and free of the disk, and the ruling that pays for that is the
+   * one this card reports: Apply writes them and clears the stack; closing without
+   * it scraps them (docs/RENDERER.md §3). So the true sentence here is the
+   * frightening one, and softening it would be the worse lie.
    *
    * WHICH IS EXACTLY WHY THE OFFER IS A BUTTON. A dialog whose only route to
    * keeping the work is *cancel, find Apply, close again* has made the person do
@@ -1261,11 +1042,8 @@ function registerIpc(): void {
   function aboutTheEdits(warning: CloseWarning, edits: number): AppQuestion {
     const changes = edits === 1 ? '1 change' : `${edits} changes`;
     /*
-     * The corrections and the filed copy, when this tab owes those as well. Kept
-     * to a clause each and put last: they are smaller losses, and the buttons are
-     * about the stack. A book tab cannot currently owe the corrections warning —
-     * `questionBefore` asks it only of a scan or an EPUB — so this is the copy
-     * clause alone, written the way the other card writes it.
+     * The filed copy, when this tab owes that as well. Kept to a clause and put
+     * last: it is the smaller loss, and the buttons are about the stack.
      */
     const alsoTheCopy = warning.modified
       ? [
@@ -1337,200 +1115,6 @@ function registerIpc(): void {
   }
 
   /**
-   * THE SENTENCE THAT MUST NOT LIE.
-   *
-   * "You have unsaved changes that will be lost" is what every editor says here
-   * and it is false in this app, twice over. The block editor has no unsaved
-   * state: a strike is written whole into the live curation the instant it is
-   * made, so closing discards nothing and every correction is exactly where it was
-   * left when the book is opened again. Saying otherwise would be frightening
-   * somebody about work that is not in danger, which is how a person learns to
-   * dismiss the next warning without reading it.
-   *
-   * What is actually at stake is a RESTORE POINT. Foundry's step-by-step undo
-   * lasts only as long as the document is open, so closing is the moment
-   * "undoable" quietly becomes "permanent" — the corrections survive, and the
-   * ability to walk back through them does not. A save is the only thing that
-   * replaces it, which is why the offer to make one is a button rather than
-   * advice: a dialog whose only route to keeping the work is *cancel, hunt for
-   * Save, close again* has made the user do the app's job.
-   *
-   * SO THE THREE STATEMENTS ARE: nothing is lost; what ends is the way back to
-   * this state; here is the one gesture that keeps it. In that order, because the
-   * reassurance has to come before the cost or the cost reads as a threat.
-   *
-   * The count is named as a DIFFERENCE from the save when there is one ("stand
-   * differently now than they do in …"), because "you have 23 corrections" is true
-   * of a book that was saved with all 23 of them and is the wrong thing to say
-   * about it. See `UncommittedCuration.blocks`.
-   */
-  function aboutTheCorrections(
-    warning: CloseWarning,
-    at: UncommittedCuration,
-  ): AppQuestion {
-    /*
-     * THE SAVE IS NAMED ONCE AND THEN REFERRED TO. With both a block count and a
-     * spine to report, naming the row twice in one sentence reads as two different
-     * saves; with only one of them, "that save" refers to nothing the reader has
-     * been told about yet. So whichever clause comes first carries the name.
-     */
-    const blocks = at.blocks === 1 ? '1 block' : `${at.blocks} blocks`;
-    const drift = at.since === null
-      ? `${blocks} corrected and no save of them`
-      : `${blocks} that stand differently now than they do in “${at.since}”`;
-    const spine = !at.chapters
-      ? null
-      : at.since === null
-        ? 'a chapter list no save of this book holds'
-        : at.blocks === 0
-          ? `a chapter list that differs from “${at.since}”`
-          : 'a chapter list that differs from that save';
-    const message = at.blocks === 0 && spine !== null
-      ? `“${warning.title}” has ${spine}.`
-      : `“${warning.title}” has ${drift}${spine === null ? '' : `, and ${spine}`}.`;
-
-    /*
-     * The filed-copy warning, when this tab owes that one as well. Kept to a
-     * sentence and put last: it is a second, smaller loss, and the corrections
-     * are what the buttons are about.
-     *
-     * ONE BRANCH NOW, not two. The other one said "this book has also not been
-     * saved anywhere you chose", and it went with the ruling that stopped a bare
-     * `unsaved` asking anything at all (`CloseWarning`): a book living in its own
-     * project is not a book somebody has mislaid, and a warning that is untrue in
-     * a card about corrections teaches people to skim the part that is true.
-     */
-    const alsoTheCopy = warning.modified
-      ? [
-        'The copy you filed for yourself is also older than this one, and closing does not bring '
-        + 'it up to date. Export the book again to replace it.',
-      ]
-      : [];
-
-    return {
-      title: 'Close without a save to come back to?',
-      message,
-      detail: [
-        'Nothing here is lost by closing. Every one of these corrections is already written into '
-        + 'this book’s curation, and all of them will be exactly where you left them the next time '
-        + 'you open it.',
-        'What closing ends is the way back to this state. Foundry’s step-by-step undo lasts only '
-        + 'as long as the book is open; a save is what turns the corrections as they stand into a '
-        + 'row in Steps that you can click back to afterwards. Saving now makes this moment one of '
-        + 'those rows. Closing without it keeps every correction and keeps no way back to this '
-        + 'point in them.',
-        ...alsoTheCopy,
-      ],
-      /*
-       * THREE ANSWERS, AND THE ORDER IS THE SAFETY. Save is offered first and is
-       * what Enter takes, because it is the one answer that costs nothing and
-       * keeps everything; Close is LAST and wears the error colour, so the button
-       * that ends the way back has to be aimed at; Keep it open is what a
-       * dismissal means. A card whose only route to keeping the work is *cancel,
-       * hunt for Save, close again* has made the user do the app's job.
-       */
-      choices: [
-        { key: 'save', label: SAVE },
-        { key: 'keep', label: KEEP },
-        { key: 'close', label: CLOSE, danger: true },
-      ],
-      preferred: 'save',
-      dismissed: 'keep',
-      checkbox: null,
-    };
-  }
-
-  /**
-   * "You deleted this footnote's last reference. Should the footnote go too?"
-   *
-   * MAIN'S SENTENCES, THE APP'S OWN CARD, like `confirmClose` above and like
-   * every other question this app asks. It used to be a native box, argued for
-   * on the grounds that the question is modal to the WINDOW — the edit has landed
-   * and the next gesture must not race it — and that an in-app modal over a
-   * sandboxed iframe is a rectangle the frame can scroll out from under. The card
-   * answers both: it is a fixed full-window scrim that takes every click before
-   * the frame can (see `ConfirmDialogComponent`), so the frame scrolling under it
-   * moves nothing the person is looking at. What the native box could not answer
-   * was that it did not look like this program (`AppQuestion`).
-   *
-   * THE NOTE IS NAMED, both by the number the page printed and by the words it
-   * begins with. "A footnote is now unreachable" tells a person nothing they can
-   * act on; “25 — Kershaw, *Hitler*, p. 412…” tells them exactly what they are
-   * about to lose, which is the whole difference between a question and a
-   * formality.
-   *
-   * THREE ANSWERS AND THEY WRITE THREE DIFFERENT THINGS. Cut strikes the note as
-   * well (`epub:set-note-cut`); Leave writes nothing at all and the note stands
-   * in the book with nothing pointing at it, which is a legitimate edition and
-   * is counted by `epub-final`'s integrity report; Cancel puts the reference
-   * number back, which is a second write of the block's previous markup and is
-   * why the renderer still has to be holding it.
-   *
-   * THE ORDER IS EDIT-THEN-ASK. The edit is already on disk when this card goes
-   * up, because an edit landing the instant it is typed is the whole feel of
-   * select mode and a dialog that interrupted the typing to ask permission would
-   * take that away. Cancel undoes; it does not pre-empt.
-   *
-   * THE CHECKBOX IS REMEMBERED PER ANSWER (app-settings.ts): "always strike it"
-   * and "always leave it" are different standing instructions, and a single
-   * "stop asking" flag would leave main choosing which one the user meant. A
-   * checked box on CANCEL is ignored — a standing instruction to always undo
-   * would make deleting a reference number impossible, with no dialog left to
-   * explain why every attempt reverts itself — and that rule is now SAID rather
-   * than implemented twice: `checkbox.remembers` names the two answers a ticked
-   * box may be stored for, and the api layer stores nothing else.
-   *
-   * THE STANDING ANSWER IS READ BEFORE ANYTHING IS COMPOSED, which is what makes
-   * "don't ask again" mean it: no question crosses the seam, so no card is drawn
-   * and nothing flickers on its way to being dismissed.
-   */
-  ipcMain.handle(
-    'document:confirm-unlinked-note',
-    (_event, note: UnlinkedNote): Asked<UnlinkedNoteAnswer> => {
-      const standing = readAppSettings().unlinkedNoteAnswer;
-      if (standing !== 'ask') return { kind: 'answered', answer: standing };
-      const printed = note.printed.trim();
-      const named = printed.length > 0 ? `Footnote ${printed}` : `The footnote “${note.noteId}”`;
-      return {
-        kind: 'ask',
-        question: {
-          title: 'That was the last reference to a footnote',
-          message: `${named} is no longer reachable from the text.`,
-          detail: [
-            ...(note.opening.length > 0 ? [`It reads: “${note.opening}”`] : []),
-            'Striking it marks it the way Delete marks any block — it stays in the working copy, '
-            + 'drawn struck through, and only leaves the book when the final edition is built, so '
-            + 'pressing Delete on it brings it back. Leaving it keeps the note in the book with '
-            + 'nothing pointing at it. Putting the number back undoes the edit you just made.',
-          ],
-          /*
-           * THE THREE ANSWERS IN THE ORDER THE BOX ALWAYS PUT THEM, and the two
-           * that are not the same answer twice. Leave is FOCUSED (the native
-           * box's own `defaultId: 1`): it is the answer that writes nothing, and
-           * a note standing in the book with nothing pointing at it is a
-           * legitimate edition. A DISMISSAL PUTS THE NUMBER BACK (`cancelId: 2`),
-           * which is the only one of the three that is not a decision about the
-           * footnote at all — somebody who waved the question away did not agree
-           * to an edition, so the edit that raised it is undone and the book is
-           * exactly as it was.
-           */
-          choices: [
-            { key: 'cut', label: 'Strike the footnote too' },
-            { key: 'keep', label: 'Leave the footnote' },
-            { key: 'cancel', label: 'Put the number back' },
-          ],
-          preferred: 'keep',
-          dismissed: 'cancel',
-          checkbox: {
-            label: 'Don’t ask again — do this every time',
-            remembers: ['cut', 'keep'],
-          },
-        },
-      };
-    },
-  );
-
-  /**
    * "Read this book again?" — the queue confirm, `BANK-LIFECYCLE.md` §3.
    *
    * MAIN'S QUESTION AND THE APP'S OWN CARD, like `confirmClose` and like every
@@ -1587,99 +1171,6 @@ function registerIpc(): void {
         checkbox: null,
       },
     }),
-  );
-
-  /*
-   * ── The page and the contents are two statements ─────────────────────────
-   *
-   * THE TEXT SHOULD SAY WHAT THE BOOK SAYS, AND THE CONTENTS SHOULD SAY WHAT
-   * THE BOOK'S OWN APPARATUS SAYS. Those are usually the same sentence and
-   * sometimes deliberately are not: the caster composes a nav label the page
-   * never carried — "Part II — The Road to War" over a page that reads "II" —
-   * and that divergence is correct. So neither side is derived from the other,
-   * nothing is kept in sync, and renaming one OFFERS to update the other.
-   *
-   * TWO QUESTIONS AND TWO PREFERENCES, not one of each. Renaming a contents
-   * entry and fixing a typo on the page are different gestures with different
-   * intents, and a person who has told the app to stop asking about one has
-   * said nothing whatever about the other.
-   *
-   * Both follow the unlinked-footnote question exactly (`70cdc69`): the app's own
-   * card, answered from `app-settings.json` without asking when a standing answer
-   * is stored, remembered PER ANSWER so that "always update the other" and "never
-   * update the other" stay two different instructions, and un-set in Settings'
-   * Curation card — because a don't-ask-again checkbox with no way back is a trap.
-   * Both of them are EITHER answer storable, which is why `remembers` names both
-   * keys here and only two of three there.
-   *
-   * ASKED AFTER THE WRITE, both of them, on select mode's rule: what the user
-   * typed lands the instant they stop typing, and the question is about the
-   * OTHER side, which nothing has touched.
-   */
-  ipcMain.handle(
-    'document:confirm-heading-echo',
-    (_event, echo: HeadingEcho): Asked<EchoAnswer> => {
-      const standing = readAppSettings().contentsRenameEcho;
-      if (standing !== 'ask') return { kind: 'answered', answer: standing };
-      return {
-        kind: 'ask',
-        question: {
-          title: 'The page still says the old name',
-          message: `The heading on the page reads “${echo.was}”.`,
-          detail: [
-            `The contents entry now reads “${echo.now}”. They are allowed to differ — the page `
-            + 'should say what the book says, and the contents should say what the book\'s '
-            + 'apparatus says — so nothing on the page has been changed. Changing it rewrites the '
-            + 'heading (and the document title) to match; leaving it keeps the words the page '
-            + 'printed.',
-          ],
-          // Update is offered first and focused (`defaultId: 0`), because the
-          // person just renamed one side and the commonest reason to do that is
-          // that both sides were wrong. Leaving is what a dismissal means:
-          // nothing has been written to the page, so nothing has to be undone.
-          choices: [
-            { key: 'update', label: 'Change the heading too' },
-            { key: 'leave', label: 'Leave the page as it is' },
-          ],
-          preferred: 'update',
-          dismissed: 'leave',
-          checkbox: {
-            label: 'Don’t ask again — do this every time',
-            remembers: ['update', 'leave'],
-          },
-        },
-      };
-    },
-  );
-
-  ipcMain.handle(
-    'document:confirm-nav-echo',
-    (_event, echo: NavEcho): Asked<EchoAnswer> => {
-      const standing = readAppSettings().headingEditEcho;
-      if (standing !== 'ask') return { kind: 'answered', answer: standing };
-      return {
-        kind: 'ask',
-        question: {
-          title: 'The contents still says the old name',
-          message: `The contents entry reads “${echo.was}”.`,
-          detail: [
-            `The heading on the page now reads “${echo.now}”. Nothing in the contents has been `
-            + 'changed — the two are allowed to differ. Changing it relabels the entry to match; '
-            + 'leaving it keeps the name the table of contents gives this chapter.',
-          ],
-          choices: [
-            { key: 'update', label: 'Change the contents entry too' },
-            { key: 'leave', label: 'Leave the contents as it is' },
-          ],
-          preferred: 'update',
-          dismissed: 'leave',
-          checkbox: {
-            label: 'Don’t ask again — do this every time',
-            remembers: ['update', 'leave'],
-          },
-        },
-      };
-    },
   );
 
   // ── Projects ─────────────────────────────────────────────────────────────
@@ -1824,15 +1315,6 @@ function registerIpc(): void {
    * action is a recursive delete.
    */
   function refuseProjectDelete(project: { dir: string; title: string }): void {
-    const open = openBookIn(project.dir);
-    if (open !== null) {
-      throw new Error(
-        `${open} is open in Foundry right now, so “${project.title}” cannot be deleted — erasing `
-        + 'the working copy out from under a book that is being read would leave that tab showing '
-        + 'files that no longer exist, and would leave half a project on disk. Close the book '
-        + 'first, then delete it.',
-      );
-    }
     refuseBusyJob(project);
   }
 
@@ -2132,8 +1614,6 @@ function registerIpc(): void {
         ? 'the one earlier version of it a rerun set aside'
         : `the ${extras.archivedVersions} earlier versions of it that reruns set aside`);
     }
-    if (extras.workingTree) also.push('the unpacked working copy it is read from');
-    if (extras.histories > 0) also.push('its edit history');
 
     return {
       prompt: {
@@ -2205,304 +1685,6 @@ function registerIpc(): void {
       : `Deleted “${removed.label}” from “${removed.title}”.`;
   });
 
-  // ── Books ────────────────────────────────────────────────────────────────
-
-  /**
-   * Where each open book may be saved — the same rule as the two allow-lists
-   * above it: the renderer names things, main decides. A destination is
-   * grantable two ways only: it is the file the user themself opened the book
-   * from (Save updates it), or it just came out of main's own save dialog
-   * (Save As chose it). `epub:save` with anything else is refused, so a
-   * renderer that was talked into asserting a path cannot write one.
-   *
-   * Case-folded like recents' samePath: on Windows the same file arrives
-   * spelled three ways.
-   */
-  const grantSave = (id: string, destination: string): void => {
-    const grants = saveGrants.get(id) ?? new Set<string>();
-    grants.add(grantKey(destination));
-    saveGrants.set(id, grants);
-  };
-
-  ipcMain.handle('epub:open', async (_event, filePath: string) => {
-    /*
-     * THE ALLOW-LIST, and it belongs here more than anywhere else in this file.
-     *
-     * Every path the renderer can legitimately pass came back to it from
-     * `document:opened`, which main sent only after admitting the file itself —
-     * so gating costs nothing a real caller would notice. What it stops is this
-     * handler being the one door that opens ANY path on disk: it now creates a
-     * project directory around whatever it is handed and copies that file into
-     * it, and it hands back a save grant for an unmanaged one. An ungated
-     * `epub:open` was a write grant to any path a renderer could name.
-     */
-    const admittedPath = admitted(filePath);
-    if (admittedPath === null) {
-      throw new Error(`${filePath} is not a document this app was asked to open.`);
-    }
-    const book = await openEpub(admittedPath);
-    // A book from the user's own disk: that file IS a copy somewhere they
-    // chose, so plain Save may update it. A managed book grants nothing —
-    // its first save goes through the dialog below.
-    if (!book.managed) grantSave(book.id, book.filePath);
-    return book;
-  });
-  ipcMain.handle('epub:close', (_event, id: string) => {
-    saveGrants.delete(id);
-    closeEpub(id);
-  });
-  ipcMain.handle('epub:read-member', (_event, id: string, href: string) =>
-    readEpubMember(id, href));
-  // Writes ONE member of the project's working tree and repacks nothing — see
-  // epub-reader.ts. The renderer holds the text; main holds the file. No Node in
-  // the renderer, ever.
-  ipcMain.handle('epub:write-member', (_event, id: string, href: string, text: string) =>
-    writeEpubMember(id, href, text));
-  // Renames a TOC entry — the nav label, ALWAYS, and an offer about the page's
-  // heading, which is written only through the door below and only when the
-  // user says so. Into the working tree, like an edit; nothing else is written.
-  ipcMain.handle('epub:rename-heading', (_event, id: string, href: string, label: string) =>
-    renameEpubHeading(id, href, label));
-  // The "yes, change the page too" answer. A door of its own, because the
-  // question is asked after the nav has already been written and the write it
-  // authorises is a different write to a different file.
-  ipcMain.handle(
-    'epub:rename-page-heading',
-    (_event, id: string, href: string, label: string, was: string) =>
-      renameEpubPageHeading(id, href, label, was),
-  );
-  // The mirror question, for the direction that runs the other way: an edited
-  // heading, and the contents entry that still reads what it used to say.
-  // A QUERY, not a write — nothing changes until the app asks and is answered.
-  ipcMain.handle(
-    'epub:nav-echo-for-block',
-    (_event, id: string, href: string, blockId: string, was: string) =>
-      navEchoForBlock(id, href, blockId, was),
-  );
-
-  /*
-   * ── Select mode's writes ─────────────────────────────────────────────────
-   *
-   * Every one of them is a member write into the working tree and every one of
-   * them repacks nothing, like every other edit since the projects change. What
-   * they have in common is that they are keyed by `data-bf-id` — the one name in
-   * a cast book that does not renumber when something before it is removed — and
-   * that each REFUSES BY NAME rather than doing its best: an id that is not
-   * there, an id that is there twice, a category nothing writes, an edit that
-   * moved a tag rather than a word. The reasons live with the surgery, in
-   * epub-reader.ts.
-   *
-   * They are handlers of their own rather than a mode on `epub:write-member`
-   * because the renderer must not be able to hand main a whole chapter and call
-   * it a cut. What crosses this boundary is a block's NAME and either a boolean,
-   * a category, or the words inside it; the document is main's the entire time.
-   */
-  // EVERY CUT, whether the user pressed Delete on one block, dragged a marquee
-  // over thirty, or struck a whole category: one read, one write, and every id
-  // located before a byte moves, so the batch either lands whole or refuses
-  // whole. Resolves with how many tags actually changed — which is what the app
-  // then says out loud, because a gesture that reports what it asked for rather
-  // than what it did is a gesture nobody can trust with two hundred paragraphs.
-  ipcMain.handle(
-    'epub:set-cuts',
-    (_event, id: string, href: string, blockIds: string[], cut: boolean) =>
-      setBlockCuts(id, href, blockIds, cut === true),
-  );
-  // Resolves with the notes this edit left unreachable, which is a QUESTION for
-  // the app rather than a failure: the write has already landed.
-  ipcMain.handle(
-    'epub:set-block-html',
-    (_event, id: string, href: string, blockId: string, html: string) =>
-      setBlockHtml(id, href, blockId, html),
-  );
-  // The "put the number back" answer. A separate door because the ordinary one
-  // forbids markup being GAINED, which is exactly what restoring a deleted
-  // reference number is — see restoreBlockHtml for the check it makes instead.
-  ipcMain.handle(
-    'epub:restore-block-html',
-    (_event, id: string, href: string, blockId: string, html: string) =>
-      restoreBlockHtml(id, href, blockId, html),
-  );
-  // The footnote itself, addressed by its OWN id — the name the reference used,
-  // read out of the href the edit removed. A cut, not a deletion.
-  ipcMain.handle(
-    'epub:set-note-cut',
-    (_event, id: string, href: string, noteId: string, cut: boolean) =>
-      setNoteCut(id, href, noteId, cut === true),
-  );
-  // The inspector's relabel, applied to the whole selection in one read and one
-  // write. It changes the LABEL and not the shape — a paragraph relabelled
-  // `footnote` stays a <p> in the prose, where the page printed it.
-  ipcMain.handle(
-    'epub:set-categories',
-    (_event, id: string, href: string, blockIds: string[], category: string) =>
-      setBlockCategories(id, href, blockIds, category),
-  );
-  // The spine, in reading order, from the renderer — which is where the reading
-  // order is known. Every href is still resolved against the book's own
-  // allow-list inside, so naming a file is not the same as reaching one. The
-  // stamping itself is the ENGINE's, spawned on the working tree.
-  ipcMain.handle('epub:stamp', (_event, id: string, members: string[]) =>
-    stampBook(id, members));
-
-  ipcMain.handle('epub:choose-save-path', async (_event, id: string, suggestedName: string) => {
-    const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
-    /*
-     * The project's own `final/`, which is what that layer is for: the tray a
-     * finished book is filed into, named for the book rather than for the slug
-     * the directory carries. The picker still opens — Save As is a question and
-     * this only answers where it starts — and the user can put the file
-     * anywhere, which is the whole point of Save As.
-     *
-     * The LIBRARY is the fallback, for a book that belongs to no project: the
-     * pickers open where the books live, which is the folder the user pointed
-     * this app at, never Documents.
-     */
-    const project = projectOf(id);
-    const folder = project === null ? readAppSettings().libraryDir : await finalDir(project);
-    await fsp.mkdir(folder, { recursive: true });
-    const options = {
-      title: 'Save this book',
-      defaultPath: path.join(folder, suggestedName),
-      filters: [{ name: 'EPUB', extensions: ['epub'] }],
-    };
-    const result = win
-      ? await dialog.showSaveDialog(win, options)
-      : await dialog.showSaveDialog(options);
-    if (result.canceled || !result.filePath) return null;
-    // The dialog's answer is the grant — recorded against the book it was asked
-    // for, so `epub:save` can hold the line that no other path is writable.
-    grantSave(id, result.filePath);
-    return result.filePath;
-  });
-
-  /**
-   * Repack the working tree to where the user said.
-   *
-   * A REPACK and not a copy of the project's archive, and that is no longer a
-   * question of a one-instant race: an edit does not repack at all now, so the
-   * tree is ahead of every zip for as long as the book has been edited. Packing
-   * from the tree is packing from the thing the editor actually wrote to, and it
-   * is one of only two places in this app that writes a zip.
-   *
-   * ── AND WHAT IT WRITES IS AN EDITION, WHEN THE BOOK IS ONE OF OURS ─────────
-   *
-   * This is the app's second door onto `final/` and it used to be the worse one.
-   * The queue's exports go through the engine, which tidies what it writes; Save
-   * As zipped the working tree VERBATIM — every `data-bf-cut` a curator left on a
-   * footnote, every `data-bf-id` and `data-bf-src` the picker addresses elements
-   * by — and then recorded the result as a filed book. Two doors onto one tray,
-   * producing two different kinds of file, and the difference was invisible until
-   * somebody opened the one they saved by hand.
-   *
-   * So a foundry book is repacked to a temp file and `epub-final` writes the
-   * destination out of it. THE ZIP STILL HAPPENS HERE and not in the engine,
-   * although `epub-final --epub` takes a directory and would read the tree
-   * directly: a directory has no compression to preserve, so every member would
-   * come back STORED and the edition of a scanned book would be several times the
-   * size of the book it was made from. `repackEpub` is what knows the order the
-   * archive had and how its members were compressed.
-   *
-   * A BOOK THAT IS NOT OURS IS REPACKED VERBATIM, exactly as before. A loose EPUB
-   * from a publisher carries none of foundry's marks — the engine refuses it by
-   * name, and rightly, because there is nothing of ours in it to strip and an
-   * "edition" of it would be a copy of somebody's book under a new name.
-   *
-   * THE TEST IS THE BOOK AND NOT THE DESTINATION, which decides the one case that
-   * is not Save As: a loose EPUB somebody opened from their own disk, STAMPED in
-   * select mode, and then saved in place with the grant `epub:open` handed out
-   * for it. That file gets the edition too, and it should — what leaves this app
-   * is a book, and the marks are the app's own working notes about it. Nothing is
-   * lost by writing them out of it: the workbench is the unpacked tree in the
-   * project, which keeps every mark and every stamp, and is where the next edit
-   * and the next save both come from.
-   *
-   * A failure REJECTS across IPC rather than resolving quietly: a save that did
-   * not happen must not clear the dot. That now includes a tidy that refused —
-   * the file at the destination would be missing or half-written, and reporting a
-   * save for it would be the app saying a book is filed when it is not.
-   */
-  ipcMain.handle('epub:save', async (_event, id: string, destination: string) => {
-    if (!saveGrants.get(id)?.has(grantKey(destination))) {
-      throw new Error(
-        'That is not a place this book was granted to save to — a destination has to come '
-        + 'from the save dialog, or be the file the book was opened from.',
-      );
-    }
-    if (await isFoundryBook(id)) {
-      /*
-       * NAMED FOR THIS SAVE AND NOT FOR THE BOOK, in the OS temp directory under
-       * `foundry/` — the queue's intermediates' rule, for the queue's reasons: two
-       * saves must not collide in a directory that belongs to every program on the
-       * machine, and debris does not go where products live. It is removed
-       * whichever way this ends, best effort, because a leftover scratch file is a
-       * console line and never a reason to fail a save that succeeded.
-       */
-      const scratch = path.join(os.tmpdir(), 'foundry', `save-${randomUUID()}.epub`);
-      await fsp.mkdir(path.dirname(scratch), { recursive: true });
-      try {
-        await repackEpub(id, scratch);
-        const tidied = await finalizeEpub(scratch, destination);
-        if (!tidied.ok) {
-          throw new Error(
-            `The book could not be finished into an edition, so nothing was saved.\n${tidied.reason}`,
-          );
-        }
-      } finally {
-        await fsp.rm(scratch, { force: true }).catch((err: Error) => {
-          console.error(`[save] the scratch copy ${scratch} could not be removed: ${err.message}`);
-        });
-      }
-    } else {
-      await repackEpub(id, destination);
-    }
-    openable.add(path.resolve(destination));
-    rememberRecent(destination, 'epub', path.basename(destination), isManaged(destination));
-    // Noted only when it landed in the project's own `final/`. A save to a USB
-    // stick is the user's business and is already in recents; this is what lets
-    // a project row say the book has been filed at all.
-    await recordFinal(destination);
-  });
-
-  /*
-   * ── The undo ledger, on disk ─────────────────────────────────────────────
-   *
-   * TWO CALLS, because the renderer has no filesystem and the stacks it holds
-   * are now a file in the book's own project. It names the BOOK and nothing
-   * else: main resolves which project, which working tree and which generation
-   * of that tree, so the renderer cannot name a path, cannot claim a generation,
-   * and therefore cannot talk one book's history into another book's folder.
-   *
-   * Load answers with a NOTICE as well as the stacks, and a load that found a
-   * history it could not use is not an error — it is one of three ordinary
-   * outcomes, all of which are said out loud. See electron/history.ts.
-   */
-  ipcMain.handle('history:load', (_event, bookId: string) => loadLedger(bookId));
-  // Called after EVERY mutation of either stack. Whole file, atomically, because
-  // a crash mid-write is exactly the case this feature exists for.
-  ipcMain.handle('history:save', (_event, bookId: string, stacks: LedgerStacks) =>
-    saveLedger(bookId, stacks));
-
-  /*
-   * ── The app's own preferences ────────────────────────────────────────────
-   *
-   * There is one, and it exists so the don't-ask-again checkbox on the
-   * unlinked-footnote dialog is not a one-way door: a preference a person can
-   * set and cannot see or unset is a preference that eventually gets set by
-   * accident and then haunts them. `ask` puts the question back.
-   */
-  ipcMain.handle('prefs:unlinked-note-answer', () => readAppSettings().unlinkedNoteAnswer);
-  ipcMain.handle('prefs:set-unlinked-note-answer', (_event, answer: UnlinkedNoteStanding) =>
-    writeAppSettings({ unlinkedNoteAnswer: answer }).unlinkedNoteAnswer);
-  // The two halves of "renaming one offers to update the other". Separate keys
-  // on purpose — see the two confirm handlers above.
-  ipcMain.handle('prefs:contents-rename-echo', () => readAppSettings().contentsRenameEcho);
-  ipcMain.handle('prefs:set-contents-rename-echo', (_event, answer: EchoStanding) =>
-    writeAppSettings({ contentsRenameEcho: answer }).contentsRenameEcho);
-  ipcMain.handle('prefs:heading-edit-echo', () => readAppSettings().headingEditEcho);
-  ipcMain.handle('prefs:set-heading-edit-echo', (_event, answer: EchoStanding) =>
-    writeAppSettings({ headingEditEcho: answer }).headingEditEcho);
-
   /*
    * ── A document's own record ──────────────────────────────────────────────
    *
@@ -2537,8 +1719,7 @@ function registerIpc(): void {
    *
    * A step is a pointer at a retained payload, so a step recorded before its
    * payload exists is a row somebody can click, render from, and be shown a
-   * refusal by (`commitOverlay`, electron/overlays.ts, states it in full). The
-   * uuid makes the write collision-free by construction — two Applies a
+   * refusal by. The uuid makes the write collision-free by construction — two Applies a
    * millisecond apart cannot land on one name — so there is no file here to
    * overwrite and nothing to serialise against.
    *
@@ -2590,21 +1771,6 @@ function registerIpc(): void {
     }
   };
 
-  ipcMain.handle('meta:read-epub', (_event, id: string) => readEpubMetadata(workingTreeOf(id)));
-  ipcMain.handle(
-    'meta:write-epub',
-    async (_event, id: string, patch: Record<string, string | undefined>): Promise<MetadataWriteOutcome> => {
-      const tree = workingTreeOf(id);
-      const outcome = await writeEpubMetadata(tree, patch);
-      // A REFUSAL LANDS NOTHING. The engine says no to a package with two
-      // `dc:creator` elements and to a blank value, by name, and a row recording an
-      // edit that was refused would send every later export after values no
-      // document ever had.
-      if (!outcome.ok) return outcome;
-      const landed = await landMetadata(tree, 'epub', patch);
-      return landed === undefined ? outcome : { ...outcome, landed };
-    },
-  );
   /*
    * The PDF's path goes through `admitted` — the SAME allow-list the pdf.js
    * viewer's bytes go through, and the same function, so this door can never
@@ -2680,130 +1846,6 @@ function registerIpc(): void {
     },
   );
 
-  /*
-   * ── The block editor ─────────────────────────────────────────────────────
-   *
-   * A scan's blocks come from the ENGINE, off the readings bank, because the
-   * engine is what decides where one block ends and the next begins — the
-   * markdown split into parts, the furniture set aside, the quotes it
-   * synthesises. An amendment naming `7:14` has to mean the same element here as
-   * it will in the conversion that applies it, and one program deciding that is
-   * the only way that stays true.
-   *
-   * WHICH FILES, AND WHICH READING, ARE MAIN'S. The renderer names the PDF it has
-   * open — through `admittedPdf`, the same allow-list the pdf.js viewer's own
-   * bytes go through, so this cannot become a door onto files nobody opened — and
-   * `locateOverlay` turns that into a project, a bank, a curation, its ledger and
-   * the generation all three are bound to. See electron/overlays.ts for what
-   * happens when that generation has moved: the files are archived aside, never
-   * deleted, and the notice says where they went.
-   */
-  /**
-   * ── AN UNREAD BOOK IS A STATE, NOT AN EXCEPTION ────────────────────────────
-   *
-   * `locateOverlay` THROWS for every book it cannot place: one outside the library,
-   * one whose project has no reading, one whose bank is not on disk. That is the
-   * right shape for a function with several callers, some of which are about to
-   * write files — and it was the wrong thing for this handler to let through. The
-   * renderer asks for blocks whenever a position wants outlines, so a book nobody
-   * has read yet threw an `OverlayError` across the IPC boundary and into the
-   * console as an unhandled rejection, once per repaint, saying nothing anybody
-   * could act on about a state that is completely ordinary.
-   *
-   * `readPdfBlocks` ALREADY HAS THE ANSWER SHAPE. It refuses softly — `{ ok: false,
-   * reason }` — precisely because "this engine build has no blocks command" and
-   * "this book has never been read" are sentences a person should meet in the pane
-   * rather than as a broken tab, and the renderer already draws that shape. So the
-   * refusal from one line earlier joins the refusals from one line later, in the
-   * same shape, and the console goes quiet.
-   *
-   * `locateOverlay` ITSELF IS UNTOUCHED: the commit path and the undo ledger both
-   * rely on the throw, and turning a refusal into a value there would mean a
-   * caller that meant to write a file quietly writing nothing. What is soft is
-   * this door, which only ever draws.
-   *
-   * ANYTHING THAT IS NOT AN `OverlayError` STILL REJECTS. A disk that will not read
-   * or a catalogue that will not parse is not a state of the book, and swallowing
-   * it here would turn a real fault into an empty pane with a plausible sentence
-   * under it.
-   */
-  ipcMain.handle('overlay:blocks', async (_event, filePath: string) => {
-    const pdf = admittedPdf(filePath);
-    let where;
-    try {
-      where = await locateOverlay(pdf);
-    } catch (err) {
-      if (err instanceof OverlayError) return { ok: false, reason: err.message };
-      throw err;
-    }
-    /*
-     * THE ARCHIVED ORIGINAL, not the document the tab is showing. The engine
-     * needs a PDF only to re-measure a bank that recorded no render sizes, and
-     * measuring the WORKING copy would measure a real-text reprint — type on
-     * blank paper, the same page sizes, none of the ink the model was shown. The
-     * boxes would come back plausible and wrong. See `OverlayLocation.source`.
-     */
-    return readPdfBlocks(where.source ?? pdf, where.readings);
-  });
-  ipcMain.handle('overlay:load', (_event, filePath: string) =>
-    loadOverlayFile(admittedPdf(filePath)));
-  // Called after every gesture that changes a curation. Whole file, atomically,
-  // for `history:save`'s reason: a crash mid-write is exactly the case the
-  // flush-on-every-change design exists for.
-  ipcMain.handle('overlay:save', (_event, filePath: string, file: OverlayFileWire) =>
-    saveOverlayFile(admittedPdf(filePath), file as OverlayFile));
-  ipcMain.handle('overlay:ledger-load', (_event, filePath: string) =>
-    loadOverlayLedger(admittedPdf(filePath)));
-  ipcMain.handle('overlay:ledger-save', (_event, filePath: string, stacks: LedgerStacks) =>
-    saveOverlayLedger(admittedPdf(filePath), stacks));
-  /**
-   * Freeze the corrections as a curation step.
-   *
-   * Through `admittedPdf` like every other call in this family: the renderer names
-   * the scan it already has open and main resolves the project, the reading
-   * generation and where a snapshot goes. A commit WRITES A FILE and mints a step
-   * that the delete card will one day offer to destroy, so it is not a door a
-   * renderer gets to point at an arbitrary path.
-   *
-   * A refusal — nothing corrected yet — REJECTS with its sentence, so it reaches
-   * the notice strip through the renderer's ordinary catch rather than looking
-   * like a commit that quietly did nothing.
-   *
-   * ── THE SAVE NO LONGER CASTS A BOOK, AND NOTHING REPLACED THAT ─────────────
-   *
-   * Standing on a save has to show the book AS OF THAT SAVE, and the way that was
-   * done was to spawn the engine here and leave an EPUB in `generated/` named
-   * after the step. The proof sheet answers it without a file: a save's decisions
-   * are replayed onto the book file the way every other step's are
-   * (docs/RENDERER.md §3), so the state of the book at that row is computed when
-   * somebody stands there rather than frozen into a document beside it.
-   */
-  ipcMain.handle('overlay:commit', async (_event, filePath: string) => {
-    const pdf = admittedPdf(filePath);
-    return await commitOverlay(pdf);
-  });
-  /**
-   * What this book holds that no save of it does — asked on the way out of a
-   * document, so it must never do anything but read.
-   *
-   * IT ANSWERS NULL FOR EVERY REFUSAL rather than rejecting, and that is the whole
-   * of the error handling on purpose. Every sentence `locateOverlay` throws is
-   * about a book that has nothing at stake here — a document outside the library,
-   * a scan nobody has read — and a rejection would have to become either a dialog
-   * saying something a person closing a tab cannot act on, or a silence that
-   * closed anyway. Null is that silence, said deliberately.
-   *
-   * Through `admittedPdf` like the rest of the family: the renderer names a scan
-   * it already has open, and main decides which project that is.
-   */
-  ipcMain.handle('overlay:uncommitted', async (_event, filePath: string) => {
-    try {
-      return await uncommittedIn(admittedPdf(filePath));
-    } catch {
-      return null;
-    }
-  });
-
   // ── The step ledger ──────────────────────────────────────────────────────
   /*
    * ONE FAMILY, AND MAIN PROVES THE DIRECTORY ON EVERY MEMBER OF IT.
@@ -2851,21 +1893,21 @@ function registerIpc(): void {
    *
    * `ledger:go` writes one field of the manifest and touches nothing else. The
    * design already defends the case it looks dangerous in: a job captures its
-   * parent at enqueue (`Job.parentStep`) and its overlay at plan time
-   * (`planConversion`), precisely so that clicking through the history while a run
-   * waits cannot retarget it. Moving the pointer is a repaint, it is free, and
+   * parent at enqueue (`Job.parentStep`) and every path it will read or write at
+   * PLAN time (`planRendering`), precisely so that clicking through the history
+   * while a run waits cannot retarget it. Moving the pointer is a repaint, it is free, and
    * people do it while they wait — refusing it during a three-hour reading would
    * take the history panel away for the whole time it is most wanted, to prevent
    * nothing.
    *
-   * `overlay:commit` writes `curations/<uuid>.json`, a path no job can be about to
+   * `book:apply` writes `ops/<uuid>.jsonl`, a path no job can be about to
    * write, and appends a step of its own. It is the one action in this app that
    * retains IRREPLACEABLE work — somebody's judgements about four hundred blocks —
-   * and refusing to let a person save those because a machine is busy would be
+   * and refusing to let a person land those because a machine is busy would be
    * this app declining to keep the only thing in a project it cannot make again.
-   * The interesting case is a commit made while a re-read is running, and the
-   * ledger already has the right answer for it: the snapshot is retained, and when
-   * the reading lands and replaces its parent, `markStale` dims the save rather
+   * The interesting case is an Apply made while a re-read is running, and the
+   * ledger already has the right answer for it: the payload is retained, and when
+   * the reading lands and replaces its parent, `markStale` dims the step rather
    * than destroying it (the retention rule: user labour is never destroyed by a
    * re-run). That is the designed outcome, not a race.
    */
@@ -2941,27 +1983,17 @@ function registerIpc(): void {
     return resolved;
   });
   /*
-   * THE WORD OPS' TWO QUESTIONS ABOUT A TRANSLATION. `of-document` is free and
-   * read-only — which world does a word edit on this open book land in — and
-   * like `stand-for` it admits no path: the renderer is asking about a document
-   * it already has open. `record-edit` is the write, and the one rule composed
-   * HERE rather than in projects.ts is the queue's: a translation appends to
-   * its records file for hours, and a whole-file swap under a live run would
-   * drop answers, so the door is shut while a job is producing the file. The
-   * queue knows and projects.ts must not import it, so main — which holds both
-   * — hands the check in.
-   */
-  ipcMain.handle('translation:of-document', (_event, projectDir: string, filePath: string) =>
-    translationWorldOf(projectDir, filePath));
-  /*
-   * THE QUEUE'S HALF OF BOTH CORRECTION DOORS, said once.
+   * THE QUEUE'S HALF OF THE CORRECTION DOOR.
    *
    * A translation appends to its records file for hours and a correction swaps
    * that whole file into place, so the door is shut while a run is producing it.
-   * The queue knows and projects.ts must not import it; main, which composes both
-   * doors, hands the same check into each — and it is one function rather than two
-   * copies of one sentence, because the two doors are the same refusal reached
-   * from a cast EPUB and from the pane (`recordCorrection`, electron/projects.ts).
+   * The queue knows and projects.ts must not import it; main, which composes the
+   * door, hands the check in (`recordCorrection`, electron/projects.ts).
+   *
+   * IT USED TO BE HANDED TO TWO DOORS. The other one started from a cast EPUB's
+   * path — a word edited in the iframe reader — and both it and the reader are
+   * deleted (docs/RENDERER.md §7). There is one door onto a translation's words
+   * now, and it is the pane's.
    */
   const recordsBusy = (recordsFile: string): string | null => (
     queue.producing(recordsFile)
@@ -2969,24 +2001,6 @@ function registerIpc(): void {
         + 'recorded — the edit is on screen and in this copy of the book. Let the run finish '
         + '(or cancel it) and make the edit again.'
       : null
-  );
-  ipcMain.handle(
-    'translation:record-edit',
-    async (_event, projectDir: string, filePath: string, parts: string, text: string) => {
-      const records = await recordTranslationEdit(projectDir, filePath, parts, text, recordsBusy);
-      /*
-       * AND THE BOOK IS REMADE, because the correction is only in the payload
-       * until it is. A translation's derived book file is a pure function of its
-       * records and the ledger (docs/RENDERER.md §4), and every position under
-       * that translation is drawn from it — so a paragraph corrected here and a
-       * proof sheet still showing the machine's words would be the same
-       * translation saying two things at once. It is `regenerable` retention, and
-       * this is the second of the two doors that regenerates it (the first is the
-       * landing); a failure is a console line and never a lost correction, which
-       * is on disk in the file this returned.
-       */
-      await materializeTranslation(records);
-    },
   );
   /*
    * THE BOOK ITSELF — the rows the renderer draws, off the file the reflow made.
@@ -3355,10 +2369,6 @@ app.on('before-quit', (event) => {
     return;
   }
   queue.shutdown();
-  // The open-book registry, emptied. Nothing on disk goes with it — a working
-  // tree lives in its project and is the newest version of that book, which is
-  // exactly what makes reopening it free.
-  closeAllEpubs();
   if (quitting || !vllm.ownsServer()) return;
   event.preventDefault();
   quitting = true;

@@ -10,7 +10,7 @@
  * the engine is `engine.ts`'s (this app never imports foundry; it spawns it). What
  * the file's grammar is belongs to `shared/book.ts`, which mirrors the engine's own
  * writer. main.ts registers the door and knows none of it — which is the shape
- * `overlays.ts` and `workspace.ts` already have.
+ * `workspace.ts` already has.
  *
  * ── ENSURING THE FILE IS ALSO THE MIGRATION, AND THAT IS DELIBERATE ─────────
  *
@@ -62,7 +62,7 @@ import { promises as fsp } from 'node:fs';
 import * as path from 'node:path';
 
 import { writeBookFile, writeEpubBook } from './engine';
-import { writeAtomically } from './epub-writer';
+import { writeAtomically } from './atomic';
 import { CurateBridgeError, rekeyCuration } from '../shared/curate-bridge';
 import {
   bookAtPosition,
@@ -114,13 +114,13 @@ async function exists(target: string): Promise<boolean> {
  * ── The figures door ─────────────────────────────────────────────────────────
  *
  * A Picture row names its crop by NAME, and the renderer is a page under a CSP
- * that loads images off the `foundry-file:` scheme and nowhere else on disk —
- * the same posture the EPUB viewer's chapters have always had. So a successful
+ * that loads images off the `foundry-file:` scheme and nowhere else on disk. So
+ * a successful
  * load REGISTERS the book's image directory under an opaque token, hands the
  * pane `foundry-file://book/<token>/` as a prefix, and the protocol handler
  * (main.ts) asks this table before it serves a byte. An ALLOW-LIST, not a path
  * scheme: a URL the renderer invents for a directory nothing registered is a
- * 403, which is `resolveEpubMember`'s exact decision one surface over.
+ * 403 rather than a read.
  *
  * The token is minted per DIRECTORY and reused across reloads, so the map stays
  * the size of the library rather than growing with every glance at a pane.
@@ -1027,7 +1027,7 @@ export async function materializeBook(
  * the smaller failure by a wide margin and is the one this order chooses.
  *
  * ATOMICALLY means a temp file beside the target and a rename (`writeAtomically`,
- * electron/epub-writer.ts): a rename is atomic on one volume, so an interrupted
+ * electron/atomic.ts): a rename is atomic on one volume, so an interrupted
  * Apply leaves no file rather than half of one — and half a file of ops is a book
  * that opens missing the second half of somebody's afternoon.
  *

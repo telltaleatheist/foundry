@@ -167,35 +167,29 @@ export class App {
   /**
    * The inspector is up when there is something to inspect.
    *
-   * A BOOK, as it always was. AND NOW A SCAN IN BLOCK VIEW, which is the case
-   * the old comment here said could never happen: "a PDF has no chapter list and
-   * no stamped blocks — its categories live in the readings bank, unparsed,
-   * behind an IPC that does not exist". That IPC exists (`overlay.blocks`), the
-   * bank is parsed by the engine on request, and the panel beside a scan in that
-   * mode has exactly as much to say as it does beside a book — the same category
-   * rows with the same colours, a chapter list, and whatever one block is
-   * selected.
+   * THE BOOK, ALWAYS — and this is the line R6c owed. The panel's surviving
+   * halves are the proof sheet's: Chapters, Notes, Furniture, the standing strip
+   * (docs/RENDERER.md §5). Every one of them is about a `book` tab, and this gate
+   * admitted `pdf` and `epub` and not `book` — so the panels R4 landed were drawn
+   * for a tab kind that could never be focused while they were on screen. The two
+   * kinds it did admit are the two that died: an EPUB in the iframe reader, and a
+   * scan in block view.
    *
    * AND BESIDE ANY DOCUMENT THIS APP HAS IMPORTED, which is the Steps section's
-   * doing and is a real widening of the old rule rather than a slip past it. The
-   * rule was "nothing to inspect out of the mode", and a project's HISTORY is
-   * something to inspect about a scan that has never been in block view: what was
-   * imported, what has been read, what was saved and what each of those was made
-   * from. It is also the panel where somebody steps back to an earlier state, and
-   * making them enter a correction mode first to reach their own history would be
-   * the app hiding the one thing that explains why their book looks as it does.
+   * doing. A project's HISTORY is something to inspect about a scan nobody has
+   * done anything to: what was imported, what has been read, what was saved and
+   * what each of those was made from. It is also the panel where somebody steps
+   * back to an earlier state, and hiding that behind a mode would be the app
+   * hiding the one thing that explains why their book looks as it does.
    *
-   * A PDF DROPPED FROM OUTSIDE THE LIBRARY still gets nothing, which is what keeps
-   * the old rule's promise: no project, no history, no accordions, and 260 pixels
-   * of window that Home wanted. It follows `activeDocument`, so with the HTML
-   * editor focused it still shows the book that editor is a face of.
+   * A PDF DROPPED FROM OUTSIDE THE LIBRARY still gets nothing, which is the old
+   * rule's promise kept: no project, no history, no accordions, and 260 pixels of
+   * window that Home wanted.
    */
   protected readonly inspectorUp = computed(() => {
     const tab = this.tabs.activeDocument();
     if (tab === null) return false;
-    if (tab.kind === 'epub') return tab.book !== null;
-    if (tab.kind !== 'pdf') return false;
-    if (tab.blockView) return true;
+    if (tab.kind === 'book') return true;
     const project = this.projects.projectFor(tab.path);
     return project !== null && project.problem === null;
   });
@@ -293,17 +287,15 @@ export class App {
   /**
    * Ctrl/Cmd+Z, and the one decision that has to be made out here.
    *
-   * THERE ARE THREE UNDOS IN THIS WINDOW and the chord means whichever one the
-   * caret is in. A text box — the HTML editor's textarea, the rename input in
-   * the contents, a settings field — has the browser's own history and expects
-   * to keep it; that is what `role: 'undo'` used to give it, and taking it away
-   * so the book could have the chord would have made typing worse to make
-   * curating better. So a text field gets `execCommand`, which is exactly what
-   * the role menu did, and everything else goes to the document's ledger. (The
-   * third is a block being edited inside the rendered frame: this window cannot
-   * see that a caret is there — the frame's origin is opaque and
-   * `activeElement` says only "the iframe" — so the frame REPORTS it and
-   * TabsService routes that case back into the frame.)
+   * THERE ARE TWO UNDOS IN THIS WINDOW and the chord means whichever one the
+   * caret is in. A text box — a rename input in the inspector, a settings field,
+   * a paragraph being retyped on the sheet — has the browser's own history and
+   * expects to keep it; that is what `role: 'undo'` used to give it, and taking it
+   * away so the book could have the chord would have made typing worse to make
+   * editing better. So a text field gets `execCommand`, which is exactly what the
+   * role menu did, and everything else goes to the book pane's stack. (There were
+   * three while a chapter could be typed into an iframe this window could not see
+   * a caret in; that frame is deleted — docs/RENDERER.md §7.)
    *
    * `execCommand` is deprecated and there is no replacement for programmatic
    * undo of a text field. It is what the platform still implements, and the

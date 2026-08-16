@@ -364,7 +364,13 @@ export class TranslateDialogComponent {
     const tab = this.tabs.activeDocument();
     if (tab === null) return null;
     const project = this.projects.projectFor(tab.path);
-    if (project === null) return tab.kind === 'epub' ? tab.path : null;
+    /*
+     * NO PROJECT, NOTHING TO TRANSLATE. A loose file used to be translatable when
+     * it was an `epub` tab — a book open in the iframe reader, outside the
+     * library — and that tab kind is deleted (docs/RENDERER.md §7). What this app
+     * translates is a POSITION, and a file with no ledger behind it has none.
+     */
+    if (project === null) return null;
     const shown = this.tabs.documentShownFor(project.dir);
     /*
      * A BOOK AND NOT A SCAN, tested on the position's answer rather than on a tab

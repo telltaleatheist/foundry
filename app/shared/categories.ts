@@ -4,17 +4,24 @@
  * ── Why this is ONE table in shared/ ─────────────────────────────────────────
  *
  * The colour has to appear in TWO places or it is a code nobody can decode: as
- * an outline on the block inside the sandboxed frame (electron/click-reporter.ts
- * builds its stylesheet from this), and as a swatch beside the category's name
- * in the inspector the user relabels from (the Angular side imports the same
- * array). Two hand-kept lists of eleven colours would be one edit away from an
- * inspector that says a paragraph is green while the page outlines it in amber,
- * and the whole point of colouring them is that the two agree.
+ * the rule down a block's edge on the proof sheet, and as a swatch beside the
+ * category's name in the legend. Two hand-kept lists of eleven colours would be
+ * one edit away from a legend that says a paragraph is green while the paper
+ * draws it amber, and the whole point of colouring them is that the two agree.
  *
  * `app/shared` is the one directory BOTH TypeScript programs compile — the
  * renderer through tsconfig.json's `@shared/*`, the main process through
  * tsconfig.electron.json's `shared/**` include — which is why the wire shapes
  * live here and why this does too.
+ *
+ * ── ONE VOCABULARY REACHES A READER NOW ─────────────────────────────────────
+ *
+ * The table below is the EPUB's — `data-bf-cat`, lower-cased — and nothing
+ * imports it any more: it survives as the SOURCE the scan's list is derived
+ * from, which is what keeps one set of colours honest across two spellings. The
+ * exports that served the deleted editing world (`BLOCK_CATEGORIES` itself,
+ * `CATEGORY_IDS`, `categoryLabel`, `categoryRgb`, `CHAPTER_MARK_COLOUR`) went
+ * with it (docs/RENDERER.md §7).
  *
  * ── The eleven ───────────────────────────────────────────────────────────────
  *
@@ -52,7 +59,7 @@ export interface BlockCategory {
   note: string;
 }
 
-export const BLOCK_CATEGORIES: readonly BlockCategory[] = [
+const BLOCK_CATEGORIES: readonly BlockCategory[] = [
   {
     id: 'text',
     label: 'Body text',
@@ -121,16 +128,8 @@ export const BLOCK_CATEGORIES: readonly BlockCategory[] = [
   },
 ];
 
-/**
- * Every legal `data-bf-cat`, for the one place it has to be checked before it is
- * written into somebody's book (`setBlockCategories` in electron/epub-reader.ts).
- * A relabel to a category the emitter never writes would put a book in a shape
- * `src/translate/blocks.ts` refuses by name on the next run.
- */
-export const CATEGORY_IDS: ReadonlySet<string> = new Set(BLOCK_CATEGORIES.map((one) => one.id));
-
 /** What a category this table has never heard of is drawn in. Grey, and named as unknown. */
-export const UNKNOWN_CATEGORY_COLOUR = '#8c8c8c';
+const UNKNOWN_CATEGORY_COLOUR = '#8c8c8c';
 
 /**
  * The same eleven, plus the page furniture, under the names a SCAN's blocks
@@ -138,12 +137,10 @@ export const UNKNOWN_CATEGORY_COLOUR = '#8c8c8c';
  *
  * ── Why there are two vocabularies and only one set of colours ───────────────
  *
- * A cast book's blocks carry `data-bf-cat="footnote"`; the readings bank's blocks
- * carry `"Footnote"`, because that is what the model answered and the bank is
- * never edited. They are the same idea spelled for two different files, and the
- * one thing that must not differ is the COLOUR: the block editor outlines a
- * footnote on the scan, select mode outlines the same footnote in the cast book,
- * and a person moving between the two panes is reading one legend.
+ * A cast book's blocks carried `data-bf-cat="footnote"`; the readings bank's
+ * blocks carry `"Footnote"`, because that is what the model answered and the bank
+ * is never edited. They are the same idea spelled for two different files, and
+ * the one thing that must not differ is the COLOUR.
  *
  * So the rows are DERIVED from the table above by lower-casing the engine's
  * spelling, and nothing here restates a hex value that is already up there. Only
@@ -156,13 +153,13 @@ export const UNKNOWN_CATEGORY_COLOUR = '#8c8c8c';
  * sets them aside as furniture — but they are emphatically in the SCAN, they are
  * what the model most often mistags as a Title (168 pages of running head, three
  * of them called a Title, each one a spurious chapter split), and correcting one
- * is the single most valuable thing a person can do in this editor. A curation
- * pass that could not name them would be missing its main job.
+ * is the single most valuable thing a person can do on the sheet. A pass that
+ * could not name them would be missing its main job.
  *
- * `chapter` goes the other way: it is foundry's own category in the EPUB and the
- * model has no such answer. On a scan, "the book divides here" is not a category
- * at all — it is the overlay's `chapter` flag, drawn as a mark on the block's edge
- * rather than as a colour, which is `CHAPTER_MARK_COLOUR` below.
+ * `chapter` goes the other way: it is foundry's own category in the EPUB table
+ * and the model has no such answer. "The book divides here" is not a category at
+ * all — it is a chapter op against a block id (docs/RENDERER.md §3), drawn as a
+ * rule above the block rather than as a colour.
  */
 const PAGE_FURNITURE: readonly BlockCategory[] = [
   {
@@ -206,27 +203,4 @@ export function pdfCategoryColour(id: string): string {
 
 export function pdfCategoryLabel(id: string): string {
   return PDF_BLOCK_CATEGORIES.find((one) => one.id === id)?.label ?? id;
-}
-
-/**
- * The edge mark on a block the book divides at.
- *
- * The EPUB's `chapter` colour, because it is the same statement about the same
- * thing — one drawn as an outline round a heading in a cast book, the other as a
- * bar down the side of a block on a scan.
- */
-export const CHAPTER_MARK_COLOUR =
-  BLOCK_CATEGORIES.find((one) => one.id === 'chapter')?.colour ?? UNKNOWN_CATEGORY_COLOUR;
-
-export function categoryLabel(id: string): string {
-  return BLOCK_CATEGORIES.find((one) => one.id === id)?.label ?? id;
-}
-
-/** `#4ade80` → `74,222,128`, so a colour can be tinted with an alpha. */
-export function categoryRgb(colour: string): string {
-  const hex = colour.replace('#', '');
-  const r = Number.parseInt(hex.slice(0, 2), 16);
-  const g = Number.parseInt(hex.slice(2, 4), 16);
-  const b = Number.parseInt(hex.slice(4, 6), 16);
-  return `${r},${g},${b}`;
 }

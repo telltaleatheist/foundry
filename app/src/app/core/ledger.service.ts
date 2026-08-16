@@ -1,6 +1,6 @@
 import { Injectable, inject, signal } from '@angular/core';
 
-import { curationLock, standingOn, type CurationLock } from '@shared/curation-lock';
+import { positionOf } from '@shared/ledger';
 import { fold } from '@shared/original';
 import type { LedgerStep, ProjectLedger, StepRow } from '@shared/types';
 
@@ -148,22 +148,19 @@ export class LedgerService {
   /** The step the pointer stands on, for a surface that wants to name it. */
   standingIn(projectDir: string | null): LedgerStep | null {
     const history = this.historyFor(projectDir);
-    return history === null ? null : standingOn(history.ledger);
+    return history === null ? null : positionOf(history.ledger);
   }
 
-  /**
-   * Whether the block editor must be read-only in this project, and the sentence
-   * that says why.
+  /*
+   * `lockIn` STOOD HERE and is deleted with the thing it guarded.
    *
-   * THE ONE PLACE THE APP ASKS. See shared/curation-lock.ts for the whole of the
-   * reasoning: standing where a rendering is made from a frozen save means an
-   * edit would land in the live curation instead, and the person would be
-   * correcting a book they are not looking at.
+   * It answered whether the block editor had to be read-only, because standing on
+   * a frozen save meant an edit would land in the LIVE curation instead and the
+   * person would be correcting a book they were not looking at. There are no two
+   * curations to diverge any more: standing on any step is a replay of that chain
+   * (docs/RENDERER.md §3), editing from an old step branches, and there is
+   * therefore nothing to guard.
    */
-  lockIn(projectDir: string | null): CurationLock | null {
-    const history = this.historyFor(projectDir);
-    return history === null ? null : curationLock(history.ledger);
-  }
 
   /**
    * Read this project's history if nobody has yet — the call every surface makes

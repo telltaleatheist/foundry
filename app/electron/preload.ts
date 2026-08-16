@@ -13,14 +13,12 @@ import type {
   AppQuestion,
   Asked,
   CloseAnswer,
-  EchoAnswer,
   EnvInstallProgress,
   Job,
   QuestionAnswer,
   ReReadAnswer,
   ServerStatus,
   SetupLogEvent,
-  UnlinkedNoteAnswer,
 } from '../shared/types';
 
 function subscribe<T>(channel: string, listener: (value: T) => void): () => void {
@@ -98,48 +96,26 @@ const api: FoundryApi = {
     ipcRenderer.invoke('document:save-copy', absolutePath, suggestedName),
   reveal: (target) => ipcRenderer.invoke('shell:reveal', target),
   /*
-   * ── The five questions, and the safe answer each of them keeps ─────────────
+   * ── The two questions, and the safe answer each of them keeps ──────────────
    *
-   * Keep the tab open; put the footnote reference back; leave the reading alone;
-   * leave the other side of the book as it is. Every one of them is the outcome
-   * that destroys nothing and costs nothing, which is what an unanswered question
-   * has to resolve to.
+   * Keep the tab open; leave the reading alone. Both are the outcome that
+   * destroys nothing and costs nothing, which is what an unanswered question has
+   * to resolve to. There were FIVE while the block editor and the iframe reader
+   * stood: the footnote-reference question and the two heading echoes went with
+   * them (docs/RENDERER.md §7).
    */
   confirmClose: (warning) =>
     ask<CloseAnswer>('document:confirm-close', warning, 'keep'),
-  confirmUnlinkedNote: (note) =>
-    ask<UnlinkedNoteAnswer>(
-      'document:confirm-unlinked-note',
-      note,
-      'cancel',
-      (answer) => ipcRenderer.invoke('prefs:set-unlinked-note-answer', answer),
-    ),
   confirmReRead: async (prompt) =>
     await ask<ReReadAnswer>('reading:confirm-re-read', prompt, 'leave') === 'again',
-  confirmHeadingEcho: (echo) =>
-    ask<EchoAnswer>(
-      'document:confirm-heading-echo',
-      echo,
-      'leave',
-      (answer) => ipcRenderer.invoke('prefs:set-contents-rename-echo', answer),
-    ),
-  confirmNavEcho: (echo) =>
-    ask<EchoAnswer>(
-      'document:confirm-nav-echo',
-      echo,
-      'leave',
-      (answer) => ipcRenderer.invoke('prefs:set-heading-edit-echo', answer),
-    ),
   /*
    * REGISTERED, NEVER CALLED FROM HERE. The renderer hands its card in as the app
-   * starts and this holds the reference for the five calls above; see
+   * starts and this holds the reference for the calls above; see
    * `FoundryApi.drawQuestions` for why the drawing has to arrive from that side.
    */
   drawQuestions: (draw) => { card = draw; },
 
   meta: {
-    readEpub: (bookId) => ipcRenderer.invoke('meta:read-epub', bookId),
-    writeEpub: (bookId, patch) => ipcRenderer.invoke('meta:write-epub', bookId, patch),
     readPdf: (filePath) => ipcRenderer.invoke('meta:read-pdf', filePath),
     writePdf: (filePath, patch) => ipcRenderer.invoke('meta:write-pdf', filePath, patch),
   },
@@ -150,46 +126,6 @@ const api: FoundryApi = {
     planExport: (inputPath, kind) => ipcRenderer.invoke('workspace:plan-export', inputPath, kind),
     planTranslation: (inputPath, targetLanguage) =>
       ipcRenderer.invoke('workspace:plan-translation', inputPath, targetLanguage),
-  },
-
-  epub: {
-    open: (filePath) => ipcRenderer.invoke('epub:open', filePath),
-    close: (id) => ipcRenderer.invoke('epub:close', id),
-    readMember: (id, href) => ipcRenderer.invoke('epub:read-member', id, href),
-    writeMember: (id, href, text) => ipcRenderer.invoke('epub:write-member', id, href, text),
-    renameHeading: (id, href, label) => ipcRenderer.invoke('epub:rename-heading', id, href, label),
-    renamePageHeading: (id, href, label, was) =>
-      ipcRenderer.invoke('epub:rename-page-heading', id, href, label, was),
-    navEchoForBlock: (id, href, blockId, was) =>
-      ipcRenderer.invoke('epub:nav-echo-for-block', id, href, blockId, was),
-    setCuts: (id, href, blockIds, cut) =>
-      ipcRenderer.invoke('epub:set-cuts', id, href, blockIds, cut),
-    setNoteCut: (id, href, noteId, cut) =>
-      ipcRenderer.invoke('epub:set-note-cut', id, href, noteId, cut),
-    setCategories: (id, href, blockIds, category) =>
-      ipcRenderer.invoke('epub:set-categories', id, href, blockIds, category),
-    setBlockHtml: (id, href, blockId, html) =>
-      ipcRenderer.invoke('epub:set-block-html', id, href, blockId, html),
-    restoreBlockHtml: (id, href, blockId, html) =>
-      ipcRenderer.invoke('epub:restore-block-html', id, href, blockId, html),
-    stamp: (id, members) => ipcRenderer.invoke('epub:stamp', id, members),
-    chooseSavePath: (id, suggestedName) => ipcRenderer.invoke('epub:choose-save-path', id, suggestedName),
-    save: (id, destination) => ipcRenderer.invoke('epub:save', id, destination),
-  },
-
-  history: {
-    load: (bookId) => ipcRenderer.invoke('history:load', bookId),
-    save: (bookId, stacks) => ipcRenderer.invoke('history:save', bookId, stacks),
-  },
-
-  overlay: {
-    blocks: (pdfPath) => ipcRenderer.invoke('overlay:blocks', pdfPath),
-    load: (pdfPath) => ipcRenderer.invoke('overlay:load', pdfPath),
-    save: (pdfPath, file) => ipcRenderer.invoke('overlay:save', pdfPath, file),
-    loadLedger: (pdfPath) => ipcRenderer.invoke('overlay:ledger-load', pdfPath),
-    saveLedger: (pdfPath, stacks) => ipcRenderer.invoke('overlay:ledger-save', pdfPath, stacks),
-    commit: (pdfPath) => ipcRenderer.invoke('overlay:commit', pdfPath),
-    uncommitted: (pdfPath) => ipcRenderer.invoke('overlay:uncommitted', pdfPath),
   },
 
   ledger: {
@@ -207,23 +143,6 @@ const api: FoundryApi = {
     load: (projectDir) => ipcRenderer.invoke('book:load', projectDir),
     apply: (projectDir, ops) => ipcRenderer.invoke('book:apply', projectDir, ops),
     correct: (projectDir, id, text) => ipcRenderer.invoke('book:correct', projectDir, id, text),
-  },
-
-  translation: {
-    ofDocument: (projectDir, filePath) =>
-      ipcRenderer.invoke('translation:of-document', projectDir, filePath),
-    recordEdit: (projectDir, filePath, parts, text) =>
-      ipcRenderer.invoke('translation:record-edit', projectDir, filePath, parts, text),
-  },
-
-  prefs: {
-    unlinkedNoteAnswer: () => ipcRenderer.invoke('prefs:unlinked-note-answer'),
-    setUnlinkedNoteAnswer: (answer) =>
-      ipcRenderer.invoke('prefs:set-unlinked-note-answer', answer),
-    contentsRenameEcho: () => ipcRenderer.invoke('prefs:contents-rename-echo'),
-    setContentsRenameEcho: (answer) => ipcRenderer.invoke('prefs:set-contents-rename-echo', answer),
-    headingEditEcho: () => ipcRenderer.invoke('prefs:heading-edit-echo'),
-    setHeadingEditEcho: (answer) => ipcRenderer.invoke('prefs:set-heading-edit-echo', answer),
   },
 
   library: {

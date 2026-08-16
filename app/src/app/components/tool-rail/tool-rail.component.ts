@@ -138,43 +138,21 @@ import { UiService } from '../../core/ui.service';
           <span class="rail-label">Metadata</span>
         </button>
 
-        <!-- Select mode. Disabled rather than hidden away from a book, like
-             Translate above: the curation pass is the point of the whole app,
-             and somebody looking at a scan should be able to see that the tool
-             exists and is waiting for a cast book. -->
-        <button
-          class="rail-item"
-          [class.active]="selecting()"
-          [disabled]="!canSelect()"
-          title="Outline the blocks: click to select, Delete to cut, Enter to fix a word"
-          (click)="toggleSelect()"
-        >
-          <span class="rail-icon">⧉</span>
-          <span class="rail-label">Select</span>
-        </button>
-
         <!--
-          ── TWO ITEMS ARE NOT ON THIS DOCK, and the machinery behind both stays ──
+          ── THREE ITEMS ARE NOT ON THIS DOCK, AND ALL THREE ARE DELETED NOW ──
 
-          BLOCKS put an editing surface over the SCAN — outline what the model
-          read off the photograph, strike it, relabel it. The user asked what it
-          was for, which is the answer: the document a reader ends up with is the
-          flowing one, and corrections made in the coordinates of a page are
-          corrections in a frame that document has already thrown away. The PDF
-          branch produces the facsimile and stops (docs/DERIVED-BOOK.md §1). The
-          outlines still light where standing on a step calls for them — a fact
-          about where you are, not a mode you switch on.
+          SELECT outlined the blocks of a cast EPUB in an iframe; BLOCKS put the
+          same surface over a photograph of the pages; EDIT HTML opened a textarea
+          over one chapter of a derived document. Each was withdrawn from the dock
+          before its machinery went, on the inspector's own rule — withdraw the
+          control the moment the thing it does is withdrawn, rather than leaving it
+          on screen to invite a gesture and refuse it — and R6c is where the
+          machinery followed (docs/RENDERER.md §7).
 
-          EDIT HTML opened a textarea over a chapter of a derived document.
-          Nothing it wrote had anywhere to be written DOWN: not the bank, not the
-          ledger, and the next cast of the book was free to erase it. A tool that
-          takes an edit and then loses it is worse than no tool, and the offer is
-          what goes — the editor tab and its toggle are untouched until phase E
-          retires them with the flowing surface in place to take the job.
-
-          Both are the shape the inspector's Block section already documented for
-          itself: withdraw the control the moment the thing it does is withdrawn,
-          rather than leaving it on screen to invite a gesture and refuse it.
+          WHAT REPLACED ALL THREE IS THE BOOK. Editing happens on the proof sheet,
+          against block ids, recorded as ops in the ledger; the PDF produces the
+          facsimile and stops (§0 A1). There is no mode to switch on, which is why
+          there is no button here to switch it.
         -->
         <!-- The PDF is an output FORMAT inside a dialog rather than a rail
              button of its own: the rail names TOOLS, and picking between an
@@ -358,28 +336,6 @@ export class ToolRailComponent {
   protected readonly documentsUp = computed(() =>
     this.ui.documentsShown() && this.tabs.tabs().length > 0);
 
-  /**
-   * Selectable means an unpacked book is in front of the user right now.
-   *
-   * `activeDocument()` rather than `active()`: with the HTML editor pane focused
-   * the tab in front of the user is the editor, and a rail that greyed out the
-   * book's own mode the moment you clicked into its source would be a rail you
-   * could not press twice.
-   */
-  protected canSelect(): boolean {
-    const tab = this.tabs.activeDocument();
-    return tab !== null && tab.kind === 'epub' && tab.book !== null;
-  }
-
-  protected selecting(): boolean {
-    return this.tabs.activeDocument()?.selectMode === true;
-  }
-
-  protected toggleSelect(): void {
-    const tab = this.tabs.activeDocument();
-    if (tab && tab.kind === 'epub' && tab.book !== null) void this.tabs.toggleSelectMode(tab.id);
-  }
-
   protected home(): void {
     void this.router.navigateByUrl('/');
     this.tabs.goHome();
@@ -488,7 +444,14 @@ export class ToolRailComponent {
     const tab = this.tabs.activeDocument();
     if (tab === null) return false;
     const shown = this.shownAt();
-    if (shown === undefined) return tab.kind === 'epub';
+    /*
+     * A LOOSE DOCUMENT CANNOT BE TRANSLATED, and that is the tab-keyed half of
+     * this test landing where it belongs. It used to answer `kind === 'epub'` —
+     * a book open in the iframe reader, in no project — and there is no such tab
+     * any more: what this app translates is a POSITION, read off the ledger, and
+     * a file with no ledger behind it has none.
+     */
+    if (shown === undefined) return false;
     return shown !== null && shown.toLowerCase().endsWith('.epub');
   }
 
@@ -519,11 +482,20 @@ export class ToolRailComponent {
    * having no ledger to key off instead, and a history this window has not read
    * answers null — which is not the import, so the button stays live and main's
    * own refusal is the backstop.
+   *
+   * ── AND IT IS THE PDF ALONE NOW, WHICH IS A NARROWING WORTH NAMING ─────────
+   *
+   * The EPUB half of this reached `meta:read-epub`, which resolved an open book's
+   * WORKING TREE — and the tree, the reader over it and the tab kind that held it
+   * are deleted (docs/RENDERER.md §7). A book's own metadata still belongs in the
+   * ledger as a metadata step; what it does not have any more is a door on this
+   * dock, because the surface that named the document it would write into is
+   * gone. Named here rather than left as a silently dead button.
    */
   protected canEditMetadata(): boolean {
     const tab = this.tabs.activeDocument();
     if (tab === null) return false;
-    if (tab.kind !== 'pdf' && tab.kind !== 'epub') return false;
+    if (tab.kind !== 'pdf') return false;
     const project = this.projects.projectFor(tab.path);
     if (project === null) return true;
     if (!project.reading.done) return false;

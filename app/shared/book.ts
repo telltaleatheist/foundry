@@ -10,8 +10,7 @@
  * to. This file states the same grammar a second time, in the app, and nothing
  * here is allowed to be an opinion about it.
  *
- * IT IS RESTATED FOR `shared/unrender.ts`'s REASON, which is the precedent this
- * follows entry for entry. The app never imports a line of the engine — it
+ * IT IS RESTATED BECAUSE THE APP NEVER IMPORTS A LINE OF THE ENGINE — it
  * spawns it (electron/engine.ts) — and spawning a process to parse a file this
  * process is already holding open would be absurd. So the table is written twice
  * with the engine's file named as the contract, and the refusals below are what

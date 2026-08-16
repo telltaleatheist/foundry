@@ -3468,10 +3468,9 @@ export class BookViewComponent {
   /**
    * Blur commits — the pair the app's other in-place editor already uses.
    *
-   * The chapter-title editor in the rendered frame *"commits on Enter or blur and
-   * cancels on Escape, which are the three endings the in-place block editor
-   * already taught this document"* (electron/click-reporter.ts). Two of those
-   * three are kept verbatim. ENTER IS THE THIRD AND IT DOES NOT COMMIT: it is the
+   * The in-place editors this app has had all commit on Enter or blur and cancel
+   * on Escape — three endings a person learns once. Two of the three are kept
+   * verbatim here. ENTER IS THE THIRD AND IT DOES NOT COMMIT: it is the
    * SPLIT (docs/RENDERER.md §5), which commits the words as its own op on the way
    * past and then cuts them — see `split`, which is the only other place a `text`
    * op is minted and mints it for exactly this reason.

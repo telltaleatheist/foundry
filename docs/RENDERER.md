@@ -259,25 +259,104 @@ are no overlay files to ping-pong.
   has always been a record of.
 - **Standing on a `curate` row — DONE, and it is §8's re-key.** See §8.
 
-**NOT landed at R6b, and named rather than implied:** `working/`, the whole of
-`epub-reader.ts`/`epub-writer.ts`'s pack half/`click-reporter.ts`,
-`overlays.ts`, `shared/overlay.ts`, `curation-lock.ts`, `uncommitted.ts`,
-`history.ts`, the epub-view and html-editor components, the `epub` and `editor`
-tab kinds, `ProjectSummary.renderings`, `castForCurateStep`/`castForTranslateStep`/
-`castBook` and `documentAtPosition`'s cast arms, and the PDF block editor's
-write half. **The overlay system is still live and still operable**: the PDF
-block editor turns on wherever a reading exists (`positionView.outlines`), its
-strikes still write `overlays/<key>.json`, and Apply changes still freezes a
-new `curate` step. So the app carries TWO editing surfaces at once — which is
-the state R5 left it in, not one R6b created — and R6c is where the second one
-goes. What R6b did change about it is that a curate row now opens the SHEET
-rather than a cast that will never be made again, so the row is honest about the
-book even while the machinery behind it is still standing. The maps that make
-R6c mechanical are in the R6b report.
+**Landed at R6c — every item above, and the app has ONE editing surface.**
+Item by item, all DONE:
+
+- **`overlays.ts` + `shared/overlay.ts` — DONE.** Both files deleted whole, and
+  with them the `{page,order,note}` grammar: no module in this app can spell an
+  overlay target. `curate-bridge.ts` reads a frozen snapshot with its own closed
+  parser and imports nothing from either (it imports two types, from `./book`
+  and `./ops`, and nothing else).
+- **`curation-lock.ts` — DONE**, and every consultation with it: `lockIn`,
+  `lockOn`, `heldByASave`, the inspector's frozen banner, the PDF pane's notice.
+  There is no `electron/curation-lock.ts` and never was; the module was shared
+  only. Standing on any step is a replay of that chain, so there is nothing to
+  diverge and nothing to guard.
+- **`uncommitted.ts` — DONE, whole.** It was about the live CURATION and nothing
+  else. The BOOK pane's scrap-guard is a different mechanism entirely — the
+  pane's `BookStack.pending()`, read in `questionBefore` — and it is untouched;
+  what came out of that function is the `corrections` arm and `CloseWarning`'s
+  field for it.
+- **`history.ts` — DONE**, with the `history:*` channels, the `ledgers` map, the
+  `LedgerRow`/`LedgerAction`/`LedgerStacks`/`LedgerLoad`/`LedgerField` types and
+  `replay`'s four non-book doors. Undo is the pane's in-memory stack alone.
+- **`click-reporter.ts` and the iframe stack — DONE.** The epub-view and
+  html-editor components are deleted, the `epub` and `editor` tab kinds are gone
+  (`TabKind` is `'pdf' | 'book'`), the `foundry-file://epub/` host and the
+  reporter's support-file serve are removed from the protocol handler, and
+  `frame-src foundry-file:` is out of the renderer's CSP. The `book` host — the
+  figure crops — stays and is now the only one.
+- **`epub-reader.ts` — DONE, whole.** Nothing surviving reads an OPF through it:
+  `meta:read-epub`/`meta:write-epub` went with it, because both resolved an open
+  book's WORKING TREE from a tab's book id and there is no such tab. The engine
+  owns every OPF read this app still makes (`epub-meta`, spawned), so **no
+  survivor had to be extracted**.
+- **`epub-writer.ts` — the pack half DONE, `writeAtomically` SURVIVES** in
+  `electron/atomic.ts`, named for what it does. Its two callers are `book.ts`
+  (the book file and the ops payloads) and `projects.ts` (a records append).
+- **The `working/` lifecycle — DONE for the TREES.** `workingTreeName`,
+  `WorkingTreeRecord`, `workingTreeFor`, `recordWorkingTree`, `treeGeneration`,
+  the hold registry, `rotationRefusal`, the rotation's tree passenger and every
+  `working.trees` read and write are gone. **`working.files` and the live PDF
+  SURVIVE, deliberately**: that row is the project's writable copy of the scan,
+  it is what `meta:write-pdf` writes into and what Home draws the scan's row
+  from, and the metadata step machinery is an invariant of this wave. The two
+  are different tenants of one folder name. Old manifests still parse — see §7a.
+- **The PDF block editor — DONE, and the DISPLAY went with the write half.**
+  A1 retires the editor and promises the scan and the facsimile stay VIEWABLE;
+  it does not promise the outlines. What would have remained after the gestures
+  came out reads the overlay file, so keeping it would have meant keeping the
+  grammar this wave deletes whole — to draw less than the proof sheet draws, over
+  a photograph, in the chrome ruling 8 calls *"sloppy and ugly"*. **This is a
+  judgement made in-wave and it is the one place R6c went further than the
+  brief**: the pane is now a viewer (page, text layer, thumbnails, search) and
+  `overlay:blocks`, `readPdfBlocks` and the `PdfBlock*` types went with it.
+- **`castForCurateStep`/`castForTranslateStep`/`castBook`/`renderingsOf`/
+  `ProjectSummary.renderings` — DONE**, and so are `documentAtPosition`'s dead
+  arms: a read, a save and an edit row answer **null**, which is `positionView.sheet`
+  saying the proof sheet is what that position shows. `curateCastFile` and
+  `translationCastFile` are deleted from `shared/ledger.ts` with them.
+- **The UI doors — DONE.** Select on the dock; the viewer's two tab-kind
+  branches; the library tree's HTML-face row, its editor drop refusal and its
+  editor glyph; the Settings **Curation card** and all three standing answers it
+  set (`unlinkedNoteAnswer`, `contentsRenameEcho`, `headingEditEcho`) with their
+  three question handlers and `confirmUnlinkedNote`/`confirmHeadingEcho`/
+  `confirmNavEcho`; the inspector's Category section, its scan/EPUB Chapters
+  section, its word-correction box and its **Apply changes** button (Apply lives
+  on the paper, beside the changes it applies). An EPUB export row and a finished
+  epub job are **reveal-only** — an export is a product and this app has one
+  viewer for a file. And `inspectorUp` now admits a `book` tab, which it never
+  did: the proof sheet's own panels were unreachable until this wave.
+
+**Two narrowings, named rather than left to be found.** PDF metadata editing is
+now the only metadata dialog write (the EPUB arm had no document to write into);
+and a loose `.epub` opened from disk no longer makes a tab of its own — it is an
+IMPORT, and the project's proof sheet is what opens when the import lands
+(`awaitBook`, core/tabs.service.ts).
 
 Stays: the ledger model whole (steps, payloads, retention, staleness, deletes,
 the tree, one-selection), the queue, Home, imports, metadata steps, exports
 into `final/`, the Ollama teardown, the engine's every command.
+
+## 7a. What an old project on disk keeps, and what stops reading it
+
+Nothing is swept and no version is bumped. `readManifest` gates on the version
+(1 or 2) and never on a key, and it REBUILDS the catalogue from named fields —
+so a field it stops naming never reaches memory and simply leaves disk the next
+time anything writes the project for a reason of its own. That is the precedent
+`ProjectReading.passes` already set.
+
+- **`working.trees`** — tolerated on read, never read, never written. The
+  `working/<tree>/` directories themselves are left where they are: they are a
+  book's markup and this app does not delete somebody's files to tidy a folder.
+- **`overlays/<key>.json` and its `.ledger.json`** — never opened again. The
+  decisions in them are not lost: a `curate` step's frozen snapshot is the
+  record, and §8's bridge replays it as ops on every open.
+- **`history/<tree>.json`** — never opened again. Session-scoped undo was always
+  the ruling (DERIVED-BOOK §3); this is the persistence that outlived it.
+- **`curations/<uuid>.json`** — READ, forever, by `curate-bridge.ts`. This is
+  the one thing in the list that is still live, and it is the reason `curationsDir`
+  survives.
 
 ## 8. Migration (small, runs once per project on open)
 
@@ -398,13 +477,16 @@ unless asked, an honest partial beats a bent whole.
     old save replays as ops and says out loud what it cannot place. WORKBENCH
     §11 marked superseded. §7's remaining list is annotated with what landed and
     what did not.
-  - **R6c — NOT STARTED:** the actual deletion of the overlay system and the
-    iframe stack — `working/`, `epub-reader.ts`, `click-reporter.ts`,
-    `overlays.ts`, `shared/overlay.ts`, `curation-lock.ts`, `uncommitted.ts`,
-    `history.ts`, the epub-view and html-editor components, the `epub`/`editor`
-    tab kinds, `ProjectSummary.renderings`, `documentAtPosition`'s cast arms and
-    the PDF block editor's write half (A1). This is the wave that leaves ONE
-    editing surface; until it lands there are two.
+  - **R6c — LANDED (this commit):** the deletion the wave is named for. Eleven
+    files gone whole (`overlays.ts`, `shared/overlay.ts`, `curation-lock.ts`,
+    `uncommitted.ts`, `history.ts`, `click-reporter.ts`, `epub-reader.ts`,
+    `epub-writer.ts`, `unrender.ts`, the epub-view and html-editor components,
+    the Settings curation card), `writeAtomically` extracted to
+    `electron/atomic.ts`, `TabKind` down to `'pdf' | 'book'`, the working-TREE
+    lifecycle out (the live PDF stays — §7), the block layer off the PDF pane
+    including its read-only display (§7 says why that went further than A1
+    required), and every UI door with them. **THE APP HAS ONE EDITING SURFACE.**
+    §7 carries the item-by-item marks and §7a says what an old project keeps.
 
 Each wave lands and pushes before the next starts. R1 and R2 can run in
 parallel (disjoint trees: `src/` vs `app/`); everything after is serial through

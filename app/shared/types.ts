@@ -187,17 +187,6 @@ export interface GenerateRequest {
   outputPath: string;
   /** `--readings`, from `WorkspacePlan.readingsPath`. Always passed; see workspace.ts. */
   readingsPath: string;
-  /**
-   * `--overlay`, from `WorkspacePlan.overlayPath` — the block editor's file of
-   * corrections.
-   *
-   * Optional on the REQUEST and conditional on the command line: a job enqueued
-   * before this field existed carries none, and a job that carries one still only
-   * gets the flag when the file is on disk when the engine starts. A run told to
-   * apply an overlay that is not there is refused by the engine, by name, which
-   * would turn "nobody has curated this book" into a failed conversion.
-   */
-  overlayPath?: string;
   /*
    * NO `--skip-pages` HERE, and its absence is the split doing its work. It is a
    * statement about READING the book — which pages are not part of it — so it is
@@ -229,7 +218,7 @@ export interface GenerateRequest {
    * change, and every decision a person has made about the source reaches the
    * translated product for free.
    *
-   * RESOLVED AT PLAN TIME like everything else about a Generate (`overlayPath`
+   * RESOLVED AT PLAN TIME like everything else about a Generate (`readingsPath`
    * says why at length): WHICH translation this book is being cast in is the state
    * of the project the user chose when they pressed the button, and a pointer move
    * made while the job waited must not silently produce a different language.
@@ -264,7 +253,7 @@ export interface GenerateRequest {
    * edited at all.
    *
    * WHOSE FILE IT IS: main's, written at plan time from the position the person
-   * was standing on when they pressed the button — the same rule `overlayPath` and
+   * was standing on when they pressed the button — the same rule `readingsPath` and
    * `records` obey, and for the same reason. A pointer move made while the job
    * waited in the queue must not silently export a different state of the book
    * than the dialog said it would.
@@ -898,17 +887,6 @@ export interface WorkspacePlan {
    */
   readingsPath: string;
   /**
-   * `<libraryDir>/projects/<key>/overlays/<key>.json` — the curation, if there is
-   * one.
-   *
-   * ALWAYS DERIVED, PASSED ONLY WHEN THE FILE EXISTS (see job-queue's `argsFor`).
-   * The path is a fact about the project and can be composed the moment the plan
-   * is made; whether there is a file at it is a fact about the moment the engine
-   * starts, which is hours later for a queued batch and may be after somebody has
-   * spent the wait striking two hundred running heads.
-   */
-  overlayPath: string;
-  /**
    * The translation's own words, when the position stands under a translation —
    * carried onto the request by whoever enqueues, and absent for every other
    * rendering.
@@ -1138,45 +1116,6 @@ export interface ProjectGenerated {
 }
 
 /**
- * One unpacked book under `working/`, and the ORDER its members go back in.
- *
- * The order is the whole reason this is written down. A repack that lost it
- * produces an EPUB with `mimetype` somewhere in the middle, which some readers
- * open and others silently reject — and the order used to survive only in
- * memory, from the unzip that created the tree. A tree that outlives the process
- * has to carry it on disk.
- */
-export interface ProjectWorkingTree {
-  /** The archive it was unpacked from, project-relative: `generated/x.epub`. */
-  from: string;
-  /** The directory under `working/` holding it. */
-  dir: string;
-  /** Every member, in archive order, `mimetype` first. */
-  members: string[];
-  unpackedAt: number;
-  /**
-   * WHICH LIFE OF THIS WORKING COPY THIS IS — a fresh uuid every time the tree
-   * is unpacked, and the one field in this catalogue that exists for a file the
-   * catalogue does not otherwise mention.
-   *
-   * The undo ledger on disk (electron/history.ts) records rows that name
-   * `data-bf-id="p47-3"` in a member. THAT NAME IS ONLY MEANINGFUL FOR THE
-   * WORKING COPY IT WAS RECORDED AGAINST. Start over rebuilds `working/` from
-   * `generated/`, a re-cast reassigns ids, and a row from a previous life would
-   * then put a paragraph into a block that is not the one it came from — the
-   * one failure mode worse than having no undo at all, because it looks like it
-   * worked. So the history file carries the generation it was written under, and
-   * a history whose generation is not this one is archived aside rather than
-   * replayed.
-   *
-   * Empty for a tree recorded before this field existed; `treeGeneration` mints
-   * one on first use, which is safe precisely because no history file can name a
-   * generation that was never written.
-   */
-  generation: string;
-}
-
-/**
  * The live PDF — the one the user sees, and the one metadata edits will land in.
  *
  * A copy is made at import so the file EXISTS from the start; writing to it is
@@ -1273,10 +1212,15 @@ export interface ProjectManifest {
    * two rows on Home and one in the picker.
    */
   documents: ProjectTypeRecord[];
-  working: {
-    trees: ProjectWorkingTree[];
-    files: ProjectWorkingFile[];
-  };
+  /**
+   * What sits under `working/`. ONE TENANT SINCE R6c: the PDF's live copy.
+   *
+   * `trees` — the unpacked EPUBs the iframe reader served chapters out of — is
+   * deleted with that reader (docs/RENDERER.md §7). An old catalogue carrying the
+   * field still parses and the field is simply not read; it leaves disk the next
+   * time anything writes the project, exactly as `ProjectReading.passes` did.
+   */
+  working: { files: ProjectWorkingFile[] };
   final: ProjectFinal[];
   /**
    * Which reading of this book the block editor's corrections are about, or null
@@ -1803,39 +1747,6 @@ export interface ProjectSummary {
    */
   exports: ProjectFinal[];
   /**
-   * THE BOOKS THE STEPS CAST FOR THEMSELVES — project-relative, forward slashes,
-   * one per step that renders one, in ledger order.
-   *
-   * ── The bug this exists to end ──────────────────────────────────────────────
-   *
-   * A per-step cast is a RENDERING: free, remade from the step's own snapshot at
-   * any time, and deliberately NOT a row in `documents` (`castForCurateStep`,
-   * electron/projects.ts, holds the whole argument — a cast filed as a
-   * `generated/` origin would become the project's newest book, so a read row
-   * would start showing whichever save was pressed last).
-   *
-   * The library tree took `documents` as its list of "paths a step already speaks
-   * for", and a cast is not in it. So opening a translation — which shows a cast —
-   * put a SECOND row in the tree beside the step that made it, in the branch meant
-   * for files somebody went and opened by hand, wearing the only name that branch
-   * had for it: *"EPUB - a copy you open… this doesnt make any sense… the naming
-   * scheme is wrong, the organizing is wrong, the user should never see 'epub' -
-   * not until they actually export an epub directly themselves. it's deceptive."*
-   *
-   * Both halves of that row were false. Nobody opened it — standing on the step
-   * did — and it is not an EPUB in any sense the reader is owed, it is the
-   * rendering of a step whose payload is a `.jsonl` of records. The tree could
-   * neither of those things because it had no way to know the file belonged to a
-   * step, so this is that way: the names, composed by the side that knows how they
-   * are composed, so the renderer never spells one and never guesses.
-   *
-   * NAMES AND NOT A PROMISE THAT THE FILE IS THERE. A cast is made on demand and
-   * swept with its step; `summarise` stats nothing for this, because the question
-   * it answers is "would a step show this path", which is true whether or not the
-   * rendering has been made yet.
-   */
-  renderings: string[];
-  /**
    * THE PAGE-FOR-PAGE RECORD EACH READING MADE — one per read step that has one
    * on disk, project-relative with forward slashes.
    *
@@ -1848,13 +1759,10 @@ export interface ProjectSummary {
    * the neighbouring fields. `documents` is one row per file TYPE and every row
    * in it is a base for further work, so filing a facsimile there would put it on
    * the PDF's chain beside the scan and make Home offer it as the document this
-   * app edits. `renderings` is only a set of paths the tree already speaks for:
-   * it draws nothing, and a facsimile listed there would vanish from the panel
-   * rather than appear in it. `exports` is `final/`, which is the user's own
+   * app edits. `exports` is `final/`, which is the user's own
    * tray — a file this app made unasked has no business in it.
    *
-   * COMPOSED, NOT CATALOGUED, which is `castForCurateStep`'s arrangement and its
-   * argument: the name comes off the read step's own id, so the landing writes
+   * COMPOSED, NOT CATALOGUED, and the argument is its own: the name comes off the read step's own id, so the landing writes
    * nothing, `project.json` grows no row, and the same three parties — the plan
    * that writes the file, this listing, and the sweep that removes it with its
    * step — cannot come to three answers. What is on disk is the authority on
@@ -1900,17 +1808,6 @@ export interface RecentDocument {
   missing?: boolean;
 }
 
-/** One entry in the chapter sidebar. Spine order; the nav supplies label and indent. */
-export interface EpubChapter {
-  /** The document's path inside the book, forward-slashed, OPF-relative resolved. */
-  href: string;
-  label: string;
-  /** 0 for a chapter, 1 for a chapter inside a part, and so on. */
-  depth: number;
-  /** The `foundry-file://epub/<id>/<href>` URL the iframe points at. */
-  url: string;
-}
-
 /**
  * What a tab has to say for itself before it closes.
  *
@@ -1934,10 +1831,10 @@ export interface EpubChapter {
  * So what is left is two genuine losses. `modified` is "you have edited this
  * since the copy YOU chose was written" — a copy on the user's own disk that is
  * now behind, which closing does not fix and nothing else will mention.
- * `corrections` is not an unsaved edit at all: a scan's block decisions land on
- * disk as they are made, and what is missing is a RESTORE POINT (see
- * `UncommittedCuration`). Main writes a different sentence for each, and a tab
- * that is neither closes without a question.
+ * `edits` is the other, and it is the one loss closing genuinely destroys: the
+ * proof sheet's stack, in memory, scrapped by a close without Apply. Main writes
+ * a different sentence for each, and a tab that owes neither closes without a
+ * question.
  */
 export interface CloseWarning {
   title: string;
@@ -1945,24 +1842,14 @@ export interface CloseWarning {
   /** Where a copy was last written, when there is one. */
   savedPath: string | null;
   /**
-   * The corrections this book has no save of, or null when there is nothing to
-   * ask about — which is the ordinary answer for every book and every EPUB.
-   */
-  corrections: UncommittedCuration | null;
-  /**
    * How many changes are on the book pane's stack with no Apply behind them, or
    * null when this tab is not a book or has nothing waiting.
    *
    * ── The one loss in this app that closing genuinely destroys ────────────────
    *
-   * `UncommittedCuration` exists to say that the block editor has NO unsaved
-   * state — every strike is written into the live curation as it is made, and
-   * what closing ends is the way BACK to a state, not the state. The book's stack
-   * is the opposite and the warning has to be too: it is in memory, it is the
-   * only copy, and the ruling is that closing without Apply scraps it
-   * (docs/RENDERER.md §3). So this is the rare case where "you will lose this"
-   * is the true sentence, and it is worth having a field of its own precisely so
-   * that the two cards cannot end up saying each other's words.
+   * It is in memory, it is the only copy, and the ruling is that closing without
+   * Apply scraps it (docs/RENDERER.md §3). So this is the rare case where "you
+   * will lose this" is the true sentence.
    *
    * A COUNT AND NOT A LIST. The card says how much is at stake; what each op says
    * is on the paper behind the dialog, in the cancel marks and the changed
@@ -1995,187 +1882,6 @@ export type CloseAnswer = 'close' | 'save' | 'keep';
  * `RE_READ_PROCEED` (shared/reread.ts) for the labels those two keys wear.
  */
 export type ReReadAnswer = 'again' | 'leave';
-
-/**
- * Corrections a book holds that no save of it does — what closing actually costs.
- *
- * ── This is NOT "unsaved changes", and the difference is the whole point ────
- *
- * There is no unsaved state in the block editor. Every strike, reclassification
- * and chapter edit is written whole into the live curation the instant it is
- * made, so closing discards nothing and every correction is exactly where it was
- * left when the book is opened again. What a person can lack is a RESTORE POINT:
- * a curation step they could step back to. Foundry's step-by-step undo lasts only
- * as long as the document is open, so closing is the moment "undoable" becomes
- * "permanent" — and a save is the only thing that replaces it.
- *
- * Composed by `uncommittedCuration` (shared/uncommitted.ts), which returns null —
- * and asks nothing — for a book nobody has corrected and for a book whose
- * corrections a save already holds.
- */
-export interface UncommittedCuration {
-  /**
-   * How many blocks stand differently now than they do in that save.
-   *
-   * A DIFFERENCE AND NOT A TOTAL: a block corrected since, corrected differently,
-   * or corrected and then put back all count, and none of the blocks the save
-   * already agrees about do. With no save to measure against it is simply how many
-   * blocks this book has decisions about.
-   */
-  blocks: number;
-  /** True when the chapter list differs from that save's — a spine is labour too. */
-  chapters: boolean;
-  /**
-   * What the save is called — "Applied changes (23)" — or null when this book
-   * has none that these corrections could be measured against.
-   */
-  since: string | null;
-}
-
-/**
- * A footnote nothing points at any more, and the number that used to.
- *
- * Produced by `setBlockHtml` when an in-place edit deleted the last reference to
- * a note (electron/epub-reader.ts), carried to the renderer, and handed straight
- * back to main so the question can be asked with the note NAMED — a person about
- * to lose a footnote has to be able to tell which one it is, and "a footnote"
- * tells them nothing.
- */
-export interface UnlinkedNote {
-  /** The `<aside>`'s own id — `fn25`. */
-  noteId: string;
-  /** What the reference read on the page — the printed number, usually. */
-  printed: string;
-  /** The words the note itself begins with, clipped, so it can be recognised. */
-  opening: string;
-}
-
-/**
- * Which world a word edit on an open book lands in — main's answer to
- * `translation:of-document`, asked once per tab and cached by the renderer.
- *
- * NULL (the IPC's other answer) is the ordinary book: the source cast, a save's
- * cast, or a foreign EPUB — a word edit there mirrors to the overlay's `text`
- * field, or to nothing at all when the book is in no project. Non-null means
- * the document is a TRANSLATE step's book, where a word edit is a per-language
- * correction: a human row in that step's records file, never an amendment in
- * the source curation.
- */
-export interface TranslationWorld {
-  /** The step's recorded target language — `params.language`, `''` where unrecorded. */
-  language: string;
-  /**
-   * A translate row from before translations were records: its payload is the
-   * EPUB the old pipeline wrote and there is no records file, so a correction
-   * has nowhere durable to go. The renderer says so instead of writing.
-   */
-  legacy: boolean;
-}
-
-/**
- * What the user said about an unlinked footnote.
- *
- * THREE ANSWERS, and they write three different things: `cut` strikes the note
- * as well, `keep` leaves it standing and unreachable, `cancel` puts the
- * reference number back by restoring the block's previous markup. Main answers
- * with the standing preference instead of asking when one has been stored — see
- * `unlinkedNoteAnswer` in electron/app-settings.ts.
- */
-export type UnlinkedNoteAnswer = 'cut' | 'keep' | 'cancel';
-
-/**
- * The stored form of that answer — the two worth remembering, plus `ask`.
- *
- * `cancel` is deliberately NOT one of them. "Always put the number back" is an
- * instruction never to be able to delete a reference number again, with no
- * dialog left to explain why every attempt undoes itself.
- */
-export type UnlinkedNoteStanding = 'ask' | 'cut' | 'keep';
-
-// ═════════════════════════════════════════════════════════════════════════════
-// The page and the contents are two statements
-// ═════════════════════════════════════════════════════════════════════════════
-
-/**
- * THE WORDS ON THE PAGE AND THE ENTRY IN THE CONTENTS ARE ALLOWED TO DIFFER,
- * and that is the whole of the design these types serve.
- *
- * The text should say what the book says; the contents should say what the
- * book's own apparatus says. Those are usually the same sentence and sometimes
- * deliberately are not — the caster composes a nav label the page never carried
- * ("Part II — The Road to War" over a page that reads "II"), and that divergence
- * is correct. So neither side is derived from the other, nothing is kept in
- * sync, and renaming one OFFERS to update the other.
- *
- * An "echo" is that offer: the other side, as it stands, when it still reads
- * what the side just renamed used to read. Where the two already differ there
- * is no echo and no question — the difference is a decision somebody has
- * already made, and asking about it on every rename would train a person to
- * dismiss the dialog without reading it.
- */
-export type EchoAnswer = 'update' | 'leave';
-
-/**
- * The stored form of that answer.
- *
- * PER ANSWER, exactly as `UnlinkedNoteStanding` is: "always update the other"
- * and "never update the other" are two different standing instructions about
- * somebody else's book, and collapsing them into one silenced-question flag
- * would mean the app picking which of them was meant. `ask` is the default.
- */
-export type EchoStanding = 'ask' | 'update' | 'leave';
-
-/** The page heading a contents rename could carry with it. */
-export interface HeadingEcho {
-  /** The document the heading lives in — a book-relative member href. */
-  member: string;
-  /** What the heading reads now, which is what the contents entry read before. */
-  was: string;
-  /** What the contents entry now reads, and what the heading would become. */
-  now: string;
-}
-
-/**
- * What a contents rename did, and what it is offering to do next.
- *
- * The nav half has ALREADY HAPPENED when this arrives — the contents is the
- * thing that was renamed, and renaming it is exactly what was asked. The echo
- * is the question.
- */
-export interface HeadingRenameOutcome {
-  /** True when a contents entry's label was rewritten. */
-  navChanged: boolean;
-  /** The page heading that still reads the old label, when there is one to offer. */
-  echo: HeadingEcho | null;
-}
-
-/**
- * One block whose `data-bf-cat` a relabel actually moved, and what it said
- * before.
- *
- * MAIN ANSWERS WITH THIS because main is the only thing that read the file. A
- * marquee over a page catches paragraphs and captions together, so "relabel
- * these thirty as footnote" is thirty different previous labels — and the undo
- * ledger has to put each one back to its own. A renderer that assumed they were
- * all the category the inspector happened to be showing would quietly rewrite
- * the ones that were not.
- */
-export interface RelabelledBlock {
-  /** Its `data-bf-id`. */
-  id: string;
-  /** The `data-bf-cat` it carried until this call. */
-  was: string;
-}
-
-/** The contents entry an in-place heading edit could carry with it. */
-export interface NavEcho {
-  /** The contents entry's href, in the shape the sidebar and `renameHeading` use. */
-  href: string;
-  /** What the entry reads now, which is what the heading read before the edit. */
-  was: string;
-  /** What the heading now reads, and what the entry would become. */
-  now: string;
-}
 
 // ═════════════════════════════════════════════════════════════════════════════
 // A document's own record
@@ -2290,396 +1996,19 @@ export type DocumentMetadata =
     producer: string | null;
   };
 
-/**
- * An open book. `id` is what closes it again — a tab that is closed, and every
- * tab on quit, hands its id back so main stops serving its members.
- *
- * CLOSING DELETES NOTHING NOW. The chapters are served out of the project's own
- * `working/` tree, which is the book's durable working copy and outlives both
- * the tab and the process; only the registry entry goes.
- */
-export interface EpubBook {
-  id: string;
-  /** The .epub the user named. Not necessarily the archive the tree came from. */
-  filePath: string;
-  /**
-   * True when `filePath` lives inside a Foundry project. Measured by MAIN,
-   * because it decides what Save may write: a book opened from the user's own
-   * disk grants plain Save to that file (it already IS a copy they chose), and
-   * a project's own file grants nothing until the save dialog says so. The
-   * renderer uses it to seed `savedPath` for the same reason.
-   */
-  managed: boolean;
-  title: string;
-  author: string | null;
-  chapters: EpubChapter[];
-  /**
-   * EVERY DOCUMENT OF THE SPINE, IN READING ORDER — what the book RENDERS, as
-   * distinct from `chapters`, which is what its contents LISTS.
-   *
-   * ── Why these had to come apart ─────────────────────────────────────────────
-   *
-   * They were one field, and the flowing book was drawn by walking `chapters`.
-   * That worked for exactly as long as `chapters` was guaranteed to name every
-   * spine document — which it was, because a document neither the nav nor its own
-   * `<title>` would name got a row anyway, labelled with its FILENAME. Take that
-   * invented row away (and it had to go: *"no fallbacks. i hate fallbacks…"*, and
-   * a filename is the one thing this app's copy never shows) and the document
-   * stops being drawn at all. A contents list quietly deciding which pages of
-   * somebody's book exist is a far worse bug than the one being fixed.
-   *
-   * So the spine is carried in its own right. The reader draws THIS, complete and
-   * in order, and the contents list is free to be an honest account of the
-   * divisions the book actually declares — including declaring none.
-   *
-   * `url` rides along because composing one is main's (`memberUrl` mints it
-   * against the id of this unpacking) and a renderer spelling the scheme itself
-   * would be a second implementation of the protocol handler's contract.
-   */
-  members: { href: string; url: string }[];
-  /**
-   * The navigation document's member path, or null for a book that has none.
-   *
-   * The renderer knows every OTHER member it edits, because every other edit is
-   * addressed by a chapter href it is already holding. The nav is the exception:
-   * renaming a contents entry writes a file nothing in the renderer can name,
-   * and the undo stack records `{ member, before, after }` — so without this,
-   * the one action that writes two members could record neither.
-   */
-  navMember: string | null;
-  /**
-   * What could not be done while opening this book, or null.
-   *
-   * NOT a `problem`: the book opened, it renders, it is readable. This is for
-   * the case where something the app does BESIDE opening it did not work —
-   * today, an imported EPUB the engine would not stamp, which reads perfectly
-   * and whose select mode has nothing to address. It lands in the notice strip
-   * once, because a door that is shut has to say so on the way in rather than
-   * by doing nothing when somebody tries it.
-   */
-  notice: string | null;
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// The undo ledger, and the file it survives in
-// ═════════════════════════════════════════════════════════════════════════════
-
-/**
- * Which setter puts one ledger row back.
- *
- * THE FIELD IS THE ROUTE, and there are five because there are five things this
- * app can do to a document. Each names a call that already exists in main, with
- * its own validator, keyed by the same id the original edit used.
- *
- * IN SHARED TYPES rather than in the service that uses them, because the ledger
- * is written to disk now and main is what writes it. Main never REPLAYS a row —
- * that is still entirely the renderer's, through the setters — but it does have
- * to recognise one, so that a history file carrying a field this app cannot
- * route is refused as the wrong shape instead of being handed back to a Ctrl+Z
- * that would fall through every branch and do nothing.
- */
-export type LedgerField =
-  | 'cut' | 'category' | 'html' | 'note-cut' | 'nav-label' | 'page-heading'
-  /*
-   * `join` IS A BOOK ROW THAT WRITES NO BOOK. The manual paragraph join is a
-   * decision in the curation and nothing else — the two paragraphs on screen
-   * merge at the next cast, not at the gesture — so its replay skips the
-   * member setters entirely and re-amends the overlay, resolved through the
-   * same provenance read the gesture used. `target` is the continuation
-   * element's `data-bf-id`; `member` is the chapter that element is in, kept
-   * so an undo made with some other chapter on screen can still resolve the
-   * name. `'1'` and `''` are the two sides, exactly as `cut` spells them.
-   */
-  | 'join'
-  /*
-   * ── AND THE FOUR THE BLOCK EDITOR ADDS ──────────────────────────────────
-   *
-   * The same idea one document earlier. The first three name a block in a SCAN's
-   * readings — `page:order`, or `page:order:part` — and their setter is not a
-   * call into somebody's markup but one line of the overlay file
-   * (shared/overlay.ts, `amendOverlay`): the same shape as every field above it,
-   * a targeted validated write of one value, so an undo is that call again with
-   * the old one.
-   *
-   * `member` for all four is the overlay's own key, which is the readings bank's
-   * key, which is the project's. A scan has no chapters to be a member of; what
-   * it has is one bank and one file of decisions about it.
-   *
-   * The empty string is "nothing said", and it is a real value rather than a
-   * missing one: un-striking a block is not writing `strike: false`, it is
-   * REMOVING the field, and `before: ''` is what makes that undoable.
-   *
-   * `chapters` IS THE ODD ONE AND IT CARRIES THE WHOLE LIST. Its `target` is the
-   * overlay key again rather than a block, because the spine is one statement
-   * about the book: adding a chapter, removing one and renaming one are all "it
-   * used to run like this and now runs like that", and the first chapter edit of
-   * all turns an ABSENT list into a seeded one — a state no per-chapter row could
-   * return from, since undoing one row would leave the other fifty-nine written
-   * out explicitly, which means something different from having said nothing.
-   */
-  | 'strike' | 'block-category' | 'block-text' | 'chapters';
-
-/**
- * One element, one field, and what it said on each side of an action.
- *
- * `target` is a `data-bf-id` for the three block fields, a footnote's own id
- * (`fn25`) for `note-cut`, and a contents entry's href for the two rename
- * fields — in every case, the name the ORIGINAL setter was called with, so the
- * replay is that call again with the other value.
- *
- * AND THAT IS WHY THE FILE IS BOUND TO A GENERATION. Every one of those names is
- * a name in ONE working copy: `p47-3` is the third stamped element on page 47 of
- * the tree it was recorded against, and a re-cast is free to call something else
- * that. See `ProjectWorkingTree.generation`.
- */
-export interface LedgerRow {
-  /** The member the setter writes. Not always the chapter on screen. */
-  member: string;
-  target: string;
-  field: LedgerField;
-  before: string;
-  after: string;
-}
-
-/**
- * One action — Owen's action number — and every row it moved.
- *
- * A batch is ONE action with many rows: a marquee's worth of cuts, an
- * all-of-this-category strike, sixteen blocks relabelled at once. Ctrl+Z
- * reverses all of them, and it falls out rather than being arranged: the gesture
- * is one call to main, main answers with everything it moved, and that answer IS
- * the rows.
- */
-export interface LedgerAction {
-  seq: number;
-  /** Past tense: "struck 14 blocks" → "Undid: struck 14 blocks." */
-  label: string;
-  rows: readonly LedgerRow[];
-}
-
-/** Both stacks of one document, as they cross IPC and as they sit on disk. */
-export interface LedgerStacks {
-  done: LedgerAction[];
-  undone: LedgerAction[];
-}
-
-/**
- * `history/<working tree>.json` — one document's undo ledger, on disk.
- *
- * WRITTEN AFTER EVERY MUTATION OF EITHER STACK, whole, atomically, because
- * "flush on every change" plus a crash mid-write is exactly the case this
- * feature exists for and a half-written history must never be what survives.
- * See electron/history.ts for the write and for what happens to a file whose
- * `generation` is not the working copy's.
- */
-export interface DocumentHistory {
-  /** 1. Bumped only when a reader of an older file would get it wrong. */
-  version: number;
-  /** The `ProjectWorkingTree.generation` these rows name blocks in. */
-  generation: string;
-  /** The origin the tree was unpacked from — `generated/x.epub`. For a human. */
-  document: string;
-  savedAt: number;
-  done: LedgerAction[];
-  undone: LedgerAction[];
-}
-
-/**
- * What `history:load` answers with: the stacks, and what had to be said about
- * getting them.
- *
- * THE NOTICE IS NOT AN ERROR CHANNEL. Every one of the three outcomes is
- * normal — a history restored, a history that belongs to a book that no longer
- * exists, a history that will not parse — and the last two both END WITH EMPTY
- * STACKS AND A SENTENCE naming the file and where it went. Never silently
- * empty: a Ctrl+Z that does nothing because a file was quietly discarded is
- * indistinguishable from one that is broken (ARCHITECTURE §8).
- */
-export interface LedgerLoad {
-  actions: LedgerStacks;
-  /** One sentence for the strip, or null when there was nothing to say. */
-  notice: string | null;
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// The block editor: what the engine says is on a scan's pages
-// ═════════════════════════════════════════════════════════════════════════════
-
-/**
- * One block of one page, as the model read it.
- *
- * STRAIGHT OFF THE READINGS BANK, through a command that prints it — the app
- * never parses the bank itself, for the same reason it never opens an EPUB by
- * hand: the bank's shape is the engine's, the split into parts is the engine's,
- * and a second reader of it would be a second opinion about what a block is.
- */
-export interface PdfBlock {
-  /** 1-based, the PDF's own numbering. */
-  page: number;
-  /** The element's index in the model's answer for that page. */
-  order: number;
-  /** Which piece of that element this is, after the markdown split. */
-  part: number;
-  /** What the model called it — one of `OVERLAY_CATEGORIES`. */
-  category: string;
-  /** The block's box IN THE RENDER'S PIXEL FRAME. See `PdfBlockPage.width`. */
-  box: { x1: number; y1: number; x2: number; y2: number };
-  /** What the model read. Shown in the inspector beside any override of it. */
-  text: string;
-}
-
-/**
- * One page's blocks, and the frame their boxes are measured in.
- *
- * THE RENDER SIZE IS NOT THE PAGE SIZE and the difference is the whole reason it
- * is carried. The model was shown a raster of the page at whatever resolution the
- * conversion rasterised it at, and every box it answered with is in those pixels.
- * The viewer draws the page at a CSS size that depends on the window and the
- * zoom. So a box is scaled by `cssPageWidth / width` — axis-aligned, one factor,
- * because both frames are the same page in the same orientation.
- */
-export interface PdfBlockPage {
-  page: number;
-  width: number;
-  height: number;
-  blocks: PdfBlock[];
-}
-
-/**
- * The blocks of a whole document, or the sentence saying why there are none.
- *
- * A RESULT AND NOT A REJECTION, exactly like `MetadataOutcome`: "this book has
- * never been read by the model" and "this engine build has no blocks command" are
- * both ordinary answers that belong on screen as words, and neither is a reason
- * for a tab to break.
- */
-export type PdfBlocksOutcome =
-  | { ok: true; pages: PdfBlockPage[]; chapters: PdfDetectedChapter[] }
-  | { ok: false; reason: string };
-
-/**
- * Where the ENGINE thinks a chapter starts, and what it would call it.
- *
- * REPORTED SO THE APP CAN SEED, and for nothing else. The overlay's `chapters`
- * list, once written, supersedes detection completely — but a person opening the
- * chapter accordion on a three-hundred-page book must not be handed an empty list
- * and told to find forty chapter openings by hand. So the detected spine is what
- * the accordion shows until somebody touches it, drawn as detected-not-confirmed,
- * and the first edit writes it out as theirs.
- */
-export interface PdfDetectedChapter {
-  page: number;
-  order: number;
-  part?: number;
-  /** What the engine derived, usually the block's own words. */
-  title: string;
-}
-
-/**
- * What `overlay:load` answers with: the amendments, and what had to be said about
- * getting them.
- *
- * The same three outcomes `LedgerLoad` has, for the same reasons — restored, or
- * archived aside with a sentence naming the file and where it went. Never
- * silently empty.
- */
-export interface OverlayLoad {
-  /**
-   * THE LIVE FILE as it stands, or an empty one bound to the current reading —
-   * and the only thing in this answer anything is allowed to write.
-   */
-  file: OverlayFileWire;
-  /**
-   * The frozen curation the position DISPLAYS, or null when what is on the pages
-   * is the live file.
-   *
-   * ── Why the answer carries two curations rather than resolving to one ───────
-   *
-   * `locateOverlay` has kept these apart on the disk side since the day snapshots
-   * existed: `file` is where a correction goes and `displayed` is what the pages
-   * draw, because resolving one to the other would mean the next strike anybody
-   * made while standing on a save silently rewrote that save. What was missing is
-   * that the second one never crossed IPC, so the block editor drew the LIVE
-   * outlines over a book it was showing frozen — read-only and honest about it,
-   * and showing the wrong corrections. The entire point of clicking an old save
-   * is to see the book as it was then.
-   *
-   * IT IS NOT WHAT A GENERATE IS MADE WITH, which it was until translations
-   * landed. Standing on a `translate` row, a Generate applies the curation the
-   * translation was taken under while the pane shows the live corrections — the
-   * row froze a bank of translated blocks and nobody's strikes, so there is
-   * nothing there to display frozen and somebody standing on it is trying to
-   * correct the book they just translated. `DISPLAYS_ITSELF` (shared/ledger.ts)
-   * is the ruling; docs/TRANSLATION-STEPS.md §4 is why the gap between the two
-   * answers is closed by pressing Save rather than by picking one of them.
-   *
-   * NULL IS THE ORDINARY ANSWER, and it is null for every project nobody has
-   * pressed Save in and for every position that is not standing on a save. It is
-   * also null for a snapshot this app would not read — one bound to an earlier
-   * reading, or one that will not parse — because outlines drawn from a curation
-   * about different blocks are the one failure worse than showing none, and
-   * `notice` says which happened.
-   */
-  frozen: FrozenOverlayWire | null;
-  notice: string | null;
-}
-
-/**
- * The overlay as it crosses IPC.
- *
- * Structurally the `OverlayFile` of shared/overlay.ts and deliberately declared
- * again here rather than imported: this file is the wire, it is imported by the
- * preload, and a type alias reaching into a module with a class in it would drag
- * that module across a boundary it has no business on.
- */
-export interface OverlayFileWire {
-  overlay: number;
-  generation: string;
-  amendments: {
-    /**
-     * `note` names one note of a Footnote block — the ordinal `splitNotes`
-     * gives it, stamped on the aside as `data-bf-note`. A note target may
-     * carry ONLY `strike`; both readers refuse `category`/`text` on it by
-     * name, because the bank holds one answer for the whole block and a
-     * per-note category would be a decision with nowhere to live.
-     */
-    at: { page: number; order: number; part?: number; note?: number };
-    strike?: boolean;
-    category?: string;
-    text?: string;
-  }[];
-  /** Absent means the engine decides. See `OverlayFile.chapters`. A chapter never names a note. */
-  chapters?: { at: { page: number; order: number; part?: number }; title: string }[];
-  /**
-   * A phantom, carried across the wire for the reason `OverlayFile.frozen`
-   * carries it: it makes a `FrozenOverlayWire` unassignable here, so the frozen
-   * curation the renderer is handed for DISPLAY cannot be passed to
-   * `overlay.save` — which takes this type — however it is passed around in
-   * between. Nothing ever sets it and nothing ever reads it.
-   */
-  frozen?: never;
-}
-
-/**
- * A committed snapshot as it crosses IPC — the same bytes, marked as the copy
- * that may be shown and not written. See `OverlayLoad.frozen`.
- */
-export interface FrozenOverlayWire extends Omit<OverlayFileWire, 'frozen'> {
-  frozen: true;
-}
-
 // ═════════════════════════════════════════════════════════════════════════════
 // THE STEP LEDGER — a project's whole history, as a tree that reads as a list
 // ═════════════════════════════════════════════════════════════════════════════
 
 /*
- * TWO THINGS IN THIS APP ARE CALLED A LEDGER AND THEY ARE NOT RELATED. The one
- * above — `LedgerRow`, `LedgerAction`, `LedgerStacks` — is the block editor's
- * UNDO history: keystroke-grained, capped, thrown away when the working copy is
- * rebuilt. This one is the project's STEP history: a handful of rows, each the
- * retained payload of one completed action, kept forever. Nothing crosses
- * between them, and the names here all begin with `Step` or `Ledger…Step` so
- * that a reader who lands on one can tell which ledger they are in.
+ * TWO THINGS IN THIS APP WERE CALLED A LEDGER AND THERE IS ONE. The other was
+ * the block editor's UNDO history — `LedgerRow`, `LedgerAction`, `LedgerStacks`,
+ * keystroke-grained, capped, persisted per working copy — and it is deleted with
+ * that editor (docs/RENDERER.md §7); undo is the proof sheet's in-memory stack
+ * now and has no shape that crosses IPC at all. THIS one is the project's STEP
+ * history: a handful of rows, each the retained payload of one completed action,
+ * kept forever. The names here all begin with `Step` or `Ledger…Step`, which is
+ * the habit that made the two tellable apart and is worth keeping.
  *
  * The logic lives in `shared/ledger.ts`; only the shapes live here, because
  * these cross IPC and the preload must be able to name them without pulling a

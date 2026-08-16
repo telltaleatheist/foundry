@@ -20,7 +20,6 @@ import * as path from 'node:path';
 import { app } from 'electron';
 
 import { readJson } from '../shared/json';
-import type { EchoStanding, UnlinkedNoteStanding } from '../shared/types';
 
 export interface AppSettings {
   /**
@@ -46,48 +45,6 @@ export interface AppSettings {
    * somebody's back.
    */
   libraryDir: string;
-  /**
-   * The standing answer to "you deleted this footnote's last reference — should
-   * the footnote go too?".
-   *
-   * REMEMBERED PER ANSWER, not merely as "stop asking". "Always strike it" and
-   * "always leave it" are two different standing instructions about somebody
-   * else's book, and collapsing them into one silenced-question flag would mean
-   * the app picking which of them the user meant. `ask` — the default — puts the
-   * dialog up every time.
-   *
-   * CANCEL IS NEVER STORED, whatever the checkbox says. "Always put the number
-   * back" is an instruction never to be able to delete a reference number again,
-   * with no dialog left to say so and nothing on screen explaining why the
-   * deletion keeps undoing itself. The checkbox is honoured for the two answers
-   * that are actual decisions and ignored for the one that is a retreat.
-   */
-  unlinkedNoteAnswer: UnlinkedNoteStanding;
-  /**
-   * The standing answer to "you renamed this contents entry — should the page's
-   * heading, which still reads the old text, change too?".
-   *
-   * TWO KEYS AND NOT ONE, and that is the point of this pair. Renaming the
-   * contents and fixing a typo on the page are different gestures with
-   * different intents: somebody tidying a table of contents usually does not
-   * want the printed page rewritten, and somebody correcting a word on the page
-   * usually does want the contents to stop showing the typo. One shared
-   * preference would silence a question that was never answered.
-   *
-   * Remembered PER ANSWER, on `unlinkedNoteAnswer`'s reasoning: "always update
-   * the other" and "never update the other" are two standing instructions, not
-   * one silenced question. `ask` — the default — puts the dialog up every time.
-   */
-  contentsRenameEcho: EchoStanding;
-  /**
-   * The standing answer to "you edited this heading — should the contents
-   * entry, which still reads the old text, change too?".
-   *
-   * This direction DID NOT EXIST AT ALL before, which was a bug rather than a
-   * design choice: fixing a typo on the page left the typo in the contents
-   * forever, with nothing on screen to say so.
-   */
-  headingEditEcho: EchoStanding;
 }
 
 export const KEEP_WARM_MAX_MINUTES = 240;
@@ -145,39 +102,11 @@ export function clampLibraryDir(value: unknown, fallback = defaultLibraryDir()):
   return path.normalize(trimmed);
 }
 
-/**
- * One of the three words, or `ask`.
- *
- * A hand-edited nonsense value reads as `ask` rather than throwing, on this
- * file's usual forgiveness rule — the worst it can cost is a question being
- * asked that somebody had silenced, which is recoverable in one dialog. The
- * opposite mistake is not: a garbled file that read as `cut` would strike
- * footnotes without ever asking.
- */
-export function clampUnlinkedNoteAnswer(value: unknown): UnlinkedNoteStanding {
-  return value === 'cut' || value === 'keep' ? value : 'ask';
-}
-
-/**
- * One of the two words, or `ask`.
- *
- * `clampUnlinkedNoteAnswer`'s forgiveness rule, for its reason: the worst a
- * garbled value can cost here is a question being asked that somebody had
- * silenced, which one dialog undoes. The opposite mistake would rewrite the
- * words on somebody's page without ever asking.
- */
-export function clampEcho(value: unknown): EchoStanding {
-  return value === 'update' || value === 'leave' ? value : 'ask';
-}
-
 export function readAppSettings(): AppSettings {
   const raw = readRaw();
   return {
     keepServerWarmMinutes: clampKeepWarm(raw?.['keepServerWarmMinutes']),
     libraryDir: clampLibraryDir(raw?.['libraryDir']),
-    unlinkedNoteAnswer: clampUnlinkedNoteAnswer(raw?.['unlinkedNoteAnswer']),
-    contentsRenameEcho: clampEcho(raw?.['contentsRenameEcho']),
-    headingEditEcho: clampEcho(raw?.['headingEditEcho']),
   };
 }
 
@@ -188,15 +117,6 @@ export function writeAppSettings(patch: Partial<AppSettings>): AppSettings {
   }
   if (patch.libraryDir !== undefined) {
     root['libraryDir'] = clampLibraryDir(patch.libraryDir);
-  }
-  if (patch.unlinkedNoteAnswer !== undefined) {
-    root['unlinkedNoteAnswer'] = clampUnlinkedNoteAnswer(patch.unlinkedNoteAnswer);
-  }
-  if (patch.contentsRenameEcho !== undefined) {
-    root['contentsRenameEcho'] = clampEcho(patch.contentsRenameEcho);
-  }
-  if (patch.headingEditEcho !== undefined) {
-    root['headingEditEcho'] = clampEcho(patch.headingEditEcho);
   }
   const file = settingsFile();
   fs.mkdirSync(path.dirname(file), { recursive: true });

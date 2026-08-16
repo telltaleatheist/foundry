@@ -115,20 +115,26 @@ import { api } from '../../core/foundry';
                       workspace until it is saved a copy of, and "where is it
                       actually" is a fair question to be able to answer.
 
-                      A text conversion gets REVEAL AND NO OPEN, and that is the
-                      whole of this app's answer to a .txt. There is no generic
-                      viewer here — a tab is a PDF in an iframe or an unpacked
-                      book with a chapter list and an editor — so a text tab would
-                      be a third kind that could use neither, threaded through the
-                      tab strip, the recents and the file allow-list to show a
-                      file every OS already opens. Reveal is one button and points
-                      at the thing that was actually made.
+                      ONLY THE PDF OPENS, and that is the whole of this app's
+                      answer to every other finished product. There is ONE viewer
+                      for a file — pdf.js — because there is one kind of file this
+                      app shows: a scan or a reprint of one. A .txt and an .epub
+                      get Reveal and no Open, which points at the thing that was
+                      actually made rather than threading a third tab kind through
+                      the strip, the recents and the allow-list to show a file
+                      every OS already opens.
 
-                      A REAL-TEXT PDF OPENS, and needs nothing new to do it: the
-                      tab kinds are epub and pdf, and what this job made is a PDF.
-                      Opening it is also how anybody judges it — the pages keep
-                      the scan's layout and lose the scan's grey, and whether the
-                      model read them right is a thing you look at.
+                      AN EPUB EXPORT USED TO OPEN, in the iframe reader, and that
+                      reader is deleted (docs/RENDERER.md §7). An export is a
+                      FINISHED product — the door out of this app, not a surface
+                      inside it — and what somebody edits is the book, on the
+                      proof sheet, which the library tree opens from its step.
+
+                      A REAL-TEXT PDF OPENS and needs nothing new to do it: what
+                      this job made is a PDF. Opening it is also how anybody
+                      judges it — the pages keep the scan's layout and lose the
+                      scan's grey, and whether the model read them right is a
+                      thing you look at.
 
                       A TRANSLATION DOES NOT OPEN, AND IT USED TO. What it makes
                       is a records file — one row per paragraph, keyed by where
@@ -137,9 +143,9 @@ import { api } from '../../core/foundry';
                       follows it seconds later, cast from those answers, and the
                       row in the tree is what opens it.
                     -->
-                    @if (job.kind === 'epub' || job.kind === 'pdf') {
+                    @if (job.kind === 'pdf') {
                       <button class="open" (click)="open(job)"
-                              [title]="job.kind === 'pdf' ? 'Open this PDF in a tab' : 'Open this book in a tab'">Open</button>
+                              title="Open this PDF in a tab">Open</button>
                     }
                     <button class="x" (click)="reveal(job)" title="Show it in the file manager">↗</button>
                   }

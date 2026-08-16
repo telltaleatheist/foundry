@@ -710,7 +710,7 @@ function argsFor(
    * from it too (docs/RENDERER.md §9) — so what crosses the boundary is a
    * document and the engine's job is to compile what it is handed.
    *
-   * NO `--reuse-readings`, NO `--overlay`, NO `--final`. The first two are about
+   * NO `--reuse-readings` and NO `--final`. The first is about
    * a bank this run never opens. The third is about a choice this command does
    * not have: there is no cast to write from a book file, so the edition's rules
    * are the compile's constants (see `vlm-compile`'s own help).
@@ -726,9 +726,9 @@ function argsFor(
      * THE FIGURES, WHICH ARE THE READING'S AND NOT THE BOOK FILE'S. A row names
      * its crop by NAME and the directory is composed from the bank the figures
      * were cut beside (`imagesDirFor`, electron/projects.ts) — the same
-     * composition the pane serves them through. Passed only when it is there, on
-     * `--overlay`'s rule: the engine refuses a directory it cannot open, and a
-     * book with no pictures in it has none to be given.
+     * composition the pane serves them through. Passed only when it is there: the
+     * engine refuses a directory it cannot open, and a book with no pictures in
+     * it has none to be given.
      */
     const figures = imagesDirFor(request.readingsPath);
     if (existsSync(figures)) args.push('--images', figures);
@@ -763,29 +763,6 @@ function argsFor(
     '--reuse-readings',
   ];
   /*
-   * THE CURATION, when there is one — and the existence test is the whole of the
-   * condition rather than a checkbox anywhere.
-   *
-   * A person's corrections about the blocks are not an option of a run: a book
-   * whose running heads have been struck has had them struck, and a conversion
-   * that quietly rendered the uncorrected version would be the app throwing away
-   * work it is still storing. So the flag is passed whenever the file is there.
-   *
-   * TESTED HERE, AS THE ENGINE STARTS, and not when the job was planned. A queued
-   * batch waits hours, and the hours are exactly when somebody sits with the
-   * block editor open — a plan-time test would render the book as it was before
-   * the afternoon's work. `existsSync` because this function is the command line
-   * and one stat on the way to spawning a process that will run for an hour is
-   * not a cost worth making asynchronous.
-   *
-   * ABSENT IS SILENCE, never the flag with a path behind it: the engine refuses
-   * an `--overlay` it cannot open, by name, which would turn "nobody has curated
-   * this book" into a failed conversion.
-   */
-  if (request.overlayPath !== undefined && existsSync(request.overlayPath)) {
-    args.push('--overlay', request.overlayPath);
-  }
-  /*
    * ── AND THE TRANSLATION'S OWN WORDS, WHICH IS THE WHOLE OF THE SECOND STAGE ─
    *
    * A rendering standing under a translation used to be TWO spawns: this one into
@@ -797,10 +774,8 @@ function argsFor(
    * `xml:lang` would keep the source book's answer and the product would lie about
    * itself to every reader that asked.
    *
-   * NOT TESTED FOR EXISTENCE, unlike the overlay above, and the difference is
-   * deliberate. An absent overlay means "nobody has curated this book", which is a
-   * state; an absent records file means the answers this product is MADE OF are
-   * gone, and a run that quietly wrote the book in its original language while the
+   * NOT TESTED FOR EXISTENCE, and that is deliberate. An absent records file means
+   * the answers this product is MADE OF are gone, and a run that quietly wrote the book in its original language while the
    * row said Hungarian is the worst outcome available here. The engine refuses a
    * `--records` it cannot open, by name, and that refusal is the right one.
    *
@@ -864,16 +839,15 @@ function argsFor(
 /**
  * THE RECORD A PRODUCT SHOULD CARRY, or nothing at all.
  *
- * Two lines over `projectDirOf` and `metadataForProduct`, spelled here for
- * `parentOf`'s reason: the module that knows where a project's files live answers
- * the question, and this is the two-line bridge from a path a job holds to that
- * answer. A product outside every project — there is no such export today, and
+ * Two lines over `projectDirOf` and `metadataForProduct`: the module that knows
+ * where a project's files live answers the question, and this is the bridge from
+ * a path a job holds to that answer. A product outside every project — there is no such export today, and
  * the type system cannot say so — carries nothing, which is the honest answer for
  * a file with no ledger behind it.
  *
  * ASKED OF THE STEP THE JOB CAPTURED, never of the position now. A pointer move
  * made while an export waited in the queue must not change which corrections the
- * book that comes out of it carries — the same rule `overlayPath` obeys one layer
+ * book that comes out of it carries — the same rule `readingsPath` obeys one layer
  * up, and `metadataInEffect` falls back to the position for a captured step that
  * has since been deleted.
  */
@@ -1616,11 +1590,8 @@ async function pump(): Promise<void> {
      * `curations/` for a save, the records in `readings/` for a translation, the
      * BANK for a reading's facsimile — so it is free to make again and there is
      * nothing here for a catalogue to own. Cataloguing it would do active harm
-     * rather than merely being redundant: `castBook` (electron/projects.ts) picks
-     * the newest `origin` sitting directly in `generated/` as the project's flowing
-     * book, so the first Apply would quietly make a save's private book into what
-     * the READ row shows — the exact confusion the per-step cast was built to end.
-     * Home's document rows would grow one entry per Apply beside it, and the
+     * rather than merely being redundant: Home's document rows would grow one
+     * entry per landing, and the
      * facsimile would land on the PDF's chain beside the scan and be offered as the
      * document this app edits.
      *
@@ -1672,9 +1643,9 @@ async function pump(): Promise<void> {
      * ── A BOOK MADE OF A TRANSLATION'S WORDS IS FILED AS A TRANSLATION ────────
      *
      * `records` is the whole test, and it has to be here rather than implied. The
-     * roles are not four names for one thing: `castBook` (electron/projects.ts)
-     * picks the newest `cast` sitting directly in `generated/` as THE PROJECT'S
-     * FLOWING BOOK, which is what the read row and every save row resolve to. So a
+     * roles are not four names for one thing: a `cast` sitting directly in
+     * `generated/` used to be THE PROJECT'S FLOWING BOOK, which every read row and
+     * save row resolved to. So a
      * Hungarian book filed as a cast would quietly become what the German rows
      * show — the exact confusion the per-step cast was built to end, arrived at
      * from the other side.
@@ -1910,13 +1881,10 @@ async function remakeBookFile(at: BookAtPosition): Promise<void> {
  * was. What draws it is `ProjectSummary.facsimiles`, composed from this same
  * step's id — the name is never read back out of the file.
  *
- * NO OVERLAY, DELIBERATELY, and it is the one field of the plan left on the
- * floor. A facsimile reprints what was READ; it compiles from the raw bank and
- * from nothing else (docs/RENDERER.md §6). Handing it the live curation would
- * make the record of a reading depend on corrections made after it — and on a
- * re-read those corrections name blocks by numbers that mean different blocks
- * now, so the reprint would be struck in the wrong places by a file about another
- * pass over the pages.
+ * NOTHING BUT THE BANK, DELIBERATELY. A facsimile reprints what was READ; it
+ * compiles from the raw bank and from nothing else (docs/RENDERER.md §6). Making
+ * the record of a reading depend on decisions taken after it would produce a
+ * page-for-page reprint of pages that were never like that.
  */
 async function castFacsimile(readFrom: string, reading: LedgerStep): Promise<void> {
   try {
@@ -1941,22 +1909,6 @@ async function castFacsimile(readFrom: string, reading: LedgerStep): Promise<voi
       + 'the pages can be reprinted from it whenever that is asked for.',
     );
   }
-}
-
-/**
- * The position of the project a job is about to write into.
- *
- * Main's `parentStepFor` said one folder over, for the same reason and about the
- * same field (`Job.parentStep`). It is spelled again here rather than exported
- * because the two callers reach it from opposite directions — main resolves it
- * between a renderer's press and a synchronous enqueue, this resolves it between
- * one job's settle and the next job's enqueue — and both are two lines over
- * `projectDirOf` and `positionStepId`. A shared helper would be a module boundary
- * drawn around a `??`.
- */
-async function parentOf(target: string): Promise<string | null> {
-  const dir = projectDirOf(target);
-  return dir === null ? null : positionStepId(dir);
 }
 
 /**

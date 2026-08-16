@@ -1,8 +1,6 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 
 import { BookViewComponent } from '../book-view/book-view.component';
-import { EpubViewComponent } from '../epub-view/epub-view.component';
-import { HtmlEditorComponent } from '../html-editor/html-editor.component';
 import { PdfViewComponent } from '../pdf-view/pdf-view.component';
 import type { Tab } from '../../core/tabs.service';
 
@@ -32,16 +30,18 @@ import type { Tab } from '../../core/tabs.service';
  *   to search and guess at what a miss meant. app-pdf-view can show the text
  *   beside the page.
  *
- * An EPUB gets app-epub-view, which is ours, because Chromium has no reader and
- * a book foundry cast is a book foundry knows the shape of. The third kind is
- * not a file at all: an `editor` tab is a book's chapter source, which lives in
- * a pane of its own so the rendered page can sit beside it.
+ * THE OTHER KIND IS NOT A FILE AT ALL, and it is the surface everything else in
+ * this app now leads to: a `book` tab is the project's reflowed blocks drawn on
+ * a proof sheet (app-book-view, docs/RENDERER.md §5), which is what a read, a
+ * save, an edit and an imported EPUB's origin row all open. It is not deferred
+ * like the PDF engine because there is no chunk to defer — it is this app's own
+ * components over rows that arrive on an IPC call.
  *
- * AND THE FOURTH IS NOT A FILE EITHER, and is the one the app is moving toward:
- * a `book` tab is the project's reflowed blocks drawn on a proof sheet
- * (app-book-view, docs/RENDERER.md §5), which is what a read row shows now. It
- * is not deferred like the PDF engine because there is no chunk to defer — it is
- * this app's own components over rows that arrive on an IPC call.
+ * THERE WERE FOUR KINDS AND THERE ARE TWO. `app-epub-view` rendered an unpacked
+ * book in a sandboxed <iframe> and `app-html-editor` showed one of its chapters
+ * as text beside it; both are deleted with the editing world they belonged to
+ * (docs/RENDERER.md §7), and what is drawn here is a document this app SHOWS or
+ * the book it EDITS.
  *
  * The empty state is Home's job now, not this component's: this only ever runs
  * with a tab, and a viewer with nothing in it is a screen the workspace does not
@@ -49,15 +49,11 @@ import type { Tab } from '../../core/tabs.service';
  */
 @Component({
   selector: 'app-viewer',
-  imports: [BookViewComponent, EpubViewComponent, HtmlEditorComponent, PdfViewComponent],
+  imports: [BookViewComponent, PdfViewComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (tab().kind === 'book') {
       <app-book-view [tab]="tab()" />
-    } @else if (tab().kind === 'epub') {
-      <app-epub-view [tab]="tab()" />
-    } @else if (tab().kind === 'editor') {
-      <app-html-editor [tab]="tab()" />
     } @else {
       <!--
         @defer, so pdf.js is its own chunk rather than half of the bundle the
@@ -77,7 +73,7 @@ import type { Tab } from '../../core/tabs.service';
   `,
   styles: [`
     :host { display: block; width: 100%; height: 100%; background: var(--bg-sunken); }
-    app-book-view, app-epub-view, app-pdf-view, app-html-editor { display: block; width: 100%; height: 100%; }
+    app-book-view, app-pdf-view { display: block; width: 100%; height: 100%; }
     .waiting { width: 100%; height: 100%; background: var(--bg-sunken); }
   `],
 })

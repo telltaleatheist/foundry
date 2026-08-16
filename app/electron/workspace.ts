@@ -86,12 +86,10 @@ import {
   generatedFileFor,
   importDocument,
   ledgerOf,
-  overlayFileFor,
   readManifest,
   readingBank,
   readingIsComplete,
   recordsForTranslation,
-  rotationRefusal,
 } from './projects';
 import {
   editsInEffect,
@@ -198,11 +196,10 @@ export async function planReading(
  * `readingBank` resolves the step's own payload, and `facsimileFile` names the
  * file after the same step.
  *
- * THE CURATION IT RESOLVES IS NOT USED, and the caller says so where it enqueues
- * (`castFacsimile`, electron/job-queue.ts). A facsimile is the record of what
- * was read; it compiles from the raw bank and from nothing else (§6), so the
- * plan's `overlayPath` is deliberately left on the floor rather than carried
- * onto the request.
+ * IT COMPILES FROM THE RAW BANK AND FROM NOTHING ELSE (§6) — no decisions, no
+ * ops, no edits. A facsimile is the record of what was READ, and a page-for-page
+ * reprint that had somebody's strikes applied to it would be a record of
+ * something that was never on the page.
  */
 export async function planFacsimile(
   inputPath: string,
@@ -280,7 +277,7 @@ export async function planExport(
    * replayed into it, as a book file of its own, which is the only language main
    * and the engine both speak.
    *
-   * AT PLAN TIME, on `overlayPath`'s rule one function down: which state of the
+   * AT PLAN TIME, on `readingsPath`'s rule one function down: which state of the
    * book this is is the state the person chose when they pressed the button, and
    * materialising at spawn would let a pointer move made while the job waited
    * export a different book than the dialog said it would.
@@ -606,7 +603,7 @@ async function planRendering(
    */
   const sourcePath = await archiveOriginal(dir) ?? inputPath;
   /*
-   * THE ROTATION IS NOT HERE ANY MORE, and moving it is the whole of a fix.
+   * THE ROTATION IS NOT HERE, and moving it was the whole of a fix.
    *
    * This function used to move the previous output aside before the job was even
    * enqueued. The new file was recorded only if the run SUCCEEDED — so a
@@ -620,25 +617,12 @@ async function planRendering(
    * (electron/job-queue.ts) and put back if it does not (`restoreRotation`), so
    * a run that produces nothing leaves the catalogue exactly as it was.
    *
-   * WHAT STAYS HERE IS THE REFUSAL, asked early so it can be said to somebody's
-   * face: the same rule, from the same function, because a rotation that would be
-   * refused at spawn is a job worth not queueing. It is asked AGAIN at the
-   * rotation itself, because a tab can be opened in between and only the second
-   * answer authorizes anything.
-   *
-   * AND AN EXPORT DOES NOT ASK IT, because the sentence it would say is not true of
-   * the tray. `rotationRefusal` is about a working TREE: it refuses when the book
-   * in `generated/` that a rerun would move aside has been unpacked and is being
-   * read in a tab, because the rename takes the chapters out from under that
-   * reader. Nothing is ever unpacked from `final/` — a filed EPUB opened in a tab
-   * was unpacked under its own name into `working/` and the tab reads that tree —
-   * so there is no reader to protect, and asking anyway would refuse the most
-   * ordinary export there is: the book somebody is looking at, again.
+   * AND THE REFUSAL THAT USED TO STAND HERE IS GONE WITH THE THING IT GUARDED.
+   * `rotationRefusal` asked whether the book a rerun would move aside had been
+   * UNPACKED and was being read in a tab, because the rename took the chapters out
+   * from under that reader. Nothing unpacks any more (docs/RENDERER.md §7): there
+   * is no tree, no reader of one, and therefore nothing to refuse.
    */
-  if (layer === GENERATED) {
-    const blocked = await rotationRefusal(dir, file);
-    if (blocked !== null) throw new Error(blocked);
-  }
   await fsp.mkdir(path.join(dir, layer), { recursive: true });
   await fsp.mkdir(path.join(dir, 'readings'), { recursive: true });
   return {
@@ -649,7 +633,7 @@ async function planRendering(
     sourcePath,
     outputPath,
     /*
-     * ── WHICH BANK, WHICH IS THE SAME QUESTION `overlayPath` BELOW ANSWERS ────
+     * ── WHICH BANK, WHICH THE POSITION ANSWERS AND THE KEY CANNOT ────────────
      *
      * The bank is keyed by the BOOK and never by the format: both outputs are
      * assembled from the same per-page answers, so converting a book to text after
@@ -670,7 +654,7 @@ async function planRendering(
      * always got, because that is what its read step already says. Nothing moves on
      * disk.
      *
-     * RESOLVED AT PLAN TIME for `overlayPath`'s reason, one paragraph down: it is
+     * RESOLVED AT PLAN TIME: it is
      * which state of the book the user chose when they asked, and re-resolving it at
      * spawn would let a pointer move made while the job waited silently render a
      * different reading than the dialog said it would.
@@ -680,47 +664,6 @@ async function planRendering(
      * the same blocks of the same pass over the pages.
      */
     readingsPath: readingBank(dir, manifest, forStep),
-    /*
-     * ── WHICH CURATION, WHICH IS A QUESTION THIS APP DID NOT USED TO HAVE ─────
-     *
-     * There was one overlay per book, so `--overlay` had one answer and it was a
-     * fact about the project. There is more than one now: the live file, and a
-     * frozen snapshot for every time somebody pressed Save. The POSITION decides
-     * which — standing on a save renders the book as it was at that save,
-     * standing on the reading renders it with the live corrections — and without
-     * that, a committed snapshot would be a file with a row in the history and no
-     * way on earth to see its effect.
-     *
-     * RESOLVED AT PLAN TIME, and the alternative was considered and is worse.
-     * `argsFor` tests for the file's EXISTENCE as the engine starts, deliberately,
-     * because a batch waits hours and the hours are when somebody sits with the
-     * block editor open — but WHICH overlay is a different question from whether
-     * it is there. It is what the user chose when they asked, and re-resolving it
-     * at spawn would let a pointer move made while the job waited silently render
-     * a different state of the book than the dialog said it would. The same rule
-     * as `Job.parentStep`, one layer down.
-     *
-     * IT IS THE PIPELINE'S OWN ANSWER, which is what makes a per-step cast honest:
-     * `renderPipeline` was asked of the STEP, so a save's cast gets that save's
-     * frozen snapshot (the walk finds the step itself) and a translation's cast
-     * gets the curation the translation was made under. Asking the position
-     * instead would write the live overlay under a step-shaped name — the book as
-     * it is now, filed as the book as it was then.
-     *
-     * A project nobody has committed a save in gets exactly the path it always
-     * got: the walk finds no curation step and `overlayFileFor` answers with the
-     * live `overlays/<key>.json`.
-     *
-     * IT IS THE SAME ANSWER FOR A TRANSLATED BOOK, and that is the whole of why
-     * the strike-then-re-render walkthrough needs no new overlay machinery:
-     * standing on a save made UNDER a translation, this is that save, so the
-     * struck blocks are dropped before a word is written and their records are
-     * simply never looked up. A block stricken before a translation was never
-     * translated and one stricken after is translated in the records and not asked
-     * for — same artefact either way, and only the ledger's story about the order
-     * differs.
-     */
-    overlayPath: overlayFileFor(dir, manifest, pipeline.curation),
     ...(translated === null
       ? {}
       : { records: translated.records, language: translated.language }),
@@ -800,21 +743,6 @@ function translatedWords(
   }
   return { records: path.join(dir, ...records.split('/')), language };
 }
-
-/*
- * `overlayPathFor` USED TO LIVE HERE and is gone, which is worth a line because
- * its argument was right and only stopped applying.
- *
- * It composed `<project>/overlays/<key>.json`, and it existed so that the app had
- * ONE answer to "where is the curation for this book" rather than two call sites
- * spelling the same path. There is no longer one curation to point at: there is
- * the live file and a frozen snapshot for every save, and which of them a
- * rendering reads is decided by the position rather than composed from the key.
- * So the single answer moved to where the position is known —
- * `projects.renderingOverlay`, and `overlayForPosition` for a caller that has not
- * read the catalogue yet — and a function here that could still compose the live
- * path would be the second opinion its own comment existed to prevent.
- */
 
 /**
  * Where this book's TRANSLATION goes — which is a records file, and no book.
@@ -1137,8 +1065,8 @@ function newestRecordsInto(
  * project and is the only answer a project with no read step has.
  *
  * IT NEVER MINTS. Minting is what a landing does, on evidence that a bank is a
- * different bank; a plan that minted one would re-bind every overlay in the project
- * because somebody pressed Translate.
+ * different bank; a plan that minted one would stamp a fresh id into records that
+ * are about the reading somebody actually read.
  */
 function readingGenerationOf(ledger: ProjectLedger, manifest: ProjectManifest): string | null {
   const recorded = readingInEffect(ledger)?.params?.generation ?? manifest.reading?.generation;

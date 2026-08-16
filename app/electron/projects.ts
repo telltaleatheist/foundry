@@ -112,11 +112,9 @@ import type {
   ProjectStep,
   ProjectTypeRecord,
   ProjectWorkingFile,
-  ProjectWorkingTree,
   StepCasualty,
   StepDeletion,
   StepRow,
-  TranslationWorld,
 } from '../shared/types';
 import { WHY_HANDMADE, WHY_IMPORTED, WHY_MODEL_PASS } from '../shared/types';
 import { spokenStem } from '../shared/documents';
@@ -127,16 +125,12 @@ import {
   askedOf,
   chainsWithout,
   chronological,
-  curateCastFile,
-  curationInEffect,
   deleteCost,
   deleteSubtree,
   destroyedBy,
-  displayedCuration,
   emptyLedger,
   facsimileFile,
   generationForLanding,
-  generationInEffect,
   id8,
   mergedMetadata,
   metadataInEffect,
@@ -156,7 +150,6 @@ import {
   translatedInto,
   translationBankOf,
   translationInEffect,
-  translationCastFile,
   translationFileFor,
   translationRecordsOf,
   translationTarget,
@@ -167,11 +160,10 @@ import {
 import { GENERATED_ROLE_FOR } from '../shared/documents';
 // The records `parts` grammar is the overlay's target grammar — one spelling,
 // three readers — so the validator is the same function the curation uses.
-import { parseTargetKey } from '../shared/overlay';
 // One spelling for a path, so Windows' three become one — and the same one the
 // renderer compares with, which is the point of it living in `shared`.
 import { fold } from '../shared/original';
-import { writeAtomically } from './epub-writer';
+import { writeAtomically } from './atomic';
 
 /**
  * Somebody has to be told when the library changes, and this is how.
@@ -237,20 +229,27 @@ const ARCHIVE = 'archive';
 const GENERATED = 'generated';
 const WORKING = 'working';
 const FINAL = 'final';
-/** The fifth folder: the undo ledgers, one per document. See `historyDir`. */
-const HISTORY = 'history';
-/** The sixth: the block editor's corrections, one pair per reading. See `overlaysDir`. */
-const OVERLAYS = 'overlays';
 /**
- * The seventh: frozen curations. See `curationsDir`.
+ * The fifth: frozen curations — the snapshots old `curate` steps retain.
+ *
+ * NOTHING WRITES ONE AND THE FOLDER IS NEVER SWEPT. A curation is a person's
+ * judgement about four hundred blocks, it is `irreplaceable` by the retention
+ * rule, and `shared/curate-bridge.ts` is the reader that turns one into ops when
+ * the book is opened. See `curationsDir`.
+ *
+ * TWO SIBLINGS WENT WITH THE OVERLAY SYSTEM (docs/RENDERER.md §7): `overlays/`,
+ * the live curation and its undo ledger, and `history/`, the block editor's
+ * per-working-copy undo. Neither is read or written any more; a project that has
+ * them keeps them, because deleting somebody's records to tidy a folder is not a
+ * thing this app does.
  */
 const CURATIONS = 'curations';
 /**
- * The eighth: the metadata patches, one per Apply. See `metadataDir`.
+ * The sixth: the metadata patches, one per Apply. See `metadataDir`.
  */
 const METADATA = 'metadata';
 /**
- * The ninth: the book's ops, one file per Apply. See `opsDir`.
+ * The seventh: the book's ops, one file per Apply. See `opsDir`.
  */
 const OPS = 'ops';
 /**
@@ -321,8 +320,8 @@ export function isManaged(filePath: string): boolean {
  * guard that stood between a write and a project layer would have let it through.
  *
  * The invariant is worth more than the convenience: `archive/` is the only copy of
- * that scan this program knows of, `overlay:blocks` re-measures a bank against it,
- * and the revert row's whole meaning is that it is the file as it came in.
+ * that scan this program knows of, and the revert row's whole meaning is that it
+ * is the file as it came in.
  */
 export function isArchived(filePath: string): boolean {
   const dir = projectDirOf(filePath);
@@ -482,10 +481,7 @@ export async function readManifest(dir: string): Promise<ProjectManifest> {
     createdAt: typeof row['createdAt'] === 'number' ? row['createdAt'] : 0,
     archive: readArchive(row['archive']),
     documents: readDocuments(row, readArchive(row['archive'])),
-    working: {
-      trees: readTrees(working['trees']),
-      files: readWorkingFiles(working['files']),
-    },
+    working: { files: readWorkingFiles(working['files']) },
     final: readFinal(row['final']),
     reading: readReading(row['reading']),
   };
@@ -672,31 +668,20 @@ function isGeneratedRole(value: unknown): value is ProjectGeneratedRole {
     || value === 'searchable' || value === 'text';
 }
 
-function readTrees(value: unknown): ProjectWorkingTree[] {
-  if (!Array.isArray(value)) return [];
-  const trees: ProjectWorkingTree[] = [];
-  for (const entry of value) {
-    if (typeof entry !== 'object' || entry === null) continue;
-    const row = entry as Record<string, unknown>;
-    const from = row['from'];
-    const dir = row['dir'];
-    const members = row['members'];
-    if (typeof from !== 'string' || typeof dir !== 'string' || !Array.isArray(members)) continue;
-    if (!members.every((name): name is string => typeof name === 'string')) continue;
-    trees.push({
-      from,
-      dir,
-      members,
-      unpackedAt: typeof row['unpackedAt'] === 'number' ? row['unpackedAt'] : 0,
-      // Empty for a tree recorded before generations existed. NOT minted here:
-      // a read that writes is a read that can fail, and `treeGeneration` does it
-      // once, deliberately, at the moment something needs the value.
-      generation: typeof row['generation'] === 'string' ? row['generation'] : '',
-    });
-  }
-  return trees;
-}
-
+/*
+ * `readTrees` IS GONE, AND AN OLD CATALOGUE'S `working.trees` IS SIMPLY NOT READ.
+ *
+ * The unpacked-EPUB working tree is deleted (docs/RENDERER.md §7): nothing
+ * unpacks, nothing holds a tree, nothing sweeps one. The parser is a whitelist
+ * rebuild rather than a mutation, so a field it stops naming never reaches the
+ * in-memory catalogue and is dropped from disk the next time anything writes for
+ * a reason of its own — exactly the precedent `ProjectReading.passes` set. NO
+ * VERSION BUMP: a v2 catalogue carrying `working.trees` still parses, because the
+ * version gate names versions and never keys.
+ *
+ * What stays under `working/` is the PDF's live copy — a different tenant of the
+ * same folder, and the one the metadata dialog writes into.
+ */
 function readWorkingFiles(value: unknown): ProjectManifest['working']['files'] {
   if (!Array.isArray(value)) return [];
   const files: ProjectManifest['working']['files'] = [];
@@ -794,7 +779,7 @@ function withCreatedProject<T>(
           createdAt: Date.now(),
           archive: null,
           documents: [],
-          working: { trees: [], files: [] },
+          working: { files: [] },
           final: [],
           // Nothing has been read and nothing has been corrected. The reading's
           // generation is minted by the first amendment, not by the import —
@@ -1415,10 +1400,6 @@ export async function describeStepDelete(dir: string, stepId: string): Promise<S
   const banks = new Set(orphanedBanks(deletion, manifest.key));
   const destroyed = destroyedBy(deletion, manifest.key);
   const sweeps = await planStepSweep(resolved, destroyed, banks, manifest, deletion.removed);
-  // The other refusal that must land before the card is drawn, for its own
-  // reason: a book this window is reading cannot be unlinked on Windows, so a
-  // card that ignored it would be a question whose yes main declines to act on.
-  refuseOpenPayload(sweeps, named.label);
   return {
     belongings: sweptBelongings(sweeps),
     stepId: named.id,
@@ -1430,15 +1411,15 @@ export async function describeStepDelete(dir: string, stepId: string): Promise<S
       stale: step.stale === true,
     })),
     /*
-     * THE PAYLOADS, AND THE BOOKS THE DOOMED SAVES CAST FOR THEMSELVES.
+     * THE PAYLOADS, AND THE FACSIMILES THE DOOMED READINGS MADE FOR THEMSELVES.
      *
      * This list is what the window LETS GO OF before main unlinks anything, and a
-     * per-step cast is a document a person can have open in a tab exactly as a
-     * translation's EPUB is — it is what standing on that save shows. Leaving it
-     * out would meet main's own refusal one line after the user said yes, which is
-     * a dialog that asks a question and then declines to act on the answer.
-     * `castsAmong` is the same function the sweep above composed its paths with,
-     * so the card and the delete cannot come to two lists.
+     * read step's facsimile is a document a person can have open in a tab — it is
+     * the terminal row drawn under the import. Leaving it out would meet main's own
+     * refusal one line after the user said yes, which is a dialog that asks a
+     * question and then declines to act on the answer. `castsAmong` is the same
+     * function the sweep above composed its paths with, so the card and the delete
+     * cannot come to two lists.
      */
     files: [
       ...destroyed.map((payload) => path.join(resolved, ...payload.split('/'))),
@@ -1470,18 +1451,6 @@ export async function describeStepDelete(dir: string, stepId: string): Promise<S
  * delete keeps `openBookIn` because it erases the folder, which is a different
  * act and says so in its own sentence.
  */
-function refuseOpenPayload(sweeps: readonly Sweep[], label: string): void {
-  for (const sweep of sweeps) {
-    if (sweep.treeRoot === null || !workingTreeHeld(sweep.treeRoot)) continue;
-    throw new ProjectError(
-      `“${label}” cannot be deleted while the book it made is open in Foundry — erasing the `
-      + 'working copy out from under a tab that is reading it would leave that tab showing files '
-      + 'that no longer exist, and would leave half an unpacked book on disk. Close the book '
-      + 'first, then delete the step.',
-    );
-  }
-}
-
 /**
  * Everything on disk that goes with the payloads a step delete destroys.
  *
@@ -1528,30 +1497,27 @@ async function planStepSweep(
    * and are nobody's payload: the books a save and a translation cast for
    * themselves.
    *
-   * It is a rendering — free, regenerable, never catalogued (`castForCurateStep`
-   * says why not) — which is exactly what makes it unreachable from every other
-   * mechanism in here. `orphanedPayloads` reasons over payloads and this is not
-   * one; `manifest.documents` has no row for it; the name is composed from the
-   * step's own uuid, so once the row is gone nothing on this disk could ever work
-   * out what the file was. Left behind it would be a whole EPUB in `generated/`
-   * that no screen in this app will ever mention again, which is the same failure
-   * a translation's abandoned bank was.
+   * It is a rendering — free, regenerable, never catalogued
+   * (`facsimileForReadStep` says why not) — which is exactly what makes it
+   * unreachable from every other mechanism in here. `orphanedPayloads` reasons
+   * over payloads and this is not one; `manifest.documents` has no row for it; the
+   * name is composed from the step's own uuid, so once the row is gone nothing on
+   * this disk could ever work out what the file was. Left behind it would be a
+   * whole PDF in `generated/` that no screen in this app will ever mention again,
+   * which is the same failure a translation's abandoned bank was.
    *
    * THE STEPS AND NOT A LIST OF PATHS, because composing the name needs the
    * project's stem and the step's id together, and a caller that composed it would
-   * be the second place that decides what a save's book is called.
+   * be the second place that decides what a reading's reprint is called.
    */
   removed: readonly LedgerStep[] = [],
 ): Promise<Sweep[]> {
   const sweeps: Sweep[] = [];
   for (const cast of await castsAmong(dir, manifest, removed)) {
     /*
-     * THROUGH `planSweep`, which is what makes this more than an unlink. A person
-     * who stood on that save and read the book has a working tree unpacked from
-     * this very file and an undo ledger named after that tree; both belong to it
-     * and to nothing else, and both would otherwise outlive the row. It also puts
-     * the file in front of `refuseOpenPayload`, so deleting a save while its book
-     * is open is refused rather than erased out from under the reader.
+     * THROUGH `planSweep`, which is what makes this more than an unlink: a re-read
+     * that replaced this same step rotated its earlier reprints aside, and those
+     * belong to this file and to nothing else.
      */
     const sweep = await planSweep(dir, cast, manifest);
     sweep.files.push(cast);
@@ -1581,33 +1547,27 @@ async function planStepSweep(
 }
 
 /**
- * The books the doomed steps cast for themselves, absolute, and only the ones
- * that are actually there.
+ * The facsimiles the doomed readings made for themselves, absolute, and only the
+ * ones that are actually there.
  *
  * ONE COMPOSITION FOR TWO CALLERS — the sweep that removes them and the card that
  * names them — because a card may not destroy something it did not name, and two
- * places composing `<stem>.<id8>.epub` is exactly how it ends up doing that.
+ * places composing `<stem>.<id8>.pdf` is exactly how it ends up doing that.
  *
- * BOTH KINDS OF LANDING THAT CAST A BOOK, which is a save and a translation. A
- * translation's book is a rendering now — the run writes records and the book is
- * cast from them — so it is unreachable from every other mechanism in the delete
- * for exactly the reasons a save's is: no step's payload names it, no catalogue row
- * mentions it, and the name is composed from the step's own uuid, so once the row
- * is gone nothing on disk could ever work out what the file was.
- *
- * AND THE READING'S FACSIMILE, which is that same sentence about the one action
- * that produces a document without being asked for one. Deleting a read step
+ * ONE KIND OF LANDING PRODUCES A DOCUMENT NOBODY ASKED FOR, and since R6b it is
+ * the reading's facsimile alone: the per-step cast EPUBs a save and a translation
+ * used to leave behind are deleted, and both rows are answered by the proof sheet
+ * (docs/RENDERER.md §7). Deleting a read step
  * already destroys the bank it was made of — this is the reprint of that bank,
  * uncatalogued for `facsimileForReadStep`'s reasons, and left behind it would be
  * a whole PDF in `generated/` describing pages nothing in this project reads any
  * more. `planSweep` takes its rotated predecessors with it, which is where a
  * re-read that replaced this same step left its earlier reprints.
  *
- * THE EXISTENCE TEST EARNS ITS STAT. A save from before casting was per-step, a
- * translation from before records (whose book is its payload, and is destroyed as
- * one), one whose cast failed, one whose cast was rotated aside: all of them are
- * rows with no book at this name, and a path in either list for a file that was
- * never made would be this app naming debris it invented.
+ * THE EXISTENCE TEST EARNS ITS STAT. A reading from before the facsimile landed
+ * automatically, one whose facsimile failed, one whose facsimile was rotated
+ * aside: all of them are rows with no reprint at this name, and a path in either
+ * list for a file that was never made would be this app naming debris it invented.
  */
 async function castsAmong(
   dir: string,
@@ -1616,14 +1576,7 @@ async function castsAmong(
 ): Promise<string[]> {
   const casts: string[] = [];
   for (const step of removed) {
-    const language = step.params?.language ?? '';
-    const named = step.action === 'curate'
-      ? castForCurateStep(manifest, step)
-      : step.action === 'read'
-        ? facsimileForReadStep(manifest, step)
-        : step.action === 'translate' && language.length > 0
-          ? castForTranslateStep(manifest, step, language)
-          : null;
+    const named = step.action === 'read' ? facsimileForReadStep(manifest, step) : null;
     if (named === null) continue;
     const cast = path.join(dir, ...named.split('/'));
     if (await exists(cast)) casts.push(cast);
@@ -1643,13 +1596,12 @@ async function castsAmong(
 /**
  * What the sweep will take besides the payloads, as one sentence — or null.
  *
- * A CONFIRM MAY NOT DESTROY SOMETHING IT DID NOT NAME. Everything in here is
- * genuinely going: the unpacked working copy of a book, the undo history written
- * against it, the versions earlier runs rotated aside. Every one of them belongs
- * to a payload above and to nothing else (`planSweep` is the argument for each),
- * so leaving them would leave bytes nothing in the app can reach — and taking
- * them silently would be the app erasing an afternoon's markup while asking about
- * a row in a list.
+ * A CONFIRM MAY NOT DESTROY SOMETHING IT DID NOT NAME. What is left in here after
+ * the working trees went (docs/RENDERER.md §7) is the versions earlier runs
+ * rotated aside — they belong to a payload above and to nothing else (`planSweep`
+ * is the argument), so leaving them would leave bytes nothing in the app can
+ * reach, and taking them silently would be the app erasing an earlier reprint
+ * while asking about a row in a list.
  *
  * NULL FOR THE ORDINARY CASE, which is most of them: a curation snapshot is one
  * file, and a reading nobody re-read has nothing beside it. A sentence that
@@ -1657,32 +1609,12 @@ async function castsAmong(
  * to skip.
  */
 function sweptBelongings(sweeps: readonly Sweep[]): string | null {
-  let trees = 0;
-  let histories = 0;
   let versions = 0;
-  for (const sweep of sweeps) {
-    if (sweep.treeRoot !== null) trees += 1;
-    histories += sweep.histories;
-    versions += sweep.archivedVersions;
-  }
-  const parts: string[] = [];
-  if (trees > 0) {
-    parts.push(trees === 1
-      ? 'the unpacked working copy of that book'
-      : `${trees} unpacked working copies`);
-  }
-  if (histories > 0) {
-    parts.push(histories === 1 ? 'its undo history' : `${histories} undo histories`);
-  }
-  if (versions > 0) {
-    parts.push(versions === 1
-      ? 'one earlier version an earlier run rotated aside'
-      : `${versions} earlier versions earlier runs rotated aside`);
-  }
-  if (parts.length === 0) return null;
-  const said = parts.length === 1
-    ? parts[0]!
-    : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  for (const sweep of sweeps) versions += sweep.archivedVersions;
+  if (versions === 0) return null;
+  const said = versions === 1
+    ? 'one earlier version an earlier run rotated aside'
+    : `${versions} earlier versions earlier runs rotated aside`;
   return `It also takes ${said}. Those belong to the files above and nothing else in this project `
     + 'names them.';
 }
@@ -1821,18 +1753,8 @@ export async function deleteStep(dir: string, stepId: string): Promise<LedgerVie
     const banks = new Set(orphanedBanks(deletion, manifest.key));
     const destroyed = destroyedBy(deletion, manifest.key);
     const planned = await planStepSweep(resolved, destroyed, banks, manifest, deletion.removed);
-    // PROVED AGAIN INSIDE THE TRANSACTION, never trusted from `describeStepDelete`:
-    // a book can be opened between the question and the answer, and this is the
-    // call that unlinks a working tree.
-    refuseOpenPayload(planned, stepOf(ledgerOf(manifest), stepId).label);
-
     manifest.ledger = deletion.ledger;
     manifest.documents = chainsWithout(manifest.documents, destroyed);
-    // The trees are keyed by the origin they were unpacked FROM, which is a
-    // project-relative path spelled exactly as a payload is — so this compares
-    // whole paths and never a basename.
-    const unpacked = new Set(destroyed);
-    manifest.working.trees = manifest.working.trees.filter((row) => !unpacked.has(row.from));
     await writeManifest(resolved, manifest);
     return { ledger: deletion.ledger, orphans: destroyed, sweeps: planned };
   });
@@ -1853,7 +1775,6 @@ export async function deleteStep(dir: string, stepId: string): Promise<LedgerVie
   // did not work while leaving it done.
   for (const sweep of sweeps) {
     for (const target of sweep.files) await fsp.rm(target, { force: true });
-    for (const target of sweep.dirs) await fsp.rm(target, { recursive: true, force: true });
     // An `archived-<stamp>/` folder that held nothing but this payload's past goes
     // with it. Emptiness is the test rather than "we emptied it", because one
     // rotation folder can hold several documents stamped in the same second.
@@ -2109,81 +2030,6 @@ export async function positionStepId(dir: string): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-/**
- * The overlay a rendering AT THE POSITION is made with: a frozen snapshot when
- * the user is standing on one, the live curation otherwise.
- *
- * ── This is where the pointer stops being decoration ────────────────────────
- *
- * Every rendering in this app is `render(bank + overlay)` and there has only ever
- * been one overlay to pass. A curation step freezes a copy of it, and a frozen
- * copy nobody can render is a file with no purpose — so standing on a save has to
- * change which file `--overlay` names, or the whole commit is bookkeeping about
- * nothing. `curationInEffect` is the decision and it is pure; this composes the
- * path from it.
- *
- * THE LIVE FILE IS THE ANSWER FOR ALMOST EVERY PROJECT, and that is what makes
- * this safe to put in the path of every Generate: a project where nobody has ever
- * pressed Save has no `curate` step for any position to resolve to, so it gets
- * exactly the path it has always got.
- */
-export function renderingOverlay(dir: string, manifest: ProjectManifest): string {
-  return overlayFileFor(dir, manifest, curationInEffect(ledgerOf(manifest)));
-}
-
-/** The same answer for a caller that has not read the catalogue yet. */
-export async function overlayForPosition(dir: string): Promise<string> {
-  return renderingOverlay(dir, await readManifest(dir));
-}
-
-/**
- * The overlay the BLOCK EDITOR SHOWS at the position — and the reason there are
- * two of these functions rather than one.
- *
- * ── Two questions that used to be one, and the row where they part ──────────
- *
- * What a Generate is made with and what the pages draw were the same answer for
- * as long as the only two states were "standing on a save" and "standing on the
- * reading". A translation broke that tie. A Generate from a translate row is made
- * with the curation the translation was taken under, because that is the state
- * its blocks were numbered in and it is a fact about the chain — but the PANE
- * there shows the live corrections, because a translate row froze nobody's
- * corrections and the person standing on it is trying to strike a paragraph in a
- * book they just translated (`DISPLAYS_ITSELF`, shared/ledger.ts, and
- * docs/TRANSLATION-STEPS.md §4).
- *
- * So this composes a path from `displayedCuration` and `renderingOverlay` above
- * composes one from `curationInEffect`, and they agree everywhere except that one
- * row. THEY SHARE THE COMPOSITION AND NOT THE QUESTION, which is the split stated
- * exactly: the fallback to the live file, the project-relative payload split on
- * its own forward slashes, the never-by-basename rule — all of that is one
- * function below, so the day the layout changes it changes for both. What differs
- * is the sentence each of them asks the ledger, and that is the whole of it.
- */
-export function displayedOverlay(dir: string, manifest: ProjectManifest): string {
-  return overlayFileFor(dir, manifest, displayedCuration(ledgerOf(manifest)));
-}
-
-/**
- * A snapshot's file, or the live overlay when there is no snapshot.
- *
- * EXPORTED FOR THE ONE CALLER THAT KNOWS ITS SNAPSHOT WITHOUT ASKING THE
- * POSITION: a rendering keyed to one step (`planFacsimile`, electron/workspace.ts).
- * A curate landing leaves the pointer where it was, so a plan that asked
- * `renderingOverlay` there would render the LIVE overlay under a step-shaped
- * name — the book as it is now, filed as the book as it was then. The step is
- * handed in instead, and this is the composition both routes share.
- */
-export function overlayFileFor(
-  dir: string,
-  manifest: ProjectManifest,
-  snapshot: LedgerStep | null,
-): string {
-  return snapshot === null
-    ? path.join(overlaysDir(dir), `${manifest.key}.json`)
-    : path.join(dir, ...snapshot.payload.split('/'));
 }
 
 /**
@@ -2576,11 +2422,6 @@ export async function documentAtPosition(dir: string): Promise<string | null> {
      * this position for a viewer to be pointed at (docs/RENDERER.md §7).
      */
     if (view.step.action === 'translate') {
-      const language = view.step.params?.language ?? '';
-      const cast = language.length === 0
-        ? null
-        : await onDisk(resolved, castForTranslateStep(manifest, view.step, language));
-      if (cast !== null) return cast;
       return translationRecordsOf(view.step) === null
         ? await onDisk(resolved, view.step.payload)
         : null;
@@ -2601,25 +2442,19 @@ export async function documentAtPosition(dir: string): Promise<string | null> {
     return await onDisk(resolved, live ?? view.step.payload);
   }
 
-  // A read or a save: the document produced from the reading this branch of the
-  // story is about. No reading, nothing produced, nothing to show.
-  if (view.reading === null) return null;
   /*
-   * THE SAVE'S OWN BOOK FIRST, and `view.curation` is the right question rather
-   * than `view.step.action === 'curate'` spelled here: `displayedCuration` is what
-   * decides whether the row being stood on is a frozen save, and a second opinion
-   * composed at this call site is how the pane and the lock come to disagree about
-   * what the user is looking at (see `DISPLAYS_ITSELF`).
+   * ── AND EVERY OTHER ROW NAMES NO DOCUMENT, WHICH IS THE WAVE LANDING ───────
+   *
+   * A read, a save, an edit: all three are drawn on the PROOF SHEET, out of the
+   * book file and the ops chain that reaches this position (docs/RENDERER.md §3).
+   * There is no file for a viewer to be pointed at, and there has not been one
+   * since the per-step casts were deleted — this used to answer the save's own
+   * cast, then the project's flowing book, then the live PDF, and all three of
+   * those were the same claim: that the book is a document sitting in a folder.
+   * It is not. `positionView.sheet` is what routes these rows, and null here is
+   * how this side says so.
    */
-  if (view.curation !== null) {
-    const own = await onDisk(resolved, castForCurateStep(manifest, view.curation));
-    if (own !== null) return own;
-  }
-  const cast = castBook(manifest);
-  const flowing = cast === null ? null : await onDisk(resolved, cast);
-  if (flowing !== null) return flowing;
-  const live = await reconcileLivePdf(resolved, manifest);
-  return live === null ? null : onDisk(resolved, `${WORKING}/${live.file}`);
+  return null;
 }
 
 /**
@@ -2754,184 +2589,30 @@ async function stepStandingFor(
   if (live !== null && relative === fold(live)) return origin.id;
 
   /*
-   * A TRANSLATION IS FOUND BY ITS BOOK, WHICH IS NOW A CAST RATHER THAN ITS
-   * PAYLOAD — and by its payload as well, for every row that predates records.
-   *
-   * `documentAtPosition` answers a translate row with `castForTranslateStep` and
-   * falls back to the step's own payload for a pre-records row, so both of those
-   * paths have to come back HERE, or focusing the tab showing a translation would
-   * quietly leave the pointer on whatever it was standing on. The two functions
-   * are one fact read in two directions and the day they disagree is the day the
-   * selection fights the user.
+   * A TRANSLATION IS FOUND BY ITS PAYLOAD, and only for a row that predates
+   * records. Those steps retain the EPUB the old EPUB-to-EPUB translator wrote, so
+   * the payload is a real document somebody can focus. A records translation has
+   * no document at all — its row is drawn on the sheet — so there is nothing here
+   * to find it by, which is `documentAtPosition` read backwards and is why the two
+   * cannot disagree.
    */
-  const translated = newestWhere(ledger, (step) => {
-    if (step.action !== 'translate') return false;
-    if (fold(step.payload) === relative) return true;
-    const language = step.params?.language ?? '';
-    return language.length > 0
-      && fold(castForTranslateStep(manifest, step, language)) === relative;
-  });
+  const translated = newestWhere(
+    ledger,
+    (step) => step.action === 'translate' && fold(step.payload) === relative,
+  );
   if (translated !== null) return newestOfChain(ledger, translated).id;
 
-  /*
-   * A SAVE'S OWN BOOK STANDS ON THAT SAVE, and on nothing else — the one answer
-   * in this function that does NOT walk down to the newest step of a chain.
-   *
-   * The plain cast is shown by the reading and by every save under it, one file
-   * for many rows, so the reverse direction has to choose and chooses the row you
-   * can act from (the paragraph above). A per-step cast has no such ambiguity: it
-   * was made from exactly one snapshot and shows exactly one row's book, so
-   * walking anywhere from it would move the pointer off the document the person
-   * just focused — which is the selection fighting the user that this whole
-   * function exists to prevent.
-   */
-  const own = ledger.steps.find((step) => (
-    step.action === 'curate' && relative === fold(castForCurateStep(manifest, step))
-  ));
-  if (own !== undefined) return own.id;
-
-  const cast = castBook(manifest);
-  if (cast !== null && relative === fold(cast)) {
-    const reading = newestWhere(ledger, (step) => step.action === 'read');
-    if (reading !== null) return newestOfChain(ledger, reading).id;
-  }
   return null;
 }
 
 /**
- * The TRANSLATE step whose words this document SHOWS, or null for a book in its
- * own language — the word ops' question, asked before an edit is mirrored
- * anywhere.
- *
- * NOT merely "is this a translate step's cast". A save made under a
- * translation casts its own book, and that book's blocks carry the ancestral
- * records' words (`renderPipeline`'s table: curate under translate renders
- * THIS snapshot + the ancestral records) — so a word edit over it is a
- * correction to the TRANSLATION, and mirroring it into the source curation's
- * `text` field would write Hungarian over the German bank, silently, in
- * exactly the walkthrough this app is for (translate, strike, save, keep
- * reading). So the question is answered the way every rendering answers it:
- * `stepStandingFor` says which step this document belongs to, and
- * `translationInEffect` walks the ancestry from there — one fact, read through
- * the same two functions the cast itself was planned with, so the words on
- * screen and the file a correction lands in cannot come to disagree.
- */
-async function translateStepForDocument(
-  dir: string,
-  absolutePath: string,
-): Promise<LedgerStep | null> {
-  const resolved = deletableProjectDir(dir);
-  const manifest = await readManifest(resolved);
-  const ledger = ledgerOf(manifest);
-  const stepId = await stepStandingFor(resolved, manifest, absolutePath);
-  if (stepId === null) return null;
-  return translationInEffect(ledger, stepOf(ledger, stepId));
-}
-
-/**
- * Which world a word edit on this document lands in — `translation:of-document`.
- *
- * Null is the ordinary book (the source world, where an edit mirrors to the
- * curation); a record names a translate step's own book. `legacy` is
- * `translationRecordsOf`'s null read back out as a fact the renderer can say a
- * sentence about, rather than a refusal here — asking is free and asking is not
- * yet editing.
- */
-export async function translationWorldOf(
-  dir: string,
-  absolutePath: string,
-): Promise<TranslationWorld | null> {
-  const step = await translateStepForDocument(dir, absolutePath);
-  if (step === null) return null;
-  return {
-    language: step.params?.language ?? '',
-    legacy: translationRecordsOf(step) === null,
-  };
-}
-
-/**
- * "Edit transformed text" — one corrected paragraph, appended to the translate
- * step's records file as a keyless human row.
- *
- * ── The row, and why it carries no key ──────────────────────────────────────
- *
- * `{parts, text, author: "user"}`. A key is a hash over the masked SOURCE text
- * and the run's own parameters, which a person correcting one paragraph has no
- * way to compute — and a keyless row never enters the cost cache, so a
- * correction can never be served as the banked answer to some other block's
- * question. Materialization takes the newest row per position, so the
- * correction shows from the next cast; a later run of the translator keeps it
- * standing while the source it answers is unchanged (the engine reads the
- * position's newest KEYED row to know which question the person was answering
- * — src/translate/run.ts, `recordRow`).
- *
- * ── The write is append-by-rewrite, atomically ──────────────────────────────
- *
- * The engine appends with fsync because a run dies mid-book; this door writes
- * ONE row per human gesture, so it reads the file, adds the line, and swaps
- * the whole thing into place with the same temp-beside-target rename every
- * other whole file in this app is written with. NOT the engine's `.pending`
- * protocol: that name is a resumable fresh-run's, and a leftover of ours under
- * it would be read as a translation somebody began. The caller (main) has
- * already refused this call while a run is producing the file; the check and
- * the write are not one atom, which is a millisecond race accepted and named
- * over a lock file nobody else would honour.
+ * In-flight appends per records file, so two corrections a second apart cannot
+ * both read the file and write back over each other.
  *
  * Serialised per file, because two edits half a second apart are the ordinary
  * gesture stream and a read-modify-write that overlapped would drop the first.
  */
 const recordEditWrites = new Map<string, Promise<void>>();
-
-export async function recordTranslationEdit(
-  dir: string,
-  absolutePath: string,
-  parts: string,
-  text: string,
-  /**
-   * The caller's answer to "is something producing this file right now" — a
-   * refusal sentence, or null to proceed. It is a parameter because the queue
-   * knows and this module must not import it (the queue imports this module);
-   * main, which composes the door, holds both.
-   */
-  busy: (recordsFile: string) => string | null = () => null,
-  /*
-   * ANSWERS WITH THE FILE IT WROTE, which is not decoration: the derived book in
-   * this translation's language is a pure function of that file (docs/RENDERER.md
-   * §4), so a correction appended here leaves it stale until somebody makes it
-   * again. This module cannot make it — the materializer walks the ledger and
-   * lives in electron/book.ts, which imports this one — so it hands back the path
-   * and main, which holds both, remakes the book. Exactly the arrangement `busy`
-   * above already is, in the other direction.
-   */
-): Promise<string> {
-  const step = await translateStepForDocument(dir, absolutePath);
-  if (step === null) {
-    throw new ProjectError(
-      'This book is not a translation, so there is no translation to record the correction in. '
-      + 'The edit itself is in the book.',
-    );
-  }
-  // The grammar, checked piece by piece before a byte moves: `parts` is
-  // data-bf-src's spelling — space-joined block keys — with `#note` legal on a
-  // single-key row, exactly what the emitter stamps and the engine looks up by.
-  // IT IS THIS DOOR'S CHECK AND NOT THE APPEND'S: the pane's own correction door
-  // keys by BLOCK ID (`recordCorrection` below says why), and a block id is not a
-  // thing `parseTargetKey` can read.
-  const pieces = parts.split(/\s+/).filter((piece) => piece.length > 0);
-  if (pieces.length === 0) {
-    throw new ProjectError('The edited block names no banked answer, so the correction cannot be recorded.');
-  }
-  for (const piece of pieces) {
-    const at = parseTargetKey(piece);
-    if (at.note !== undefined && pieces.length > 1) {
-      throw new ProjectError(
-        'A footnote correction names one note of one block, and this one names several blocks at '
-        + 'once — that is not a shape a record can hold.',
-      );
-    }
-  }
-  return recordCorrection(dir, step, parts, text, busy);
-}
 
 /**
  * THE CORRECTION ITSELF — one keyless human row, appended to a translate step's
@@ -2939,24 +2620,22 @@ export async function recordTranslationEdit(
  *
  * ── Why this is a function of a STEP and not of a document ──────────────────
  *
- * Because there are two doors onto it now and only one of them has a document.
- * `recordTranslationEdit` above starts from a cast EPUB's path and resolves the
- * step through `stepStandingFor`; the renderer's aligned view starts from THE
- * POSITION — there is no file on disk it is editing, only the book file main
- * materialised and the ops chain over it — and resolves the same step through
- * `translationInEffect` (electron/book.ts, `correctBookBlock`). One step, one
- * append, one serialisation lock: the two doors must not be two implementations
- * of "write a corrected paragraph down", because the whole point of the records
- * model is that a translation's words live in exactly one file.
+ * Because the door that had one is deleted. The EPUB pane resolved a step from a
+ * cast's path (`recordTranslationEdit`, gone with the iframe reader); the
+ * renderer's aligned view starts from THE POSITION — there is no file on disk it
+ * is editing, only the book file main materialised and the ops chain over it — and
+ * resolves the step through `translationInEffect` (electron/book.ts,
+ * `correctBookBlock`). One step, one append, one serialisation lock, and now one
+ * door: a translation's words live in exactly one file and are written from
+ * exactly one place.
  *
- * ── `parts` IS WHATEVER THE CALLER'S WORLD KEYS BY, and that is honest ──────
+ * ── `parts` IS A BLOCK ID, AND THE OLD SPELLING IS STILL READ BACK ─────────
  *
- * The EPUB door writes `page:order[:part]`, which is what its emitter stamped
- * into the document. The pane writes a BLOCK ID, which is what the book file
- * names its rows. Both are read back by the same lookup, which tries the book's
- * ids first and the legacy spelling second (`translationWords`, shared/records.ts)
- * — so the two vocabularies meet at materialisation and neither has to be
- * translated into the other on the way in.
+ * The pane writes a BLOCK ID, which is what the book file names its rows. Records
+ * written by the deleted EPUB door spell `page:order[:part]`, and the lookup still
+ * tries the book's ids first and that spelling second (`translationWords`,
+ * shared/records.ts) — nothing writes the old vocabulary any more, and every file
+ * that already holds it goes on being read.
  *
  * The word checks below are common to both because they are about the WORDS:
  * empty is not a correction, and control characters are not text a book can hold.
@@ -3109,67 +2788,12 @@ function newestOfChain(ledger: ProjectLedger, from: LedgerStep): LedgerStep {
  * is not guaranteed to be.
  */
 /**
- * The book ONE CURATE STEP cast for itself, project-relative — a name, never a
- * promise that the file is there.
- *
- * COMPOSED AND NOT CATALOGUED, which is the decision worth writing down. The
- * per-step cast is a RENDERING: free, made again from the step's own snapshot at
- * any time, and deliberately NOT a row in `manifest.documents`. Two things fall
- * out of that and both are wanted. `castBook` goes on meaning the project's one
- * flowing book — a per-step cast filed as a `generated/` origin would be the
- * newest one, so a read row would start showing whichever save was pressed last,
- * which is the exact confusion this whole unit exists to end. And Home's document
- * rows go on listing the documents a person made rather than one per Apply.
- *
- * WHICH LEAVES ONE OBLIGATION, DISCHARGED IN `planStepSweep`: a file nothing
- * catalogues is a file nothing would ever remove, so the step delete composes
- * this same name and sweeps it. That is why the composition is in shared/ledger.ts
- * (`curateCastFile`) and asked for here rather than spelled in either place.
- */
-function castForCurateStep(manifest: ProjectManifest, step: LedgerStep): string {
-  return `${GENERATED}/${curateCastFile(manifest.stem, step.id)}`;
-}
-
-/**
- * The book ONE TRANSLATE STEP is shown as, project-relative — a name, never a
- * promise that the file is there.
- *
- * THE SAME ARRANGEMENT AS A SAVE'S BOOK ABOVE, and for a stronger version of its
- * reason. A save's cast is a rendering because the snapshot it is made from is the
- * payload; a translation's cast is a rendering because THE RUN NEVER WROTE A BOOK
- * AT ALL. What `translate --records` leaves behind is per-block answers, and the
- * document is `vlm-convert` over the same reading bank with those answers put into
- * the blocks — which is why the translated book comes out of the same reflow, the
- * same curation, the same chapters and the same edition rules as the source rather
- * than out of a second pipeline that had to be kept in step with this one.
- *
- * NOT CATALOGUED, exactly as a save's is not, and here it costs something worth
- * naming: `manifest.documents` no longer grows a row for a translated EPUB, so
- * Home's per-type list stops mentioning translations. The tree draws from the
- * LEDGER (docs/WORKBENCH.md §6c) and the translate step is right there in it, which
- * is where a person looks for their translation now; cataloguing the cast as a
- * document would put a filename back in a list the library tree replaced, and would
- * do it for a file that is remade every time the row is re-run.
- *
- * THE LANGUAGE IS PASSED IN rather than read off the step, because a step that
- * never recorded one has no cast and the caller has to decide what to do about
- * that — `documentAtPosition` falls back to the payload, the sweep skips it. A
- * default here would compose a plausible name for a file nobody ever wrote.
- */
-function castForTranslateStep(
-  manifest: ProjectManifest,
-  step: LedgerStep,
-  language: string,
-): string {
-  return `${GENERATED}/${translationCastFile(manifest.stem, language, step.id)}`;
-}
-
-/**
  * The page-for-page reprint ONE READ STEP made of its own pages,
  * project-relative — a name, never a promise that the file is there.
  *
- * THE THIRD MEMBER OF THE FAMILY ABOVE, and it belongs to it for their reasons
- * rather than by resemblance. It is a RENDERING: `vlm-convert --format pdf` over
+ * THE ONE ACTION LEFT THAT PRODUCES A DOCUMENT NOBODY ASKED FOR — the per-step
+ * casts a save and a translation used to leave are deleted (docs/RENDERER.md §7)
+ * and both rows are answered by the proof sheet. It is a RENDERING: `vlm-convert --format pdf` over
  * a bank that is already complete, free, offline, made again at any time, and
  * emphatically NOT a row in `manifest.documents`. Cataloguing it would do the
  * same active harm cataloguing a save's book would, one type over — the PDF
@@ -3190,12 +2814,8 @@ function facsimileForReadStep(manifest: ProjectManifest, step: LedgerStep): stri
  * Every facsimile this project's readings actually have on disk —
  * `ProjectSummary.facsimiles`.
  *
- * THE ONE PLACE THAT STATS, which is the difference between this and
- * `renderingsOf` above it and is the whole reason the two are separate
- * functions. That one answers "would a step show this path", which is true
- * whether or not the rendering has been made; this one draws a ROW, and a row
- * for a file that is not there is a nav offering something to click that opens
- * nothing. Every project read before facsimiles existed is in exactly that
+ * THE ONE PLACE THAT STATS. It draws a ROW, and a row for a file that is not
+ * there is a nav offering something to click that opens nothing. Every project read before facsimiles existed is in exactly that
  * state, and it is the ordinary state rather than an error — the reading is
  * complete, the bank is on disk, and a facsimile of it is one export away.
  */
@@ -3218,47 +2838,6 @@ async function facsimilesOf(
 }
 
 /**
- * Every book this project's steps cast for themselves — `ProjectSummary.renderings`.
- *
- * ONE PLACE ASKS THE TWO COMPOSERS ABOVE, and it is deliberately not a third
- * account of which actions render. `documentAtPosition` reads the same pair in
- * the same order to decide what a row SHOWS, and the two agreeing is the whole
- * value of this: the library draws no loose row for a file precisely when the
- * position would open that file, which is the one condition under which the row
- * would have been a lie.
- *
- * A TRANSLATE STEP WITH NO LANGUAGE CONTRIBUTES NOTHING, exactly as it does
- * there. Its cast has no name to compose, so it has no rendering — and a row for
- * it in the tree, should somebody open its payload, is then the honest answer.
- */
-function renderingsOf(manifest: ProjectManifest): string[] {
-  const out: string[] = [];
-  for (const step of ledgerOf(manifest).steps) {
-    if (step.action === 'curate') {
-      out.push(castForCurateStep(manifest, step));
-      continue;
-    }
-    if (step.action !== 'translate') continue;
-    const language = step.params?.language ?? '';
-    if (language.length > 0) out.push(castForTranslateStep(manifest, step, language));
-  }
-  return out;
-}
-
-function castBook(manifest: ProjectManifest): string | null {
-  const live = stepsOf(manifest, 'epub').filter(
-    (step) => step.kind === 'origin'
-      && step.retention !== 'irreplaceable'
-      && step.file.startsWith(`${GENERATED}/`)
-      && !step.file.slice(GENERATED.length + 1).includes('/'),
-  );
-  return live.reduce<ProjectStep | null>(
-    (newest, step) => (newest === null || step.appliedAt >= newest.appliedAt ? step : newest),
-    null,
-  )?.file ?? null;
-}
-
-/**
  * The project's own working copy of an archived file, project-relative, or null
  * when the archive is all there is.
  *
@@ -3269,10 +2848,10 @@ function castBook(manifest: ProjectManifest): string | null {
  *
  * The two kinds keep their copies in different layers because they are different
  * arrangements, not because anything is inconsistent: a PDF's live copy is
- * `working/`, catalogued in `working.files` with the layer it came from; an EPUB's
- * is the STAMPED copy in `generated/`, recorded as that type's own origin step
- * (`importDocument`), because a book without Foundry's stamps is one no later pass
- * will admit.
+ * `working/<stem>.pdf`, catalogued in `working.files` with the layer it came from
+ * — the one thing under `working/` that outlived the unpacked trees, because it is
+ * the copy the metadata dialog writes into; an EPUB's is the STAMPED copy in
+ * `generated/`, recorded as that type's own origin step (`importDocument`).
  */
 async function liveCopyOf(
   dir: string,
@@ -3532,56 +3111,18 @@ function stepsOf(manifest: ProjectManifest, kind: ProjectDocumentKind): ProjectS
 // The generated layer
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Working trees an open book is reading and writing right now.
- *
- * A rotation MOVES a working tree (see `rotateGenerated`), and moving the
- * directory an open tab is serving its chapters from would leave that tab
- * reading paths that no longer exist — every image a 404, every save a failure,
- * and nothing on screen saying why. So a re-run of a conversion whose previous
- * book is open is refused by name instead. Held by the epub reader from open to
- * close.
- *
- * COUNTED, not a set. One tree can be open twice — the same book reached both as
- * the file the user dropped and as the copy Home lists in its project — and a
- * set would let the first tab to close unlock a tree the second is still
- * reading. The count only ever goes to zero when the last reader has gone.
- */
-const heldTrees = new Map<string, number>();
-
-export function holdWorkingTree(root: string): void {
-  const key = path.resolve(root).toLowerCase();
-  heldTrees.set(key, (heldTrees.get(key) ?? 0) + 1);
-}
-
-export function releaseWorkingTree(root: string): void {
-  const key = path.resolve(root).toLowerCase();
-  const held = (heldTrees.get(key) ?? 0) - 1;
-  if (held > 0) heldTrees.set(key, held);
-  else heldTrees.delete(key);
-}
-
-function workingTreeHeld(root: string): boolean {
-  return heldTrees.has(path.resolve(root).toLowerCase());
-}
-
 /** `archived-2026-08-14T00-31-02-114Z` — the engine's shape, colons removed. */
 function stampedArchive(parent: string): string {
   return path.join(parent, `archived-${new Date().toISOString().replace(/[:.]/g, '-')}`);
 }
 
 /**
- * Move an origin — and the working tree unpacked from it — aside, if it is there.
+ * Move an origin aside, if it is there.
  *
  * Called before a conversion writes, so a second run of the same book replaces
  * the first WITHOUT destroying it. `generated/` is never overwritten, ever: it
  * is the record of what the model read, and the previous read is still a record
  * of something.
- *
- * THE WORKING TREE GOES WITH IT, and that is not tidiness. The tree is keyed by
- * the origin it came from, so a new cast EPUB beside a tree unpacked from the
- * old one would open the OLD book's edits and never show the new conversion at
- * all — the failure would look like the run having done nothing.
  */
 /**
  * A rotation that happened, and everything needed to put it back.
@@ -3596,37 +3137,6 @@ export interface Rotation {
   file: string;
   /** Where it went: `generated/archived-<stamp>/<file>`. */
   movedTo: string;
-  /** The working tree's catalogue row, which the rotation struck out. */
-  tree: ProjectWorkingTree | null;
-}
-
-/**
- * Whether a rotation of this file is currently refusable, and why.
- *
- * ONE RULE, ASKED TWICE. The rotation itself happens as the engine starts, which
- * is the right moment for the filesystem and the wrong moment to tell somebody
- * their book is open — by then they have pressed Generate and walked away. So the
- * dialog asks this first and refuses in front of them, and the rotation asks it
- * again because a tab can be opened in between and only the second answer is an
- * authorization.
- */
-export async function rotationRefusal(dir: string, file: string): Promise<string | null> {
-  const target = path.join(dir, GENERATED, file);
-  if (!await exists(target)) return null;
-  let manifest: ProjectManifest;
-  try {
-    manifest = await readManifest(dir);
-  } catch {
-    // A catalogue that will not parse cannot say which tree serves this file.
-    // The rotation itself will fail on its own read; there is nothing to refuse
-    // in advance.
-    return null;
-  }
-  const tree = manifest.working.trees.find((entry) => entry.from === `${GENERATED}/${file}`) ?? null;
-  if (tree === null) return null;
-  if (!workingTreeHeld(path.join(dir, WORKING, tree.dir))) return null;
-  return `${file} is open in Foundry right now. Running this again would move the working copy `
-    + 'you are reading out from under that tab — close the book first.';
 }
 
 export async function rotateGenerated(dir: string, file: string): Promise<Rotation | null> {
@@ -3634,18 +3144,8 @@ export async function rotateGenerated(dir: string, file: string): Promise<Rotati
   if (!await exists(target)) return null;
 
   let movedTo: string | null = null;
-  let movedTree: ProjectWorkingTree | null = null;
   await withManifest(dir, async (manifest) => {
     const from = `${GENERATED}/${file}`;
-    const tree = manifest.working.trees.find((entry) => entry.from === from) ?? null;
-    const treeRoot = tree === null ? null : path.join(dir, WORKING, tree.dir);
-    if (treeRoot !== null && workingTreeHeld(treeRoot)) {
-      throw new ProjectError(
-        `${file} is open in Foundry right now. Running this again would move the working copy `
-        + 'you are reading out from under that tab — close the book first.',
-      );
-    }
-
     const archive = stampedArchive(path.join(dir, GENERATED));
     if (await exists(archive)) {
       // The engine's rule, for the engine's reason: two runs' outputs under one
@@ -3658,14 +3158,6 @@ export async function rotateGenerated(dir: string, file: string): Promise<Rotati
     await fsp.mkdir(archive, { recursive: true });
     movedTo = path.join(archive, file);
     await fsp.rename(target, movedTo);
-    if (tree !== null && treeRoot !== null && await exists(treeRoot)) {
-      await fsp.rename(treeRoot, path.join(archive, `working-${tree.dir}`));
-      // Kept whole, so a run that never writes can put the row back exactly as
-      // it was. Its `generation` and its member order are not derivable from
-      // anything on the disk — they are the catalogue's own record — and a
-      // restored tree missing them is a book whose undo history is orphaned.
-      movedTree = tree;
-    }
 
     /*
      * THE ROTATED COPY STAYS IN THE CHAIN, at the path it was moved to.
@@ -3683,16 +3175,15 @@ export async function rotateGenerated(dir: string, file: string): Promise<Rotati
       record.steps = record.steps.map(
         (step) => (step.file === from ? { ...step, file: moved } : step));
     }
-    manifest.working.trees = manifest.working.trees.filter((entry) => entry.from !== from);
     await writeManifest(dir, manifest);
   });
   // A document moved out of the live layer and into an archive folder, which is
   // a listing that has changed even though nothing was made.
   announceProjects();
-  // The receipt: where it went (so a run whose own input is the copy being
-  // replaced can read it there — see `planTranslation`) and what it took with
-  // it (so a run that never writes can put it back — see `restoreRotation`).
-  return movedTo === null ? null : { file, movedTo, tree: movedTree };
+  // The receipt: where it went, so a run whose own input is the copy being
+  // replaced can read it there (see `planTranslation`) and a run that never
+  // writes can put it back (see `restoreRotation`).
+  return movedTo === null ? null : { file, movedTo };
 }
 
 /**
@@ -3714,10 +3205,7 @@ export async function rotateGenerated(dir: string, file: string): Promise<Rotati
  *
  * ── What it puts back ───────────────────────────────────────────────────────
  *
- * The file, the working tree beside it, the step's location in the chain, and
- * the tree's catalogue row — which is why `Rotation` carries the row whole
- * rather than a flag: `generation` and the member order are the catalogue's own
- * record and cannot be re-derived from a directory.
+ * The file, and the step's location in the chain.
  *
  * NOTHING IS DELETED BY A RESTORE, and the empty archive folder is removed only
  * if it IS empty — a stamp is per second and a sibling rotated in the same
@@ -3740,12 +3228,6 @@ export async function restoreRotation(dir: string, rotation: Rotation): Promise<
     if (await exists(rotation.movedTo)) await fsp.rename(rotation.movedTo, back);
 
     const archive = path.dirname(rotation.movedTo);
-    const tree = rotation.tree;
-    if (tree !== null) {
-      const parked = path.join(archive, `working-${tree.dir}`);
-      const home = path.join(dir, WORKING, tree.dir);
-      if (await exists(parked) && !await exists(home)) await fsp.rename(parked, home);
-    }
 
     await withManifest(dir, async (manifest) => {
       const from = `${GENERATED}/${rotation.file}`;
@@ -3754,9 +3236,6 @@ export async function restoreRotation(dir: string, rotation: Rotation): Promise<
       if (record !== undefined) {
         record.steps = record.steps.map(
           (step) => (step.file === moved ? { ...step, file: from } : step));
-      }
-      if (tree !== null && !manifest.working.trees.some((row) => row.from === from)) {
-        manifest.working.trees = [...manifest.working.trees, tree];
       }
       await writeManifest(dir, manifest);
     });
@@ -3777,10 +3256,9 @@ export async function restoreRotation(dir: string, rotation: Rotation): Promise<
  * A rotation of a FILED document, and everything needed to put it back.
  *
  * The `generated/` receipt one folder over (`Rotation`) and deliberately not the
- * same shape: an origin can have a working tree unpacked from it and a step in a
- * type's chain, and both of those have to travel in the receipt. A filed document
- * has neither — nothing is ever made from an export — so what a restore owes is
- * the file and the catalogue row that named it.
+ * same shape: an origin has a step in a type's chain, and that has to travel in
+ * the receipt. A filed document has none — nothing is ever made from an export —
+ * so what a restore owes is the file and the catalogue row that named it.
  */
 export interface FinalRotation {
   /** `<stem>.epub` — the name in `final/` that was moved out of the way. */
@@ -4276,198 +3754,6 @@ function kindOf(file: string): ProjectDocumentKind | null {
   return null;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Working trees
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * The directory under `working/` that holds the tree unpacked from `entry`.
- *
- * A readable prefix plus six hex of the entry's own hash. The prefix alone would
- * not do: it is capped for Windows' path limit, and two translations of a book
- * with a long name would cap to the same string — one book served out of
- * another book's working copy, which is the worst outcome available because it
- * looks like it worked. The hash makes the name unique from the thing it names.
- *
- * Nobody ever reads this: it is an internal directory, and the documents the
- * user sees are named from `manifest.stem`.
- */
-export function workingTreeName(entry: string): string {
-  const readable = slugify(entry.replace(/\//g, '-')).slice(0, 32);
-  return `${readable}-${createHash('sha256').update(entry).digest('hex').slice(0, 6)}`;
-}
-
-export interface WorkingTreeRecord {
-  root: string;
-  members: string[];
-}
-
-/** The recorded tree for this archive, or null when there is none yet. */
-export async function workingTreeFor(dir: string, entry: string): Promise<WorkingTreeRecord | null> {
-  const manifest = await readManifest(dir);
-  const tree = manifest.working.trees.find((candidate) => candidate.from === entry);
-  if (tree === undefined) return null;
-  return { root: path.join(dir, WORKING, tree.dir), members: tree.members };
-}
-
-/**
- * Record a tree that is about to be written. See `openEpub` for the ordering.
- *
- * A FRESH GENERATION EVERY TIME, and this is the only place one is minted for a
- * tree that is being made. The call happens exactly when a working copy comes
- * into existence: the first unpack, and again after `rotateGenerated` has moved
- * the previous origin AND its tree aside, which is what a re-cast and what
- * "start over" both come down to. So the uuid changes precisely when the block
- * ids in the tree may have been reassigned, and a ledger recorded against the
- * old one stops being replayable at the same instant — which is the entire
- * point (see `ProjectWorkingTree.generation`).
- */
-export async function recordWorkingTree(
-  dir: string,
-  entry: string,
-  members: readonly string[],
-): Promise<string> {
-  const name = workingTreeName(entry);
-  await withManifest(dir, async (manifest) => {
-    manifest.working.trees = [
-      ...manifest.working.trees.filter((tree) => tree.from !== entry),
-      {
-        from: entry,
-        dir: name,
-        members: [...members],
-        unpackedAt: Date.now(),
-        generation: randomUUID(),
-      },
-    ];
-    await writeManifest(dir, manifest);
-  });
-  return path.join(dir, WORKING, name);
-}
-
-/**
- * The generation of the tree unpacked from `entry`, minting one if it has none.
- *
- * BACKFILLING IS SAFE, and it is the only reason this can write. A tree recorded
- * before this field existed has no history file that could name a generation —
- * there was nothing writing one — so the first id it is given cannot possibly
- * disagree with a ledger already on disk. From then on the ordinary rule holds:
- * the id changes only when `recordWorkingTree` makes a new working copy.
- *
- * Refuses by name for an entry no tree was recorded for. That is not a state a
- * caller reaches by accident — the book it is asking about is open, which means
- * `ensureWorkingTree` recorded one — so it means the catalogue lost the tree
- * somebody is editing, and guessing an id would file this session's undo history
- * against a working copy nothing describes.
- */
-export async function treeGeneration(dir: string, entry: string): Promise<string> {
-  return withManifest(dir, async (manifest) => {
-    const tree = manifest.working.trees.find((candidate) => candidate.from === entry);
-    if (tree === undefined) {
-      throw new ProjectError(
-        `${path.join(dir, MANIFEST)} lists no working copy unpacked from ${entry}, so there is `
-        + 'nothing for an undo history to be bound to.',
-      );
-    }
-    if (tree.generation.length > 0) return tree.generation;
-    const minted = randomUUID();
-    manifest.working.trees = manifest.working.trees.map(
-      (candidate) => (candidate.from === entry ? { ...candidate, generation: minted } : candidate),
-    );
-    await writeManifest(dir, manifest);
-    return minted;
-  });
-}
-
-/**
- * `<project>/history/` — where the undo ledgers live, one file per document.
- *
- * A SIBLING OF THE FOUR LAYERS, on `readings/`'s precedent and for its reason: it
- * is neither an origin nor something the user asked for, but it belongs to THIS
- * BOOK and travels with it. Deliberately NOT inside `working/<tree>/`, which is
- * an unpacked EPUB — a stray file in there is a file that has to be explained to
- * every pass that walks the book — and not in userData, which nobody backs up
- * and which would sever a history from the book it describes the moment the
- * library folder moved.
- */
-export function historyDir(dir: string): string {
-  return path.join(dir, HISTORY);
-}
-
-/**
- * `<project>/overlays/` — what a PERSON decided about the blocks on the pages.
- *
- * A SIXTH SIBLING, on `history/`'s precedent and for its reasons: it is neither
- * an origin nor something the user asked to have written, and it belongs to THIS
- * BOOK and travels with it. Not in `readings/`, which is the model's own record
- * and is never edited by anything in this app — the entire design of the overlay
- * is that a correction is a second file rather than a rewrite of the evidence,
- * and filing the corrections inside the evidence would undo that on the disk if
- * not in the code.
- *
- * TWO FILES PER READING, both keyed by the bank's own key: `<key>.json` is the
- * curation and `<key>.ledger.json` is its undo history. They are together rather
- * than the ledger being in `history/` because they are ARCHIVED TOGETHER — a
- * re-read of the pages invalidates both in one instant, for one reason — and a
- * pair that has to be moved aside as a unit should not be a pair spread across
- * two directories with two archive folders and two ways for half the move to
- * fail. (`history/` keys by working TREE, which a scan does not have at all.)
- */
-export function overlaysDir(dir: string): string {
-  return path.join(dir, OVERLAYS);
-}
-
-/** Where a curation that is not this reading's goes. Nothing is deleted. */
-export function overlayArchiveDir(dir: string): string {
-  return stampedArchive(overlaysDir(dir));
-}
-
-/**
- * The generation the overlay and its ledger are bound to AT THIS PROJECT'S
- * POSITION, minting one if nothing has ever answered for this book.
- *
- * See `ProjectReading` for the hazard and `generationInEffect` for the whole of
- * the rule; this is the half that touches disk. The short version: re-RENDERING a
- * bank leaves every block exactly where it was, re-READING it renumbers all of
- * them, and only the second may throw a curation aside.
- *
- * IT ASKS THE STEP, and it used to count `readings/archived-<stamp>/` folders.
- * The engine no longer archives a bank at all — it swaps a finished pending one
- * into place — so the count stopped moving on the exact event it existed to
- * notice, and a re-read asking a different page range branches to a bank of its
- * own without ever having archived anything either. The read step's
- * `params.generation` is the authority now, taken from the nearest reading on the
- * position's ancestry so that standing on either branch of a book compares an
- * overlay against the pass it was made from.
- *
- * THE MARKER IS READ INSIDE THE LOCK, with the manifest that decides which bank
- * to read it for. Outside it, the position could move between the two and this
- * would compare one reading's completion against another reading's record — which
- * is precisely the disagreement it is here to detect, arriving from nowhere.
- *
- * A WRITE IS THE UNUSUAL PATH and stays that way: a project whose step already
- * carries a generation and a marker stamp that still matches the disk is answered
- * without touching the file, which is what makes this affordable in front of every
- * block-editor open.
- */
-export async function readingGeneration(dir: string): Promise<string> {
-  return withManifest(dir, async (manifest) => {
-    const ruling = generationInEffect(
-      ledgerOf(manifest),
-      manifest.reading,
-      await markerStamp(readingBank(dir, manifest)),
-      // Minted before it is known to be wanted, because `shared/ledger.ts` has no
-      // randomness by design (see its header) and a uuid costs nothing. The ruling
-      // says whether it was spent — the same arrangement `LandedRun.id` uses.
-      randomUUID(),
-    );
-    if (ruling.ledger === null && ruling.reading === null) return ruling.generation;
-    if (ruling.ledger !== null) manifest.ledger = ruling.ledger;
-    if (ruling.reading !== null) manifest.reading = ruling.reading;
-    await writeManifest(dir, manifest);
-    return ruling.generation;
-  });
-}
-
 /**
  * A reading FINISHED — the one moment anything can honestly say a bank is done.
  *
@@ -4479,16 +3765,12 @@ export async function readingGeneration(dir: string): Promise<string> {
  * finishing. Everything else mints: a re-read swapped in over the old bank, a
  * branch beside it, and a first read nobody watched.
  *
- * IT USED TO ASK `readingGeneration`, which answered from a count of archived
- * banks and so kept the id whenever nothing had archived. Nothing archives now
- * (docs/BANK-LIFECYCLE.md §2), and that function has become a question about
- * where the user is STANDING rather than about what just landed — the two are
- * different questions and a landing is not a viewer.
- *
- * FIRST-TOUCH MINTING STILL EXISTS, in `readingGeneration`, because it has to: a
- * bank filled by `foundry vlm-read` from a terminal, or one adopted from the old
- * flat layout, is complete and this app never saw it happen. Opening the block
- * editor on one of those mints an id there, under the same rule.
+ * IT IS THE ONLY PLACE THAT MINTS ONE NOW. `readingGeneration` — the block
+ * editor's first-touch minting, which asked where the user was STANDING rather
+ * than what had just landed — is deleted with the overlay system that was the
+ * only thing bound to it (docs/RENDERER.md §7). What the id is still for is the
+ * records: a translate run is handed `--generation` and stamps it into every row
+ * it writes, so a set of answers can say which reading of the pages it is about.
  *
  * A failure is a console line and never a throw. This runs after a job that may
  * have taken three hours, and a catalogue row that could not be written is not a
@@ -4793,11 +4075,6 @@ export async function archiveFileOf(dir: string): Promise<string | null> {
   }
 }
 
-/** Where a history that is not this working copy's goes. Nothing is deleted. */
-export function historyArchiveDir(dir: string): string {
-  return stampedArchive(historyDir(dir));
-}
-
 /**
  * Give the project the book's own title, once something can read one.
  *
@@ -4955,9 +4232,8 @@ async function summarise(dir: string, name: string): Promise<ProjectSummary> {
       // at a tray by reading the directory would offer files this app cannot say
       // it made. The row offers Reveal, which is the honest door into a folder.
       exports: [],
-      // No ledger was read, so no step is claiming anything — and no reading can
-      // be named, so nothing can say which reprint belongs to which pass.
-      renderings: [],
+      // No ledger was read, so no reading can be named, and nothing can say which
+      // reprint belongs to which pass.
       facsimiles: [],
       problem: (err as Error).message,
     };
@@ -5084,7 +4360,6 @@ async function summarise(dir: string, name: string): Promise<ProjectSummary> {
     reading: await readingState(dir, manifest),
     filed: manifest.final.length > 0,
     exports: await filedDocuments(dir, manifest),
-    renderings: renderingsOf(manifest),
     facsimiles: await facsimilesOf(dir, manifest),
     problem: null,
   };
@@ -5368,14 +4643,11 @@ export async function inspectProject(dir: string): Promise<ProjectInventory> {
      *
      * A SNAPSHOT'S DECISIONS OVERLAP THE LIVE FILE'S and are counted anyway, which
      * is what this number has always been: every amendment in every curation file
-     * under the project, not a count of distinct decisions. The archived overlays
-     * it already walks overlap each other the same way — each is a whole copy of
-     * the state at the time it was set aside. What the figure conveys is how much
-     * recorded judgement is in this folder, and every one of those files is a
-     * separate thing that will not exist afterwards.
+     * under the project, not a count of distinct decisions. What the figure
+     * conveys is how much recorded judgement is in this folder, and every one of
+     * those snapshots is a separate thing that will not exist afterwards.
      */
-    amendments: await countAmendments(overlaysDir(resolved))
-      + await countAmendments(curationsDir(resolved)),
+    amendments: await countAmendments(curationsDir(resolved)),
   };
 }
 
@@ -5493,23 +4765,14 @@ function deletableDocumentPath(filePath: string): { dir: string; resolved: strin
  * file's own parent directory, which is exact rather than approximate: an output
  * name is derived from the project's stem and its format (`generatedFileFor`),
  * so at most one live document can carry a given basename, and every archived
- * copy of that name is a former life of it. A rotation also parks the working
- * tree beside the file as `working-<tree dir>`, so that goes with the same pass.
+ * copy of that name is a former life of it.
  *
- * THE WORKING TREE. `manifest.working.trees` keys a tree by the origin it was
- * unpacked FROM (`recordWorkingTree`), so a tree serves exactly one document and
- * `rotateGenerated` already treats the pair as inseparable — moving one without
- * the other is a bug it exists to prevent. Its row goes with the directory.
- *
- * THE UNDO LEDGER. `history/<working tree name>.json` (electron/history.ts),
- * keyed by the same `workingTreeName(entry)` the directory carries — derived
- * from the origin, not from a runtime id, which is what makes it stable across
- * sessions and per-document here. Its `archived-<stamp>/` copies go too: they
- * are ledgers of the same book, kept only so a Ctrl+Z that lost its footing
- * could be explained, and there is nothing left to explain once the book is
- * gone. History's own rule is that a ledger is never deleted, only rotated —
- * that rule is about a book that STILL EXISTS whose generation moved underneath
- * it, and it has nothing to say about a book the user has just erased.
+ * AND THAT IS THE WHOLE LIST NOW. Two other things used to be in it and both went
+ * with the surfaces that made them (docs/RENDERER.md §7): the unpacked working
+ * TREE a rotation parked beside the file, and `history/<tree>.json`, the block
+ * editor's undo ledger keyed to that tree. Nothing writes either any more; a
+ * project that still holds one keeps it, because sweeping somebody's records to
+ * tidy a folder is not a thing this app does.
  *
  * ── What is NOT in here, and these are decisions ────────────────────────────
  *
@@ -5529,24 +4792,19 @@ function deletableDocumentPath(filePath: string): { dir: string; resolved: strin
  * deliberately filed would be reaching outside what was asked for — the same
  * reason a Save As to a USB stick is left alone.
  *
- * THE OVERLAY AND ITS LEDGER (`overlays/<key>.json`), and this is the bank's rule
- * carried one step further. A curation is not about the EPUB — it is about the
- * READING, which is why it is keyed by the bank rather than by any output: the
- * two hundred running heads somebody struck are struck for the text emission and
- * for every future cast of the book as much as for the one being deleted. And
- * deleting an output in order to make a better one is the ordinary reason to
- * delete an output, which is exactly the case where destroying the corrections
- * would be worst. By the retention rule they are `irreplaceable` where the bank
- * is merely `expensive`; a project delete takes them, says so in those words, and
- * nothing else does.
+ * THE OPS AND THE FROZEN CURATIONS (`ops/`, `curations/`), and this is the bank's
+ * rule carried one step further. A decision about the book is not about the EPUB —
+ * it is about the READING, keyed by block id rather than by any output: the two
+ * hundred running heads somebody struck are struck for every future rendering as
+ * much as for the one being deleted. And deleting an output in order to make a
+ * better one is the ordinary reason to delete an output, which is exactly the case
+ * where destroying the decisions would be worst. By the retention rule they are
+ * `irreplaceable` where the bank is merely `expensive`; a project delete takes
+ * them, says so in those words, and nothing else does.
  */
 export interface DocumentAssets {
   /** Previous versions of this same file, rotated aside by earlier runs. */
   archivedVersions: number;
-  /** True when an unpacked working copy serves this document. */
-  workingTree: boolean;
-  /** Undo ledgers for it — the live one and any that were rotated aside. */
-  histories: number;
 }
 
 /** What became of a document that was asked to be deleted. */
@@ -5594,20 +4852,6 @@ export async function deleteDocument(filePath: string): Promise<DocumentRemoval>
     sweep = await planSweep(dir, resolved, manifest);
 
     /*
-     * REFUSED WHILE THE TREE IS OPEN, the same refusal and for the same reason
-     * `rotateGenerated` makes it: the renderer closes the tab before asking main
-     * to delete, but a tab it failed to close is a directory this window still
-     * has files open in, and on Windows the remove fails part way and leaves
-     * half a working copy behind.
-     */
-    if (sweep.treeRoot !== null && workingTreeHeld(sweep.treeRoot)) {
-      throw new ProjectError(
-        `${label} is open in Foundry right now, so it cannot be deleted — its working copy is `
-        + 'being read from this window. Close the book first, then delete it.',
-      );
-    }
-
-    /*
      * A ROW IS MATCHED IN ITS OWN LAYER, AND THIS IS A BUG FIX WITH A CASUALTY.
      *
      * It used to resolve a row's basename against `generated/`, `working/` AND
@@ -5639,13 +4883,6 @@ export async function deleteDocument(filePath: string): Promise<DocumentRemoval>
       (record) => !record.steps.some((step) => step.file === relative));
     manifest.working.files = manifest.working.files.filter((row) => !inLayer(WORKING)(row.file));
     manifest.final = manifest.final.filter((row) => !inLayer(FINAL)(row.file));
-    // The tree's row goes with the tree itself: a catalogue entry for a
-    // directory that is not there is exactly the state `rotateGenerated` is
-    // careful never to leave behind.
-    if (sweep.treeEntry !== null) {
-      manifest.working.trees = manifest.working.trees.filter(
-        (row) => row.from !== sweep.treeEntry);
-    }
     await writeManifest(dir, manifest);
   });
 
@@ -5661,7 +4898,6 @@ export async function deleteDocument(filePath: string): Promise<DocumentRemoval>
    */
   await fsp.rm(resolved, { force: true });
   for (const target of sweep.files) await fsp.rm(target, { force: true });
-  for (const target of sweep.dirs) await fsp.rm(target, { recursive: true, force: true });
 
   /*
    * An `archived-<stamp>/` folder that held nothing but this document's past
@@ -5682,40 +4918,26 @@ export async function deleteDocument(filePath: string): Promise<DocumentRemoval>
 
 /** The paths one document's delete takes with it, resolved and ready to remove. */
 interface Sweep {
-  /** Archived copies of this same output, and its ledgers. */
+  /** Archived copies of this same output. */
   files: string[];
-  /** The working tree, and archived working trees of this same output. */
-  dirs: string[];
   /** `archived-<stamp>/` folders to remove IF this emptied them. */
   archives: string[];
-  /** The live working tree's root, for the open-book refusal. Null when none. */
-  treeRoot: string | null;
-  /** The manifest key of that tree (`generated/x.epub`), so its row can go. */
-  treeEntry: string | null;
   /**
-   * The counts the card quotes, tallied AS THE PATHS ARE FOUND rather than
-   * re-derived from them afterwards. Reading "is this a version or a ledger?"
-   * back out of a string is a guess about a filename; counting at the moment the
-   * thing is identified is a fact, and the card is quoting these numbers to
-   * somebody about to destroy them.
+   * The count the card quotes, tallied AS THE PATHS ARE FOUND rather than
+   * re-derived from them afterwards. Reading "is this a version?" back out of a
+   * string is a guess about a filename; counting at the moment the thing is
+   * identified is a fact, and the card is quoting this number to somebody about
+   * to destroy it.
    */
   archivedVersions: number;
-  histories: number;
 }
 
 function emptySweep(): Sweep {
-  return {
-    files: [], dirs: [], archives: [], treeRoot: null, treeEntry: null,
-    archivedVersions: 0, histories: 0,
-  };
+  return { files: [], archives: [], archivedVersions: 0 };
 }
 
 function countSweep(sweep: Sweep): DocumentAssets {
-  return {
-    archivedVersions: sweep.archivedVersions,
-    workingTree: sweep.treeRoot !== null,
-    histories: sweep.histories,
-  };
+  return { archivedVersions: sweep.archivedVersions };
 }
 
 /**
@@ -5732,37 +4954,6 @@ async function planSweep(
 ): Promise<Sweep> {
   const sweep = emptySweep();
 
-  // The manifest spells an origin with forward slashes, relative to the project.
-  const entry = path.relative(dir, resolved).split(path.sep).join('/');
-  const tree = manifest.working.trees.find((row) => row.from === entry) ?? null;
-  const treeDir = tree?.dir ?? workingTreeName(entry);
-  if (tree !== null) {
-    sweep.treeEntry = entry;
-    sweep.treeRoot = path.join(dir, WORKING, tree.dir);
-    sweep.dirs.push(sweep.treeRoot);
-  }
-
-  /*
-   * THE LEDGERS, live and archived. Named for the working tree even when no tree
-   * is recorded any more: a history outlives the copy it was written against —
-   * that is what `history/archived-<stamp>/` is for — and one left behind here
-   * would be a file named after a book that no longer exists.
-   */
-  const history = historyDir(dir);
-  const ledger = `${treeDir}.json`;
-  if (await exists(path.join(history, ledger))) {
-    sweep.files.push(path.join(history, ledger));
-    sweep.histories += 1;
-  }
-  for (const archive of await archivesIn(history)) {
-    const inside = path.join(archive, ledger);
-    if (await exists(inside)) {
-      sweep.files.push(inside);
-      sweep.histories += 1;
-      sweep.archives.push(archive);
-    }
-  }
-
   /*
    * THE PREDECESSORS, in the file's own directory. `generated/archived-<stamp>/`
    * for an output and `working/archived-<stamp>/` for a live copy are the same
@@ -5776,13 +4967,9 @@ async function planSweep(
     const past = path.join(archive, label);
     if (await exists(past)) {
       sweep.files.push(past);
-      // The FILE is what a "version" is. Its tree below is the same version's
-      // working copy, not a second one, so it is swept and never counted twice.
       sweep.archivedVersions += 1;
       touched = true;
     }
-    const pastTree = path.join(archive, `working-${treeDir}`);
-    if (await exists(pastTree)) { sweep.dirs.push(pastTree); touched = true; }
     if (touched) sweep.archives.push(archive);
   }
   return sweep;
@@ -5816,7 +5003,7 @@ export async function documentAssets(filePath: string): Promise<DocumentAssets> 
     // A catalogue that will not parse still deletes; it just cannot promise
     // what else is in there. Saying "nothing extra" is the honest answer to a
     // question this project cannot be asked.
-    return { archivedVersions: 0, workingTree: false, histories: 0 };
+    return { archivedVersions: 0 };
   }
 }
 

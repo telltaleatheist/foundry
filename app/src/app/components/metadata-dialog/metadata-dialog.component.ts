@@ -356,15 +356,14 @@ export class MetadataDialogComponent {
   protected readonly source = computed(() => {
     const tab = this.tabs.activeDocument();
     if (tab === null) return null;
-    const mine = tab.kind === 'epub' || tab.kind === 'pdf' ? tab : null;
+    const mine = tab.kind === 'pdf' ? tab : null;
     const project = this.projects.projectFor(tab.path);
     if (project === null) return mine;
     const shown = this.tabs.documentShownFor(project.dir);
     if (shown === null) return mine;
     const at = fold(shown);
-    return this.tabs.tabs().find((candidate) =>
-      (candidate.kind === 'epub' || candidate.kind === 'pdf') && fold(candidate.path) === at)
-      ?? mine;
+    return this.tabs.tabs().find(
+      (candidate) => candidate.kind === 'pdf' && fold(candidate.path) === at) ?? mine;
   });
 
   /**
@@ -379,7 +378,7 @@ export class MetadataDialogComponent {
    * cannot read the form.
    */
   protected named(tab: Tab): string {
-    return qualify(tab.title, tab.kind === 'epub' ? 'epub' : 'pdf', '');
+    return qualify(tab.title, 'pdf', '');
   }
 
   /** What the document said when the dialog opened. The baseline every save diffs against. */
@@ -460,12 +459,7 @@ export class MetadataDialogComponent {
     this.loading.set(true);
     this.problem.set(null);
     try {
-      const outcome = tab.kind === 'epub'
-        // The BOOK's id, not its path: main resolves the working tree from it,
-        // so what the dialog shows is what the book says right now rather than
-        // what the file it was imported from said.
-        ? (tab.book === null ? null : await api.meta.readEpub(tab.book.id))
-        : await api.meta.readPdf(tab.path);
+      const outcome = await api.meta.readPdf(tab.path);
       if (outcome === null) {
         this.problem.set('This book is still opening — its package has not been read yet.');
         return;
@@ -555,39 +549,32 @@ export class MetadataDialogComponent {
     this.busy.set(true);
     this.problem.set(null);
     try {
+      /*
+       * ONE FORMAT REACHES THE WRITE NOW. The EPUB arm resolved an open book's
+       * WORKING TREE by its tab's book id, and the tree, the reader over it and
+       * the tab kind that held it are deleted (docs/RENDERER.md §7). The FORM
+       * still knows both shapes — `meta.kind === 'epub'` draws six `dc:` fields
+       * against a record read from a document — because a record read from an
+       * imported EPUB is still a record; what has no door any more is writing one
+       * back through a book this app no longer opens as a file.
+       */
       if (meta.kind === 'epub') {
-        if (tab.book === null) return;
-        const patch = {
-          title: this.changedField(this.title(), meta.fields.title),
-          creator: this.doubled('creator') ? undefined : this.changedField(this.creator(), meta.fields.creator),
-          language: this.changedField(this.language(), meta.fields.language),
-          publisher: this.doubled('publisher')
-            ? undefined
-            : this.changedField(this.publisher(), meta.fields.publisher),
-          date: this.changedField(this.date(), meta.fields.date),
-          identifier: meta.uniqueIdentifier === null
-            ? undefined
-            : this.changedField(this.identifier(), meta.fields.identifier),
-        };
-        const outcome = await api.meta.writeEpub(tab.book.id, patch);
-        if (!outcome.ok) { this.problem.set(outcome.reason); return; }
-        // The working tree changed, so the filed copy has fallen behind it.
-        // NOT a revision bump: no chapter's markup moved, and reloading the
-        // rendered pane would cost a scroll position to show nothing new.
-        this.tabs.noteDocumentEdited(tab.id);
-        this.adopt(tab, outcome.landed);
-      } else {
-        const patch = {
-          title: this.changedField(this.title(), meta.fields.title),
-          author: this.changedField(this.creator(), meta.fields.author),
-          subject: this.changedField(this.subject(), meta.fields.subject),
-          keywords: this.changedField(this.keywords(), meta.fields.keywords),
-        };
-        const outcome = await api.meta.writePdf(tab.path, patch);
-        if (!outcome.ok) { this.problem.set(outcome.reason); return; }
-        this.tabs.noteDocumentEdited(tab.id);
-        this.adopt(tab, outcome.landed);
+        this.problem.set(
+          'Foundry edits a book through its own steps now, not by writing into the container it '
+          + 'was imported from. This document’s details are read-only here.',
+        );
+        return;
       }
+      const patch = {
+        title: this.changedField(this.title(), meta.fields.title),
+        author: this.changedField(this.creator(), meta.fields.author),
+        subject: this.changedField(this.subject(), meta.fields.subject),
+        keywords: this.changedField(this.keywords(), meta.fields.keywords),
+      };
+      const outcome = await api.meta.writePdf(tab.path, patch);
+      if (!outcome.ok) { this.problem.set(outcome.reason); return; }
+      this.tabs.noteDocumentEdited(tab.id);
+      this.adopt(tab, outcome.landed);
       this.ui.closeMetadata();
     } catch (err) {
       this.problem.set(err instanceof Error ? err.message : String(err));

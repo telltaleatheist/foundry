@@ -169,7 +169,7 @@ import { api } from '../../core/foundry';
             -->
             <p class="note quiet">
               Made from the {{ pages() > 0 ? pages().toLocaleString() + ' pages' : 'pages' }} the
-              model has already read{{ curated() ? ', with your block corrections applied' : '' }}.
+              model has already read.
               Nothing is read again and no GPU is used.
             </p>
 
@@ -449,29 +449,6 @@ export class ExportDialogComponent {
   protected readonly canMake = computed(() => this.readingDone() && !this.onImport());
 
   /**
-   * Whether a curation exists to apply — said out loud, because it is the
-   * difference between two exports of one book.
-   *
-   * Inferred from the block view being up on this document with amendments in
-   * it, which is the only decision state this window can see without asking main.
-   * A curation made in an earlier session and not reopened is not claimed here:
-   * the flag under-promises rather than over-promises, and main applies whatever
-   * is on disk regardless (`argsFor`). It under-promises harder now than it used
-   * to — standing on the flowing book there is no block view at all — which is
-   * the same direction it always erred in, and the correct one.
-   */
-  protected readonly curated = computed(() => {
-    const tab = this.tabs.activeDocument();
-    if (tab === null) return false;
-    // THE CURATION THIS POSITION IS SHOWING, which is the frozen save when the
-    // user is standing on one — and standing on a save, the live overlay is not
-    // what this export applies, so a sentence composed from it would describe a
-    // different book than the one about to be made.
-    const shown = this.tabs.curationShown(tab.id);
-    return (shown?.amendments.length ?? 0) > 0 || shown?.chapters !== undefined;
-  });
-
-  /**
    * The three products, named as PRODUCTS.
    *
    * "Facsimile PDF" and not "PDF": the word is the user's, and it is doing real
@@ -482,7 +459,7 @@ export class ExportDialogComponent {
    * building a page-image exporter nobody asked for.
    */
   protected readonly choices: readonly { kind: ConversionKind; label: string; blurb: string }[] = [
-    { kind: 'epub', label: 'EPUB', blurb: 'The book, in chapters. Opens here.' },
+    { kind: 'epub', label: 'EPUB', blurb: 'The book, in chapters, for a reader.' },
     { kind: 'pdf', label: 'Facsimile PDF', blurb: 'The same pages, reprinted as real text.' },
     { kind: 'txt', label: 'Plain text', blurb: 'The words, with the markup taken off.' },
   ];
@@ -609,12 +586,6 @@ export class ExportDialogComponent {
         outputPath: plan.outputPath,
         readingsPath: plan.readingsPath,
         /*
-         * AND THE BLOCK CORRECTIONS. The path is carried, not the decision: main
-         * tests for the file as it spawns the engine, so an export ordered a
-         * moment after a strike applies that strike.
-         */
-        overlayPath: plan.overlayPath,
-        /*
          * TERMINAL, and the landing has to be told. Without this the queue
          * records the result as a rendering of the project — a row in the
          * documents catalogue, a live file something later could be built on —
@@ -626,8 +597,8 @@ export class ExportDialogComponent {
          * carried, never composed. Which translation this position is about is
          * read off the ledger, and the ledger main holds is the truth; this
          * window holds a mirror of it that is a repaint behind at worst. Copying
-         * what the plan says is the same rule `readingsPath` and `overlayPath`
-         * have always obeyed one line up.
+         * what the plan says is the same rule `readingsPath` has always obeyed one
+         * line up.
          *
          * This used to be a whole second STAGE — a translate run after the
          * rendering, with a language, a bank and a row to land in. A translation

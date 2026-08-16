@@ -52,8 +52,7 @@
  *
  * ── And the refusals are strict ─────────────────────────────────────────────
  *
- * Exactly as `shared/overlay.ts` is strict, and for the same reason one layer
- * up. This file is written whole by one program, so anything wrong with it is a
+ * This file is written whole by one program, so anything wrong with it is a
  * bug in that program — and a ledger half-read is worse than no ledger at all.
  * A step whose parent id is a typo, guessed at, is a book whose history says it
  * was translated from a reading it was not translated from. Every refusal names
@@ -79,10 +78,11 @@ import {
 /**
  * Refusals from this module, named so a caller can tell them from anything else.
  *
- * `StepLedgerError` rather than `LedgerError` because this app already has a
- * ledger — the block editor's undo history (`LedgerRow`, electron/history.ts) —
- * and an error class called after the word both of them use is an error class
- * whose message tells you nothing about which one broke.
+ * `StepLedgerError` rather than `LedgerError` because this app used to have two
+ * ledgers — the block editor's persisted undo history was the other, and it is
+ * deleted (docs/RENDERER.md §7). The name outlived the ambiguity it was written
+ * to end, and it is kept: every refusal in this file already says it, and
+ * renaming a thrown class to reclaim a word nothing else uses is churn.
  */
 export class StepLedgerError extends Error {
   constructor(message: string) {
@@ -1270,38 +1270,6 @@ export function translationRecordsOf(step: LedgerStep): string | null {
 }
 
 /**
- * THE BOOK ONE TRANSLATE STEP IS SHOWN AS — `<stem> (<tag>).<id8>.epub`,
- * project-relative.
- *
- * ── Why a translation's book is a rendering now ─────────────────────────────
- *
- * Because the run does not write one. `translate --records` produces answers and
- * no document, and the document is `vlm-convert` over the SAME reading bank with
- * those answers substituted into the blocks — which means a translated book comes
- * out of the same reflow, the same curation, the same chapters and the same
- * edition rules as the source book rather than out of a second pipeline. It is
- * free, it is made again at any time, and it is nobody's payload: exactly what
- * `curateCastFile` above says about a save's own book, for exactly its reasons.
- *
- * `<id8>` ON EVERY ONE OF THEM, including the first, which is the one place this
- * scheme differs from the payload names it borrows from. Those carry the suffix
- * only on a branch because the plain name is what every project on every disk
- * already holds and a migration was refused; a cast is a file this unit invents,
- * so there is nothing to be compatible with and every reason to make the name
- * collision-free — a re-translation that landed on a name another row's book
- * already had would rotate somebody else's book aside to make room for this one.
- *
- * THE LANGUAGE STAYS IN THE NAME, because a person who opens `generated/` should
- * see `Book (hu).<id8>.epub` and know what they are looking at. Nothing reads it
- * back out: this composition is asked for by the plan that writes the file, the
- * resolution that shows it and the sweep that removes it, so all three come to one
- * answer without any of them parsing a filename.
- */
-export function translationCastFile(stem: string, language: string, stepId: string): string {
-  return `${stem} (${languageTagFor(language)}).${id8(stepId)}.epub`;
-}
-
-/**
  * THE BANK A TRANSLATE STEP MEANS — what it recorded, or the path its language
  * composes for a step that landed before banks were recorded.
  *
@@ -1454,37 +1422,6 @@ export function translationTarget(
     records: `readings/${translationRecordsFileFor(ask.key, ask.language, id8(minted))}`,
     replaces: null,
   };
-}
-
-/**
- * THE BOOK ONE CURATE STEP CAST FOR ITSELF — `<stem>.<id8>.epub`, project-relative.
- *
- * ── Why a save gets a file of its own ───────────────────────────────────────
- *
- * A curate row used to show the project's ONE cast, which meant every save in a
- * book's history showed the same document: the live tree wearing today's marks.
- * The whole point of clicking an old save is to see the book AS IT WAS THEN, so a
- * landing casts its own book and the row shows that. The pointer does not move
- * for a save (`RETAINED_BESIDE_YOU`), which is precisely why the plan has to be
- * keyed to the STEP rather than to the position — see `planFacsimile`
- * (electron/workspace.ts), where getting this wrong would render the live overlay
- * under a step-shaped name.
- *
- * THE SAME NAMING SCHEME READINGS AND TRANSLATIONS ALREADY USE, deliberately and
- * not by imitation: `id8` of the step's own uuid, which is collision-free for the
- * handful of files one project holds and — the part that matters here — means
- * NOTHING EVER OVERWRITES. A cast per save under one name would be a rotation per
- * save, and a rotation refused because somebody has the book open would make
- * pressing Apply a thing that can fail.
- *
- * IT IS A RENDERING AND NEVER A PAYLOAD. The step's payload is the snapshot in
- * `curations/`; this is made again from that snapshot for nothing, at any time.
- * It is composed here rather than in main so that the three places that need the
- * name — the plan, the resolution that shows it, and the sweep that removes it
- * when the step goes — cannot come to three answers.
- */
-export function curateCastFile(stem: string, stepId: string): string {
-  return `${stem}.${id8(stepId)}.epub`;
 }
 
 /**
@@ -2287,11 +2224,13 @@ export function curationInEffect(
  * translation does not — and it is resolved the way this whole app resolves it:
  * commit, and the commit is a row (docs/TRANSLATION-STEPS.md §4).
  *
- * A TABLE, for `RETAINED_BESIDE_YOU`'s reason. The lock derives from this answer
- * (shared/curation-lock.ts) so the two cannot drift, and the day a fifth action
- * arrives its author has to say whether that row is a frozen copy of somebody's
- * corrections — which is a question with a real answer, and one that a literal
- * `action === 'curate'` at a call site would let them skip.
+ * A TABLE, for `RETAINED_BESIDE_YOU`'s reason: the day a fifth action arrives its
+ * author has to say whether that row is a frozen copy of somebody's decisions —
+ * which is a question with a real answer, and one that a literal
+ * `action === 'curate'` at a call site would let them skip. (A read-only LOCK
+ * used to derive from this same table so the two could not drift; there is no
+ * lock any more, because standing on any step is a replay of that chain and
+ * there is nothing to diverge — docs/RENDERER.md §7.)
  */
 const DISPLAYS_ITSELF: Readonly<Record<StepAction, boolean>> = {
   import: false,
@@ -2755,17 +2694,6 @@ export interface PositionView {
   /** The frozen save drawn over them, or null when the answer is the live corrections. */
   curation: LedgerStep | null;
   /**
-   * True when the pages carry the model's outlines at all.
-   *
-   * IT FALLS OUT OF THE WALK RATHER THAN BEING A CASE FOR THE IMPORT. Standing on
-   * the origin, `readingInEffect` answers null — the walk is bounded by the import
-   * itself (`BOUNDS_THE_WALK`) — so "nothing has been read at this point in the
-   * story" and "this project has never been read" are one answer, which is right:
-   * both mean there is nothing to outline. Drawing boxes over the import would be
-   * the pane making a claim about a step the user is standing BEFORE.
-   */
-  outlines: boolean;
-  /**
    * True when the document at this position is a BOOK OF ITS OWN — the untouched
    * original, the translation — rather than the project's one flowing book in the
    * state this row is about. See `A_BOOK_OF_ITS_OWN`.
@@ -2832,7 +2760,6 @@ export function positionView(ledger: ProjectLedger): PositionView {
     step,
     reading,
     curation: displayedCuration(ledger),
-    outlines: reading !== null,
     own: step !== null && A_BOOK_OF_ITS_OWN[step.action],
     /*
      * AND AT R6b IT IS EVERY ROW A BOOK CAN BE SEEN AT, which is the assumption
@@ -2908,7 +2835,7 @@ export function importedAsEpub(ledger: ProjectLedger): boolean {
  */
 export function positionPicture(view: PositionView): string {
   return [
-    view.outlines ? view.reading?.id ?? '' : '',
+    view.reading?.id ?? '',
     view.curation?.id ?? '',
     view.own ? view.step?.id ?? '' : '',
     /*
@@ -2925,164 +2852,19 @@ export function positionPicture(view: PositionView): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Which pass over the pages an overlay is about
+// Which pass over the pages a set of answers is about
 //
-// The generation is the id a curation carries and the app compares before it
-// draws one over a book. It is a uuid, and this module has no randomness (see
-// the header), so every function here is handed one and says whether it was
-// spent — the same shape `LandedRun.id` already uses for a step id.
+// The generation is the id a translation's records carry, so a set of answers can
+// say which reading of the pages it is about. It is a uuid, and this module has
+// no randomness (see the header), so the one function here is handed one and says
+// whether it was spent — the same shape `LandedRun.id` already uses for a step id.
+//
+// IT WAS A FAMILY OF THREE. `generationInEffect` reconciled the id an OVERLAY was
+// bound to against the bank's completion marker, and archived the pair aside when
+// they disagreed; that whole reconciliation is deleted with the overlay system
+// (docs/RENDERER.md §7). What survives is the landing, because a records file
+// still wants to name its reading.
 // ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * The generation a viewer at the position compares against, and what has to be
- * written down for that answer to still be true tomorrow.
- *
- * ── What replaced the folder count ──────────────────────────────────────────
- *
- * This used to be answered by counting `readings/archived-<stamp>/` folders: the
- * engine archived a completed bank before reading the pages again, so a count
- * that had moved meant a re-read and an unchanged one meant a re-render, which
- * is exactly the distinction an overlay cares about. Two changes landed together
- * and took both of its legs. A re-read now writes a PENDING bank and swaps it in
- * on success (docs/BANK-LIFECYCLE.md §2) — nothing archives, so the count never
- * moves and a fresh reading would silently inherit the old generation. And a
- * re-read asking for a different page range BRANCHES into a bank of its own,
- * which never archived anything either, so both branches would answer with the
- * first reading's id and the app would compare an overlay against a pass it was
- * not made from.
- *
- * The step model already holds the truth. A read step's `params.generation` is
- * what that pass over the pages was called, and the one a viewer wants is the
- * POSITION'S — `readingInEffect`, the same walk `readingBank` uses to find the
- * bank, so the id and the file it is about are answered from one row.
- *
- * ── The four answers, in the order they are asked ───────────────────────────
- *
- * THE STEP'S OWN ID, when the position stands under a reading that recorded one.
- * This is every project that has read a book since the ledger existed.
- *
- * RE-MINTED, when the completion marker on disk is not the one this step landed
- * with. That is a bank read again by something that is not this app — `foundry
- * vlm-read` from a terminal swaps a new bank into the same path — and it is the
- * honest successor to "the folder count moved": the blocks were renumbered, so
- * the id has to move or the archive-the-pair machinery never fires.
- *
- * THE PROJECT'S RECORD, for a project whose ledger holds no read step at all: a
- * bank filled from a terminal, one adopted out of the old flat workspace, or a
- * position standing on the import — the revert row, which is about the untouched
- * original and not about any bank.
- *
- * MINTED FRESH, for a project that has no record anywhere. Backfilling is safe
- * exactly as it always was: a project with nothing written here has no overlay
- * bound to a generation, because nothing was writing one.
- *
- * ── And what it will NOT do ─────────────────────────────────────────────────
- *
- * A MARKER NOBODY RECORDED IS ADOPTED, NEVER RE-MINTED. An absent stamp means
- * the generation was minted before there was a marker to record — somebody
- * opened the block editor while the first OCR was still running — and the run
- * that finishes appends to the very bank they were looking at. Re-minting there
- * would archive an overlay aside for a run that renumbered nothing, which is the
- * one case the folder count got right and the one this must not lose.
- *
- * A MISSING MARKER IS NOT EVIDENCE EITHER. There is a window inside the swap
- * where the old marker is gone and the new one is not written yet (§2), and a
- * bank can outlive its marker for reasons nobody chose. "I cannot see one" is
- * never allowed to mean "the bank was replaced".
- */
-export interface GenerationRuling {
-  /** The id the overlay and its undo ledger are bound to at this position. */
-  generation: string;
-  /** The ledger to write, or null when no step's record changed. */
-  ledger: ProjectLedger | null;
-  /** The reading record to write, or null when it did not change. */
-  reading: ProjectReading | null;
-}
-
-export function generationInEffect(
-  ledger: ProjectLedger,
-  reading: ProjectReading | null,
-  /** The position's bank's completion marker, epoch ms, or null for no marker. */
-  markerAt: number | null,
-  /** Spent only when this mints. See `LandedRun.id` for the same arrangement. */
-  minted: string,
-): GenerationRuling {
-  const settled = (generation: string): GenerationRuling => (
-    { generation, ledger: null, reading: null }
-  );
-
-  const step = readingInEffect(ledger);
-  const recorded = step?.params?.generation;
-  if (step !== null && recorded !== undefined && recorded.length > 0) {
-    const stamped = step.params?.completedAt;
-    if (markerAt === null) return settled(recorded);
-    // The backfill: a step landed before markers were recorded, or one whose
-    // generation was minted mid-read. Take the marker as this step's own without
-    // moving the id — see "adopted, never re-minted" above.
-    if (stamped === undefined) {
-      return { generation: recorded, ledger: stamping(ledger, step.id, recorded, markerAt), reading: null };
-    }
-    if (stamped === markerAt) return settled(recorded);
-    return { generation: minted, ledger: stamping(ledger, step.id, minted, markerAt), reading: null };
-  }
-
-  if (reading === null) {
-    return {
-      generation: minted,
-      ledger: null,
-      reading: {
-        generation: minted,
-        readAt: 0,
-        pages: 0,
-        ...(markerAt !== null ? { completedAt: markerAt } : {}),
-      },
-    };
-  }
-  /*
-   * THE MARKER IS ONLY ASKED WHERE THE PROJECT HAS NO READ STEP AT ALL, and the
-   * guard is the whole safety of this arm.
-   *
-   * `manifest.reading` is one record per project. The bank being looked at is the
-   * POSITION'S, and a project with steps can have several — so standing on the
-   * import, or on an older branch, would compare one branch's marker against a
-   * stamp the newest landing wrote about a different file, disagree every time,
-   * and re-mint a generation on every repaint. That would archive somebody's
-   * curation aside for no event at all.
-   *
-   * With no read step anywhere there is exactly one bank this record can be
-   * about, and the comparison is the same one the steps make.
-   */
-  if (ledger.steps.some((other) => other.action === 'read')) return settled(reading.generation);
-  if (markerAt === null) return settled(reading.generation);
-  if (reading.completedAt === undefined) {
-    return { generation: reading.generation, ledger: null, reading: { ...reading, completedAt: markerAt } };
-  }
-  if (reading.completedAt === markerAt) return settled(reading.generation);
-  /*
-   * `readAt` AND `pages` ARE LEFT EXACTLY AS THEY ARE, which is not laziness.
-   * They are this app's record of ITS OWN landings — `readAt > 0` is what the
-   * library row means by "read", and zeroing it would re-arm the adoption rule
-   * below and let the next landing in this app inherit an id minted against
-   * somebody else's bank. What moved is which pass the pages came from, and that
-   * is the only thing rewritten here. The next landing counts the pages again.
-   */
-  return { generation: minted, ledger: null, reading: { ...reading, generation: minted, completedAt: markerAt } };
-}
-
-/** One step's generation and marker stamp, written into a copy of the ledger. */
-function stamping(
-  ledger: ProjectLedger,
-  id: string,
-  generation: string,
-  completedAt: number,
-): ProjectLedger {
-  return {
-    ...ledger,
-    steps: ledger.steps.map((step) => (
-      step.id === id ? { ...step, params: { ...step.params, generation, completedAt } } : step
-    )),
-  };
-}
 
 /**
  * The generation a READING THAT HAS JUST FINISHED lands with.
