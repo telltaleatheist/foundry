@@ -69,9 +69,11 @@ import {
   ledgerOf,
   opsDir,
   opsPayloadFor,
+  ProjectError,
   projectDirOf,
   readStepLedger,
   recordBookEdit,
+  recordCorrection,
   translationBookFileFor,
   type LedgerView,
 } from './projects';
@@ -190,6 +192,17 @@ interface OpenedBook {
    * TRANSLATION for one standing under a transform. See `editsSinceTransform`.
    */
   ops: BookOp[];
+  /**
+   * The translate step this position stands under, or null.
+   *
+   * CARRIED RATHER THAN ASKED AGAIN. It is what decided which file was opened
+   * three fields up, and every caller that needs to know "are these words a
+   * translation's" needs the SAME answer that decision was made with — the
+   * aligned view's source column, and the correction door that will not let a
+   * text op fork a translated block. Walking the ledger a second time would be a
+   * second opinion about a question this function has already answered.
+   */
+  transform: LedgerStep | null;
 }
 
 async function openBookAtPosition(
@@ -305,7 +318,7 @@ async function openBookAtPosition(
         };
       }
     }
-    return { ok: true, opened: { at, path: source.path, parsed, ops: chain } };
+    return { ok: true, opened: { at, path: source.path, parsed, ops: chain, transform } };
   } catch (err) {
     if (err instanceof BookFileError) {
       console.error(`[book] ${source.path} is not a book this app can read: ${err.message}`);
@@ -628,7 +641,7 @@ export async function materializeTranslation(recordsPath: string): Promise<void>
 export async function loadBook(projectDir: string): Promise<BookOutcome> {
   const read = await openBookAtPosition(projectDir);
   if (!read.ok) return read;
-  const { at, parsed, ops } = read.opened;
+  const { at, parsed, ops, transform } = read.opened;
   /*
    * The figures prefix is minted only when a row will ask for one. `null` is the
    * pane's ordinary answer for a book with no cut images — no --pdf at reflow, or
@@ -652,7 +665,168 @@ export async function loadBook(projectDir: string): Promise<BookOutcome> {
     loose: parsed.header.loose,
     figures,
     ops,
+    /*
+     * AND THE PAIR, WHEN THERE IS ONE — *"two scroll-locked columns over two book
+     * files with the same ids"* (docs/RENDERER.md §5), carried in the one answer
+     * the pane already asks for. See `sourceOfTranslation` for what the left-hand
+     * rows are and why they are rows and nothing else.
+     */
+    translation: transform === null
+      ? null
+      : {
+        // The step's own param, which is where a translation's language has lived
+        // since `recordTranslation` began writing it: nothing reads a language out
+        // of a file of sentences. `parsed.header.language` says the same thing —
+        // `translated` declares it from this very field — and this is the side of
+        // the pair that is a fact about the STEP rather than about a file.
+        language: transform.params?.language?.trim() ?? parsed.header.language,
+        source: await sourceOfTranslation(at.dir, ledgerOf(at.manifest), transform),
+      },
   };
+}
+
+/**
+ * THE LEFT-HAND COLUMN — the parent book as the records answered it.
+ *
+ * ── It is `writeTranslationBook`'s own first half, and that is the point ────
+ *
+ * That function materialises `parent book file + chain ops` and then puts the
+ * records' words into the result (docs/RENDERER.md §4). What comes back from here
+ * is the state at the end of its first sentence: the same parent, opened the same
+ * way, with the same chain replayed by the same `materialize`. So the ids in these
+ * rows are the ids in the derived file BY CONSTRUCTION rather than by hope — the
+ * two columns are one book twice, which is the only reason locking them together
+ * by id is honest.
+ *
+ * ── ROWS, AND NO OPS ───────────────────────────────────────────────────────
+ *
+ * The chain is already IN them. Handing the pane an ops list beside these rows
+ * would invite it to replay a second time, and a strike replayed twice takes out a
+ * row the first one already removed. There is also nothing to edit here: the left
+ * column is context (source edits stand above the translation, where they
+ * invalidate the records by changing the question the cost cache is keyed on), so
+ * there is no gesture on that sheet that could mint an op to carry.
+ *
+ * ── EVERY REFUSAL IS THE LEFT SHEET'S AND NEVER THE PANE'S ─────────────────
+ *
+ * See `BookTranslation.source`: the position is drawable without its context, so
+ * nothing here is allowed to take the whole load down. Each way this fails already
+ * has a sentence written to be read, and they are passed through rather than
+ * paraphrased.
+ */
+async function sourceOfTranslation(
+  projectDir: string,
+  ledger: LedgerView['ledger'],
+  transform: LedgerStep,
+): Promise<{ ok: true; rows: BookFile['rows'] } | { ok: false; reason: string }> {
+  const parent = ledger.steps.find((step) => step.id === transform.parent) ?? null;
+  if (parent === null) {
+    console.error(
+      `[book] step ${transform.id} names parent ${String(transform.parent)}, which this project's `
+      + 'history does not hold, so there is no source to show beside it.',
+    );
+    return {
+      ok: false,
+      reason: `The step “${transform.label}” was made from is not in this project's history, so there `
+        + 'is no source to set beside these words.',
+    };
+  }
+  const read = await openBookAtPosition(projectDir, parent);
+  if (!read.ok) return read;
+  let made: ReturnType<typeof materialize>;
+  try {
+    made = materialize(read.opened.parsed, read.opened.ops);
+  } catch (err) {
+    if (!(err instanceof BookOpsError)) throw err;
+    console.error(`[book] the source under ${transform.id} could not be materialised: ${err.message}`);
+    return {
+      ok: false,
+      reason: `The changes recorded above “${transform.label}” could not be replayed onto the book it `
+        + `was translated from, so its source cannot be set beside it: ${err.message}`,
+    };
+  }
+  /*
+   * A CHANGE THAT LANDED ON NOTHING IS SAID OUT LOUD AND IS NOT FATAL — the same
+   * ruling `materializeBook` and `writeTranslationBook` both make about the same
+   * list, and the same one for the same reason: the column is context, and
+   * refusing to show any of it over one stale strike is the worst answer here too.
+   */
+  if (made.missing.length > 0) {
+    console.error(
+      `[book] ${made.missing.length} recorded change(s) could not be replayed for the source beside `
+      + `${transform.id} — ${made.missing.map((one) => `${one.op.op} ${one.id}`).join(', ')}`,
+    );
+  }
+  return { ok: true, rows: made.book.rows };
+}
+
+/**
+ * A CORRECTED PARAGRAPH ON A TRANSLATED POSITION — the words go to the records,
+ * never to a text op.
+ *
+ * ── The rule, and why it is not a preference ────────────────────────────────
+ *
+ * *"Translated edits are per-language record corrections."* (docs/RENDERER.md §5.)
+ * The words of a translated block belong to the records file: that file is the
+ * step's payload, it is the truth the derived book is a pure function of, and
+ * every position under the translation is drawn from that derived book. A `text`
+ * op over the same block would put the person's sentence in the ops chain while
+ * the records still held the machine's — two accounts of one paragraph, which is
+ * precisely the failure `translationWorldOf` was built to prevent one surface over
+ * ("mirroring it into the source curation would write Hungarian over the German
+ * bank, silently", electron/projects.ts). So the edit goes where the words live.
+ *
+ * ── THE ID MUST BE A ROW OF THE BOOK FILE, and this is where that is proven ──
+ *
+ * A record is keyed by a block id and read back by looking that id up in the book
+ * being materialised (`translationWords`). The pane can hold ids that book has
+ * never had — the halves of an unapplied cut, `b2-3/1` and `b2-3/2`, which exist
+ * only in the replay — and a record filed under one of those would be a row that
+ * every future materialisation reports as stale and no reader ever finds. It is
+ * refused by name instead, with the sentence saying which gesture comes first.
+ *
+ * ── The order, and what the caller gets back ────────────────────────────────
+ *
+ * Append, re-materialise, re-read. The derived book is stale from the instant the
+ * row is appended until it is made again (main's `translation:record-edit` door
+ * makes the same pair of calls for the same reason), and the pane cannot draw the
+ * corrected words until it is. So the answer is the WHOLE BOOK back — one question,
+ * one answer, on `loadBook`'s own rule — rather than an acknowledgement the pane
+ * would have to follow with a second round trip.
+ *
+ * IT REJECTS, on `applyBookOps`'s rule: the person's words are in front of them
+ * and a refusal is something they can act on.
+ */
+export async function correctBookBlock(
+  projectDir: string,
+  id: string,
+  text: string,
+  /** The queue's answer to "is a run writing this file right now" — main holds both. */
+  busy: (recordsFile: string) => string | null = () => null,
+): Promise<BookOutcome> {
+  const read = await openBookAtPosition(projectDir);
+  if (!read.ok) {
+    // The load's own sentence, thrown rather than returned: this is a write door,
+    // and a book that cannot be opened is a correction that cannot be recorded.
+    throw new ProjectError(read.reason);
+  }
+  const { at, parsed, transform } = read.opened;
+  if (transform === null) {
+    throw new BookOpsError(
+      'These words are not a translation\'s, so there is no translation to record a correction in. '
+      + 'An edit here is an ordinary change to the book.',
+    );
+  }
+  if (!parsed.rows.some((row) => row.id === id)) {
+    throw new ProjectError(
+      'This paragraph is not one the translation answered for — it was made by a change that is '
+      + 'still waiting to be applied. A translation keeps its words block by block, so apply the '
+      + 'change first and the corrected words have somewhere to be recorded.',
+    );
+  }
+  const records = await recordCorrection(at.dir, transform, id, text, busy);
+  await materializeTranslation(records);
+  return loadBook(projectDir);
 }
 
 /**

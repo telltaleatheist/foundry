@@ -295,13 +295,34 @@ unless asked, an honest partial beats a bent whole.
   the pane's stack). Drag-to-reorder and rule-dragging deferred out loud —
   the `move` and chapter-`move` ops exist; the drag machinery waits, with
   comments standing where each would hang.
-- **R5 (projections)** — LANDED in three slices: `fb974af` (R5a, the Edition
+- **R5 (projections)** — LANDED in four slices: `fb974af` (R5a, the Edition
   toggle), `de5cd2f` (R5b, materialize + `vlm-compile`, export refusal
   lifted), `f2b39f6` (R5c, translations through the book file: `--book`
   source, block-id records, derived files at translate landings, the
-  second edit-walk bound, translate + translated-export refusals lifted).
-  Remaining from this wave: the aligned two-column view + records
-  streaming (R5d, before or beside R6).
+  second edit-walk bound, translate + translated-export refusals lifted),
+  and **R5d — the aligned translation view**. `book:load` on a translated
+  position carries the pair in ONE answer (`BookTranslation`: the target
+  language, and the parent position MATERIALISED — rows only, no ops chain,
+  because it is `writeTranslationBook`'s own first half and that is exactly
+  why the ids line up). An `Alone | Aligned` toggle stands beside
+  `Workbench | Edition` on translated positions only — not a third segment,
+  because Aligned composes with the workbench and is meaningless against the
+  edition — refused in Edition and below ~68rem of pane, with the sentence
+  said as a title AND on the notice strip. Two scrollers are locked BY ID,
+  the column a hand is on holding the wheel until `scrollend`; where a row
+  is on one side only (struck under the translation, the halves of a cut)
+  the anchor is the NEAREST PRECEDING shared row — a documented rule with
+  its own pure function (`sharedAnchor`, book-view/flow.ts), chosen because
+  it is the same answer whichever column drives. The hover tint reaches
+  across the gap by id. And a TEXT EDIT on a translated block routes to
+  `book:correct`, which appends a block-id-keyed row to the records,
+  re-materialises the derived book and answers with it: a `text` op there
+  would leave the ops chain and the records saying different things about
+  one paragraph, which is `translationWorldOf`'s own argument. Structure ops
+  (strike, category, merge, split, chapter) stay ordinary ops. Source edits
+  stay where they already were — above the translation, where changing the
+  words changes the question the cost cache is keyed on. **Records streaming
+  did not land**; §10 says why.
 - **R6 (subtraction):** everything in §7 deleted; migration shim; imported-EPUB
   explode; docs updated (WORKBENCH §11 marked superseded).
 
@@ -320,3 +341,19 @@ the main checkout.
 - Scan-crop-beside-block affordance — valuable, not in these waves.
 - Websockets / remote client — A2.
 - Rich WYSIWYG inline-markup editing — source-level text edits first.
+- **Records streaming into the aligned view — LEFT OUT AT R5d, and the reason
+  is not effort.** §5 admits it *"only because it is nearly free"* — a file
+  tail and a signal — and the thing it would fill in does not exist while a
+  run is going. A translate step is minted at its LANDING (`recordTranslation`
+  is called from the queue's settle, electron/job-queue.ts), so while the
+  model is answering there is no step in the ledger, no position under it, no
+  derived book, and therefore no aligned view for rows to arrive in. The one
+  case that IS reachable is a RE-RUN over a step somebody happens to be
+  standing on, and paying for it would mean: a watcher per pane with a
+  lifecycle across tab moves and position moves, an offset reader tolerant of
+  the whole-file rename a correction makes under it, a channel and a
+  subscription through preload, and a rule for what the column means while it
+  is half the old translation and half the new one. That is not a file tail
+  and a signal. The honest place for it is beside a translate step that exists
+  from the moment the job is queued — which is a change to the ledger, not to
+  this pane.

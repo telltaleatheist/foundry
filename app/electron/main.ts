@@ -31,7 +31,13 @@ import {
 
 import { readAppSettings, writeAppSettings } from './app-settings';
 import { cancelSetup, setupWslEnv } from './backend-setup';
-import { applyBookOps, bookFigureFile, loadBook, materializeTranslation } from './book';
+import {
+  applyBookOps,
+  bookFigureFile,
+  correctBookBlock,
+  loadBook,
+  materializeTranslation,
+} from './book';
 import { injectReporter, REPORTER_ID, REPORTER_MEMBER, REPORTER_SOURCE, sanitizeChapter } from './click-reporter';
 import {
   engineInfo,
@@ -3069,16 +3075,27 @@ function registerIpc(): void {
    */
   ipcMain.handle('translation:of-document', (_event, projectDir: string, filePath: string) =>
     translationWorldOf(projectDir, filePath));
+  /*
+   * THE QUEUE'S HALF OF BOTH CORRECTION DOORS, said once.
+   *
+   * A translation appends to its records file for hours and a correction swaps
+   * that whole file into place, so the door is shut while a run is producing it.
+   * The queue knows and projects.ts must not import it; main, which composes both
+   * doors, hands the same check into each — and it is one function rather than two
+   * copies of one sentence, because the two doors are the same refusal reached
+   * from a cast EPUB and from the pane (`recordCorrection`, electron/projects.ts).
+   */
+  const recordsBusy = (recordsFile: string): string | null => (
+    queue.producing(recordsFile)
+      ? 'A translation is writing this book\'s records right now, so the correction was not '
+        + 'recorded — the edit is on screen and in this copy of the book. Let the run finish '
+        + '(or cancel it) and make the edit again.'
+      : null
+  );
   ipcMain.handle(
     'translation:record-edit',
     async (_event, projectDir: string, filePath: string, parts: string, text: string) => {
-      const records = await recordTranslationEdit(projectDir, filePath, parts, text, (recordsFile) => (
-        queue.producing(recordsFile)
-          ? 'A translation is writing this book\'s records right now, so the correction was not '
-            + 'recorded — the edit is on screen and in this copy of the book. Let the run finish '
-            + '(or cancel it) and make the edit again.'
-          : null
-      ));
+      const records = await recordTranslationEdit(projectDir, filePath, parts, text, recordsBusy);
       /*
        * AND THE BOOK IS REMADE, because the correction is only in the payload
        * until it is. A translation's derived book file is a pure function of its
@@ -3132,6 +3149,25 @@ function registerIpc(): void {
    */
   ipcMain.handle('book:apply', (_event, projectDir: string, ops: BookOp[]) =>
     applyBookOps(projectDir, ops));
+  /*
+   * AND THE THIRD DOOR ONTO THIS BOOK — a corrected paragraph on a TRANSLATED
+   * position, which is not an op and must never become one.
+   *
+   * *"Translated edits are per-language record corrections."* (docs/RENDERER.md
+   * §5.) `book:apply` records decisions about STRUCTURE — strike, category,
+   * merge, split, chapter — and every one of those is as true of a translation as
+   * of the book it came from, so they ride the ops chain unchanged. The WORDS are
+   * the exception: they belong to the records file, which is the step's payload
+   * and the truth the derived book is a pure function of, and a `text` op over one
+   * would leave the same paragraph saying two things.
+   *
+   * IT REJECTS, like `book:apply` and for its reason, and it ANSWERS WITH THE
+   * WHOLE BOOK — the correction is not visible until the derived book has been
+   * made again, and making the pane ask a second time for a state this call
+   * already produced would be two questions about one gesture.
+   */
+  ipcMain.handle('book:correct', (_event, projectDir: string, id: string, text: string) =>
+    correctBookBlock(projectDir, id, text, recordsBusy));
   ipcMain.handle('ledger:describe-delete', async (_event, projectDir: string, stepId: string) => {
     // Proven BEFORE the card is composed, so a warning is never put on screen for
     // something the delete would refuse a click later.

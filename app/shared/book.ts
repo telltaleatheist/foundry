@@ -310,6 +310,49 @@ export interface BookFile {
 }
 
 /**
+ * THE POSITION IS UNDER A TRANSLATION, AND HERE IS WHAT IT WAS MADE FROM.
+ *
+ * ── Why this is one fact and not three ──────────────────────────────────────
+ *
+ * *"Two scroll-locked columns over two book files with the same ids."*
+ * (docs/RENDERER.md §5.) The pane cannot draw that pair by asking three
+ * questions — is this translated, what language, and what did it say before —
+ * because the three answers are composed from ONE walk of the ledger
+ * (`translationInEffect`, then the step's parent, then that position's book) and
+ * three round trips would be three chances for them to disagree about which
+ * translation the pane is standing under. Null is the ordinary book in its own
+ * language, and it is what makes the aligned view UNAVAILABLE rather than empty.
+ *
+ * ── `source` IS AN OUTCOME OF ITS OWN, and that is deliberate ───────────────
+ *
+ * The right-hand column is drawable whatever happened to the left one: the
+ * derived book is on disk and the ops chain over it is already proven by the time
+ * this is composed. So a parent that cannot be read — a payload swept out from
+ * under an edit step, a step whose parent is not in the history — must not refuse
+ * the whole load and take a working position down with it. It refuses the CONTEXT,
+ * in main's own sentence, on the left sheet, and the book somebody came to edit is
+ * still in front of them.
+ */
+export interface BookTranslation {
+  /** The language the words at this position are IN — the translate step's own. */
+  language: string;
+  /**
+   * The parent book AS THE RECORDS ANSWERED IT — the translate step's parent
+   * position, materialised: its nearest ancestor book file with the chain up to
+   * that step replayed into it.
+   *
+   * ROWS ONLY, AND NO OPS CHAIN COMES WITH THEM. This is not a second editable
+   * book; it is the state the translator was handed, which is why the ids line up
+   * with the derived file's (docs/RENDERER.md §4 — *"parent ids kept verbatim"*)
+   * and why replaying anything over it would make it stop lining up. It is the
+   * identical composition `writeTranslationBook` performs before it puts the
+   * records' words in (electron/book.ts), which is the whole reason the two
+   * columns can be locked together by id at all.
+   */
+  source: { ok: true; rows: BookRow[] } | { ok: false; reason: string };
+}
+
+/**
  * THE ANSWER TO `book:load` — the file, plus the two things the file does not
  * carry.
  *
@@ -332,6 +375,11 @@ export interface BookLoad {
   loose: BookLoose;
   /** Where the figures are served, ending in `/`, or null when none were cut. */
   figures: string | null;
+  /**
+   * The translation this position stands under, or null for a book in its own
+   * language — and with it, the source the aligned view draws in its left column.
+   */
+  translation: BookTranslation | null;
   /**
    * EVERY CHANGE ON THE PATH FROM THE READING TO WHERE THE PERSON IS STANDING,
    * flattened into one list in the order they were made.

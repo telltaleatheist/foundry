@@ -108,3 +108,46 @@ export function seamJoins(
   }
   return out;
 }
+
+/**
+ * WHERE THE OTHER COLUMN SHOULD BE PUT — the aligned view's anchor, resolved.
+ *
+ * ── The question ────────────────────────────────────────────────────────────
+ *
+ * The pane has found the topmost block not cut off at the top of the column a
+ * hand is scrolling (`anchor`, an index into that column's ids in reading order),
+ * and it has the set of ids the OTHER column holds. What it needs back is the row
+ * both columns can be lined up on.
+ *
+ * ── NEAREST PRECEDING IS THE RULE, AND IT IS NOT A FALLBACK ─────────────────
+ *
+ * Two book files of one book do not hold identical lists of ids, and the two ways
+ * they differ are both ordinary rather than exceptional: a block struck under the
+ * translation is absent from the derived book, and a cut applied under it mints
+ * `b2-3/1` and `b2-3/2`, names the source never had. The ruling for this view
+ * (R5d's brief, written down here because a rule that lives only in a message is a
+ * rule the next reader mistakes for a shortcut) is the LAST SHARED ROW AT OR ABOVE
+ * the anchor.
+ *
+ * It is not a guess at where the missing row would have been. It is the one thing
+ * still true of both columns — that they are somewhere past that paragraph — and
+ * it is STABLE, because scrolling either column back the other way picks the same
+ * shared row and puts the pair back exactly where it was. A rule that reached
+ * FORWARD instead would answer differently depending on which column was driving,
+ * and the two columns would walk apart a row at a time.
+ *
+ * NULL IS THE HONEST ANSWER FOR A BOOK WITH NOTHING SHARED ABOVE — the top of a
+ * translation whose first paragraphs were all struck. Nothing is moved, which
+ * leaves both columns where their reader put them.
+ */
+export function sharedAnchor(
+  ids: readonly string[],
+  anchor: number,
+  twins: ReadonlySet<string>,
+): number | null {
+  for (let at = Math.min(anchor, ids.length - 1); at >= 0; at -= 1) {
+    const id = ids[at];
+    if (id !== undefined && twins.has(id)) return at;
+  }
+  return null;
+}

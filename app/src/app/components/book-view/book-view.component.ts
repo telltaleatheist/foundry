@@ -22,7 +22,7 @@ import { api } from '../../core/foundry';
 import { LedgerService } from '../../core/ledger.service';
 import { TabsService, type BookStack, type Tab } from '../../core/tabs.service';
 import { editionFlow, editionPieces } from './edition';
-import { flowNeighbours, seamJoins } from './flow';
+import { flowNeighbours, seamJoins, sharedAnchor } from './flow';
 
 /**
  * THE BOOK — a proof sheet on a dark workbench, and the one surface this app
@@ -248,6 +248,33 @@ const DRAG_SLOP = 4;
 /** The tint pulse on a block a marker jumped to — RENDERER-DESIGN.md §4. */
 const PULSE_MS = 600;
 
+/**
+ * The narrowest bench two sheets can breathe in, in rem — the lead's own number.
+ *
+ * Below it the aligned view is UNAVAILABLE rather than cramped: two columns of
+ * book at less than this are two columns of six words a line, which is not a
+ * proof sheet, it is a pair of ransom notes. The refusal says the window is too
+ * narrow, which is a thing a person can act on in one gesture.
+ */
+const ALIGNED_MIN_REM = 68;
+
+/**
+ * How long a column keeps the wheel when no `scrollend` ever arrives.
+ *
+ * ── This is a documented rule and not a fallback ────────────────────────────
+ *
+ * The scroll lock is re-entrant by nature — scrolling A moves B, and B's own
+ * scroll event would move A back — so exactly one column is DRIVING at a time and
+ * the other's events are ignored while it is. `scrollend` is what hands the wheel
+ * back, and it is the honest signal: it fires when a hand, a wheel or a smooth
+ * scroll has actually finished. This is the release valve for the one case that
+ * signal cannot cover: a column that took the wheel WITHOUT SCROLLING — the sync
+ * when the pair opens, which drives the source column from a live column that
+ * never moved — emits no `scrollend`, because nothing scrolled. A wheel nobody
+ * ever hands back is a pane where the other column can never be scrolled again.
+ */
+const SCROLL_SETTLE_MS = 400;
+
 @Component({
   selector: 'app-book-view',
   imports: [NgTemplateOutlet],
@@ -262,10 +289,20 @@ const PULSE_MS = 600;
       line they are written on, and the book would come out with a space in front
       of every note number.
     -->
-    <ng-template #words let-line>
+    <!--
+      \`plain\` IS THE CONTEXT ASKING FOR THE DEMOTED NUMBER, and it is a parameter
+      rather than a reading of \`edition()\` because there are two sheets now that
+      want it and only one of them is a mode. The edition demotes a marker because
+      the link is a reader's apparatus and a page is not a reader; the SOURCE
+      column demotes it because the left sheet is context — no coupling, no jump,
+      no amber (RENDERER-DESIGN.md §5: chrome only on the live column). One
+      template, asked which it is, instead of two that must be kept saying the
+      same thing about a superscript.
+    -->
+    <ng-template #words let-line let-plain="plain">
       @for (piece of line.pieces; track $index) {
         @if (piece.marker; as marker) {
-          @if (edition()) {
+          @if (plain) {
             <!--
               THE REF, DEMOTED — *"struck elements absent, refs demoted"*
               (docs/RENDERER.md §5). In the cast a matched marker is
@@ -293,6 +330,187 @@ const PULSE_MS = 600;
       }
     </ng-template>
 
+    <!--
+      THE WORDS AS THE BOOK SETS THEM — one block's prose, in the element its
+      category asks for.
+
+      IT IS A TEMPLATE BECAUSE THERE ARE TWO SHEETS NOW. The live column draws it
+      under the whole of §3's chrome and the SOURCE column draws it under none, and
+      the one thing that must not differ between them is the typography: a caption
+      set in italics on the right and roman on the left would be two books rather
+      than one book twice, and the scroll lock would be locking rows of different
+      heights together. So the element, the measured size and the marker cuts are
+      decided once, here, and what the two columns disagree about is only what is
+      drawn AROUND this.
+    -->
+    <ng-template #prose let-line let-plain="plain">
+      @switch (line.row.category) {
+        @case ('Title') {
+          <h1 [style.font-size.em]="line.size">
+            <ng-container
+              *ngTemplateOutlet="words; context: { $implicit: line, plain: plain }"
+            ></ng-container>
+          </h1>
+        }
+        @case ('Section-header') {
+          <h2 [style.font-size.em]="line.size">
+            <ng-container
+              *ngTemplateOutlet="words; context: { $implicit: line, plain: plain }"
+            ></ng-container>
+          </h2>
+        }
+        @case ('Quote') {
+          <blockquote>
+            <p [style.font-size.em]="line.size">
+              <ng-container
+                *ngTemplateOutlet="words; context: { $implicit: line, plain: plain }"
+              ></ng-container>
+            </p>
+          </blockquote>
+        }
+        @case ('Caption') {
+          <p class="caption" [style.font-size.em]="line.size">
+            <ng-container
+              *ngTemplateOutlet="words; context: { $implicit: line, plain: plain }"
+            ></ng-container>
+          </p>
+        }
+        @case ('Footnote') {
+          <p class="note" [style.font-size.em]="line.size">
+            <ng-container
+              *ngTemplateOutlet="words; context: { $implicit: line, plain: plain }"
+            ></ng-container>
+          </p>
+        }
+        @case ('Picture') {
+          <!--
+            THE PLATE IS THE ENGINE'S OWN CROP, cut once beside the bank when the
+            book was made (docs/BOOK-FILE.md §6) and served through the
+            allow-listed book host — the row names it, main resolves it, and this
+            pane composes a URL and nothing else. The empty frame remains the
+            honest state of a book none were cut for (no PDF at reflow): it
+            reserves the space a plate takes and names the page it came from, so a
+            book with plates reads as a book with plates rather than as a
+            paragraph gone missing. The alt is empty because the caption below IS
+            the description, and a reader hearing it twice was told nothing the
+            second time.
+          -->
+          <figure>
+            @if (plate(line.row); as src) {
+              <img class="plate-img" [src]="src" alt="" draggable="false">
+            } @else if (!edition()) {
+              <!--
+                AND THE EMPTY FRAME IS THE BENCH'S. It is a dashed rule and a page
+                number — an instrument mark saying "a plate belongs here and this
+                book was reflowed without the PDF to cut it from". The edition is
+                the finished book, the finished book has the plate, and drawing a
+                dashed box in its place would put a mark on the page that the
+                export will never write. What is left is the gap the missing plate
+                actually is.
+
+                THE SOURCE COLUMN KEEPS IT, which looks like an exception to
+                "chrome only on the live column" and is not: this frame is the
+                SPACE the picture occupies, and a context column that closed the
+                gap would stand a row taller than its twin all the way down the
+                page — which the scroll lock would then have to argue with.
+              -->
+              <div class="plate"><span class="plate-page">≈ {{ line.row.page }}</span></div>
+            }
+            @if (line.row.text.trim().length > 0) {
+              <figcaption [style.font-size.em]="line.size">
+                <ng-container
+                  *ngTemplateOutlet="words; context: { $implicit: line, plain: plain }"
+                ></ng-container>
+              </figcaption>
+            }
+          </figure>
+        }
+        @default {
+          <!--
+            Text, and — with a class and nothing else — a table, a formula and a
+            list item. Their own shapes are later waves (a table grid editor was
+            deferred out loud); rendering what the model read, plainly, is not a
+            placeholder for that, it is what the words are.
+          -->
+          <p
+            class="para"
+            [class.indent]="line.indent"
+            [class.set-off]="line.row.category !== 'Text'"
+            [style.font-size.em]="line.size"
+          >
+            <ng-container
+              *ngTemplateOutlet="words; context: { $implicit: line, plain: plain }"
+            ></ng-container>
+          </p>
+        }
+      }
+    </ng-template>
+
+    <!--
+      ── §5 THE ALIGNED TRANSLATION VIEW — two columns, one book, twice ────────
+
+      *"Two scroll-locked columns over two book files with the same ids."*
+      (docs/RENDERER.md §5.) The SOURCE is on the left and the TRANSLATION on the
+      right, which is the order the work went in and the order a proof is read in.
+      The right-hand column IS the pane — every gesture, every mark, the stack, the
+      trays — untouched; the left is READ-ONLY CONTEXT and carries no chrome at
+      all, because there is nothing on that sheet a person can decide (source edits
+      stand ABOVE the translation, where changing the words changes the question
+      the records answered).
+
+      THE PAIR IS ALWAYS THIS ELEMENT, with one child or two. A wrapper that only
+      existed while two columns did would mean the bench's own box changed shape
+      when the toggle was pressed, and everything measured against it — the sticky
+      trays, the marquee's coordinates — would be measuring a different thing
+      depending on a mode.
+    -->
+    <div class="pair" [class.aligned]="aligned()">
+      @if (aligned()) {
+        <!--
+          ITS OWN SCROLLER, which is the whole mechanism: two scrollable boxes are
+          what there is to lock together.
+
+          AND NO \`(scroll)\` BINDING ON IT, deliberately — the listeners are put on
+          the HOST in the capture phase instead, and the constructor says why: an
+          Angular event binding marks this view dirty every time it fires, and a
+          scroll fires every frame of every drag of every book, aligned or not.
+        -->
+        <div class="context">
+          @if (sourceProblem(); as reason) {
+            <div class="sheet context-sheet"><p class="failure">{{ reason }}</p></div>
+          } @else {
+            <!--
+              THE TITLE SAYS WHERE SOURCE EDITS LIVE, and it is the only thing this
+              sheet says about itself. A double-click here reaches no handler —
+              there is none bound on this sheet — so the sheet does not refuse the
+              gesture, it simply is not one of the surfaces that takes it, and the
+              sentence names the step where those words ARE editable.
+            -->
+            <div
+              class="sheet context-sheet"
+              [attr.title]="sourceTitle()"
+            >
+              @for (line of sourceLines(); track line.row.id) {
+                @if (line.opensNotes) { <div class="notes-rule"></div> }
+                <div
+                  class="block"
+                  [attr.data-id]="line.row.id"
+                  [style.color]="line.colour"
+                  [class.twin]="twinned() === line.row.id"
+                  (pointerenter)="twin(line.row.id)"
+                  (pointerleave)="twin(null)"
+                >
+                  <div class="body">
+                    <ng-container
+                      *ngTemplateOutlet="prose; context: { $implicit: line, plain: true }"
+                    ></ng-container>
+                  </div>
+                </div>
+              }
+            </div>
+          }
+        </div>
+      }
     <div class="bench" [class.edition]="edition()">
       @if (problem(); as reason) {
         <div class="sheet"><p class="failure">{{ reason }}</p></div>
@@ -334,6 +552,47 @@ const PULSE_MS = 600;
               (click)="show('edition')"
             >Edition</button>
           </div>
+          <!--
+            AND THE SECOND CONTROL, WHICH IS NOT A THIRD SEGMENT.
+
+            \`Workbench | Edition\` is the REGISTER — what kind of thing this page
+            is — and Aligned is not a third kind of page: it composes with the
+            workbench (chrome on the live column, the source beside it) and is
+            meaningless against the edition, which is the finished book and has one
+            column. A third segment would have said the three were alternatives and
+            put "the finished book, with a working column beside it" on the list of
+            things a person could ask for.
+
+            IT IS ONLY THERE ON A TRANSLATED POSITION. There is no source to set
+            beside a book in its own language, and a control that was permanently
+            dimmed on every ordinary book would be furniture nobody could ever use.
+
+            REFUSED RATHER THAN DISABLED. \`aria-disabled\` and not \`disabled\`,
+            because a control that cannot be reached cannot say why it cannot be
+            used: the title is for a pointer that pauses, and a PRESS puts the same
+            sentence on the window's notice strip, where the rest of this app says
+            what it would not do.
+          -->
+          @if (translation() !== null) {
+            <div class="segments" role="group" aria-label="Where the source of this translation is shown">
+              <button
+                type="button"
+                class="act segment"
+                [class.on]="!aligned()"
+                [attr.aria-pressed]="!aligned()"
+                (click)="align('alone')"
+              >Alone</button>
+              <button
+                type="button"
+                class="act segment"
+                [class.on]="aligned()"
+                [attr.aria-pressed]="aligned()"
+                [attr.aria-disabled]="alignRefusal() !== null ? 'true' : null"
+                [attr.title]="alignRefusal()"
+                (click)="align('aligned')"
+              >Aligned</button>
+            </div>
+          }
         </div>
         <!--
           \`tabindex="-1"\` so the sheet can HOLD focus without being a tab stop.
@@ -486,8 +745,9 @@ const PULSE_MS = 600;
               [class.lit]="lit() === line.row.id"
               [class.pulse]="pulse() === line.row.id"
               [class.spanned]="spans(line)"
+              [class.twin]="twinned() === line.row.id"
               (pointerenter)="lightRow(line)"
-              (pointerleave)="light(null)"
+              (pointerleave)="dim()"
             >
               <span class="gutter rail"></span>
               @if (!edition() && chosen().has(line.row.id)) {
@@ -547,89 +807,9 @@ const PULSE_MS = 600;
                     (keydown.escape)="revert(line.row.text, $event)"
                   >{{ line.row.text }}</p>
                 } @else {
-                @switch (line.row.category) {
-                  @case ('Title') {
-                    <h1 [style.font-size.em]="line.size">
-                      <ng-container *ngTemplateOutlet="words; context: { $implicit: line }"></ng-container>
-                    </h1>
-                  }
-                  @case ('Section-header') {
-                    <h2 [style.font-size.em]="line.size">
-                      <ng-container *ngTemplateOutlet="words; context: { $implicit: line }"></ng-container>
-                    </h2>
-                  }
-                  @case ('Quote') {
-                    <blockquote>
-                      <p [style.font-size.em]="line.size">
-                        <ng-container *ngTemplateOutlet="words; context: { $implicit: line }"></ng-container>
-                      </p>
-                    </blockquote>
-                  }
-                  @case ('Caption') {
-                    <p class="caption" [style.font-size.em]="line.size">
-                      <ng-container *ngTemplateOutlet="words; context: { $implicit: line }"></ng-container>
-                    </p>
-                  }
-                  @case ('Footnote') {
-                    <p class="note" [style.font-size.em]="line.size">
-                      <ng-container *ngTemplateOutlet="words; context: { $implicit: line }"></ng-container>
-                    </p>
-                  }
-                  @case ('Picture') {
-                    <!--
-                      THE PLATE IS THE ENGINE'S OWN CROP, cut once beside the
-                      bank when the book was made (docs/BOOK-FILE.md §6) and
-                      served through the allow-listed book host — the row names
-                      it, main resolves it, and this pane composes a URL and
-                      nothing else. The empty frame remains the honest state of
-                      a book none were cut for (no PDF at reflow): it reserves
-                      the space a plate takes and names the page it came from,
-                      so a book with plates reads as a book with plates rather
-                      than as a paragraph gone missing. The alt is empty
-                      because the caption below IS the description, and a
-                      reader hearing it twice was told nothing the second time.
-                    -->
-                    <figure>
-                      @if (plate(line.row); as src) {
-                        <img class="plate-img" [src]="src" alt="" draggable="false">
-                      } @else if (!edition()) {
-                        <!--
-                          AND THE EMPTY FRAME IS THE BENCH'S. It is a dashed rule
-                          and a page number — an instrument mark saying "a plate
-                          belongs here and this book was reflowed without the PDF
-                          to cut it from". The edition is the finished book, the
-                          finished book has the plate, and drawing a dashed box
-                          in its place would put a mark on the page that the
-                          export will never write. What is left is the gap the
-                          missing plate actually is.
-                        -->
-                        <div class="plate"><span class="plate-page">≈ {{ line.row.page }}</span></div>
-                      }
-                      @if (line.row.text.trim().length > 0) {
-                        <figcaption [style.font-size.em]="line.size">
-                          <ng-container *ngTemplateOutlet="words; context: { $implicit: line }"></ng-container>
-                        </figcaption>
-                      }
-                    </figure>
-                  }
-                  @default {
-                    <!--
-                      Text, and — with a class and nothing else — a table, a
-                      formula and a list item. Their own shapes are later waves
-                      (a table grid editor was deferred out loud); rendering what
-                      the model read, plainly, is not a placeholder for that, it
-                      is what the words are.
-                    -->
-                    <p
-                      class="para"
-                      [class.indent]="line.indent"
-                      [class.set-off]="line.row.category !== 'Text'"
-                      [style.font-size.em]="line.size"
-                    >
-                      <ng-container *ngTemplateOutlet="words; context: { $implicit: line }"></ng-container>
-                    </p>
-                  }
-                }
+                  <ng-container
+                    *ngTemplateOutlet="prose; context: { $implicit: line, plain: edition() }"
+                  ></ng-container>
                 }
               </div>
             </div>
@@ -706,6 +886,7 @@ const PULSE_MS = 600;
         </div>
       }
     </div>
+    </div>
   `,
   styles: [`
     /* ── §1 Tokens. Copied from RENDERER-DESIGN.md, and nothing else in this
@@ -758,7 +939,7 @@ const PULSE_MS = 600;
        and not as a fill. Clipped horizontally rather than scrollable: a margin
        chip longer than its gutter is chrome, and chrome must never be able to
        give the page a second scrollbar. */
-    .bench {
+    .bench, .context {
       position: relative;
       width: 100%;
       height: 100%;
@@ -767,10 +948,18 @@ const PULSE_MS = 600;
       background: var(--bench);
       scrollbar-width: thin;
       scrollbar-color: #3a3733 transparent;
+      /* Equal halves of the pair, and zero basis so a long word in one column
+         cannot widen it at the other's expense. Alone, one item at \`flex: 1\` is
+         the whole width, which is what the bench has always been. */
+      flex: 1 1 0;
+      min-width: 0;
     }
-    .bench::-webkit-scrollbar { width: 8px; }
-    .bench::-webkit-scrollbar-track { background: transparent; }
-    .bench::-webkit-scrollbar-thumb { background: #3a3733; border-radius: 4px; }
+    .bench::-webkit-scrollbar, .context::-webkit-scrollbar { width: 8px; }
+    .bench::-webkit-scrollbar-track, .context::-webkit-scrollbar-track { background: transparent; }
+    .bench::-webkit-scrollbar-thumb, .context::-webkit-scrollbar-thumb {
+      background: #3a3733;
+      border-radius: 4px;
+    }
 
     .sheet {
       position: relative;
@@ -803,6 +992,34 @@ const PULSE_MS = 600;
     }
 
     .sheet:focus { outline: none; }
+
+    /* ── §5 The pair ──────────────────────────────────────────────────────── */
+
+    .pair { display: flex; width: 100%; height: 100%; }
+    /*
+     * *"Both sheets narrow to fit: min(38rem, 46%) each."* — the lead's measure,
+     * written here against the COLUMN because that is the box a sheet is centred
+     * in: each column is half the pair, so 92% of one is 46% of the bench, and the
+     * two spellings are the same width. What is left over is bench, on both sides
+     * of both sheets, which is the gap between them.
+     */
+    .pair.aligned .sheet, .pair.aligned .tray { width: min(38rem, 92%); }
+    /*
+     * THE CONTEXT SHEET IS THE PAPER WITHOUT THE INSTRUMENT. Same ground, same
+     * serif, same measured sizes — it has to be, or the two columns would set the
+     * same book in two typefaces and the scroll lock would be tying rows of
+     * different heights together — and none of §3's chrome, because there is
+     * nothing on this sheet to decide. The gutters close to the paper's own
+     * margin: with no rails, chips, ordinals, ghosts or flags to hang in them,
+     * 3.25rem of instrument margin either side would be air with nothing in it.
+     */
+    .context-sheet {
+      padding-inline: 2rem;
+      /* A caret cannot land here — there is no editor on this sheet — but a
+         person reading the source will want to take a sentence out of it, and
+         nothing on this column drags a marquee for the selection to fight with. */
+      user-select: text;
+    }
 
     .waiting, .failure { margin: 0; text-indent: 0; color: var(--ink-muted); }
     .waiting { text-align: center; }
@@ -849,6 +1066,18 @@ const PULSE_MS = 600;
     .body > * { color: var(--ink); }
 
     .block:hover .body { background: color-mix(in srgb, currentColor 5%, transparent); }
+    /*
+     * §5 — THE TWIN, which is the hover tint reaching across the gap.
+     *
+     * *"Hovering a block in either column lights the SAME id in the other."* It is
+     * the hover state and NOT the note coupling's sienna one level down: what is
+     * being said is "this paragraph and that paragraph are the same paragraph",
+     * which is exactly what a hover already says about one block. A second colour
+     * would have made the pairing look like a decision somebody had to make.
+     * Selection and the lit note both beat it, by order, because both of those ARE
+     * decisions.
+     */
+    .block.twin .body { background: color-mix(in srgb, currentColor 5%, transparent); }
     .block.selected .body { background: color-mix(in srgb, currentColor 9%, transparent); }
     .block.lit .body, .block.pulse .body {
       background: color-mix(in srgb, var(--ink-note) 9%, transparent);
@@ -1206,6 +1435,10 @@ const PULSE_MS = 600;
     .segment:not(.on) { background: transparent; color: var(--text-secondary); }
     .segment.on { z-index: 1; background: var(--bg-hover); border-color: var(--border-strong); }
     .segment:focus-visible { z-index: 1; outline: 2px solid var(--ink-select); outline-offset: 2px; }
+    /* Refused, not disabled — see the control's own comment in the template. It
+       wears \`.act:disabled\`'s own fade and keeps the pointer, because pressing it
+       is how the sentence gets said out loud. */
+    .segment[aria-disabled='true'] { opacity: 0.4; }
 
     /* The app's small menu, copied from open-documents — one vocabulary for
        one kind of thing, and the scrim is what makes the next click dismiss it
@@ -1429,6 +1662,94 @@ export class BookViewComponent {
   protected readonly edition = computed(() => this.mode() === 'edition');
 
   /**
+   * WHETHER THE SOURCE STANDS BESIDE THE TRANSLATION — the second control, and
+   * the one that is not a register.
+   *
+   * NOT REMEMBERED, on `mode`'s ruling and for its reason: a book opens with one
+   * column and so does moving to another step, because two columns are a way of
+   * READING this book rather than a fact about it. `load` puts it back.
+   *
+   * WHAT IS ON SCREEN IS `aligned()` BELOW AND NOT THIS. This is what the person
+   * asked for; that is what the pane can honestly give them, which also depends on
+   * there being a source to show, room to show it in, and a register that has two
+   * columns to give. The template reads only the second, so the segment that looks
+   * pressed and the sheet that is drawn cannot come apart.
+   */
+  private readonly alignment = signal<'alone' | 'aligned'>('alone');
+
+  /** The translation this position stands under, or null — main's own walk. */
+  protected readonly translation = computed(() => this.book()?.translation ?? null);
+
+  /**
+   * The pane's own width and the root's font size, in pixels, measured.
+   *
+   * NEITHER IS ASSUMED. The width comes from a `ResizeObserver` on this host —
+   * the pane is a pane in a window with panels either side of it, so the window's
+   * width is not this surface's width and never was — and the rem comes from the
+   * document's own computed style. Both start at zero, which reads as "not
+   * measured yet" and makes the aligned view unavailable until the first frame
+   * has been through: an availability answered before anything has been laid out
+   * would be an answer about nothing.
+   */
+  private readonly wide = signal(0);
+  private readonly rem = signal(0);
+
+  /** True when two sheets fit — `ALIGNED_MIN_REM`, against the measured pane. */
+  private readonly roomy = computed(() => {
+    const rem = this.rem();
+    return rem > 0 && this.wide() >= ALIGNED_MIN_REM * rem;
+  });
+
+  /**
+   * Why the aligned view cannot be had right now, or null when it can.
+   *
+   * ONE SENTENCE, TWO DOORS: the pointer that pauses on the segment gets it as a
+   * title, and a press gets it on the window's notice strip. The control is only
+   * on screen at all where there IS a translation, so "this book is not a
+   * translation" is not one of the answers here — it is the absence of the
+   * control, which is the plainest statement of it available.
+   */
+  protected readonly alignRefusal = computed<string | null>(() => {
+    if (this.edition()) {
+      return 'The edition is the finished book, and a finished book has one column. Press Workbench '
+        + 'and the source can stand beside these words.';
+    }
+    if (!this.roomy()) {
+      return 'There is not room here for two columns of book. Widen the window and the source can '
+        + 'stand beside the translation.';
+    }
+    return null;
+  });
+
+  /**
+   * THE AGREED ANSWER — two columns, or one.
+   *
+   * Derived rather than stored, so that narrowing the window takes the second
+   * column away and widening it brings the same one back without a state anywhere
+   * that has to be corrected on the way. Switching to the edition is the one
+   * transition that changes what was ASKED FOR (`show` puts the alignment back to
+   * alone), because the edition is not a place a person was reading a pair in.
+   */
+  protected readonly aligned = computed(() =>
+    this.alignment() === 'aligned'
+    && this.translation() !== null
+    && this.roomy()
+    && !this.edition());
+
+  /**
+   * The id under the pointer in EITHER column, lighting its twin in the other.
+   *
+   * A signal of its own and not a mode of `lit`. `lit` is a NOTE and its printed
+   * numbers — one fact about apparatus, drawn in the sienna the apparatus wears —
+   * and this is one block and the same block on the other sheet. Two questions,
+   * two answers, and a marker hover must not tint a paragraph across the gap.
+   */
+  protected readonly twinned = signal<string | null>(null);
+
+  /** True while a correction is in flight — one paragraph at a time, per gesture. */
+  private correcting = false;
+
+  /**
    * Which load is the current one.
    *
    * A pane can be pointed at another project before the first answer arrives —
@@ -1553,8 +1874,80 @@ export class BookViewComponent {
         registered = id;
       });
     });
-    inject(DestroyRef).onDestroy(() => {
+    const destroy = inject(DestroyRef);
+    destroy.onDestroy(() => {
       if (registered !== null) tabs.releaseBookStack(registered);
+    });
+
+    /*
+     * ── HOW WIDE THIS PANE IS, MEASURED, BECAUSE NOTHING ELSE KNOWS ───────────
+     *
+     * The aligned view is unavailable below a bench two sheets cannot breathe in
+     * (`ALIGNED_MIN_REM`), and the only honest source for that number is this
+     * element: the window holds a left nav, an inspector and a tab strip, every
+     * one of which can be opened and shut, so a media query on the window would
+     * answer for a width this surface never had. A `ResizeObserver` is one
+     * observer for the life of the pane and it fires when the pane's box changes
+     * for ANY of those reasons.
+     *
+     * The rem is read once, here, rather than per resize: it is the document's
+     * font size and nothing in this app changes it while a window is open. Zero
+     * until this runs, which is what makes the toggle refuse rather than guess
+     * before anything has been laid out.
+     */
+    afterNextRender(() => {
+      const root = getComputedStyle(document.documentElement).fontSize;
+      const rem = Number.parseFloat(root);
+      if (Number.isFinite(rem) && rem > 0) this.rem.set(rem);
+      const watch = new ResizeObserver((entries) => {
+        const box = entries[0]?.contentRect;
+        if (box !== undefined) this.wide.set(box.width);
+      });
+      watch.observe(this.host.nativeElement);
+      destroy.onDestroy(() => watch.disconnect());
+    });
+
+    /*
+     * ── THE SCROLL LOCK'S LISTENERS, AND WHY THEY ARE NOT TEMPLATE BINDINGS ───
+     *
+     * An Angular event binding marks this view dirty every time it fires, and this
+     * app is zoneless — so a `(scroll)` on the bench would put a change-detection
+     * pass behind every frame of every drag of every book, on a sheet whose DOM is
+     * the whole four hundred pages (there is no virtual scroller here;
+     * `content-visibility` skips the PAINT and leaves the nodes). The lock writes
+     * no signal and draws nothing — it moves one element's `scrollTop` — so there
+     * is nothing for a change-detection pass to do, and the honest way to say that
+     * is to stay outside the machinery that schedules one.
+     *
+     * ON THE HOST, IN THE CAPTURE PHASE, because scroll events do not bubble: an
+     * ancestor sees them on the way DOWN or not at all. One pair of listeners for
+     * the life of the pane, rather than a pair that has to be added and removed
+     * every time a toggle is pressed or a window is dragged narrower.
+     *
+     * WHICH COLUMN IT WAS IS THE ELEMENT'S OWN CLASS. Anything else in this pane
+     * that scrolls — the category menu is the only one — is neither, and is left
+     * alone rather than mistaken for a column.
+     */
+    const surface = this.host.nativeElement;
+    const which = (event: Event): 'live' | 'source' | null => {
+      const target = event.target as HTMLElement | null;
+      if (target === null || target.classList === undefined) return null;
+      if (target.classList.contains('bench')) return 'live';
+      return target.classList.contains('context') ? 'source' : null;
+    };
+    const scrolled = (event: Event): void => {
+      const column = which(event);
+      if (column !== null) this.scrolled(column);
+    };
+    const settled = (event: Event): void => {
+      const column = which(event);
+      if (column !== null) this.settled(column);
+    };
+    surface.addEventListener('scroll', scrolled, { capture: true, passive: true });
+    surface.addEventListener('scrollend', settled, { capture: true, passive: true });
+    destroy.onDestroy(() => {
+      surface.removeEventListener('scroll', scrolled, { capture: true });
+      surface.removeEventListener('scrollend', settled, { capture: true });
     });
   }
 
@@ -1583,6 +1976,12 @@ export class BookViewComponent {
     // persisted": there is nowhere it is written down and here is where a reload
     // puts it back.
     this.mode.set('workbench');
+    // AND WITH ONE COLUMN — `alignment`'s own ruling, for `mode`'s reason. A pane
+    // pointed at another step is a pane that may not be standing under a
+    // translation at all, and two columns for a book with no source is a state
+    // this surface must never be able to construct.
+    this.alignment.set('alone');
+    this.twinned.set(null);
     this.chosen.set(new Set());
     this.editingId.set(null);
     this.renaming.set(null);
@@ -1772,57 +2171,103 @@ export class BookViewComponent {
      * of the replayed rows (`seamJoins`, ./flow).
      */
     const seams = seamJoins(replayed.rows, book.seams);
-    const printed = this.printed();
+    return linesOf(replayed.rows, {
+      printed: this.printed(),
+      size: (category) => sizeOf(book, category),
+      chapters,
+      seams,
+      orphans,
+      chrome: true,
+    });
+  });
 
-    const out: Line[] = [];
-    let previous: BookRow | null = null;
-    let onPage = -1;
-    for (const row of replayed.rows) {
-      /*
-       * THE SHELF IS IN THE FILE AND NOT ON THE PAPER — §5 of the contract: a
-       * shelved row is a block the model answered and the book does not contain
-       * (page furniture, a suppressed running head), kept at its reading-order
-       * position so that restoring one is an op with an obvious answer for
-       * where. The Furniture Review panel is its surface (R4); the flow is not.
-       */
-      if (row.shelf !== undefined) continue;
-      const page = row.pages[0] ?? row.page;
-      const ghost = page === onPage ? null : page;
-      onPage = page;
-      const chapter = chapters.get(row.id) ?? null;
-      const heading = previous !== null
-        && (previous.category === 'Title' || previous.category === 'Section-header');
-      const markers = printed.get(row.id) ?? [];
-      out.push({
-        row,
-        pieces: cut(row.text, markers),
-        colour: pdfCategoryColour(row.category),
-        label: pdfCategoryLabel(row.category),
-        size: sizeOf(book, row.category),
-        ordinal: row.note === undefined ? null : row.note + 1,
-        jump: row.refs?.[0]?.block ?? null,
-        ghost,
-        chapter,
-        // The bench draws divisions as rules and never as headings, and it
-        // spends no air on them — the rule is the break.
-        heading: null,
-        opens: false,
-        seamInto: seams.get(row.id) ?? null,
-        indent: row.category === 'Text' && previous !== null && !heading && chapter === null,
-        opensNotes: row.category === 'Footnote'
-          && (previous === null || previous.category !== 'Footnote' || previous.page !== row.page),
-        // Both directions of the one structural flag this app still keeps
-        // (docs/RENDERER.md §0, ruling 7). A note nothing points at first: it is
-        // the whole row's problem, where a stray number is one word's.
-        flag: orphans.has(row.id)
-          ? 'nothing in the book carries this note'
-          : markers.some((marker) => marker.note === null)
-            ? 'no note carries this number'
-            : null,
-      });
-      previous = row;
+  /**
+   * THE LEFT-HAND COLUMN — the source this translation was made from, as lines.
+   *
+   * ── The same builder, with the instrument switched off ─────────────────────
+   *
+   * The rows come from main in one answer beside the translated ones
+   * (`BookTranslation.source`), and they go through the identical pass the live
+   * sheet's do — the same element per category, the same measured size, the same
+   * `cut` at the same resolved offsets. That is not a convenience: two columns
+   * whose typography was decided in two places would drift a line apart somewhere
+   * in the middle of a four-hundred-page book, and the scroll lock would be tying
+   * rows of different heights together and calling it aligned.
+   *
+   * WHAT IS SWITCHED OFF IS EVERYTHING A PERSON COULD ACT ON. No chapter rules or
+   * chips, no ordinals, no page ghosts, no amber flags, no seam ghosts — *"chrome
+   * only on the live column"*. `chrome: false` is what says so, once, rather than
+   * six empty collections that would each have to be kept empty.
+   *
+   * THE MARKERS ARE STILL CUT, and only the source has any. A translated row
+   * carries `refs: []` — nothing recovers where a note number falls inside a
+   * sentence somebody else wrote (`translated`, shared/materialize.ts) — so the
+   * numbers on the left are the apparatus as the page printed it, drawn demoted
+   * (`plain`), with no jump and no coupling, because this sheet is not a reader.
+   *
+   * NOTHING IS STRUCK HERE, and nothing has to be made not to be: main
+   * materialises these rows, and a materialised book has its struck rows already
+   * absent (docs/RENDERER.md §4).
+   */
+  protected readonly sourceLines = computed<Line[]>(() => {
+    const book = this.book();
+    const source = book?.translation?.source ?? null;
+    if (book === null || source === null || !source.ok) return [];
+    /*
+     * The markers, gathered by the block they were PRINTED in — `printed`'s own
+     * inversion, over these rows. LOOSE ONES ARE NOT HERE and are not missing:
+     * a stray number with no note under it is a FLAG, this column draws none, and
+     * the header that records them is not carried across (rows only, see
+     * `BookTranslation.source`). What that costs is one superscript on the left
+     * left as ordinary characters in the words, which is what it is.
+     */
+    const printed = new Map<string, Marker[]>();
+    for (const row of source.rows) {
+      for (const ref of row.refs ?? []) {
+        const already = printed.get(ref.block);
+        const marker: Marker = { at: ref.at, len: ref.len, note: row.id, struck: false };
+        if (already === undefined) printed.set(ref.block, [marker]);
+        else already.push(marker);
+      }
     }
-    return out;
+    for (const markers of printed.values()) markers.sort((one, other) => one.at - other.at);
+    return linesOf(source.rows, {
+      printed,
+      // The parent's measurements, which are also this book's: a translation
+      // carries its source's typography verbatim, because translating the words
+      // did not change what size the type was set in on the page.
+      size: (category) => sizeOf(book, category),
+      chapters: new Map(),
+      seams: new Map(),
+      orphans: new Set(),
+      chrome: false,
+    });
+  });
+
+  /** The sentence saying why there is no source to set beside these words, or null. */
+  protected readonly sourceProblem = computed<string | null>(() => {
+    const source = this.book()?.translation?.source ?? null;
+    return source === null || source.ok ? null : source.reason;
+  });
+
+  /**
+   * What the context sheet says about itself — where source edits live.
+   *
+   * *"Source edits invalidate that block's records."* (docs/RENDERER.md §5.) That
+   * is already true by construction and upstream of this pane: the translator's
+   * cost cache is keyed on the masked SOURCE text, so changing a word above the
+   * translation changes the question and a re-run answers it fresh. What this
+   * sheet has to say is therefore not a refusal but a direction — the words are
+   * editable, one step up, and this is where they were read from.
+   */
+  protected readonly sourceTitle = computed<string>(() => {
+    const language = this.book()?.translation?.language ?? '';
+    return language.length === 0
+      ? 'The book this translation was made from. To change these words, stand on the step above '
+        + 'the translation and edit them there; translating again answers with the new ones.'
+      : `The book this translation into ${language} was made from. To change these words, stand on `
+        + 'the step above the translation and edit them there; translating again answers with the '
+        + 'new ones.';
   });
 
   /**
@@ -1918,7 +2363,58 @@ export class BookViewComponent {
     this.commitEditing();
     this.renaming.set(null);
     this.menu.set(null);
+    /*
+     * AND THE EDITION DROPS TO ONE COLUMN. The edition is the finished book, a
+     * finished book has one column, and there is no such thing as a preview of a
+     * translation WITH its source down the side — the export writes nothing like
+     * it. It is put back rather than merely hidden, so that coming back to the
+     * bench is the page somebody left and not a page that reassembles itself
+     * around them.
+     */
+    if (register === 'edition') this.alignment.set('alone');
     this.mode.set(register);
+  }
+
+  /**
+   * The source beside the translation, or not — the second control's whole
+   * behaviour.
+   *
+   * A REFUSAL IS SAID OUT LOUD. The Aligned segment is `aria-disabled` and not
+   * `disabled` precisely so that pressing it can reach here and put the reason on
+   * the notice strip: a control that cannot be pressed cannot explain itself, and
+   * a title alone is a sentence only a pointer that pauses ever reads.
+   *
+   * A LIVE BLOCK IS PUT TO BED FIRST, on `show`'s rule: both sheets change measure
+   * when the pair opens or closes, and words somebody typed into a paragraph that
+   * is about to reflow are not a thing to lose to a layout.
+   */
+  protected align(which: 'alone' | 'aligned'): void {
+    if (which === 'aligned') {
+      const refused = this.alignRefusal();
+      if (refused !== null) {
+        this.tabs.notice.set(refused);
+        return;
+      }
+    }
+    if (this.alignment() === which) return;
+    this.commitEditing();
+    this.alignment.set(which);
+    this.twinned.set(null);
+    /*
+     * AND THE COLUMNS ARE PUT IN STEP THE MOMENT THE SECOND ONE EXISTS. The
+     * source arrives scrolled to its own top while the translation is wherever the
+     * person had been reading, and two columns that do not agree on the first
+     * frame are two columns somebody has to scroll to reconcile before the lock is
+     * any use. The LIVE column drives, because that is the one they were reading.
+     *
+     * THROUGH `scrolled` AND NOT STRAIGHT INTO `lock`, so that the sync takes the
+     * wheel like any other gesture: the source column is about to be moved, its own
+     * scroll event is about to fire, and an unguarded one would drive the live
+     * column back off the place this was called to put it.
+     */
+    if (which === 'aligned') {
+      afterNextRender(() => this.scrolled('live'), { injector: this.injector });
+    }
   }
 
   /**
@@ -1960,10 +2456,179 @@ export class BookViewComponent {
   /** A note row under the pointer lights its own markers. Anything else lights nothing. */
   protected lightRow(line: Line): void {
     this.lit.set(line.ordinal === null ? null : line.row.id);
+    this.twin(line.row.id);
+  }
+
+  /**
+   * Light the same block on the other sheet — the coupling, both directions.
+   *
+   * *"Hovering a block in either column lights the SAME id in the other."* It is
+   * an id and not an element, so the two columns never have to find each other for
+   * this: each draws the class where its own row's id matches, and a row the other
+   * column does not have simply lights nothing, which is the honest picture of a
+   * paragraph that the translation struck or a cut has since divided.
+   *
+   * NOTHING IS LIT WHILE THERE IS ONE COLUMN. The tint would be indistinguishable
+   * from the hover it is made of, so it would be a class that changed nothing —
+   * but it would also be a signal writing on every pointer move across a book that
+   * has no use for it.
+   */
+  protected twin(id: string | null): void {
+    this.twinned.set(this.aligned() ? id : null);
+  }
+
+  /** The pointer left a block: the note goes out and so does its twin. */
+  protected dim(): void {
+    this.lit.set(null);
+    this.twinned.set(null);
   }
 
   protected haunt(page: number | null): void {
     this.ghosted.set(page);
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // The scroll lock — two columns, one place in the book
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * ONE COLUMN DRIVES AT A TIME, and this is which.
+   *
+   * ── The loop this exists to break ──────────────────────────────────────────
+   *
+   * Scrolling A moves B. Moving B fires B's own scroll event. If that event moved
+   * A, the two columns would push each other down the page for as long as the
+   * arithmetic disagreed by a pixel — the classic two-way scroll loop, and it does
+   * not merely jitter, it makes both columns unusable. So the column a HAND is on
+   * takes the wheel, the other one's events are ignored for the duration, and the
+   * wheel goes back when that hand stops (`scrollend`, or `SCROLL_SETTLE_MS` for
+   * the one case that fires nothing).
+   *
+   * IT IS A FIELD AND NOT A SIGNAL. Nothing draws it, it changes many times a
+   * second while a wheel is turning, and a signal would put a change-detection
+   * pass behind every one of those.
+   */
+  private driving: 'live' | 'source' | null = null;
+  private drivingTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** A column was scrolled: it takes the wheel, and the other one follows. */
+  private scrolled(which: 'live' | 'source'): void {
+    if (!this.aligned()) return;
+    // The passenger's own scroll, which this pane caused a moment ago. Ignored,
+    // and that is the whole of the re-entrancy guard.
+    if (this.driving !== null && this.driving !== which) return;
+    this.driving = which;
+    if (this.drivingTimer !== null) clearTimeout(this.drivingTimer);
+    this.drivingTimer = setTimeout(() => {
+      this.driving = null;
+      this.drivingTimer = null;
+    }, SCROLL_SETTLE_MS);
+    this.lock(which);
+  }
+
+  /** `scrollend` on the driving column: the wheel goes back at once. */
+  private settled(which: 'live' | 'source'): void {
+    if (this.driving !== which) return;
+    this.driving = null;
+    if (this.drivingTimer !== null) {
+      clearTimeout(this.drivingTimer);
+      this.drivingTimer = null;
+    }
+  }
+
+  /**
+   * PUT THE OTHER COLUMN WHERE THIS ONE IS — the lock, by block id.
+   *
+   * ── What "the same place" means, and it is not a fraction ──────────────────
+   *
+   * *"Scrolling either column finds its topmost fully-visible block id and scrolls
+   * the other column so its row of the SAME id sits at the same viewport offset."*
+   * Not a proportion of the scroll height: a translation is a different length
+   * from its source in every language anybody translates into, so tying the two
+   * scrollbars together by percentage would put paragraph four hundred beside
+   * paragraph four hundred and thirty and drift the whole way down the book. The
+   * ids are the same on both sides by construction (docs/RENDERER.md §4 — *"parent
+   * ids kept verbatim"*), so the id is the place.
+   *
+   * ── NEAREST PRECEDING IS A RULE HERE, NOT A FALLBACK ───────────────────────
+   *
+   * A row can be on one side and not the other, and both ways of it happening are
+   * ordinary: a block struck under the translation is absent from the derived
+   * book, and a cut applied under it mints ids (`b2-3/1`) the source never had. The
+   * ruling (this wave's brief, and it is written down here because it is the kind
+   * of decision that gets mistaken for a shortcut later) is the NEAREST PRECEDING
+   * id present on both — the last shared paragraph at or above the one on screen.
+   * It is not a guess at where the missing row would have been: it is the true
+   * statement that both columns are somewhere after that paragraph, and it is
+   * stable, because the same anchor is chosen whichever column is driving.
+   *
+   * A book with NO shared row above the anchor moves nothing at all, which is the
+   * top of the book and needs no help.
+   */
+  private lock(driver: 'live' | 'source'): void {
+    const host = this.host.nativeElement;
+    const live = host.querySelector('.bench') as HTMLElement | null;
+    const source = host.querySelector('.context') as HTMLElement | null;
+    if (live === null || source === null) return;
+    const from = driver === 'live' ? live : source;
+    const to = driver === 'live' ? source : live;
+
+    const fromBox = from.getBoundingClientRect();
+    const rows = [...from.querySelectorAll('.block[data-id]')] as HTMLElement[];
+    /*
+     * THE TOPMOST ROW NOT CUT OFF AT THE TOP. A block whose first line is above
+     * the fold is a block the reader is in the MIDDLE of, and putting its top edge
+     * at the other column's top edge would scroll the passenger backwards past
+     * words the driver can still see. The one under it is the first whole thing on
+     * screen, which is what a person would point at if asked where they were.
+     *
+     * The half-pixel is the browser's own subpixel layout and not a tolerance
+     * invented here: two boxes flush against each other can differ in the last
+     * place of a fractional rectangle.
+     *
+     * IT IS A WALK FROM THE TOP AND IT IS AFFORDABLE, which is worth saying so
+     * that nobody optimises it in the dark. The rects are read after the layout
+     * the scroll already forced, so a four-hundred-page book costs a few thousand
+     * property reads and no reflow — and it costs them only while two columns are
+     * on screen, which is a mode somebody chose. A binary search would work (the
+     * blocks are in document order in normal flow, so their tops only increase)
+     * and it is not here because the walk is honest and the search is a claim
+     * about the layout that nothing in this file could check.
+     */
+    const anchor = rows.findIndex((row) => row.getBoundingClientRect().top >= fromBox.top - 0.5);
+    if (anchor < 0) return;
+
+    const twins = new Map<string, HTMLElement>();
+    for (const row of to.querySelectorAll('.block[data-id]')) {
+      const id = row.getAttribute('data-id');
+      if (id !== null) twins.set(id, row as HTMLElement);
+    }
+
+    // The rule itself is `sharedAnchor` (./flow) — pure, over two lists of ids,
+    // where a script can exercise it. What is left here is the arithmetic, which
+    // needs a laid-out document and can only be checked by looking at one.
+    const shared = sharedAnchor(
+      rows.map((row) => row.getAttribute('data-id') ?? ''),
+      anchor,
+      new Set(twins.keys()),
+    );
+    if (shared === null) return;
+    const twin = twins.get(rows[shared]!.getAttribute('data-id')!);
+    if (twin === undefined) return;
+    /*
+     * THE SHARED ROW'S OWN OFFSET, and not the anchor's. When the row on screen is
+     * one the other column does not have, what is being lined up is the last
+     * paragraph they both hold — so the offset that matters is where THAT
+     * paragraph sits in the driving column, which is off the top of the screen by
+     * however far the reader has come since. Using the anchor's offset would put a
+     * paragraph the reader has already passed at the top of the other column.
+     */
+    const offset = rows[shared]!.getBoundingClientRect().top - fromBox.top;
+    const moved = (twin.getBoundingClientRect().top - to.getBoundingClientRect().top) - offset;
+    // A move of less than a pixel is the two columns already agreeing. Assigning
+    // it anyway would fire a scroll event on the passenger for nothing, which costs
+    // a frame and a guarded handler on every notch of a wheel.
+    if (Math.abs(moved) >= 1) to.scrollTop += moved;
   }
 
   /**
@@ -2398,7 +3063,102 @@ export class BookViewComponent {
     this.editingId.set(null);
     const row = this.view()?.rows.find((candidate) => candidate.id === id);
     if (row === undefined || row.text === said) return;
+    /*
+     * AND ON A TRANSLATED POSITION THE WORDS ARE NOT AN OP.
+     *
+     * *"Translated edits are per-language record corrections."* (docs/RENDERER.md
+     * §5.) The words of a translated block belong to the records file — the
+     * translate step's own payload, and the truth every derived book of it is a
+     * pure function of — so a `text` op here would put this sentence in the ops
+     * chain while the records still held the machine's, and the next time anything
+     * materialised this translation it would answer with the machine's. Two truths
+     * about one paragraph, which is the failure `translationWorldOf` was built to
+     * make impossible one surface over.
+     *
+     * Everything else this sheet can do to a translated block IS an op and stays
+     * one: striking it, relabelling it, joining it, cutting it, putting a division
+     * above it. Those are decisions about the book's STRUCTURE, and a translation
+     * has the same structure as the book it came from.
+     */
+    if (this.translation() !== null) {
+      void this.correct(id, said);
+      return;
+    }
     this.push({ op: 'text', id, text: said });
+  }
+
+  /**
+   * ONE CORRECTED PARAGRAPH, RECORDED — the round trip, and what comes back.
+   *
+   * ── The order, which is main's and is not negotiable from here ─────────────
+   *
+   * Main appends the row to the records file, materialises the derived book again
+   * from it, and answers with the whole book (`correctBookBlock`, electron/book.ts).
+   * There is nothing for this side to apply: the corrected words arrive as ROWS,
+   * which is the only shape that keeps one account of them.
+   *
+   * ── THE STACK SURVIVES, and that is the point of reloading rows and not the
+   * pane ──────────────────────────────────────────────────────────────────────
+   *
+   * `load` scraps the stack because it is called when the POSITION moved and the
+   * ops on it are a delta against a book somebody left. Nothing moved here: the
+   * same position, the same chain, one block's text different underneath. Every op
+   * waiting on the stack is keyed by block id and none of them names a row that
+   * stopped existing, so they replay onto the new rows exactly as they were
+   * replaying onto the old ones — which is what `view()` does on the next frame
+   * without being asked.
+   *
+   * ── The refusal, and what the person sees ──────────────────────────────────
+   *
+   * Main rejects with a sentence (a book that is not a translation, a block the
+   * file does not hold, a run writing the records right now) and it goes to the
+   * notice strip, where the rest of this window says what it would not do. The
+   * paragraph is already showing its recorded words again by then, because the
+   * editor closed before this call and nothing pushed an op — so the sentence is
+   * the only thing standing between the person and a correction that vanished, and
+   * main's own words say so.
+   */
+  private async correct(id: string, text: string): Promise<boolean> {
+    if (api === null) return false;
+    /*
+     * ONE AT A TIME, AND THE SECOND ONE IS TOLD SO. Two corrections in flight
+     * would be two whole-file rewrites of one records file racing each other, and
+     * the loser's paragraph would be gone with no sign of it anywhere. It is a
+     * round trip of a moment, so this is a rare thing to meet — which is exactly
+     * why it must not be met in silence: a paragraph that quietly reverted to the
+     * machine's words is the failure this whole door exists to prevent.
+     */
+    if (this.correcting) {
+      this.tabs.notice.set(
+        'The last corrected paragraph is still being written into this translation\'s records, so '
+        + 'this one was not — it is showing its recorded words again. Make the edit once more.',
+      );
+      return false;
+    }
+    const ticket = this.asked;
+    this.correcting = true;
+    try {
+      const answered = await api.book.correct(this.tab().path, id, text);
+      // The pane was pointed somewhere else while this was in flight: the answer is
+      // about a book that is no longer on screen. `load`'s own ticket, for its
+      // reason.
+      if (ticket !== this.asked) return false;
+      if (answered.ok) {
+        this.book.set(answered);
+        return true;
+      }
+      // The correction landed and the book could not be read back — main's
+      // sentence goes on the paper, which is where a book that cannot be drawn
+      // says why (`load`).
+      this.problem.set(answered.reason);
+      return false;
+    } catch (err) {
+      if (ticket !== this.asked) return false;
+      this.tabs.notice.set(err instanceof Error ? err.message : String(err));
+      return false;
+    } finally {
+      this.correcting = false;
+    }
   }
 
   /**
@@ -2617,13 +3377,41 @@ export class BookViewComponent {
      * pushes nothing.
      */
     this.editingId.set(null);
+    // The two halves, selected — the cut shown as two blocks rather than left for
+    // the reader to find in a page of prose that looks much as it did.
+    const halves = new Set([`${id}/1`, `${id}/2`]);
+    /*
+     * ── A CUT ON A TRANSLATED POSITION, WHERE THE WORDS MOVED TOO ─────────────
+     *
+     * The cut itself is an ordinary op — structure is structure in either language
+     * — but the words this cut is measured against are the RECORDS' (see `commit`),
+     * so the pair cannot be pushed together. The correction goes first and is
+     * WAITED FOR, and the split follows only if it landed: `at` is an offset into
+     * the string the person typed, so a split pushed over words the records still
+     * hold would cut a different sentence at the same number.
+     *
+     * A correction that main refused takes the cut down with it, deliberately.
+     * Half of this gesture is not a smaller version of it — it is a paragraph cut
+     * in two at an offset nobody chose.
+     */
+    if (this.translation() !== null) {
+      if (row.text === said) {
+        this.push({ op: 'split', id, at });
+        this.chosen.set(halves);
+        return;
+      }
+      void this.correct(id, said).then((recorded) => {
+        if (!recorded) return;
+        this.push({ op: 'split', id, at });
+        this.chosen.set(halves);
+      });
+      return;
+    }
     const ops: BookOp[] = [];
     if (row.text !== said) ops.push({ op: 'text', id, text: said });
     ops.push({ op: 'split', id, at });
     this.push(...ops);
-    // The two halves, selected — the cut shown as two blocks rather than left for
-    // the reader to find in a page of prose that looks much as it did.
-    this.chosen.set(new Set([`${id}/1`, `${id}/2`]));
+    this.chosen.set(halves);
   }
 
   /**
@@ -2732,6 +3520,93 @@ function caretOffsetIn(editor: HTMLElement): number | null {
   before.selectNodeContents(editor);
   before.setEnd(range.startContainer, range.startOffset);
   return before.toString().length;
+}
+
+/**
+ * ONE PASS OVER A LIST OF ROWS — the book as a sheet draws it, whichever sheet.
+ *
+ * EVERYTHING THAT DEPENDS ON THE ROW BEFORE IS DECIDED HERE, in one pass, and not
+ * in the template: whether a paragraph is indented (the first of the book and the
+ * first after a heading are not — print convention, RENDERER-DESIGN.md §2), where
+ * a page ghost belongs (only where the source page CHANGES), and which note opens
+ * a page's group of them and so carries the hairline. A template asking those
+ * questions per block would ask them again on every repaint.
+ *
+ * ── `chrome` IS THE WHOLE OF WHAT THE TWO COLUMNS DISAGREE ABOUT ────────────
+ *
+ * *"Chrome only on the live column."* The context sheet in the aligned view is
+ * the paper, the serif and the measured sizes with no instrument on it at all —
+ * no rules, no chips, no ordinals, no ghosts, no flags — because there is nothing
+ * on that sheet a person can decide. It is ONE parameter rather than six empty
+ * collections passed in, because six empty collections are six things that have to
+ * stay empty and one boolean is a statement.
+ *
+ * The marker cutting is NOT under it: numbers are characters of the words, not
+ * marks in a gutter, and both columns cut at the offsets the engine resolved
+ * (`cut`, below — the one implementation, on both sheets).
+ */
+function linesOf(
+  rows: readonly ReplayedRow[],
+  marks: {
+    printed: ReadonlyMap<string, Marker[]>;
+    size: (category: string) => number;
+    chapters: ReadonlyMap<string, string>;
+    seams: ReadonlyMap<string, string>;
+    orphans: ReadonlySet<string>;
+    chrome: boolean;
+  },
+): Line[] {
+  const out: Line[] = [];
+  let previous: BookRow | null = null;
+  let onPage = -1;
+  for (const row of rows) {
+    /*
+     * THE SHELF IS IN THE FILE AND NOT ON THE PAPER — §5 of the contract: a
+     * shelved row is a block the model answered and the book does not contain
+     * (page furniture, a suppressed running head), kept at its reading-order
+     * position so that restoring one is an op with an obvious answer for where.
+     * The Furniture Review panel is its surface (R4); the flow is not.
+     */
+    if (row.shelf !== undefined) continue;
+    const page = row.pages[0] ?? row.page;
+    const ghost = page === onPage ? null : page;
+    onPage = page;
+    const chapter = marks.chapters.get(row.id) ?? null;
+    const heading = previous !== null
+      && (previous.category === 'Title' || previous.category === 'Section-header');
+    const markers = marks.printed.get(row.id) ?? [];
+    out.push({
+      row,
+      pieces: cut(row.text, markers),
+      colour: pdfCategoryColour(row.category),
+      label: pdfCategoryLabel(row.category),
+      size: marks.size(row.category),
+      ordinal: marks.chrome && row.note !== undefined ? row.note + 1 : null,
+      jump: marks.chrome ? row.refs?.[0]?.block ?? null : null,
+      ghost: marks.chrome ? ghost : null,
+      chapter,
+      // The bench draws divisions as rules and never as headings, and it spends
+      // no air on them — the rule is the break.
+      heading: null,
+      opens: false,
+      seamInto: marks.seams.get(row.id) ?? null,
+      indent: row.category === 'Text' && previous !== null && !heading && chapter === null,
+      opensNotes: row.category === 'Footnote'
+        && (previous === null || previous.category !== 'Footnote' || previous.page !== row.page),
+      // Both directions of the one structural flag this app still keeps
+      // (docs/RENDERER.md §0, ruling 7). A note nothing points at first: it is
+      // the whole row's problem, where a stray number is one word's.
+      flag: !marks.chrome
+        ? null
+        : marks.orphans.has(row.id)
+          ? 'nothing in the book carries this note'
+          : markers.some((marker) => marker.note === null)
+            ? 'no note carries this number'
+            : null,
+    });
+    previous = row;
+  }
+  return out;
 }
 
 /** The measured size for this category, or the engine's own base sheet's. */

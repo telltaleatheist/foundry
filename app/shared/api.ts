@@ -910,6 +910,33 @@ export interface FoundryApi {
      * nothing had been pressed.
      */
     apply(projectDir: string, ops: readonly BookOp[]): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
+    /**
+     * ONE CORRECTED PARAGRAPH ON A TRANSLATED POSITION — the words, to the
+     * records, and never onto the ops chain.
+     *
+     * *"Translated edits are per-language record corrections."* (docs/RENDERER.md
+     * §5.) Everything else the pane can do to a translated book is an ordinary op
+     * and goes through `apply` above: striking a paragraph, relabelling it,
+     * joining two, cutting one, moving a division. The WORDS are the one thing
+     * that is not the ops chain's to hold, because they are the translate step's
+     * payload — a `text` op over a translated block would put the person's
+     * sentence in the chain while the records still held the machine's, and every
+     * later materialisation of that book would answer with the machine's.
+     *
+     * `id` IS A BLOCK ID OF THE BOOK FILE, and main proves it is one before a byte
+     * moves: the halves of a cut that has not been applied yet are ids the pane
+     * holds and the file has never had, and a record filed under one of those is a
+     * row nothing will ever read back (`correctBookBlock`, electron/book.ts).
+     *
+     * IT ANSWERS WITH THE WHOLE BOOK, already remade. A correction leaves the
+     * derived book file stale until main materialises it again, so the call that
+     * appends the row is the call that rebuilds it and hands back what the pane
+     * should now be drawing — one question, one answer, on `load`'s own rule.
+     *
+     * IT REJECTS rather than answering a sentence, on `apply`'s rule: the words
+     * are in front of the person, and a refusal is a thing they can act on.
+     */
+    correct(projectDir: string, id: string, text: string): Promise<BookOutcome>;
   };
 
   /**

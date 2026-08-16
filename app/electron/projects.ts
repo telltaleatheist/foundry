@@ -2874,21 +2874,12 @@ export async function recordTranslationEdit(
       + 'The edit itself is in the book.',
     );
   }
-  const records = translationRecordsOf(step);
-  if (records === null) {
-    // D2's export refusal, continued at the third door: the legacy row's words
-    // exist only inside the book its run wrote.
-    throw new ProjectError(
-      `“${step.label}” was made before Foundry kept a translation as records, so a corrected `
-      + 'sentence has nowhere durable to be recorded — the edit is in this copy of the book and '
-      + 'will not survive it being cast again. To make corrections that keep, translate again from '
-      + 'the step it was made from; everything after that is free.',
-    );
-  }
-
   // The grammar, checked piece by piece before a byte moves: `parts` is
   // data-bf-src's spelling — space-joined block keys — with `#note` legal on a
   // single-key row, exactly what the emitter stamps and the engine looks up by.
+  // IT IS THIS DOOR'S CHECK AND NOT THE APPEND'S: the pane's own correction door
+  // keys by BLOCK ID (`recordCorrection` below says why), and a block id is not a
+  // thing `parseTargetKey` can read.
   const pieces = parts.split(/\s+/).filter((piece) => piece.length > 0);
   if (pieces.length === 0) {
     throw new ProjectError('The edited block names no banked answer, so the correction cannot be recorded.');
@@ -2901,6 +2892,55 @@ export async function recordTranslationEdit(
         + 'once — that is not a shape a record can hold.',
       );
     }
+  }
+  return recordCorrection(dir, step, parts, text, busy);
+}
+
+/**
+ * THE CORRECTION ITSELF — one keyless human row, appended to a translate step's
+ * records file.
+ *
+ * ── Why this is a function of a STEP and not of a document ──────────────────
+ *
+ * Because there are two doors onto it now and only one of them has a document.
+ * `recordTranslationEdit` above starts from a cast EPUB's path and resolves the
+ * step through `stepStandingFor`; the renderer's aligned view starts from THE
+ * POSITION — there is no file on disk it is editing, only the book file main
+ * materialised and the ops chain over it — and resolves the same step through
+ * `translationInEffect` (electron/book.ts, `correctBookBlock`). One step, one
+ * append, one serialisation lock: the two doors must not be two implementations
+ * of "write a corrected paragraph down", because the whole point of the records
+ * model is that a translation's words live in exactly one file.
+ *
+ * ── `parts` IS WHATEVER THE CALLER'S WORLD KEYS BY, and that is honest ──────
+ *
+ * The EPUB door writes `page:order[:part]`, which is what its emitter stamped
+ * into the document. The pane writes a BLOCK ID, which is what the book file
+ * names its rows. Both are read back by the same lookup, which tries the book's
+ * ids first and the legacy spelling second (`translationWords`, shared/records.ts)
+ * — so the two vocabularies meet at materialisation and neither has to be
+ * translated into the other on the way in.
+ *
+ * The word checks below are common to both because they are about the WORDS:
+ * empty is not a correction, and control characters are not text a book can hold.
+ */
+export async function recordCorrection(
+  dir: string,
+  step: LedgerStep,
+  parts: string,
+  text: string,
+  busy: (recordsFile: string) => string | null = () => null,
+): Promise<string> {
+  const records = translationRecordsOf(step);
+  if (records === null) {
+    // D2's export refusal, continued at the third door: the legacy row's words
+    // exist only inside the book its run wrote.
+    throw new ProjectError(
+      `“${step.label}” was made before Foundry kept a translation as records, so a corrected `
+      + 'sentence has nowhere durable to be recorded — the edit is in this copy of the book and '
+      + 'will not survive it being cast again. To make corrections that keep, translate again from '
+      + 'the step it was made from; everything after that is free.',
+    );
   }
   if (text.trim().length === 0) {
     throw new ProjectError(
