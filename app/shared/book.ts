@@ -6,9 +6,9 @@
  * The engine owns the format. `vlm-book` reflows a readings bank into one row
  * per block — hyphens fused, page turns joined, ids minted, notes cut apart —
  * and writes `readings/<key>.book.jsonl`; `src/vlm/book-file.ts` is where that
- * grammar is decided and where its every field is explained. This file states
- * the same grammar a second time, in the app, and nothing here is allowed to be
- * an opinion about it.
+ * grammar is decided and `docs/BOOK-FILE.md` is the contract both files answer
+ * to. This file states the same grammar a second time, in the app, and nothing
+ * here is allowed to be an opinion about it.
  *
  * IT IS RESTATED FOR `shared/unrender.ts`'s REASON, which is the precedent this
  * follows entry for entry. The app never imports a line of the engine — it
@@ -20,7 +20,7 @@
  * program does not write is refused before a single row is read.
  *
  * If the engine's format grows a field, BOTH files grow. The version number is
- * the thing that makes that non-optional: a v3 book meets a sentence here rather
+ * the thing that makes that non-optional: a v4 book meets a sentence here rather
  * than a renderer quietly drawing a book with its new half missing.
  *
  * ── WHY A BAD ROW TAKES THE FILE DOWN ───────────────────────────────────────
@@ -33,19 +33,25 @@
  * the one on disk. A sentence naming the block that is wrong costs a reload; a
  * lenient parse costs somebody's afternoon and says nothing at all.
  *
- * ── What v2 added over v1, in one paragraph ─────────────────────────────────
+ * ── What v3 added over v2, in one paragraph ─────────────────────────────────
  *
- * A HEADER THAT CARRIES THE BOOK'S FURNITURE — the chapter starts the engine
- * detected, the measured typography, and the LOOSE apparatus (a printed
- * reference number with no note under it, a note nothing points at) — and, on
- * every note row, the `refs` that say where in the body its number was printed.
- * All four exist so that the renderer draws structure rather than deriving it:
- * a marker is an element bound to a note id, and a marker with nobody to bind to
- * is a flag in the margin instead of a silence.
+ * PROVENANCE, PARTS, SEAMS, THE SHELF AND THE FIGURES. The header now says what
+ * the book is made of — the engine that wrote it, the read's declared language,
+ * and `source.bankSha`, the identity of the receipt underneath, which is what
+ * lets a loader refuse a book whose bank has moved from under its ids. Every row
+ * carries `parts` in place of v2's bare `src` list: which banked answer
+ * contributed which characters of its finished text, char-exact, so the page
+ * inside a joined paragraph is a fact and not arithmetic. The page turns the
+ * reflow declined are pairs of BLOCK IDS (`seams`), because a person joining one
+ * is joining two paragraphs and "p13" names neither. The page furniture and the
+ * suppressed running heads are ROWS now, at their reading-order positions,
+ * wearing `shelf` and a sentence of `why` — nothing the model answered is
+ * silently gone. And a Picture row can carry `image`: the name of its crop in
+ * `readings/<key>.images/`, cut once when the book was made.
  */
 
 /** The format this program reads. A file declaring anything else is refused. */
-export const BOOK_FILE_VERSION = 2;
+export const BOOK_FILE_VERSION = 3;
 
 /** Refusals from this module, named so a caller can tell them from anything else. */
 export class BookFileError extends Error {
@@ -89,6 +95,71 @@ export interface BookRef {
 }
 
 /**
+ * One banked answer's contribution to a row's text.
+ *
+ * `chars` is a half-open `[start, end)` into the ROW's final text, and the
+ * parts of a row TILE it — no gap, no overlap, first one at 0 — which the
+ * parser proves rather than assumes, because an offset into somebody's text is
+ * either verified where the file is read or it is a rumour every later reader
+ * acts on. `fused` is the word a column broke that the reflow made whole; the
+ * engine records it on the part that BEGINS with it, never the first.
+ */
+export interface BookPart {
+  /** `page:order`, or `page:order:part` for a piece of one banked answer. */
+  src: string;
+  /** The page THIS part was printed on, which a joined row's `page` is not. */
+  page: number;
+  /** Half-open `[start, end)` into the row's final text. */
+  chars: [number, number];
+  /** The word the column broke, made whole. Never on the first part. */
+  fused?: string;
+}
+
+/** The two ways a block can be out of the flow and still be in the book. */
+export type BookShelf = 'furniture' | 'suppressed-head';
+
+/**
+ * A page turn the reflow declined to join, as the two blocks it falls between.
+ *
+ * Both ids name FLOWING rows and they are adjacent among the flowing prose —
+ * the notes at the foot of the earlier page sit between them in the file, and
+ * the engine's `bookSeams` owns the argument for why they are skipped. This is
+ * the "4 page turns left as two paragraphs" report turned into something a
+ * renderer can draw a control between.
+ */
+export interface BookSeam {
+  /** The row the paragraph before the turn ends at. */
+  after: string;
+  /** The row the page after the turn opens with. */
+  before: string;
+}
+
+/** A page whose banked answer would not parse, named and skipped. */
+export interface BookUnreadable {
+  page: number;
+  reason: string;
+}
+
+/**
+ * What this book was made out of — the bank, identified.
+ *
+ * `bankSha` IS THE LOAD-BEARING ONE: the first sixteen hex of a sha-256 over
+ * the receipt's bytes. The book file is a pure function of the bank, so the
+ * bank's identity is the book's warrant — a loader that finds a different bank
+ * under the same name is holding ids that may name nothing, and the only safe
+ * thing it can do is refuse by name (docs/BOOK-FILE.md §2).
+ */
+export interface BookSource {
+  /** Page answers in the bank, whether or not they parsed. */
+  pages: number;
+  unreadable: BookUnreadable[];
+  /** The app's binding of reading to step, carried and never interpreted. */
+  generation?: string;
+  /** sha-256 of the receipt's bytes, first 16 hex. */
+  bankSha: string;
+}
+
+/**
  * One block of the finished book — one row of the file.
  *
  * A PARAGRAPH, A HEADING, A NOTE OR A FIGURE, whole. Never half of one, never
@@ -97,8 +168,9 @@ export interface BookRef {
 export interface BookRow {
   /**
    * The block's name, minted once and never reused — `b<page>-<order>` of its
-   * first banked answer, `b<page>-<order>#<ordinal>` for a note cut out of a
-   * footnote block, `b<page>-<order>/<n>` for a half of a user split.
+   * first banked answer, `-<part>` where the markdown pass cut one answer into
+   * several, `#<ordinal>` for a note cut out of a footnote block, `/<n>` for a
+   * half of a user split.
    *
    * IDENTITY IS THIS AND ONLY THIS. `page` below is an estimate and addresses
    * nothing; see the engine's own header for the whole of that argument.
@@ -122,16 +194,32 @@ export interface BookRow {
   /** The page's render size, so a width can be read as a fraction of a column. */
   pageWidth: number;
   pageHeight: number;
-  /** The banked answers this block was made of, `page:order[:part]`, in order. */
-  src: string[];
+  /** How the text was assembled, char-exact — one entry per banked answer, in order. */
+  parts: BookPart[];
   /** Which note of its banked block this is, from 0. Set on a Footnote row only. */
   note?: number;
   /**
-   * Where this note's number was printed. Set on a Footnote row that something
-   * points at, absent on every other kind — and absent on a note NOTHING points
-   * at, which is what the header's `loose.notes` is a list of.
+   * Where this note's number was printed. Set on EVERY Footnote row, including
+   * the ones nothing points at, where it is `[]` — one spelling of "unpointed",
+   * not two. Absent on every other kind.
    */
   refs?: BookRef[];
+  /**
+   * The figure cut for this row, by NAME inside `readings/<key>.images/` — set
+   * on a Picture row of a run that was given a PDF to cut from, and absent
+   * everywhere else. A name and not a path: the file is a portable document
+   * about a book, and the app composes the directory itself (`imagesDirFor`,
+   * electron/projects.ts).
+   */
+  image?: string;
+  /**
+   * Why this row is NOT in the flow — absent, always, on a row that is.
+   * Renderers draw the flow and leave the shelf where it is; restoring a
+   * shelved row is an ordinary op against its id (docs/BOOK-FILE.md §5).
+   */
+  shelf?: BookShelf;
+  /** One sentence of evidence — set on a shelved row and on no other kind. */
+  why?: string;
 }
 
 /**
@@ -188,8 +276,8 @@ export interface BookLooseMarker {
   block: string;
   at: number;
   len: number;
-  /** The digits the page printed, as text. */
-  printed: string;
+  /** The number the page printed — the superscript run's value, as the engine read it. */
+  printed: number;
 }
 
 /** The apparatus that did not join up, both directions. */
@@ -202,10 +290,14 @@ export interface BookLoose {
 
 /** The file's first line — everything about the book that is not a block. */
 export interface BookHeader {
-  /** How many rows follow. Checked, because a book cut short is a corrupt book. */
-  blocks: number;
+  /** The foundry that wrote it. Provenance, and the only field a release moves. */
+  engine: string;
+  /** The read's declared language. Declared, never detected. */
+  language: string;
+  source: BookSource;
   chapters: BookChapter[];
   typography: BookTypography | null;
+  seams: BookSeam[];
   loose: BookLoose;
 }
 
@@ -216,20 +308,28 @@ export interface BookFile {
 }
 
 /**
- * THE ANSWER TO `book:load` — the file, plus the one thing the file does not
+ * THE ANSWER TO `book:load` — the file, plus the two things the file does not
  * carry.
  *
  * The title is the PROJECT's, read off its catalogue by main, because a book file
- * is a list of blocks and has no idea what the book it came out of is called. It
- * rides along here rather than being asked for separately so that a pane has one
- * question to ask and one answer to draw.
+ * is a list of blocks and has no idea what the book it came out of is called.
+ * `figures` is where this book's cut images are served from — a URL prefix the
+ * pane puts a row's `image` name after — or null for a book none were cut for,
+ * which is an ordinary state (no --pdf at reflow, or no pictures in the book)
+ * and not a hole. Both ride along here rather than being asked for separately
+ * so that a pane has one question to ask and one answer to draw.
  */
 export interface BookLoad {
   title: string;
+  /** The read's declared language, from the header. */
+  language: string;
   rows: BookRow[];
   chapters: BookChapter[];
   typography: BookTypography | null;
+  seams: BookSeam[];
   loose: BookLoose;
+  /** Where the figures are served, ending in `/`, or null when none were cut. */
+  figures: string | null;
 }
 
 /**
@@ -298,9 +398,9 @@ function refOf(value: unknown): BookRef | null {
 /**
  * The header, field by field.
  *
- * EVERY FIELD IS REQUIRED, including the two that are usually empty. A file with
- * no `loose` is not a file with nothing loose in it — it is a file written by
- * something that does not know what loose apparatus is, which is exactly the
+ * EVERY FIELD IS REQUIRED, including the ones that are usually empty. A file
+ * with no `seams` is not a file whose every page turn was joined — it is a file
+ * written by something that does not know what a seam is, which is exactly the
  * drift the version number and this function exist to catch.
  */
 function headerOf(line: string): BookHeader {
@@ -315,13 +415,31 @@ function headerOf(line: string): BookHeader {
 
   const version = row['book'];
   if (version !== BOOK_FILE_VERSION) {
+    /*
+     * AN OLD BOOK FILE IS REFUSED, NOT MIGRATED, and the sentence says why that
+     * costs nothing: the file is derived. The engine's own parser owns the full
+     * argument (parseBookFile, src/vlm/book-file.ts); this side adds the one
+     * fact the app knows — that opening the position again is what remakes it.
+     */
     throw new BookFileError(
-      `this book is written in format ${String(version)} and this app reads format `
-      + `${BOOK_FILE_VERSION}. It was made by a different build of the engine.`,
+      version === 1 || version === 2
+        ? `this book is written in format ${String(version)}, from an earlier engine. It is derived `
+          + 'and costs nothing to remake: remove it and open this position again, and the book comes '
+          + 'back in the current format with every block wearing the id it already had.'
+        : `this book is written in format ${String(version)} and this app reads format `
+          + `${BOOK_FILE_VERSION}. It was made by a different build of the engine.`,
     );
   }
-  const blocks = countOf(row['blocks']);
-  if (blocks === null) throw new BookFileError('the book\'s header does not say how many blocks it has.');
+
+  const engine = row['engine'];
+  const language = row['language'];
+  if (typeof engine !== 'string' || engine.length === 0
+    || typeof language !== 'string' || language.length === 0) {
+    throw new BookFileError(
+      'the book\'s header does not say which engine wrote it and in what language it was read.',
+    );
+  }
+  const source = sourceOf(row['source']);
 
   const rawChapters = row['chapters'];
   if (!Array.isArray(rawChapters)) throw new BookFileError('the book\'s header carries no chapter list.');
@@ -342,6 +460,22 @@ function headerOf(line: string): BookHeader {
 
   const typography = typographyOf(row['typography']);
 
+  const rawSeams = row['seams'];
+  if (!Array.isArray(rawSeams)) {
+    throw new BookFileError('the book\'s header carries no list of unjoined page turns.');
+  }
+  const seams: BookSeam[] = [];
+  for (const [at, candidate] of rawSeams.entries()) {
+    const entry = objectOf(candidate);
+    const after = entry === null ? undefined : entry['after'];
+    const before = entry === null ? undefined : entry['before'];
+    if (typeof after !== 'string' || after.length === 0
+      || typeof before !== 'string' || before.length === 0) {
+      throw new BookFileError(`unjoined page turn ${at + 1} does not name the two blocks it falls between.`);
+    }
+    seams.push({ after, before });
+  }
+
   const rawLoose = objectOf(row['loose']);
   if (rawLoose === null) {
     throw new BookFileError('the book\'s header does not say what apparatus was left unlinked.');
@@ -354,8 +488,8 @@ function headerOf(line: string): BookHeader {
   const markers: BookLooseMarker[] = [];
   for (const [at, candidate] of rawMarkers.entries()) {
     const ref = refOf(candidate);
-    const printed = objectOf(candidate)?.['printed'];
-    if (ref === null || typeof printed !== 'string' || printed.length === 0) {
+    const printed = countOf(objectOf(candidate)?.['printed']);
+    if (ref === null || printed === null) {
       throw new BookFileError(`unlinked reference ${at + 1} does not say where in the book it was printed.`);
     }
     markers.push({ ...ref, printed });
@@ -368,7 +502,39 @@ function headerOf(line: string): BookHeader {
     notes.push(candidate);
   }
 
-  return { blocks, chapters, typography, loose: { markers, notes } };
+  return { engine, language, source, chapters, typography, seams, loose: { markers, notes } };
+}
+
+/** The bank's identity block, or the sentence saying the header lost it. */
+function sourceOf(value: unknown): BookSource {
+  const row = objectOf(value);
+  const pages = row === null ? null : countOf(row['pages']);
+  const bankSha = row === null ? undefined : row['bankSha'];
+  const rawUnreadable = row === null ? undefined : row['unreadable'];
+  if (row === null || pages === null || typeof bankSha !== 'string' || bankSha.length === 0
+    || !Array.isArray(rawUnreadable)) {
+    throw new BookFileError(
+      'the book\'s header does not say what bank it was made from — and without the bank\'s '
+      + 'identity, nothing can tell whether the pages underneath this book have changed.',
+    );
+  }
+  const unreadable: BookUnreadable[] = [];
+  for (const [at, candidate] of rawUnreadable.entries()) {
+    const entry = objectOf(candidate);
+    const page = entry === null ? null : countOf(entry['page']);
+    const reason = entry === null ? undefined : entry['reason'];
+    if (page === null || typeof reason !== 'string') {
+      throw new BookFileError(`unreadable page ${at + 1} in this book's record is not a page with a reason.`);
+    }
+    unreadable.push({ page, reason });
+  }
+  const generation = row['generation'];
+  if (generation !== undefined && typeof generation !== 'string') {
+    throw new BookFileError('the book\'s record of its generation is not a name.');
+  }
+  return generation === undefined
+    ? { pages, unreadable, bankSha }
+    : { pages, unreadable, generation, bankSha };
 }
 
 /** The measured type, or null where the book gave the engine too little to measure. */
@@ -394,6 +560,60 @@ function typographyOf(value: unknown): BookTypography | null {
     categories[name] = { medianPx, ratio, samples };
   }
   return { bodyPx, categories };
+}
+
+/**
+ * A row's parts, proven against the row's own text.
+ *
+ * CHAR-EXACT IS THE CONTRACT AND SO IT IS CHECKED, not assumed — the engine's
+ * `checkParts`, restated. `chars` is the one field in this format that makes a
+ * claim about ANOTHER field of the same row: an offset past the end of the text
+ * slices nothing, a gap between two parts loses characters that belong to a
+ * page, and an overlap files the same words under two of them. All three read
+ * as ordinary data and none of them is.
+ */
+function partsOf(id: string, text: string, value: unknown): BookPart[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new BookFileError(
+      `block "${id}" does not say which banked answers it was assembled from.`,
+    );
+  }
+  const parts: BookPart[] = [];
+  let at = 0;
+  for (const [index, candidate] of value.entries()) {
+    const entry = objectOf(candidate);
+    const src = entry === null ? undefined : entry['src'];
+    const page = entry === null ? null : countOf(entry['page']);
+    const chars = entry === null ? undefined : entry['chars'];
+    const start = Array.isArray(chars) ? countOf(chars[0]) : null;
+    const end = Array.isArray(chars) ? countOf(chars[1]) : null;
+    if (typeof src !== 'string' || src.length === 0 || page === null
+      || !Array.isArray(chars) || chars.length !== 2 || start === null || end === null) {
+      throw new BookFileError(
+        `part ${index + 1} of block "${id}" is not a banked answer with a page and a character range.`,
+      );
+    }
+    const fused = entry === null ? undefined : entry['fused'];
+    if (fused !== undefined && typeof fused !== 'string') {
+      throw new BookFileError(`part ${index + 1} of block "${id}" fused something that is not a word.`);
+    }
+    if (start !== at || end < at) {
+      throw new BookFileError(
+        `part ${index + 1} of block "${id}" covers characters ${start} to ${end} and the parts `
+        + `before it end at ${at}, so the block's text is not divided between them.`,
+      );
+    }
+    at = end;
+    parts.push(fused === undefined
+      ? { src, page, chars: [start, end] }
+      : { src, page, chars: [start, end], fused });
+  }
+  if (at !== text.length) {
+    throw new BookFileError(
+      `block "${id}" is ${text.length} character(s) long and its parts account for ${at} of them.`,
+    );
+  }
+  return parts;
 }
 
 /** One row, field by field. `at` is its line number, for a sentence about a row with no id. */
@@ -436,17 +656,9 @@ function rowOf(line: string, at: number, seen: Set<string>): BookRow {
     if (found === null) throw new BookFileError(`block "${id}" claims a page that is not a page number.`);
     pages.push(found);
   }
-  const rawSrc = row['src'];
-  if (!Array.isArray(rawSrc)) throw new BookFileError(`block "${id}" does not say which answers it was made from.`);
-  const src: string[] = [];
-  for (const candidate of rawSrc) {
-    if (typeof candidate !== 'string' || candidate.length === 0) {
-      throw new BookFileError(`block "${id}" was made from something that is not a banked answer.`);
-    }
-    src.push(candidate);
-  }
+  const parts = partsOf(id, text, row['parts']);
 
-  const made: BookRow = { id, category, text, page, pages, box, pageWidth, pageHeight, src };
+  const made: BookRow = { id, category, text, page, pages, box, pageWidth, pageHeight, parts };
 
   const note = row['note'];
   if (note !== undefined) {
@@ -467,6 +679,31 @@ function rowOf(line: string, at: number, seen: Set<string>): BookRow {
     }
     made.refs = found;
   }
+  const image = row['image'];
+  if (image !== undefined) {
+    if (typeof image !== 'string' || image.length === 0) {
+      throw new BookFileError(`block "${id}" names its figure as something that is not a name.`);
+    }
+    made.image = image;
+  }
+  const shelf = row['shelf'];
+  if (shelf !== undefined) {
+    if (shelf !== 'furniture' && shelf !== 'suppressed-head') {
+      throw new BookFileError(
+        `block "${id}" says it is shelved as "${String(shelf)}", and the shelf has two places on `
+        + 'it: furniture, and suppressed-head.',
+      );
+    }
+    made.shelf = shelf;
+    // A shelved row without its sentence is the Furniture Review panel with a
+    // blank cell where the argument goes — a block out of the book and nothing
+    // saying why, which is the one thing the shelf exists to prevent.
+    const why = row['why'];
+    if (typeof why !== 'string' || why.length === 0) {
+      throw new BookFileError(`block "${id}" is on the shelf and says nothing about why.`);
+    }
+    made.why = why;
+  }
   return made;
 }
 
@@ -475,19 +712,20 @@ function rowOf(line: string, at: number, seen: Set<string>): BookRow {
  *
  * ── The cross-checks, which are the ones worth having ───────────────────────
  *
- * Every field above is checked for BEING what it claims to be; these last three
+ * Every field above is checked for BEING what it claims to be; these last ones
  * check that the file AGREES WITH ITSELF, and they are the ones that catch a real
  * corruption rather than a typo. A reference into a block the file does not hold
- * is a marker that can never be drawn; a loose note naming a row that is not there
- * is a flag in the margin about nothing. Both would be invisible on the page and
- * both mean the file was written by two things that disagree — which is precisely
- * the state this whole format exists to make impossible.
+ * is a marker that can never be drawn; a loose note naming a row that is not
+ * there is a flag in the margin about nothing; a seam between blocks the book
+ * does not hold — or between blocks on the shelf — is a join nobody can be
+ * offered. All would be invisible on the page, and all mean the file was written
+ * by two things that disagree — which is precisely the state this whole format
+ * exists to make impossible.
  *
- * THE BLOCK COUNT IS CHECKED FOR THE SAME REASON, and it is the one that catches
- * the ordinary disaster: a run that died mid-write leaves a file whose every line
- * parses and whose last chapter is missing. JSONL makes that recoverable in
- * principle; the header's count is what turns it from a silent truncation into a
- * sentence and a re-run.
+ * TRUNCATION STOPPED BEING THIS PARSER'S PROBLEM AT VERSION 3: the engine
+ * writes the file atomically (temp beside the target, then rename), so a crash
+ * leaves the old book or none, never half of one, and the v2 header's row count
+ * went with the version bump.
  */
 export function parseBookFile(text: string): BookFile {
   const lines = text.split('\n').filter((line) => line.trim().length > 0);
@@ -499,12 +737,6 @@ export function parseBookFile(text: string): BookFile {
   const seen = new Set<string>();
   for (const [at, line] of lines.entries()) rows.push(rowOf(line, at + 1, seen));
 
-  if (rows.length !== header.blocks) {
-    throw new BookFileError(
-      `this book says it has ${header.blocks} blocks and carries ${rows.length}. It was cut short `
-      + 'while it was being written.',
-    );
-  }
   /*
    * EVERY MARKER IN ONE PLACE, then checked as a set. A reference is a range of
    * characters inside somebody else's text, so the two ways it can be wrong are
@@ -552,6 +784,20 @@ export function parseBookFile(text: string): BookFile {
   for (const chapter of header.chapters) {
     if (!seen.has(chapter.id)) {
       throw new BookFileError(`a chapter starts at "${chapter.id}", which this book has no block called.`);
+    }
+  }
+  // A seam is an offer to join two paragraphs, so both must be blocks the book
+  // holds and both must be IN THE FLOW — a join onto a shelved running head is
+  // an offer nobody should ever see.
+  const shelved = new Set(rows.filter((row) => row.shelf !== undefined).map((row) => row.id));
+  for (const seam of header.seams) {
+    for (const id of [seam.after, seam.before]) {
+      if (!seen.has(id)) {
+        throw new BookFileError(`an unjoined page turn names "${id}", which this book has no block called.`);
+      }
+      if (shelved.has(id)) {
+        throw new BookFileError(`an unjoined page turn names "${id}", which is on the shelf and not in the book.`);
+      }
     }
   }
   return { header, rows };

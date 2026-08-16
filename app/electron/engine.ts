@@ -424,9 +424,22 @@ export interface BookOutcome {
  * treat a refusal as a success — there is no book file after one, so parsing what
  * is at the path would either fail on nothing or read a stale file from an
  * earlier run, and both are worse than the sentence.
+ *
+ * `--pdf` AND `--language` ARE PASSED ONLY WHERE THE CALLER HAS THEM. The PDF
+ * buys one thing — the figure crops, cut once into `readings/<key>.images/` —
+ * and without it the engine cuts nothing and says so; the language goes in the
+ * book's header, and the engine's default (`en`) is the engine's own documented
+ * rule rather than a spelling this side repeats.
  */
-export async function writeBookFile(readingsPath: string, outPath: string): Promise<BookOutcome> {
-  const run = runEngine(['vlm-book', '--readings', readingsPath, '--out', outPath]);
+export async function writeBookFile(
+  readingsPath: string,
+  outPath: string,
+  opts: { pdfPath: string | null; language: string | null },
+): Promise<BookOutcome> {
+  const args = ['vlm-book', '--readings', readingsPath, '--out', outPath];
+  if (opts.pdfPath !== null) args.push('--pdf', opts.pdfPath);
+  if (opts.language !== null) args.push('--language', opts.language);
+  const run = runEngine(args);
   /*
    * The same two minutes `stampEpub` and `finalizeEpub` allow, for work of the
    * same order over the same book — a few hundred pages of banked answers parsed,

@@ -2153,6 +2153,27 @@ export function bookFileFor(bank: string): string {
 }
 
 /**
+ * WHERE THE BOOK'S CUT FIGURES ARE — the bank's own path with `.images` in place
+ * of its extension, and the whole of the app's knowledge of that spelling.
+ *
+ * A MIRROR OF THE ENGINE'S `imagesDir` (src/vlm/book-run.ts), on shared/book.ts's
+ * grow-together rule: the engine cuts the figures beside the bank they were cut
+ * out of the answers of, a book row names its crop by NAME and never by path
+ * (docs/BOOK-FILE.md §6), and this is where the app turns the name back into a
+ * file. Derived from the bank for `bookFileFor`'s reason exactly — a project can
+ * hold two banks, and each reading's figures belong to it.
+ */
+export function imagesDirFor(bank: string): string {
+  if (!bank.toLowerCase().endsWith('.jsonl')) {
+    throw new ProjectError(
+      `${bank} is not a readings bank — those are the .jsonl files the engine writes, and the `
+      + 'figure directory is named after one. Refusing to guess at where the images would live.',
+    );
+  }
+  return `${bank.slice(0, -'.jsonl'.length)}.images`;
+}
+
+/**
  * The bank at the position and the book file made from it, with the directory
  * PROVEN to be one of Home's projects first.
  *
@@ -2165,17 +2186,40 @@ export function bookFileFor(bank: string): string {
  *
  * The manifest rides back with it because every caller needs it anyway — the
  * project's title is the only thing the book file itself cannot say.
+ *
+ * THE PDF AND THE LANGUAGE RIDE BACK TOO, because the reflow takes both
+ * (`vlm-book --pdf --language`) and both are this module's facts: the archived
+ * original is `archive/<manifest.archive.file>` — named only where the archive
+ * IS a PDF, because the figure crops are cut out of pages and an archived EPUB
+ * has none — and the language is what the reading in effect at the position
+ * declared when it ran. Null for either is an ordinary answer the engine has a
+ * documented behaviour for (no figures cut and says so; language defaults),
+ * not a hole this side papers over.
  */
 export async function bookAtPosition(dir: string): Promise<{
   dir: string;
   manifest: ProjectManifest;
   bank: string;
   book: string;
+  pdf: string | null;
+  language: string | null;
 }> {
   const resolved = deletableProjectDir(dir);
   const manifest = await readManifest(resolved);
   const bank = readingBank(resolved, manifest);
-  return { dir: resolved, manifest, bank, book: bookFileFor(bank) };
+  const reading = readingInEffect(ledgerOf(manifest));
+  const language = reading?.params?.language ?? null;
+  const pdf = manifest.archive !== null && manifest.archive.kind === 'pdf'
+    ? path.join(resolved, ARCHIVE, manifest.archive.file)
+    : null;
+  return {
+    dir: resolved,
+    manifest,
+    bank,
+    book: bookFileFor(bank),
+    pdf,
+    language: typeof language === 'string' && language.length > 0 ? language : null,
+  };
 }
 
 /**

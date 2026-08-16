@@ -125,6 +125,14 @@ interface Line {
   ghost: number | null;
   /** The chapter this block starts, drawn as a rule above it. */
   chapter: string | null;
+  /**
+   * True when an unjoined page turn falls immediately above this block — the
+   * `before` half of one of the header's seams. Drawn as the `··· join ···`
+   * ghost; the click that performs the join is the op grammar's (R3), so for
+   * now the ghost is the report made visible where it belongs, between the two
+   * paragraphs it is about, and it does nothing when pressed.
+   */
+  seam: boolean;
   /** Indented like a printed paragraph — not the first of the book, not after a heading. */
   indent: boolean;
   /** The hairline above the first note of a page's group of them. */
@@ -205,6 +213,17 @@ const PULSE_MS = 600;
           (pointercancel)="release($event)"
         >
           @for (line of lines(); track line.row.id) {
+            <!--
+              The seam sits FIRST in a line's group of marks so that in the DOM
+              it is the next sibling of the block ABOVE it — which is what lets
+              a hover on either neighbour reveal it with two CSS selectors and
+              no state. A chapter rule and a seam on one block cannot honestly
+              co-occur (the reflow never leaves a seam onto a chapter opening),
+              so the ordering costs nothing.
+            -->
+            @if (line.seam) {
+              <div class="seam"><span class="seam-word">··· join ···</span></div>
+            }
             @if (line.chapter; as title) {
               <div class="chapter"><span class="chapter-chip">{{ title }}</span></div>
             }
@@ -271,16 +290,24 @@ const PULSE_MS = 600;
                   }
                   @case ('Picture') {
                     <!--
-                      THE PLATE ITSELF IS NOT HERE YET, and the frame says so by
-                      being empty rather than by apologising. A picture is a crop
-                      of the scan served over the file protocol, which is a wave
-                      of its own; what this reserves is the space one takes and
-                      the page it was cropped from, so that a book with plates in
-                      it reads as a book with plates in it rather than as a
-                      paragraph gone missing.
+                      THE PLATE IS THE ENGINE'S OWN CROP, cut once beside the
+                      bank when the book was made (docs/BOOK-FILE.md §6) and
+                      served through the allow-listed book host — the row names
+                      it, main resolves it, and this pane composes a URL and
+                      nothing else. The empty frame remains the honest state of
+                      a book none were cut for (no PDF at reflow): it reserves
+                      the space a plate takes and names the page it came from,
+                      so a book with plates reads as a book with plates rather
+                      than as a paragraph gone missing. The alt is empty
+                      because the caption below IS the description, and a
+                      reader hearing it twice was told nothing the second time.
                     -->
                     <figure>
-                      <div class="plate"><span class="plate-page">≈ {{ line.row.page }}</span></div>
+                      @if (plate(line.row); as src) {
+                        <img class="plate-img" [src]="src" alt="" draggable="false">
+                      } @else {
+                        <div class="plate"><span class="plate-page">≈ {{ line.row.page }}</span></div>
+                      }
                       @if (line.row.text.trim().length > 0) {
                         <figcaption [style.font-size.em]="line.size">
                           <ng-container *ngTemplateOutlet="words; context: { $implicit: line }"></ng-container>
@@ -555,6 +582,29 @@ const PULSE_MS = 600;
       border-radius: var(--radius);
     }
     .plate-page { color: var(--ink-muted); font-size: 10px; font-style: italic; }
+    .plate-img { display: block; max-width: 100%; margin: 0 auto; border-radius: var(--radius); }
+
+    /* §4 — an unjoined page turn, drawn where it falls: between the two
+       paragraphs, centered, hairline rules either side, and INVISIBLE until
+       either neighbour is hovered — the seam is an offer, not a decoration,
+       and a page of prose with four permanent captions in it would read as
+       damaged. The two selectors below are the two neighbours: the block
+       above is the seam's previous sibling, the block below its next. */
+    .seam {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      margin: 0.35rem 0;
+      color: var(--ink-muted);
+      font-size: 10px;
+      font-variant: small-caps;
+      letter-spacing: 0.08em;
+      opacity: 0;
+      transition: opacity var(--t-fast) var(--ease);
+    }
+    .seam::before, .seam::after { content: ''; flex: 1; border-top: 1px solid var(--ink-faint); }
+    .seam-word { white-space: nowrap; }
+    .block:hover + .seam, .seam:has(+ .block:hover) { opacity: 0.85; }
 
     /* §4 — a short hairline above the first note of a page's group of them. */
     .notes-rule { width: 4rem; margin: 1.2em 0 0.5em; border-top: 1px solid var(--ink-faint); }
@@ -600,7 +650,7 @@ const PULSE_MS = 600;
 
     /* ── §6 Motion. The states must read perfectly as stills. ─────────────── */
     @media (prefers-reduced-motion: reduce) {
-      .body, .rail, .marker, .flag .pill { transition-duration: 0ms; }
+      .body, .rail, .marker, .flag .pill, .seam { transition-duration: 0ms; }
     }
   `],
 })
@@ -749,12 +799,27 @@ export class BookViewComponent {
     if (book === null) return [];
     const chapters = new Map(book.chapters.map((chapter) => [chapter.id, chapter.title] as const));
     const orphans = new Set(book.loose.notes);
+    /*
+     * A seam is drawn above its `before` block. The `after` id is not needed to
+     * draw it — the two are adjacent among the flowing prose by the format's own
+     * guarantee — but it will be the day the ghost becomes the join op, and the
+     * header carries it for that day.
+     */
+    const seams = new Set(book.seams.map((seam) => seam.before));
     const printed = this.printed();
 
     const out: Line[] = [];
     let previous: BookRow | null = null;
     let onPage = -1;
     for (const row of book.rows) {
+      /*
+       * THE SHELF IS IN THE FILE AND NOT ON THE PAPER — §5 of the contract: a
+       * shelved row is a block the model answered and the book does not contain
+       * (page furniture, a suppressed running head), kept at its reading-order
+       * position so that restoring one is an op with an obvious answer for
+       * where. The Furniture Review panel is its surface (R4); the flow is not.
+       */
+      if (row.shelf !== undefined) continue;
       const page = row.pages[0] ?? row.page;
       const ghost = page === onPage ? null : page;
       onPage = page;
@@ -772,6 +837,7 @@ export class BookViewComponent {
         jump: row.refs?.[0]?.block ?? null,
         ghost,
         chapter,
+        seam: seams.has(row.id),
         indent: row.category === 'Text' && previous !== null && !heading && chapter === null,
         opensNotes: row.category === 'Footnote'
           && (previous === null || previous.category !== 'Footnote' || previous.page !== row.page),
@@ -788,6 +854,19 @@ export class BookViewComponent {
     }
     return out;
   });
+
+  /**
+   * The URL a Picture row's crop is served at, or null — for a row that names
+   * no image (no PDF was given to the reflow) or a book main minted no door
+   * for. Composed and never fetched: the allow-list behind the prefix is
+   * main's (`bookFigureFile`), and a URL this pane got wrong is a 403 there.
+   */
+  protected plate(row: BookRow): string | null {
+    const figures = this.book()?.figures ?? null;
+    return figures !== null && row.image !== undefined
+      ? figures + encodeURIComponent(row.image)
+      : null;
+  }
 
   /** True while a hovered page ghost names a page this block sits on. */
   protected spans(line: Line): boolean {

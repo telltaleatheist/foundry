@@ -26,6 +26,15 @@
  * be this process rewriting the document somebody is editing every time they look
  * at it. Regenerating on purpose is a different gesture and it is not this one.
  *
+ * ── THE BANK'S IDENTITY IS CHECKED ON EVERY OPEN ────────────────────────────
+ *
+ * The book file is a pure function of the receipt, and its header carries the
+ * receipt's identity (`source.bankSha`, docs/BOOK-FILE.md §2). A loader that
+ * finds the bank has changed under the book is holding ids that may name
+ * nothing, and the contract's answer is the one given here: REFUSE BY NAME, as
+ * a sentence, and let the one door that may rebuild do it as an announced
+ * action. That door is the read-landing orchestration's, not this open.
+ *
  * ── Every failure is a sentence, and it carries no path ─────────────────────
  *
  * What comes back from here goes onto the paper (RENDERER-DESIGN.md §5: errors
@@ -34,10 +43,12 @@
  * the BOOK's problem and the terminal gets the path — which is where somebody
  * debugging their own library goes looking, and the one place it is any use.
  */
+import { createHash, randomUUID } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
+import * as path from 'node:path';
 
 import { writeBookFile } from './engine';
-import { bookAtPosition } from './projects';
+import { bookAtPosition, imagesDirFor } from './projects';
 import { BookFileError, parseBookFile, type BookOutcome } from '../shared/book';
 
 /** Does this path exist? Nothing else about it is asked. */
@@ -48,6 +59,51 @@ async function exists(target: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/*
+ * ── The figures door ─────────────────────────────────────────────────────────
+ *
+ * A Picture row names its crop by NAME, and the renderer is a page under a CSP
+ * that loads images off the `foundry-file:` scheme and nowhere else on disk —
+ * the same posture the EPUB viewer's chapters have always had. So a successful
+ * load REGISTERS the book's image directory under an opaque token, hands the
+ * pane `foundry-file://book/<token>/` as a prefix, and the protocol handler
+ * (main.ts) asks this table before it serves a byte. An ALLOW-LIST, not a path
+ * scheme: a URL the renderer invents for a directory nothing registered is a
+ * 403, which is `resolveEpubMember`'s exact decision one surface over.
+ *
+ * The token is minted per DIRECTORY and reused across reloads, so the map stays
+ * the size of the library rather than growing with every glance at a pane.
+ */
+const figureTokens = new Map<string, string>();
+const figureDirs = new Map<string, string>();
+
+function figuresPrefixFor(imagesDir: string): string {
+  const known = figureTokens.get(imagesDir);
+  if (known !== undefined) return `foundry-file://book/${known}/`;
+  const token = randomUUID();
+  figureTokens.set(imagesDir, token);
+  figureDirs.set(token, imagesDir);
+  return `foundry-file://book/${token}/`;
+}
+
+/**
+ * The file behind `foundry-file://book/<token>/<name>`, or null for anything
+ * this process never agreed to serve.
+ *
+ * THE NAME MUST BE A PLAIN BASENAME. The engine writes the crops flat into one
+ * directory (`p<page>-<order>.png`), so a separator in the name is not a figure
+ * this app cut — it is a traversal, and it meets the same null as an unknown
+ * token rather than a resolve() that might climb.
+ */
+export function bookFigureFile(token: string, name: string): string | null {
+  const dir = figureDirs.get(token);
+  if (dir === undefined) return null;
+  if (name.length === 0 || name.includes('/') || name.includes('\\') || name.includes('..')) {
+    return null;
+  }
+  return path.join(dir, name);
 }
 
 /**
@@ -79,7 +135,7 @@ export async function loadBook(projectDir: string): Promise<BookOutcome> {
           + 'first and the book is made from them.',
       };
     }
-    const made = await writeBookFile(at.bank, at.book);
+    const made = await writeBookFile(at.bank, at.book, { pdfPath: at.pdf, language: at.language });
     if (!made.ok) {
       // The engine's own words to the terminal, with the paths that make them
       // actionable; the sentence the person reads says what happened to the book.
@@ -102,16 +158,51 @@ export async function loadBook(projectDir: string): Promise<BookOutcome> {
 
   try {
     const parsed = parseBookFile(text);
+    /*
+     * THE RECEIPT'S IDENTITY, CHECKED AGAINST THE RECEIPT — see the module
+     * header. Hashed here, on this side of the wall, because the claim is the
+     * book file's and the evidence is the bank's, and only the process holding
+     * both can put them side by side. The same sixteen hex the engine writes
+     * (`bankSha`, src/vlm/book-run.ts), by the grow-together rule.
+     */
+    const sha = createHash('sha256')
+      .update(await fsp.readFile(at.bank))
+      .digest('hex')
+      .slice(0, 16);
+    if (parsed.header.source.bankSha !== sha) {
+      console.error(
+        `[book] ${at.book} was made from a bank whose sha-256 began ${parsed.header.source.bankSha}, `
+        + `and ${at.bank} now begins ${sha}.`,
+      );
+      return {
+        ok: false,
+        reason: 'The pages underneath this book have changed since the book was made from them, so '
+          + 'its blocks may no longer name what is really there. It is not opened over a moved '
+          + 'foundation; reading the project again remakes it.',
+      };
+    }
+    /*
+     * The figures prefix is minted only when a row will ask for one. `null` is
+     * the pane's ordinary answer for a book with no cut images — no --pdf at
+     * reflow, or no pictures in the book — and the plate placeholder is what
+     * draws in that silence.
+     */
+    const figures = parsed.rows.some((row) => row.image !== undefined)
+      ? figuresPrefixFor(imagesDirFor(at.bank))
+      : null;
     return {
       ok: true,
       // THE TITLE IS THE PROJECT'S. A book file is a list of blocks and has no
       // idea what the book is called; the catalogue is where that has lived for
       // every other surface in this app (`ProjectsService.nameFor`).
       title: at.manifest.title,
+      language: parsed.header.language,
       rows: parsed.rows,
       chapters: parsed.header.chapters,
       typography: parsed.header.typography,
+      seams: parsed.header.seams,
       loose: parsed.header.loose,
+      figures,
     };
   } catch (err) {
     if (err instanceof BookFileError) {

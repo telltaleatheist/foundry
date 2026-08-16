@@ -31,7 +31,7 @@ import {
 
 import { readAppSettings, writeAppSettings } from './app-settings';
 import { cancelSetup, setupWslEnv } from './backend-setup';
-import { loadBook } from './book';
+import { bookFigureFile, loadBook } from './book';
 import { injectReporter, REPORTER_ID, REPORTER_MEMBER, REPORTER_SOURCE, sanitizeChapter } from './click-reporter';
 import {
   engineInfo,
@@ -400,6 +400,29 @@ function registerFileProtocol(): void {
       return new Response('That is not a URL this app serves.', { status: 400 });
     }
 
+    if (url.host === 'book') {
+      /*
+       * `/<token>/<figure name>` — a cut figure of an OPEN book, and nothing
+       * else. The token is minted by a successful `book:load` and looked up in
+       * an allow-list (`bookFigureFile`, electron/book.ts), which is the same
+       * decision the epub host makes one branch down: a URL the renderer
+       * composed for a directory nothing registered is a refusal, not a read.
+       * These are app-cut PNGs served to the app's own page — never into a
+       * book's sandboxed frame — so they carry the no-store/nosniff pair and
+       * no CSP of their own.
+       */
+      const segments = url.pathname.split('/').filter((part) => part.length > 0);
+      const token = segments.shift();
+      if (token === undefined || segments.length !== 1) {
+        return new Response('No book and figure were named.', { status: 400 });
+      }
+      const figure = bookFigureFile(token, decodeURIComponent(segments[0]!));
+      if (figure === null) {
+        return new Response('That book\'s figures are not open in this app.', { status: 403 });
+      }
+      return serveFile(figure, { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+    }
+
     if (url.host === 'epub') {
       // `/<book id>/<member path>`. The member path keeps its slashes and is
       // decoded segment by segment, because a chapter called `Ch 1.xhtml` was
@@ -486,7 +509,10 @@ const CSP = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
+  // `foundry-file:` for the book pane's figures — the crops the engine cut
+  // beside the bank, served through the allow-listed `book` host and nothing
+  // else on that scheme reachable as an image.
+  "img-src 'self' data: blob: foundry-file:",
   "font-src 'self' data:",
   'frame-src foundry-file:',
   "connect-src 'self'",
