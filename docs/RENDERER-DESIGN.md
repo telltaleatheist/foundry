@@ -183,7 +183,11 @@ style — the paper vocabulary stays on the paper. Additions:
   ruling: the gutters hold, and what says "finished" is the chrome gone, the
   leading, and the collected notes, never a narrower column. Switching
   crossfades the sheet over `var(--t-med)`: chrome and gutters fade, struck
-  blocks collapse (height animates to 0), demoted refs re-render. Edition is
+  blocks leave at once, demoted refs re-render. Struck blocks NO LONGER
+  collapse (superseded 2026-08-16): a per-block collapse is priced per leaving
+  element by the framework's leave machinery — one forced style pass each,
+  four hundred at a time on a real book — and it froze the flip for half a
+  minute. The sheet's crossfade is the flip's motion. Edition is
   read-only; any edit gesture flips back to Workbench with the block focused.
 - Loading: the empty sheet with `Opening the book…` centered in
   `--ink-muted`; no spinners on paper. Errors render as main's own sentence
@@ -194,7 +198,11 @@ style — the paper vocabulary stays on the paper. Additions:
 - Durations: `--t-fast` for hover/tint, `--t-med` for anything structural
   (strike, join, drag-drop, edition crossfade). Easing always `--ease`.
 - Movement is meaningful only: things that BECOME one thing slide together;
-  things that leave the document collapse; nothing bounces, nothing floats.
+  nothing bounces, nothing floats. Things that leave the document do NOT
+  collapse (superseded 2026-08-16, see §5): per-element leave animation costs a
+  forced style pass per departing block, and departures here come four hundred
+  at a time — they leave in the frame they are removed in, under the sheet's
+  own crossfade.
 - `prefers-reduced-motion: reduce` → all transitions `0ms`, no slides — the
   states must read perfectly as stills.
 

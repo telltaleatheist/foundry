@@ -756,18 +756,21 @@ const SCROLL_SETTLE_MS = 400;
             }
             @if (line.opensNotes) { <div class="notes-rule"></div> }
             <!--
-              \`animate.leave\` is the ONE piece of motion machinery on this sheet
-              and it is CSS with a class on it: Angular puts \`leaving\` on the
-              element, the stylesheet's own keyframes collapse it, and the node
-              goes when the animation ends. §6's rule is *"things that leave the
-              document collapse"*, and the styles hold that to the blocks a mode
-              flip takes out — the struck ones — so nothing about a merge or a
-              cut is animated and no measurement pass exists anywhere here.
+              THERE IS NO \`animate.leave\` HERE, AND ITS ABSENCE IS THE RULING.
+              The only thing that ever takes rows out of this list is the
+              register flip, and the flip takes out every struck block at once —
+              four hundred of them on a working book, because a working book is
+              what four hundred strikes look like. A leave binding is not free
+              per element: to know when a node may go, the framework reads that
+              node's own animations and computed style, one at a time, against a
+              sheet whose bodies are under \`content-visibility: auto\`. §6
+              carries the measurement and the arithmetic. The flip's motion is
+              §5's crossfade on the sheet itself; the blocks are simply not in
+              the list on the next frame, which is what a still would show.
             -->
             <div
               class="block"
               tabindex="0"
-              animate.leave="leaving"
               [attr.data-id]="line.row.id"
               [attr.data-jump]="line.jump"
               [style.color]="line.colour"
@@ -1751,11 +1754,32 @@ const SCROLL_SETTLE_MS = 400;
        page-group's mark on the bench. */
     .bench.edition .notes-rule { width: 100%; margin: 2em 0 0.5em; }
     /* The break a new chapter makes. The cast writes no page-break rule and does
-       not need one — each chapter is its own document in the spine — so on a
-       sheet that never ends the break is air. */
+       not need one — each chapter is its own document in the spine, and a reader
+       turns the page because the file ended. This sheet never ends, and the
+       first translation of that boundary was air alone: 3.5rem of it. Air only
+       says "break" when you can see both sides of it at once, and a chapter that
+       happens to open mid-viewport opens with no announcement whatever. So the
+       edition prints the device paper has always used for the same problem — a
+       short centred rule, neutral, sitting in the middle of the air rather than
+       on top of the words. \`--ink-faint\` is the paper's own hairline, the one
+       §4 gives the notes rule and the page seam; the chapter rule's green is an
+       instrument's mark and has no business on a finished book. */
     .bench.edition .block.opens { margin-top: 3.5rem; }
+    .bench.edition .block.opens::before {
+      content: '';
+      position: absolute;
+      top: -1.75rem;
+      left: 50%;
+      width: 4.5rem;
+      transform: translateX(-50%);
+      border-top: 1px solid var(--ink-faint);
+    }
     .bench.edition .division { margin-top: 3.5rem; }
+    /* Where the division draws its own \`h1\`, the heading IS the announcement and
+       the block below it is just the chapter starting — so the air closes and
+       the rule goes with it, exactly as the margin rule beside it already did. */
     .bench.edition .division + .block.opens { margin-top: 0; }
+    .bench.edition .division + .block.opens::before { content: none; }
     /* \`sup\`, verbatim — and it is the same rule \`.marker\` already wears, because
        §4 built the bench's marker out of the cast's superscript to begin with. */
     .ref { font-size: 0.75em; line-height: 0; vertical-align: super; }
@@ -1763,43 +1787,38 @@ const SCROLL_SETTLE_MS = 400;
     /* ── §6 Motion. The states must read perfectly as stills. ─────────────── */
 
     /*
-     * *"struck blocks collapse (height animates to 0)"* — §5, and *"things that
-     * leave the document collapse"* — §6.
+     * THE STRUCK BLOCKS DO NOT COLLAPSE, AND THIS IS WHERE THAT WAS SETTLED.
+     * *"struck blocks collapse (height animates to 0)"* — §5 — and *"things
+     * that leave the document collapse"* — §6 — and the collapse is gone,
+     * because of what it cost to ask for it.
      *
-     * A KEYFRAME AND NOT A TRANSITION, for one exact reason: the host gains
-     * \`.edition\` in the same repaint that takes the struck rows out, and a
-     * transition declared in that same repaint has no earlier value to travel
-     * from. An animation fires on the class arriving, whatever came before it.
+     * The rule was a keyframe on a class the framework hands each leaving
+     * element, which reads as free and is not. To know when a node may finally
+     * go, the leave machinery interrogates that node — its running animations,
+     * its computed style — one node at a time, interleaved with the class it
+     * has just written to it. That is a forced style pass per departure. And
+     * nothing removes struck rows but the register flip, which removes ALL of
+     * them: four hundred forced passes in one repaint, over a sheet whose
+     * bodies are under \`content-visibility: auto\` and must be laid out again to
+     * answer at all. Measured in isolation it was 150× a plain removal; on the
+     * real book it froze the flip for something near half a minute. Reduced
+     * motion buys none of it back — \`animation: none\` is still a style the pass
+     * has to stop and read.
      *
-     * IT IS HELD TO \`.struck\`, which is the whole of what §5 asks for. A merge
-     * and a cut also take blocks out of this list, and both of them are
-     * restructurings whose result the words themselves carry — \`join\` says why
-     * they are not animated — so a leaving block with no cancel mark on it gets
-     * the class, has no animation to wait for, and goes at once exactly as it
-     * always has.
+     * So the flip's motion is the motion §5 already pays for: the crossfade on
+     * the sheet, where the gutters close to the cast's margin and the leading
+     * opens to 1.5, both over \`--t-med\`. That is one element's transition
+     * whatever the book's length, and underneath it the struck blocks are
+     * simply not in the list on the next frame — which is the state the still
+     * has to read as, and the state it reads as.
      *
-     * \`overflow: hidden\` rather than \`clip\`: it contains the words' own margins
-     * as well as clipping them, so the row closes to nothing rather than to the
-     * half-line a note's margin would leave behind. It arrives with the collapse
-     * and takes the gutter marks down with it, which is right — they are this
-     * block's marks and this block is going.
+     * A merge and a cut are unchanged: they never had an animation to wait for,
+     * and \`join\` says why the words carry their own result.
      */
-    @keyframes collapse {
-      from { height: auto; opacity: 1; }
-      to   { height: 0; opacity: 0; }
-    }
-    .block.struck.leaving {
-      overflow: hidden;
-      animation: collapse var(--t-med) var(--ease) forwards;
-    }
 
     @media (prefers-reduced-motion: reduce) {
       .body, .rail, .marker, .flag .pill, .seam, .sheet,
       .block.struck .body, .marker.struck { transition-duration: 0ms; }
-      /* No animation at all rather than a zero-length one: with nothing to wait
-         for, the row is gone on the next frame, which is what "instant" means
-         here and is also the state the still has to read as. */
-      .block.struck.leaving { animation: none; }
     }
   `],
 })
