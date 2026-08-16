@@ -19,6 +19,7 @@ import * as path from 'node:path';
 
 import { app } from 'electron';
 
+import { hostedLibraryDir } from './host';
 import { readJson } from '../shared/json';
 
 export interface AppSettings {
@@ -102,11 +103,34 @@ export function clampLibraryDir(value: unknown, fallback = defaultLibraryDir()):
   return path.normalize(trimmed);
 }
 
+/**
+ * ── THE HOST'S LIBRARY WINS, AND IT WINS HERE RATHER THAN AT EACH READER ────
+ *
+ * Hosted, the books live inside the host's own data directory
+ * (docs/BOOKFORGE-HANDOFF.md §8) and `libraryDir` stops being a preference: it
+ * is a fact about somebody else's folder layout. The obvious place to honour
+ * that was `projectsDir()`, which is what actually composes
+ * `<libraryDir>/projects` — but it is not the only reader. The Save-a-copy
+ * dialog opens on the library, and `library:dir` answers the settings screen
+ * with it, and a version of this that only fixed `projectsDir` would leave those
+ * two naming a folder nothing in the app writes to any more.
+ *
+ * So the override is at the SETTING, and every reader is right for free. It goes
+ * through `clampLibraryDir` exactly as a value out of the file does: a host that
+ * hands over a relative path gets the same refusal a hand-edited file gets,
+ * because the reason — the same setting naming two folders depending on where
+ * the process was launched from — has nothing to do with who wrote it.
+ *
+ * WRITES ARE NOT REDIRECTED, and they do not need to be: the two IPC doors that
+ * change this refuse outright while a host is mounted (`library:set`), so what
+ * is in the file stays the standalone app's own answer, waiting unharmed for the
+ * next time Foundry is run on its own.
+ */
 export function readAppSettings(): AppSettings {
   const raw = readRaw();
   return {
     keepServerWarmMinutes: clampKeepWarm(raw?.['keepServerWarmMinutes']),
-    libraryDir: clampLibraryDir(raw?.['libraryDir']),
+    libraryDir: clampLibraryDir(hostedLibraryDir() ?? raw?.['libraryDir']),
   };
 }
 

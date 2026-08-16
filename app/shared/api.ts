@@ -93,6 +93,25 @@ export interface FoundryApi {
   /** process.platform, for the one or two places the UI says "on Windows". */
   platform: string;
 
+  /**
+   * Whether this window is standing inside another app.
+   *
+   * ── What the answer changes, and what it must not ───────────────────────────
+   *
+   * Hosted (docs/BOOKFORGE-HANDOFF.md §8), the window is one BookForge opened
+   * over books it owns: the library folder is its data directory and the book
+   * list is its own page. So the controls that would answer those questions a
+   * second time go — the library-location setting, whose refusal main enforces
+   * anyway (`library:set`), and eventually Home. NOTHING ELSE. This is not a
+   * feature flag and there is no hosted EDITING mode: the proof sheet, the
+   * ledger, the queue and every door behind them are the same app either way,
+   * and a second behaviour keyed off this is how the copy stops being mechanical.
+   *
+   * A PROMISE ASKED ONCE. Mounting happens before the window exists and there is
+   * one main process, so the answer cannot change while the page lives.
+   */
+  hosted(): Promise<boolean>;
+
   /** The menu's File→Open, callable from the UI too. Resolves to the path, or null. */
   openDocumentDialog(): Promise<string | null>;
   /**
@@ -856,6 +875,31 @@ export interface FoundryApi {
    */
   onDocumentRelocated(listener: (move: { from: string; to: string }) => void): () => void;
   onNavigate(listener: (route: string) => void): () => void;
+  /**
+   * A project to stand in, pushed as the window finishes loading — the hosted
+   * door onto a book.
+   *
+   * ── Why a push, and why it carries what it carries ──────────────────────────
+   *
+   * Hosted, the window is opened FROM something: a book's page in BookForge, on
+   * a press of "Edit in Foundry". There is no Home to land on — BookForge's book
+   * list is the library — so the window has to come up already standing in the
+   * project, and the only side that knows which project that is is the one that
+   * opened the window.
+   *
+   * The payload is exactly what a click on Home's own row carries, and it is
+   * resolved by main from `originalOf` (shared/original.ts), the same function
+   * that row calls: the project directory, the document opening it opens, and
+   * whether Foundry made that document — which is what decides the unsaved dot.
+   * One rule, one resolution, two doors onto it.
+   *
+   * NOT WIRED IN THE RENDERER YET. The contract lands with the mount seam so
+   * that BookForge can build against it; the tab this should open is a wave of
+   * its own (docs/PLAN.md, Wave 7).
+   */
+  onProjectOpen(
+    listener: (project: { dir: string; originalPath: string; managed: boolean }) => void,
+  ): () => void;
   /** File→Save As / Close Tab, which are accelerators on the menu. */
   onMenuAction(listener: (action: MenuAction) => void): () => void;
   /**

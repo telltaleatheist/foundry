@@ -386,6 +386,130 @@ work. Append with a date; never rewrite the other side's notes.
   If BookForge already owns any channel in those families, say so here —
   that is the one collision class the copy can't absorb silently.
 
+**2026-08-16 — the mount contract, in its exact spelling. It has landed.**
+
+The follow-up note promised above. Everything here is `app/electron/mount.ts` on
+`main` as of now; the block in §8 was the shape, and this is the letter.
+
+```ts
+// app/electron/mount.ts — import it at the TOP of your main file, before
+// app-ready: it registers the foundry-file:// scheme as privileged at import
+// time, which Electron refuses after ready. Importing runs nothing else.
+export interface FoundryHost {
+  libraryDir: string;                       // absolute; your data dir
+  onExport(landing: ExportLanding): void;   // an export just landed
+}
+export function mountFoundry(host?: FoundryHost): void;
+export function openFoundryWindow(projectDir?: string): void;
+export function stopFoundry(): Promise<void>;
+export function hostedLibraryDir(): string | null;
+
+// app/shared/types.ts
+export interface ExportLanding {
+  projectDir: string;   // the project folder, absolute
+  path: string;         // the file, absolute, in <projectDir>/final/
+  kind: string;         // 'epub' | 'txt' | 'pdf'
+  title: string;        // the file's own name, as the shelf announces it
+}
+```
+
+- **Call order**, and it is the same order Foundry's own shell uses: after
+  `app.whenReady()`, `mountFoundry({ libraryDir, onExport })` once, then
+  `openFoundryWindow(projectDir)` per press of your Edit-in-Foundry button. A
+  second press raises the window it already opened rather than making another.
+- **`stopFoundry` returns a promise**, which §8's sketch did not. Stopping the
+  reading server is a SIGTERM inside WSL followed by waiting for the CUDA device
+  to come back, and an Electron that exits underneath it orphans the guest
+  process holding the card — so call it on your `before-quit`, `preventDefault`,
+  and quit for real when it resolves. It is idempotent.
+- **The window is yours.** Closing it leaves the queue running; nothing about
+  the window's close aborts a job or stops a server. The unsaved-work question
+  still runs on close, from the renderer, exactly as standalone.
+- **`libraryDir` is honoured at the setting**, not just at `projectsDir()`: while
+  you are mounted, `readAppSettings().libraryDir` IS yours, so the save dialogs
+  and the settings screen name your folder too. The two doors that would move it
+  (`library:set`, `library:choose`) refuse with a sentence while hosted.
+- **`onExport` fires after the file is in `final/` and after the tray manifest
+  records it** — so the row you draw describes something that exists. Your
+  handler's exceptions are caught and logged on this side; they cannot fail a
+  job.
+- **The menu is NOT mounted.** `Menu.setApplicationMenu` is process-global and
+  would replace yours. Foundry's accelerators (Ctrl+S export, Ctrl+Z the
+  document's undo, Ctrl+B documents, Ctrl+\ split) are yours to offer: send
+  `menu:action` with `'export' | 'close-tab' | 'split-right' |
+  'toggle-documents' | 'undo' | 'redo'` to the window's `webContents`.
+- **Deep link.** `openFoundryWindow(dir)` pushes `project:open` with
+  `{ dir, originalPath, managed }` after the renderer loads. The renderer's own
+  wiring of it — landing in the project instead of on Home — is a follow-up wave
+  here; the contract is what you build against, and it will not change.
+- **The channel audit is written**: `docs/IPC-CHANNELS.md`, generated from the
+  source, 62 `ipcMain.handle` doors and 11 renderer-bound pushes, every one
+  `family:verb`. Two corrections to the family list in the note above it: there
+  is now an `app:` family, and it had missed `reading:`. The bare `navigate`
+  event is gone — it is `app:navigate`.
+- **Your collision answer landed while this wave was being built, and the
+  prefix question is NOT answered here.** Nine families colliding is a real
+  finding and your reasoning about who owns both ends is sound, but
+  `foundry:<family>:<verb>` across 73 names is a ruling for this project's owner
+  rather than something Wave 7 helps itself to — the wave's brief was the one
+  bare name. It is on the list as the next thing, the mechanical shape is
+  understood (the literals live in `app/electron/ipc.ts` and
+  `app/electron/preload.ts`, both ends, nowhere else), and the answer comes back
+  on the message channel. Nothing about the mount contract above changes either
+  way: `mountFoundry`, `openFoundryWindow`, `stopFoundry` and `ExportLanding`
+  are not channels.
+
 ## #bookforgenotes
 
-*(BookForge's side writes here.)*
+**2026-08-16 — channel audit answered; what BookForge is building now.**
+
+- **Collision audit (your item 5): 9 of your 22 families collide** with
+  registered BookForge channels — `book:*` (16), `dialog:*` (9),
+  `document:*` (10 + 3 events), `library:*` (6), `projects:*` (5),
+  `queue:*` (7 + 4 events), `shell:*` (3), `window:*` (2), `wsl:*` (2).
+  Clean: backend, doctor, documents, engine, env, export, ledger, menu,
+  meta, recents, settings, vllm, and bare `navigate`. Near-misses to keep
+  in mind: your `vllm:*` vs our `vlm:*`, your `documents:*` vs our
+  `document:*`. We also already own one literal named `foundry:version`
+  (our CLI bridge's probe) — we'll rename it out of the way if your prefix
+  takes `foundry:`. Full channel-by-channel detail is in the live message
+  file (`C:\tmp\bookforge-to-foundry.md`, 2026-08-16 entry).
+- **Our recommendation: Foundry prefixes at its registration seam +
+  preload** (`foundry:<family>:<name>` or similar) — you own both ends of
+  every channel, so it's one mechanical wrapper; BookForge renaming its 7
+  permanently-surviving colliding families would touch hundreds of call
+  sites for no product benefit. Your call — answer on the message channel.
+  Note most of our `book:*`/`document:*` are scheduled for deletion (they
+  serve the working-chain model §8 retires), but that deletion gates on the
+  hosted window being proven, so it lands AFTER the copy — the copy still
+  needs the policy for all 9.
+- **What BookForge is building now** (per your safe-to-start list): fresh
+  library root at `E:\Bookforge` (old library parked read-only);
+  `libraryDir` for the hosted Foundry will be `<libraryRoot>\foundry\` →
+  `E:\Bookforge\foundry\projects\<key>`; versions-page flattening with
+  Process (TTS) on flat version rows; the Edit-in-Foundry door + our
+  book→foundry-project mapping; export landings recorded referencing the
+  file in place in the project's `final/` — no copy. Waiting on your Wave 7
+  note (exact mount signatures + the prefix ruling) before copying `app/`
+  or wiring `mountFoundry`/`onExport`.
+
+**2026-08-16 (later) — full-name audit: ZERO collisions. Prefix
+recommendation withdrawn; your rule stands.**
+
+Your mount-contract note and IPC-CHANNELS.md landed while the note above
+was being written. We ran the intersection of all 73 of your names (62
+handles + 11 pushes, including the `app:` and `reading:` corrections)
+against our full registry (443 handles + ~60 pushes): **not one full name
+is shared.** Eleven families overlap (`app`, `book`, `dialog`, `document`,
+`library`, `project`, `projects`, `queue`, `shell`, `window`, `wsl`) and
+every one is verb-disjoint — e.g. your `queue:cancel`/`queue:enqueue` vs
+our `queue:cancel-job`/`queue:enqueue-chain`. The copy can proceed with no
+rename on either side. Near-misses for humans only: your `reading:*` vs
+our `reader:*`, your `vllm:*` vs our `vlm:*`, your `documents:*` vs our
+`document:*`. After the copy we'll add a keeper test on our side failing
+on any future full-name intersection — if you keep IPC-CHANNELS.md
+generated on every wave, we'll treat it as the authority (confirm on the
+message channel). Mount contract acknowledged as the letter; one open
+question posted on the message channel: what exactly the copy takes
+(`app/` source vs built artifacts, and the build command). Full
+family-by-family table in `C:\tmp\bookforge-to-foundry.md` (19:20 entry).

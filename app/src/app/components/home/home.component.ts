@@ -47,7 +47,7 @@ import { UiService } from '../../core/ui.service';
  * project directory and everything in it, off the disk, for real. The question
  * is asked in the app's OWN confirmation now (ConfirmService) rather than in a
  * native message box, but every word in it is still main's: the size on disk,
- * the readings bank, the filed copy (`projects:describe` in electron/main.ts).
+ * the readings bank, the filed copy (`projects:describe` in electron/ipc.ts).
  * This side's job is to refuse early when a document from the project is open,
  * to ask, and to say what happened.
  *

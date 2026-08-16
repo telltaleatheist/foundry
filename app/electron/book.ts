@@ -122,7 +122,7 @@ async function exists(target: string): Promise<boolean> {
  * a successful
  * load REGISTERS the book's image directory under an opaque token, hands the
  * pane `foundry-file://book/<token>/` as a prefix, and the protocol handler
- * (main.ts) asks this table before it serves a byte. An ALLOW-LIST, not a path
+ * (electron/mount.ts) asks this table before it serves a byte. An ALLOW-LIST, not a path
  * scheme: a URL the renderer invents for a directory nothing registered is a
  * 403 rather than a read.
  *

@@ -132,7 +132,7 @@ export function forgetRecent(filePath: string): RecentDocument[] {
 /**
  * Forget every row that points anywhere inside `dir`.
  *
- * The one caller is a project being DELETED (electron/main.ts, `projects:delete`),
+ * The one caller is a project being DELETED (electron/ipc.ts, `projects:delete`),
  * and it exists because this list is keyed by FILE and a project is a folder full
  * of them: the scan in `working/`, the cast book in `generated/`, whatever was
  * filed into `final/`. Forgetting them one at a time would mean main enumerating

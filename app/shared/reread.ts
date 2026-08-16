@@ -39,7 +39,7 @@
  * already looking at would be a round trip for a decision that is already made.
  *
  * WHAT MAIN OWNS IS THE QUESTION, NOT THE PROSE, and this is the only question in
- * the app where that line falls here. `reading:confirm-re-read` (main.ts) takes
+ * the app where that line falls here. `reading:confirm-re-read` (electron/ipc.ts) takes
  * these two strings and dresses them as an `AppQuestion`: the two choices, the
  * key each one answers with, which of them a dismissal means. It draws nothing —
  * no process does but the renderer, whose `ConfirmDialogComponent` paints this in
@@ -66,7 +66,7 @@ import type { LedgerStep, ProjectLedger } from './types';
  *
  * THE LABEL IS NOT THE ANSWER, and nothing here reads one back. Main dresses
  * these two words as the choices of an `AppQuestion` (`reading:confirm-re-read`,
- * main.ts) and what a press sends back is that choice's own KEY — 'again' or
+ * electron/ipc.ts) and what a press sends back is that choice's own KEY — 'again' or
  * 'leave' (`ReReadAnswer`, shared/types.ts) — never a label, and never the index
  * a native box would have answered with. So the wording above can be rewritten
  * without a single branch anywhere changing with it.
@@ -90,7 +90,7 @@ export const BRANCH_SENTENCE = 'This will be a second reading beside the current
  * line and its body, from when this crossed the seam as one. They still name the
  * same two jobs, but the slots they land in have moved: main dresses `message` as
  * the card's TITLE and `detail` as its message (`reading:confirm-re-read`,
- * main.ts), because a card carries a heading of its own where the box had window
+ * electron/ipc.ts), because a card carries a heading of its own where the box had window
  * chrome — and the box's title and message were this same sentence, twice.
  */
 export interface ReReadPrompt {

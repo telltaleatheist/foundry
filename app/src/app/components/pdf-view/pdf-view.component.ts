@@ -78,7 +78,7 @@ import { api } from '../../core/foundry';
  * ── The bytes ────────────────────────────────────────────────────────────────
  *
  * `api.documentBytes(path)` — IPC, not `fetch` on `foundry-file://`. The
- * argument is in electron/main.ts beside the handler; the short version is that
+ * argument is in electron/ipc.ts beside the handler; the short version is that
  * the page is served under `connect-src 'self'` and the allow-list is the same
  * one either way.
  *

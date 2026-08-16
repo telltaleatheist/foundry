@@ -116,7 +116,7 @@ import { readSettings } from './settings';
 import { ensureServer, isLocalVllmEndpoint, noteQueueBusy, noteQueueIdle } from './vllm-server';
 import { REWRITE_LABELS } from '../shared/ledger';
 import type {
-  ConversionKind, EnvInstallRequest, Job, JobRequest, TranslateRequest,
+  ConversionKind, EnvInstallRequest, ExportLanding, Job, JobRequest, TranslateRequest,
 } from '../shared/types';
 
 /**
@@ -140,6 +140,29 @@ let notify: (jobs: Job[]) => void = () => { /* set by main */ };
 /** Where the queue publishes. Called on every mutation, with the whole list. */
 export function onQueueChanged(listener: (jobs: Job[]) => void): void {
   notify = listener;
+}
+
+/**
+ * The other thing this queue publishes: an export, the moment it is filed.
+ *
+ * ── Why it is a registration and not an import ──────────────────────────────
+ *
+ * Because the queue must not know what a HOST is. Hosted, an export landing is
+ * the moment BookForge's versions page gains a row (docs/BOOKFORGE-HANDOFF.md
+ * §8) — but this module's business is spawning the engine and reporting what it
+ * wrote, and a queue that imported the mount seam to tell it so would be the
+ * bottom of the graph reaching for the top. So it is `onQueueChanged`'s shape,
+ * for the same reason: main wires it, and main is the only side that knows
+ * whether anybody is listening.
+ *
+ * ONE LISTENER, replaced rather than appended, exactly like the one above. There
+ * is one host per process and the alternative — a list — would invite a second
+ * subscriber whose failure the first one would have to survive.
+ */
+let exportLanded: (landing: ExportLanding) => void = () => { /* set by main */ };
+
+export function onExportLanded(listener: (landing: ExportLanding) => void): void {
+  exportLanded = listener;
 }
 
 export function listJobs(): Job[] {
@@ -1607,8 +1630,45 @@ async function pump(): Promise<void> {
      */
     if (exporting) {
       await recordFinal(next.outputPath);
-      next.message = `Wrote ${path.basename(next.outputPath)}`;
+      const filed = path.basename(next.outputPath);
+      next.message = `Wrote ${filed}`;
       changed();
+      /*
+       * ── AND WHOEVER IS HOSTING US IS TOLD, LAST ───────────────────────────
+       *
+       * After the file is in `final/` and after the tray has recorded it, so a
+       * host that files this into a versions list is describing something that
+       * exists on disk and is already in the catalogue this app would answer
+       * with. Announcing it any earlier would be inviting the host to race the
+       * manifest.
+       *
+       * THE NAME IS THE ONE THE SHELF JUST SAID. A version row and a job row are
+       * two views of one landing, and a second derivation of "what to call it"
+       * is how the two come to disagree about what was made.
+       *
+       * A THROW HERE MUST NOT REACH THE SETTLE. The work is done — hours of it,
+       * sometimes — and a host whose handler has a bug in it does not get to
+       * turn a landed export into a failed job. `mountFoundry` catches it too,
+       * and this is the second catch rather than the same one written twice: a
+       * listener registered by anything else — a test, a future caller — reaches
+       * this line and not that one.
+       */
+      const projectDir = projectDirOf(next.outputPath);
+      if (projectDir !== null) {
+        try {
+          exportLanded({
+            projectDir,
+            path: next.outputPath,
+            kind: request.kind,
+            title: filed,
+          });
+        } catch (err) {
+          console.error(
+            `[queue] the export-landed listener threw for ${next.outputPath}: `
+            + `${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
       void pump();
       return;
     }

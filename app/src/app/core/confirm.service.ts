@@ -31,7 +31,7 @@ import { UiService } from './ui.service';
  *
  * Nothing in this file composes a sentence. `AppQuestion` and `DeletionPrompt`
  * arrive whole from the process that knows the size on disk, the readings bank's
- * page count and what a save is worth (electron/main.ts). The one thing the
+ * page count and what a save is worth (electron/ipc.ts). The one thing the
  * renderer must never do to this dialog is start writing its own copy, which is
  * how a warning worth reading becomes "Are you sure?".
  *

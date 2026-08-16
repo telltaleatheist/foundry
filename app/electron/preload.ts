@@ -88,6 +88,8 @@ async function ask<Answer extends string>(
 const api: FoundryApi = {
   platform: process.platform,
 
+  hosted: () => ipcRenderer.invoke('app:hosted'),
+
   openDocumentDialog: () => ipcRenderer.invoke('dialog:open-document'),
   openPath: (candidate) => ipcRenderer.invoke('document:open-path', candidate),
   pathForFile: (file) => webUtils.getPathForFile(file),
@@ -223,7 +225,9 @@ const api: FoundryApi = {
   onDocumentOpened: (listener) => subscribe<string>('document:opened', listener),
   onDocumentRelocated: (listener) =>
     subscribe<{ from: string; to: string }>('document:relocated', listener),
-  onNavigate: (listener) => subscribe<string>('navigate', listener),
+  onNavigate: (listener) => subscribe<string>('app:navigate', listener),
+  onProjectOpen: (listener) =>
+    subscribe<{ dir: string; originalPath: string; managed: boolean }>('project:open', listener),
   onMenuAction: (listener) => subscribe<MenuAction>('menu:action', listener),
   // The window is going and the documents in it have not been asked yet. The
   // payload is nothing — what is open is the renderer's own business, and this

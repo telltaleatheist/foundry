@@ -1740,7 +1740,7 @@ export async function deletableStep(dir: string, stepId: string): Promise<StepSu
  * record), and its own pending file goes with it.
  *
  * A QUEUED JOB ABOUT TO RESUME ONE CANNOT LOSE IT TO THIS, and there is no new
- * mechanism for that: `refuseBusyStepDelete` (electron/main.ts) already refuses a
+ * mechanism for that: `refuseBusyStepDelete` (electron/ipc.ts) already refuses a
  * step delete while ANY held, queued or running job writes into this project —
  * deliberately coarse, on `refuseBusyJob`'s own argument that a narrower test
  * would have to predict where a run that has not started will write. Both IPC
@@ -2351,7 +2351,8 @@ export async function bookAtPosition(dir: string, at: LedgerStep | null = null):
  * sites: the pointer decides which of several files a surface is handed, and a
  * second opinion composed from the project key is a lie the moment a project holds
  * two of anything. Main also has to ADMIT the path to the viewer's allow-list
- * (main.ts, `openable`), which the renderer cannot do for itself and must not be
+ * (electron/documents.ts, `admit`), which the renderer cannot do for itself and must
+ * not be
  * able to.
  *
  * ── The four rows ───────────────────────────────────────────────────────────
@@ -4518,7 +4519,8 @@ async function hasBytes(target: string): Promise<boolean> {
  * it is given came across IPC from the renderer — a page that runs a book's own
  * markup in an iframe and an OpenAI-compatible endpoint's answers through a
  * parser. Every other door in this app that touches a path the renderer named
- * asks main's own allow-list first (`admitted`, in main.ts) precisely because a
+ * asks main's own allow-list first (`admitted`, electron/documents.ts) precisely
+ * because a
  * renderer's word is not an authorization. This function is the whole of that
  * gate for the one call that erases directories, so if it is wrong, an argument
  * of `C:\Users\tellt` is a recursive delete of a home folder.

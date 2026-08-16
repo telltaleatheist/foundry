@@ -1184,6 +1184,36 @@ export interface ProjectFinal {
 }
 
 /**
+ * AN EXPORT, THE MOMENT IT LANDS — the one thing Foundry says out loud to
+ * whoever is hosting it.
+ *
+ * ── Why this crosses a boundary that nothing else does ──────────────────────
+ *
+ * Hosted, Foundry's window is where a book is made and BookForge's versions page
+ * is where finished things are listed (docs/BOOKFORGE-HANDOFF.md §8). Those are
+ * two truths about one moment: the file goes into `<project>/final/` and stays
+ * there — nothing is copied, nothing is moved — and the host learns that a row
+ * pointing AT IT is now worth drawing. So this carries a path and enough words
+ * to name a row with, and nothing else: no bytes, no step, no ledger. A host
+ * that wants more asks the project folder, which is the whole truth and always
+ * was.
+ *
+ * IT LIVES IN `shared/` RATHER THAN IN THE MOUNT SEAM because it is the shape of
+ * an announcement, and announcements in this app are declared where both ends
+ * can compile against them — the same rule that put every IPC payload here.
+ */
+export interface ExportLanding {
+  /** The project the export was made in — the folder, absolute. */
+  projectDir: string;
+  /** The file itself, absolute, sitting in that project's `final/`. */
+  path: string;
+  /** `epub`, `txt`, `pdf` — the format the export was asked for. */
+  kind: string;
+  /** What to call it in a list: the file's own name, as the shelf announces it. */
+  title: string;
+}
+
+/**
  * One reading's page-for-page reprint, in `generated/`. See
  * `ProjectSummary.facsimiles`, which is the only thing that carries these and
  * where the whole argument for the shape lives.

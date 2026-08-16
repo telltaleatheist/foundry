@@ -1883,7 +1883,7 @@ export class TabsService {
    * original opens exactly as it always has, and then, WHERE THE POSITION'S
    * PICTURE IS THE SHEET, the book tab goes on top: the same end state the user
    * was building by hand, in one click. `document:opened` is announced before
-   * `openPath` resolves (electron/main.ts), so the original's tab has already
+   * `openPath` resolves (electron/documents.ts), so the original's tab has already
    * been adopted and focused by the time the sheet is revealed over it — the
    * ordering cannot race.
    *
@@ -2035,7 +2035,7 @@ export class TabsService {
      * is what the proof sheet draws.
      *
      * SO NO TAB IS MADE HERE. Main has already started the import (`openDocument`,
-     * electron/main.ts) and `awaitBook` opens the project's sheet the moment there
+     * electron/documents.ts) and `awaitBook` opens the project's sheet the moment there
      * is a project to open it for — which is usually a moment later, and is
      * immediate for an EPUB already in the library.
      */
