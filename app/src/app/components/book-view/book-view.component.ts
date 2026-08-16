@@ -21,6 +21,7 @@ import { replayOps, struckNotes, type BookOp, type ReplayedRow } from '@shared/o
 import { api } from '../../core/foundry';
 import { LedgerService } from '../../core/ledger.service';
 import { TabsService, type BookStack, type Tab } from '../../core/tabs.service';
+import { editionFlow, editionPieces } from './edition';
 import { flowNeighbours, seamJoins } from './flow';
 
 /**
@@ -125,6 +126,19 @@ import { flowNeighbours, seamJoins } from './flow';
  * they are drawn from OFFSETS the engine resolved (`BookRef`), never by matching
  * digits — the same digits appear five times on a page of a book with fifty notes
  * in it.
+ *
+ * ── TWO REGISTERS, ONE TOGGLE ───────────────────────────────────────────────
+ *
+ * *"Workbench — the working view. Paper + gutters + chrome. Edition — the export
+ * preview. The same replay with ALL chrome removed and the export stylesheet
+ * applied."* (docs/RENDERER-DESIGN.md §0.) The edition is a PROJECTION of the
+ * very list the bench is drawing — one more pure function over `lines()`, no
+ * second replay, no IPC and no engine, which is what makes it *"a toggle, not a
+ * build"* (docs/RENDERER.md §5). What moves lives in `./edition`; what is merely
+ * left out is a selector under the one host class, at the bottom of the styles.
+ *
+ * IT IS READ-ONLY AND EVERY EDIT GESTURE FLIPS IT BACK — §5's own sentence — and
+ * the mode is deliberately NOT REMEMBERED anywhere: `mode` below says why.
  */
 
 /** A reference number inside a block's text — bound to its note, or to nothing. */
@@ -172,8 +186,21 @@ interface Line {
   jump: string | null;
   /** The page ghost for the right gutter, where a new source page begins here. */
   ghost: number | null;
-  /** The chapter this block starts, drawn as a rule above it. */
+  /** The chapter this block starts, drawn as a rule above it. Null in the edition. */
   chapter: string | null;
+  /**
+   * The chapter title drawn as a HEADING above this block — the edition's mark
+   * where `chapter` is the bench's, and null in every workbench line.
+   *
+   * They are two fields rather than one read two ways because they are not the
+   * same fact: the bench draws a rule and a chip at every division, and the
+   * edition draws a heading only where the block below is not already one
+   * (`EditionPlace.heading`, ./edition). One field would have to be asked which
+   * mode it was about before it could be read.
+   */
+  heading: string | null;
+  /** True where a division opens — the air the cast's new document makes. */
+  opens: boolean;
   /**
    * The block this one would be joined onto, when an unjoined page turn falls
    * immediately above it — or null, which is almost every block in the book.
@@ -238,27 +265,76 @@ const PULSE_MS = 600;
     <ng-template #words let-line>
       @for (piece of line.pieces; track $index) {
         @if (piece.marker; as marker) {
-          <span
-            class="marker"
-            [attr.data-note]="marker.note"
-            [class.unlinked]="marker.note === null"
-            [class.struck]="marker.struck"
-            [class.lit]="marker.note !== null && lit() === marker.note"
-            (pointerenter)="light(marker.note)"
-            (pointerleave)="light(null)"
-          >{{ piece.text }}</span>
+          @if (edition()) {
+            <!--
+              THE REF, DEMOTED — *"struck elements absent, refs demoted"*
+              (docs/RENDERER.md §5). In the cast a matched marker is
+              \`<a class="noteref" epub:type="noteref" href="#fnN"><sup>n</sup></a>\`
+              and an unmatched one falls through to the inline pass's own plain
+              \`<sup>n</sup>\`; the edition draws that plain superscript for every
+              number it has. NO JUMP, NO COUPLING, NO AMBER: the link is the
+              apparatus of a reader, and this is the page, not a reader.
+            -->
+            <sup class="ref">{{ piece.text }}</sup>
+          } @else {
+            <span
+              class="marker"
+              [attr.data-note]="marker.note"
+              [class.unlinked]="marker.note === null"
+              [class.struck]="marker.struck"
+              [class.lit]="marker.note !== null && lit() === marker.note"
+              (pointerenter)="light(marker.note)"
+              (pointerleave)="light(null)"
+            >{{ piece.text }}</span>
+          }
         } @else {
           <span class="run">{{ piece.text }}</span>
         }
       }
     </ng-template>
 
-    <div class="bench">
+    <div class="bench" [class.edition]="edition()">
       @if (problem(); as reason) {
         <div class="sheet"><p class="failure">{{ reason }}</p></div>
       } @else if (loading()) {
         <div class="sheet"><p class="waiting">Opening the book…</p></div>
       } @else {
+        <!--
+          THE TWO REGISTERS — *"a two-segment control … \`Workbench | Edition\`,
+          styled like the app's existing acts"* (RENDERER-DESIGN.md §5).
+
+          IT IS AT THE HEAD OF THE SHEET'S OWN COLUMN, mirroring the tray at the
+          foot of it, because this pane has no toolbar and the tray is the whole
+          of the grammar it does have: the app's dark \`.act\` on the bench, in
+          the paper's own measure, pinned to the column's edge and never on the
+          paper (§5 keeps the paper vocabulary on the paper). The tray holds the
+          VERB and the head holds the REGISTER — what this is, against what to do
+          with it — and the two of them bracket the sheet rather than crowding one
+          corner of it.
+
+          A GROUP OF TWO BUTTONS AND NOT A CHECKBOX. \`aria-pressed\` on each says
+          which one is in force in the one vocabulary a screen reader already has
+          for a segmented control, and buttons are reachable, pressable and
+          focusable from a keyboard with nothing added.
+        -->
+        <div class="tray head">
+          <div class="segments" role="group" aria-label="How this book is shown">
+            <button
+              type="button"
+              class="act segment"
+              [class.on]="!edition()"
+              [attr.aria-pressed]="!edition()"
+              (click)="show('workbench')"
+            >Workbench</button>
+            <button
+              type="button"
+              class="act segment"
+              [class.on]="edition()"
+              [attr.aria-pressed]="edition()"
+              (click)="show('edition')"
+            >Edition</button>
+          </div>
+        </div>
         <!--
           \`tabindex="-1"\` so the sheet can HOLD focus without being a tab stop.
           The Delete key has to reach a selection that a marquee made over empty
@@ -289,7 +365,14 @@ const PULSE_MS = 600;
             change recorded against a paragraph that a later reading of the pages
             no longer has — and there is nothing here to do.
           -->
-          @if (stranded() > 0 || refused().length > 0) {
+          <!--
+            AND NOT IN THE EDITION. It is a report about this book's HISTORY —
+            changes recorded against paragraphs a later reading no longer has —
+            which makes it the most instrument-shaped mark on the sheet, and the
+            export writes nothing like it. The facts do not go away with the
+            register: one press of Workbench and the strip is back.
+          -->
+          @if (!edition() && (stranded() > 0 || refused().length > 0)) {
             <div class="stranded">
               @if (stranded(); as many) {
                 <p>
@@ -311,7 +394,7 @@ const PULSE_MS = 600;
               }
             </div>
           }
-          @for (line of lines(); track line.row.id) {
+          @for (line of sheetLines(); track line.row.id) {
             <!--
               The seam sits FIRST in a line's group of marks so that in the DOM
               it is the next sibling of the block ABOVE it — which is what lets
@@ -366,13 +449,37 @@ const PULSE_MS = 600;
                 }
               </div>
             }
+            <!--
+              THE DIVISION, AS THE FINISHED BOOK SETS IT. The cast writes a
+              chapter opening as the block that was already there wearing the
+              chapter attribute — an \`h1\` for a Title, an \`h2\` for a
+              Section-header — so a heading is drawn HERE only where the block
+              below is not itself one and the division would otherwise have
+              nothing on the page saying its name (\`EditionPlace.heading\`,
+              ./edition). \`h1\` because that is the tag the cast gives a chapter
+              opener in the ordinary case.
+            -->
+            @if (line.heading; as title) {
+              <h1 class="division" [style.font-size.em]="headingSize()">{{ title }}</h1>
+            }
             @if (line.opensNotes) { <div class="notes-rule"></div> }
+            <!--
+              \`animate.leave\` is the ONE piece of motion machinery on this sheet
+              and it is CSS with a class on it: Angular puts \`leaving\` on the
+              element, the stylesheet's own keyframes collapse it, and the node
+              goes when the animation ends. §6's rule is *"things that leave the
+              document collapse"*, and the styles hold that to the blocks a mode
+              flip takes out — the struck ones — so nothing about a merge or a
+              cut is animated and no measurement pass exists anywhere here.
+            -->
             <div
               class="block"
               tabindex="0"
+              animate.leave="leaving"
               [attr.data-id]="line.row.id"
               [attr.data-jump]="line.jump"
               [style.color]="line.colour"
+              [class.opens]="line.opens"
               [class.selected]="chosen().has(line.row.id)"
               [class.struck]="line.row.struck === true"
               [class.editing]="editingId() === line.row.id"
@@ -383,7 +490,7 @@ const PULSE_MS = 600;
               (pointerleave)="light(null)"
             >
               <span class="gutter rail"></span>
-              @if (chosen().has(line.row.id)) {
+              @if (!edition() && chosen().has(line.row.id)) {
                 <!--
                   THE CHIP IS THE CATEGORY'S DOOR. It already names the category
                   of the block it sits beside, so it is the one place in the
@@ -485,7 +592,17 @@ const PULSE_MS = 600;
                     <figure>
                       @if (plate(line.row); as src) {
                         <img class="plate-img" [src]="src" alt="" draggable="false">
-                      } @else {
+                      } @else if (!edition()) {
+                        <!--
+                          AND THE EMPTY FRAME IS THE BENCH'S. It is a dashed rule
+                          and a page number — an instrument mark saying "a plate
+                          belongs here and this book was reflowed without the PDF
+                          to cut it from". The edition is the finished book, the
+                          finished book has the plate, and drawing a dashed box
+                          in its place would put a mark on the page that the
+                          export will never write. What is left is the gap the
+                          missing plate actually is.
+                        -->
                         <div class="plate"><span class="plate-page">≈ {{ line.row.page }}</span></div>
                       }
                       @if (line.row.text.trim().length > 0) {
@@ -540,7 +657,15 @@ const PULSE_MS = 600;
           affordance is somewhere a person can learn it is there before they have
           anything to press it with.
         -->
-        <div class="tray">
+        <!--
+          AND IN THE EDITION IT IS \`inert\`. The tray is the bench's furniture and
+          the edition has none of it, but a button faded to nothing is still a tab
+          stop and still takes a press — so the mode does not hide it, it takes it
+          out of the document. Apply is not gone, it is one press of Workbench
+          away, and the head that gets you there is the only thing on the bench
+          that stays.
+        -->
+        <div class="tray" [attr.inert]="edition() ? '' : null">
           @if (pending().length > 0) {
             <button type="button" class="act ghost" (click)="undo()">Undo</button>
           }
@@ -614,6 +739,17 @@ const PULSE_MS = 600;
       display: block;
       width: 100%;
       height: 100%;
+      /*
+       * WHAT LETS A BLOCK COLLAPSE FROM THE HEIGHT IT HAPPENS TO HAVE. §6 asks
+       * that things which leave the document collapse, and a block's height is
+       * \`auto\` — there is no number to animate from, and measuring one is the
+       * FLIP machinery this surface has been told not to grow (see \`join\`).
+       * \`interpolate-size\` is the browser doing that measurement itself, which
+       * is why the collapse below is nine lines of CSS and no JavaScript. It is
+       * inherited, so it is declared once here; nothing else on this sheet
+       * animates a keyword, so it changes nothing that is already drawn.
+       */
+      interpolate-size: allow-keywords;
     }
 
     /* ── §2 The paper ─────────────────────────────────────────────────────── */
@@ -655,6 +791,15 @@ const PULSE_MS = 600;
          the browser's own is off — copying a block's words is a gesture this
          surface does not offer yet. */
       user-select: none;
+      /* §5 — the crossfade into the edition. The GUTTERS are what actually
+         travels: the paper's 3.25rem of instrument margin closes to the export's
+         own \`body { margin: 0 5%; }\` and the leading opens from the bench's 1.62
+         to the cast sheet's 1.5, both over \`--t-med\`, both back again. Neither
+         property ever changes for any other reason, so this transition costs
+         nothing on a book nobody is previewing. */
+      transition:
+        padding var(--t-med) var(--ease),
+        line-height var(--t-med) var(--ease);
     }
 
     .sheet:focus { outline: none; }
@@ -1040,6 +1185,28 @@ const PULSE_MS = 600;
     .act:disabled { opacity: 0.4; cursor: default; }
     .act.ghost { background: transparent; color: var(--text-secondary); }
 
+    /* ── §5 The register, at the head of the column the tray closes ────────── */
+
+    /* The tray's own rule, turned over: same measure, same sticky edge-of-column
+       placement, the other edge. */
+    .head { top: 0; bottom: auto; padding: 0 0 0.75rem; }
+
+    /* Two acts made one control: the seam between them is a shared hairline
+       (the second pulled back a pixel onto the first's border) and only the
+       outer corners are rounded, so the pair reads as one segmented thing
+       rather than as two buttons that happen to be adjacent. */
+    .segments { display: flex; pointer-events: auto; }
+    .segment { border-radius: 0; }
+    .segment:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+    .segment:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; margin-left: -1px; }
+    /* The one in force wears the app's own "this is live" ground — \`.act\`'s
+       hover state, held — and the other stands back in the secondary ink. No new
+       colour is stated: both are the shell's tokens, which is what keeps this
+       control the shell's furniture. */
+    .segment:not(.on) { background: transparent; color: var(--text-secondary); }
+    .segment.on { z-index: 1; background: var(--bg-hover); border-color: var(--border-strong); }
+    .segment:focus-visible { z-index: 1; outline: 2px solid var(--ink-select); outline-offset: 2px; }
+
     /* The app's small menu, copied from open-documents — one vocabulary for
        one kind of thing, and the scrim is what makes the next click dismiss it
        exactly once. */
@@ -1079,10 +1246,100 @@ const PULSE_MS = 600;
        which is the ONE table these colours come from. */
     .swatch { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 2px; }
 
+    /* ── §0/§5 THE EDITION — the export's own sheet, transcribed ──────────────
+     *
+     * The numbers below are \`STYLESHEET_BASE\` and \`dotsStylesheet\`
+     * (src/vlm/dots-book.ts), copied rather than imported, on the \`BASE_RATIO\`
+     * precedent at the top of this file: the app and the engine are two programs
+     * and the app's mirror of the engine lives in \`shared/\`, so a stylesheet the
+     * engine writes into an EPUB is transcribed here with its source named.
+     *
+     *   body       { margin: 0 5%; line-height: 1.5; }
+     *   p          { margin: 0 0 0.4em; text-indent: 1.4em; }
+     *   sup        { font-size: 0.75em; line-height: 0; vertical-align: super; }
+     *   .footnotes { font-size: 0.85em; margin-top: 2em; }
+     *   .footnotes .footnote { text-indent: 0; margin-bottom: 0.5em; }
+     *
+     * TWO THINGS THE CAST'S SHEET DOES NOT SAY are left where the paper already
+     * had them. It names NO FONT FAMILY anywhere — *"still no point sizes and
+     * still no font families"* — because in a reader the family is the reader's;
+     * on a screen it has to be something, and the something is §2's serif stack,
+     * which is the book's voice in this app. And the per-category SIZES are not
+     * here because they are already on the blocks: \`line.size\` is the measured
+     * ratio, and \`dotsStylesheet\` writes those very ratios into the cast.
+     *
+     * These rules sit LAST so that the ones they must beat — the hover tint, the
+     * selected rail — are beaten on specificity AND on order, and neither of
+     * those two things has to be true on its own.
+     */
+    .bench.edition .sheet {
+      padding-inline: 5%;
+      line-height: 1.5;
+      /* The marquee is what turned the browser's own selection off (§3), and
+         there is no marquee here. A preview somebody can take a sentence out of
+         is a preview doing its job. */
+      user-select: text;
+    }
+    /* Every tint the bench paints is a state of an instrument: hover, selection,
+       the note that is lit, the block a jump landed on. */
+    .bench.edition .block .body { background: transparent; }
+    .bench.edition .block .rail { opacity: 0; }
+    .bench.edition .para { margin-bottom: 0.4em; }
+    .bench.edition .note { margin-bottom: 0.5em; }
+    /* The cast opens the apparatus with a bare \`<hr/>\` across the column under
+       \`.footnotes { margin-top: 2em; }\` — not §4's 4rem hairline, which is a
+       page-group's mark on the bench. */
+    .bench.edition .notes-rule { width: 100%; margin: 2em 0 0.5em; }
+    /* The break a new chapter makes. The cast writes no page-break rule and does
+       not need one — each chapter is its own document in the spine — so on a
+       sheet that never ends the break is air. */
+    .bench.edition .block.opens { margin-top: 3.5rem; }
+    .bench.edition .division { margin-top: 3.5rem; }
+    .bench.edition .division + .block.opens { margin-top: 0; }
+    /* \`sup\`, verbatim — and it is the same rule \`.marker\` already wears, because
+       §4 built the bench's marker out of the cast's superscript to begin with. */
+    .ref { font-size: 0.75em; line-height: 0; vertical-align: super; }
+
     /* ── §6 Motion. The states must read perfectly as stills. ─────────────── */
+
+    /*
+     * *"struck blocks collapse (height animates to 0)"* — §5, and *"things that
+     * leave the document collapse"* — §6.
+     *
+     * A KEYFRAME AND NOT A TRANSITION, for one exact reason: the host gains
+     * \`.edition\` in the same repaint that takes the struck rows out, and a
+     * transition declared in that same repaint has no earlier value to travel
+     * from. An animation fires on the class arriving, whatever came before it.
+     *
+     * IT IS HELD TO \`.struck\`, which is the whole of what §5 asks for. A merge
+     * and a cut also take blocks out of this list, and both of them are
+     * restructurings whose result the words themselves carry — \`join\` says why
+     * they are not animated — so a leaving block with no cancel mark on it gets
+     * the class, has no animation to wait for, and goes at once exactly as it
+     * always has.
+     *
+     * \`overflow: hidden\` rather than \`clip\`: it contains the words' own margins
+     * as well as clipping them, so the row closes to nothing rather than to the
+     * half-line a note's margin would leave behind. It arrives with the collapse
+     * and takes the gutter marks down with it, which is right — they are this
+     * block's marks and this block is going.
+     */
+    @keyframes collapse {
+      from { height: auto; opacity: 1; }
+      to   { height: 0; opacity: 0; }
+    }
+    .block.struck.leaving {
+      overflow: hidden;
+      animation: collapse var(--t-med) var(--ease) forwards;
+    }
+
     @media (prefers-reduced-motion: reduce) {
-      .body, .rail, .marker, .flag .pill, .seam,
+      .body, .rail, .marker, .flag .pill, .seam, .sheet,
       .block.struck .body, .marker.struck { transition-duration: 0ms; }
+      /* No animation at all rather than a zero-length one: with nothing to wait
+         for, the row is gone on the next frame, which is what "instant" means
+         here and is also the state the still has to read as. */
+      .block.struck.leaving { animation: none; }
     }
   `],
 })
@@ -1149,6 +1406,27 @@ export class BookViewComponent {
 
   /** The categories the chip's list offers — the ONE table, in the engine's order. */
   protected readonly categories = PDF_BLOCK_CATEGORIES;
+
+  /**
+   * WHICH OF THE TWO REGISTERS IS ON SCREEN — the bench, or the edition.
+   *
+   * ── IT IS NOT REMEMBERED, AND THAT IS THE RULING ────────────────────────────
+   *
+   * Nothing writes this down: not the project file, not the window's layout, not
+   * a step. Opening a book opens it on the bench, and so does moving to another
+   * step, because a preview is a GLANCE and not a state of the project — the
+   * person went to look at what the export will do and then came back to work. A
+   * mode that survived a reload would mean somebody could open a book they have
+   * decisions waiting on and be handed a page with no gutters, no chips and no
+   * Apply, with nothing on screen saying why. `load` puts it back for exactly
+   * that reason.
+   *
+   * IT IS ALSO NOT AN OP AND NOT IN THE UNDO STACK, on the selection's own rule:
+   * it is a fact about this pane and about nothing in the book.
+   */
+  protected readonly mode = signal<'workbench' | 'edition'>('workbench');
+  /** Read all over the template and the guards — the mode, asked as a question. */
+  protected readonly edition = computed(() => this.mode() === 'edition');
 
   /**
    * Which load is the current one.
@@ -1301,6 +1579,10 @@ export class BookViewComponent {
     this.loading.set(true);
     this.problem.set(null);
     this.book.set(null);
+    // A BOOK OPENS ON THE BENCH, ALWAYS — see `mode`. This is the whole of "not
+    // persisted": there is nowhere it is written down and here is where a reload
+    // puts it back.
+    this.mode.set('workbench');
     this.chosen.set(new Set());
     this.editingId.set(null);
     this.renaming.set(null);
@@ -1521,6 +1803,10 @@ export class BookViewComponent {
         jump: row.refs?.[0]?.block ?? null,
         ghost,
         chapter,
+        // The bench draws divisions as rules and never as headings, and it
+        // spends no air on them — the rule is the break.
+        heading: null,
+        opens: false,
         seamInto: seams.get(row.id) ?? null,
         indent: row.category === 'Text' && previous !== null && !heading && chapter === null,
         opensNotes: row.category === 'Footnote'
@@ -1540,6 +1826,72 @@ export class BookViewComponent {
   });
 
   /**
+   * THE SAME BOOK, PROJECTED THROUGH THE EXPORT'S RULES — the edition.
+   *
+   * ── One list, folded again, exactly like everything else here ───────────────
+   *
+   * This is `lines()` with a pure function over it and nothing more: no second
+   * replay, no second load, no engine (docs/RENDERER.md §5 — *"a toggle, not a
+   * build"*). Every field the bench uses to draw an instrument mark is put to
+   * null on the way through, so the marks are not merely hidden by CSS — the
+   * ordinals, page ghosts, amber flags, seam ghosts and division rules are not
+   * in the DOM of an edition at all, which is the difference between a page with
+   * its chrome turned down and a page that never had any.
+   *
+   * WHAT MOVES IS THE APPARATUS, and that decision is `editionFlow`'s
+   * (./edition), where a script can exercise it. What is left out of the prose is
+   * `editionPieces`'s: the reference numbers of notes that are not in this book.
+   *
+   * THE SIZES ARE NOT TOUCHED. `line.size` is already the measured ratio for its
+   * category, and the measured ratios are the EXPORT'S — `dotsStylesheet` writes
+   * the very same numbers into the cast's own sheet as `font-size: <ratio>em`
+   * rules for `.footnotes`, `p.caption`, `blockquote p`, `h1` and `h2`
+   * (src/vlm/dots-book.ts). There is nothing to convert; the bench was always
+   * setting the book in the export's type.
+   */
+  private readonly editionLines = computed<Line[]>(() => editionFlow(
+    this.lines(),
+    (line) => ({
+      category: line.row.category,
+      chapter: line.chapter,
+      struck: line.row.struck === true,
+    }),
+  ).map((place) => ({
+    ...place.row,
+    pieces: editionPieces(place.row.pieces),
+    heading: place.heading,
+    opens: place.opens,
+    opensNotes: place.opensNotes,
+    indent: place.indent,
+    // The bench's marks, absent rather than quiet — see the docblock.
+    chapter: null,
+    ordinal: null,
+    ghost: null,
+    flag: null,
+    seamInto: null,
+    jump: null,
+  })));
+
+  /** The list on the paper: the bench's book, or the edition's. */
+  protected readonly sheetLines = computed<Line[]>(
+    () => (this.edition() ? this.editionLines() : this.lines()));
+
+  /**
+   * The size a division's own heading is set at, when the edition draws one.
+   *
+   * THE TITLE RATIO, because that is what the cast sets a chapter opening in: the
+   * emitter writes the opener as `<h1 data-bf-cat="chapter">` and the sheet's own
+   * `h1` rule is the measured `Title` size (or 1.5em, the base sheet's). A
+   * division the Chapters panel put above a paragraph has no heading in the book
+   * to take a size from, and this is the size the heading it is standing in for
+   * would have had.
+   */
+  protected readonly headingSize = computed<number>(() => {
+    const book = this.book();
+    return book === null ? 1.5 : sizeOf(book, 'Title');
+  });
+
+  /**
    * The URL a Picture row's crop is served at, or null — for a row that names
    * no image (no PDF was given to the reflow) or a book main minted no door
    * for. Composed and never fetched: the allow-list behind the prefix is
@@ -1550,6 +1902,48 @@ export class BookViewComponent {
     return figures !== null && row.image !== undefined
       ? figures + encodeURIComponent(row.image)
       : null;
+  }
+
+  /**
+   * The register, chosen — the toggle's whole behaviour.
+   *
+   * A LIVE BLOCK IS PUT TO BED FIRST. The edition has no editor to blur later
+   * and no caret to leave one in, so words somebody typed and did not commit
+   * would go with the flip — and the flip is not a gesture about those words.
+   * `commitEditing` runs while the bench is still on, so its own text op lands
+   * the ordinary way (and `push` below finds the mode it expects).
+   */
+  protected show(register: 'workbench' | 'edition'): void {
+    if (this.mode() === register) return;
+    this.commitEditing();
+    this.renaming.set(null);
+    this.menu.set(null);
+    this.mode.set(register);
+  }
+
+  /**
+   * Back to the bench, with a block picked out — the ending EVERY edit gesture
+   * takes while the edition is on.
+   *
+   * *"Edition is read-only; any edit gesture flips back to Workbench with the
+   * block focused."* (RENDERER-DESIGN.md §5.) THE FLIP IS THE ANSWER and the
+   * gesture is not also performed: a double-click on a preview is somebody
+   * reaching for the words, and putting a caret in them as well would have one
+   * press both change the mode and start an edit in a mode they had not seen
+   * yet. The second press does the thing, on the bench, where its marks are.
+   *
+   * FOCUS AFTER THE FRAME THAT DRAWS IT, for `edit`'s reason: the bench's list is
+   * a different list and the element under the pointer belongs to the edition's.
+   */
+  private toBench(id: string | null): void {
+    this.mode.set('workbench');
+    if (id === null) return;
+    this.chosen.set(new Set([id]));
+    afterNextRender(() => {
+      const block = this.host.nativeElement
+        .querySelector(`[data-id="${CSS.escape(id)}"]`) as HTMLElement | null;
+      block?.focus({ preventScroll: true });
+    }, { injector: this.injector });
   }
 
   /** True while a hovered page ghost names a page this block sits on. */
@@ -1580,6 +1974,26 @@ export class BookViewComponent {
    * of it they had been sent to.
    */
   private scrollTo(id: string): void {
+    /*
+     * A JUMP OUT OF A PANEL PUTS THE PANE BACK ON THE BENCH FIRST, which is the
+     * same rule `push` states one level down and for the same reason: the panels
+     * draw the WORKBENCH's book. A note the Notes panel is pointing at may be
+     * struck — absent from the edition entirely — or may be sitting somewhere
+     * else on the page, because the edition collects the apparatus at the end of
+     * its chapter. Following that jump into the preview would land on nothing or
+     * on the wrong thing, and doing nothing at all would be a click that reports
+     * no answer.
+     */
+    if (this.edition()) {
+      this.mode.set('workbench');
+      afterNextRender(() => this.land(id), { injector: this.injector });
+      return;
+    }
+    this.land(id);
+  }
+
+  /** The scroll and the pulse, once the list under them is the bench's. */
+  private land(id: string): void {
     const element = this.host.nativeElement.querySelector(`[data-id="${CSS.escape(id)}"]`);
     if (element === null) return;
     element.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1600,6 +2014,17 @@ export class BookViewComponent {
    */
   protected press(event: PointerEvent): void {
     if (event.button !== 0) return;
+    /*
+     * AND IN THE EDITION THERE IS NO GESTURE HERE AT ALL — not a flip, either.
+     * A press is the start of a selection or of a marquee, and both of those are
+     * chrome: there is no rail to raise, no chip to hang and no rectangle to
+     * draw. It is not an EDIT gesture, so §5's "flips back to Workbench" is not
+     * about it, and treating it as one would mean a preview nobody can click
+     * anywhere on — including on the words they came to read. Standing aside
+     * also leaves the browser's own selection alone, which the edition turns
+     * back on.
+     */
+    if (this.edition()) return;
     const target = event.target as HTMLElement | null;
     const block = target === null ? null : target.closest('.block');
     /*
@@ -1735,15 +2160,50 @@ export class BookViewComponent {
    */
   private push(...ops: readonly BookOp[]): void {
     if (ops.length === 0) return;
+    /*
+     * AND ANY DECISION AT ALL PUTS THE PANE BACK ON THE BENCH.
+     *
+     * Nothing on the paper can reach this line while the edition is on — every
+     * gesture up there is guarded — so what this is actually about is THE
+     * PANELS. Notes, Furniture review and Chapters live in the shell, they keep
+     * drawing the workbench's truth while the preview is up (they are workshop
+     * tools, RENDERER-DESIGN.md §5), and each of them pushes onto this very list.
+     * A strike minted from a panel would otherwise land on a page that does not
+     * draw strikes: the row would simply vanish, with no cancel mark anywhere
+     * saying a person had done that.
+     *
+     * ONE RULE FOR EVERY DOOR, stated once, here, rather than at each panel:
+     * a change to the book is made where changes are visible. Setting the signal
+     * to what it already holds is nothing (`signal` compares), so this costs the
+     * ordinary case exactly nothing.
+     */
+    this.mode.set('workbench');
     this.pending.update((held) => [...held, ...ops]);
     this.undone.set([]);
   }
 
-  /** Ctrl+Z, routed from `TabsService.replay`. Pops one op; never touches a disk. */
+  /**
+   * Ctrl+Z, routed from `TabsService.replay`. Pops one op; never touches a disk.
+   *
+   * ── THE CHORD FLIPS TO THE BENCH FIRST, AND THAT WAS A CHOICE ──────────────
+   *
+   * The stack is mode-independent — it is a list of ops and the edition is a
+   * projection — so a chord COULD be performed where it was pressed. It is not,
+   * because most of what an undo does is invisible in a preview: taking back a
+   * text edit, a relabel or a chapter rename changes a page the edition draws
+   * exactly as it drew it before, and taking back a strike makes a paragraph
+   * appear out of nowhere with nothing on the page saying it was ever cancelled.
+   * An undo somebody cannot see the result of is an undo they press twice.
+   *
+   * So it lands where its marks are, which is also the rule `push` states for
+   * every other decision on this book: one answer for taking something back and
+   * for doing it in the first place.
+   */
   protected undo(): void {
     const held = this.pending();
     const last = held[held.length - 1];
     if (last === undefined) return;
+    this.mode.set('workbench');
     this.pending.set(held.slice(0, -1));
     this.undone.update((taken) => [...taken, last]);
   }
@@ -1753,6 +2213,7 @@ export class BookViewComponent {
     const taken = this.undone();
     const last = taken[taken.length - 1];
     if (last === undefined) return;
+    this.mode.set('workbench');
     this.undone.set(taken.slice(0, -1));
     this.pending.update((held) => [...held, last]);
   }
@@ -1833,6 +2294,19 @@ export class BookViewComponent {
     const chosen = this.chosen();
     if (chosen.size === 0) return;
     event.preventDefault();
+    /*
+     * AND IN THE EDITION IT ONLY FLIPS (§5). Delete is the plainest edit gesture
+     * on this surface and the preview is read-only, so the press buys the mode it
+     * needs rather than the strike it asked for — and the selection it would have
+     * struck is still exactly what it was, drawn again with its rails and chips,
+     * so pressing Delete once more does the thing. NOTHING IS FOCUSED because
+     * nothing single was named: a Delete is about a selection, and the selection
+     * is what comes back.
+     */
+    if (this.edition()) {
+      this.mode.set('workbench');
+      return;
+    }
     const replayed = this.view();
     if (replayed === null) return;
     const struck = new Set(replayed.rows.filter((row) => row.struck === true).map((row) => row.id));
@@ -1863,6 +2337,12 @@ export class BookViewComponent {
     const block = target === null ? null : target.closest('.block');
     const id = block === null ? null : block.getAttribute('data-id');
     if (id === null || id === this.editingId()) return;
+    // §5's sentence, exactly: the block is named, so the block is what comes back
+    // focused. See `toBench` for why the caret does not come with it.
+    if (this.edition()) {
+      this.toBench(id);
+      return;
+    }
     this.commitEditing();
     this.editingId.set(id);
     this.chosen.set(new Set([id]));
@@ -2036,6 +2516,13 @@ export class BookViewComponent {
     // them while it is being typed.
     if (this.editingId() !== null || this.renaming() !== null) return;
     event.preventDefault();
+    // The third of the edit gestures a keyboard can still reach in the edition,
+    // and it takes the same ending Delete does: the mode, not the join. The two
+    // blocks somebody picked are still picked.
+    if (this.edition()) {
+      this.mode.set('workbench');
+      return;
+    }
     const replayed = this.view();
     if (replayed === null) return;
     const picked = [...this.chosen()];
