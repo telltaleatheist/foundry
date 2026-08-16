@@ -272,8 +272,12 @@ unless asked, an honest partial beats a bent whole.
 - **R3 (ops core)** — LANDED `b82b2a8`: the shared replay; the in-memory stack; strike/restore
   (with derived ref removal), text edit, category; Apply → step; standing on
   any step renders its chain; branch-on-edit-at-old-step.
-- **R4 (structure ops):** merge/split/move/join; chapter ops + lines; furniture
-  review; notes panel + unlinked flags + `link` op.
+- **R4 (structure ops)** — LANDED `1fa72ff` (replay: every §3 op performed) +
+  `ade0c97` (surfaces: seam-join click, Enter-at-caret split, Ctrl+J merge,
+  chip rename; Chapters/Notes/Furniture panels in the inspector pushing onto
+  the pane's stack). Drag-to-reorder and rule-dragging deferred out loud —
+  the `move` and chapter-`move` ops exist; the drag machinery waits, with
+  comments standing where each would hang.
 - **R5 (projections):** export preview; export pipeline rewired to materialize;
   aligned translation view + derived book files + records re-key; streaming if
   it stays a file-tail.
