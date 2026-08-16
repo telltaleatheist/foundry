@@ -1,0 +1,274 @@
+# The renderer — Foundry's one editing surface, and the plan that gets there
+
+Opened 2026-08-16. **This is the plan of record for the endgame.** Where it
+conflicts with WORKBENCH §11 (the iframe continuous book) or DERIVED-BOOK's
+phases, this file wins; where it is silent, those stand. PLAN.md indexes it.
+
+Written to be executed after a context compaction: everything needed to build
+is IN this file or in the named source files, and nothing depends on the
+conversation that produced it.
+
+---
+
+## 0. The rulings this plan is built on (user, 2026-08-15/16)
+
+1. **No EPUB as working form.** *"we arent supposed to be rendering the book as
+   an epub. it's supposed to be rendered as an html page… an open, permanently
+   unzipped html page… the user isnt reading a book on foundry, they're editing
+   the contents of a book… when the user hits export, thats when the contents of
+   the bank are compiled into whatever format they choose."*
+2. **Facsimile first, then reflow, immediately.** *"lets render a facsimile pdf
+   the moment the vlm finishes, and then reflow the bank immediately. fix
+   hyphenated words, join paragraphs split across pages, etc."*
+3. **One file, merged blocks, unique ids, positions kept.** *"merge the bank
+   into a single file, merge blocks that were split by pages, and keep page
+   numbers as a rough estimate IF WE CAN. give each block a unique ID after
+   merging the split ones back together, and make sure we have their position on
+   the page."* Pages are kept and **not trusted**; identity is the id.
+4. **Footnotes are complete on their page** — *"standard publishing practice"* —
+   which is what makes splitting them into rows safe.
+5. **Ledger-based, with derived banks at commits.** *"we should still operate
+   off of a ledger-based system, and when the changes are saved/committed, we
+   could produce a new, second bank with the updates/changes."* The stack is
+   LIFO in memory; Apply writes it to disk as a step and clears it; closing
+   without applying scraps it.
+6. **No fallbacks, ever.** Fix at the root; error if there's a problem.
+7. **No OCR errors.** *"assume they dont exist."* Kills bulk-fix and suspicion
+   heuristics; keeps only LINKING flags (a marker with no note, a note with no
+   marker), which are structural, not OCR.
+8. **Priorities.** Tier-2 structure ops (drag/split/merge, reading-order
+   repair, furniture review, unlinked-ref flags) are *"the biggest wins"*.
+   Aligned translation view is *"great"*. **Export preview is high priority.**
+   Ops-timeline, live streaming: only if nearly free. Crop adjustment, table
+   grid: later. The block outlines today are *"sloppy and ugly"* — fixed by
+   owning the chrome.
+9. **Footnote ↔ reference numbers.** Better catching/linking wanted; *"if i
+   delete footnotes, it removes their corresponding reference numbers."*
+10. **Imported EPUBs** are valid originals: strip every script, then treat as a
+    normal document. The renderer is Angular-native, *"fully integrated into
+    the angular system."*
+
+Assumptions the user can veto (stated here so they are vetoed BEFORE the build):
+
+- **A1 — one editing surface.** The PDF block editor (select mode over page
+  images) retires with the overlay system. The scan and the facsimile stay
+  viewable; editing happens on the rendered book only.
+- **A2 — transport is Electron IPC**, not websockets. Websockets buy nothing
+  inside one Electron app; revisit only if a browser/remote client becomes a
+  goal.
+- **A3 — the facsimile is auto-produced at read-landing** and drawn as a
+  terminal row under the import (the user's own tree: *"from the bank, pdf
+  facsimile can be generated. that's a terminal item"*).
+
+---
+
+## 1. The model, in one page
+
+```
+archive/<scan>.pdf                the untouched original (irreplaceable)
+readings/<key>.jsonl              RAW BANK: model answers per page (expensive)
+    │
+    ├─► facsimile PDF             made ONCE at read-landing (vlm-convert
+    │   (generated/, terminal)     --format pdf); the page-for-page record
+    │
+    └─► readings/<key>.book.jsonl BOOK FILE: one row per block, ids minted,
+        (regenerable)              hyphens fused, page turns joined, notes split
+             │
+   ledger steps carry OPS         deltas keyed by block id (§3)
+   committed transforms           DERIVED book files, parent ids kept (§4)
+             │
+   RENDERER shows                 replay(nearest ancestor book file, ops chain)
+   EXPORT compiles                the same replay → epub / txt via the engine
+```
+
+- The engine's `vlm-book` (landed, `src/vlm/book-run.ts`) and `--format html`
+  (landed) already exist. The app never unzips anything again.
+- The raw bank is the reset point. Derived book files are `regenerable`
+  retention — sweep freely, rebuild from parent + ledger.
+- One strike lives in exactly ONE place: an op in the ledger. (Today it lives in
+  four — frame DOM, spliced XHTML in `working/`, `overlays/<key>.json`,
+  `curations/<uuid>.json` — and every guard in the app exists to reconcile
+  them. See PLAN.md wave 4e for the diagnosis.)
+
+## 2. Book file v2 (engine)
+
+v1 is landed (`src/vlm/book-file.ts`): merge across pages, `b<page>-<order>`
+ids derived from the first banked answer (a merge consumes the SECOND block, so
+re-running never renames survivors), composed boxes (origin of first part +
+summed heights + union width), notes as rows `b<page>-<order>#<ordinal>` with
+the footnote area shared by characters. v2 adds:
+
+- **Reference markers as data.** Each note row gains
+  `refs: [{block: "b2-3", at: <offset>, len: <n>}]` — resolved at reflow by the
+  same printed-number matcher the emitter uses today (`dots-book.ts`, noteref
+  matching). The renderer draws each marker as an element bound to its note id;
+  **deleting a note removes its number as a DERIVED fact** (and restore restores
+  it) — never a second op. A marker with no note and a note with no marker are
+  flagged in the margin; `{op:"link"}` (§3) fixes a missed match by hand.
+- **Split ids.** A user split of `b2-3` mints `b2-3/1`, `b2-3/2` — derived from
+  the parent id, deterministic, never colliding with bank-derived names.
+- **Chapter seed.** The file carries the engine's detected chapter starts (block
+  ids + labels) as a `chapters` header field. Ownership is by ops exactly as
+  today's confirmed-list rule: the first chapter op takes the list over; "Use
+  Foundry's" is an op that returns it.
+- **Inline markup stays source-level.** Block text keeps the model's inline
+  markers (`*italics*`, superscripts); the renderer renders them through the
+  same inline rules the emitter uses (`dotsInline`, ported to shared/). Text
+  edits edit the source string. Rich WYSIWYG editing of inline markup is
+  deferred.
+
+## 3. The op grammar (ledger payloads)
+
+One JSONL file per Apply — the step's payload, a DELTA (never cumulative), keyed
+by block id only:
+
+```
+{"op":"strike","id":"b2-4#3"}          {"op":"restore","id":"b2-4#3"}
+{"op":"text","id":"b2-3","text":"…"}   {"op":"category","id":"b7-2","category":"Quote"}
+{"op":"merge","id":"b8-1","into":"b7-9"}     — into keeps its id, absorbs text
+{"op":"split","id":"b2-3","at":214}          — mints b2-3/1, b2-3/2
+{"op":"move","id":"b4-2","before":"b4-6"}    — reading-order repair
+{"op":"chapter","set":"b5-1","title":"…"}    — also move/remove/rename/reset
+{"op":"link","block":"b2-3","at":214,"len":1,"note":"b2-4#0"}
+{"op":"restore-furniture","src":"3:0"}       — un-drop a running head
+```
+
+- Replay is a pure function `blocks → blocks` in `shared/`, used identically by
+  the renderer (a computed signal) and by export materialization. Ops that name
+  a block a bank no longer has are **reported, never guessed at**.
+- Undo/redo is the in-memory stack; Apply writes and clears; the existing
+  uncommitted-close dialog survives as the scrap-guard. `history.ts` and the
+  overlay ledger retire (undo does not persist across sessions — already ruled
+  in DERIVED-BOOK §3).
+- **Standing on any step = replay of that chain.** No snapshots, no frozen
+  copies, no `curation-lock.ts` — there is nothing to diverge, so there is
+  nothing to guard. Editing while standing on an old step starts the stack from
+  that step's state; Apply lands the new step as its child (branching is what
+  the tree already draws).
+
+## 4. Derived book files at transform commits
+
+When a translate (later: simplify) lands, main materializes
+`parent book file + chain ops + records → readings/<key>.<lang>.book.jsonl` —
+same format, **parent ids kept verbatim**, struck rows absent, text replaced
+from records. Downstream positions read the NEAREST ancestor book file, so
+replay is always one short hop, and the aligned view (§6) is two files with the
+same ids. Derived files are regenerable; the records file remains the step's
+payload (truth), the derived file is a materialization.
+
+Translation records re-key from `page:order[:part]` to block ids; the book
+file's `src` column is the mechanical mapping (that is why it exists).
+
+## 5. The renderer (app)
+
+**Angular-native. No iframe, no sandbox, no postMessage, no injected script.**
+A block is a component; the book is `@for (block of view())` under CDK virtual
+scroll (a 400-page book is ~30 live components). `click-reporter.ts` (~2,200
+lines) deletes entirely, and with it the sloppy outlines: selection, hover,
+struck-X, drag handles, chapter lines are our own chrome, styled properly,
+animated where it helps.
+
+- **Data path:** main reads book file + ledger → IPC → signals. Pictures serve
+  over the existing `foundry-file` protocol. Imported-EPUB blocks are sanitized
+  in main (`sanitizeChapter` already exists) before they ever reach a template;
+  model-produced text is rendered through our own inline rules, not
+  `innerHTML` of foreign markup.
+- **Gestures → ops:** click/marquee select; Delete strikes (X chrome stays
+  visible always — landed rule); Enter-at-caret splits; a drag handle merges;
+  drag to reorder in an explicit order-repair mode; drag chapter lines; click a
+  flagged marker to link it.
+- **Panels:** Chapters (already one unit — rewired to ops), **Notes** (every
+  note, jump-to-marker, unlinked flags both directions), **Furniture review**
+  (the running heads the reflow dropped, listed with un-drop — today a log line
+  nobody can act on), Category legend (kept).
+- **Export preview — high priority.** The same replay projected through the
+  export rules (struck elements absent, refs demoted, edition attributes
+  withheld — the `--final` table in `dots-book.ts`) with the export stylesheet.
+  A toggle, not a build: nothing is written, no engine spawns.
+- **Aligned translation view:** two scroll-locked columns over two book files
+  with the same ids; edit either side (source edits invalidate that block's
+  records — already the records model's rule; translated edits are per-language
+  record corrections).
+- **Streaming (only because it is nearly free):** the records file is appended
+  row-by-row as the model answers; main tails it and pushes rows over IPC; the
+  aligned view fills in live. If it grows beyond a file-tail and a signal, it
+  waits.
+
+## 6. Orchestration and export
+
+- **Read lands →** main runs facsimile (`vlm-convert --format pdf`, into
+  `generated/`, drawn as a terminal row under the import) **then** `vlm-book`.
+  Both recorded as the read step's products, neither is a step of its own.
+- **Open a book →** renderer over the position's book file + ops. No unzip, no
+  `working/`, no cast EPUBs.
+- **Export →** materialize (replay) → engine compiles EPUB/txt; facsimile
+  compiles from the RAW bank only. `epub-final`'s tidy rules run inside the
+  compile as they do today.
+- **Imported EPUB (its own wave):** sanitize → explode spine HTML into block
+  rows (one per element, ids `e-<n>` in spine order, no boxes → no typography
+  derivation, no facsimile) → same book file, same ops, same renderer.
+  Everything downstream is identical by construction.
+
+## 7. What dies, and what stays
+
+Dies (the bulk of app/electron's document machinery — deletion, not bypass):
+`working/` unpacking and the whole working-tree lifecycle; `epub-reader.ts`'s
+byte-splicing family (`setBlockCuts`, `setBlockHtml`, `renameEpubHeading`,
+`renameNavAnchor`…); `overlays.ts` and the `{page,order,note}` grammar;
+`curations/*` snapshots; `curation-lock.ts`; `history.ts`; `click-reporter.ts`;
+the epub-view iframe stack; per-step cast EPUBs (`castForCurateStep`,
+`castForTranslateStep`, `castBook`) and `ProjectSummary.renderings`; the
+generation reconciliation (`readingGeneration`, `overlayFate`, archived-aside
+folders); the html-editor machinery; the PDF block editor's WRITE half (A1).
+Wave-6 "branched-read overlay ping-pong" (PLAN.md) is **superseded** — there
+are no overlay files to ping-pong.
+
+Stays: the ledger model whole (steps, payloads, retention, staleness, deletes,
+the tree, one-selection), the queue, Home, imports, metadata steps, exports
+into `final/`, the Ollama teardown, the engine's every command.
+
+## 8. Migration (small, runs once per project on open)
+
+Existing projects predate ids. On first open under the new model: build the
+book file from the raw bank; re-key old curate amendments and translation
+records through the book file's `src` mapping; archive `overlays/` and
+`curations/` aside (never deleted). The user's library is small and
+dev-stage; the re-key is mechanical because `src` records exactly the old
+coordinates.
+
+## 9. Execution order
+
+Rules of engagement are PLAN.md §1's, unchanged — five gates every unit,
+Angular gates only in the main checkout, agents never commit, no new tests
+unless asked, an honest partial beats a bent whole.
+
+- **R1 (engine):** book file v2 — ref markers, split ids, chapter seed;
+  `vlm-book` regeneration keeps ids; derived-book-file materialization
+  (`vlm-book --from <book> --ops <file> --records <file>` or equivalent).
+- **R2 (app spine):** read-landing orchestration (facsimile → book file);
+  book file + ops over IPC; renderer skeleton READ-ONLY — blocks, virtual
+  scroll, selection, proper chrome, chapters panel rewired.
+- **R3 (ops core):** the shared replay; the in-memory stack; strike/restore
+  (with derived ref removal), text edit, category; Apply → step; standing on
+  any step renders its chain; branch-on-edit-at-old-step.
+- **R4 (structure ops):** merge/split/move/join; chapter ops + lines; furniture
+  review; notes panel + unlinked flags + `link` op.
+- **R5 (projections):** export preview; export pipeline rewired to materialize;
+  aligned translation view + derived book files + records re-key; streaming if
+  it stays a file-tail.
+- **R6 (subtraction):** everything in §7 deleted; migration shim; imported-EPUB
+  explode; docs updated (WORKBENCH §11 marked superseded).
+
+Each wave lands and pushes before the next starts. R1 and R2 can run in
+parallel (disjoint trees: `src/` vs `app/`); everything after is serial through
+the main checkout.
+
+## 10. Deferred out loud (with reasons)
+
+- Crop adjustment; table grid editor — *"talk more about it later."*
+- Ops-timeline UI — the data model provides it whenever wanted; no UI now.
+- Bulk fix / OCR suspicion — no OCR errors (ruling 7).
+- Re-read-a-block at higher resolution — build only if garbling ever appears.
+- Scan-crop-beside-block affordance — valuable, not in these waves.
+- Websockets / remote client — A2.
+- Rich WYSIWYG inline-markup editing — source-level text edits first.

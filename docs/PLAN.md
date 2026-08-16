@@ -611,7 +611,30 @@ system."*
    Foundry generates these books and sanitises the one kind it does
    not. Not specced yet; it does not block 2 or 3.
 
-### Wave 5
+### Wave 4f — THE RENDERER PLAN OF RECORD (user, 2026-08-16)
+
+**`docs/RENDERER.md` is the endgame plan now.** It carries the rulings
+(no EPUB as working form; facsimile-then-reflow at read landing; one
+book file with minted ids; ops keyed by id; derived book files at
+transform commits; no OCR errors; tier-2 structure ops and export
+preview as the priorities), the formats, the renderer architecture,
+the deletion list, the migration, and execution waves R1–R6.
+
+Supersessions, so nothing dangles:
+
+- **Wave 5 (Phase E) is absorbed** into RENDERER.md §7/R6 — the same
+  retirements, plus the iframe stack and the overlay system whole.
+- **Wave 6 (branched-read overlay ping-pong) is SUPERSEDED** — there
+  are no overlay files to ping-pong; ops ride the ledger and are keyed
+  by block id, so a branch is just a chain.
+- **WORKBENCH §11's iframe continuous book** is superseded by the
+  Angular-native renderer (marked in R6, not silently).
+- Wave 4b item 3 (chapter rename throws) and 4c item 6 residue die
+  with the surfaces that host them; they are not fixed, they are
+  removed with their bug class. If either surface survives past R6,
+  the items come back on this list.
+
+### Wave 5 — ABSORBED into RENDERER.md (kept for the record)
 
 - **Phase E — retire the old surfaces.** The html-editor machinery (dead
   since its buttons went), `history.ts`, **and DERIVED-BOOK phase 0**
