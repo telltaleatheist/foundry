@@ -432,7 +432,13 @@ export class HomeComponent {
   protected openProject(project: ProjectSummary): void {
     const original = this.projects.originalOf(project);
     if (original === null) return;
-    void this.tabs.openFile(original.path, original.managed);
+    /*
+     * THE PROJECT DOOR AND NOT THE FILE DOOR: the row is a book, and opening a
+     * book means landing where its position stands — the proof sheet, for any
+     * project with edits or a reading — with the original adopted underneath it
+     * exactly as before. `TabsService.openProject` owns the reasoning.
+     */
+    void this.tabs.openProject(project.dir, original.path, original.managed);
   }
 
   /**

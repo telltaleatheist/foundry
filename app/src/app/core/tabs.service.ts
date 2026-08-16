@@ -1862,6 +1862,46 @@ export class TabsService {
     await this.openFile(filePath, managed);
   }
 
+  /**
+   * Open a PROJECT — Home's row click — which is a different gesture from
+   * opening a file, because a project has a POSITION and the position decides
+   * what belongs on screen.
+   *
+   * ── The complaint this answers ──────────────────────────────────────────────
+   *
+   * Opening a project put the ORIGINAL document in the pane while the position
+   * stood on the newest step — an edit row, whose picture is the proof sheet —
+   * and the first-sighting rule (correctly) refuses to read "a tab appeared" as
+   * a move, so nothing ever corrected it. The user had to click the import row
+   * and then back down to their edits to see the book they left off in.
+   *
+   * ── Why the original still opens first ──────────────────────────────────────
+   *
+   * The `openPath` round trip is where main records the recent — the fact Home
+   * orders its rows by — and the adopted tab is the project's document face,
+   * grouped in the documents nav where flipping to it is one click. So the
+   * original opens exactly as it always has, and then, WHERE THE POSITION'S
+   * PICTURE IS THE SHEET, the book tab goes on top: the same end state the user
+   * was building by hand, in one click. `document:opened` is announced before
+   * `openPath` resolves (electron/main.ts), so the original's tab has already
+   * been adopted and focused by the time the sheet is revealed over it — the
+   * ordering cannot race.
+   *
+   * A project standing on the import keeps today's behaviour: the position's
+   * surface IS the document, and `view.sheet` is false there for a scan. An
+   * imported EPUB's origin row answers sheet=true (positionView owns that test),
+   * so such a project opens onto its book — the only surface it has.
+   */
+  async openProject(projectDir: string, originalPath: string, managed = false): Promise<void> {
+    await this.openFile(originalPath, managed);
+    // The history is read before the decision, not guessed at: a project opened
+    // from Home has usually never been seen by this window's ledger mirror.
+    if (this.ledger.historyFor(projectDir) === null) await this.ledger.refresh(projectDir);
+    const picture = this.pictureIn(projectDir);
+    if (picture === null || !picture.view.sheet) return;
+    this.reveal(this.bookTabIn(projectDir));
+  }
+
   /** Open a path this window already knows about: Home's list, the shelf's Open. */
   async openFile(filePath: string, managed = false): Promise<void> {
     if (!api) return;
