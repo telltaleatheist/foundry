@@ -205,14 +205,27 @@ const NOTE_CLASSES: ReadonlySet<string> = new Set(['footnote', 'footnotes', 'fn'
 // the walk
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** One noteref anchor, as it stood in the prose. */
-interface Noteref {
+/**
+ * A noteref met mid-fold, measured against the string the fold is building.
+ *
+ * `printed` is the number the anchor SHOWS a reader, in either alphabet, and it
+ * is null where the anchor shows anything else. EPUB 3 does not need it — the
+ * `epub:type` said what the anchor was — and EPUB 2 is nothing but it; see the
+ * `case 'a'` branch of the fold and the resolution loop, which are the two ends
+ * of the one piece of evidence.
+ */
+interface FoundRef {
   /** `<document path>#<fragment>` — the note it names, in the container. */
   target: string;
-  /** The row whose text carries the anchor's own words. */
-  block: string;
   at: number;
   len: number;
+  printed: number | null;
+}
+
+/** One noteref anchor, as it stood in the prose. */
+interface Noteref extends FoundRef {
+  /** The row whose text carries the anchor's own words. */
+  block: string;
 }
 
 /** Everything the walk accumulates across the whole book. */
@@ -264,6 +277,24 @@ function isNote(el: XmlElement): boolean {
   const types = epubTypes(el);
   if (types.length > 0) return types.some((type) => NOTE_TYPES.has(type));
   return el.tag === 'aside' && classes(el).some((name) => NOTE_CLASSES.has(name));
+}
+
+/**
+ * The number this text PRINTS, in either alphabet, or null if it prints none.
+ *
+ * Both alphabets, because the fold has already turned a `<sup>` of digits into
+ * the dialect's superscript run by the time an enclosing anchor sees it, and an
+ * anchor around a `<sup>` and a `<sup>` around an anchor are the same markup to
+ * a reader. The superscript half reads through `SUPERSCRIPT_DIGITS` rather than
+ * a second character class written out, so the one alphabet cannot drift.
+ */
+function printedNumber(text: string): number | null {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return null;
+  if (/^[0-9]+$/.test(trimmed)) return Number(trimmed);
+  const digits = [...trimmed].map((char) => SUPERSCRIPT_DIGITS.indexOf(char));
+  if (digits.some((digit) => digit < 0)) return null;
+  return Number(digits.join(''));
 }
 
 function directoryOf(file: string): string {
@@ -350,12 +381,19 @@ function firstCharAfter(children: readonly XmlNode[], from: number, source: stri
  * The noterefs found on the way are pushed into `found` with their offsets into
  * the text this returns, which is why the fold is where they are collected: after
  * it, the anchor is characters in a string and there is nothing left to find.
+ *
+ * `pictures` is the same arrangement for the `<img>`/`<svg>` met inside the run.
+ * The fold cannot decide what they are — a picture inside a sentence has nowhere
+ * to go in this format, and a picture that is the block's ENTIRE content is the
+ * block — and it cannot know which it is looking at until the whole fold is done
+ * and the text is either words or nothing. So it collects and the caller rules.
  */
 function foldInline(
   nodes: readonly XmlNode[],
   walk: DocumentWalk,
   book: Explosion,
-  found: { target: string; at: number; len: number }[],
+  found: FoundRef[],
+  pictures: XmlElement[],
   keepSpace: boolean,
 ): string {
   let out = '';
@@ -378,7 +416,7 @@ function foldInline(
   ): string => {
     const from = found.length;
     const base = out.length;
-    const inner = foldInline(child.children, walk, book, found, keepSpace);
+    const inner = foldInline(child.children, walk, book, found, pictures, keepSpace);
     const made = emit(inner);
     for (let i = from; i < found.length; i += 1) found[i]!.at += base + made.shift;
     return made.text;
@@ -399,10 +437,10 @@ function foldInline(
     }
     if (child.tag === 'br') { out += '\n'; continue; }
     if (child.tag === 'img' || child.tag === 'svg') {
-      // A picture inside a paragraph. A row's `image` names ONE figure and this
-      // row is prose, so there is nowhere in the format to put it — counted and
-      // said out loud rather than dropped in silence.
-      book.inlineImages += 1;
+      // Kept for the caller, which is the only place that can tell a picture
+      // inside a paragraph from a paragraph that IS a picture. See `pictures`
+      // above and `whole()` below.
+      pictures.push(child);
       continue;
     }
     if (child.tag === 'sup') {
@@ -425,15 +463,36 @@ function foldInline(
       const text = nested(child, (inner) => ({ text: inner, shift: 0 }));
       out += text;
       const href = child.attrs.get('href');
-      // The publisher's own link between a number and its note. Recorded by
-      // TARGET here and resolved to a row after the whole book is walked, because
-      // an endnote lives in a document the spine has not reached yet. Pushed
-      // AFTER the fold, so the rebase above cannot move the anchor's own claim.
-      if (href !== undefined && text.length > 0 && epubTypes(child).includes('noteref')) {
-        const hash = href.indexOf('#');
-        if (hash >= 0) {
-          const document = hash === 0 ? walk.docPath : resolveHref(walk.dir, href);
-          found.push({ target: `${document}#${href.slice(hash + 1)}`, at, len: text.length });
+      /*
+       * The publisher's own link between a number and its note. Recorded by
+       * TARGET here and resolved to a row after the whole book is walked, because
+       * an endnote lives in a document the spine has not reached yet. Pushed
+       * AFTER the fold, so the rebase above cannot move the anchor's own claim.
+       *
+       * ── AND THE SAME DECLARATION IN THE OLDER SPELLING ─────────────────────
+       *
+       * `epub:type="noteref"` is EPUB 3's word for this and EPUB 2 has no such
+       * word — it has no `epub:type` at all. What it has is the link itself, and
+       * an anchor whose WHOLE TEXT is a number, aimed at a fragment, is the same
+       * statement made with the only vocabulary that spec had. So a printed
+       * number is recorded as a candidate too, with the number it printed, and
+       * the resolution loop is where it either finds its answer or does not.
+       *
+       * THE BACK-LINK IS THE HAZARD AND IT IS ALREADY CLOSED. A note's own return
+       * anchor is `<a href="#fn_1">1.</a>` and points back INTO the prose; the
+       * period keeps it out of this test and it stays prose, as it should. One
+       * spelled with bare digits would be recorded here and would then resolve to
+       * an ordinary paragraph that does not open with its number, and the loop
+       * would refuse it — no side's evidence converts anything alone.
+       */
+      if (href !== undefined && text.length > 0) {
+        const printed = printedNumber(text);
+        if (printed !== null || epubTypes(child).includes('noteref')) {
+          const hash = href.indexOf('#');
+          if (hash >= 0) {
+            const document = hash === 0 ? walk.docPath : resolveHref(walk.dir, href);
+            found.push({ target: `${document}#${href.slice(hash + 1)}`, at, len: text.length, printed });
+          }
         }
       }
       continue;
@@ -482,10 +541,11 @@ function blockText(
   children: readonly XmlNode[],
   walk: DocumentWalk,
   book: Explosion,
-  found: { target: string; at: number; len: number }[],
+  found: FoundRef[],
+  pictures: XmlElement[],
   keepSpace = false,
 ): string {
-  const raw = foldInline(children, walk, book, found, keepSpace);
+  const raw = foldInline(children, walk, book, found, pictures, keepSpace);
   if (keepSpace) return raw.replace(/^\n+|\s+$/g, '');
   const start = raw.length - raw.replace(/^\s+/, '').length;
   for (const ref of found) ref.at -= start;
@@ -561,14 +621,60 @@ function bindAnchors(
 
 /** Record a block's noterefs against the row they ended up inside. */
 function keepRefs(
-  found: readonly { target: string; at: number; len: number }[],
+  found: readonly FoundRef[],
   row: BookRow,
   book: Explosion,
 ): void {
   for (const ref of found) {
     if (ref.at < 0 || ref.at + ref.len > row.text.length) continue;
-    book.noterefs.push({ target: ref.target, block: row.id, at: ref.at, len: ref.len });
+    book.noterefs.push({
+      target: ref.target, block: row.id, at: ref.at, len: ref.len, printed: ref.printed,
+    });
   }
+}
+
+/**
+ * One `<img>` or `<svg>`, as a Picture row — or as nothing, said out loud.
+ *
+ * WRITTEN ONCE BECAUSE IT IS READ FROM TWO PLACES. A picture standing as a block
+ * of its own and a picture that is the entire content of a `<p>` are the same
+ * picture, and the day one of them learns something about `srcset` or about an
+ * `<svg>` of two `<image>` elements, the other must not be sitting a hundred
+ * lines away spelling the old rule. The row is minted through the caller's own
+ * `row`, so the anchors and the refs of whatever element the walk is standing on
+ * are bound exactly as they would have been.
+ */
+function mintPicture(
+  el: XmlElement,
+  walk: DocumentWalk,
+  book: Explosion,
+  row: (category: DotsCategory, text: string) => BookRow,
+): boolean {
+  if (el.tag === 'img') {
+    const src = el.attrs.get('src');
+    if (src === undefined || src.length === 0) return false;
+    const made = row('Picture', (el.attrs.get('alt') ?? '').replace(/\s+/g, ' ').trim());
+    book.figures.push({ href: resolveHref(walk.dir, src), row: made });
+    return true;
+  }
+  /*
+   * An `<svg>` wrapping one `<image>` is how nearly every EPUB sets its cover,
+   * and the picture is the file that image names. An SVG that draws anything
+   * ELSE is a drawing this format has no row for — there is no file to point at
+   * — so it is counted and named rather than flattened into whatever text
+   * happens to be inside it.
+   */
+  const images = findElements(el, 'image');
+  const href = images.length === 1
+    ? (images[0]!.attrs.get('xlink:href') ?? images[0]!.attrs.get('href'))
+    : undefined;
+  if (href === undefined || href.length === 0) {
+    book.loose.set('svg', (book.loose.get('svg') ?? 0) + 1);
+    return false;
+  }
+  const made = row('Picture', '');
+  book.figures.push({ href: resolveHref(walk.dir, href), row: made });
+  return true;
 }
 
 /**
@@ -589,17 +695,40 @@ function explodeElement(el: XmlElement, walk: DocumentWalk, book: Explosion): vo
     return;
   }
 
-  const found: { target: string; at: number; len: number }[] = [];
+  const found: FoundRef[] = [];
   const row = (category: DotsCategory, text: string): BookRow => {
     const made = mint(book, category, text);
     bindAnchors([el], walk, book, made);
     keepRefs(found, made, book);
     return made;
   };
+  /*
+   * ── A BLOCK THAT HOLDS NOTHING BUT A PICTURE IS THE PICTURE ────────────────
+   *
+   * EPUB 3 sets a plate as `<img>` or `<svg>` standing on its own, which the
+   * table below has a case for. EPUB 2 sets the identical plate as
+   * `<p class="full-img"><img src="cover.jpg"/></p>`, because that spec's authors
+   * were writing XHTML 1.1 and a `<p>` is where you put content in XHTML 1.1.
+   * The wrapper is the stylesheet's business and not the book's: a paragraph
+   * whose entire text is EMPTY and whose entire content is an image holds no
+   * prose to lose and one picture to keep, so it mints the picture. That is not
+   * a guess about what the publisher meant — it is a reading of what is there.
+   *
+   * The old rule stands wherever there are words: a picture beside prose has
+   * nowhere in the format to go, because a row's `image` names ONE figure and
+   * that row is the prose. Those are still counted and still said out loud.
+   */
   const whole = (category: DotsCategory, keepSpace = false): void => {
-    const text = blockText(el.children, walk, book, found, keepSpace);
-    if (text.length > 0) row(category, text);
-    else claimLater(el, walk);
+    const pictures: XmlElement[] = [];
+    const text = blockText(el.children, walk, book, found, pictures, keepSpace);
+    if (text.length > 0) {
+      row(category, text);
+      book.inlineImages += pictures.length;
+      return;
+    }
+    let minted = false;
+    for (const picture of pictures) minted = mintPicture(picture, walk, book, row) || minted;
+    if (!minted) claimLater(el, walk);
   };
 
   // A NOTE IS ONE ROW WHATEVER IT IS MADE OF. Its `refs` name it and a person
@@ -607,7 +736,9 @@ function explodeElement(el: XmlElement, walk: DocumentWalk, book: Explosion): vo
   // the publisher wrote between them — not two rows, one of which the reference
   // number would point at and the other of which would be an orphan.
   if (isNote(el)) {
-    const text = blockText(el.children, walk, book, found);
+    const pictures: XmlElement[] = [];
+    const text = blockText(el.children, walk, book, found, pictures);
+    book.inlineImages += pictures.length;
     const made = row('Footnote', text);
     made.refs = [];
     return;
@@ -617,7 +748,31 @@ function explodeElement(el: XmlElement, walk: DocumentWalk, book: Explosion): vo
   if (heading !== undefined) { whole(heading); return; }
 
   switch (el.tag) {
-    case 'p': case 'dt': case 'dd': whole(walk.inherited ?? 'Text'); return;
+    case 'p': {
+      /*
+       * ── A CLASS THAT SPELLS A HEADING TAG IS A DECLARED HEADING ────────────
+       *
+       * `<p class="h1">NOTES</p>` is not a paragraph a classifier has to squint
+       * at. The publisher NAMED the element after the tag it stands in for —
+       * that is what "h1" means and there is no other thing it could mean — and
+       * a house that sets its headings this way (every EPUB 2 built from a print
+       * stylesheet does) has stated the structure as plainly as `<h1>` states it,
+       * in the only vocabulary its CSS gave it. Reading the class literally is
+       * retaining the publisher's data, which is this file's whole rule; refusing
+       * to would throw away a declaration because of where it was written.
+       *
+       * SECTION-HEADER AND NOT TITLE, whatever digit the class carries. `h1` maps
+       * to Title in `HEADINGS` because a real `<h1>` is rare and load-bearing; a
+       * `class="h1"` is a type size, and books like this one use it for the head
+       * over every subsection. What says which heads open divisions is the nav,
+       * and the pass below reads it — so this rule states the kind and lets that
+       * one state the rank.
+       */
+      const declared = classes(el).some((name) => /^h[1-6]$/.test(name));
+      whole(declared ? 'Section-header' : walk.inherited ?? 'Text');
+      return;
+    }
+    case 'dt': case 'dd': whole(walk.inherited ?? 'Text'); return;
     case 'pre': whole(walk.inherited ?? 'Text', true); return;
     case 'figcaption': whole('Caption'); return;
     // A quotation of several paragraphs is several Quote rows, because each of
@@ -634,33 +789,9 @@ function explodeElement(el: XmlElement, walk: DocumentWalk, book: Explosion): vo
     case 'table':
       row('Table', checkTableHtml(stripUnsafeMarkup(walk.source.slice(el.start, el.end)), 0));
       return;
-    case 'img': {
-      const src = el.attrs.get('src');
-      if (src === undefined || src.length === 0) return;
-      const made = row('Picture', (el.attrs.get('alt') ?? '').replace(/\s+/g, ' ').trim());
-      book.figures.push({ href: resolveHref(walk.dir, src), row: made });
+    case 'img': case 'svg':
+      mintPicture(el, walk, book, row);
       return;
-    }
-    case 'svg': {
-      /*
-       * An `<svg>` wrapping one `<image>` is how nearly every EPUB sets its cover,
-       * and the picture is the file that image names. An SVG that draws anything
-       * ELSE is a drawing this format has no row for — there is no file to point
-       * at — so it is counted and named rather than flattened into whatever text
-       * happens to be inside it.
-       */
-      const images = findElements(el, 'image');
-      const href = images.length === 1
-        ? (images[0]!.attrs.get('xlink:href') ?? images[0]!.attrs.get('href'))
-        : undefined;
-      if (href === undefined || href.length === 0) {
-        book.loose.set('svg', (book.loose.get('svg') ?? 0) + 1);
-        return;
-      }
-      const made = row('Picture', '');
-      book.figures.push({ href: resolveHref(walk.dir, href), row: made });
-      return;
-    }
     case 'hr':
       // Typography and not text. The format has no row for a rule, no words are
       // lost, and a Text row holding nothing would be a blank block on the sheet.
@@ -718,8 +849,13 @@ function descendInto(
     if (run.length === 0) return;
     const carried = run;
     run = [];
-    const found: { target: string; at: number; len: number }[] = [];
-    const text = blockText(carried, walk, book, found);
+    const found: FoundRef[] = [];
+    // A picture in a loose run of inline content sits beside the words of that
+    // run, so it is the counted case and not the minted one — `whole()` above is
+    // the only place a block turns out to BE its picture.
+    const pictures: XmlElement[] = [];
+    const text = blockText(carried, walk, book, found, pictures);
+    book.inlineImages += pictures.length;
     if (text.length === 0) return;
     const made = mint(book, inherited ?? 'Text', text);
     bindAnchors(carried, walk, book, made);
@@ -809,7 +945,15 @@ function navEntries(navSource: string | null, ncxSource: string | null): NavEntr
   if (ncxSource === null) return [];
   const root = parseXml(ncxSource, 'xml');
   const out: NavEntry[] = [];
-  for (const point of findElements(root, 'navPoint')) {
+  /*
+   * THE NEEDLE IS LOWER-CASE BECAUSE THE PARSER'S TAGS ARE. `src/epub/xml.ts`
+   * spells every tag it reads `name.toLowerCase()` and `findElements` compares
+   * against that, so a needle written the way the NCX DTD writes it — `navPoint`,
+   * camel-cased — matched nothing, ever. It cost every EPUB 2 book its entire
+   * table of contents, silently, because an NCX with no `navPoint` in it is
+   * indistinguishable here from a book that declared no contents at all.
+   */
+  for (const point of findElements(root, 'navpoint')) {
     const content = point.children.find(
       (child): child is XmlElement => child.kind === 'element' && child.tag.endsWith('content'),
     );
@@ -929,22 +1073,46 @@ export function bookFromEpub(
   }
 
   /*
-   * THE NOTEREFS, RESOLVED — and a target that is not a note is NOT made into
-   * one. The publisher's `epub:type` says which elements are notes and the
-   * publisher's anchors say which numbers point at them; when the two disagree,
-   * the honest answer is to keep the number in the prose (it is already there),
-   * record no reference, and SAY so. Inventing a Footnote out of a target because
-   * something pointed at it would move a paragraph to the end of a chapter on the
-   * strength of one attribute.
+   * ── THE NOTEREFS, RESOLVED — AND WHAT IT TAKES TO MAKE A NOTE OF A TARGET ──
+   *
+   * The old ruling here was that a target which is not already a declared note is
+   * never made into one: `epub:type` says which elements are notes, and inventing
+   * a Footnote because something pointed at a paragraph would move that paragraph
+   * to the end of a chapter on the strength of one attribute. That reasoning was
+   * right about the danger and wrong about the evidence available, and a book
+   * with no `epub:type` anywhere in it — every EPUB 2 ever made — lost all of its
+   * notes to it.
+   *
+   * THE EVIDENCE IS TWO-SIDED, AND EITHER SIDE ALONE STILL CONVERTS NOTHING. A
+   * number in the prose that LINKS somewhere is one half of a statement. A target
+   * that answers by PRINTING the same number at its own start is the other half.
+   * Together they are not this program recognising a note — they are the
+   * publisher stating a correspondence at both of its ends, in the only spelling
+   * EPUB 2 had, and reading it is retaining the data rather than guessing at it.
+   * A link to a paragraph that opens with different words, or with no number at
+   * all, converts nothing and is reported exactly as before; so is a number that
+   * links nowhere resolvable. It takes both.
    */
-  const notes = new Map(book.rows.filter((row) => row.category === 'Footnote').map((row) => [row.id, row]));
+  const rowById = new Map(book.rows.map((row) => [row.id, row] as const));
   let refs = 0;
   let unresolved = 0;
   for (const ref of book.noterefs) {
-    const target = book.anchors.get(ref.target);
-    const note = target === undefined ? undefined : notes.get(target);
-    if (note === undefined) { unresolved += 1; continue; }
-    note.refs!.push({ block: ref.block, at: ref.at, len: ref.len });
+    const id = book.anchors.get(ref.target);
+    const target = id === undefined ? undefined : rowById.get(id);
+    if (target === undefined) { unresolved += 1; continue; }
+    if (target.category !== 'Footnote') {
+      // The leading `*` are the fold's emphasis markers: a house that sets its
+      // note numbers in bold prints `**1.** Thomas Paine…`, and the number it
+      // printed is still the first thing in the row.
+      const opens = /^[\s*]*(\d+)/.exec(target.text);
+      if (ref.printed === null || opens === null || opens[1] !== String(ref.printed)) {
+        unresolved += 1;
+        continue;
+      }
+      target.category = 'Footnote';
+      if (target.refs === undefined) target.refs = [];
+    }
+    target.refs!.push({ block: ref.block, at: ref.at, len: ref.len });
     refs += 1;
   }
 
@@ -998,6 +1166,55 @@ export function bookFromEpub(
     if (id === undefined || seen.has(id)) { unplaced += 1; continue; }
     seen.add(id);
     chapters.push({ id, title: entry.title });
+  }
+
+  /*
+   * ── THE ROWS THAT PRINT A DIVISION'S OWN NAME ARE ITS TITLE ────────────────
+   *
+   * A nav entry is the publisher declaring what this place in the book is
+   * CALLED. The rows sitting at the place it lands on, printing that name, are
+   * therefore the division's title blocks — whatever the stylesheet spelled them
+   * as, and this is the point of doing it here rather than in the element table:
+   * `<p class="ct">KILLING AMERICA</p>` and `<h1>KILLING AMERICA</h1>` are one
+   * thing, and only the contents can say so.
+   *
+   * PART OF THE NAME COUNTS, WHICH IS THE WHOLE REASON IT IS A WALK. A label
+   * reads "Chapter 1: Killing America" and the page sets it as two blocks — a
+   * number block "1" and a title block "KILLING AMERICA" — because that is how a
+   * chapter opening is typeset. Each of them prints a PIECE of the name, so the
+   * test is containment in either direction and it runs over the run of rows, not
+   * one row. Four is where it stops: a chapter opening is a number, a title, a
+   * subtitle and an epigraph attribution at the very most, and a longer walk
+   * would start eating prose the moment a book repeated its own title in a
+   * sentence.
+   *
+   * AND ANYTHING ELSE ENDS IT IMMEDIATELY. A row of prose is longer than the
+   * label and contains none of it, so it fails; a Picture row — the cover, whose
+   * entry is "Cover" and whose landing row is the image — fails on its category
+   * and the walk stops before it starts, which is right, because a cover's title
+   * block is the cover. Prose never restates a label, so the first row that does
+   * not print the name is the end of the title and everything after it is the
+   * chapter.
+   */
+  const rowAt = new Map(book.rows.map((row, index) => [row.id, index] as const));
+  /** Emphasis markers off, whitespace collapsed, case folded — the name itself. */
+  const nameOnly = (text: string): string => text
+    .replace(/\*/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  for (const chapter of chapters) {
+    const start = rowAt.get(chapter.id);
+    const label = nameOnly(chapter.title);
+    if (start === undefined || label.length === 0) continue;
+    for (let i = start; i < book.rows.length && i < start + 4; i += 1) {
+      const row = book.rows[i]!;
+      if (row.category !== 'Text' && row.category !== 'Section-header') break;
+      const printed = nameOnly(row.text);
+      if (printed.length === 0) break;
+      if (!label.includes(printed) && !printed.includes(label)) break;
+      row.category = 'Title';
+    }
   }
 
   const made: BookFile = {
