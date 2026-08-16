@@ -21,6 +21,7 @@ import { replayOps, struckNotes, type BookOp, type ReplayedRow } from '@shared/o
 import { api } from '../../core/foundry';
 import { LedgerService } from '../../core/ledger.service';
 import { TabsService, type BookStack, type Tab } from '../../core/tabs.service';
+import { flowNeighbours, seamJoins } from './flow';
 
 /**
  * THE BOOK — a proof sheet on a dark workbench, and the one surface this app
@@ -54,15 +55,21 @@ import { TabsService, type BookStack, type Tab } from '../../core/tabs.service';
  * back on the chain. Closing without Apply scraps the stack, which is the ruling
  * (docs/RENDERER.md §3) and is what the closing question is about.
  *
- * ── FOUR OPS THIS WAVE, and the gestures for exactly those ──────────────────
+ * ── THE GESTURES, and which op each of them mints ───────────────────────────
  *
- * Strike and restore (Delete over a selection), text (double-click a block), and
- * category (the margin chip's menu). Merge, split, move, join, chapter, link and
- * restore-furniture are R4's: their shapes are declared in `shared/ops.ts` so the
- * grammar is whole, and the replay refuses one by name rather than performing two
- * thirds of somebody's history. The seam ghost still does nothing when pressed
- * for exactly that reason — it is the join op's gesture and the join op is not
- * built.
+ * Delete over a selection strikes and restores; a double-click puts a caret in a
+ * block and a blur commits its words; the margin chip's list relabels. The
+ * structure gestures landed with the replay that performs them: the seam's
+ * `··· join ···` ghost IS the merge now, Enter at the caret cuts a paragraph in
+ * two, Ctrl+J joins two blocks a person picked, and a double-click on a chapter
+ * chip renames the division in place. The panels in the shell mint the rest —
+ * link, restore-furniture and the four other chapter verbs — onto this same
+ * stack, through the registry (`BookStack`, core/tabs.service.ts).
+ *
+ * TWO GESTURES ARE DEFERRED OUT LOUD and their ops exist regardless: dragging a
+ * block to repair reading order (`move`) and dragging a chapter rule to another
+ * block (`chapter` with `move`). Both are drop targets, autoscroll and a lift —
+ * real UI machinery — and both are named where they would hang, below.
  *
  * ── The undo chord is ROUTED here, never listened for ───────────────────────
  *
@@ -168,13 +175,17 @@ interface Line {
   /** The chapter this block starts, drawn as a rule above it. */
   chapter: string | null;
   /**
-   * True when an unjoined page turn falls immediately above this block — the
-   * `before` half of one of the header's seams. Drawn as the `··· join ···`
-   * ghost; the click that performs the join is the op grammar's (R3), so for
-   * now the ghost is the report made visible where it belongs, between the two
-   * paragraphs it is about, and it does nothing when pressed.
+   * The block this one would be joined onto, when an unjoined page turn falls
+   * immediately above it — or null, which is almost every block in the book.
+   *
+   * IT IS THE OP'S `into` AND NOT A FLAG. The ghost between the two paragraphs
+   * is the join (RENDERER-DESIGN.md §4: *"Click = the join op"*), so the thing
+   * the ghost needs is the name of the block that keeps its own — the earlier of
+   * the two, `BookSeam.after` — and carrying it here is what lets the control be
+   * a control rather than a report. `seamJoins` decides which seams still have
+   * both of their halves in the flow.
    */
-  seam: boolean;
+  seamInto: string | null;
   /** Indented like a printed paragraph — not the first of the book, not after a heading. */
   indent: boolean;
   /** The hairline above the first note of a page's group of them. */
@@ -266,6 +277,8 @@ const PULSE_MS = 600;
           (dblclick)="edit($event)"
           (keydown.delete)="cancel($event)"
           (keydown.backspace)="cancel($event)"
+          (keydown.control.j)="joinChosen($event)"
+          (keydown.meta.j)="joinChosen($event)"
         >
           <!--
             THE OPS THAT LANDED ON NOTHING — reported, never guessed at
@@ -276,11 +289,27 @@ const PULSE_MS = 600;
             change recorded against a paragraph that a later reading of the pages
             no longer has — and there is nothing here to do.
           -->
-          @if (stranded(); as many) {
-            <p class="stranded">
-              {{ many }} recorded {{ many === 1 ? 'change names a block' : 'changes name blocks' }}
-              this book no longer has, so {{ many === 1 ? 'it was' : 'they were' }} left out.
-            </p>
+          @if (stranded() > 0 || refused().length > 0) {
+            <div class="stranded">
+              @if (stranded(); as many) {
+                <p>
+                  {{ many }} recorded {{ many === 1 ? 'change names a block' : 'changes name blocks' }}
+                  this book no longer has, so {{ many === 1 ? 'it was' : 'they were' }} left out.
+                </p>
+              }
+              <!--
+                AND THE ONES THAT NAMED BLOCKS THIS BOOK HOLDS. A cut that would
+                leave one half empty, a second reference number on words another
+                already claims, a division asked to move from above a block that
+                has none: the replay refuses those on their merits and says why in
+                its own sentence (\`MissingOp.why\`). Saying "this book has no block
+                called that" about one would be a lie, and paraphrasing the replay
+                here would be a second account of a refusal that already has one.
+              -->
+              @for (said of refused(); track $index) {
+                <p>{{ said }}</p>
+              }
+            </div>
           }
           @for (line of lines(); track line.row.id) {
             <!--
@@ -291,11 +320,51 @@ const PULSE_MS = 600;
               co-occur (the reflow never leaves a seam onto a chapter opening),
               so the ordering costs nothing.
             -->
-            @if (line.seam) {
-              <div class="seam"><span class="seam-word">··· join ···</span></div>
+            @if (line.seamInto; as into) {
+              <!--
+                THE GHOST IS THE JOIN (RENDERER-DESIGN.md §4). A button because it
+                is one, which is also what makes it reachable from a keyboard —
+                and \`pointerdown\` is stopped for the margin chip's reason: a press
+                on the sheet takes pointer capture, and a captured pointer
+                retargets the click that follows to the sheet, where it would
+                arrive with no idea which seam it had been.
+              -->
+              <div class="seam">
+                <button
+                  type="button"
+                  class="seam-word"
+                  aria-label="Join these two paragraphs — the page turn between them was left unjoined"
+                  (pointerdown)="$event.stopPropagation()"
+                  (click)="join(line.row.id, into)"
+                >··· join ···</button>
+              </div>
             }
             @if (line.chapter; as title) {
-              <div class="chapter"><span class="chapter-chip">{{ title }}</span></div>
+              <div class="chapter">
+                @if (renaming() === line.row.id) {
+                  <!--
+                    *"Double-click the chip to rename in place"* — §4, and the chip
+                    itself is the field, exactly as the block itself is the editor
+                    one level down. \`plaintext-only\` for the same reason: a title
+                    is characters, and a rich contenteditable would let a paste
+                    bring markup into one.
+                  -->
+                  <span
+                    class="chapter-chip naming"
+                    contenteditable="plaintext-only"
+                    (pointerdown)="$event.stopPropagation()"
+                    (blur)="commitChapter(line.row.id, title, $event)"
+                    (keydown.enter)="commitChapter(line.row.id, title, $event)"
+                    (keydown.escape)="abandonChapter(title, $event)"
+                  >{{ title }}</span>
+                } @else {
+                  <span
+                    class="chapter-chip"
+                    (pointerdown)="$event.stopPropagation()"
+                    (dblclick)="rename(line.row.id, $event)"
+                  >{{ title }}</span>
+                }
+              </div>
             }
             @if (line.opensNotes) { <div class="notes-rule"></div> }
             <div
@@ -367,6 +436,7 @@ const PULSE_MS = 600;
                     [class.indent]="line.indent"
                     [style.font-size.em]="line.size"
                     (blur)="commit(line.row.id, $event)"
+                    (keydown.enter)="split(line.row.id, $event)"
                     (keydown.escape)="revert(line.row.text, $event)"
                   >{{ line.row.text }}</p>
                 } @else {
@@ -598,11 +668,12 @@ const PULSE_MS = 600;
        it is only ever there when it has something to say. */
     .stranded {
       margin: -2rem 0 2rem;
-      text-indent: 0;
       color: var(--ink-muted);
       font-size: 0.8rem;
       font-style: italic;
     }
+    .stranded p { margin: 0 0 0.4em; text-indent: 0; }
+    .stranded p:last-child { margin-bottom: 0; }
 
     /* ── §3 Block chrome. The text column NEVER reflows from any of it: rails
        and chips are absolute in the gutters, tints are backgrounds that bleed
@@ -853,8 +924,23 @@ const PULSE_MS = 600;
       transition: opacity var(--t-fast) var(--ease);
     }
     .seam::before, .seam::after { content: ''; flex: 1; border-top: 1px solid var(--ink-faint); }
-    .seam-word { white-space: nowrap; }
+    /* It is a button now, so it undoes the things a button brings with it and
+       keeps every mark §4 gives the ghost. What it gained is the join. */
+    .seam-word {
+      padding: 0;
+      background: transparent;
+      border: none;
+      color: inherit;
+      font: inherit;
+      font-variant: inherit;
+      letter-spacing: inherit;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .seam-word:focus-visible { outline: 2px solid var(--ink-select); outline-offset: 2px; }
     .block:hover + .seam, .seam:has(+ .block:hover) { opacity: 0.85; }
+    /* Reached from the keyboard, the ghost has to be visible to be pressed. */
+    .seam:focus-within { opacity: 0.85; }
 
     /* §4 — a short hairline above the first note of a page's group of them. */
     .notes-rule { width: 4rem; margin: 1.2em 0 0.5em; border-top: 1px solid var(--ink-faint); }
@@ -877,6 +963,17 @@ const PULSE_MS = 600;
       font-size: 11px;
       font-weight: 600;
       white-space: nowrap;
+      cursor: default;
+    }
+    /* Being renamed: the same chip with a caret in it and the spruce ground the
+       editing block wears one level down. No box and no field — the chip IS the
+       field, which is §4's own instruction for this gesture. */
+    .chapter-chip.naming {
+      background: color-mix(in srgb, var(--ink-edit) 12%, var(--paper-high));
+      outline: none;
+      caret-color: var(--ink-edit);
+      cursor: text;
+      user-select: text;
     }
 
     /* §4 — a reference number is a real element, not a superscript in a string. */
@@ -1036,6 +1133,17 @@ export class BookViewComponent {
   /** The block being retyped, or null. Exactly one at a time, by construction. */
   protected readonly editingId = signal<string | null>(null);
 
+  /**
+   * The block whose chapter chip is being renamed, or null.
+   *
+   * A SECOND SIGNAL AND NOT A MODE OF THE FIRST. `editingId` is a caret in the
+   * BOOK's words and this is a caret in a division's name; they are two different
+   * things being typed into, they commit through different doors and Enter means
+   * something different in each (a cut, and a name). One signal serving both would
+   * be a state that has to be asked what it is about before it can be read.
+   */
+  protected readonly renaming = signal<string | null>(null);
+
   /** The category list, open over a block's chip. */
   protected readonly menu = signal<{ id: string; category: string; x: number; y: number } | null>(null);
 
@@ -1122,11 +1230,18 @@ export class BookViewComponent {
     });
 
     /*
-     * THE STACK, ANNOUNCED — see `BookStack` (core/tabs.service.ts) for why the
-     * wire exists at all when the selection deliberately has none. Two things
-     * outside this pane need it: the undo chord, which main swallows as a menu
-     * accelerator and the window routes, and the closing question, which is asked
-     * once per tab about everything closing costs.
+     * THE STACK, ANNOUNCED — see `BookStack` (core/tabs.service.ts) for the whole
+     * argument. Four things outside this pane need it now: the undo chord, which
+     * main swallows as a menu accelerator and the window routes; the closing
+     * question, asked once per tab about everything closing costs; and the Notes,
+     * Furniture and Chapters panels, which are drawn in the shell out of the very
+     * replay the paper draws and push their ops onto this very list.
+     *
+     * WHAT CROSSES IS THIS PANE'S OWN SIGNALS, called rather than copied. A panel
+     * reading `view()` inside a computed depends on the same graph the sheet does,
+     * so the panel and the paper cannot come to different conclusions about what
+     * this book says — there is nothing to keep in step, because there is only one
+     * of it.
      */
     const tabs = this.tabs;
     const stack: BookStack = {
@@ -1136,6 +1251,11 @@ export class BookViewComponent {
       undo: () => this.undo(),
       redo: () => this.redo(),
       apply: () => this.apply(),
+      view: () => this.view(),
+      selected: () => this.chosen(),
+      chaptersOwned: () => this.chaptersOwned(),
+      push: (ops) => this.push(...ops),
+      reveal: (id) => this.scrollTo(id),
     };
     /*
      * IN AN EFFECT AND NOT ON THIS LINE, because a required input has no value
@@ -1183,6 +1303,7 @@ export class BookViewComponent {
     this.book.set(null);
     this.chosen.set(new Set());
     this.editingId.set(null);
+    this.renaming.set(null);
     this.menu.set(null);
     /*
      * THE STACK GOES WITH THE LOAD, and it is said out loud when it held anything.
@@ -1250,14 +1371,64 @@ export class BookViewComponent {
    * a chain it could not read (electron/book.ts), and the stack is minted by the
    * four gestures below.
    */
+  /*
+   * THE HEADER'S CHAPTERS RIDE IN AS THE SEED, and drawing the header's list
+   * instead would make every chapter op invisible. The engine's detected starts
+   * are an INPUT to the replay now: a chain with no chapter op in it hands the
+   * seed straight back, the first chapter op takes the list over for the rest of
+   * the chain, and `reset` hands it back (`Replayed.chapters`). So the sheet draws
+   * `view().chapters` — the ops' answer where there is one and the reading's
+   * everywhere else — and there is no second place where a division is also
+   * decided.
+   */
   private readonly view = computed(() => {
     const book = this.book();
     if (book === null) return null;
-    return replayOps(book.rows, [...book.ops, ...this.pending()], book.loose);
+    return replayOps(book.rows, [...book.ops, ...this.pending()], book.loose, book.chapters);
   });
 
-  /** How many recorded changes named blocks this book no longer has. */
-  protected readonly stranded = computed(() => this.view()?.missing.length ?? 0);
+  /**
+   * How many recorded changes named blocks this book no longer has.
+   *
+   * THE ONES WITH NO `why`, which is the ordinary case: a bank read again mints
+   * ids for blocks the model answered differently, so a chain from before can name
+   * paragraphs that are genuinely not there. One sentence covers all of them and
+   * they are counted rather than listed.
+   */
+  protected readonly stranded = computed(
+    () => this.view()?.missing.filter((one) => one.why === undefined).length ?? 0);
+
+  /**
+   * And the ones the replay refused ON THEIR MERITS, each in the replay's own
+   * words.
+   *
+   * These named blocks this book HOLDS and still could not be performed — a cut
+   * that would leave one half empty, a reference number bound onto words another
+   * already claims. There is no count that says any of that, so each carries its
+   * sentence up whole rather than being tallied with the stale ones.
+   */
+  protected readonly refused = computed<string[]>(() =>
+    (this.view()?.missing ?? []).flatMap((one) => (one.why === undefined ? [] : [one.why])));
+
+  /**
+   * True when the ops own the divisions rather than the reading — `interpret`'s
+   * ownership rule, restated over the same two lists the replay reads.
+   *
+   * IT IS THE PANEL'S QUESTION AND NOT THE SHEET'S. The paper draws whichever
+   * list is in force without caring whose it is; the Chapters panel has to say
+   * whose the rows are and whether "Use Foundry's" has anything to hand back, and
+   * a reset pushed over a seed already in force would be a row in somebody's
+   * history recording a change that changed nothing.
+   */
+  private readonly chaptersOwned = computed(() => {
+    const book = this.book();
+    if (book === null) return false;
+    let owned = false;
+    for (const op of [...book.ops, ...this.pending()]) {
+      if (op.op === 'chapter') owned = !('reset' in op);
+    }
+    return owned;
+  });
 
   /** The notes whose numbers are cancelled with them — derived, never an op (§2). */
   private readonly struckNotes = computed<ReadonlySet<string>>(() => {
@@ -1301,18 +1472,24 @@ export class BookViewComponent {
     const book = this.book();
     const replayed = this.view();
     if (book === null || replayed === null) return [];
-    const chapters = new Map(book.chapters.map((chapter) => [chapter.id, chapter.title] as const));
+    // THE REPLAY'S LIST AND NOT THE HEADER'S — see `view`. The header's is the
+    // seed the replay was handed; what comes back is the seed where no chapter op
+    // has spoken and the ops' own list where one has, already filtered to the
+    // divisions that sit above a block this book still flows.
+    const chapters = new Map(replayed.chapters.map((chapter) => [chapter.id, chapter.title] as const));
     // The REPLAYED record of what is unlinked, not the file's: a text edit is the
     // one gesture that can point a note at nothing or a number at no note, and
     // `replayOps` is what re-derives both for the blocks it touched.
     const orphans = new Set(replayed.loose.notes);
     /*
-     * A seam is drawn above its `before` block. The `after` id is not needed to
-     * draw it — the two are adjacent among the flowing prose by the format's own
-     * guarantee — but it will be the day the ghost becomes the join op, and the
-     * header carries it for that day.
+     * A seam is drawn above its `before` block and carries the id of the block it
+     * would be joined onto, because the ghost IS the join now. Which of the
+     * header's seams can still be drawn is a question about the book AS THE OPS
+     * LEFT IT rather than about the reading — a chain that has already joined one
+     * of these turns has taken one of its halves out of the book — so it is asked
+     * of the replayed rows (`seamJoins`, ./flow).
      */
-    const seams = new Set(book.seams.map((seam) => seam.before));
+    const seams = seamJoins(replayed.rows, book.seams);
     const printed = this.printed();
 
     const out: Line[] = [];
@@ -1344,7 +1521,7 @@ export class BookViewComponent {
         jump: row.refs?.[0]?.block ?? null,
         ghost,
         chapter,
-        seam: seams.has(row.id),
+        seamInto: seams.get(row.id) ?? null,
         indent: row.category === 'Text' && previous !== null && !heading && chapter === null,
         opensNotes: row.category === 'Footnote'
           && (previous === null || previous.category !== 'Footnote' || previous.page !== row.page),
@@ -1455,6 +1632,25 @@ export class BookViewComponent {
     };
   }
 
+  /**
+   * A drag over the sheet is the marquee, and it is the ONLY thing a drag is.
+   *
+   * ── WHERE THE REORDER MODE WOULD HANG, AND WHY IT IS NOT HERE ──────────────
+   *
+   * `{ op: 'move', id, before }` is performed by the replay and nothing on this
+   * surface mints it. The gesture docs/RENDERER.md §5 names is *"drag to reorder
+   * in an explicit order-repair mode"*, and that is a second meaning for the one
+   * gesture below: a mode to enter and leave, a lift under the pointer, a drop
+   * indicator between two blocks, a hit test per block on every pointer move and
+   * an autoscroll when the drag reaches the top or the bottom of a bench holding a
+   * four-hundred-page book. That is real machinery, it is the same machinery a
+   * draggable chapter rule needs (see `rename`), and the op exists without it —
+   * so the two gestures are deferred together and out loud rather than half-built.
+   *
+   * WHAT STANDS IN THE MEANTIME IS NOTHING, deliberately. Reading order coming out
+   * wrong is a reflow problem before it is an editing one, and a repair nobody can
+   * reach is better than a repair that reorders a book on a slip of the hand.
+   */
   protected drag(event: PointerEvent): void {
     const from = this.pressed;
     if (from === null) return;
@@ -1703,11 +1899,10 @@ export class BookViewComponent {
    * The chapter-title editor in the rendered frame *"commits on Enter or blur and
    * cancels on Escape, which are the three endings the in-place block editor
    * already taught this document"* (electron/click-reporter.ts). Two of those
-   * three are kept verbatim. ENTER IS NOT, and its absence is a reservation
-   * rather than an omission: a block is prose and a line break inside one is
-   * content the page had, and Enter-at-caret is the SPLIT gesture this surface
-   * owes (docs/RENDERER.md §5) — which is R4's. Binding it to commit now would be
-   * teaching a gesture the next wave has to take away.
+   * three are kept verbatim. ENTER IS THE THIRD AND IT DOES NOT COMMIT: it is the
+   * SPLIT (docs/RENDERER.md §5), which commits the words as its own op on the way
+   * past and then cuts them — see `split`, which is the only other place a `text`
+   * op is minted and mints it for exactly this reason.
    *
    * ONE OP, AND ONLY IF THE STRING MOVED. A double-click that put a caret
    * somewhere and then went away has decided nothing, and a step recording it
@@ -1779,6 +1974,277 @@ export class BookViewComponent {
     if (row === undefined || row.category === category) return;
     this.push({ op: 'category', id, category });
   }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // The structure gestures
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * THE SEAM, PRESSED — *"the report becomes a control"* (RENDERER-DESIGN.md §4).
+   *
+   * The block the later page opens with goes INTO the block the earlier page ends
+   * at, which is the asymmetry the op is built around: the earlier of the two
+   * keeps its name, because it is the one every marker, chapter and earlier op is
+   * already keyed to (`MergeOp`). The seam then stops being drawn because one of
+   * its halves is no longer in the flow — nothing hides it, it simply has nothing
+   * left to hang on.
+   *
+   * THE MOTION IS THE DOM CHANGE AND NOTHING IS BUILT FOR IT. §4 asks that the
+   * blocks slide together over `--t-med`; the sheet sets no vertical margins
+   * between body blocks (print convention, §2), so what actually closes is the
+   * seam's own line — and animating two paragraphs into one across a re-render
+   * would take a FLIP measurement pass, which is machinery this surface has been
+   * told not to grow. The join reads perfectly as a still, which is §6's own
+   * standard for every state here.
+   */
+  protected join(before: string, into: string): void {
+    // A block still live has words in it nobody has recorded; committing first is
+    // what keeps the join a join rather than a join that eats an edit.
+    this.commitEditing();
+    this.push({ op: 'merge', id: before, into });
+    this.chosen.set(new Set([into]));
+  }
+
+  /**
+   * Ctrl+J — the same join, over two blocks somebody picked.
+   *
+   * ── The chord, chosen out loud ──────────────────────────────────────────────
+   *
+   * This app had no join key to inherit: nothing in the window binds a modifier
+   * chord to anything, so there was no precedent to keep faith with and Ctrl+J is
+   * a choice rather than a convention. It is the word-processor chord for exactly
+   * this act, it is not a menu accelerator main swallows, and Cmd+J rides beside
+   * it because a Mac hand does not reach for Ctrl.
+   *
+   * ── THE LATER BLOCK MERGES INTO THE EARLIER, always ─────────────────────────
+   *
+   * Reading order decides, not click order. A person picking two paragraphs has
+   * said which two; they have not said which of them is the survivor, and the
+   * grammar has an answer that does not depend on the order a hand happened to
+   * click in (`MergeOp`, and `join` above).
+   *
+   * ── Refused with a sentence, three ways ─────────────────────────────────────
+   *
+   * Not two blocks; not neighbours in the flow; or one of them is a note. All
+   * three go to the window's notice strip rather than being minted and left for
+   * the replay to file in `missing`, because an op that lands there puts a line in
+   * the margin the person cannot clear — and the third of them is the replay's own
+   * refusal said before the fact rather than after it.
+   */
+  protected joinChosen(event: Event): void {
+    // A caret owns every key while it is in the words, and a chapter name owns
+    // them while it is being typed.
+    if (this.editingId() !== null || this.renaming() !== null) return;
+    event.preventDefault();
+    const replayed = this.view();
+    if (replayed === null) return;
+    const picked = [...this.chosen()];
+    if (picked.length !== 2) {
+      this.tabs.notice.set(
+        'Joining is a decision about two blocks: pick the paragraph that ends and the one that '
+        + 'carries on from it, then press it again.',
+      );
+      return;
+    }
+    const pair = flowNeighbours(replayed.rows, picked[0]!, picked[1]!);
+    if (pair === null) {
+      this.tabs.notice.set(
+        'Those two blocks do not sit next to each other in the book, and joining them would put '
+        + 'words from either side of whatever stands between them into one paragraph.',
+      );
+      return;
+    }
+    const held = new Map(replayed.rows.map((row) => [row.id, row] as const));
+    const note = [pair.earlier, pair.later].some((id) => held.get(id)?.category === 'Footnote');
+    if (note) {
+      this.tabs.notice.set(
+        'A note is one piece of apparatus, printed whole at the foot of its page. Joining one to '
+        + 'anything is not a repair this program offers.',
+      );
+      return;
+    }
+    this.push({ op: 'merge', id: pair.later, into: pair.earlier });
+    this.chosen.set(new Set([pair.earlier]));
+  }
+
+  /**
+   * ENTER AT THE CARET CUTS THE PARAGRAPH IN TWO — the gesture this surface has
+   * owed since the in-place editor landed.
+   *
+   * ── Why the words are committed first, as their own op ──────────────────────
+   *
+   * `SplitOp.at` is an offset into the block's text AS THE OPS BEFORE IT LEFT IT.
+   * Somebody who retyped half a sentence and then put the caret in the middle of
+   * what they typed is asking for a cut in the NEW words, and a split pushed on
+   * its own would be measured against the old ones — the same offset, a different
+   * string, a cut in the wrong place. So the text op goes first when the string
+   * moved, and the split's offset is an offset into exactly what that op wrote.
+   *
+   * ── The offset is measured against the SOURCE STRING ────────────────────────
+   *
+   * The editor edits the model's source string directly — no rendering, no marker
+   * cuts, `plaintext-only` — so the characters in the element are the characters
+   * in the op, and `caretOffsetIn` counts them the same way `textContent` does.
+   *
+   * ── AND A CUT AT EITHER END IS REFUSED HERE rather than minted ──────────────
+   *
+   * The replay refuses a cut that would leave one half with nothing in it, and it
+   * refuses it into `missing`, where the person cannot clear it. Enter at the end
+   * of a paragraph is the most ordinary keystroke in any editor, so it must not be
+   * a way to put a permanent line in the margin: it is answered with a sentence
+   * and no op at all.
+   */
+  protected split(id: string, event: Event): void {
+    /*
+     * ALWAYS PREVENTED, including on every refusal below. A block is prose and the
+     * one thing Enter now means here is a cut, so a refused cut must not fall
+     * through into `plaintext-only`'s own line break — which would leave a
+     * character in the words as the trace of a gesture that did nothing.
+     */
+    event.preventDefault();
+    if (this.editingId() !== id) return;
+    const editor = event.target as HTMLElement;
+    const said = editor.textContent ?? '';
+    const at = caretOffsetIn(editor);
+    if (at === null) {
+      this.tabs.notice.set(
+        'A paragraph is cut where the caret is, and there are words selected rather than a caret '
+        + 'in them. A cut cannot also delete what is highlighted.',
+      );
+      return;
+    }
+    if (at <= 0 || at >= said.length) {
+      this.tabs.notice.set(
+        `The caret is at the very ${at <= 0 ? 'start' : 'end'} of this paragraph, and cutting there `
+        + 'would leave one of the two halves with nothing in it.',
+      );
+      return;
+    }
+    const row = this.view()?.rows.find((candidate) => candidate.id === id);
+    if (row === undefined) return;
+    /*
+     * THE EDITOR CLOSES BEFORE THE OPS GO ON, and it closes rather than moving:
+     * the block being typed into is about to stop existing and its halves are two
+     * names nobody has seen yet. `commit` guards on this signal, so the blur that
+     * follows the element being taken out finds the edit already accounted for and
+     * pushes nothing.
+     */
+    this.editingId.set(null);
+    const ops: BookOp[] = [];
+    if (row.text !== said) ops.push({ op: 'text', id, text: said });
+    ops.push({ op: 'split', id, at });
+    this.push(...ops);
+    // The two halves, selected — the cut shown as two blocks rather than left for
+    // the reader to find in a page of prose that looks much as it did.
+    this.chosen.set(new Set([`${id}/1`, `${id}/2`]));
+  }
+
+  /**
+   * Double-click a chapter chip and type the division's name into it.
+   *
+   * *"Double-click the chip to rename in place"* — RENDERER-DESIGN.md §4, and it
+   * is a RENAME rather than a set: the chip only exists where a division already
+   * does, so there is nothing here to create. Setting a division at a block that
+   * has none is the panel's gesture, because the block it would go above is the
+   * one somebody has selected and that is a thing the panel can say.
+   *
+   * ── DRAGGING THE RULE IS DEFERRED, and the op exists anyway ─────────────────
+   *
+   * §4 also asks that a rule be draggable, with candidate seams glowing and the
+   * rule animating into place. `{ op: 'chapter', move, to }` performs that today
+   * and nothing here mints it: the gesture is drop targets, a lift, autoscroll and
+   * a hit test per block, which is the same machinery the deferred reorder mode
+   * needs (see `drag`). Until it is built, a division is moved by taking it off
+   * one block in the panel and setting it on another — two decisions, two rows in
+   * the history, and both of them honest.
+   */
+  protected rename(id: string, event: Event): void {
+    event.stopPropagation();
+    this.commitEditing();
+    this.renaming.set(id);
+    /*
+     * FOCUSED AFTER THE FRAME THAT DRAWS IT, for `edit`'s reason exactly: the chip
+     * that can take a caret does not exist until the template has re-run, and this
+     * app is zoneless, so `afterNextRender` is the only honest promise about when
+     * that has happened. THE WHOLE NAME IS SELECTED rather than the caret placed —
+     * the inspector's own rename box does the same, and a title is short enough
+     * that replacing it is the common case.
+     */
+    afterNextRender(() => {
+      const chip = this.host.nativeElement.querySelector('.chapter-chip.naming') as HTMLElement | null;
+      if (chip === null) return;
+      chip.focus({ preventScroll: true });
+      const range = document.createRange();
+      range.selectNodeContents(chip);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }, { injector: this.injector });
+  }
+
+  /**
+   * Enter or blur commits the name — the two endings the block editor already
+   * taught this surface, and Escape below is the third.
+   *
+   * AN EMPTY NAME IS REFUSED, and it is the one place this component declines
+   * something the grammar allows. The file format accepts a division with no words
+   * over it on purpose — a rule across the page is a real typographic decision —
+   * but a chip with nothing on it is a chip nobody can double-click again, so
+   * agreeing to it here would be building the only edit on this sheet that cannot
+   * be taken back by the gesture that made it. The sentence says the other door.
+   */
+  protected commitChapter(id: string, was: string, event: Event): void {
+    event.preventDefault();
+    if (this.renaming() !== id) return;
+    const chip = event.target as HTMLElement;
+    const said = (chip.textContent ?? '').trim();
+    this.renaming.set(null);
+    if (said === was) return;
+    if (said.length === 0) {
+      chip.textContent = was;
+      this.tabs.notice.set(
+        'A chapter chip with no words on it could not be double-clicked again, so the division kept '
+        + 'the name it had. Take the division away in the panel if the book should not divide there.',
+      );
+      return;
+    }
+    this.push({ op: 'chapter', rename: id, title: said });
+  }
+
+  /** Escape puts the name back, and the blur that follows finds nothing changed. */
+  protected abandonChapter(was: string, event: Event): void {
+    const chip = event.target as HTMLElement;
+    chip.textContent = was;
+    chip.blur();
+  }
+}
+
+/**
+ * How many characters into the editor's own text the caret is, or null when
+ * there is no caret to measure — nothing focused here, or a RANGE rather than an
+ * insertion point.
+ *
+ * COUNTED THE WAY `textContent` COUNTS. A `Range`'s own string is the data of the
+ * text nodes it spans and nothing else, which is exactly what `textContent`
+ * returns — so an offset measured here is an offset into the string `commit` reads
+ * back, and the two cannot disagree about where character forty is. Walking the
+ * child nodes by hand would be a second implementation of that arithmetic.
+ *
+ * A NON-COLLAPSED SELECTION IS NULL AND NOT ITS START. Enter with words
+ * highlighted is a replace in every editor anybody has used, and a replace is not
+ * a thing one op can say; answering "the caret is at the start of what you
+ * highlighted" would perform a cut nobody asked for and leave the highlighted
+ * words at the top of the second half.
+ */
+function caretOffsetIn(editor: HTMLElement): number | null {
+  const selection = window.getSelection();
+  if (selection === null || selection.rangeCount === 0) return null;
+  const range = selection.getRangeAt(0);
+  if (!range.collapsed || !editor.contains(range.startContainer)) return null;
+  const before = document.createRange();
+  before.selectNodeContents(editor);
+  before.setEnd(range.startContainer, range.startOffset);
+  return before.toString().length;
 }
 
 /** The measured size for this category, or the engine's own base sheet's. */

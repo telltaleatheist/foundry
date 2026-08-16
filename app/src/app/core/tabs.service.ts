@@ -4,6 +4,7 @@ import type { FoundryApi } from '@shared/api';
 import { PDF_BLOCK_CATEGORIES, categoryLabel, pdfCategoryLabel } from '@shared/categories';
 import type { CurationLock } from '@shared/curation-lock';
 import { positionPicture, positionView, type PositionView } from '@shared/ledger';
+import type { BookOp, Replayed } from '@shared/ops';
 import { fold } from '@shared/original';
 import {
   amendOverlay,
@@ -498,8 +499,27 @@ interface ShownPicture {
  *
  * IT IS AN INTERFACE THE PANE IMPLEMENTS rather than state this service holds,
  * which is the whole of what keeps the ruling intact: the ops still live in the
- * component that makes them, and what crosses the boundary is three questions and
- * two verbs.
+ * component that makes them, and what crosses the boundary is a set of questions
+ * and a set of verbs.
+ *
+ * ── AND NOW THE PANELS, WHICH IS WHY IT GREW ────────────────────────────────
+ *
+ * Notes, Furniture review and Chapters live in the app shell and keep its dark
+ * style (RENDERER-DESIGN.md §5), which puts them OUTSIDE the pane whose stack
+ * their every gesture pushes onto. A panel that kept its own list of notes would
+ * be a second account of the book — the exact failure the replay exists to make
+ * impossible — so what crosses here is the pane's OWN replay, read as a signal,
+ * and one verb that puts ops on the pane's own stack. Undo, redo and Apply then
+ * take a panel's decision back exactly as they take a decision made on the paper,
+ * because there is one stack and it is the pane's.
+ *
+ * THE SELECTION CROSSED WITH THEM, and it crossed as a QUESTION rather than as
+ * state. The pane's own rule was that its selection stays local *until something
+ * else genuinely needs it* — "the day the inspector can act on it, it moves up".
+ * That day is this one: "a chapter starts at the selected block" is a panel
+ * button about a block picked on the paper. It is still the pane's signal, still
+ * in no undo stack and still gone on a reload; the panel reads it and cannot
+ * write it.
  */
 export interface BookStack {
   /** How many changes are waiting with no Apply behind them. */
@@ -511,6 +531,32 @@ export interface BookStack {
   redo(): void;
   /** Land the stack as a step. Resolves false when main refused; the sentence is its own. */
   apply(): Promise<boolean>;
+  /**
+   * THE BOOK AS THE SHEET IS DRAWING IT — the file with the chain and the stack
+   * replayed, and null while the pane is still opening.
+   *
+   * A SIGNAL READ, so a panel calling it inside a computed repaints with the
+   * paper. It is the pane's own `view()` and not a copy of it: the rows the
+   * Notes panel lists and the rows on the sheet are one array, so the two cannot
+   * disagree about what this book says.
+   */
+  view(): Replayed | null;
+  /** The blocks picked on the paper. Read-only, and never a fact about the book. */
+  selected(): ReadonlySet<string>;
+  /**
+   * True when the ops own the divisions — the first chapter op takes the list
+   * over and `reset` hands it back (`Replayed.chapters`).
+   *
+   * The panel needs it twice: to say whose list the rows are, and to know whether
+   * "Use Foundry's" has anything to give back. A reset pushed over a seed already
+   * in force would be a row in somebody's history recording a change that changed
+   * nothing.
+   */
+  chaptersOwned(): boolean;
+  /** Ops onto the same stack the gestures on the paper push onto. */
+  push(ops: readonly BookOp[]): void;
+  /** Put a block in the middle of the sheet and pulse it — the panels' jump. */
+  reveal(id: string): void;
 }
 
 /** One project whose position has moved since this window last painted it. */
@@ -1748,26 +1794,50 @@ export class TabsService {
   /**
    * The open book panes' stacks, by tab id — see `BookStack`.
    *
-   * A PLAIN MAP AND NOT A SIGNAL. Nothing draws from it: the chord reads it at the
-   * instant a chord arrives and the closing question reads it at the instant a tab
-   * goes, and both are events rather than repaints. A signal would make every push
-   * onto a stack a change-detection pass over a window that has already repainted
-   * for the same reason, one component down.
+   * A SIGNAL OF A MAP, AND IT USED TO BE A PLAIN ONE. The argument for the plain
+   * map was that nothing DREW from it: the undo chord reads it the instant a chord
+   * arrives and the closing question reads it the instant a tab goes, and both are
+   * events rather than repaints. The panels ended that — Notes, Furniture and
+   * Chapters are drawn in the shell out of the pane's own replay, so the inspector
+   * has to hear a pane arrive and hear it leave, and a lookup in a plain map inside
+   * a computed is a read of something that can change with nothing to notice it.
+   *
+   * WHAT THIS IS NOT is a signal that a PUSH moves. The map answers which pane is
+   * in which tab; the ops behind `pending()` and the rows behind `view()` are the
+   * pane's own signals, reached through the entry. So a gesture on the paper still
+   * repaints exactly what depends on it, and registering a pane — twice per tab, in
+   * a session — is what writes here.
    *
    * The pane puts itself in on init and takes itself out on destroy, so an entry
-   * here is always a pane that exists — which is what lets both readers treat a
+   * here is always a pane that exists — which is what lets every reader treat a
    * missing entry as "that book has nothing waiting" rather than as an error.
    */
-  private readonly bookStacks = new Map<string, BookStack>();
+  private readonly bookStacks = signal<ReadonlyMap<string, BookStack>>(new Map());
 
   /** The book pane in this tab, announcing itself. Called once, on init. */
   registerBookStack(tabId: string, stack: BookStack): void {
-    this.bookStacks.set(tabId, stack);
+    this.bookStacks.update((held) => new Map(held).set(tabId, stack));
   }
 
   /** And letting go, on destroy — an entry for a pane that is gone answers for nothing. */
   releaseBookStack(tabId: string): void {
-    this.bookStacks.delete(tabId);
+    this.bookStacks.update((held) => {
+      const next = new Map(held);
+      next.delete(tabId);
+      return next;
+    });
+  }
+
+  /**
+   * The stack of the book pane in this tab, or null for every other kind of tab
+   * and for a book still opening.
+   *
+   * THE PANELS' ONE DOOR. Everything the inspector's three book sections draw and
+   * everything they do goes through the returned interface, so the shell holds no
+   * copy of the book and no second list of ops.
+   */
+  bookStackFor(tabId: string | null): BookStack | null {
+    return tabId === null ? null : this.bookStacks().get(tabId) ?? null;
   }
 
   /** Set by the inspector's menu immediately before it moves the pointer. */
@@ -2857,7 +2927,7 @@ export class TabsService {
      * way back to the project: a stack belongs to one pane and closing that pane
      * is the moment it goes, whatever else is open onto the same book.
      */
-    const stack = current.kind === 'book' ? this.bookStacks.get(current.id) ?? null : null;
+    const stack = current.kind === 'book' ? this.bookStackFor(current.id) : null;
     const edits = stack === null || stack.pending() === 0 ? null : stack.pending();
     if (!current.modified && corrections === null && edits === null) return 'go';
 
@@ -6408,8 +6478,8 @@ export class TabsService {
      * somebody's next instinct is Ctrl+Z.
      */
     if (tab.kind === 'book') {
-      const stack = this.bookStacks.get(tab.id);
-      if (stack === undefined) {
+      const stack = this.bookStackFor(tab.id);
+      if (stack === null) {
         this.notice.set(`${tab.title} is still opening.`);
         return;
       }

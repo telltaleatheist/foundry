@@ -10,13 +10,24 @@ import {
   viewChild,
 } from '@angular/core';
 
-import { BLOCK_CATEGORIES, PDF_BLOCK_CATEGORIES, UNKNOWN_CATEGORY_COLOUR } from '@shared/categories';
+import {
+  BLOCK_CATEGORIES,
+  PDF_BLOCK_CATEGORIES,
+  UNKNOWN_CATEGORY_COLOUR,
+  pdfCategoryLabel,
+} from '@shared/categories';
+import type { Replayed } from '@shared/ops';
 import { targetKey, type OverlayChapter } from '@shared/overlay';
 import type { EpubChapter, UncommittedCuration } from '@shared/types';
 
 import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';
-import { TabsService, type BlockElement, type ChapterMark } from '../../core/tabs.service';
+import {
+  TabsService,
+  type BlockElement,
+  type BookStack,
+  type ChapterMark,
+} from '../../core/tabs.service';
 
 /**
  * The inspector — what the focused book IS, down the right-hand side.
@@ -57,7 +68,7 @@ import { TabsService, type BlockElement, type ChapterMark } from '../../core/tab
   selector: 'app-inspector',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    @if (subject() !== null || projectDir() !== null) {
+    @if (subject() !== null || projectDir() !== null || sheet() !== null) {
       <div class="panel">
         <!--
           STANDING ON A FROZEN SAVE, said once, at the top, before anything else
@@ -146,6 +157,255 @@ import { TabsService, type BlockElement, type ChapterMark } from '../../core/tab
                 >Apply changes</button>
               </div>
               <p class="applying">{{ applyLine(pending) }}</p>
+            }
+          </section>
+        }
+
+        <!--
+          ── THE PROOF SHEET'S THREE PANELS ──────────────────────────────────
+
+          Chapters, Notes and Furniture review, drawn for a book pane and for
+          nothing else (RENDERER-DESIGN.md §5: the panels live in the app shell
+          and keep its dark style — the paper vocabulary stays on the paper). They
+          are sections of THIS panel rather than chrome of their own, in the
+          accordion the two below them established, because a book pane's
+          inspector and a scan's must read as one instrument with different things
+          to say.
+
+          THE RUNNING ORDER IS THE PANEL'S: divisions first, exactly where the
+          Chapters section sits for every other kind of document, then the two
+          that are new. A book tab and a scan tab never draw both sets — \`sheet\`
+          is a book pane and \`subject\` is never one — so nothing here overtakes
+          anything there.
+
+          EVERY ROW IS READ OUT OF THE PANE'S OWN REPLAY and every button pushes
+          onto the pane's own stack (\`BookStack\`, core/tabs.service.ts). This
+          component holds no copy of the book, no list of ops and no idea where
+          any of it is kept: undo, redo and Apply take a decision made here back
+          exactly as they take one made on the paper, because there is one stack.
+        -->
+        @if (sheet(); as pane) {
+          <section class="accordion" [class.shut]="!chaptersOpen()">
+            <button class="head" (click)="chaptersOpen.set(!chaptersOpen())">
+              <span class="twist">{{ chaptersOpen() ? '▾' : '▸' }}</span>
+              <span class="label">Chapters</span>
+              <span class="count">{{ sheetChapters().length }}</span>
+            </button>
+            @if (chaptersOpen()) {
+              <div class="body">
+                <!--
+                  WHOSE LIST THIS IS, said before anything is clicked — the same
+                  sentence the scan's section says, because it is the same rule:
+                  the first chapter op takes the list over and "Use Foundry's" is
+                  the op that hands it back. It is a fact about the chain,
+                  recomputed every replay, so it cannot drift.
+                -->
+                <p class="hint">
+                  @if (pane.chaptersOwned()) {
+                    These are your chapters. The book divides here and nowhere else.
+                  } @else {
+                    These are the chapters Foundry found. Change any of them and the list
+                    becomes yours — from then on the book divides exactly where it says.
+                  }
+                </p>
+                <ul>
+                  @for (row of sheetChapters(); track row.id) {
+                    <li class="entry">
+                      @if (renamingHref() === row.id) {
+                        <input
+                          #renameBox
+                          class="rename"
+                          [value]="renameText()"
+                          (input)="renameText.set(renameBox.value)"
+                          (keydown.enter)="commitSheetRename(row.id)"
+                          (keydown.escape)="cancelRename()"
+                          (blur)="cancelRename()"
+                          [attr.aria-label]="'Rename ' + row.title"
+                        >
+                      } @else {
+                        <button
+                          class="chapter"
+                          [title]="row.title"
+                          (click)="pane.reveal(row.id)"
+                          (dblclick)="startSheetRename(row)"
+                        >
+                          <span class="ch-title">{{ row.title }}</span>
+                          <span class="ch-at">≈ {{ row.page }}</span>
+                        </button>
+                        <button class="pencil" title="Rename" (click)="startSheetRename(row)">✎</button>
+                        <button
+                          class="pencil"
+                          title="Take the division away — the block stays, the rule goes"
+                          (click)="dropSheetChapter(row.id)"
+                        >✕</button>
+                      }
+                    </li>
+                  }
+                  @if (sheetChapters().length === 0) {
+                    <li class="none">This book does not divide: it reads as one run of prose.</li>
+                  }
+                </ul>
+                <div class="acts">
+                  <!--
+                    "HERE" IS THE BLOCK PICKED ON THE PAPER, which is the one thing
+                    the panel cannot say for itself and the one thing it reads off
+                    the pane. Setting a division is the panel's gesture for that
+                    reason: the chip on the sheet renames what is already there,
+                    and creating one needs a block somebody has pointed at.
+                  -->
+                  <button
+                    class="act"
+                    [disabled]="!canDivide()"
+                    [title]="divideTitle()"
+                    (click)="makeSheetChapter()"
+                  >Chapter starts here</button>
+                  <button
+                    class="act"
+                    [disabled]="!pane.chaptersOwned()"
+                    title="Throw this list away and let Foundry work the chapters out again"
+                    (click)="resetSheetChapters()"
+                  >Use Foundry's</button>
+                </div>
+              </div>
+            }
+          </section>
+
+          <!--
+            ── Notes — every note, and both directions of the one flag ─────────
+
+            The apparatus, listed in reading order, with the two LINKING flags the
+            app still keeps (docs/RENDERER.md §0, ruling 7): a number in the body
+            that no note carries, and a note nothing in the body points at. The
+            first of those is the only list in this panel that is not a list of
+            rows — a loose marker is characters inside a block — and it sits at the
+            top because it is the half a person has to act on.
+
+            LINKING IS TWO CLICKS AND NO DRAG. Click the number, then click the
+            note it belongs to; the second click is the op. A drag between two
+            lists in a 260px column is a gesture that needs autoscroll to reach
+            most of its targets, and this needs none.
+          -->
+          <section class="accordion" [class.shut]="!notesOpen()">
+            <button class="head" (click)="notesOpen.set(!notesOpen())">
+              <span class="twist">{{ notesOpen() ? '▾' : '▸' }}</span>
+              <span class="label">Notes</span>
+              <span class="count">{{ notes().length }}</span>
+              <!--
+                THE FLAG COUNT IS ITS OWN BADGE and it is only there when it is
+                nonzero — §5's *"Flag counts in --ink-flag when nonzero"*, read as
+                a count OF flags rather than as the notes count wearing a colour.
+                Both directions are in it, because they are one flag seen from
+                either end and a person opening the section finds them separated.
+              -->
+              @if (unlinked(); as flagged) {
+                <span
+                  class="count flagged"
+                  title="Reference numbers with no note, and notes nothing points at"
+                >{{ flagged }} unlinked</span>
+              }
+            </button>
+            @if (notesOpen()) {
+              <div class="body">
+                <p class="hint">
+                  @if (linkingRow() !== null) {
+                    Now click the note this number belongs to. Click the number again to
+                    leave it unbound.
+                  } @else if (looseMarkers().length > 0) {
+                    The numbers above carry nothing yet. Click one, then click its note.
+                  } @else {
+                    Every note in the book, in reading order. Click one to go to it.
+                  }
+                </p>
+                @if (looseMarkers().length > 0) {
+                  <ul>
+                    @for (row of looseMarkers(); track row.key) {
+                      <li class="entry flagged">
+                        <button
+                          class="chapter"
+                          [class.active]="linking() === row.key"
+                          [title]="'No note carries this number, printed in ' + row.words"
+                          (click)="startLink(row)"
+                        >
+                          <span class="ord flag">{{ row.printed }}</span>
+                          <span class="ch-title">{{ row.words }}</span>
+                          <span class="ch-at">≈ {{ row.page }}</span>
+                        </button>
+                      </li>
+                    }
+                  </ul>
+                }
+                <ul>
+                  @for (row of notes(); track row.id) {
+                    <li class="entry" [class.flagged]="row.orphan">
+                      <button
+                        class="chapter"
+                        [title]="row.orphan
+                          ? 'Nothing in the book carries this note'
+                          : row.words"
+                        (click)="tapNote(row)"
+                      >
+                        <span class="ord" [class.flag]="row.orphan">{{ row.ordinal }}</span>
+                        <span class="ch-title">{{ row.words }}</span>
+                        <span class="ch-at">≈ {{ row.page }}</span>
+                      </button>
+                    </li>
+                  }
+                  @if (notes().length === 0) {
+                    <li class="none">Nothing at the foot of a page in this book.</li>
+                  }
+                </ul>
+              </div>
+            }
+          </section>
+
+          <!--
+            ── Furniture review — the shelf, made visible ──────────────────────
+
+            *"nothing the model answered is silently gone"* (docs/BOOK-FILE.md §5).
+            The reflow takes running heads, folios and page furniture out of the
+            flow and keeps them as rows at their reading-order positions wearing a
+            sentence of evidence; until now that sentence was a log line nobody
+            could act on. Each of them is a row here with its own why under it and
+            one verb beside it, and restoring one puts it back exactly where it was
+            printed — the position is not a guess, which is why the op has none to
+            make.
+          -->
+          <section class="accordion" [class.shut]="!furnitureOpen()">
+            <button class="head" (click)="furnitureOpen.set(!furnitureOpen())">
+              <span class="twist">{{ furnitureOpen() ? '▾' : '▸' }}</span>
+              <span class="label">Furniture</span>
+              <span class="count">{{ furniture().length }}</span>
+            </button>
+            @if (furnitureOpen()) {
+              <div class="body">
+                <p class="hint">
+                  What the reflow took out of the book — running heads and the page's own
+                  furniture. Nothing is lost: restore one and it goes back where it was
+                  printed.
+                </p>
+                <ul>
+                  @for (row of furniture(); track row.id) {
+                    <li class="entry shelved">
+                      <div class="shelf">
+                        <div class="shelf-line">
+                          <span class="ord">{{ row.label }}</span>
+                          <span class="ch-title">{{ row.words }}</span>
+                          <span class="ch-at">≈ {{ row.page }}</span>
+                        </div>
+                        <p class="shelf-why">{{ row.why }}</p>
+                      </div>
+                      <button
+                        class="pencil"
+                        title="Put this row back in the book"
+                        (click)="restoreShelved(row.id)"
+                      >↺</button>
+                    </li>
+                  }
+                  @if (furniture().length === 0) {
+                    <li class="none">The reflow took nothing out of this book.</li>
+                  }
+                </ul>
+              </div>
             }
           </section>
         }
@@ -502,7 +762,23 @@ import { TabsService, type BlockElement, type ChapterMark } from '../../core/tab
     }
   `,
   styles: [`
-    :host { display: block; width: 260px; min-width: 260px; height: 100%; }
+    /*
+      THE ONE PAPER TOKEN THE SHELL BORROWS. RENDERER-DESIGN.md §5 keeps the
+      panels in the app's dark style and asks for exactly one thing from the
+      sheet's palette: *"Flag counts in --ink-flag when nonzero."* It is copied
+      from §1 verbatim rather than approximated with the app's warning colour,
+      because the amber a person learns in the book's right-hand gutter and the
+      amber on the Notes count are one statement — something here needs a
+      decision — and two ambers would be two statements.
+    */
+    :host {
+      --ink-flag: #b98a1c;
+
+      display: block;
+      width: 260px;
+      min-width: 260px;
+      height: 100%;
+    }
 
     /* The documents panel's surface, mirrored: the two side panels are siblings
        and the window should read as one frame around the pages, not as three
@@ -708,6 +984,56 @@ import { TabsService, type BlockElement, type ChapterMark } from '../../core/tab
       color: var(--text-tertiary); font-size: 11px; font-style: italic;
     }
 
+    /* ── The proof sheet's three sections ──────────────────────────────────── */
+
+    /*
+      THE COUNT GOES AMBER WHEN SOMETHING IN THE SECTION NEEDS A DECISION, and it
+      is still the same quiet badge — §5 asks for a colour, not for a second kind
+      of badge, and this app does not put numbers in red circles.
+    */
+    .count.flagged { color: var(--ink-flag); }
+
+    /*
+      THE ORDINAL, or the kind of thing a shelved row is. It is the leading mark
+      of a row the way the sienna ordinal is the leading mark of a note in the
+      book's gutter, and it holds a fixed width so that twenty rows read as a
+      column rather than as twenty different indents.
+    */
+    .ord {
+      flex: 0 0 auto;
+      min-width: 1.6em;
+      color: var(--text-tertiary);
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+    }
+    .ord.flag { color: var(--ink-flag); }
+
+    /*
+      A ROW WITH A FLAG ON IT — dotted, in the amber, exactly as the marker and
+      the note wear it on the paper. Underline rather than a background, because
+      a list where the interesting rows are tinted becomes a list nobody can read
+      the ordinary rows in.
+    */
+    .entry.flagged .ch-title {
+      text-decoration: underline dotted var(--ink-flag);
+      text-underline-offset: 0.2em;
+    }
+
+    /* The armed loose marker wears \`.chapter.active\`, which is already the panel's
+       word for "this is the row you are on" — one vocabulary, stated once above. */
+
+    /* A shelved row is two lines — what it is and where, then the evidence. */
+    .entry.shelved { align-items: flex-start; }
+    .shelf { flex: 1; min-width: 0; margin: 0 6px; padding: 6px 10px; }
+    .shelf-line { display: flex; align-items: baseline; gap: 6px; }
+    .shelf-line .ch-title { color: var(--text-secondary); font-size: 12px; }
+    .shelf-why {
+      margin: 2px 0 0;
+      color: var(--text-tertiary);
+      font-size: 10px; line-height: 1.4;
+    }
+    .entry.shelved .pencil { margin-top: 6px; }
+
     .acts { display: flex; gap: 6px; padding: 8px 12px 4px; }
     /*
       The sentence under Apply changes. NOT a hint and deliberately not given
@@ -835,6 +1161,9 @@ export class InspectorComponent {
   protected readonly categoryOpen = signal(true);
   protected readonly chaptersOpen = signal(true);
   protected readonly blockOpen = signal(true);
+  /** The proof sheet's two new sections. Open by default, for the reason above. */
+  protected readonly notesOpen = signal(true);
+  protected readonly furnitureOpen = signal(true);
 
   /** Which chapter row is being renamed, and the text in its box. */
   protected readonly renamingHref = signal<string | null>(null);
@@ -1339,6 +1668,269 @@ export class InspectorComponent {
     await this.tabs.renameHeading(tab.id, chapter.href, label);
   }
 
+  // ── The proof sheet's panels: Chapters, Notes, Furniture review ──────────
+  //
+  // Three sections about one book, and none of them holds any of it. The book
+  // pane registers itself with the service as a `BookStack`; what this half of
+  // the component does is read that pane's own replay and push ops onto that
+  // pane's own stack. Nothing here is persisted, nothing here goes over IPC, and
+  // there is no second account of the document anywhere in it — which is the
+  // whole of why the panels can live in the shell (RENDERER-DESIGN.md §5) while
+  // the ops go on living in the pane that draws them.
+
+  /** The book pane in front, or null for every other kind of document. */
+  protected readonly sheet = computed<BookStack | null>(() => {
+    const tab = this.tabs.activeDocument();
+    return tab === null || tab.kind !== 'book' ? null : this.tabs.bookStackFor(tab.id);
+  });
+
+  /**
+   * The book as that pane is drawing it — the file with the chain and the
+   * unapplied stack replayed over it, and null while it is still opening.
+   *
+   * THE PENDING VIEW AND NOT THE FILE. A panel drawing what is on disk would
+   * disagree with the paper the moment somebody struck a note, and the person
+   * would be looking at two answers to one question with no way to tell which
+   * was stale.
+   */
+  private readonly sheetView = computed<Replayed | null>(() => this.sheet()?.view() ?? null);
+
+  /**
+   * Where the book divides, in reading order — the replay's answer.
+   *
+   * ALREADY FILTERED TO WHAT IS DRAWABLE (`Replayed.chapters`), so a division
+   * above a block a merge consumed is not in this list and there is no dimmed
+   * row here of the kind the scan's section keeps. The two are different facts:
+   * a scan's chapter names a banked answer this RENDERING may not show, and is
+   * kept because the name is still in the file; this list is the file, so a
+   * division that is not in it is a division that is not.
+   */
+  protected readonly sheetChapters = computed<SheetChapterRow[]>(() => {
+    const replayed = this.sheetView();
+    if (replayed === null) return [];
+    const where = new Map(replayed.rows.map((row) => [row.id, row.pages[0] ?? row.page] as const));
+    return replayed.chapters.map((one) => ({
+      id: one.id,
+      title: one.title,
+      page: where.get(one.id) ?? 0,
+    }));
+  });
+
+  /** Every note in the book, in reading order, each knowing whether anything points at it. */
+  protected readonly notes = computed<NoteRow[]>(() => {
+    const replayed = this.sheetView();
+    if (replayed === null) return [];
+    const orphans = new Set(replayed.loose.notes);
+    const out: NoteRow[] = [];
+    for (const row of replayed.rows) {
+      // The shelf is not the book, and a note is never on it.
+      if (row.shelf !== undefined || row.category !== 'Footnote') continue;
+      out.push({
+        id: row.id,
+        // The engine counts a note's place on its page from zero and the page
+        // prints it from one, which is the pane's own arithmetic for the sienna
+        // ordinal in the gutter.
+        ordinal: (row.note ?? 0) + 1,
+        words: opening(row.text),
+        page: row.pages[0] ?? row.page,
+        orphan: orphans.has(row.id),
+      });
+    }
+    return out;
+  });
+
+  /**
+   * The reference numbers in the body that no note carries.
+   *
+   * NOT ROWS. A loose marker is a run of characters inside a block — a block,
+   * an offset and a length — so it is listed by the words it is printed in and
+   * by the number the page shows, and its identity is the three coordinates
+   * together. That key is what the linking state is held by, so a marker the
+   * replay re-derives away while somebody is choosing simply stops being armed.
+   */
+  protected readonly looseMarkers = computed<LooseRow[]>(() => {
+    const replayed = this.sheetView();
+    if (replayed === null) return [];
+    const held = new Map(replayed.rows.map((row) => [row.id, row] as const));
+    const order = new Map(replayed.rows.map((row, at) => [row.id, at] as const));
+    return [...replayed.loose.markers]
+      .sort((one, other) =>
+        (order.get(one.block) ?? 0) - (order.get(other.block) ?? 0) || one.at - other.at)
+      .map((marker) => {
+        const row = held.get(marker.block);
+        return {
+          key: `${marker.block}|${marker.at}|${marker.len}`,
+          block: marker.block,
+          at: marker.at,
+          len: marker.len,
+          printed: marker.printed,
+          words: opening(row?.text ?? ''),
+          page: row === undefined ? 0 : row.pages[0] ?? row.page,
+        };
+      });
+  });
+
+  /** Both directions of the one flag, counted for the badge. */
+  protected readonly unlinked = computed<number>(() => {
+    const replayed = this.sheetView();
+    return replayed === null ? 0 : replayed.loose.markers.length + replayed.loose.notes.length;
+  });
+
+  /** Every row the reflow took out of the book, at its reading-order position. */
+  protected readonly furniture = computed<ShelvedRow[]>(() => {
+    const replayed = this.sheetView();
+    if (replayed === null) return [];
+    const out: ShelvedRow[] = [];
+    for (const row of replayed.rows) {
+      if (row.shelf === undefined) continue;
+      out.push({
+        id: row.id,
+        label: pdfCategoryLabel(row.category),
+        // Every shelved row carries one, by the file format's own rule; the
+        // empty string is what a book written by something older would leave,
+        // and an empty line is better than a sentence this panel invented.
+        why: row.why ?? '',
+        words: opening(row.text),
+        page: row.pages[0] ?? row.page,
+      });
+    }
+    return out;
+  });
+
+  /**
+   * The loose marker whose note the next click chooses, by key.
+   *
+   * A KEY AND NOT THE ROW. The rows are recomputed on every push, and a held
+   * object would go on naming a marker the replay has since bound or re-derived
+   * away — which is a link op minted against coordinates that have moved.
+   */
+  protected readonly linking = signal<string | null>(null);
+
+  /** That marker, if it is still loose. Null the moment it stops being. */
+  protected readonly linkingRow = computed<LooseRow | null>(() => {
+    const key = this.linking();
+    return key === null ? null : this.looseMarkers().find((row) => row.key === key) ?? null;
+  });
+
+  /** Arm a number for linking, or put it down again. */
+  protected startLink(row: LooseRow): void {
+    this.linking.set(this.linking() === row.key ? null : row.key);
+  }
+
+  /**
+   * A note row, clicked — which means one of two things and says which in the
+   * hint before it is clicked.
+   *
+   * With a number armed it is the LINK: the number in the body stops being a
+   * number nothing carries and the note stops being a note nothing points at,
+   * both from one decision, which is what `link` is for. With nothing armed it
+   * is the jump — the pane's own scroll-and-pulse, so that clicking a note in a
+   * list of eighty puts it in front of the reader on the paper.
+   */
+  protected tapNote(row: NoteRow): void {
+    const pane = this.sheet();
+    if (pane === null) return;
+    const picked = this.linkingRow();
+    if (picked === null) {
+      pane.reveal(row.id);
+      return;
+    }
+    this.linking.set(null);
+    pane.push([{ op: 'link', block: picked.block, at: picked.at, len: picked.len, note: row.id }]);
+  }
+
+  /** Put a shelved row back in the book, where it was printed. */
+  protected restoreShelved(id: string): void {
+    this.sheet()?.push([{ op: 'restore-furniture', id }]);
+  }
+
+  /**
+   * The one block picked on the paper, when exactly one is and it is in the flow.
+   *
+   * A DIVISION SITS ABOVE A BLOCK, so a shelved row cannot carry one — the
+   * replay would refuse it into `missing`, where nothing can clear it, and a
+   * button that mints such an op is a button that files a complaint against the
+   * person who pressed it.
+   */
+  private readonly divideAt = computed(() => {
+    const pane = this.sheet();
+    const replayed = this.sheetView();
+    if (pane === null || replayed === null) return null;
+    const picked = [...pane.selected()];
+    if (picked.length !== 1) return null;
+    const row = replayed.rows.find((one) => one.id === picked[0]);
+    return row === undefined || row.shelf !== undefined ? null : row;
+  });
+
+  protected canDivide(): boolean {
+    const row = this.divideAt();
+    return row !== null && !this.sheetChapters().some((one) => one.id === row.id);
+  }
+
+  protected divideTitle(): string {
+    const row = this.divideAt();
+    if (row === null) return 'Pick one block on the page first';
+    return this.sheetChapters().some((one) => one.id === row.id)
+      ? 'A chapter already starts at that block'
+      : 'The book divides at this block, and the contents lists it';
+  }
+
+  /**
+   * "Chapter starts here", over the block picked on the paper.
+   *
+   * SEEDED WITH THE BLOCK'S OWN FIRST LINE, which is what the scan's version of
+   * this button does and for its reason: it is right far more often than any
+   * other guess, it is exactly what the detection would have called it, and it is
+   * a starting point rather than a rule — the row is renameable the moment it
+   * appears, because the contents entry and the printed heading are two
+   * statements and a book is allowed to disagree with itself about them.
+   */
+  protected makeSheetChapter(): void {
+    const pane = this.sheet();
+    const row = this.divideAt();
+    if (pane === null || row === null || !this.canDivide()) return;
+    const words = row.text.split('\n')[0]?.trim() ?? '';
+    pane.push([{ op: 'chapter', set: row.id, title: words.slice(0, 120) }]);
+  }
+
+  protected startSheetRename(row: SheetChapterRow): void {
+    this.renameText.set(row.title);
+    this.renamingHref.set(row.id);
+  }
+
+  /**
+   * Enter in the rename box. An empty or unchanged name is a cancel, which is
+   * the box's own rule everywhere else in this panel — and here it also keeps
+   * the paper's promise that a chapter chip always has something on it to
+   * double-click.
+   */
+  protected commitSheetRename(id: string): void {
+    const pane = this.sheet();
+    const label = this.renameText().trim();
+    const row = this.sheetChapters().find((one) => one.id === id);
+    this.renamingHref.set(null);
+    if (pane === null || label.length === 0 || label === row?.title) return;
+    pane.push([{ op: 'chapter', rename: id, title: label }]);
+  }
+
+  /** The block stays; the rule goes. */
+  protected dropSheetChapter(id: string): void {
+    this.sheet()?.push([{ op: 'chapter', remove: id }]);
+  }
+
+  /**
+   * The way back — one op, so Ctrl+Z brings the person's own list back.
+   *
+   * Only offered while the ops own the list, because a reset over a seed already
+   * in force is a change that changes nothing and would still be a row in
+   * somebody's history.
+   */
+  protected resetSheetChapters(): void {
+    const pane = this.sheet();
+    if (pane === null || !pane.chaptersOwned()) return;
+    pane.push([{ op: 'chapter', reset: true }]);
+  }
+
   // ── Standing on ──────────────────────────────────────────────────────────
 
   /**
@@ -1512,6 +2104,66 @@ interface ChapterRow {
   where: string;
   /** False when this reading has no such block. Drawn, dimmed, and kept. */
   present: boolean;
+}
+
+/** One drawn row of the proof sheet's Chapters section. */
+interface SheetChapterRow {
+  /** The block the division sits above — the id every chapter op is keyed to. */
+  id: string;
+  title: string;
+  /** The source page it opens on, drawn with the ≈ the book's own ghosts wear. */
+  page: number;
+}
+
+/** One drawn row of the Notes section — a note at the foot of a page. */
+interface NoteRow {
+  id: string;
+  /** Which note of its page this is, counted from one. */
+  ordinal: number;
+  words: string;
+  page: number;
+  /** True when nothing in the body points at it — one of the two linking flags. */
+  orphan: boolean;
+}
+
+/** One drawn row of the numbers in the body that no note carries. */
+interface LooseRow {
+  /** Block, offset and length together — the only identity a marker has. */
+  key: string;
+  block: string;
+  at: number;
+  len: number;
+  /** The number the page printed, which is what a person matches a note by. */
+  printed: number;
+  /** The opening of the block it is printed in, so the row can be found. */
+  words: string;
+  page: number;
+}
+
+/** One drawn row of the Furniture review — a row the reflow took out of the book. */
+interface ShelvedRow {
+  id: string;
+  /** What kind of block the model said it was. */
+  label: string;
+  /** The reflow's own sentence of evidence for taking it out. */
+  why: string;
+  words: string;
+  page: number;
+}
+
+/**
+ * The opening of a block's words, for a row in a 260px column.
+ *
+ * WHITESPACE COLLAPSED AND CUT ON A CHARACTER COUNT, not on a word boundary: a
+ * row is one line with an ellipsis at the end of it either way, and hunting for
+ * the last space before the limit would make the cut depend on how long the
+ * words happen to be. The source string's own markup rides along, because the
+ * panel is a list of what the book SAYS and the book says it in the model's
+ * spelling.
+ */
+function opening(text: string, many = 64): string {
+  const said = text.replace(/\s+/g, ' ').trim();
+  return said.length <= many ? said : `${said.slice(0, many).trimEnd()}…`;
 }
 
 /** One drawn row of the Category section. */
