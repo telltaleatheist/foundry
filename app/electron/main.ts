@@ -49,7 +49,6 @@ import { catalogForThisMachine, onEnvInstallProgress } from './env-install';
 import { planProvisioning } from './env-provision';
 import * as queue from './job-queue';
 import {
-  adoptLegacyLayout,
   deletableStep,
   deleteDocument,
   deleteProject,
@@ -69,7 +68,6 @@ import {
   onProjectsChanged,
   positionStepId,
   projectDirOf,
-  promoteStrandedReprints,
   readStepLedger,
   recordMetadata,
   standForDocument,
@@ -2453,30 +2451,13 @@ void app.whenReady().then(async () => {
   registerIpc();
   buildMenu();
   /*
-   * Regroup a flat workspace and a flat readings directory into projects — see
-   * electron/projects.ts, which owns every rule about what it will and will not
-   * move.
-   *
-   * AWAITED, and before the window. Home's first `projects:list` fires as soon
-   * as the renderer paints, and a listing taken halfway through the regrouping
-   * is a library with half the user's books missing from it — which reads as
-   * data loss even though nothing has been lost. It is a directory scan and a
-   * handful of same-volume renames on a machine that has been used, and nothing
-   * at all on a fresh one.
-   *
-   * A failure here still opens the window. Every refusal inside is already a
-   * named log line, and an app that will not start because it could not tidy a
-   * folder is worse than one that started with the folder untidy.
+   * The startup migrations that used to run here — regrouping the pre-project
+   * flat workspace into projects, promoting stranded reprints — are gone, on
+   * the ruling that nothing is kept for legacy's sake (2026-08-16): every
+   * machine that held the old layouts has been regrouped or deliberately
+   * wiped, and a scan of two directories on every launch forever is a tax
+   * paid to a past no install has.
    */
-  await adoptLegacyLayout().catch((err: Error) => {
-    console.error(`[projects] the existing library could not be regrouped: ${err.message}`);
-  });
-  // And the one-evening migration beside it, for the same reason and with the
-  // same tolerance: a project whose reprint was catalogued as a second document
-  // gets it promoted to being the project's PDF (`promoteStrandedReprints`).
-  await promoteStrandedReprints().catch((err: Error) => {
-    console.error(`[projects] a reprint could not be adopted as its project's PDF: ${err.message}`);
-  });
   createWindow();
 
   app.on('activate', () => {

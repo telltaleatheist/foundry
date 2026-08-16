@@ -3696,12 +3696,11 @@ export async function recordGenerated(
 /**
  * Install a `generated/` PDF as the project's live one.
  *
- * ONLY ONE CALLER IS LEFT AND IT IS THE LEGACY ONE. A conversion run today
- * produces a document of its own and never replaces the scan (`recordGenerated`
- * says why). What still needs this is `adoptLegacyLayout`: the PDFs it finds
- * were written when `--format pdf` laid an invisible layer over the pages it was
- * given, so each of them IS that project's scan, and a project adopted without
- * this would list a book and no scan at all.
+ * `recordGenerated` above is the one caller: a searchable conversion's output
+ * becomes the copy the tabs open. The flat-layout adoption that also needed
+ * this is gone — the ruling of 2026-08-16 was that nothing is kept for legacy's
+ * sake, and the machines that held a flat workspace have been regrouped or
+ * wiped by their owners.
  *
  * The old live copy is rotated into `working/archived-<stamp>/` rather than
  * overwritten, because it is the only thing that can answer "what did this look
@@ -4049,63 +4048,6 @@ async function markerStamp(bankPath: string): Promise<number | null> {
   if (typeof said !== 'string') return null;
   const at = Date.parse(said);
   return Number.isNaN(at) ? null : at;
-}
-
-/**
- * Promote any reprint that was left sitting in `generated/` as a row of its own.
- *
- * A MIGRATION FOR ONE EVENING'S PROJECTS, and it is written down because it will
- * look mysterious in a month. For a short while a PDF-producing conversion did
- * not replace the live PDF — it was catalogued as a second document — so a
- * project converted in that window has a `searchable` origin that was never
- * promoted, and the listing now skips those rows. Without this, that reprint
- * would simply vanish from the app: on disk, catalogued, and drawn nowhere.
- *
- * IDEMPOTENT, and that is the whole of its safety. It promotes only when the
- * live PDF is not already the one made FROM that origin — `refreshLivePdf`
- * records `from` on the working row, so a project that has been through this
- * (or that was converted after the fix) is left completely alone. Running it at
- * every launch therefore costs a manifest read per project and nothing else.
- *
- * A FAILURE IS A CONSOLE LINE, never a throw. This runs at startup across every
- * project in the library; one project with a rotation folder from this same
- * second, or a catalogue that will not parse, must not stop the app from opening
- * — and the consequence of skipping one is a reprint the user can still reach by
- * running the conversion again.
- */
-export async function promoteStrandedReprints(): Promise<void> {
-  let dirs: string[];
-  try {
-    dirs = (await fsp.readdir(projectsDir(), { withFileTypes: true }))
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => path.join(projectsDir(), entry.name));
-  } catch {
-    return; // No library yet is the ordinary state of a fresh install.
-  }
-
-  for (const dir of dirs) {
-    try {
-      const manifest = await readManifest(dir);
-      // The PDF chain's latest step, when it is something a conversion wrote.
-      const steps = stepsOf(manifest, 'pdf');
-      const latest = steps[steps.length - 1];
-      if (latest === undefined || !latest.file.startsWith(`${GENERATED}/`)) continue;
-      const reprint = { file: latest.file.slice(GENERATED.length + 1) };
-      const live = manifest.working.files.find((row) => row.kind === 'pdf');
-      if (live !== undefined && live.from === latest.file) continue;
-      if (!await exists(path.join(dir, GENERATED, reprint.file))) continue;
-      await withManifest(dir, async (current) => {
-        await refreshLivePdf(dir, current, reprint.file);
-        await writeManifest(dir, current);
-      });
-      console.log(`[projects] ${path.basename(dir)}: ${reprint.file} is now the project's PDF.`);
-    } catch (err) {
-      console.error(
-        `[projects] ${path.basename(dir)} could not adopt its reprint as the live PDF `
-        + `(${(err as Error).message}). Converting the book again will do it.`,
-      );
-    }
-  }
 }
 
 /**
@@ -4498,16 +4440,11 @@ async function readingState(
     // spellings of one file is two answers the day either of them changes.
     || await exists(completionMarkerFor(banked))
     /*
-     * AND A BANK WITH ANSWERS IN IT, which is the third source and the one the
-     * legacy libraries need.
-     *
-     * `adoptLegacyBanks` deliberately does NOT carry the old flat
-     * `completed.json` across, and it is right not to: that marker sat in a
-     * folder shared by every book on the machine and belonged to whichever run
-     * happened to finish last, so copying it into a project would tell the
-     * engine a half-read book was finished. The consequence was that an adopted
-     * bank of three hundred paid-for pages read as "not read yet": no Generate,
-     * and an OCR light asking the user to buy them again.
+     * AND A BANK WITH ANSWERS IN IT, which is the third source: a bank can
+     * arrive without a completion marker — a copy somebody moved in by hand,
+     * an interrupted run — and a marker's absence must not make paid-for
+     * pages read as "not read yet", with an OCR light asking the user to buy
+     * them again.
      *
      * So the bank itself is asked. A file with bytes in it is a file the model
      * put page answers into, and NEVER RE-PAYING for those is the rule that
@@ -4756,6 +4693,17 @@ async function countAmendments(dir: string): Promise<number> {
  * that hit a locked file — finishes rather than refusing. The path check has
  * already run and runs again here; being generous about a missing file is not
  * being generous about which directory this is.
+ *
+ * RETRIED, AND THEN LOUD, because Windows makes deletion a race against
+ * whoever is READING. `rm` walks the tree and dies at the first file some
+ * process holds open without delete-sharing — this app's own window showing a
+ * figure was enough — and a delete that dies mid-walk leaves a partial
+ * directory that LOOKS deleted from Home. The same book imported again then
+ * lands on this exact name-keyed path, on top of the debris, and the leftovers
+ * resurface inside a project that believes itself fresh. The retries ride out
+ * the transient holds; a hold that outlasts them is a real answer, and it is
+ * thrown as a sentence naming the directory rather than as a bare errno,
+ * because the fix is on the other end of a window somebody has open.
  */
 export async function deleteProject(dir: string): Promise<void> {
   const resolved = deletableProjectDir(dir);
@@ -4763,7 +4711,29 @@ export async function deleteProject(dir: string): Promise<void> {
   const previous = edits.get(key) ?? Promise.resolve();
   const next = previous
     .catch(() => { /* see withManifest — a failed edit must not block this */ })
-    .then(() => fsp.rm(resolved, { recursive: true, force: true }));
+    .then(async () => {
+      try {
+        await fsp.rm(resolved, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+      } catch (err) {
+        throw new ProjectError(
+          `${resolved} could not be fully deleted (${(err as Error).message}). Something on this `
+          + 'machine is holding one of its files open — a window showing it, a sync client, an '
+          + 'antivirus scan. Close it and delete the project again; what was already removed '
+          + 'stays removed.',
+        );
+      }
+      // The rm resolving is not the directory being gone — `force` swallows
+      // whole classes of per-file refusals — and a delete that reports success
+      // over a surviving directory is how debris ends up inside the next
+      // import of the same book.
+      if (await exists(resolved)) {
+        throw new ProjectError(
+          `${resolved} is still there after the delete — something on this machine is holding one `
+          + 'of its files open (a window showing it, a sync client, an antivirus scan). Close it '
+          + 'and delete the project again; what was already removed stays removed.',
+        );
+      }
+    });
   edits.set(key, next);
   await next;
   // Nothing may queue behind a directory that is gone: the same book imported
@@ -5127,337 +5097,3 @@ function countLines(file: string): Promise<number> {
   });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Adopting what was already on disk
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Where conversions landed before projects existed. */
-function legacyWorkspaceDir(): string {
-  return path.join(readAppSettings().libraryDir, 'workspace');
-}
-
-/** Where the readings banks lived before they moved in with their books. */
-function legacyReadingsDir(): string {
-  return path.join(app.getPath('userData'), 'readings');
-}
-
-/**
- * `<userData>/readings/adopted/` — where a bank goes once its copy is in place.
- *
- * A SUBFOLDER, so the scan (which skips directories) stops seeing it, and the
- * bytes are still exactly where somebody who goes looking would look. See
- * `adoptLegacyBanks` for why a bank that stayed in the scanned directory was a
- * bug and not a nicety.
- */
-const ADOPTED = 'adopted';
-
-/**
- * `Buch-a1b2c3d4.epub`, `Buch-a1b2c3d4.en.epub`, `Buch-a1b2c3d4.pdf`.
- *
- * The stem is greedy, so the LAST `-<8 hex>` group in the name is the key — which
- * is the right one, because the key is appended last by construction and a book
- * whose own title ends in something that looks like a hash would otherwise be
- * filed under half its name.
- */
-const LEGACY_OUTPUT = /^(?<stem>.+)-(?<hex>[0-9a-f]{8})(?:\.(?<tag>[A-Za-z0-9-]+))?\.(?<ext>epub|pdf|txt)$/i;
-
-/** `Buch-a1b2c3d4.jsonl`. */
-const LEGACY_BANK = /^(?<stem>.+)-(?<hex>[0-9a-f]{8})\.jsonl$/i;
-
-/**
- * Regroup a flat workspace and a flat readings directory into projects.
- *
- * Runs on every launch and is IDEMPOTENT by construction rather than by a marker
- * file: once a file has moved it is no longer in the directory being scanned,
- * and every write refuses an existing destination outright, so a second pass
- * finds nothing to do and says nothing.
- *
- * WHAT IT MOVES IS AN ORIGIN. Everything the old flat workspace held was written
- * by the engine, so it all belongs in `generated/` — a cast EPUB, a translation,
- * a converted PDF, a text export — and the layers above it are built from there
- * the first time each is opened. There is no `archive/` for these: the PDF they
- * were read from was never copied anywhere, and inventing one would be a guess.
- *
- * THE OUTPUTS ARE MOVED and the READINGS ARE COPIED, and the asymmetry is
- * deliberate. An output is a file this app wrote and can write again; a bank is
- * GPU-hours, and Owen has real ones on this machine — copying means a mistake
- * here cannot destroy one. The copy is then SET ASIDE rather than left in place:
- * see `adoptLegacyBanks`, where leaving it was a bug with teeth.
- *
- * A FILE WHOSE KEY CANNOT BE READ IS LEFT WHERE IT IS and named in a log line.
- * Never moved on a guess: a book filed under the wrong project is a book the
- * user will look for in the wrong folder forever, and the flat directory is a
- * perfectly good place for a file nobody can identify to keep sitting.
- */
-export async function adoptLegacyLayout(): Promise<void> {
-  const said: string[] = [];
-  await adoptLegacyGenerated(said);
-  await adoptLegacyBanks(said);
-  for (const line of said) console.log(`[projects] ${line}`);
-}
-
-async function adoptLegacyGenerated(said: string[]): Promise<void> {
-  const from = legacyWorkspaceDir();
-  let entries: Dirent[];
-  try {
-    entries = await fsp.readdir(from, { withFileTypes: true });
-  } catch {
-    return; // No flat workspace: nothing was ever written the old way.
-  }
-
-  for (const entry of entries) {
-    const source = path.join(from, entry.name);
-    if (!entry.isFile()) {
-      said.push(`${source} is not a file, so it was left alone.`);
-      continue;
-    }
-    const match = LEGACY_OUTPUT.exec(entry.name);
-    const slug = match?.groups?.['stem'];
-    const hex = match?.groups?.['hex'];
-    const ext = match?.groups?.['ext']?.toLowerCase();
-    if (slug === undefined || hex === undefined || ext === undefined) {
-      said.push(
-        `${source} carries no <name>-<8 hex> key, so there is no project it certainly belongs to. `
-        + 'Left where it is.',
-      );
-      continue;
-    }
-
-    const tag = match?.groups?.['tag'];
-    const key = `${slug}-${hex.toLowerCase()}`;
-    // The flat name IS the only name this book ever had, so it becomes the stem.
-    // It is a slug, and it will read as one — but renaming somebody's book on a
-    // guess about what the slug used to spell is worse than a plain name.
-    const stem = sanitiseStem(slug);
-    const file = ext === 'pdf'
-      ? `${stem}.pdf`
-      : ext === 'txt'
-        ? `${stem}.txt`
-        : (tag === undefined ? `${stem}.epub` : translationFileFor(stem, tag));
-    const role: ProjectGeneratedRole = ext === 'pdf'
-      ? 'searchable'
-      : ext === 'txt' ? 'text' : (tag === undefined ? 'cast' : 'translation');
-    const kind = kindOf(file);
-    if (kind === null) continue; // unreachable: the regex admits three extensions
-
-    const dir = path.join(projectsDir(), key);
-    const destination = path.join(dir, GENERATED, file);
-    try {
-      await withCreatedProject(dir, key, stem, async (manifest) => {
-        await fsp.mkdir(path.join(dir, GENERATED), { recursive: true });
-        if (!await claim(destination)) {
-          said.push(`${destination} already exists, so ${source} was left where it is.`);
-          return;
-        }
-        try {
-          await fsp.rename(source, destination);
-        } catch (err) {
-          // The claim is an empty file. It must not survive a failed move, or
-          // the next launch would find a zero-byte book with the right name.
-          await fsp.rm(destination, { force: true });
-          throw err;
-        }
-        recordStep(manifest, kind, {
-          file: `${GENERATED}/${file}`,
-          label: STEP_LABELS[role],
-          appliedAt: Date.now(),
-          kind: role === 'translation' ? 'translate' : role === 'cast' ? 'origin' : 'convert',
-          // Everything the old flat workspace held was written by the engine, so
-          // every one of these was a model pass.
-          retention: 'expensive',
-          why: WHY_MODEL_PASS,
-        });
-        // Written before the refresh below, for the reason `recordGenerated`
-        // gives: the move has already happened, and a refusal from the refresh
-        // must not take the record of it down too.
-        await writeManifest(dir, manifest);
-        said.push(`${entry.name} -> ${destination}`);
-        /*
-         * A searchable PDF adopted from the flat layout still has to become the
-         * live PDF, or the project would list a book and no scan at all — and
-         * unlike a conversion run today, this one really IS the scan. Every file
-         * this path can find was written by the engine back when `--format pdf`
-         * laid an invisible layer over the pages it was given, so promoting it
-         * installs a scan rather than replacing one. Nothing new lands here.
-         */
-        if (role === 'searchable') {
-          /*
-           * AND IT BECOMES THE ARCHIVE, which this path used to leave null —
-           * and that omission made the adoption lie twice.
-           *
-           * `archive/` is where every other part of this app looks for A BOOK'S
-           * PAGES. `planReading` reads it, and with none recorded it fell back
-           * to whatever document the user was pointing at — which after this
-           * promotion is the reprint itself, so ordering OCR read a reading of a
-           * reading and spent the GPU-hours to produce nothing new. And
-           * `readingState` asks the archive's kind to decide whether a book has
-           * pages worth reading at all, so the project sat there with no waiting
-           * light and no way to get one.
-           *
-           * THE PROVENANCE IS DETERMINABLE HERE, which is the whole reason this
-           * is allowed to write an archive at all: every file this path can find
-           * was written when `--format pdf` laid an invisible text layer over
-           * the pages it was given, so the promoted file IS the scan, pixels and
-           * all. Nothing else in the app ever composes a path into `archive/`;
-           * this does, once, for the one document whose only copy it is.
-           *
-           * A COPY AND NOT A MOVE: the live PDF must stay live. And if the copy
-           * fails the promotion is refused rather than half-made, which is the
-           * ruling — a project with a live PDF and no archive is exactly the
-           * state this exists to stop creating.
-           */
-          if (manifest.archive === null) {
-            await fsp.mkdir(path.join(dir, ARCHIVE), { recursive: true });
-            await fsp.copyFile(destination, path.join(dir, ARCHIVE, file));
-            manifest.archive = {
-              file,
-              kind: 'pdf',
-              contentKey: hex.toLowerCase(),
-              // Where it came from is genuinely unknown: the flat workspace held
-              // outputs and never recorded an input. Null is the honest answer
-              // and is what a project adopted from that layout has always said.
-              originPath: null,
-            };
-            recordStep(manifest, 'pdf', {
-              file: `${ARCHIVE}/${file}`,
-              label: 'The scan you imported',
-              appliedAt: Date.now(),
-              kind: 'origin',
-              retention: 'irreplaceable',
-              why: WHY_IMPORTED,
-            }, { onlyIfEmpty: true });
-          }
-          await refreshLivePdf(dir, manifest, file);
-          await writeManifest(dir, manifest);
-        }
-      });
-    } catch (err) {
-      said.push(`${source} could not be adopted (${(err as Error).message}). Left where it is.`);
-    }
-  }
-}
-
-/**
- * Copy each flat bank into its project, then SET THE ORIGINAL ASIDE.
- *
- * ── The bug the set-aside fixes, because it had teeth ────────────────────────
- *
- * This used to copy and leave the original exactly where it was, and call itself
- * idempotent on the strength of `copyNewOnly` refusing an existing destination.
- * It was idempotent about the COPY and about nothing else: the file stayed in
- * the directory this scans, so every launch found it again, and finding it again
- * means `withCreatedProject` — which MAKES the project directory if it is not
- * there. Nothing further was copied and nothing was said, so the loop was
- * invisible.
- *
- * Then Home got a delete button, and the loop stopped being invisible: a project
- * the user deleted came back on the next launch as an empty shell — a
- * `project.json` naming a book, a `readings/` folder, and no documents at all.
- * Measured on Owen's machine, an hour after a delete. A delete that undoes
- * itself at the next launch is not a delete, and the user has no way to tell
- * which of the two things they are looking at.
- *
- * So the original MOVES into `adopted/` once its copy is in place. The bytes are
- * still there — this function still refuses to be the thing that destroys a
- * bank — but the scan no longer sees them, and adoption becomes idempotent IN
- * FACT rather than in intention. `adoptLegacyGenerated` never had this problem
- * because it moves what it adopts.
- *
- * IF THE SET-ASIDE CANNOT HAPPEN, SAY SO BY NAME. A bank that could not be moved
- * is one this will find again next launch, so the sentence in the log is the
- * only warning that the shell is going to come back — and it names the file, the
- * place it was going, and why. A destination in `adopted/` that already exists
- * stops this BEFORE the project is created, which is the one case that can be
- * headed off entirely: two flat files of one name cannot both be set aside, and
- * creating a directory for the second would recreate the very shell this is
- * meant to stop.
- */
-async function adoptLegacyBanks(said: string[]): Promise<void> {
-  const from = legacyReadingsDir();
-  let entries: Dirent[];
-  try {
-    entries = await fsp.readdir(from, { withFileTypes: true });
-  } catch {
-    return;
-  }
-
-  for (const entry of entries) {
-    const source = path.join(from, entry.name);
-    if (!entry.isFile()) continue; // `archived-<stamp>/` directories stay put.
-    const match = LEGACY_BANK.exec(entry.name);
-    const slug = match?.groups?.['stem'];
-    const hex = match?.groups?.['hex'];
-    if (slug === undefined || hex === undefined) {
-      /*
-       * `completed.json` is the one that has to be named rather than skipped.
-       * The engine writes it BESIDE the bank (src/vlm/readings.ts's
-       * `completionMarkerPath` joins it onto the bank's own directory), so in a
-       * flat readings folder shared by every book on this machine there is
-       * exactly one, and it belongs to whichever run finished last. Copying it
-       * into a project would tell the engine that THAT book's bank is a finished
-       * read — and a half-read book would then be replayed out of a cache
-       * instead of being read. Left where it is, deliberately.
-       *
-       * From here on the problem cannot recur: a project's bank has a readings
-       * directory to itself, so its marker names it and nothing else.
-       */
-      said.push(`${source} names no book's bank, so it was left where it is.`);
-      continue;
-    }
-
-    const key = `${slug}-${hex.toLowerCase()}`;
-    const dir = path.join(projectsDir(), key);
-    // Named `<key>.jsonl` rather than carried across verbatim, because that is
-    // the exact path a rendering plan will hand the engine as `--readings`. A
-    // bank that landed under a name differing by so much as the case of a hex
-    // digit would be a bank the resume never finds — and the whole point of
-    // copying these in is that the next run does not read those pages again.
-    const destination = path.join(dir, 'readings', `${key}.jsonl`);
-    const aside = path.join(from, ADOPTED, entry.name);
-    // Asked BEFORE anything is created, because this is the failure that would
-    // otherwise recreate a deleted project on every launch forever.
-    if (await exists(aside)) {
-      said.push(
-        `${aside} already holds a bank of that name, so ${source} cannot be set aside and was `
-        + 'left where it is. Nothing was adopted from it — move one of the two away by hand.',
-      );
-      continue;
-    }
-    try {
-      await withCreatedProject(dir, key, sanitiseStem(slug), async () => {
-        await fsp.mkdir(path.join(dir, 'readings'), { recursive: true });
-        // A COPY, never a move: see `adoptLegacyLayout`. False means the copy is
-        // already there from an earlier launch — which still has to be set aside
-        // below, and on Owen's machine those are the ones that matter.
-        if (await copyNewOnly(source, destination)) said.push(`${entry.name} -> ${destination} (copied)`);
-      });
-      // Only ever after the copy exists. A set-aside that ran first would, on a
-      // failure between the two, leave the bank in a folder nothing reads and no
-      // project holding it — the one outcome worse than adopting it twice.
-      await fsp.mkdir(path.join(from, ADOPTED), { recursive: true });
-      await fsp.rename(source, aside);
-      said.push(`${entry.name} -> ${aside} (set aside; the copy in the project is the live one)`);
-    } catch (err) {
-      said.push(`${source} could not be adopted (${(err as Error).message}). Left where it is.`);
-    }
-  }
-}
-
-/**
- * Claim a destination, atomically, without writing anything into it.
- *
- * `wx` fails when the file exists, so two app instances started together cannot
- * both decide they are the one adopting a book — and unlike a `stat` followed by
- * a `rename`, there is no window between the question and the answer. False
- * means somebody else has it; the caller leaves the original alone and says so.
- */
-async function claim(destination: string): Promise<boolean> {
-  try {
-    const handle = await fsp.open(destination, 'wx');
-    await handle.close();
-    return true;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
-    throw err;
-  }
-}
