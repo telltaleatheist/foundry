@@ -141,6 +141,13 @@ import { TabsService, type BookStack } from '../../core/tabs.service';
             <button class="head" (click)="chaptersOpen.set(!chaptersOpen())">
               <span class="twist">{{ chaptersOpen() ? '▾' : '▸' }}</span>
               <span class="label">Chapters</span>
+              <!--
+                THE COUNT IS DIVISIONS AND ONLY DIVISIONS. The header says
+                Chapters, so the number beside it answers "how many does this
+                book divide into" — the headings listed below are the shape
+                INSIDE those, and adding them in would make a count of two
+                different things that agrees with neither.
+              -->
               <span class="count">{{ sheetChapters().length }}</span>
             </button>
             @if (chaptersOpen()) {
@@ -151,19 +158,43 @@ import { TabsService, type BookStack } from '../../core/tabs.service';
                   the first chapter op takes the list over and "Use Foundry's" is
                   the op that hands it back. It is a fact about the chain,
                   recomputed every replay, so it cannot drift.
+
+                  IT NAMES THE DOT because the list below it stopped being one
+                  kind of row. "These are your chapters" over an outline that
+                  also holds headings would be a caption misidentifying half of
+                  what is under it; naming the mark makes the sentence point at
+                  the rows it is actually about, and pays for the dot at the same
+                  time by saying once what it means. BLUE-dotted, in full: the
+                  paper's chapter rule is the green DOTTED line, so "the dotted
+                  rows" alone would name the panel's mark in the instrument's
+                  own word.
                 -->
                 <p class="hint">
                   @if (pane.chaptersOwned()) {
-                    These are your chapters. The book divides here and nowhere else.
+                    The blue-dotted rows are your chapters. The book divides here and nowhere else.
                   } @else {
-                    These are the chapters Foundry found. Change any of them and the list
-                    becomes yours — from then on the book divides exactly where it says.
+                    The blue-dotted rows are the chapters Foundry found. Change any of them and
+                    the list becomes yours — from then on the book divides exactly where it says.
                   }
                 </p>
                 <ul>
-                  @for (row of sheetChapters(); track row.id) {
-                    <li class="entry">
-                      @if (renamingHref() === row.id) {
+                  <!--
+                    THE SENTENCE COMES FIRST WHEN THERE ARE NO DIVISIONS, not
+                    last. It used to be the list's empty state and could sit at
+                    the bottom because nothing else was ever in the list; now a
+                    book with headings and no divisions has rows, and "this book
+                    does not divide" printed UNDER them would read as a caption
+                    on the rows above it and contradict them. Above, it is what
+                    it has always been: the answer about DIVISIONS, with the
+                    headings that are not divisions indented below it.
+                  -->
+                  @if (sheetChapters().length === 0) {
+                    <li class="none">This book does not divide: it reads as one run of prose.</li>
+                  }
+                  @for (row of sheetOutline(); track row.id) {
+                    <li class="entry" [class.division]="row.kind === 'chapter'"
+                        [class.section]="row.kind === 'section'">
+                      @if (renamingHref() === row.id && row.kind === 'chapter') {
                         <input
                           #renameBox
                           class="rename"
@@ -174,7 +205,7 @@ import { TabsService, type BookStack } from '../../core/tabs.service';
                           (blur)="cancelRename()"
                           [attr.aria-label]="'Rename ' + row.title"
                         >
-                      } @else {
+                      } @else if (row.kind === 'chapter') {
                         <button
                           class="chapter"
                           [title]="row.title"
@@ -190,11 +221,27 @@ import { TabsService, type BookStack } from '../../core/tabs.service';
                           title="Take the division away — the block stays, the rule goes"
                           (click)="dropSheetChapter(row.id)"
                         >✕</button>
+                      } @else {
+                        <!--
+                          A HEADING ROW GOES TO THE HEADING AND DOES NOTHING
+                          ELSE. No pencil and no ✕, because neither op exists
+                          here: renaming a heading is editing the words of a
+                          block, and taking one away is striking that block —
+                          both of them things done to the paper, on the paper,
+                          where the words are. This section pushes the
+                          DIVISIONS' ops and no others, so the only gesture a
+                          heading row can honestly offer is "show me".
+                        -->
+                        <button
+                          class="chapter"
+                          [title]="row.title"
+                          (click)="pane.reveal(row.id)"
+                        >
+                          <span class="ch-title">{{ row.title }}</span>
+                          <span class="ch-at">≈ {{ row.page }}</span>
+                        </button>
                       }
                     </li>
-                  }
-                  @if (sheetChapters().length === 0) {
-                    <li class="none">This book does not divide: it reads as one run of prose.</li>
                   }
                 </ul>
                 <div class="acts">
@@ -399,6 +446,26 @@ import { TabsService, type BookStack } from '../../core/tabs.service';
     :host {
       --ink-flag: #b98a1c;
 
+      /*
+        THE DIVISION MARK, AND IT IS DELIBERATELY OUTSIDE THE PAPER'S PALETTE.
+        The sheet already owns a green for structure (\`--ink-chapter\`, spruce)
+        and it is the INSTRUMENT's ink: it draws the rule across the page and
+        the chip that sets it, on the surface where a chapter is made. This dot
+        is panel chrome answering a different question — which of these rows are
+        divisions and which are headings inside them — and wearing the paper's
+        green for it would have the two surfaces claiming each other's
+        vocabulary, so that a person who learned green-means-a-division-is-being-
+        set on the page reads it here as a thing they could act on.
+
+        BLUE, AND NOT THE SHEET'S BLUE EITHER. The paper has an archival blue
+        (\`--ink-select\`, #3b6ea5) and it means SELECTED there; the app's own
+        palette (styles.scss) has no blue at all — its accent is cyan, which is
+        this window's word for "active". So this is a literal, stated once,
+        chosen to sit quietly on the dark panel: steel, legible at six pixels,
+        and claimed by nothing else in either vocabulary.
+      */
+      --mark-division: #5a83b0;
+
       display: block;
       width: 260px;
       min-width: 260px;
@@ -558,6 +625,36 @@ import { TabsService, type BookStack } from '../../core/tabs.service';
     */
     .entry.missing .ch-title { text-decoration: line-through; }
     .entry.missing { opacity: 0.5; }
+
+    /*
+      ── The outline's two levels ──────────────────────────────────────────
+
+      THE DOT IS THE ROW'S OWN, drawn as a flex item of the button (\`.chapter\`
+      is already \`display: flex\`, so the \`::before\` takes the row's 6px gap
+      without a second number being written down anywhere). Centred rather than
+      on the baseline: an empty box's baseline is its bottom edge, which would
+      hang the dot below the type it belongs to.
+
+      A HEADING ROW GETS THE SAME BOX, EMPTY. The dot is the only thing this
+      panel says with colour, so the two levels must not ALSO differ by four
+      pixels of accident: both rows measure their text from the same origin, and
+      the indent below is then the whole of the difference in position — a real
+      16px step instead of the near-miss you get by indenting one level past a
+      gutter the other does not have.
+
+      SCOPED TO THIS SECTION'S ROWS. Notes, loose markers and shelved rows are
+      \`.entry\` with a \`.chapter\` button too, and none of them is a division.
+    */
+    .entry.division > .chapter::before,
+    .entry.section > .chapter::before {
+      content: '';
+      flex: 0 0 auto;
+      align-self: center;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+    }
+    .entry.division > .chapter::before { background: var(--mark-division); }
+    .entry.section { padding-left: 1rem; }
 
     .none {
       padding: 4px 12px 8px;
@@ -763,6 +860,57 @@ export class InspectorComponent {
       title: one.title,
       page: where.get(one.id) ?? 0,
     }));
+  });
+
+  /**
+   * The same list with the book's HEADINGS in it — divisions at the top level,
+   * every Section-header indented under the division it falls in.
+   *
+   * TWO LEVELS BECAUSE A BOOK HAS TWO. A division is where the book breaks; a
+   * heading is where a part of it is announced. The panel listed only the first
+   * of those, so a chapter with six headed sections in it looked exactly like a
+   * chapter with none, and the one thing an outline is FOR — seeing the shape of
+   * what you are working on — was the one thing it would not show.
+   *
+   * ONE WALK OF THE ROWS, and the order falls out of it. `Replayed.chapters` is
+   * already filtered to divisions whose anchor is an unshelved row (ops.ts,
+   * \`drawableChapters\`), so every division is met in this walk exactly where the
+   * flow puts it and the nesting needs no second sort and no parent pointers:
+   * reading order IS the outline.
+   *
+   * A ROW THAT IS BOTH IS THE CHAPTER. Divisions are routinely set on the very
+   * heading block that opens them — the seed does it by construction — and
+   * listing that block twice would have the panel say the book divides here and
+   * also merely announces something here, about one block, in two rows sharing
+   * one id.
+   *
+   * WHAT A SECTION ENTRY IS NOT: shelved, and not struck. The shelf is not the
+   * book (the Furniture section is where those live and it says why each one
+   * left). And an outline is where the book divides and what it will read as, so
+   * a struck heading — in the document, drawn cancelled, absent from the edition
+   * — is on its way out and has no business shaping the list of what is staying.
+   *
+   * A HEADING ABOVE THE FIRST DIVISION STILL LISTS, indented, under nothing.
+   * Front matter has headings and no parent, and inventing a parent for them
+   * would be the panel making up a division the book does not have.
+   */
+  protected readonly sheetOutline = computed<OutlineEntry[]>(() => {
+    const replayed = this.sheetView();
+    if (replayed === null) return [];
+    const divisions = new Map(replayed.chapters.map((one) => [one.id, one.title] as const));
+    const out: OutlineEntry[] = [];
+    for (const row of replayed.rows) {
+      const page = row.pages[0] ?? row.page;
+      const division = divisions.get(row.id);
+      if (division !== undefined) {
+        out.push({ kind: 'chapter', id: row.id, title: division, page });
+        continue;
+      }
+      if (row.category !== 'Section-header') continue;
+      if (row.shelf !== undefined || row.struck === true) continue;
+      out.push({ kind: 'section', id: row.id, title: headingWords(row.text), page });
+    }
+    return out;
   });
 
   /** Every note in the book, in reading order, each knowing whether anything points at it. */
@@ -1074,6 +1222,34 @@ interface SheetChapterRow {
   title: string;
   /** The source page it opens on, drawn with the ≈ the book's own ghosts wear. */
   page: number;
+}
+
+/**
+ * One row of the two-level outline: a division, or a heading inside one.
+ *
+ * IT EXTENDS THE CHAPTER ROW rather than being a union of two shapes, because
+ * the two rows carry the same three facts and differ only in what may be DONE to
+ * them — which the template asks about by name, once, where it draws the
+ * buttons. A union would buy a narrowing the template does not need and would
+ * cost this file a second declaration of id, title and page.
+ */
+interface OutlineEntry extends SheetChapterRow {
+  kind: 'chapter' | 'section';
+}
+
+/**
+ * A heading's words, for a row in the outline.
+ *
+ * THE EMPHASIS MARKS COME OFF. A heading's text arrives in the model's spelling
+ * and \`*Interlude*\` is the source saying "set this in italics", not a book
+ * called *Interlude* with the asterisks printed. Elsewhere in this panel the
+ * markup rides along (\`opening\`, which lists what the book SAYS); an outline
+ * entry is a NAME, held next to chapter titles that carry none, and a column of
+ * names where half wear punctuation the printer never set reads as a fault in
+ * the book.
+ */
+function headingWords(text: string): string {
+  return text.replace(/\*/g, '').replace(/\s+/g, ' ').trim();
 }
 
 /** One drawn row of the Notes section — a note at the foot of a page. */
