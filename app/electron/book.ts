@@ -1007,11 +1007,22 @@ export async function materializeBook(
 ): Promise<{ ok: true; path: string } | { ok: false; reason: string }> {
   const read = await openBookAtPosition(projectDir);
   if (!read.ok) return read;
-  const { at, parsed, ops } = read.opened;
+  const { at, parsed, ops, tip } = read.opened;
 
   let made: ReturnType<typeof materialize>;
   try {
-    made = materialize(parsed, ops);
+    /*
+     * THE TIP'S OPS ARE PART OF THE BOOK. `openBookAtPosition` withholds the
+     * amendable tip step's ops from `ops` and hands them back as `tip`,
+     * because the PANE needs them separately — they hydrate its undo stack.
+     * Every other consumer wants the concatenation, and this call site was
+     * the one of three that forgot it: standing on a freshly applied edit
+     * step, every op the person just made is in the tip and `ops` is empty,
+     * so the book that went to the compiler was the unedited one — an EPUB
+     * with every struck block still in it, exported from a workbench whose
+     * Final version showed them gone.
+     */
+    made = materialize(parsed, [...ops, ...(tip ?? [])]);
   } catch (err) {
     if (!(err instanceof BookOpsError)) throw err;
     console.error(`[book] ${read.opened.path} could not be materialised: ${err.message}`);
