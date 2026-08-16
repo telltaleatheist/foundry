@@ -58,8 +58,15 @@ import {
   recordBookEdit,
   type LedgerView,
 } from './projects';
-import { BookFileError, parseBookFile, type BookOutcome } from '../shared/book';
+import {
+  BookFileError,
+  formatBookFile,
+  parseBookFile,
+  type BookFile,
+  type BookOutcome,
+} from '../shared/book';
 import { editsInEffect } from '../shared/ledger';
+import { materialize } from '../shared/materialize';
 import { BookOpsError, formatOpsFile, parseOpsFile, type BookOp } from '../shared/ops';
 
 /** Does this path exist? Nothing else about it is asked. */
@@ -118,18 +125,36 @@ export function bookFigureFile(token: string, name: string): string | null {
 }
 
 /**
- * The book at this project's position — reflowed first if nothing has reflowed it.
+ * The book file at the position, parsed, with the chain of ops that stands on it.
  *
- * NEVER ANSWERS EMPTY. A pane with no rows in it and no sentence is
- * indistinguishable from a book with nothing in it, and the two want opposite
- * things from the person looking at them — so every way this can fail comes back
- * as `{ok: false}` carrying words to put on the paper (`BookOutcome`).
+ * ── ONE WALK, TWO READERS, AND THE SECOND ONE IS WHY THIS EXISTS ────────────
+ *
+ * `loadBook` below draws this for a person; `materializeBook` writes the same
+ * answer out as a file for the engine to compile (docs/RENDERER.md §6). Both need
+ * the identical sequence — ensure the book file, read it, prove the bank has not
+ * moved under its ids, then walk the edit steps on the path to where the person is
+ * standing and read every payload — and every one of those steps has a refusal
+ * attached to it that is written to be read. Spelling it twice would be two
+ * answers to "what is this book and what has been done to it", which is exactly
+ * the failure the single replay exists to make impossible.
+ *
+ * NEVER ANSWERS EMPTY, and never throws for anything a person can be told about:
+ * every way this can fail comes back carrying words to put on the paper.
  *
  * IT STILL REJECTS FOR A DIRECTORY THAT IS NOT A PROJECT. That is the security
  * gate refusing, not the book being unavailable, and it must not be renderable as
  * a polite sentence in a pane.
  */
-export async function loadBook(projectDir: string): Promise<BookOutcome> {
+interface OpenedBook {
+  at: Awaited<ReturnType<typeof bookAtPosition>>;
+  parsed: BookFile;
+  /** Every change on the path from the reading to where the person stands. */
+  ops: BookOp[];
+}
+
+async function openBookAtPosition(
+  projectDir: string,
+): Promise<{ ok: true; opened: OpenedBook } | { ok: false; reason: string }> {
   const at = await bookAtPosition(projectDir);
 
   if (!await exists(at.book)) {
@@ -193,15 +218,6 @@ export async function loadBook(projectDir: string): Promise<BookOutcome> {
       };
     }
     /*
-     * The figures prefix is minted only when a row will ask for one. `null` is
-     * the pane's ordinary answer for a book with no cut images — no --pdf at
-     * reflow, or no pictures in the book — and the plate placeholder is what
-     * draws in that silence.
-     */
-    const figures = parsed.rows.some((row) => row.image !== undefined)
-      ? figuresPrefixFor(imagesDirFor(at.bank))
-      : null;
-    /*
      * THE CHAIN, AND IT IS A REFUSAL RATHER THAN A BEST EFFORT.
      *
      * Every edit step on the path from this reading to the position retained a
@@ -240,21 +256,7 @@ export async function loadBook(projectDir: string): Promise<BookOutcome> {
         };
       }
     }
-    return {
-      ok: true,
-      // THE TITLE IS THE PROJECT'S. A book file is a list of blocks and has no
-      // idea what the book is called; the catalogue is where that has lived for
-      // every other surface in this app (`ProjectsService.nameFor`).
-      title: at.manifest.title,
-      language: parsed.header.language,
-      rows: parsed.rows,
-      chapters: parsed.header.chapters,
-      typography: parsed.header.typography,
-      seams: parsed.header.seams,
-      loose: parsed.header.loose,
-      figures,
-      ops: chain,
-    };
+    return { ok: true, opened: { at, parsed, ops: chain } };
   } catch (err) {
     if (err instanceof BookFileError) {
       console.error(`[book] ${at.book} is not a book this app can read: ${err.message}`);
@@ -264,6 +266,116 @@ export async function loadBook(projectDir: string): Promise<BookOutcome> {
     }
     throw err;
   }
+}
+
+/**
+ * The book at this project's position — reflowed first if nothing has reflowed
+ * it, and handed to the pane with the two things the file itself cannot say.
+ *
+ * NEVER ANSWERS EMPTY (`BookOutcome`): a pane with no rows in it and no sentence
+ * is indistinguishable from a book with nothing in it, and the two want opposite
+ * things from the person looking at them.
+ */
+export async function loadBook(projectDir: string): Promise<BookOutcome> {
+  const read = await openBookAtPosition(projectDir);
+  if (!read.ok) return read;
+  const { at, parsed, ops } = read.opened;
+  /*
+   * The figures prefix is minted only when a row will ask for one. `null` is the
+   * pane's ordinary answer for a book with no cut images — no --pdf at reflow, or
+   * no pictures in the book — and the plate placeholder is what draws in that
+   * silence.
+   */
+  const figures = parsed.rows.some((row) => row.image !== undefined)
+    ? figuresPrefixFor(imagesDirFor(at.bank))
+    : null;
+  return {
+    ok: true,
+    // THE TITLE IS THE PROJECT'S. A book file is a list of blocks and has no idea
+    // what the book is called; the catalogue is where that has lived for every
+    // other surface in this app (`ProjectsService.nameFor`).
+    title: at.manifest.title,
+    language: parsed.header.language,
+    rows: parsed.rows,
+    chapters: parsed.header.chapters,
+    typography: parsed.header.typography,
+    seams: parsed.header.seams,
+    loose: parsed.header.loose,
+    figures,
+    ops,
+  };
+}
+
+/**
+ * MATERIALISE — the position's book with its whole chain replayed into it,
+ * written out as a book file of its own.
+ *
+ * ── What it is for, and why it is a file at all ─────────────────────────────
+ *
+ * *"Export → materialize (replay) → engine compiles EPUB/txt."* (docs/RENDERER.md
+ * §6.) The engine has never heard of the op grammar and is never going to: the
+ * replay lives once, in shared/, because the renderer needs it in-process, so
+ * MAIN materialises and the engine compiles what it is handed (§9, R1). This is
+ * the seam between those two sentences, and a file is what crosses it.
+ *
+ * ── IT IS SCRATCH, AND IT IS THE CALLER'S TO SWEEP ──────────────────────────
+ *
+ * A derived book file is `regenerable` retention in the strongest sense — it is a
+ * pure function of a file on disk and a chain in the ledger, and remaking it costs
+ * a read and a replay — so nothing catalogues it, nothing points at it, and the
+ * job that asked for one removes it when it settles. `into` is the directory it
+ * goes in, which the caller chooses precisely because THIS module has no business
+ * deciding whether a scratch file belongs in the OS temp directory or beside the
+ * project.
+ *
+ * WRITTEN ATOMICALLY, like every other file this app writes: a temp path and a
+ * rename, so an interrupted write leaves nothing rather than half a book — and
+ * half a book file is a compile that refuses on a row that was cut in two.
+ */
+export async function materializeBook(
+  projectDir: string,
+  into: string,
+): Promise<{ ok: true; path: string } | { ok: false; reason: string }> {
+  const read = await openBookAtPosition(projectDir);
+  if (!read.ok) return read;
+  const { at, parsed, ops } = read.opened;
+
+  let made: ReturnType<typeof materialize>;
+  try {
+    made = materialize(parsed, ops);
+  } catch (err) {
+    if (!(err instanceof BookOpsError)) throw err;
+    console.error(`[book] ${at.book} could not be materialised: ${err.message}`);
+    return {
+      ok: false,
+      reason: `The changes recorded for this book could not be replayed onto it: ${err.message}`,
+    };
+  }
+  /*
+   * AN OP THE REPLAY COULD NOT PERFORM IS SAID OUT LOUD AND IS NOT FATAL, which
+   * is `Replayed.missing`'s own ruling: a chain can name a block a later reading
+   * no longer has, and refusing to export a whole book over one stale strike is
+   * the worst of the three answers available. The terminal gets the count and the
+   * ids; the book that comes out carries everything that still landed.
+   */
+  if (made.missing.length > 0) {
+    console.error(
+      `[book] ${at.book}: ${made.missing.length} recorded change(s) could not be replayed for this `
+      + `export — ${made.missing.map((one) => `${one.op.op} ${one.id}`).join(', ')}`,
+    );
+  }
+
+  const file = path.join(into, `${randomUUID()}.book.jsonl`);
+  try {
+    await writeAtomically(file, Buffer.from(formatBookFile(made.book), 'utf8'));
+  } catch (err) {
+    console.error(`[book] the derived book for ${at.dir} could not be written: ${(err as Error).message}`);
+    return {
+      ok: false,
+      reason: 'The book with your changes in it could not be written out for the engine to compile.',
+    };
+  }
+  return { ok: true, path: file };
 }
 
 /**

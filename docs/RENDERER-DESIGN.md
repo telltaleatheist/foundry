@@ -21,7 +21,9 @@ Two registers, one toggle:
 
 - **Workbench** — the working view. Paper + gutters + chrome.
 - **Edition** — the export preview. The same replay with ALL chrome removed
-  and the export stylesheet applied: struck blocks absent, refs demoted,
+  and the export stylesheet applied: struck blocks absent (a struck note's
+  number cut from the prose with it — the number belongs to the note, §0
+  ruling 9), live refs demoted to plain superscripts,
   measured typography. It should feel like the finished book because it is
   exactly the finished book.
 

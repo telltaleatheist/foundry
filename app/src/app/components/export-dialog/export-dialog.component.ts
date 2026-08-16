@@ -636,6 +636,16 @@ export class ExportDialogComponent {
          */
         ...(plan.records !== undefined ? { records: plan.records } : {}),
         ...(plan.language !== undefined ? { language: plan.language } : {}),
+        /*
+         * AND THE BOOK ITSELF, WHEN THIS EXPORT IS OF A BOOK SOMEBODY EDITED —
+         * carried, never composed, for `records`' reason exactly. Main replayed
+         * the changes on the way to this position into a book file of its own the
+         * moment the plan was made, and the engine compiles that instead of
+         * rebuilding the book from the pages it was read from
+         * (docs/RENDERER.md §6). Absent for a book nobody has edited and for a
+         * facsimile, both of which are made from the reading as they always were.
+         */
+        ...(plan.bookPath !== undefined ? { bookPath: plan.bookPath } : {}),
       };
 
       const outcome = await this.queue.enqueue(request);

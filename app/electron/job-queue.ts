@@ -101,6 +101,7 @@ import { destFor, installEnv } from './env-install';
 import {
   bookAtPosition,
   generatedRoleFor,
+  imagesDirFor,
   metadataForProduct,
   positionStepId,
   projectDirOf,
@@ -490,10 +491,44 @@ export function cancel(id: string): void {
   if (job.state === 'queued' || job.state === 'running') {
     job.state = 'cancelled';
     job.finishedAt = Date.now();
+    // The derived book this export was going to be compiled from, if it never
+    // got as far as the settle that normally sweeps it. Nothing else will ever
+    // mention that file again — see `sweepDerivedBook`.
+    void sweepDerivedBook(requests.get(job.id));
     changed();
     // A cancel can be the thing that empties the queue, and the drain signal
     // lives in pump()'s nothing-to-do branch — which nothing else would visit.
     void pump();
+  }
+}
+
+/**
+ * The book main materialised for an export, removed.
+ *
+ * ── Why it goes, and why it goes on failure too ─────────────────────────────
+ *
+ * It is scratch: a pure function of the reading's own book file and a chain in
+ * the ledger, made when the button was pressed and remade for nothing whenever it
+ * is wanted again (docs/RENDERER.md §4 — derived book files are `regenerable`
+ * retention). Nothing catalogues it, nothing can open it twice, and its name is a
+ * uuid in a temp directory.
+ *
+ * KEEPING THE FAILED ONE IS DELIBERATELY NOT DONE. The engine's refusal names
+ * the block it choked on, in words, in the terminal that is already open — that is
+ * what somebody debugs from, and a copy of a book under a uuid is not.
+ *
+ * BEST EFFORT AND NEVER A THROW: an export that produced a book is not a failure
+ * because a scratch file would not unlink, and a cancel is not a failure at all.
+ */
+async function sweepDerivedBook(request: EngineRequest | undefined): Promise<void> {
+  if (request === undefined || request.kind === 'read' || request.kind === 'translate') return;
+  if (request.bookPath === undefined) return;
+  try {
+    await fsp.rm(request.bookPath, { force: true });
+  } catch (err) {
+    console.error(
+      `[job] the derived book ${request.bookPath} could not be removed: ${(err as Error).message}`,
+    );
   }
 }
 
@@ -555,7 +590,16 @@ export function shutdown(): void {
  * the engine reads that same settings.json for itself, and a per-job override
  * here was a second opinion about a decision that has one owner.
  */
-function argsFor(request: EngineRequest): string[] {
+function argsFor(
+  request: EngineRequest,
+  /**
+   * The merged metadata patch this product carries, for the ONE route that puts
+   * it on the command line rather than stamping it on afterwards — see the
+   * compile branch below. Empty for every other job, and for a project whose
+   * ancestry recorded nothing.
+   */
+  metadata: Record<string, string> = {},
+): string[] {
   if (request.kind === 'translate') {
     /*
      * A translation shares nothing with a conversion's command line but the
@@ -638,6 +682,53 @@ function argsFor(request: EngineRequest): string[] {
     if (request.language && request.language.trim().length > 0) {
       args.push('--language', request.language.trim());
     }
+    return args;
+  }
+
+  /*
+   * ── COMPILING THE BOOK SOMEBODY EDITED ───────────────────────────────────
+   *
+   * `foundry vlm-compile --book <derived> --out <product>`, and it is a different
+   * command rather than a flag on the one below because it takes a different
+   * INPUT: not the bank and a curation, but the book itself, with this position's
+   * whole chain of changes already replayed into it by main (`materializeBook`,
+   * electron/book.ts). The engine has never heard of the op grammar and never
+   * will — the replay lives once, in this process, because the renderer draws
+   * from it too (docs/RENDERER.md §9) — so what crosses the boundary is a
+   * document and the engine's job is to compile what it is handed.
+   *
+   * NO `--reuse-readings`, NO `--overlay`, NO `--final`. The first two are about
+   * a bank this run never opens. The third is about a choice this command does
+   * not have: there is no cast to write from a book file, so the edition's rules
+   * are the compile's constants (see `vlm-compile`'s own help).
+   *
+   * THE FACSIMILE NEVER REACHES HERE, and that is by construction rather than by
+   * a test: `--format pdf` reprints the scan's own photographed lines from the
+   * raw bank, so `planExport` never materialises a book for one and the field
+   * that would send it down this branch is absent (docs/RENDERER.md §6).
+   */
+  if (request.bookPath !== undefined) {
+    const args = ['vlm-compile', '--book', request.bookPath, '--out', request.outputPath];
+    /*
+     * THE FIGURES, WHICH ARE THE READING'S AND NOT THE BOOK FILE'S. A row names
+     * its crop by NAME and the directory is composed from the bank the figures
+     * were cut beside (`imagesDirFor`, electron/projects.ts) — the same
+     * composition the pane serves them through. Passed only when it is there, on
+     * `--overlay`'s rule: the engine refuses a directory it cannot open, and a
+     * book with no pictures in it has none to be given.
+     */
+    const figures = imagesDirFor(request.readingsPath);
+    if (existsSync(figures)) args.push('--images', figures);
+    /*
+     * AND THE RECORD THE PERSON TYPED, ON THE PACKAGE ITSELF. The bank route
+     * takes its title from the PDF and has the metadata stamped on afterwards;
+     * this route has no PDF to ask, so the merged patch reaches the book while it
+     * is being made. The stamp still happens after it for an EPUB — the same two
+     * commands, unchanged — and this is what makes a compiled `.txt` carry the
+     * corrected title too, which nothing before could.
+     */
+    if (metadata['title'] !== undefined) args.push('--title', metadata['title']);
+    if (metadata['creator'] !== undefined) args.push('--author', metadata['creator']);
     return args;
   }
 
@@ -1010,6 +1101,18 @@ async function pump(): Promise<void> {
    * nowhere to put a title, and there is no third command that would pretend
    * otherwise.
    */
+  /*
+   * THE PATCH ITSELF, READ ONCE. It used to be read straight into flags for the
+   * stamping stage, which is still where it goes for an EPUB or a PDF — but the
+   * COMPILE route puts the title and the author into the package as it writes it
+   * (`argsFor`), because a book file has no PDF behind it to take a title from,
+   * and a plain-text export has no stamping stage at all and therefore had no way
+   * to carry a corrected title before this. One read of the ledger, two consumers,
+   * and neither of them re-derives the other's answer.
+   */
+  const merged = exporting
+    ? await recordFor(next.outputPath, request.kind, next.parentStep ?? null)
+    : {};
   const record = exporting && request.kind !== 'txt'
     ? {
       // The command follows the PRODUCT and not the position: a facsimile export
@@ -1017,7 +1120,7 @@ async function pump(): Promise<void> {
       // project started from. Carried as the kind rather than read back off the
       // extension later, so the composition below names one fact once.
       kind: request.kind === 'pdf' ? 'pdf' as const : 'epub' as const,
-      flags: metaFlagsFor(await recordFor(next.outputPath, request.kind, next.parentStep ?? null)),
+      flags: metaFlagsFor(merged),
     }
     : null;
   /*
@@ -1243,7 +1346,7 @@ async function pump(): Promise<void> {
    * metadata stamp is exactly the case where a single line would leave somebody
    * reading the wrong command.
    */
-  const args = argsFor(spawned);
+  const args = argsFor(spawned, merged);
   console.log(`[job] ${next.kind} ${args.join(' ')}`);
   let handle = runEngine(args, watch);
   /*
@@ -1309,6 +1412,10 @@ async function pump(): Promise<void> {
       console.error(`[job] the intermediate ${unstamped} could not be removed: ${(err as Error).message}`);
     }
   }
+
+  // And the book main materialised for this export, whichever way it ended —
+  // `sweepDerivedBook` carries the whole argument.
+  await sweepDerivedBook(request);
 
   if (result.code === 0) {
     next.state = 'done';

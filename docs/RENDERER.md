@@ -184,7 +184,8 @@ animated where it helps.
   (the running heads the reflow dropped, listed with un-drop — today a log line
   nobody can act on), Category legend (kept).
 - **Export preview — high priority.** The same replay projected through the
-  export rules (struck elements absent, refs demoted, edition attributes
+  export rules (struck elements absent — a struck note's number cut from the
+  prose with it, per ruling 9 — live refs demoted, edition attributes
   withheld — the `--final` table in `dots-book.ts`) with the export stylesheet.
   A toggle, not a build: nothing is written, no engine spawns.
 - **Aligned translation view:** two scroll-locked columns over two book files

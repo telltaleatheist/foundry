@@ -729,6 +729,43 @@ function rowOf(line: string, at: number, seen: Set<string>): BookRow {
 }
 
 /**
+ * A book file, written down — a header line, then one row per block.
+ *
+ * ── WHY THE APP WRITES ONE AT ALL ───────────────────────────────────────────
+ *
+ * The engine is the writer of this format and stays the writer of it: `vlm-book`
+ * makes a book out of a bank and nothing here will ever do that. What this writes
+ * is the DERIVED book file — the same format with the same ids, with a chain of
+ * ops replayed into it (docs/RENDERER.md §4) — and it has to be written here for
+ * the reason the replay lives in shared/ at all: there is one implementation of
+ * "what does this book say now", it is `replayOps`, and it runs in this process.
+ * An engine that could materialise would be a second one (§9, R1).
+ *
+ * THE HEADER'S FIELDS ARE THE CONTRACT'S, IN THE CONTRACT'S ORDER, and the row
+ * lines are the rows as this module parses them — same field order, same
+ * spelling — so that a file written here is a file the engine's own parser reads
+ * without a special case (`parseBookFile`, src/vlm/book-file.ts). Anything else
+ * would be two dialects of one format, and the second one would be discovered by
+ * an export failing.
+ *
+ * NO TIMESTAMP AND NOTHING ABOUT THIS MACHINE, which is what makes the same book
+ * and the same chain produce the same bytes anywhere.
+ */
+export function formatBookFile(book: BookFile): string {
+  const header = JSON.stringify({
+    book: BOOK_FILE_VERSION,
+    engine: book.header.engine,
+    language: book.header.language,
+    source: book.header.source,
+    chapters: book.header.chapters,
+    typography: book.header.typography,
+    seams: book.header.seams,
+    loose: book.header.loose,
+  });
+  return [header, ...book.rows.map((row) => JSON.stringify(row))].join('\n') + '\n';
+}
+
+/**
  * Read a book file back, or say exactly what about it is not a book.
  *
  * ── The cross-checks, which are the ones worth having ───────────────────────

@@ -250,6 +250,34 @@ export interface GenerateRequest {
    */
   language?: string;
   /**
+   * `--book` — THE DOCUMENT THIS RUN COMPILES, when the position carries changes
+   * a person applied on the proof sheet.
+   *
+   * ── What it swaps out, which is the whole command ───────────────────────────
+   *
+   * With it the job is `foundry vlm-compile --book <derived> --out <product>`
+   * rather than `foundry vlm-convert --readings <bank> …`. Everything the engine
+   * would otherwise work out from the bank is already settled in the file: the
+   * struck rows are absent, the words are as the person left them, and the header
+   * says where the book divides. The compile replays nothing and decides nothing
+   * (docs/RENDERER.md §6), which is precisely why it can be handed a book somebody
+   * edited at all.
+   *
+   * WHOSE FILE IT IS: main's, written at plan time from the position the person
+   * was standing on when they pressed the button — the same rule `overlayPath` and
+   * `records` obey, and for the same reason. A pointer move made while the job
+   * waited in the queue must not silently export a different state of the book
+   * than the dialog said it would.
+   *
+   * SWEPT WHEN THE JOB SETTLES, success or failure. It is derived from a file on
+   * disk and a chain in the ledger and costs a read and a replay to make again, so
+   * keeping one would be hoarding a copy of a book nobody can name.
+   *
+   * Absent for every generate, every facsimile and every export of a book nobody
+   * has edited — see `WorkspacePlan.bookPath`, which is where it comes from.
+   */
+  bookPath?: string;
+  /**
    * THIS IS ONE STEP'S OWN DOCUMENT — what a `curate`, `translate` or `read`
    * landing makes of itself, named after the step it belongs to.
    *
@@ -870,6 +898,32 @@ export interface WorkspacePlan {
   records?: string;
   /** The tag that cast declares itself to be in. Travels with `records`, always. */
   language?: string;
+  /**
+   * THE BOOK WITH THIS POSITION'S CHANGES ALREADY IN IT — a derived book file,
+   * written when the plan was made, and the whole of what an export over an edited
+   * book is.
+   *
+   * ── Why the plan carries a file rather than a flag ──────────────────────────
+   *
+   * The engine compiles a book out of pages and a curation and has never heard of
+   * the op grammar; the changes a person makes on the proof sheet are ops in the
+   * ledger, and the document they describe is the reading's book file with those
+   * ops replayed over it. That replay lives in one place — `shared/ops.ts`, in
+   * main's own process, because the renderer draws from it too — so main
+   * MATERIALISES the answer as a book file and the engine compiles THAT
+   * (docs/RENDERER.md §6). What crosses the process boundary is a document, not a
+   * decision.
+   *
+   * ABSENT IS THE ORDINARY EXPORT, and it means exactly what it says: this
+   * position has no applied changes on the way to it, so the reading's own pages
+   * are the book and `vlm-convert` compiles them as it always has. Absent is also
+   * every facsimile, which is the RAW bank reprinted page for page and is a record
+   * of the reading rather than of any state of the book downstream of it.
+   *
+   * IT IS SCRATCH. Nothing catalogues it, nothing opens it twice, and the queue
+   * removes it when the job settles either way.
+   */
+  bookPath?: string;
 }
 
 /**

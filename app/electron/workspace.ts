@@ -74,7 +74,10 @@
  * (`readingState`).
  */
 import { promises as fsp } from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
+
+import { materializeBook } from './book';
 
 import {
   ProjectError,
@@ -216,7 +219,7 @@ export async function planConversion(
    */
   kind: ConversionKind = 'epub',
 ): Promise<WorkspacePlan> {
-  return planRendering(inputPath, kind, GENERATED);
+  return (await planRendering(inputPath, kind, GENERATED)).plan;
 }
 
 /**
@@ -265,7 +268,7 @@ export async function planConversionForStep(
   inputPath: string,
   step: LedgerStep,
 ): Promise<WorkspacePlan> {
-  return planRendering(inputPath, 'epub', GENERATED, step);
+  return (await planRendering(inputPath, 'epub', GENERATED, step)).plan;
 }
 
 /**
@@ -304,7 +307,7 @@ export async function planFacsimile(
   inputPath: string,
   step: LedgerStep,
 ): Promise<WorkspacePlan> {
-  return planRendering(inputPath, 'pdf', GENERATED, step);
+  return (await planRendering(inputPath, 'pdf', GENERATED, step)).plan;
 }
 
 /**
@@ -335,6 +338,21 @@ export async function planFacsimile(
  * refusal here would stop somebody exporting the book they are looking at, which is
  * the most ordinary reason to export at all.
  *
+ * ── AND IT IS THE ONE RENDERING THAT COMPILES THE EDITED BOOK ───────────────
+ *
+ * *"Export → materialize (replay) → engine compiles EPUB/txt."* (docs/RENDERER.md
+ * §6.) A position with applied changes on the way to it used to be refused here,
+ * because the engine builds from the pages that were read and the changes live
+ * beside them — so the book that came out would have had none of them in it. It
+ * is not refused any more: main replays the chain into a derived book file and
+ * the engine compiles THAT (`vlm-compile`), which is what makes a person who
+ * struck forty running heads and pressed Export get a book without them.
+ *
+ * The other renderings still refuse, each for its own reason — see
+ * `refuseOverEdits` — and a FACSIMILE export never touches any of this: it
+ * reprints the reading's own pages from the raw bank, which is a statement about
+ * what was read rather than about any state of the book downstream of it.
+ *
  * ── The refusals it DOES keep, verbatim ─────────────────────────────────────
  *
  * The reading has to be finished, said in the same words about the same bank: an
@@ -348,26 +366,81 @@ export async function planExport(
   inputPath: string,
   kind: ConversionKind = 'epub',
 ): Promise<WorkspacePlan> {
-  return planRendering(inputPath, kind, FINAL);
+  const planned = await planRendering(inputPath, kind, FINAL);
+  if (!planned.compiles) return planned.plan;
+  /*
+   * ── THE BOOK WITH THE CHANGES IN IT, WRITTEN OUT FOR THE ENGINE ────────────
+   *
+   * *"Export → materialize (replay) → engine compiles EPUB/txt."*
+   * (docs/RENDERER.md §6.) `planRendering` has just decided that this export both
+   * CAN and MUST carry changes — the layer, the format, the absence of a
+   * translation and the presence of applied changes are what that turns on — so
+   * here is the other half: the position's book file with its whole chain
+   * replayed into it, as a book file of its own, which is the only language main
+   * and the engine both speak.
+   *
+   * AT PLAN TIME, on `overlayPath`'s rule one function down: which state of the
+   * book this is is the state the person chose when they pressed the button, and
+   * materialising at spawn would let a pointer move made while the job waited
+   * export a different book than the dialog said it would.
+   *
+   * INTO THE OS TEMP DIRECTORY, under a folder of foundry's own — the same place
+   * the metadata stage puts the file it stamps (electron/job-queue.ts), and for
+   * the same reason: it is scratch, it belongs to one job, nothing catalogues it
+   * and the queue removes it when the job settles. `generated/` was the other
+   * candidate and is worse: everything in there is drawn, swept and reasoned
+   * about by the ledger, and a file nobody can name would be the one exception.
+   */
+  const derived = await materializeBook(planned.dir, path.join(os.tmpdir(), 'foundry'));
+  /*
+   * A REFUSAL HERE IS THE PERSON'S OWN SENTENCE. `materializeBook` answers in
+   * words for everything a person can be told about — a book file whose bank has
+   * moved, a step whose payload will not read — and the export dialog shows main's
+   * sentences verbatim, which is where those belong. What it will not do is queue
+   * a job over a book it could not read: an export that ran anyway would be the
+   * cast of an unedited book filed as an edition, which is the silence this whole
+   * wave exists to end.
+   */
+  if (!derived.ok) throw new ProjectError(derived.reason);
+  return { ...planned.plan, bookPath: derived.path };
 }
 
 /**
- * A CHAIN WITH APPLIED CHANGES IN IT CANNOT BE RENDERED YET, and this is the one
- * place that says so.
+ * A CHAIN WITH APPLIED CHANGES IN IT CANNOT BE RENDERED BY THE BANK ROUTE, and
+ * this is the one place that says so.
  *
  * ── Why a refusal is the only honest answer here ────────────────────────────
  *
- * The engine compiles a book out of a readings bank and a curation. It has never
- * heard of the op grammar, and it will not until export is rewired to compile
- * from a MATERIALISED book file (docs/RENDERER.md §9, R5). So a Generate, an
- * Export or a translation planned from a position with edit steps on its path
+ * The engine's `vlm-convert` compiles a book out of a readings bank and a
+ * curation. It has never heard of the op grammar and it is never going to: the
+ * changes a person makes on the proof sheet are ops in the ledger, replayed by
+ * one implementation that lives in this process (docs/RENDERER.md §9, R1). So a
+ * rendering that went down that route from a position with edit steps on its path
  * would run perfectly and produce a document with none of those changes in it —
  * the strikes back, the retyped sentences reverted, the relabelled headings as the
- * model first read them — and nothing on screen saying so. A person who struck
- * forty running heads and pressed Export would file a book that still has them.
- * That is the worst outcome available: silent, plausible, and discovered in a
- * finished file. NO FALLBACKS — the rule is a root fix or a refusal with a
- * sentence, and the root fix is a later wave's.
+ * model first read them — and nothing on screen saying so. That is the worst
+ * outcome available: silent, plausible, and discovered in a finished file.
+ *
+ * ── AND WHAT THE ROOT FIX TOOK OFF IT ───────────────────────────────────────
+ *
+ * *"A person who struck forty running heads and pressed Export would file a book
+ * that still has them."* Not any more: an EXPORT of an untranslated book to EPUB
+ * or to plain text goes through the compile now (`planExport`), so the sentence
+ * this refusal was written to prevent is prevented by making the book properly
+ * instead. What still comes here is everything that route cannot carry, and each
+ * of them for a reason rather than for the want of a wave:
+ *
+ *  - GENERATE, whose product is the `generated/` CAST — a workbench book carrying
+ *    the very editing stamps an edition withholds, which is what `translate`
+ *    reads and what select mode addresses. Compiling one is a different question
+ *    and is R6's, when the two collapse into one route.
+ *  - A FACSIMILE, which reprints the scan's own photographed lines page for page.
+ *    It is a record of the READING and compiles from the raw bank by definition
+ *    (§6); there is nothing about an edit for it to carry.
+ *  - AN EXPORT STANDING UNDER A TRANSLATION, whose words come out of a records
+ *    file keyed to the bank's own positions. Putting those words into a book file
+ *    the ops have restructured is the derived-book half of R5 and is not this
+ *    unit; until it lands, the refusal is the honest answer.
  *
  * ── ONE CHOKE POINT, NOT ONE PER BUTTON ─────────────────────────────────────
  *
@@ -396,15 +469,15 @@ function refuseOverEdits(ledger: ProjectLedger, forStep: LedgerStep | null): voi
   if (oldest === undefined) return;
   throw new ProjectError(
     edits.length === 1
-      ? `“${oldest.label}” is on the way to where you are standing, and Foundry cannot yet compile a `
-        + 'book that carries changes made on the proof sheet — the engine builds from the pages that '
-        + 'were read, and those changes live beside them. Making it anyway would hand you a document '
-        + 'with none of them in it. Stand on a step below that one to make this now.'
+      ? `“${oldest.label}” is on the way to where you are standing, and this one is built from the `
+        + 'pages that were read rather than from the book you have been editing — so it would hand '
+        + 'you a document with none of those changes in it. Export the book instead and every one of '
+        + 'them is in what you get, or stand on a step below that one to make this.'
       : `${edits.length} rows of applied changes are on the way to where you are standing, beginning `
-        + `with “${oldest.label}”, and Foundry cannot yet compile a book that carries them — the `
-        + 'engine builds from the pages that were read, and those changes live beside them. Making it '
-        + 'anyway would hand you a document with none of them in it. Stand on a step below the first '
-        + 'of them to make this now.',
+        + `with “${oldest.label}”, and this one is built from the pages that were read rather than `
+        + 'from the book you have been editing — so it would hand you a document with none of them '
+        + 'in it. Export the book instead and every one of them is in what you get, or stand on a '
+        + 'step below the first of them to make this.',
   );
 }
 
@@ -422,6 +495,23 @@ const FINAL = 'final';
 /** The layer a rendering writes into. See `planConversion` and `planExport`. */
 type RenderingLayer = typeof GENERATED | typeof FINAL;
 
+/**
+ * The plan, and the two facts about it that are this module's business and
+ * nobody else's.
+ *
+ * `WorkspacePlan` is what crosses the bridge to the window that asked, and it is
+ * a list of paths and nothing else. `dir` is where the project lives, which the
+ * renderer must never be handed (composing a project path over there is how a
+ * branch read ends up answering for the other reading's bank); `compiles` is the
+ * answer to "can this rendering carry the changes on the way to it", which is
+ * decided once, below, and read once, by `planExport`.
+ */
+interface PlannedRendering {
+  plan: WorkspacePlan;
+  dir: string;
+  compiles: boolean;
+}
+
 async function planRendering(
   inputPath: string,
   kind: ConversionKind,
@@ -437,7 +527,7 @@ async function planRendering(
    * same facts about the same project however this plan was reached.
    */
   forStep: LedgerStep | null = null,
-): Promise<WorkspacePlan> {
+): Promise<PlannedRendering> {
   const { dir } = await importDocument(inputPath, 'pdf');
   /*
    * ── ONE READING OF THE CATALOGUE, AND EVERY ANSWER BELOW COMES OUT OF IT ───
@@ -465,7 +555,32 @@ async function planRendering(
    * of answers however many languages the book passed through (shared/pipeline.ts).
    */
   const pipeline = renderPipeline(ledger, forStep);
-  refuseOverEdits(ledger, forStep);
+  /*
+   * ── WHICH ROUTE THIS RENDERING TAKES, AND IT IS FOUR FACTS ─────────────────
+   *
+   * An EXPORT of an untranslated book to EPUB or to plain text, FROM A POSITION
+   * THAT CARRIES APPLIED CHANGES, is compiled from a materialised book file —
+   * the one route that can carry what a person did on the proof sheet
+   * (docs/RENDERER.md §6). Everything else is the bank route, and everything else
+   * therefore still refuses over an edit chain; `refuseOverEdits` below carries
+   * the argument for each of the three cases it still fires on.
+   *
+   * A BOOK NOBODY HAS EDITED KEEPS THE LEGACY PATH, deliberately and for now. The
+   * two routes produce the same edition out of the same reading when there is
+   * nothing to replay — `vlm-convert --final` and `vlm-compile` write the same
+   * elements through the same emitter — so nothing is bought by moving it today
+   * and one thing is risked: every export in the library changing command at once.
+   * R6 COLLAPSES THEM, and it is the wave that can, because it is where the cast
+   * in `generated/` stops being a file anybody unpacks. Until then this condition
+   * is a line that gets deleted rather than a branch that grows.
+   */
+  const compiles = layer === FINAL
+    && (kind === 'epub' || kind === 'txt')
+    && pipeline.translate === null
+    && editsInEffect(ledger, forStep).length > 0;
+  // A no-op for the export that just took the compile route, and for every
+  // position with nothing applied on the way to it — which is most of them.
+  if (!compiles) refuseOverEdits(ledger, forStep);
   /*
    * ── THE READING HAS TO BE FINISHED, AND THIS IS EVERY RENDERING ────────────
    *
@@ -608,6 +723,9 @@ async function planRendering(
   await fsp.mkdir(path.join(dir, layer), { recursive: true });
   await fsp.mkdir(path.join(dir, 'readings'), { recursive: true });
   return {
+    dir,
+    compiles,
+    plan: {
     key: manifest.key,
     sourcePath,
     outputPath,
@@ -687,6 +805,7 @@ async function planRendering(
     ...(translated === null
       ? {}
       : { records: translated.records, language: translated.language }),
+    },
   };
 }
 

@@ -39,6 +39,7 @@ import { probeEndpoint, probeLocalPython, probeVllmLocal, probeWslVllm } from '.
 import { loadSettings, settingsPath, type FoundrySettings } from './backend/settings.js';
 import { dumpBlocks } from './vlm/blocks-dump.js';
 import { buildBookFile } from './vlm/book-run.js';
+import { compileBook } from './vlm/compile.js';
 import { vlmConvert } from './vlm/convert.js';
 import { replaysCompletedBank, vlmRead } from './vlm/read.js';
 import { DEFAULT_VLM_CONCURRENCY } from './vlm/endpoint.js';
@@ -339,6 +340,51 @@ const BOOK_PYTHON: OptionSpec = {
   type: 'string',
   placeholder: '<path>',
   describe: 'The interpreter with PyMuPDF in it, for the figure crops. Also FOUNDRY_VLM_PYTHON.',
+};
+
+// ── vlm-compile ──────────────────────────────────────────────────────────────
+
+const COMPILE_BOOK: OptionSpec = {
+  name: 'book',
+  type: 'string',
+  placeholder: '<book.jsonl>',
+  describe: 'The book file to compile. Read, never written — a derived one compiles like any other.',
+};
+
+/**
+ * The product, and it is the ONLY place the format is said.
+ *
+ * `vlm-convert` has a `--format` flag because it can be asked for four different
+ * things out of one bank and the ask has to be explicit. A book file compiles into
+ * two, the extension names one of them unambiguously, and a flag that could
+ * disagree with the filename would be a second way to state one decision.
+ */
+const COMPILE_OUT: OptionSpec = {
+  name: 'out',
+  type: 'string',
+  placeholder: '<file.epub|.txt>',
+  describe: 'Where the book is written. The extension chooses the format: .epub or .txt.',
+};
+
+const COMPILE_IMAGES: OptionSpec = {
+  name: 'images',
+  type: 'string',
+  placeholder: '<dir>',
+  describe: 'The figures this book\'s rows name, cut when it was made. Read, never written.',
+};
+
+const COMPILE_TITLE: OptionSpec = {
+  name: 'title',
+  type: 'string',
+  placeholder: '<title>',
+  describe: 'dc:title. Left out, the name of the file being written stands in for it.',
+};
+
+const COMPILE_AUTHOR: OptionSpec = {
+  name: 'author',
+  type: 'string',
+  placeholder: '<name>',
+  describe: 'dc:creator. Left out, none is written — an author is never inferred.',
 };
 
 // ── translate ────────────────────────────────────────────────────────────────
@@ -1027,6 +1073,30 @@ async function runVlmBook(args: ParsedArgs): Promise<void> {
     // hands the engine the options object it has always been handed.
     ...(pdfPath !== undefined ? { pdfPath } : {}),
     ...(python !== undefined ? { python } : {}),
+    log,
+  });
+}
+
+/**
+ * `vlm-compile` — a book file in, the finished document out.
+ *
+ * Every argument is a path or a piece of metadata; there is no switch that
+ * changes what the book SAYS, which is the whole point of compiling from a book
+ * file rather than from a bank. What the rows say is what comes out.
+ */
+async function runVlmCompile(args: ParsedArgs): Promise<void> {
+  const imagesDir = optionalString(args, 'images');
+  const title = optionalString(args, 'title');
+  const author = optionalString(args, 'author');
+  compileBook({
+    bookPath: requireString(args, 'book', 'the book file to compile'),
+    outPath: requireString(args, 'out', 'where the finished book is written'),
+    // Passed only where they were asked for, so a run with nothing to say about
+    // the book's metadata hands the compiler the options object it has always
+    // been handed.
+    ...(imagesDir !== undefined ? { imagesDir } : {}),
+    ...(title !== undefined ? { title } : {}),
+    ...(author !== undefined ? { author } : {}),
     log,
   });
 }
@@ -2022,6 +2092,58 @@ export const COMMANDS: readonly Command[] = [
     ].join('\n'),
     options: [BOOK_READINGS, BOOK_OUT, BOOK_PDF, BOOK_LANGUAGE, BOOK_PYTHON],
     run: runVlmBook,
+  },
+  {
+    name: 'vlm-compile',
+    summary: 'Compile a book file into the finished document: EPUB or plain text. No bank, no model.',
+    usage: '--book <book.jsonl> --out <file.epub|.txt> [--images <dir>] [--title <t>] [--author <a>]',
+    detail: [
+      'THE BOOK FILE IS THE BOOK. vlm-convert compiles a BANK — the model\'s page',
+      'answers, put through every rule that turns pages into a book — and that is',
+      'the right shape for a book nobody has touched. It is the wrong shape for a',
+      'book somebody has EDITED, because the edits are not in the bank: they are',
+      'changes recorded against block names, and the document they describe is the',
+      'book file with those changes replayed over it.',
+      '',
+      'So the replay happens once, where the person is looking at it, and what',
+      'reaches this command is a book file with the answer already in it — same',
+      'format, same names, the struck blocks absent and the words as they were',
+      'left. This command replays nothing and decides nothing about the book: what',
+      'the rows say is what it writes, and where the header says the book divides',
+      'is where it divides. A book file straight out of vlm-book compiles exactly',
+      'the same way, which is what makes the two routes one route.',
+      '',
+      'IT ALWAYS WRITES THE EDITION. vlm-convert has a --final switch because it',
+      'writes two books out of one bank: the working copy, which keeps a curator\'s',
+      'marks, and the edition, which is what you hand to a library. There is no',
+      'working copy here — that is the editor on screen — so the edition\'s rules',
+      'are constants: none of the attributes this program addresses elements by are',
+      'written. The page and the category stay, because page provenance is what',
+      'makes a scan citable and neither is visible to a reader.',
+      '',
+      'THE REFERENCE NUMBERS ARE LINKED BY POSITION AND NEVER BY SEARCH. Every',
+      'note in the book records the exact characters of the body its number is',
+      'printed at, resolved when the book was made with the page in front of it —',
+      'so the numbers link to their notes and the notes link back, and a number no',
+      'note answers to stays the plain superscript the page printed. The same digits',
+      'appear five times on a page of a book with fifty notes, and nothing here goes',
+      'looking for them.',
+      '',
+      'GIVE IT --images AND THE FIGURES GO IN. A picture is pixels, cut once into',
+      'readings/<key>.images/ when the book was made; every row that has one names',
+      'its file, and this copies them into the container. A row naming a figure',
+      'that was never cut, or one that is not in the directory it was pointed at,',
+      'STOPS THE RUN — a figure missing from the container is a broken image in the',
+      'reader, on a book that opened without an error. Plain text carries no',
+      'pictures at all and asks for none of it.',
+      '',
+      'The format is the extension of --out and nothing else: .epub or .txt.',
+      '--title and --author land in the package exactly as vlm-convert\'s do; the',
+      'language is the reading\'s own, carried by the book file\'s header, and is',
+      'declared rather than detected. Same book file and same flags, same bytes.',
+    ].join('\n'),
+    options: [COMPILE_BOOK, COMPILE_OUT, COMPILE_IMAGES, COMPILE_TITLE, COMPILE_AUTHOR],
+    run: runVlmCompile,
   },
   {
     name: 'vlm-read',

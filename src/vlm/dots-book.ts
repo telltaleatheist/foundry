@@ -1198,6 +1198,20 @@ const CATEGORY_ATTRIBUTE: Record<string, string> = {
 };
 
 /**
+ * What `data-bf-cat` says about a block of this category — the model's own
+ * vocabulary, lower-cased.
+ *
+ * EXPORTED FOR THE SECOND WRITER. `vlm-compile` builds an edition out of a BOOK
+ * FILE rather than out of a bank (`compile.ts`), and the attribute a reader of
+ * that book selects on has to be the same string this emitter writes or the two
+ * products of one program disagree about what a footnote is called. One table,
+ * two writers.
+ */
+export function categoryAttribute(category: DotsCategory): string {
+  return CATEGORY_ATTRIBUTE[category] ?? category.toLowerCase();
+}
+
+/**
  * The one `data-bf-cat` value that is not a dots category.
  *
  * It is BookForge's, not the model's: the picker's palette has a `chapter`
@@ -1396,6 +1410,135 @@ function pageBreak(page: number): string {
     + ` data-bf-page="${page}" aria-label="${page}"></span>`;
 }
 
+/**
+ * The attributes an element wears, as the caller composed them.
+ *
+ * A STRING AND NOT A MAP, because what goes in here is already spelled: the
+ * alignment class, the heading's anchor, and the stamps, each written by the one
+ * function that knows the fact it states. Re-parsing them into a map so that this
+ * could re-serialise them would be a second spelling of markup that is already
+ * correct.
+ */
+export interface BlockAttributes {
+  /** Everything after the tag name of the OUTER element. */
+  outer: string;
+  /** The same, for the child element the nesting categories write. */
+  inner?: string;
+}
+
+/**
+ * ONE BLOCK, AS ONE ELEMENT — the category→element switch, in one place.
+ *
+ * ── Why this is a function and not the emitter's inline switch ──────────────
+ *
+ * There are two writers of this book now. `buildChapterBody` below writes it out
+ * of the BANK, which is what a conversion does; `vlm-compile` (src/vlm/compile.ts)
+ * writes it out of a BOOK FILE, which is what an export does once a person has
+ * edited one. Both are answering the same question — which element does a Quote
+ * take, does a Picture carry its caption, is a table wrapped — and a second copy
+ * of the answer is a book whose exported edition differs from its cast in ways
+ * nobody decided. So the answer is here, once, and both callers ask it.
+ *
+ * WHAT IT DOES NOT DECIDE, deliberately: the attributes (the caller stamps what
+ * it knows), the CONTENT (the caller renders it, through `dotsInline`, with its
+ * own page marker in front where one is owed), and the `<ul>`/`<ol>` a run of
+ * list items sits inside — that is state across blocks rather than a fact about
+ * one, and it belongs in the loop that has the run in hand.
+ */
+export function blockElement(
+  category: DotsCategory,
+  attrs: BlockAttributes,
+  /** Already rendered: the page marker, then the inline markup of the words. */
+  content: string,
+  /** Picture rows only: the file the figure was cut to, and the page it was on. */
+  figure?: { name: string; page: number },
+): string {
+  switch (category) {
+    // Indented because a list item sits inside the `<ul>` its caller opened, and
+    // the two writers must not disagree about the shape of a book's list.
+    case 'List-item':
+      return `  <li${attrs.outer}>${content}</li>`;
+    case 'Title':
+      return `<h1${attrs.outer}>${content}</h1>`;
+    case 'Section-header':
+      return `<h2${attrs.outer}>${content}</h2>`;
+    case 'Quote':
+      return `<blockquote${attrs.outer}><p${attrs.inner ?? ''}>${content}</p></blockquote>`;
+    case 'Table':
+      return `<div class="tablewrap"${attrs.outer}>${content}</div>`;
+    case 'Formula':
+      return `<p class="formula"${attrs.outer}>${content}</p>`;
+    case 'Picture': {
+      if (figure === undefined) {
+        // Unreachable from either writer — both resolve the figure before they
+        // ask for the element, because a `<figure>` with no picture in it is a
+        // gap on the page and neither of them has a rule for making one.
+        throw new Error('a Picture block reached the emitter with no figure to put in it');
+      }
+      return `<figure${attrs.outer}>${content}`
+        + `<img src="../images/${figure.name}" alt="figure from page ${figure.page}"/></figure>`;
+    }
+    case 'Caption':
+      return `<p class="caption"${attrs.outer}>${content}</p>`;
+    default:
+      return `<p${attrs.outer}>${content}</p>`;
+  }
+}
+
+/** The id of the FIRST marker that claimed a note — where its backlink aims. */
+export function noteRefId(seq: number): string {
+  return `ref-fn${seq}`;
+}
+
+/**
+ * A reference number in the prose, as a link to its note.
+ *
+ * Only the FIRST reference carries an id: ids are unique and a backlink can only
+ * aim one place. A second marker for the same note still links forward.
+ */
+export function noteRefAnchor(seq: number, printed: number, id: string | null): string {
+  return `<a${id === null ? '' : ` id="${id}"`} class="noteref" epub:type="noteref"`
+    + ` role="doc-noteref" href="#fn${seq}"><sup>${printed}</sup></a>`;
+}
+
+/**
+ * The number a note opens with — a backlink where some marker claimed it, and a
+ * plain superscript where nothing did, because a link to nowhere teaches a reader
+ * not to click the next one. Empty for a note the page printed no number on.
+ */
+export function noteNumber(printed: number | null, refId: string | null): string {
+  if (printed === null) return '';
+  return refId !== null
+    ? `<a class="fn-back" epub:type="backlink" role="doc-backlink" href="#${refId}">`
+      + `<sup>${printed}</sup></a> `
+    : `<sup>${printed}</sup> `;
+}
+
+/**
+ * One note at the foot of its chapter.
+ *
+ * An `<aside epub:type="footnote">` rather than a `<p>`: that is the element
+ * reading systems recognise for pop-up notes, and it costs nothing to a reader
+ * that renders it in place.
+ */
+export function noteAside(seq: number, attrs: string, body: string): string {
+  return `<aside class="footnote" epub:type="footnote" role="doc-footnote" id="fn${seq}"`
+    + `${attrs}>${body}</aside>`;
+}
+
+/** The chapter's apparatus, opened. A rule, then the notes. */
+export const FOOTNOTES_OPEN = '<section class="footnotes" epub:type="footnotes">';
+export const FOOTNOTES_RULE = '<hr/>';
+export const FOOTNOTES_CLOSE = '</section>';
+
+/**
+ * The print-source page marker, the standard EPUB spelling of it — exported for
+ * `vlm-compile`, which owes a book file's pages the same anchors.
+ */
+export function pageMarker(page: number): string {
+  return pageBreak(page);
+}
+
 export interface DotsChapterOptions {
   column: BodyColumn;
   stripNoteMarkers: boolean;
@@ -1546,7 +1689,7 @@ function printedNumber(run: string): number {
 const ASCII_NOTE_LEAD = /^(\d{1,3})[ \t]/;
 
 /** A note's printed number as the page set it: the characters, and the value. */
-interface NoteLead {
+export interface NoteLead {
   /** Exactly the characters the number was set in, so a caller can cut them off. */
   run: string;
   printed: number;
@@ -1568,7 +1711,7 @@ interface NoteLead {
  * the marker match and the emitter all ask what a note's number is, and two
  * answers to that question is how an apparatus falls apart.
  */
-function noteLeadOf(text: string): NoteLead | null {
+export function noteLeadOf(text: string): NoteLead | null {
   const sup = LEADING_SUPERSCRIPT.exec(text);
   if (sup !== null) return { run: sup[0], printed: printedNumber(sup[0]) };
   const ascii = ASCII_NOTE_LEAD.exec(text);
@@ -1704,13 +1847,9 @@ export function buildChapterBody(
          * the EPUB cannot reach the txt export at all.
          */
         if (opts.final === true && note.struck) return null;
-        // Only the FIRST reference carries an id: ids are unique, and the
-        // backlink can only aim one place. A second marker for the same note
-        // still links forward.
         const first = note.refId === null;
-        if (first) note.refId = `ref-fn${note.seq}`;
-        return `<a${first ? ` id="${note.refId}"` : ''} class="noteref" epub:type="noteref"`
-          + ` role="doc-noteref" href="#fn${note.seq}"><sup>${printed}</sup></a>`;
+        if (first) note.refId = noteRefId(note.seq);
+        return noteRefAnchor(note.seq, printed, first ? note.refId : null);
       },
     });
 
@@ -1751,7 +1890,7 @@ export function buildChapterBody(
   const stamp = (
     block: DotsBlock,
     src: string,
-    attribute: string = CATEGORY_ATTRIBUTE[block.category],
+    attribute: string = categoryAttribute(block.category),
   ): string => {
     const n = opts.elementNumbers.get(block.page) ?? 1;
     opts.elementNumbers.set(block.page, n + 1);
@@ -1843,7 +1982,11 @@ export function buildChapterBody(
         out.push(`<${tag}${stamp(block, src)}>`);
         openList = tag;
       }
-      out.push(`  <li${stamp(block, src)}>${marker(block)}${inline(words, block.page)}</li>`);
+      out.push(blockElement(
+        'List-item',
+        { outer: stamp(block, src) },
+        `${marker(block)}${inline(words, block.page)}`,
+      ));
       continue;
     }
     closeList();
@@ -1857,7 +2000,7 @@ export function buildChapterBody(
         // opens on a Section-header did not become a Title by opening one.
         const tag = flow.category === 'Title' ? 'h1' : 'h2';
         const align = alignmentClass(block.box, opts.column);
-        const cat = opts.openers.has(index) ? CHAPTER_ATTRIBUTE : CATEGORY_ATTRIBUTE[flow.category];
+        const cat = opts.openers.has(index) ? CHAPTER_ATTRIBUTE : categoryAttribute(flow.category);
         /*
          * A Section-header that is neither the chapter's own title (the first
          * heading, where `label` comes from) nor one of its opening headings
@@ -1879,10 +2022,11 @@ export function buildChapterBody(
             headings.push({ id, label: headingLabel(text) });
           }
         }
-        out.push(
-          `<${tag}${anchor}${classOf(align)}${stamp(block, src, cat)}>`
-          + `${marker(block)}${xhtml}</${tag}>`,
-        );
+        out.push(blockElement(
+          flow.category,
+          { outer: `${anchor}${classOf(align)}${stamp(block, src, cat)}` },
+          `${marker(block)}${xhtml}`,
+        ));
         // The section's own name, flattened for the contents the same way an
         // inner heading's is: the document's `<h1>` keeps the printed break and
         // the nav gets one line of it.
@@ -1890,10 +2034,14 @@ export function buildChapterBody(
         break;
       }
       case 'Quote':
-        out.push(
-          `<blockquote${stamp(block, src)}><p${stamp(block, src)}>`
-          + `${marker(block)}${inline(words, block.page)}</p></blockquote>`,
-        );
+        out.push(blockElement(
+          'Quote',
+          // Two elements, one block, and the SAME stamp on both — see `stampSrc`:
+          // a decision about either is a decision about the same banked answer.
+          // The two calls are two element numbers, which is the counter's rule.
+          { outer: stamp(block, src), inner: stamp(block, src) },
+          `${marker(block)}${inline(words, block.page)}`,
+        ));
         break;
       case 'Footnote':
         // Already in `notes`, held back to the end of the chapter. The page
@@ -1911,28 +2059,36 @@ export function buildChapterBody(
          * this program did not write, and writing a stranger's HTML into a
          * `<div class="tablewrap">` is not something to do on a maybe.
          */
-        out.push(
-          `<div class="tablewrap"${stamp(block, src)}>${marker(block)}`
-          + `${checkTableHtml(flow.text, block.page)}</div>`,
-        );
+        out.push(blockElement(
+          'Table',
+          { outer: stamp(block, src) },
+          `${marker(block)}${checkTableHtml(flow.text, block.page)}`,
+        ));
         break;
       case 'Formula':
-        out.push(`<p class="formula"${stamp(block, src)}>${marker(block)}${inline(words, block.page)}</p>`);
+        out.push(blockElement(
+          'Formula',
+          { outer: stamp(block, src) },
+          `${marker(block)}${inline(words, block.page)}`,
+        ));
         break;
       case 'Picture': {
         const name = `p${String(block.page).padStart(4, '0')}-${opts.firstPicture + crops.length}.png`;
         crops.push({ page: block.page, box: block.box, name });
-        out.push(
-          `<figure${stamp(block, src)}>${marker(block)}`
-          + `<img src="../images/${name}" alt="figure from page ${block.page}"/></figure>`,
-        );
+        out.push(blockElement(
+          'Picture',
+          { outer: stamp(block, src) },
+          marker(block),
+          { name, page: block.page },
+        ));
         break;
       }
       case 'Caption':
-        out.push(
-          `<p class="caption"${stamp(block, src)}>`
-          + `${marker(block)}${inline(words, block.page)}</p>`,
-        );
+        out.push(blockElement(
+          'Caption',
+          { outer: stamp(block, src) },
+          `${marker(block)}${inline(words, block.page)}`,
+        ));
         break;
       default: {
         /*
@@ -1995,9 +2151,11 @@ export function buildChapterBody(
           if (n > 0 && part.page !== flow.parts[n - 1].page) joinedPages.push(part.page);
         }
         if (substituted) written.push(inline(words, block.page));
-        out.push(
-          `<p${classOf(align)}${stamp(block, src)}>${written.join('')}</p>`,
-        );
+        out.push(blockElement(
+          flow.category,
+          { outer: `${classOf(align)}${stamp(block, src)}` },
+          written.join(''),
+        ));
       }
     }
   }
@@ -2021,8 +2179,8 @@ export function buildChapterBody(
    */
   const emitted = opts.final === true ? notes.filter((note) => !note.struck) : notes;
   if (emitted.length > 0) {
-    out.push('<section class="footnotes" epub:type="footnotes">');
-    out.push('<hr/>');
+    out.push(FOOTNOTES_OPEN);
+    out.push(FOOTNOTES_RULE);
     for (const note of emitted) {
       /*
        * An <aside epub:type="footnote"> rather than a <p>: that is the element
@@ -2062,11 +2220,7 @@ export function buildChapterBody(
         ? lead
         : opts.stripNoteMarkers ? null : noteLeadOf(words);
       const rest = cut ? words.slice(cut.run.length).replace(/^\s+/, '') : words;
-      const number = printed === null
-        ? ''
-        : note.refId !== null
-          ? `<a class="fn-back" epub:type="backlink" role="doc-backlink" href="#${note.refId}"><sup>${printed}</sup></a> `
-          : `<sup>${printed}</sup> `;
+      const number = noteNumber(printed, note.refId);
       /*
        * `data-bf-note` — WHICH NOTE OF ITS BLOCK THIS IS, and the reason it has
        * to be written down is `data-bf-src`'s reason one paragraph over.
@@ -2107,14 +2261,13 @@ export function buildChapterBody(
       const editing = opts.final === true
         ? ''
         : ` data-bf-note="${note.ordinal}"${note.struck ? ' data-bf-cut="1"' : ''}`;
-      out.push(
-        `<aside class="footnote" epub:type="footnote" role="doc-footnote" id="fn${note.seq}"`
-        + `${stamp(note.block, sourceOfBlock(note.block))}`
-        + `${editing}>`
-        + `${number}${inline(rest)}</aside>`,
-      );
+      out.push(noteAside(
+        note.seq,
+        `${stamp(note.block, sourceOfBlock(note.block))}${editing}`,
+        `${number}${inline(rest)}`,
+      ));
     }
-    out.push('</section>');
+    out.push(FOOTNOTES_CLOSE);
   }
 
   return { xhtml: out.join('\n'), label, crops, notes: notes.length, joinedPages, headings };
