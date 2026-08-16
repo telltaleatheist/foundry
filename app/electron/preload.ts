@@ -144,6 +144,7 @@ const api: FoundryApi = {
     load: (projectDir) => ipcRenderer.invoke('book:load', projectDir),
     apply: (projectDir, ops) => ipcRenderer.invoke('book:apply', projectDir, ops),
     amend: (projectDir, ops) => ipcRenderer.invoke('book:amend', projectDir, ops),
+    view: (target) => ipcRenderer.invoke('book:view', target),
     correct: (projectDir, id, text) => ipcRenderer.invoke('book:correct', projectDir, id, text),
   },
 

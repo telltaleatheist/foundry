@@ -560,6 +560,12 @@ export interface FoundryApi {
      */
     amend(projectDir: string, ops: readonly BookOp[]): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
     /**
+     * A finished export in this library's tray, exploded and answered in
+     * book:load's own shape, read-only — ops empty, tip null, no translation
+     * pair. Refusals are sentences in the outcome, never rejections.
+     */
+    view(target: string): Promise<BookOutcome>;
+    /**
      * ONE CORRECTED PARAGRAPH ON A TRANSLATED POSITION — the words, to the
      * records, and never onto the ops chain.
      *

@@ -391,6 +391,9 @@ import { UiService } from '../../core/ui.service';
           } @else {
             <button role="menuitem" (click)="fromMenu(open.row, 'reveal')">Show in file manager</button>
             @if (open.row.kind === 'export') {
+              @if (open.row.path.toLowerCase().endsWith('.epub')) {
+                <button role="menuitem" (click)="fromMenu(open.row, 'view')">Open</button>
+              }
               <!-- The same door the finished shelf row presses — an OS save
                    dialog over a copy, so the export reaches the hand from
                    either surface it is met on. -->
@@ -872,10 +875,11 @@ export class OpenDocumentsComponent {
           title: label,
           tally: whenOn(made.madeAt),
           glyph: made.kind === 'epub' ? '▤' : made.kind === 'pdf' ? '▦' : '≡',
-          tooltip: made.kind === 'pdf'
-            ? `Open this ${label}\nExported ${new Date(made.madeAt).toLocaleString()}\n${path}`
-            : `Show this ${label} in the file manager\nExported `
-              + `${new Date(made.madeAt).toLocaleString()}\nRight-click to save a copy.\n${path}`,
+          tooltip: made.kind === 'txt'
+            ? `Show this ${label} in the file manager\nExported `
+              + `${new Date(made.madeAt).toLocaleString()}\nRight-click to save a copy.\n${path}`
+            : `Open this ${label}\nExported ${new Date(made.madeAt).toLocaleString()}\n`
+              + `Right-click or Ctrl+S in its tab to save a copy.\n${path}`,
           depth: 1,
           dir: project.dir,
           // A finished thing this app made, so it wears the dot when it is opened:
@@ -1174,7 +1178,19 @@ export class OpenDocumentsComponent {
        * menu offers, promoted to the click, because a dead left-click teaches
        * people the row is furniture.
        */
-      if (row.kind === 'export') void api?.reveal(row.path);
+      if (row.kind === 'export') {
+        /*
+         * The click model is the user's (2026-08-16): an exported BOOK opens in
+         * a tab — the proof sheet locked to the Final version over the file
+         * itself — and Ctrl+S there saves a copy. Plain text still reveals: it
+         * has no book inside it to show.
+         */
+        if (row.path.toLowerCase().endsWith('.epub')) {
+          this.tabs.openExportView(row.path, row.title);
+        } else {
+          void api?.reveal(row.path);
+        }
+      }
       return;
     }
     void this.router.navigateByUrl('/');
@@ -1368,6 +1384,9 @@ export class OpenDocumentsComponent {
         void api?.saveExport(row.path).catch((err: unknown) => {
           this.tabs.notice.set(err instanceof Error ? err.message : String(err));
         });
+        return;
+      case 'view':
+        this.tabs.openExportView(row.path, row.title);
         return;
       case 'close':
         if (row.tab !== null) void this.tabs.close(row.tab.id);
@@ -1584,7 +1603,7 @@ export class OpenDocumentsComponent {
 }
 
 /** What a right-click can offer, across the four kinds of row. */
-type MenuAction = 'reveal' | 'save-copy' | 'close' | 'delete' | 'close-project' | 'split' | 'discard';
+type MenuAction = 'reveal' | 'save-copy' | 'view' | 'close' | 'delete' | 'close-project' | 'split' | 'discard';
 
 /**
  * One drawn line of the library.

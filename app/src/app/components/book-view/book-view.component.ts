@@ -552,7 +552,12 @@ const SCROLL_SETTLE_MS = 400;
           for a segmented control, and buttons are reachable, pressable and
           focusable from a keyboard with nothing added.
         -->
-        <div class="tray head">
+        <!--
+          AN EXPORT VIEW HAS NO HEAD AT ALL: one register, no pair, no verbs —
+          a control whose every segment is refused is furniture explaining
+          itself, and the absence says "this is the finished file" better.
+        -->
+        <div class="tray head" [style.display]="viewing() ? 'none' : null">
           <div class="segments" role="group" aria-label="How this book is shown">
             <button
               type="button"
@@ -920,7 +925,11 @@ const SCROLL_SETTLE_MS = 400;
           away, and the head that gets you there is the only thing on the bench
           that stays.
         -->
-        <div class="tray" [attr.inert]="edition() ? '' : null">
+        <div
+          class="tray"
+          [style.display]="viewing() ? 'none' : null"
+          [attr.inert]="edition() ? '' : null"
+        >
           @if (waiting() > 0) {
             <button type="button" class="act ghost" (click)="undo()">Undo</button>
           }
@@ -1893,6 +1902,15 @@ export class BookViewComponent {
   protected readonly edition = computed(() => this.mode() === 'edition');
 
   /**
+   * A TAB THAT SHOWS A FINISHED EXPORT — the sheet locked to the Final version
+   * register over an exploded copy of the file (user ruling, 2026-08-16:
+   * left-click opens it, Ctrl+S saves a copy). Nothing about it is a position:
+   * no stack, no Apply, no register toggle, and every door that would edit
+   * says where editing lives instead.
+   */
+  protected readonly viewing = computed(() => this.tab().viewOnly === true);
+
+  /**
    * WHETHER THE SOURCE STANDS BESIDE THE TRANSLATION — the second control, and
    * the one that is not a register.
    *
@@ -2331,10 +2349,15 @@ export class BookViewComponent {
       );
     }
     try {
-      const loaded = await api.book.load(projectDir);
+      const loaded = this.viewing()
+        ? await api.book.view(projectDir)
+        : await api.book.load(projectDir);
       if (ticket !== this.asked) return;
       if (loaded.ok) {
         this.book.set(loaded);
+        // The finished-book projection is the only honest register for a
+        // finished file; `show` refuses to leave it while viewing.
+        if (this.viewing()) this.mode.set('edition');
         /*
          * ── THE STACK HYDRATES FROM THE TIP ─────────────────────────────────
          *
@@ -2781,6 +2804,9 @@ export class BookViewComponent {
     if (register === 'edition') this.alignment.set('alone');
     // A card is a glance at the bench's book; neither register keeps one up.
     this.peek.set(null);
+    // An export view has one register: the file is finished, and a workbench
+    // over it would draw instruments nothing here can honour.
+    if (this.viewing()) return;
     this.mode.set(register);
   }
 
@@ -3145,7 +3171,7 @@ export class BookViewComponent {
      * on the wrong thing, and doing nothing at all would be a click that reports
      * no answer.
      */
-    if (this.edition()) {
+    if (this.edition() && !this.viewing()) {
       this.mode.set('workbench');
       afterNextRender(() => this.land(id), { injector: this.injector });
       return;
@@ -3377,6 +3403,20 @@ export class BookViewComponent {
    */
   private push(...ops: readonly BookOp[]): void {
     if (ops.length === 0) return;
+    /*
+     * AN EXPORT VIEW TAKES NO DECISIONS, and the panels are the one door that
+     * can still reach this line (the paper's own gestures are all behind the
+     * edition guards). The sentence says where editing lives rather than the
+     * push vanishing — a click that does nothing silently is the failure this
+     * app keeps refusing to ship.
+     */
+    if (this.viewing()) {
+      this.tabs.notice.set(
+        'This tab shows a finished export. To change the book, open it from its step in the tree '
+        + 'and export again.',
+      );
+      return;
+    }
     /*
      * AND ANY DECISION AT ALL PUTS THE PANE BACK ON THE BENCH.
      *

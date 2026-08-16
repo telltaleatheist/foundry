@@ -191,6 +191,13 @@ export interface Tab {
    * mode that resets itself when you glance away is a view mode you stop using.
    */
   layerView: boolean;
+  /**
+   * A BOOK TAB THAT SHOWS A FINISHED EXPORT, read-only — the proof sheet locked
+   * to the Final version register over an exploded copy of the file. Its path
+   * is the EPUB itself, not a project directory, and nothing about it is a
+   * position: no stack, no Apply, and Ctrl+S saves a copy of the export.
+   */
+  viewOnly?: boolean;
   /** True while the PDF viewer's thumbnail strip is up. ON by default — it sits
    *  along the bottom where it costs little, and Owen wants the pages in reach. */
   thumbnails: boolean;
@@ -1538,6 +1545,28 @@ export class TabsService {
    * shared/api.ts), and a door answering "yes, you may open this directory" would
    * be a door granting access to a folder for being asked about it.
    */
+  /**
+   * OPEN A FINISHED EXPORT IN A TAB — the proof sheet over the file itself.
+   *
+   * The click model is the user's (2026-08-16): left-click an export leaf opens
+   * it, Ctrl+S saves a copy somewhere else, and the context menu carries the
+   * rest. What the tab shows is the export EXPLODED — the same derivation an
+   * imported EPUB gets — locked to the Final version register, because what the
+   * file contains is a finished book and the finished-book projection is the
+   * honest way to look at one. One tab per file, like every document.
+   */
+  openExportView(path: string, title: string): void {
+    const key = fold(path);
+    const already = this.all().find((tab) => tab.kind === 'book' && fold(tab.path) === key);
+    if (already !== undefined) {
+      this.reveal(already.id, true);
+      return;
+    }
+    const made: Tab = { ...this.blankTab('book', path, title), viewOnly: true };
+    this.all.update((tabs) => [...tabs, made]);
+    this.reveal(made.id, true);
+  }
+
   private bookTabIn(projectDir: string): string {
     const key = fold(projectDir);
     const already = this.all().find((tab) => tab.kind === 'book' && fold(tab.path) === key);
@@ -3099,12 +3128,33 @@ export class TabsService {
   /** The menu's Save / Save As. The focused pane's document. */
   async saveActive(): Promise<void> {
     const tab = this.active();
-    if (tab) await this.save(tab.id);
+    if (tab === null) return;
+    /*
+     * CTRL+S OVER AN EXPORT VIEW SAVES A COPY — the user's own reading of the
+     * chord (2026-08-16). The tab's file is finished and already filed in the
+     * project's tray; "save" over it can only mean "put a copy where I choose",
+     * which is the export door's dialog. Both chords say it, because Save and
+     * Save As collapse to one meaning over a file this app will never rewrite.
+     */
+    if (tab.viewOnly === true) {
+      await api?.saveExport(tab.path).catch((err: unknown) => {
+        this.notice.set(err instanceof Error ? err.message : String(err));
+      });
+      return;
+    }
+    await this.save(tab.id);
   }
 
   async saveActiveAs(): Promise<void> {
     const tab = this.active();
-    if (tab) await this.saveAs(tab.id);
+    if (tab === null) return;
+    if (tab.viewOnly === true) {
+      await api?.saveExport(tab.path).catch((err: unknown) => {
+        this.notice.set(err instanceof Error ? err.message : String(err));
+      });
+      return;
+    }
+    await this.saveAs(tab.id);
   }
 
   private patch(id: string, changes: Partial<Tab>): void {

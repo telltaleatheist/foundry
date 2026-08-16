@@ -59,6 +59,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { writeBookFile, writeEpubBook } from './engine';
@@ -72,6 +73,7 @@ import {
   opsPayloadFor,
   ProjectError,
   projectDirOf,
+  readManifest,
   readStepLedger,
   recordBookEdit,
   recordBookEditAmend,
@@ -1148,6 +1150,86 @@ export async function applyBookOps(projectDir: string, ops: readonly BookOp[]): 
  * child that landed between the pane's load and its Apply meets a refusal
  * rather than a rewrite of a file that stopped being safe to rewrite.
  */
+/**
+ * VIEW A FINISHED EXPORT — the file exploded into a book file and handed to the
+ * pane read-only, in the same shape `book:load` answers.
+ *
+ * ── The same derivation an imported EPUB gets, aimed at a temp cache ────────
+ *
+ * The iframe reader is deleted and stays deleted; what shows an EPUB now is the
+ * proof sheet over `f(epub)`, which is honest in a way a rendering engine over
+ * foreign markup never was — the pane draws exactly what the container holds,
+ * through the one explode. The cache is keyed by the FILE'S OWN BYTES (sixteen
+ * hex of sha-256), so a re-export at the same name views fresh and an unchanged
+ * file explodes once; it lives in the OS temp directory because it is a viewing
+ * artifact of a copy, not a fact about the project — the project's own book
+ * files describe positions, and this file may be three Applies stale by design.
+ *
+ * GATED ON THE FINAL TRAY, exactly as `export:save-copy` is and for its reason:
+ * this door exists so a person can look at the thing this app just filed, and
+ * membership in a project's tray is the whole of that claim.
+ */
+export async function viewExportedBook(target: string): Promise<BookOutcome> {
+  const resolved = path.resolve(target);
+  const dir = projectDirOf(resolved);
+  const inside = dir === null ? null : path.relative(dir, resolved).split(path.sep);
+  if (dir === null || inside === null || inside.length !== 2 || inside[0] !== 'final'
+    || !resolved.toLowerCase().endsWith('.epub')) {
+    return { ok: false, reason: 'This tab can only show one of this library’s exported books.' };
+  }
+  let bytes: Buffer;
+  try {
+    bytes = await fsp.readFile(resolved);
+  } catch (err) {
+    console.error(`[book] ${resolved} could not be read for viewing: ${(err as Error).message}`);
+    return { ok: false, reason: 'This export could not be read back from the tray.' };
+  }
+  const sha = createHash('sha256').update(bytes).digest('hex').slice(0, 16);
+  const cave = path.join(os.tmpdir(), 'foundry-view');
+  await fsp.mkdir(cave, { recursive: true });
+  const book = path.join(cave, `${sha}.book.jsonl`);
+  if (!await exists(book)) {
+    const made = await writeEpubBook(resolved, book);
+    if (!made.ok) {
+      console.error(`[book] ${resolved} would not explode for viewing: ${made.reason ?? ''}`);
+      return {
+        ok: false,
+        reason: 'This export could not be opened as a book. The engine refused, and its own words '
+          + 'are in the terminal.',
+      };
+    }
+  }
+  let parsed: BookFile;
+  try {
+    parsed = parseBookFile(await fsp.readFile(book, 'utf8'));
+  } catch (err) {
+    if (!(err instanceof BookFileError)) throw err;
+    // A stale or half-written cache entry is swept and the next open remakes
+    // it; the cache is nobody's record of anything.
+    await fsp.rm(book, { force: true });
+    console.error(`[book] the view cache for ${resolved} would not parse: ${err.message}`);
+    return { ok: false, reason: 'This export could not be opened as a book. Try it again.' };
+  }
+  const manifest = await readManifest(dir);
+  const figures = parsed.rows.some((row) => row.image !== undefined)
+    ? figuresPrefixFor(path.join(cave, `${sha}.images`))
+    : null;
+  return {
+    ok: true,
+    title: manifest.title,
+    language: parsed.header.language,
+    rows: parsed.rows,
+    chapters: parsed.header.chapters,
+    typography: parsed.header.typography,
+    seams: parsed.header.seams,
+    loose: parsed.header.loose,
+    figures,
+    ops: [],
+    tip: null,
+    translation: null,
+  };
+}
+
 export async function amendBookOps(projectDir: string, ops: readonly BookOp[]): Promise<LedgerView> {
   const at = await bookAtPosition(projectDir);
   if (ops.length === 0) {

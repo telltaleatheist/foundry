@@ -37,6 +37,7 @@ import {
   correctBookBlock,
   loadBook,
   materializeTranslation,
+  viewExportedBook,
 } from './book';
 import {
   engineInfo,
@@ -2079,6 +2080,9 @@ function registerIpc(): void {
    */
   ipcMain.handle('book:amend', (_event, projectDir: string, ops: BookOp[]) =>
     amendBookOps(projectDir, ops));
+  // A finished export, exploded and shown read-only — never a rejection a pane
+  // cannot draw: every refusal is a sentence in the outcome.
+  ipcMain.handle('book:view', (_event, target: string) => viewExportedBook(target));
   ipcMain.handle('book:apply', (_event, projectDir: string, ops: BookOp[]) =>
     applyBookOps(projectDir, ops));
   /*
