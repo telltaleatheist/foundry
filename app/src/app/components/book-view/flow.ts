@@ -151,3 +151,49 @@ export function sharedAnchor(
   }
   return null;
 }
+
+/**
+ * THE BOOK IN THE BENCH'S ORDER — every chapter's prose, then that chapter's
+ * notes, then the next chapter.
+ *
+ * ── The ruling this serves (user, 2026-08-16) ───────────────────────────────
+ *
+ * The apparatus reads at the end of its chapter, ON THE WORKBENCH TOO — not
+ * only in the edition and the export. The bench used to draw each page's notes
+ * where the printer set them, which is faithful to the scan and wrong for the
+ * document being edited: the page is not a unit of this book any more
+ * (docs/RENDERER.md §0, ruling 3 — pages are kept and not trusted), and a
+ * paragraph interrupted every few hundred words by the foot of a page nobody
+ * is looking at is the scan's layout leaking into the edit. So the one
+ * reordering the edition performs (`editionFlow`, ./edition) is performed for
+ * the bench as well, by this function, with one difference that is the whole
+ * reason it exists beside `editionFlow` rather than replacing it: NOTHING IS
+ * DROPPED. The bench draws struck rows cancelled — struck is a state of the
+ * document, not of a mode — so this is a pure REORDER over every row it is
+ * handed, and the edition keeps its own projection, which also filters.
+ *
+ * The shelf is not special-cased here for `linesOf`'s reason: the caller's
+ * line-builder already skips shelved rows, and a reorder that also filtered
+ * would be two functions deciding one question.
+ */
+export function chapterOrder<T>(
+  rows: readonly T[],
+  of: (row: T) => { category: string; opens: boolean },
+): T[] {
+  const out: T[] = [];
+  let body: T[] = [];
+  let notes: T[] = [];
+  const close = (): void => {
+    out.push(...body, ...notes);
+    body = [];
+    notes = [];
+  };
+  for (const row of rows) {
+    const read = of(row);
+    if (read.opens) close();
+    if (read.category === 'Footnote') notes.push(row);
+    else body.push(row);
+  }
+  close();
+  return out;
+}

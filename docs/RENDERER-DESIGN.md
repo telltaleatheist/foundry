@@ -141,14 +141,29 @@ past the text into the gutters (`margin-inline: -0.9rem; padding-inline:
 - **Note markers:** a reference number renders as a real element: sienna,
   raised, `padding: 0 .18em`, radius `.45em`, hairline sienna underline on
   hover. Hover a marker → its note gains the hover tint; hover a note → its
-  marker(s) do. Click either → smooth-scroll to the other with a 600ms tint
-  pulse. **Unlinked** marker or note: `--ink-flag` dotted underline + an
-  amber dot flag in the right gutter that expands on hover to a pill naming
-  the problem ("no note carries this number"). Deleting a note strikes its
-  markers with it — derived, animated together.
-- **Footnote rows:** set at the measured footnote ratio, separated from the
-  body by a short hairline rule (`4rem` wide, `--ink-faint`) above the first
-  note of a page-group, sienna ordinal in the gutter.
+  marker(s) do. **Click either → the PEEK CARD** (user ruling, 2026-08-16:
+  *the scrollbar is the reader's; a click must not move it*): the counterpart
+  appears on a small card of `--paper-high` beside the click — sienna left
+  rail, small-caps head naming category and ≈page, 22rem wide, capped and
+  scrollable — joined to the click point by a 1.5px sienna leader with a dot
+  at its origin, all in sheet coordinates so the pair rides the scroll like
+  ink. The clicked note's own number is lit inside the shown paragraph. The
+  card's "Go there" is the old jump (smooth-scroll + 600ms pulse), asked for
+  by name; a second click on the same counterpart, a press anywhere on the
+  paper, or Escape dismisses. **Unlinked** marker or note: `--ink-flag`
+  dotted underline + an amber dot flag in the right gutter that expands on
+  hover to a pill naming the problem ("no note carries this number").
+  Deleting a note strikes its markers with it — derived, animated together.
+- **Footnote rows:** set at the measured footnote ratio, **collected at the
+  end of their chapter on the workbench too** (user ruling, 2026-08-16 — the
+  page is not a unit of this book; the bench shows the document being made,
+  not the scan's layout), separated from the prose by the short hairline rule
+  (`4rem` wide, `--ink-faint`) above the first note of the chapter's
+  apparatus, sienna ordinal in the gutter, page ghosts still whispering which
+  leaf each note came from.
+- **Alt+click:** selects every block of the clicked block's category — "all
+  the footnotes", "all the captions" — one gesture for a book-wide decision.
+  Alt rather than double-click, because double-click is the editor's.
 
 ## 5. Panels and overlays
 

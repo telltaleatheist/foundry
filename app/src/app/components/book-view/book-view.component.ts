@@ -22,7 +22,7 @@ import { api } from '../../core/foundry';
 import { LedgerService } from '../../core/ledger.service';
 import { TabsService, type BookStack, type Tab } from '../../core/tabs.service';
 import { editionFlow, editionPieces } from './edition';
-import { flowNeighbours, seamJoins, sharedAnchor } from './flow';
+import { chapterOrder, flowNeighbours, seamJoins, sharedAnchor } from './flow';
 
 /**
  * THE BOOK — a proof sheet on a dark workbench, and the one surface this app
@@ -612,6 +612,7 @@ const SCROLL_SETTLE_MS = 400;
           (dblclick)="edit($event)"
           (keydown.delete)="cancel($event)"
           (keydown.backspace)="cancel($event)"
+          (keydown.escape)="dismissPeek()"
           (keydown.control.j)="joinChosen($event)"
           (keydown.meta.j)="joinChosen($event)"
         >
@@ -822,6 +823,51 @@ const SCROLL_SETTLE_MS = 400;
               [style.width.px]="box.width"
               [style.height.px]="box.height"
             ></div>
+          }
+          <!--
+            THE PEEK CARD — the other half of an apparatus, brought to the hand
+            instead of the hand being dragged to it. Clicking a reference number
+            or a note used to scroll the sheet to the counterpart; the ruling is
+            that the scrollbar is the reader's and a click must not move it. So
+            the counterpart appears ON a card beside the click, joined to it by
+            a short sienna leader, and the one deliberate way to travel remains:
+            the card's own "Go there", which is the old jump, asked for by name.
+            Anchored in sheet coordinates, so it rides the scroll like any ink.
+          -->
+          @if (peeked(); as card) {
+            <svg
+              class="peek-line"
+              [style.left.px]="card.line.left"
+              [style.top.px]="card.line.top"
+              [attr.width]="card.line.width"
+              [attr.height]="card.line.height"
+            >
+              <circle [attr.cx]="card.line.x1" [attr.cy]="card.line.y1" r="2.5"></circle>
+              <line
+                [attr.x1]="card.line.x1" [attr.y1]="card.line.y1"
+                [attr.x2]="card.line.x2" [attr.y2]="card.line.y2"
+              ></line>
+            </svg>
+            <aside
+              class="peek"
+              [style.left.px]="card.x"
+              [style.top.px]="card.y"
+              (pointerdown)="$event.stopPropagation()"
+            >
+              <div class="peek-head">
+                <span class="peek-what">{{ card.label }} · ≈ {{ card.page }}</span>
+                <button type="button" class="peek-go" (click)="travel(card.target)">Go there</button>
+              </div>
+              <p class="peek-words" [class.struck-words]="card.struck">
+                @for (piece of card.pieces; track $index) {
+                  @if (piece.marker; as marker) {
+                    <span class="marker plain" [class.hot]="marker.note === peekFrom()">{{ piece.text }}</span>
+                  } @else {
+                    <span class="run">{{ piece.text }}</span>
+                  }
+                }
+              </p>
+            </aside>
           }
         </div>
         <!--
@@ -1254,6 +1300,68 @@ const SCROLL_SETTLE_MS = 400;
       border: 1px solid color-mix(in srgb, var(--ink-select) 55%, transparent);
       background: color-mix(in srgb, var(--ink-select) 12%, transparent);
       pointer-events: none;
+    }
+
+    /* ── §4 The peek card — the other half of an apparatus, beside the hand.
+       A small sheet of the brighter paper joined to the click by a sienna
+       leader; it rides the scroll (sheet coordinates) and never moves it. ── */
+    .peek-line { position: absolute; z-index: 3; pointer-events: none; overflow: visible; }
+    .peek-line circle { fill: var(--ink-note); }
+    .peek-line line {
+      stroke: color-mix(in srgb, var(--ink-note) 55%, transparent);
+      stroke-width: 1.5;
+    }
+    .peek {
+      position: absolute;
+      z-index: 4;
+      width: 22rem;
+      max-height: 16rem;
+      overflow-y: auto;
+      padding: 0.6rem 0.85rem 0.7rem;
+      border: 1px solid color-mix(in srgb, var(--ink-note) 30%, transparent);
+      border-left: 3px solid color-mix(in srgb, var(--ink-note) 65%, transparent);
+      border-radius: var(--radius);
+      background: var(--paper-high);
+      box-shadow: 0 2px 6px rgb(0 0 0 / .18), 0 8px 28px rgb(0 0 0 / .12);
+      font-size: 0.85em;
+      line-height: 1.5;
+      scrollbar-width: thin;
+    }
+    .peek-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.6rem;
+      margin-bottom: 0.35rem;
+    }
+    .peek-what {
+      color: var(--ink-note);
+      font-size: 10px;
+      font-weight: 600;
+      font-variant: small-caps;
+      letter-spacing: 0.06em;
+    }
+    .peek-go {
+      border: 0;
+      padding: 0;
+      background: none;
+      color: var(--ink-select);
+      font: inherit;
+      font-size: 10px;
+      cursor: pointer;
+    }
+    .peek-go:hover { text-decoration: underline; }
+    .peek-words { margin: 0; color: var(--ink); }
+    .peek-words .marker.plain { color: var(--ink-note); }
+    .peek-words .marker.hot {
+      background: color-mix(in srgb, var(--ink-note) 22%, transparent);
+      border-radius: 0.45em;
+    }
+    /* The card is honest about a struck counterpart: cancelled there, cancelled here. */
+    .peek-words.struck-words {
+      opacity: 0.55;
+      text-decoration: line-through;
+      text-decoration-color: color-mix(in srgb, var(--ink-strike) 55%, transparent);
     }
 
     /* ── §2/§4 The type itself ────────────────────────────────────────────── */
@@ -1781,11 +1889,33 @@ export class BookViewComponent {
     /** Where this block jumps to when it is clicked — a note's first marker. */
     jump: string | null;
     extend: boolean;
+    /** Alt was down: the press asks for every block of this one's category. */
+    similar: boolean;
     base: ReadonlySet<string>;
     dragging: boolean;
   } | null = null;
 
   private pulseTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * THE PEEK — which counterpart is on the card, and where the card sits.
+   *
+   * Raw geometry in SHEET coordinates, decided once at the click (`peekAt`) so
+   * the card and its leader ride the scroll like any other ink on the paper —
+   * the whole point of the card is that the scrollbar is the reader's and a
+   * click must not move it. `from` is the NOTE the pair belongs to, whichever
+   * half was clicked, so the card can light that note's own number inside the
+   * paragraph it shows. Cleared by any press on the paper, by Escape, by a mode
+   * change and by travel — a card is a glance, not a state of the pane.
+   */
+  protected readonly peek = signal<{
+    target: string;
+    from: string | null;
+    x: number;
+    y: number;
+    line: { left: number; top: number; width: number; height: number;
+      x1: number; y1: number; x2: number; y2: number };
+  } | null>(null);
 
   /**
    * True between a successful Apply and the reload it causes — the one thing
@@ -1986,6 +2116,7 @@ export class BookViewComponent {
     this.editingId.set(null);
     this.renaming.set(null);
     this.menu.set(null);
+    this.peek.set(null);
     /*
      * THE STACK GOES WITH THE LOAD, and it is said out loud when it held anything.
      *
@@ -2171,7 +2302,18 @@ export class BookViewComponent {
      * of the replayed rows (`seamJoins`, ./flow).
      */
     const seams = seamJoins(replayed.rows, book.seams);
-    return linesOf(replayed.rows, {
+    /*
+     * THE APPARATUS READS AT THE END OF ITS CHAPTER, on the bench as in the
+     * edition and the export — the user's ruling, applied by `chapterOrder`
+     * (./flow), which reorders and drops nothing. The rows are cut into spans
+     * at the replay's own divisions, so the panel and the paper cannot disagree
+     * about where a chapter starts.
+     */
+    const ordered = chapterOrder(replayed.rows, (row) => ({
+      category: row.category,
+      opens: chapters.has(row.id),
+    }));
+    return linesOf(ordered, {
       printed: this.printed(),
       size: (category) => sizeOf(book, category),
       chapters,
@@ -2231,7 +2373,20 @@ export class BookViewComponent {
       }
     }
     for (const markers of printed.values()) markers.sort((one, other) => one.at - other.at);
-    return linesOf(source.rows, {
+    /*
+     * ORDERED WITH THE SAME DIVISIONS AS THE LIVE COLUMN, which is load-bearing
+     * for the scroll lock: `sharedAnchor` assumes the two columns hold their
+     * shared ids in the same order, and a left column still in page order beside
+     * a right column in chapter order would anchor a reader onto the wrong
+     * paragraph. The division ids are shared between the files by construction
+     * (parent ids kept verbatim, docs/RENDERER.md §4).
+     */
+    const divisions = new Set((this.view()?.chapters ?? []).map((chapter) => chapter.id));
+    const ordered = chapterOrder(source.rows, (row) => ({
+      category: row.category,
+      opens: divisions.has(row.id),
+    }));
+    return linesOf(ordered, {
       printed,
       // The parent's measurements, which are also this book's: a translation
       // carries its source's typography verbatim, because translating the words
@@ -2372,6 +2527,8 @@ export class BookViewComponent {
      * around them.
      */
     if (register === 'edition') this.alignment.set('alone');
+    // A card is a glance at the bench's book; neither register keeps one up.
+    this.peek.set(null);
     this.mode.set(register);
   }
 
@@ -2632,6 +2789,93 @@ export class BookViewComponent {
   }
 
   /**
+   * The card, resolved against the book being drawn — the peek's geometry
+   * joined with the target row's own pieces, label and state. Null while no
+   * card is up OR when the chain has taken the target out of the book from
+   * under an open card, which closes it by answering nothing.
+   */
+  protected readonly peeked = computed(() => {
+    const peek = this.peek();
+    if (peek === null) return null;
+    const line = this.lines().find((one) => one.row.id === peek.target);
+    if (line === undefined) return null;
+    return {
+      target: peek.target,
+      label: line.label,
+      page: line.row.pages[0] ?? line.row.page,
+      pieces: line.pieces,
+      struck: line.row.struck === true,
+      x: peek.x,
+      y: peek.y,
+      line: peek.line,
+    };
+  });
+
+  /** The note whose pair is on the card — the number the card lights. */
+  protected peekFrom(): string | null {
+    return this.peek()?.from ?? null;
+  }
+
+  /**
+   * Open the card beside the click, or close it when the same counterpart is
+   * asked for twice — the second click is the reader saying they are done.
+   *
+   * The geometry is decided here, once: the card stands to the RIGHT of the
+   * click where the paper has room and to the left where it does not, and the
+   * leader runs from the click point to the card's near top corner. All of it
+   * in sheet coordinates — see `peek`.
+   */
+  private peekAt(
+    sheet: HTMLElement,
+    clientX: number,
+    clientY: number,
+    target: string,
+    from: string | null,
+  ): void {
+    if (this.peek()?.target === target) {
+      this.peek.set(null);
+      return;
+    }
+    const box = sheet.getBoundingClientRect();
+    const ax = clientX - box.left;
+    const ay = clientY - box.top;
+    const width = 352;
+    const right = ax + 28;
+    const x = right + width > box.width - 12 ? Math.max(12, ax - 28 - width) : right;
+    const y = Math.max(12, ay - 14);
+    const entryX = x > ax ? x : x + width;
+    const entryY = y + 18;
+    const left = Math.min(ax, entryX) - 4;
+    const top = Math.min(ay, entryY) - 4;
+    this.peek.set({
+      target,
+      from,
+      x,
+      y,
+      line: {
+        left,
+        top,
+        width: Math.abs(entryX - ax) + 8,
+        height: Math.abs(entryY - ay) + 8,
+        x1: ax - left,
+        y1: ay - top,
+        x2: entryX - left,
+        y2: entryY - top,
+      },
+    });
+  }
+
+  /** The card's one deliberate journey: the old jump, asked for by name. */
+  protected travel(id: string): void {
+    this.peek.set(null);
+    this.scrollTo(id);
+  }
+
+  protected dismissPeek(): void {
+    this.peek.set(null);
+  }
+
+  /**
    * Put a block in the middle of the sheet and tint it for `PULSE_MS`.
    *
    * The pulse is the whole point of the gesture: a jump that merely scrolled
@@ -2717,9 +2961,14 @@ export class BookViewComponent {
       note: marker === null ? null : marker.getAttribute('data-note'),
       jump: block === null ? null : block.getAttribute('data-jump'),
       extend: event.ctrlKey || event.metaKey || event.shiftKey,
+      similar: event.altKey,
       base: this.chosen(),
       dragging: false,
     };
+    // A new press anywhere on the paper closes an open card; the branches at
+    // release may put a new one up. The card's own pointerdown never reaches
+    // here (it stops propagation), so clicking ON the card holds it open.
+    this.peek.set(null);
   }
 
   /**
@@ -2782,14 +3031,16 @@ export class BookViewComponent {
     if (sheet.hasPointerCapture(event.pointerId)) sheet.releasePointerCapture(event.pointerId);
     if (from === null || from.dragging) return;
     /*
-     * A PRESS ON A REFERENCE NUMBER IS A JUMP AND NOTHING ELSE — not a selection
+     * A PRESS ON A REFERENCE NUMBER IS A PEEK AND NOTHING ELSE — not a selection
      * of the paragraph it happens to sit in. The two halves of an apparatus are
-     * a pair the reader is moving between, and taking a selection with them
-     * would leave whatever they were about to act on behind. A number nothing
-     * carries goes nowhere; the amber pill in the margin has already said why.
+     * a pair, and the ruling is that reading the other half must not move the
+     * scrollbar: the note appears on a card beside the number, joined by the
+     * leader, and the card's own "Go there" is the deliberate journey. A number
+     * nothing carries shows nothing; the amber pill in the margin has already
+     * said why.
      */
     if (from.onMarker) {
-      if (from.note !== null) this.scrollTo(from.note);
+      if (from.note !== null) this.peekAt(sheet, from.x, from.y, from.note, from.note);
       return;
     }
     if (from.id === null) {
@@ -2799,6 +3050,26 @@ export class BookViewComponent {
       return;
     }
     const id = from.id;
+    /*
+     * ALT+CLICK TAKES THE WHOLE CATEGORY — every block set as this one is, in
+     * one selection, for the gesture "act on all the footnotes" (or captions, or
+     * quotes) without sweeping a four-hundred-page book by hand. Alt rather than
+     * double-click because double-click is the editor's (RENDERER-DESIGN.md §3:
+     * the block itself is the editor), and a gesture that sometimes edited and
+     * sometimes selected three hundred rows would be two meanings on one motion.
+     */
+    if (from.similar) {
+      const line = this.lines().find((one) => one.row.id === id);
+      if (line !== undefined) {
+        const category = line.row.category;
+        this.chosen.set(new Set(
+          this.lines()
+            .filter((one) => one.row.category === category)
+            .map((one) => one.row.id),
+        ));
+      }
+      return;
+    }
     if (from.extend) {
       const taken = new Set(from.base);
       if (!taken.delete(id)) taken.add(id);
@@ -2806,8 +3077,9 @@ export class BookViewComponent {
     } else {
       this.chosen.set(new Set([id]));
     }
-    // A note goes the other way: to the first place its own number was printed.
-    if (from.jump !== null) this.scrollTo(from.jump);
+    // A note peeks the other way: the paragraph its number is printed in comes
+    // to the card, with that number lit inside it.
+    if (from.jump !== null) this.peekAt(sheet, from.x, from.y, from.jump, id);
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -3591,8 +3863,15 @@ function linesOf(
       opens: false,
       seamInto: marks.seams.get(row.id) ?? null,
       indent: row.category === 'Text' && previous !== null && !heading && chapter === null,
+      /*
+       * The hairline stands above the first note of a CHAPTER's collected
+       * apparatus now, not a page's: `chapterOrder` has already gathered each
+       * chapter's notes into one contiguous run, so "the previous row is not a
+       * note" is the whole of the test, and the page clause that used to cut a
+       * rule between page-groups would draw rules inside one apparatus.
+       */
       opensNotes: row.category === 'Footnote'
-        && (previous === null || previous.category !== 'Footnote' || previous.page !== row.page),
+        && (previous === null || previous.category !== 'Footnote'),
       // Both directions of the one structural flag this app still keeps
       // (docs/RENDERER.md §0, ruling 7). A note nothing points at first: it is
       // the whole row's problem, where a stray number is one word's.
