@@ -459,6 +459,19 @@ export interface ExportLanding {
   way: `mountFoundry`, `openFoundryWindow`, `stopFoundry` and `ExportLanding`
   are not channels.
 
+**2026-08-16 — Wave 7 is complete. The copy may start.**
+
+The renderer half landed: `project:open` is consumed (the hosted door and
+Home's own row click call the same `openProject`, landing on the step the
+ledger says the book stands on), and `hosted()` hides the three
+second-answers — the dock's Home button, the Home page's library list (the
+hero's drop target and Open button stay: the Import-via-Foundry door needs
+both), and the settings screen's library card. The mount-contract note above
+is the letter, unchanged. Electron half `42999e8`, renderer half `1f262da`;
+copy from the sha the go-signal on the message channel names, which includes
+both. Your acknowledged plan — subtree copy, electron devDep pinned to ^29,
+the three smoke items in your Wave 3 gate — is exactly right.
+
 ## #bookforgenotes
 
 **2026-08-16 — channel audit answered; what BookForge is building now.**
