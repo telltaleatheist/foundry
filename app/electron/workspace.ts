@@ -533,7 +533,52 @@ async function planRendering(
    * did not finish" is a false thing to say to somebody who has not read the book
    * yet.
    */
-  if (!await readingIsComplete(dir, manifest, forStep)) {
+  /*
+   * ── A BOOK THAT ARRIVED AS A BOOK HAS NO READING TO FINISH ─────────────────
+   *
+   * The refusal below is about a BANK, and it dead-bolted every project imported
+   * from an EPUB: there is no bank under one, there is no completion marker beside
+   * the bank that is not there, and so a finished book with its chapters and its
+   * figures already on the disk was told it had not been read yet and sent to buy
+   * a vision model. Nothing about that sentence was true.
+   *
+   * THE SAME PAIR `bookAtPosition` TESTS, out of the same helpers, because they
+   * are answering one question — which of the two roads this project's blocks come
+   * down — and two spellings of it is the day one route explodes a container the
+   * other is rendering a bank of. An EPUB archive with NO READING IN EFFECT at this
+   * position is `book = f(epub)` (docs/RENDERER.md §6); the same archive with a
+   * reading on the path is that reading's bank and goes through the refusal like
+   * everything else, which is why the kind alone is not the test.
+   *
+   * AND THE CONTAINER IS COMPLETE BY CONSTRUCTION. What the marker attests is that
+   * every page somebody paid for came back — a statement that only exists because a
+   * reading can stop halfway. An archived EPUB cannot: it was copied whole at
+   * import, it is never written again, and it is the receipt this project's book
+   * file is a hash of. There is no half of it to be missing, so there is nothing
+   * here to prove and nothing to resume.
+   */
+  const arrivedAsBook = manifest.archive?.kind === 'epub'
+    && readingInEffect(ledger, forStep) === null;
+  if (arrivedAsBook) {
+    /*
+     * EXCEPT A FACSIMILE, AND THIS IS THE BACKSTOP RATHER THAN THE DOOR. The card
+     * is already dead in the export dialog with this sentence beside it; what
+     * reaches here is the menu route, and a refusal is the only honest answer
+     * available. A facsimile reprints a READING'S photographed pages set back as
+     * type — it is a record of what the model saw on paper — and this book has no
+     * paper behind it, so there is no version of the product to make rather than a
+     * position it cannot be made from. `refuseOverEdits` above has already had its
+     * say about the other reason a facsimile can be refused.
+     */
+    if (kind === 'pdf') {
+      throw new ProjectError(
+        'There is no facsimile of this one. A facsimile reprints the pages a reading photographed, '
+        + 'set back as real text, and this book arrived as a book — it has never had pages, only '
+        + 'words. The EPUB and the plain text are both made from those, from wherever you are '
+        + 'standing.',
+      );
+    }
+  } else if (!await readingIsComplete(dir, manifest, forStep)) {
     throw new ProjectError(
       pipeline.reading === null
         ? 'This book has not been read yet, so there is nothing to make it from — a rendering '

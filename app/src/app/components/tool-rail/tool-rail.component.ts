@@ -394,6 +394,19 @@ export class ToolRailComponent {
    * nothing to export before a reading lands: every format this app makes is
    * arithmetic over that bank.
    *
+   * ── AND THE RULING HAS A SECOND CASE: A BOOK THAT ARRIVED AS A BOOK ─────────
+   *
+   * "Nothing to export before a reading lands" was written about a scan, where it
+   * is the whole truth, and it dead-bolted this door for every project imported
+   * from an EPUB — books that are FINISHED, whose chapters and figures and
+   * footnotes are all on the disk already. There is no bank under one and there
+   * never will be: its book is exploded out of the archived container rather than
+   * read off photographs (`bookAtPosition`, electron/projects.ts), so `done` is
+   * false about a book with nothing left to do. The rule is what it always meant —
+   * there is nothing to export until the blocks exist — and the blocks arrive by
+   * one of two roads. `arrivedAsBook` is the other one, asked of the same project
+   * record so that this and the dialog cannot disagree.
+   *
    * AND IT STAYS LIVE FOR A DOCUMENT WHOSE PROJECT THIS WINDOW HAS NOT LISTED —
    * the pre-import window, where a dead button explains nothing and the plan
    * call's own refusal names the case precisely (the book nobody has read; the
@@ -410,6 +423,15 @@ export class ToolRailComponent {
    * for Export and Metadata"). The dialog says the same thing in a sentence for
    * whoever arrives by the menu instead of by this button.
    *
+   * EXCEPT WHERE THE IMPORT ROW IS THE BOOK. That refusal is about stepping BACK
+   * PAST a reading to the untouched scan, and a project that arrived as a book has
+   * no such step to step past: its ledger holds the import and nothing else, and
+   * `bookAtPosition`'s own EPUB branch reads exactly that position — `reading ===
+   * null` beside an EPUB archive — as the instruction to explode the container.
+   * The row a scan project is standing BEFORE its book on is the row an EPUB
+   * project's book IS, so applying one sentence to both would shut the only
+   * position such a project can ever occupy.
+   *
    * A HISTORY THIS WINDOW HAS NOT READ ANSWERS NULL, AND NULL IS NOT THE IMPORT.
    * The button stays live and main's own refusal is the backstop, on this rail's
    * standing preference for a door that opens onto an explanation over one that is
@@ -420,8 +442,9 @@ export class ToolRailComponent {
     if (tab === null) return false;
     const project = this.projects.projectFor(tab.path);
     if (project === null) return true;
-    if (!project.reading.done) return false;
-    return this.ledger.standingIn(project.dir)?.action !== 'import';
+    const arrived = this.projects.arrivedAsBook(project);
+    if (!project.reading.done && !arrived) return false;
+    return arrived || this.ledger.standingIn(project.dir)?.action !== 'import';
   }
 
   protected openExport(): void {

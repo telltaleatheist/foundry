@@ -126,12 +126,26 @@ import { api } from '../../core/foundry';
                 book. A translation is a records file now and the words go into the
                 blocks as the book is assembled, upstream of the format fork — so
                 plain text works from here too, and only the facsimile cannot.
+
+                TWO REASONS, TWO SENTENCES. The card is dead for a book that
+                arrived as a book as well, and "click back to the reading" is
+                advice to nowhere for a project that has no reading and no scan to
+                have one of. A bound that names the wrong reason is a bound the
+                person will try to work around.
               -->
-              <p class="note">
-                No facsimile, standing here. You are on a translation, and a facsimile reprints the
-                scan's own photographed pages — there is nowhere on a photograph of a German page to
-                put a Hungarian paragraph. Click back to the reading for a facsimile of the original.
-              </p>
+              @if (arrivedAsBook()) {
+                <p class="note">
+                  No facsimile of this one. A facsimile reprints a scan's own photographed pages as
+                  real text, and this book came to you as a book — there are no pages of it anywhere,
+                  only its words. The EPUB and the plain text are made from those.
+                </p>
+              } @else {
+                <p class="note">
+                  No facsimile, standing here. You are on a translation, and a facsimile reprints the
+                  scan's own photographed pages — there is nowhere on a photograph of a German page to
+                  put a Hungarian paragraph. Click back to the reading for a facsimile of the original.
+                </p>
+              }
             }
 
             @if (kind() === 'txt') {
@@ -166,12 +180,25 @@ import { api } from '../../core/foundry';
               rendering now — the words are read out of the translation's records
               file, which is on disk — so the plain sentence is true everywhere and
               the caveat is gone rather than merely unshown.
+
+              A BOOK THAT ARRIVED AS A BOOK GETS THE TRUE VERSION OF THE SAME
+              REASSURANCE. No model has read anything here and none ever will, so
+              naming pages that were never read would be this app claiming work it
+              did not do — in the one sentence whose entire job is to make
+              exporting a second time feel free.
             -->
-            <p class="note quiet">
-              Made from the {{ pages() > 0 ? pages().toLocaleString() + ' pages' : 'pages' }} the
-              model has already read.
-              Nothing is read again and no GPU is used.
-            </p>
+            @if (arrivedAsBook()) {
+              <p class="note quiet">
+                Made from the book you imported, taken apart into its own chapters and paragraphs.
+                Nothing is read and no GPU is used.
+              </p>
+            } @else {
+              <p class="note quiet">
+                Made from the {{ pages() > 0 ? pages().toLocaleString() + ' pages' : 'pages' }} the
+                model has already read.
+                Nothing is read again and no GPU is used.
+              </p>
+            }
 
             <!--
               A FINISHED EXPORT IS NOT A STEP, and saying so is what stops the
@@ -206,6 +233,14 @@ import { api } from '../../core/foundry';
               The whole of the no-reading state. Two options, because there is no
               third: nothing in this engine turns a scanned book into a readable
               one without the model reading it first.
+
+              AND IT IS ABOUT A SCAN, WHICH IS WHAT IT ALWAYS MEANT. Every project
+              that had not been read landed here, including the ones that never had
+              pages to read — so a person who imported an EPUB was told their book
+              had not been read yet and offered a vision model for it, which is a
+              false sentence about a finished book and a bill for nothing. Those go
+              to the cards now (\`canMake\`) and this is left saying exactly what it
+              was written to say, to the people it was written for.
             -->
             <p class="unread">This book has not been read yet.</p>
             <p class="note">
@@ -417,6 +452,27 @@ export class ExportDialogComponent {
   protected readonly pages = computed(() => this.project()?.reading.pages ?? 0);
 
   /**
+   * WHETHER THIS BOOK ARRIVED AS A BOOK, which is the other way a project comes
+   * to have blocks — and the reason this dialog was dead-bolted for every one of
+   * them.
+   *
+   * `readingDone` above is false for such a project and always will be: there are
+   * no pages under it to read, so nothing ever banks any, so the sentence below
+   * offered to run OCR on a book that has no photographs in it and the Export
+   * button never appeared. The three formats are all arithmetic over BLOCKS, and
+   * an imported EPUB's blocks are exploded out of the archived container the same
+   * way a scan's are reflowed out of a bank (docs/RENDERER.md §6, `book =
+   * f(epub)`). One of the two roads having been travelled is the real condition,
+   * and it always was.
+   *
+   * FROM `ProjectsService`, where the test is argued and spelled once, because the
+   * rail's Export button asks the identical question — a dock that lights a button
+   * onto a dialog that says the book cannot be exported is worse than either
+   * answer alone.
+   */
+  protected readonly arrivedAsBook = computed(() => this.projects.arrivedAsBook(this.project()));
+
+  /**
    * WHETHER THE POSITION IS STANDING ON THE SCAN, which is the one place in a
    * read project where there is nothing to export.
    *
@@ -441,12 +497,26 @@ export class ExportDialogComponent {
    * dialog stays open and main's own refusal is the backstop, which is this file's
    * rule everywhere: a shut door explains itself, and a door shut on a guess does
    * not.
+   *
+   * AND IT IS NOT THE IMPORT WHEN THE IMPORT IS THE BOOK. Everything above is
+   * about stepping BACK to the untouched scan from a reading made of it. A project
+   * that arrived as a book has no reading to have stepped back from and exactly
+   * one row in its whole ledger — the import — and that row is not a photograph of
+   * the book, it IS the book: main reads that same position, an EPUB archive with
+   * no reading in effect, as the instruction to explode the container
+   * (`bookAtPosition`, electron/projects.ts). Refusing there would refuse the only
+   * place such a project can ever stand.
    */
   protected readonly onImport = computed(() =>
-    this.ledger.standingIn(this.project()?.dir ?? null)?.action === 'import');
+    !this.arrivedAsBook()
+    && this.ledger.standingIn(this.project()?.dir ?? null)?.action === 'import');
 
-  /** Reading done, and standing somewhere an export can be made from. */
-  protected readonly canMake = computed(() => this.readingDone() && !this.onImport());
+  /**
+   * The blocks exist — read off pages or exploded out of a container — and the
+   * position is somewhere an export can be made from.
+   */
+  protected readonly canMake = computed(() =>
+    (this.readingDone() || this.arrivedAsBook()) && !this.onImport());
 
   /**
    * The three products, named as PRODUCTS.
@@ -485,8 +555,20 @@ export class ExportDialogComponent {
    * FROM THE LEDGER MIRROR, the same one the inspector paints its rows from and
    * the OCR dialog asks what a re-read would cost. `translationInEffect` is the
    * walk `curationInEffect` already makes, asked one more question.
+   *
+   * ── AND THERE IS A SECOND WAY TO HAVE NO PAGES TO REPRINT ───────────────────
+   *
+   * A book that arrived as a book never had any. The translation case is "there
+   * is nowhere on this photograph to put those words"; this one is that there is
+   * no photograph — no scan, no bank, no page geometry anywhere in the project —
+   * so a facsimile is not a product that is unavailable from where somebody is
+   * standing, it is a product this book has no version of at all. The two are one
+   * dead card and two different sentences, said below; main refuses the pair for
+   * the second reason as well (`planRendering`, electron/workspace.ts), so the
+   * menu route is answered too.
    */
   protected readonly noFacsimile = computed(() => {
+    if (this.arrivedAsBook()) return true;
     const ledger = this.ledger.historyFor(this.project()?.dir ?? null)?.ledger ?? null;
     return ledger !== null && translationInEffect(ledger) !== null;
   });

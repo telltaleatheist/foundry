@@ -1,7 +1,7 @@
 import { Injectable, effect, inject, signal } from '@angular/core';
 
 import { spokenName } from '@shared/documents';
-import { fold, originalOf } from '@shared/original';
+import { bookRow, fold, originalOf } from '@shared/original';
 import type { ProjectDocument, ProjectSummary } from '@shared/types';
 
 import { ConfirmService } from './confirm.service';
@@ -182,6 +182,49 @@ export class ProjectsService {
   originalOf(project: ProjectSummary): ProjectDocument | null {
     if (project.problem !== null) return null;
     return originalOf(project.documents);
+  }
+
+  /**
+   * DID THIS BOOK ARRIVE AS A BOOK — the test that separates a project with
+   * nothing left to read from a project with everything still to read.
+   *
+   * ── Why every door in this app needs it ─────────────────────────────────────
+   *
+   * A project imported from an EPUB has no reading and never will have one: a
+   * bank models PAGES, an EPUB has none, and its book is exploded out of the
+   * container instead (`bookAtPosition`, electron/projects.ts — the `book =
+   * f(epub)` route). So `reading.done` is false for that project forever, and
+   * every gate written as "a reading has landed" reads that false and shuts a
+   * door on a book that is already finished. The rail's Export button and the
+   * export dialog both have to ask this, and two spellings of one question is two
+   * answers the day either of them learns something the other has not.
+   *
+   * ── Why the ORIGIN ROW and not `!reading.needed && !reading.done` ───────────
+   *
+   * That pair is derivable and very nearly right: main composes
+   * `needed: !done && archive.kind === 'pdf'` (`readingState`), so "not needed and
+   * not done" does mean "nothing has been read and the archive is not a scan".
+   * What it does not do is SAY anything about origin. It is two negatives about
+   * the OCR light, it answers true as well for a catalogue that names no archive
+   * at all, and a reader has to run main's own boolean backwards to see why it
+   * means what it means.
+   *
+   * The summary already carries the fact itself. `bookRow` is the row whose chain
+   * STARTS with the file the person handed over — `origin`, decided in
+   * `summarise` from that first step's own irreplaceable cost — so its KIND is
+   * what they imported, read rather than inferred. `done` rides along because it
+   * is the second half of the exact pair `bookAtPosition` tests before it routes a
+   * book through its container: an origin never changes, so the kind alone would
+   * go on answering "arrived as a book" at a position standing under a reading of
+   * one, and this side must not be the place that forgets that.
+   *
+   * A CATALOGUE THAT WILL NOT PARSE ANSWERS FALSE. A project this app cannot
+   * describe is not one to open an export door over on a guess; main's own
+   * refusal names that case in words, which is the better door.
+   */
+  arrivedAsBook(project: ProjectSummary | null): boolean {
+    if (project === null || project.problem !== null) return false;
+    return bookRow(project.documents)?.kind === 'epub' && !project.reading.done;
   }
 
   /**
