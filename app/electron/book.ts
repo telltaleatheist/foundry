@@ -74,6 +74,7 @@ import {
   projectDirOf,
   readStepLedger,
   recordBookEdit,
+  recordBookEditAmend,
   recordCorrection,
   translationBookFileFor,
   type LedgerView,
@@ -87,6 +88,7 @@ import {
 } from '../shared/book';
 import {
   editsSinceTransform,
+  positionOf,
   translationInEffect,
   translationRecordsOf,
 } from '../shared/ledger';
@@ -193,6 +195,12 @@ interface OpenedBook {
    * TRANSLATION for one standing under a transform. See `editsSinceTransform`.
    */
   ops: BookOp[];
+  /**
+   * The AMENDABLE TIP's own ops, or null where the position has none — see the
+   * comment where it is decided. Not in `ops`: the pane replays these under the
+   * chain itself, because they are still its stack.
+   */
+  tip: BookOp[] | null;
   /**
    * The translate step this position stands under, or null.
    *
@@ -315,7 +323,28 @@ async function openBookAtPosition(
      * there is nothing to say (`rekeyCuration`, shared/curate-bridge.ts).
      */
     const unplaced: string[] = [];
-    for (const step of editsSinceTransform(ledger, from)) {
+    const steps = editsSinceTransform(ledger, from);
+    /*
+     * ── THE TIP — the one step whose ops are still the person's to change ─────
+     *
+     * An edit step the position stands ON with nothing landed under it is not
+     * history yet: nothing depends on it, so a further Apply AMENDS it rather
+     * than stacking a sibling row (user ruling, 2026-08-16), and the undo stack
+     * reaches back through what it recorded. Its ops are therefore handed up
+     * SEPARATELY — the pane hydrates its stack from them and replays them under
+     * the chain itself — and they are not in `ops`, or they would replay twice.
+     * The moment anything lands under the step (a translate, a child edit), it
+     * freezes into the chain like every row above it, because rewriting a file
+     * another step was made from would be editing history someone stood on.
+     */
+    const standing = positionOf(ledger);
+    const last = steps[steps.length - 1];
+    const amendable = last !== undefined
+      && last.action === 'edit'
+      && standing !== null && standing.id === last.id
+      && !ledger.steps.some((step) => step.parent === last.id);
+    let tip: BookOp[] | null = null;
+    for (const step of steps) {
       const file = path.join(at.dir, ...step.payload.split('/'));
       let said: string;
       try {
@@ -375,7 +404,9 @@ async function openBookAtPosition(
         continue;
       }
       try {
-        chain.push(...parseOpsFile(said));
+        const read = parseOpsFile(said);
+        if (amendable && step.id === last.id) tip = read;
+        else chain.push(...read);
       } catch (err) {
         if (!(err instanceof BookOpsError)) throw err;
         console.error(`[book] ${file} is the payload of step ${step.id} and is not a list of changes: ${err.message}`);
@@ -388,7 +419,8 @@ async function openBookAtPosition(
     return {
       ok: true,
       opened: {
-        at, path: source.path, parsed, ops: chain, transform, ...(unplaced.length > 0 ? { unplaced } : {}),
+        at, path: source.path, parsed, ops: chain, tip, transform,
+        ...(unplaced.length > 0 ? { unplaced } : {}),
       },
     };
   } catch (err) {
@@ -579,7 +611,7 @@ async function writeTranslationBook(
 
   let made: ReturnType<typeof materialize>;
   try {
-    made = materialize(read.opened.parsed, read.opened.ops);
+    made = materialize(read.opened.parsed, [...read.opened.ops, ...(read.opened.tip ?? [])]);
   } catch (err) {
     if (!(err instanceof BookOpsError)) throw err;
     console.error(`[book] the book under ${transform.id} could not be materialised: ${err.message}`);
@@ -745,7 +777,7 @@ export async function materializeTranslation(recordsPath: string): Promise<void>
 export async function loadBook(projectDir: string): Promise<BookOutcome> {
   const read = await openBookAtPosition(projectDir);
   if (!read.ok) return read;
-  const { at, parsed, ops, transform } = read.opened;
+  const { at, parsed, ops, tip, transform } = read.opened;
   const unplaced = read.opened.unplaced ?? [];
   /*
    * The figures prefix is minted only when a row will ask for one. `null` is the
@@ -770,6 +802,7 @@ export async function loadBook(projectDir: string): Promise<BookOutcome> {
     loose: parsed.header.loose,
     figures,
     ops,
+    tip,
     /*
      * The sentences an old save left behind, when there are any — carried on the
      * load so the sheet can say them where the book is, rather than raised as a
@@ -846,7 +879,7 @@ async function sourceOfTranslation(
   if (!read.ok) return read;
   let made: ReturnType<typeof materialize>;
   try {
-    made = materialize(read.opened.parsed, read.opened.ops);
+    made = materialize(read.opened.parsed, [...read.opened.ops, ...(read.opened.tip ?? [])]);
   } catch (err) {
     if (!(err instanceof BookOpsError)) throw err;
     console.error(`[book] the source under ${transform.id} could not be materialised: ${err.message}`);
@@ -1087,4 +1120,43 @@ export async function applyBookOps(projectDir: string, ops: readonly BookOp[]): 
     await fsp.rm(path.join(at.dir, ...payload.split('/')), { force: true });
     throw err;
   }
+}
+
+/**
+ * AMEND — the tip edit step rewritten to what the pane now holds.
+ *
+ * ── Why this exists beside `applyBookOps` ───────────────────────────────────
+ *
+ * A second Apply while standing on an edit step with nothing under it used to
+ * mint a sibling row, so five rounds of strike-and-apply read as five steps of
+ * history about one sitting (user ruling, 2026-08-16). While the step is the
+ * TIP — nothing landed under it, nothing made from it — its ops are still the
+ * person's to change, so Apply rewrites the step's own file to the list the
+ * pane holds now. That list can be SHORTER than what was recorded: the pane's
+ * undo reaches back through applied ops precisely because this door can record
+ * the removal. The moment anything lands under the step it freezes, this door
+ * refuses by sentence, and the next Apply is a new row (`applyBookOps`).
+ *
+ * AN EMPTY LIST IS REFUSED. Undoing everything a step recorded and applying
+ * that is deleting the step, and deletion has its own door in the tree with
+ * its own question; a step whose file says nothing would be a row nobody can
+ * tell from the one above it.
+ *
+ * WHO THE TIP IS IS MAIN'S ANSWER, NOT THE RENDERER'S. The pane asks to amend
+ * "the position"; main re-derives that the position is an amendable tip at the
+ * moment of the write (`recordBookEditAmend`, inside the manifest lock), so a
+ * child that landed between the pane's load and its Apply meets a refusal
+ * rather than a rewrite of a file that stopped being safe to rewrite.
+ */
+export async function amendBookOps(projectDir: string, ops: readonly BookOp[]): Promise<LedgerView> {
+  const at = await bookAtPosition(projectDir);
+  if (ops.length === 0) {
+    throw new BookOpsError(
+      'Applying this would leave the step recording nothing — every change it held has been '
+      + 'undone. Deleting the step is the tree\'s gesture, with its own question.',
+    );
+  }
+  const bytes = formatOpsFile(ops);
+  parseOpsFile(bytes);
+  return await recordBookEditAmend(at.dir, bytes, ops.length);
 }

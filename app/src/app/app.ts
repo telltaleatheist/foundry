@@ -162,7 +162,11 @@ export class App {
    * nothing to collapse to a stub either. It comes back by itself with the first
    * document, and `documentsShown` remembers what the user chose across that.
    */
-  protected readonly documentsUp = computed(() => this.tabs.tabs().length > 0);
+  // The panel stays up for a project the window is still IN, tabs or none —
+  // its tree is the door back to every step, and hiding the door with the
+  // last tab would strand the empty workspace it was closed into.
+  protected readonly documentsUp = computed(
+    () => this.tabs.tabs().length > 0 || this.tabs.heldProject() !== null);
 
   /**
    * The inspector is up when there is something to inspect.

@@ -920,13 +920,13 @@ const SCROLL_SETTLE_MS = 400;
           that stays.
         -->
         <div class="tray" [attr.inert]="edition() ? '' : null">
-          @if (pending().length > 0) {
+          @if (waiting() > 0) {
             <button type="button" class="act ghost" (click)="undo()">Undo</button>
           }
           <button
             type="button"
             class="act"
-            [disabled]="pending().length === 0 || applying()"
+            [disabled]="waiting() === 0 || applying()"
             (click)="apply()"
           >{{ applying() ? 'Applying…' : applyLabel() }}</button>
         </div>
@@ -1805,6 +1805,14 @@ export class BookViewComponent {
    * change is also applied by hand.
    */
   protected readonly pending = signal<readonly BookOp[]>([]);
+
+  /**
+   * The tip step's ops as the last load (or the last Apply) recorded them — the
+   * disk's side of `waiting()`'s comparison. Empty when the position has no
+   * amendable tip, which makes the old arithmetic fall out: nothing landed, so
+   * everything pending is waiting.
+   */
+  private readonly landedOps = signal<readonly BookOp[]>([]);
   /** What undo has taken off the stack, newest last. Cleared by any new gesture. */
   private readonly undone = signal<readonly BookOp[]>([]);
   /** True while `book:apply` is in flight, so the button cannot be pressed twice. */
@@ -2072,7 +2080,7 @@ export class BookViewComponent {
      */
     const tabs = this.tabs;
     const stack: BookStack = {
-      pending: () => this.pending().length,
+      pending: () => this.waiting(),
       canUndo: () => this.pending().length > 0,
       canRedo: () => this.undone().length > 0,
       undo: () => this.undo(),
@@ -2261,10 +2269,8 @@ export class BookViewComponent {
      * what happened — the same strip every other "that did not do what you may
      * have expected" in this window uses.
      */
-    const scrapped = this.landed ? 0 : this.pending().length;
+    const scrapped = this.landed ? 0 : this.waiting();
     this.landed = false;
-    this.pending.set([]);
-    this.undone.set([]);
     if (scrapped > 0) {
       this.tabs.notice.set(
         scrapped === 1
@@ -2276,14 +2282,54 @@ export class BookViewComponent {
     try {
       const loaded = await api.book.load(projectDir);
       if (ticket !== this.asked) return;
-      if (loaded.ok) this.book.set(loaded);
-      else this.problem.set(loaded.reason);
+      if (loaded.ok) {
+        this.book.set(loaded);
+        /*
+         * ── THE STACK HYDRATES FROM THE TIP ─────────────────────────────────
+         *
+         * Standing on an edit step nothing has been made from, the step's own
+         * ops ARE the stack: undo pops back through what was already applied,
+         * and Apply records whatever the list has become — longer, shorter, or
+         * reordered — by rewriting the step (user ruling, 2026-08-16). What was
+         * recorded at this load is kept beside it (`landedOps`), because "is
+         * there anything to apply" stopped being "is the stack non-empty" and
+         * became "does the stack differ from the disk".
+         */
+        const tip = loaded.tip ?? [];
+        this.landedOps.set(tip);
+        this.pending.set([...tip]);
+        this.undone.set([]);
+      } else {
+        this.landedOps.set([]);
+        this.pending.set([]);
+        this.undone.set([]);
+        this.problem.set(loaded.reason);
+      }
     } catch (err) {
       if (ticket !== this.asked) return;
       this.problem.set(err instanceof Error ? err.message : String(err));
     } finally {
       if (ticket === this.asked) this.loading.set(false);
     }
+  }
+
+  /**
+   * How many decisions stand between the paper and the disk — the tray's count,
+   * the closing question's count, and the scrap notice's.
+   *
+   * NOT `pending().length` any more: the stack begins as a copy of the tip's
+   * recorded ops, so its length counts history. What is waiting is the
+   * DIFFERENCE — gestures made since the last Apply, plus applied ops undone
+   * since it — measured past the shared prefix, because an undo below the
+   * boundary is as much a thing to record as a new strike above it.
+   */
+  protected waiting(): number {
+    const landed = this.landedOps();
+    const pending = this.pending();
+    let shared = 0;
+    while (shared < landed.length && shared < pending.length
+      && landed[shared] === pending[shared]) shared += 1;
+    return (landed.length - shared) + (pending.length - shared);
   }
 
   /**
@@ -3312,7 +3358,7 @@ export class BookViewComponent {
 
   /** What the button says. The count is IN the label, on `labelFor`'s rule. */
   protected applyLabel(): string {
-    const many = this.pending().length;
+    const many = this.waiting();
     return many === 1 ? 'Apply 1 change' : `Apply ${many} changes`;
   }
 
@@ -3338,17 +3384,38 @@ export class BookViewComponent {
    * question, which can call this, needs the false answer to keep the tab open.
    */
   protected async apply(): Promise<boolean> {
-    const ops = this.pending();
-    if (api === null || ops.length === 0 || this.applying()) return false;
+    if (api === null || this.waiting() === 0 || this.applying()) return false;
     // A block still live when Apply is pressed has words in it nobody has
     // recorded yet. Committing first is what makes "apply what is on screen"
     // true rather than "apply what was on screen before you started typing".
     this.commitEditing();
-    const waiting = this.pending();
+    const ops = this.pending();
     this.applying.set(true);
     try {
-      const history = await api.book.apply(this.tab().path, waiting);
-      this.landed = true;
+      /*
+       * ── AMEND THE TIP, OR LAND A STEP — the consolidation ruling ────────────
+       *
+       * Standing on an edit step nothing has been made from (`landedOps`
+       * non-empty means the load found one), Apply rewrites that step to the
+       * list as it now stands; the pointer never moves, no reload fires, and
+       * the stack simply becomes the recorded state — undo still reaches back
+       * through all of it. Everywhere else, Apply lands a new step exactly as
+       * it always has, the pointer follows, and the reload's hydration is what
+       * makes the NEXT Apply an amendment.
+       *
+       * An amendment can also RECORD ONLY REMOVALS: undo below the applied
+       * boundary leaves pending shorter than landed, `waiting()` counts it,
+       * and the rewrite is how the removal reaches the disk.
+       */
+      const amending = this.landedOps().length > 0;
+      const history = amending
+        ? await api.book.amend(this.tab().path, ops)
+        : await api.book.apply(this.tab().path, ops);
+      if (amending) {
+        this.landedOps.set(ops);
+      } else {
+        this.landed = true;
+      }
       this.ledger.adopt(this.tab().path, history);
       return true;
     } catch (err) {

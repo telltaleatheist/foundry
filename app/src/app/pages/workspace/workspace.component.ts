@@ -1,9 +1,10 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 
 import { HomeComponent } from '../../components/home/home.component';
 import { NoticeBarComponent } from '../../components/notice-bar/notice-bar.component';
 import { DOCUMENT_MIME } from '../../components/open-documents/open-documents.component';
 import { ViewerComponent } from '../../components/viewer/viewer.component';
+import { ProjectsService } from '../../core/projects.service';
 import { TabsService, type Pane, type Tab } from '../../core/tabs.service';
 
 /**
@@ -99,7 +100,21 @@ import { TabsService, type Pane, type Tab } from '../../core/tabs.service';
 
     @if (tabs.panes(); as panes) {
       @if (panes.length === 0) {
-        <app-home />
+        <!--
+          NO TABS IS NOT NO PROJECT. Closing the last document keeps the window
+          in the book it was working on (TabsService.heldProject): the tree
+          stays up on the left, and this quiet bench says the way back is one
+          click away. Home is where you go on purpose, by the button.
+        -->
+        @if (heldTitle(); as title) {
+          <div class="held">
+            <p class="held-title">{{ title }}</p>
+            <p class="held-hint">Nothing is open. Click a step in the tree to open it here.</p>
+            <button type="button" class="held-leave" (click)="leave()">Back to the library</button>
+          </div>
+        } @else {
+          <app-home />
+        }
       } @else {
         <div class="row">
           @for (pane of panes; track pane.id; let index = $index, first = $first) {
@@ -455,10 +470,50 @@ import { TabsService, type Pane, type Tab } from '../../core/tabs.service';
        saying how much of the room it takes. */
     .landing.left { right: 50%; }
     .landing.right { left: 50%; }
+
+    /* The empty workspace of a held project: the shell's own quiet, not the
+       paper's — no sheet is up, so the paper vocabulary would be a costume. */
+    .held {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      color: var(--text-secondary);
+    }
+    .held-title { margin: 0; font-size: 1.1rem; color: var(--text-primary); }
+    .held-hint { margin: 0; font-size: 0.9rem; }
+    .held-leave {
+      margin-top: 1rem;
+      padding: 0.35rem 0.9rem;
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md, 6px);
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+    .held-leave:hover { background: var(--bg-hover); color: var(--text-primary); }
   `],
 })
 export class WorkspaceComponent {
   protected readonly tabs = inject(TabsService);
+  private readonly projects = inject(ProjectsService);
+
+  /**
+   * The held project's title, or null when there is none to hold — a project
+   * deleted from the library since it was held answers null too, which is what
+   * sends the empty workspace back to Home rather than naming a ghost.
+   */
+  protected readonly heldTitle = computed(() => {
+    const held = this.tabs.heldProject();
+    if (held === null) return null;
+    return this.projects.projectFor(held)?.title ?? null;
+  });
+
+  protected leave(): void {
+    this.tabs.releaseProject();
+  }
 
   /** Which pane the pointer is over, and what a drop there would do. */
   protected readonly preview = signal<Landing | null>(null);

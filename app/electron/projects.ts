@@ -1951,6 +1951,55 @@ export async function recordBookEdit(
 }
 
 /**
+ * AMEND the tip edit step's own file to a new list — the manifest half of
+ * `amendBookOps` (electron/book.ts, which owns the ruling and the refusals'
+ * argument).
+ *
+ * THE TIP IS PROVED INSIDE THE MANIFEST LOCK, which is the whole reason this is
+ * here rather than in book.ts: whether the position is still an amendable tip is
+ * a fact that can change between a pane's load and its Apply (a translate
+ * landing makes a child), and the only place the answer cannot move again before
+ * the write is under `withManifest`. The ops file is rewritten atomically FIRST,
+ * then the count on the step — a crash between the two leaves a file that says
+ * more or less than the label counts, which the next open reads correctly
+ * anyway, because the file is the truth and the count is a label.
+ */
+export async function recordBookEditAmend(
+  dir: string,
+  bytes: string,
+  count: number,
+): Promise<LedgerView> {
+  const resolved = deletableProjectDir(dir);
+  const ledger = await withManifest(resolved, async (manifest) => {
+    const held = ledgerOf(manifest);
+    const standing = positionOf(held);
+    if (standing === null || standing.action !== 'edit') {
+      throw new ProjectError(
+        'The changes could not be added to the step you are standing on — it is not a row of '
+        + 'applied changes. Press Apply again and they land as a step of their own.',
+      );
+    }
+    if (held.steps.some((step) => step.parent === standing.id)) {
+      throw new ProjectError(
+        'Something has been made from the step you are standing on since the book was opened, so '
+        + 'its changes are history now and cannot be rewritten. Press Apply again and the new '
+        + 'changes land as a step of their own.',
+      );
+    }
+    await writeAtomically(
+      path.join(resolved, ...standing.payload.split('/')),
+      Buffer.from(bytes, 'utf8'),
+    );
+    const row = manifest.ledger?.steps.find((step) => step.id === standing.id);
+    if (row !== undefined) row.params = { ...row.params, ops: count };
+    await writeManifest(resolved, manifest);
+    return ledgerOf(manifest);
+  });
+  announceProjects();
+  return { ledger, rows: chronological(ledger) };
+}
+
+/**
  * THE PATCH EVERY PRODUCT MADE FROM THIS POSITION CARRIES — the chain, read off
  * the disk and merged.
  *

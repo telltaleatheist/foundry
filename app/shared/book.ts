@@ -410,6 +410,17 @@ export interface BookLoad {
    */
   ops: BookOp[];
   /**
+   * THE AMENDABLE TIP'S OWN OPS, or null where the position has none.
+   *
+   * Set when the position stands ON an edit step with nothing landed under it:
+   * that step's changes are still the person's to change, so they are NOT in
+   * `ops` — the pane hydrates its undo stack from them and replays them under
+   * the chain itself, which is what lets undo reach back through what was
+   * already applied and lets the next Apply amend the step rather than mint a
+   * sibling (user ruling, 2026-08-16; `amendBookOps`, electron/book.ts).
+   */
+  tip: BookOp[] | null;
+  /**
    * WHAT AN OLD SAVE ON THIS PATH DECIDED AND THIS BOOK HAS NOWHERE TO PUT —
    * absent for every project made under the op grammar, which is nearly all of
    * them.

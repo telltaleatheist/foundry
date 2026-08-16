@@ -546,6 +546,13 @@ export interface FoundryApi {
      */
     apply(projectDir: string, ops: readonly BookOp[]): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
     /**
+     * Rewrite the tip edit step's own file to this list — the consolidating
+     * Apply. Refuses (rejects) when the position is no longer an amendable tip;
+     * the pane shows the sentence and the person presses Apply again, which
+     * lands a step of its own. See amendBookOps, electron/book.ts.
+     */
+    amend(projectDir: string, ops: readonly BookOp[]): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
+    /**
      * ONE CORRECTED PARAGRAPH ON A TRANSLATED POSITION — the words, to the
      * records, and never onto the ops chain.
      *

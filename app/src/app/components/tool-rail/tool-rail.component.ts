@@ -338,6 +338,9 @@ export class ToolRailComponent {
 
   protected home(): void {
     void this.router.navigateByUrl('/');
+    // The dock's Home is leaving on purpose: the held project lets go, so an
+    // empty workspace shows the library rather than the room just left.
+    this.tabs.releaseProject();
     this.tabs.goHome();
   }
 

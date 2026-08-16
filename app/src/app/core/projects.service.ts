@@ -109,8 +109,20 @@ export class ProjectsService {
    */
   projectFor(filePath: string): ProjectSummary | null {
     const target = fold(filePath);
-    return this.all().find(
-      (project) => target.startsWith(`${fold(project.dir).replace(/\/+$/, '')}/`)) ?? null;
+    /*
+     * THE DIRECTORY ITSELF IS IN ITS OWN PROJECT. The strict-child test was the
+     * whole answer while every tab held a FILE — a scan, a cast, an export — and
+     * it silently excluded the one tab that holds the project directory as its
+     * path: the proof sheet. That absence was load-bearing in the worst way —
+     * the export dialog concluded no book was open over the very surface the
+     * book is edited on, and the inspector's standing strip never drew there.
+     * Equality is folded the same way the prefix is, so the two spellings of
+     * one directory cannot disagree about whose project it is.
+     */
+    return this.all().find((project) => {
+      const dir = fold(project.dir).replace(/\/+$/, '');
+      return target === dir || target.startsWith(`${dir}/`);
+    }) ?? null;
   }
 
   /**

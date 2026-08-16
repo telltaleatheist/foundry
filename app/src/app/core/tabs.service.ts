@@ -650,6 +650,23 @@ export class TabsService {
     api?.onDocumentOpened((absolutePath) => { this.adopt(absolutePath); });
     api?.onDocumentRelocated(({ from, to }) => { this.relocate(from, to); });
 
+    /*
+     * THE PROJECT THE WINDOW IS IN, remembered past its last tab. Closing every
+     * tab used to bounce the window to Home, which reads as being thrown out of
+     * the room you were working in (user ruling, 2026-08-16): the workspace now
+     * keeps the project — its tree stays up, its empty bench says a step is one
+     * click away — until the person leaves for the library on purpose
+     * (`releaseProject`). Written from an effect on the active tab rather than
+     * at close time, because "the project you were in" is a fact about what was
+     * shown, not about what was shut.
+     */
+    effect(() => {
+      const tab = this.active();
+      if (tab === null) return;
+      const dir = this.projectDirOf(tab);
+      if (dir !== null) this.heldProject.set(dir);
+    });
+
     /**
      * A finished conversion opens itself.
      *
@@ -2490,6 +2507,18 @@ export class TabsService {
     if (!pane) return;
     this.columns.update((panes) => panes.map((candidate) =>
       (candidate.id === pane.id ? { ...candidate, activeTabId: null } : candidate)));
+  }
+
+  /**
+   * The project this window is in — set by looking at any of its documents,
+   * kept when the last of them closes, cleared only by leaving on purpose.
+   * See the constructor's effect for the ruling.
+   */
+  readonly heldProject = signal<string | null>(null);
+
+  /** Leaving for the library, on purpose — the one thing that clears the hold. */
+  releaseProject(): void {
+    this.heldProject.set(null);
   }
 
   /**

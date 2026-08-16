@@ -31,6 +31,7 @@ import {
 import { readAppSettings, writeAppSettings } from './app-settings';
 import { cancelSetup, setupWslEnv } from './backend-setup';
 import {
+  amendBookOps,
   applyBookOps,
   bookFigureFile,
   correctBookBlock,
@@ -2039,6 +2040,8 @@ function registerIpc(): void {
    * the step and takes the file back if the step will not land, so there is no
    * half-applied state for this handler to describe.
    */
+  ipcMain.handle('book:amend', (_event, projectDir: string, ops: BookOp[]) =>
+    amendBookOps(projectDir, ops));
   ipcMain.handle('book:apply', (_event, projectDir: string, ops: BookOp[]) =>
     applyBookOps(projectDir, ops));
   /*

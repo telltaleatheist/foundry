@@ -712,8 +712,14 @@ export class OpenDocumentsComponent {
    */
   private readonly openProjects = computed<readonly ProjectSummary[]>(() => {
     const paths = this.tabs.tabs().map((tab) => tab.path);
+    // The held project draws even with no tab open: closing the last document
+    // keeps the window in the project, and this tree is the door back into it
+    // (`TabsService.heldProject`). One project, not a history — the hold is
+    // where you ARE, not where you have been.
+    const held = this.tabs.heldProject();
     return this.projects.items().filter((project) => project.problem === null
-      && paths.some((path) => inProject(path, project.dir)));
+      && (paths.some((path) => inProject(path, project.dir))
+        || (held !== null && inProject(held, project.dir))));
   });
 
   /**
