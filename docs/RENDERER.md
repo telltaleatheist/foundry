@@ -242,13 +242,13 @@ Rules of engagement are PLAN.md §1's, unchanged — five gates every unit,
 Angular gates only in the main checkout, agents never commit, no new tests
 unless asked, an honest partial beats a bent whole.
 
-- **R1 (engine):** book file v2 — ref markers, chapter seed, version bump;
+- **R1 (engine)** — LANDED `8e68348`: book file v2 — ref markers, chapter seed, version bump;
   `vlm-book` regeneration keeps ids. **Materialization is NOT here**: the
   replay lives once, in `app/shared` (the renderer needs it in-process), so
   MAIN materializes derived book files and the engine never replays ops —
   one implementation, not two. The engine learns to COMPILE FROM a book
   file in R5, which is when export needs it.
-- **R1b (engine):** book file v3 per **docs/BOOK-FILE.md** — the format
+- **R1b (engine)** — LANDED `d9c222a`: book file v3 per **docs/BOOK-FILE.md** — the format
   contract, written as an architect would: receipt/book wall, purity
   (`book = f(receipt)`), atomic writes, bankSha integrity, deliberate-only
   regeneration, forward-compatible versioning, `parts` with char ranges,
@@ -257,8 +257,11 @@ unless asked, an honest partial beats a bent whole.
   User ruling 2026-08-16: *"i want to do this right, even if it takes up a
   little bit more disk space."* The app mirror (`app/shared/book.ts`)
   updates to v3 in the same commit that lands R1b or the one immediately
-  after R2 — never later.
-- **R2 (app spine):** book file + ops over IPC; renderer skeleton READ-ONLY —
+  after R2 — never later. (Done: the mirror landed v3 in `7f234e4`, the
+  commit after R1b, with the seams and shelf on the pane, the figure
+  crops served through an allow-listed `book` host, `--pdf`/`--language`
+  through the ensure step, and bankSha verified on every open.)
+- **R2 (app spine)** — LANDED `b3e8351`: book file + ops over IPC; renderer skeleton READ-ONLY —
   blocks, virtual scroll, selection, proper chrome per RENDERER-DESIGN.md.
   Opening a read position ENSURES the book file (main spawns `vlm-book` if
   absent), which doubles as the migration for existing projects.

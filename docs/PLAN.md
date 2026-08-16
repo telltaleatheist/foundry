@@ -620,6 +620,15 @@ transform commits; no OCR errors; tier-2 structure ops and export
 preview as the priorities), the formats, the renderer architecture,
 the deletion list, the migration, and execution waves R1–R6.
 
+Progress (RENDERER.md §9 carries the same marks): **R1 landed**
+(`8e68348`, book file v2), **R2 landed** (`b3e8351`, the read-only
+renderer skeleton), **R1b landed** (`d9c222a`, book file v3 —
+provenance, parts, seams, shelf, figures, atomic writes), and the
+**v3 mirror landed** (`7f234e4` — app parser to v3, bankSha checked
+on open, `--pdf`/`--language` through the ensure step, seams and
+shelf and plates on the pane). R2b (facsimile + book file at
+read-landing) is in flight; R3–R6 wait their turns.
+
 Supersessions, so nothing dangles:
 
 - **Wave 5 (Phase E) is absorbed** into RENDERER.md §7/R6 — the same
