@@ -234,7 +234,14 @@ animated where it helps.
   the publisher's own noteref anchors mint `refs` EXACTLY (no printed-number
   matching, so no loose markers from a well-made EPUB); images copy once
   into the `.images/` directory; inline emphasis folds to the same source
-  markers the model writes. `vlm-compile` already exports any book file
+  markers the model writes. EPUB 2 states the same facts in an older
+  spelling and `f` reads those too (`ac226ae`): the NCX is the nav; a
+  paragraph whose entire content is an image is the Picture; a `p` whose
+  class spells a heading tag (`h1`..`h6`) is a Section-header; the rows at
+  a contents entry's landing that print the entry's own name are the
+  division's Titles; and an anchor whose whole text is a number, resolved
+  to a target that opens by printing the same number, is a noteref stated
+  at both ends — either end alone still converts nothing. `vlm-compile` already exports any book file
   with no reference to a bank, so the whole downstream — ops, panels,
   Edition, export — works on day one of the explode.
 
