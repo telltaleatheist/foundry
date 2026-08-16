@@ -89,11 +89,17 @@
  *    wide the book's face is. Divided by what OUR face needs for the same
  *    characters, it says how much narrower the book's type was than ours.
  *
- * So the size is `min(leading / LINE_FACTOR, fit / TZ_MIN)`: as large as the
- * book's leading implies, but never larger than horizontal compression can make
- * fit. And the leading is taken from the box rather than from the size, so a
- * block's lines always span exactly the rectangle they were printed in — which
- * is what closes the white gap, by construction rather than by tuning.
+ * So the size is the leading over `LINE_FACTOR`, full stop — the measure the
+ * page itself supplies. A width-fit cap used to ride along (`min` with a
+ * fit-quantile over `TZ_MIN`) and it is gone, because held against a book
+ * whose text layer states its sizes it was measurably the distortion: the
+ * leading put the body within one per cent of the printed size and the cap
+ * priced it four per cent under, to spare a minority of lines a squeeze they
+ * could afford. Width is paid for line by line where it is actually owed —
+ * the spaces, then `Tz`, then `LINE_OVERRUN`, then this block alone. And the
+ * leading is taken from the box rather than from the size, so a block's lines
+ * always span exactly the rectangle they were printed in — which is what
+ * closes the white gap, by construction rather than by tuning.
  *
  * AND SOME BOOKS STATE IT A THIRD TIME, IN POINTS, AND THAT STATEMENT WINS. A
  * born-digital PDF — and a scan whose publisher ran real OCR over it, which is
@@ -397,28 +403,10 @@ const LINE_COUNT_TOLERANCE = 0.2;
 const AVG_CHAR_EM = 0.45;
 
 /**
- * Which block's width-fit the class's size is capped by.
- *
- * NOT THE MEDIAN, AND THE ASYMMETRY IS THE POINT. The leading samples are
- * two-sided — a class's typical leading is what is wanted, so the median is
- * right. The width-fit samples are one-sided: each is the largest size at which
- * that block's WIDEST line still fits, so a class set at the median fit leaves
- * half its blocks with a line too wide to set. Those lines then either overrun
- * the column or drag the block out of its line count, and on the first run of
- * this design that is exactly what happened — 76 of 136 blocks fell back and the
- * book came out at 5 pt.
- *
- * A fifth from the bottom leaves four blocks in five fitting outright, and the
- * remainder inside `LINE_OVERRUN`. Lower would start pricing the whole book off
- * its worst boxes again, which is the failure the old low-quantile design had.
- */
-const FIT_QUANTILE = 0.2;
-
-/**
  * How much of the class size a line-for-line block may spend to keep its lines.
  *
- * `FIT_QUANTILE` prices the class so four blocks in five fit outright, which
- * means one in five holds a line wider than the class size can set — and a block
+ * A class is priced off its leading alone (`classSizes`), which means some of
+ * its blocks hold a line wider than the class size can set — and a block
  * over that line used to lose its printed lines entirely, re-broken at our own
  * widths in the middle of a page whose neighbours kept theirs. The structure is
  * worth more to a facsimile than the last half-point of uniformity, so such a
@@ -446,6 +434,26 @@ const LINE_OVERRUN = 0.03;
 
 /** How many blocks a class needs before its size is measured over the class. */
 const CLASS_SAMPLES = 8;
+
+/**
+ * How far the text layer may disagree with the paper before it is a liar.
+ *
+ * The one check a layer has to pass before a word of it is believed. A
+ * publisher's layer states sizes within a few per cent of what the boxes'
+ * own leading implies — measured: 10.2 stated against 10.1 implied. A layer
+ * that puts a class thirty per cent away from the leading its own paper
+ * shows is not a poor measurement of this book, it is text about some other
+ * setting — the crude OCR a cheap scan ships, sizes invented wholesale —
+ * and an instrument caught lying about one class is not half-believed about
+ * the others: the whole layer is discarded, by name, and the measured
+ * formulas stand as if it had never existed. Wide enough that the leading
+ * estimate's own noise (a fully-reflowed class quantised at `40 ± 20/n`)
+ * cannot condemn an honest layer; the comparison is made only where both
+ * sides have a class's worth of samples, and the leading side only off
+ * blocks whose printed lines survived — the one measurement the layer
+ * cannot have influenced.
+ */
+const LAYER_DISAGREEMENT = 0.3;
 
 /**
  * The least leading a truth-sized block may be set on, as a multiple of its
@@ -714,6 +722,14 @@ export interface TextPdfResult {
    */
   layerSized: { blocks: number; of: number };
   /**
+   * The layer stood trial against the paper's own leading and lost — its
+   * sizes were discarded wholesale and the measured formulas stood. Null
+   * when there was no layer, or when it told the truth. Reported because a
+   * person looking at the output deserves to know a witness was dismissed,
+   * and which class it lied about.
+   */
+  layerRejected: LayerVerdict | null;
+  /**
    * How the book's lines were decided — the single most useful number about a
    * facsimile, because it says how much of it is the printer's own setting.
    */
@@ -774,13 +790,19 @@ interface CrampedTally {
  *
  * Each is a thing a printer sizes DELIBERATELY and uniformly: body text is the
  * measure everything else is relative to, notes smaller, captions smaller again,
- * a block quotation a shade down. NOT here: display type, because a chapter
- * opener is meant to be bigger than a section head; and `Table`, `Formula` and
- * `Picture`, because a box round one of those is not a box round a line of type.
+ * a block quotation a shade down. The page furniture is here too, and it used
+ * not to be: a running head and a folio are set once and printed on every page
+ * of the book, which makes them the MOST uniform type in it — and sizing each
+ * one from its own box gave the same running head 6 pt on one page and 18 on
+ * another, purely on how generously the model drew that page's rectangle. A
+ * median over sixteen of them is a measurement; sixteen boxes taken alone are
+ * sixteen guesses. NOT here: display type, because a chapter opener is meant
+ * to be bigger than a section head; and `Table`, `Formula` and `Picture`,
+ * because a box round one of those is not a box round a line of type.
  *
  * The same split, and the same reasoning, as `typography.ts`'s `CALIBRATED`.
  */
-type SizeClass = 'body' | 'quote' | 'footnote' | 'caption';
+type SizeClass = 'body' | 'quote' | 'footnote' | 'caption' | 'pageHead' | 'pageFoot';
 
 function sizeClassOf(category: DotsCategory): SizeClass | null {
   switch (category) {
@@ -793,6 +815,10 @@ function sizeClassOf(category: DotsCategory): SizeClass | null {
       return 'footnote';
     case 'Caption':
       return 'caption';
+    case 'Page-header':
+      return 'pageHead';
+    case 'Page-footer':
+      return 'pageFoot';
     default:
       return null;
   }
@@ -1013,7 +1039,7 @@ export async function buildTextPdf(opts: TextPdfOptions): Promise<TextPdfResult>
    * measured. This is also where the substitution tally is filled, once, off the
    * same text the drawing pass will use.
    */
-  const planned = planBlocks(opts.pages, geometry, faces, tally, opts.dpi, opts.layer);
+  const { planned, layerRejected } = planBlocks(opts.pages, geometry, faces, tally, opts.dpi, opts.layer);
   const sizes = classSizes(planned);
 
   for (let number = 1; number <= pageCount; number += 1) {
@@ -1122,6 +1148,7 @@ export async function buildTextPdf(opts: TextPdfOptions): Promise<TextPdfResult>
       blocks: planned.filter((block) => block.truthPt !== null).length,
       of: planned.length,
     },
+    layerRejected,
     lineForLine,
     emphasis: planned.reduce((sum, block) => sum + block.emphasis, 0),
     superscripts: planned.reduce((sum, block) => sum + block.superscripts, 0),
@@ -1503,7 +1530,7 @@ function planBlocks(
   tally: SubstitutionTally,
   dpi: number,
   layer?: ReadonlyMap<number, readonly PdfLayerSpan[]>,
-): PlannedBlock[] {
+): { planned: PlannedBlock[]; layerRejected: LayerVerdict | null } {
   const planned: PlannedBlock[] = [];
   const columns: { centre: number; width: number }[] = [];
 
@@ -1647,7 +1674,36 @@ function planBlocks(
     }
   }
 
-  const bodyLead = medianOf(planned.filter((b) => b.trusted && b.cls === 'body').map((b) => b.leadPt));
+  /*
+   * THE LAYER STANDS TRIAL BEFORE IT IS USED, and the moment matters: the
+   * trusted flags are final here, and nothing downstream has read a truth
+   * yet. The witness against it is the one measurement it cannot have
+   * touched — the leading of the blocks whose printed lines survived — and
+   * the verdict is wholesale: a layer that put one class thirty per cent
+   * from its own paper is not believed about any other. Every truth is
+   * struck, and the measured formulas below run exactly as they would have
+   * had no layer existed.
+   */
+  const layerRejected = judgeLayer(planned);
+  if (layerRejected !== null) {
+    for (const block of planned) block.truthPt = null;
+  }
+
+  /*
+   * Each class's leading, measured off the blocks whose printed lines
+   * survived — they are the only ones where a box divided by a line count is
+   * a measurement rather than an estimate. This used to be taken for the
+   * body alone, and every other class's reflowed blocks fell through to the
+   * `impliedLines` estimate, whose `40 ± 20/n` quantisation is exactly the
+   * wobble this file exists to keep off the page. A class's trusted blocks
+   * know its leading as surely as the body's know the body's.
+   */
+  const classLeads = new Map<SizeClass, number>();
+  const measured = new Set(planned.filter((b) => b.trusted && b.cls !== null).map((b) => b.cls!));
+  for (const cls of measured) {
+    const lead = medianOf(planned.filter((b) => b.trusted && b.cls === cls).map((b) => b.leadPt));
+    if (lead !== null) classLeads.set(cls, lead);
+  }
 
   for (const block of planned) {
     if (!block.trusted) {
@@ -1659,19 +1715,17 @@ function planBlocks(
        * characters each, and n lines fill the box, so `s = √(H·W / (C·charEm·λ))`.
        */
       /*
-       * The layer's size settles the line count too, where it exists. The
-       * body's median leading is the right guess for a body-sized paragraph
-       * and a wrong one for everything set smaller inside the body class —
-       * an extract, a source line, the small type of a title page — which
-       * got a line budget a fifth short and then shrank to meet it. A block
-       * whose printed size is KNOWN was printed on lines of that size, and
-       * `LINE_FACTOR` is the same convention the class sizes already assume.
+       * The layer's size settles the line count too, where it exists — a
+       * block whose printed size is KNOWN was printed on lines of that size,
+       * and `LINE_FACTOR` is the same convention the class sizes already
+       * assume. After it, the class's own measured leading; the estimate is
+       * only for a block whose class no trusted block ever measured.
        */
+      const classLead = block.cls !== null ? classLeads.get(block.cls) : undefined;
       const lead = block.truthPt !== null
         ? block.truthPt * LINE_FACTOR
-        : bodyLead !== null && block.cls === 'body'
-          ? bodyLead
-          : Math.max(MIN_FONT_SIZE, block.rect.height / impliedLines(block, charEm));
+        : classLead
+          ?? Math.max(MIN_FONT_SIZE, block.rect.height / impliedLines(block, charEm));
       block.lines = Math.max(1, Math.round(block.rect.height / lead));
       block.leadPt = block.rect.height / block.lines;
     }
@@ -1698,7 +1752,7 @@ function planBlocks(
         && width <= measure * CENTRE_MAX_WIDTH
       );
   }
-  return planned;
+  return { planned, layerRejected };
 }
 
 /**
@@ -1749,6 +1803,46 @@ function impliedLines(block: PlannedBlock, charEm: number): number {
   );
   if (!Number.isFinite(size) || size <= 0) return 1;
   return Math.max(1, block.rect.height / (LINE_FACTOR * size));
+}
+
+/** The class a rejected layer lied about, and both sides of the disagreement. */
+export interface LayerVerdict {
+  cls: string;
+  /** What the layer claimed the class measures, in points. */
+  layerPt: number;
+  /** What the paper's own leading implies it measures, in points. */
+  leadPt: number;
+}
+
+/**
+ * Does the layer agree with the paper it claims to describe?
+ *
+ * Asked class by class, and only where both sides can field a class's worth
+ * of samples: the layer's median against the leading of the blocks whose
+ * printed lines survived — leading measured off kept line breaks, which is
+ * the one number in this file a layer cannot have influenced. A book with no
+ * trusted blocks returns no verdict and the layer is believed: nothing
+ * contradicts it, and refusing evidence for want of a second witness would
+ * throw away the publisher's own record over this file's inability to check
+ * it. See `LAYER_DISAGREEMENT` for where the line sits and why.
+ */
+function judgeLayer(planned: readonly PlannedBlock[]): LayerVerdict | null {
+  const classes = new Set(
+    planned.filter((b) => b.cls !== null).map((b) => b.cls!),
+  );
+  for (const cls of classes) {
+    const truths = planned
+      .filter((b) => b.cls === cls && b.truthPt !== null)
+      .map((b) => b.truthPt!);
+    const leads = planned
+      .filter((b) => b.cls === cls && b.trusted)
+      .map((b) => b.leadPt);
+    if (truths.length < CLASS_SAMPLES || leads.length < CLASS_SAMPLES) continue;
+    const layerPt = medianOf(truths)!;
+    const leadPt = medianOf(leads)! / LINE_FACTOR;
+    if (Math.abs(layerPt / leadPt - 1) > LAYER_DISAGREEMENT) return { cls, layerPt, leadPt };
+  }
+  return null;
 }
 
 /**
@@ -1866,12 +1960,10 @@ function lineWidthAt1(words: readonly Word[], faces: FaceSet): number {
  */
 function classSizes(planned: readonly PlannedBlock[]): Map<SizeClass, number> {
   const leads = new Map<SizeClass, number[]>();
-  const fits = new Map<SizeClass, number[]>();
   const byClass = new Map<SizeClass, PlannedBlock[]>();
   for (const block of planned) {
     if (block.cls === null) continue;
     (leads.get(block.cls) ?? leads.set(block.cls, []).get(block.cls)!).push(block.leadPt);
-    (fits.get(block.cls) ?? fits.set(block.cls, []).get(block.cls)!).push(block.fitPt);
     (byClass.get(block.cls) ?? byClass.set(block.cls, []).get(block.cls)!).push(block);
   }
 
@@ -1879,18 +1971,9 @@ function classSizes(planned: readonly PlannedBlock[]): Map<SizeClass, number> {
   for (const [cls, lead] of leads) {
     if (lead.length < CLASS_SAMPLES) continue;
     /*
-     * THE LAYER'S STATEMENT BEATS BOTH INFERENCES, class-wide as well as per
-     * block. Where enough of a class's blocks sit over the source's own text
-     * layer, the class is set at the median of what the layer says those
-     * blocks measured — and the width-fit cap does not apply to it. The cap
-     * exists because a size solved from leading might not FIT our wider face,
-     * and capping it traded size for fit across the whole class; but the fit
-     * machinery already pays for width line by line (the spaces, then `Tz`,
-     * then `LINE_OVERRUN`), so applying the cap to a size that is KNOWN right
-     * would shrink the entire book below its printed size to spare a few
-     * lines a squeeze they can afford. Measured against a book whose layer
-     * was checked by hand, the cap is exactly where the missing tenth of the
-     * body size had gone.
+     * THE LAYER'S STATEMENT FIRST, where enough of a class's blocks sit over
+     * one: the median of what the layer says those blocks measured is the
+     * printed size, recorded rather than solved.
      */
     const truths = (byClass.get(cls) ?? [])
       .map((block) => block.truthPt)
@@ -1899,10 +1982,22 @@ function classSizes(planned: readonly PlannedBlock[]): Map<SizeClass, number> {
       sizes.set(cls, Math.max(MIN_FONT_SIZE, medianOf(truths)!));
       continue;
     }
+    /*
+     * OTHERWISE THE LEADING ALONE, AND NO LONGER CAPPED BY THE WIDTH-FIT.
+     * The cap — `min(byLead / λ, fit-quantile / TZ_MIN)` — existed so that a
+     * class would not be set larger than our face could squeeze into the
+     * book's columns. Held against a book whose text layer states its sizes
+     * outright, the cap is precisely where the missing tenth of the body
+     * size had gone: the leading put the body at 10.1 of a printed 10.2, and
+     * the cap priced it down to 9.86 to spare a fifth of the blocks a
+     * squeeze their lines could afford. Width is the fit machinery's bill to
+     * pay, line by line — the spaces, then `Tz`, then `LINE_OVERRUN` — and a
+     * line that truly cannot pay it is handled where it fails, not priced
+     * into every line of the book in advance.
+     */
     const byLead = medianOf(lead);
-    const byFit = quantileOf(fits.get(cls) ?? [], FIT_QUANTILE);
-    if (byLead === null || byFit === null) continue;
-    sizes.set(cls, Math.max(MIN_FONT_SIZE, Math.min(byLead / LINE_FACTOR, byFit / TZ_MIN)));
+    if (byLead === null) continue;
+    sizes.set(cls, Math.max(MIN_FONT_SIZE, byLead / LINE_FACTOR));
   }
   return sizes;
 }
@@ -2069,6 +2164,18 @@ function layOut(
   const wanted = block.truthPt
     ?? (block.cls !== null ? sizes.get(block.cls) : undefined)
     ?? Math.max(MIN_FONT_SIZE, Math.min(block.leadPt / LINE_FACTOR, block.fitPt / TZ_MIN));
+  /*
+   * Whether `wanted` is a size this file KNOWS rather than one it solved from
+   * this block's own box. Two ways to know: the source's text layer said so,
+   * or a class median over the whole book said so — a median across dozens of
+   * boxes is a measurement the way one box never is. Everything below splits
+   * on this: a known size is HELD, and a block that struggles with it pays in
+   * tightness, leading, or a reach into the margin; a solved size gives way,
+   * because the struggle is evidence the guess was wrong. Only a block of an
+   * uncalibrated class — display type, a class under `CLASS_SAMPLES` — is on
+   * the last, per-box formula, and only it keeps the old give-way arithmetic.
+   */
+  const known = block.truthPt !== null || (block.cls !== null && sizes.has(block.cls));
 
   const hangAt = (size: number): number => block.marker.length === 0
     ? 0
@@ -2084,20 +2191,21 @@ function layOut(
      * Every printed line has to reach its measure once the squeeze is spent —
      * give or take `LINE_OVERRUN`, which is cheaper than losing the line count.
      *
-     * A LINE THAT STILL DOES NOT FIT COSTS THIS BLOCK SIZE, NOT ITS LINES. The
+     * A LINE THAT STILL DOES NOT FIT NEVER COSTS THE BLOCK ITS LINES. The
      * first cut of this branch gave the whole block to the wrapping path the
-     * moment one line came up wide, and `FIT_QUANTILE` made that common: the
-     * class size is set so a fifth of the book's blocks hold at least one line
-     * wider than it, and every one of them was being re-broken at our widths,
-     * its boundary spaces lost and its leading stretched over the shortfall —
-     * one paragraph in five set sparse in the middle of a page whose neighbours
-     * kept their printed breaks. The page's own geometry is the better half of
-     * the facsimile, so the block keeps the printer's lines and gives up size
-     * until its widest line fits, and the loss is counted as cramped where a
-     * person can read about it. Only a block whose lines would cost more than
-     * `TRUSTED_SIZE_FLOOR` of the class size can be lying about its line count
-     * — the model gluing two printed lines into one arrives here asking for
-     * half size — and only that block is re-broken by wrapping.
+     * moment one line came up wide, and with a class priced off its leading
+     * that is common: our face is wider than the book's, so a fair share of
+     * blocks hold at least one line wider than the class size can set, and
+     * every one of them was being re-broken at our widths, its boundary
+     * spaces lost and its leading stretched over the shortfall — sparse
+     * paragraphs in the middle of pages whose neighbours kept their printed
+     * breaks. The page's own geometry is the better half of the facsimile,
+     * so the block keeps the printer's lines, and what the wide line costs
+     * depends on how the size was arrived at — see `known`. Only a block
+     * whose lines would cost more than `TRUSTED_SIZE_FLOOR` of the wanted
+     * size can be lying about its line count — the model gluing two printed
+     * lines into one arrives here asking for half size — and only that block
+     * is re-broken by wrapping.
      */
     const widest = lines.reduce(
       (max, line) => Math.max(max, lineWidthAt1(line.words, faces)), 0,
@@ -2109,18 +2217,18 @@ function layOut(
        * whose widest line outruns the measure in our face, and when the size
        * was solved from the box that shave is the honest answer — the size
        * was a guess and the line is evidence against it. When the size is
-       * the LAYER's, the line is not evidence of anything except DejaVu
-       * being wider than the book's face, and shaving a few per cent off
-       * block after block is precisely the wobble a page of one-size type
-       * turns into: every paragraph its own size, none of them the page's.
-       * So the block keeps the printed size and its widest line pays where
-       * a line can — spaces first, then `Tz`, then a reach into the margin
-       * (`fitLine` compresses to `TZ_MIN` and past that lets the line run
-       * long rather than clipping a word). `TRUSTED_SIZE_FLOOR` still
-       * guards above: a block asking for HALF its size is a merged line,
-       * not a wide one, and it re-wraps as before.
+       * the layer's or the class median's, the line is not evidence of
+       * anything except DejaVu being wider than the book's face, and shaving
+       * a few per cent off block after block is precisely the wobble a page
+       * of one-size type turns into: every paragraph its own size, none of
+       * them the page's. So the block keeps that size and its widest line
+       * pays where a line can — spaces first, then `Tz`, then a reach into
+       * the margin (`fitLine` compresses to `TZ_MIN` and past that lets the
+       * line run long rather than clipping a word). `TRUSTED_SIZE_FLOOR`
+       * still guards above: a block asking for HALF its size is a merged
+       * line, not a wide one, and it re-wraps as before.
        */
-      const size = block.truthPt !== null ? wanted : fitted;
+      const size = known ? wanted : fitted;
       return {
         lines,
         size,
@@ -2150,7 +2258,7 @@ function layOut(
   const flat = joinSegments(block.segments);
   const allowed = Math.max(1, block.lines);
   /*
-   * A truth-sized block wraps into the measure a line is ACTUALLY permitted
+   * A block of known size wraps into the measure a line is ACTUALLY permitted
    * to occupy — the squeeze plus the same `LINE_OVERRUN` the trusted path
    * grants a printed line. The distinction matters at the margin, and the
    * margin is where whole paragraphs were being lost: a bulleted paragraph
@@ -2158,43 +2266,44 @@ function layOut(
    * at the strict measure, and the shrink loop then prices three-into-two at
    * two-thirds of the printed size — 6.8 pt in a 10.2 pt book, for four per
    * cent of overflow the overrun absorbs without anyone seeing it. A block
-   * with no truth keeps the strict measure and the old arithmetic untouched:
-   * its `wanted` is a guess solved from its own box, over-generous exactly
-   * when the box is (a 35 pt "size" from a box drawn far too tall), and the
-   * aggressive count-ratio shrink is what walks a guess like that back down.
+   * with no known size keeps the strict measure and the old arithmetic
+   * untouched: its `wanted` is a guess solved from its own box, over-generous
+   * exactly when the box is (a 35 pt "size" from a box drawn far too tall),
+   * and the aggressive count-ratio shrink is what walks a guess like that
+   * back down.
    */
-  const wrapWidth = block.truthPt === null
-    ? block.rect.width / TZ_MIN
-    : (block.rect.width * (1 + LINE_OVERRUN)) / TZ_MIN;
+  const wrapWidth = known
+    ? (block.rect.width * (1 + LINE_OVERRUN)) / TZ_MIN
+    : block.rect.width / TZ_MIN;
   let size = wanted;
   let indent = block.indent ? INDENT_EM * size : 0;
   let hang = hangAt(size);
   let lines = wrapWords(flat, block.rect.width, size, faces, indent, hang);
   if (lines.length > allowed) {
     const squeezed = wrapWords(flat, wrapWidth, size, faces, indent, hang);
-    // For a truth-sized block the squeezed wrap is adopted whenever it is the
+    // For a known-size block the squeezed wrap is adopted whenever it is the
     // better of the two — the loop below starts from its count, and starting
-    // from the unsqueezed count overshoots. Without truth, the historical
-    // rule stands: adopted only when it settles the matter outright.
-    if (block.truthPt !== null ? squeezed.length < lines.length : squeezed.length <= allowed) {
+    // from the unsqueezed count overshoots. For a solved size, the
+    // historical rule stands: adopted only when it settles the matter.
+    if (known ? squeezed.length < lines.length : squeezed.length <= allowed) {
       lines = squeezed;
     }
   }
   /*
-   * A block whose size is the LAYER's spends its leading before its size.
-   * Our face squeezed to `TZ_MIN` sits within a few per cent of the widths
-   * these books are set in, so a wrap that misses the printed line count
-   * misses it by a line — and the page's own remedy for one line too many is
-   * never to print the paragraph smaller, it is to set the lines closer. The
-   * leading floor is where that stops: below five per cent of air between
-   * lines, descenders and ascenders start to meet, and past THAT point the
-   * box genuinely cannot hold the text at the printed size — a box the model
-   * drew too small, or two blocks' text in one box — and shrinking is the
-   * honest answer again, exactly as it is for a block with no truth at all.
+   * A block of KNOWN size spends its leading before its size. Our face
+   * squeezed to `TZ_MIN` sits within a few per cent of the widths these
+   * books are set in, so a wrap that misses the printed line count misses it
+   * by a line — and the page's own remedy for one line too many is never to
+   * print the paragraph smaller, it is to set the lines closer. The leading
+   * floor is where that stops: below five per cent of air between lines,
+   * descenders and ascenders start to meet, and past THAT point the box
+   * genuinely cannot hold the text at the known size — a box the model drew
+   * too small, or two blocks' text in one box — and shrinking is the honest
+   * answer again, exactly as it is for a block with no known size at all.
    */
-  const ceiling = block.truthPt === null
-    ? allowed
-    : Math.max(allowed, Math.floor(block.rect.height / (block.truthPt * LEADING_FLOOR)));
+  const ceiling = known
+    ? Math.max(allowed, Math.floor(block.rect.height / (wanted * LEADING_FLOOR)))
+    : allowed;
   let tight = block.trusted;
   for (let attempt = 0; attempt < 4 && lines.length > ceiling && size > MIN_FONT_SIZE; attempt += 1) {
     size = Math.max(MIN_FONT_SIZE, size * (ceiling / lines.length));
@@ -2203,7 +2312,38 @@ function layOut(
     lines = wrapWords(flat, wrapWidth, size, faces, indent, hang);
     tight = true;
   }
-  if (block.truthPt !== null && lines.length > allowed) tight = true;
+  /*
+   * A KNOWN size that had to shrink CLIMBS BACK to the largest size that
+   * still fits. The count-ratio step cannot see slivers: a paragraph needing
+   * a hair over two lines wraps to three, and two-thirds of the size is a
+   * punishment for the hair — any size a few per cent down would have taken
+   * its two lines. The step stays, because a guess three times too big needs
+   * exactly that kind of walking down; what changes is that a size this file
+   * KNOWS is then bisected back toward, so the marginal block lands a
+   * whisker under its printed size instead of a third under it. A solved
+   * size earns no climb: the shrink that fit it is the best statement about
+   * it anybody has.
+   */
+  if (known && tight && size < wanted && lines.length <= ceiling) {
+    let floor = size;
+    let over = wanted;
+    for (let probe = 0; probe < 4; probe += 1) {
+      const middle = (floor + over) / 2;
+      const midIndent = block.indent ? INDENT_EM * middle : 0;
+      const midHang = hangAt(middle);
+      const trial = wrapWords(flat, wrapWidth, middle, faces, midIndent, midHang);
+      if (trial.length <= ceiling) {
+        floor = middle;
+        size = middle;
+        indent = midIndent;
+        hang = midHang;
+        lines = trial;
+      } else {
+        over = middle;
+      }
+    }
+  }
+  if (known && lines.length > allowed) tight = true;
   return {
     lines,
     size,

@@ -778,6 +778,21 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
         );
       }
       /*
+       * A dismissed witness is said out loud. Whoever compares this output
+       * against the source's own text layer will find them disagreeing, and
+       * without this line the disagreement reads as this program's error
+       * rather than as the layer's.
+       */
+      if (built.layerRejected !== null) {
+        opts.log(
+          `vlm-convert: the source carries a text layer and it was NOT believed — it puts the `
+          + `${built.layerRejected.cls} class at ${built.layerRejected.layerPt.toFixed(1)} pt where `
+          + `the page's own line spacing measures ${built.layerRejected.leadPt.toFixed(1)}, which is `
+          + 'the kind of size a crude OCR pass invents. The book is set from its own measurements '
+          + 'instead, as a layerless scan would be',
+        );
+      }
+      /*
        * HOW MUCH OF THE BOOK IS THE PRINTER'S OWN SETTING, said because it is
        * the single most useful number about a facsimile. Where the model kept
        * the page's line breaks they are reproduced exactly — hyphens and all —
