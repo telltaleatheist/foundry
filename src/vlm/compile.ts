@@ -257,7 +257,7 @@ interface CompiledRef {
 function spansOf(
   flow: readonly BookRow[],
   book: BookFile,
-): { from: number; to: number; title: string; kind: DotsPageKind | null }[] {
+): { from: number; to: number; title: string; kind: DotsPageKind | null; heading: string | null }[] {
   const at = new Map<string, number>();
   for (const [index, row] of flow.entries()) at.set(row.id, index);
 
@@ -306,7 +306,24 @@ function spansOf(
       : sectionName(span, null)
         || KIND_LABEL[start.kind ?? 'chapter']
         || `Chapter ${which + 1}`;
-    return { from: start.index, to, title, kind: start.kind };
+    /*
+     * `heading` IS NOT `title`, and the difference is who said it. The title
+     * above is the NAV's label and falls back through guesses — the span's own
+     * first heading, the kind, the position — because a contents entry has to
+     * say something. The heading is what may be PRINTED at the top of the
+     * chapter when nothing else is (`chapterBody`), and only a division's own
+     * declared name qualifies: printing "Chapter 3" into the text of a book
+     * whose page never said it would be this file writing the book instead of
+     * compiling it. Empty for the synthesized front-matter span and for a rule
+     * drawn with no words over it, both of which print nothing.
+     */
+    return {
+      from: start.index,
+      to,
+      title,
+      kind: start.kind,
+      heading: start.title.trim().length > 0 ? start.title : null,
+    };
   });
 }
 
@@ -381,11 +398,30 @@ function chapterBody(
   column: BodyColumn,
   images: ReadonlyMap<string, string>,
   format: CompileFormat,
+  heading: string | null,
 ): CompiledBody {
   const out: string[] = [];
   const headings: { id: string; label: string }[] = [];
   const pagesSeen = new Set<number>();
   const openers = openingRun(span);
+  /*
+   * A DIVISION WITH NOTHING ON THE PAGE SAYING ITS NAME PRINTS ITS NAME — the
+   * mirror of `EditionPlace.heading` (app, edition.ts), which is the surface
+   * the person watched while deciding. Where the chapter opens on the book's
+   * own heading, THAT is the heading and the division's title is metadata
+   * beside it; where somebody struck the printed title and named the rule
+   * instead, the chapter would otherwise open on bare prose while the sheet
+   * they approved showed a heading. Set through `dotsInline` like every other
+   * string that becomes markup, and stamped with the category alone — a page
+   * stamp would cite a leaf this element was never printed on.
+   */
+  if (openers === 0 && heading !== null) {
+    out.push(blockElement(
+      'Title',
+      { outer: ` data-bf-cat="${categoryAttribute('Title')}"` },
+      dotsInline(heading, { noteref: () => null }),
+    ));
+  }
   let linked = 0;
   let pictures = 0;
   let openList: 'ol' | 'ul' | null = null;
@@ -777,7 +813,7 @@ export function compileBook(opts: CompileOptions): CompileReport {
         refId: null,
       }));
     notes += apparatus.length;
-    const body = chapterBody(rows, apparatus, column, images, format);
+    const body = chapterBody(rows, apparatus, column, images, format, span.heading);
     linked += body.linked;
     unresolved += body.unresolved;
     pictures += body.pictures;

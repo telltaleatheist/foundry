@@ -989,6 +989,15 @@ const SCROLL_SETTLE_MS = 400;
           [style.top.px]="open.y"
           (keydown.escape)="context.set(null)"
         >
+          <!--
+            The one verb about THIS block rather than its kind: the same editor
+            the double-click opens, offered where a double-click has neighbours
+            that mean other things (the chip renames, a note's click peeks).
+          -->
+          <button role="menuitem" (click)="editFromMenu()">
+            <span class="swatch" [style.background]="open.colour"></span>
+            Edit this block
+          </button>
           <button role="menuitem" (click)="selectSimilar()">
             <span class="swatch" [style.background]="open.colour"></span>
             Select {{ open.ids.length === 1 ? 'the 1' : 'all ' + open.ids.length }} {{ open.plural }}
@@ -3625,6 +3634,18 @@ export class BookViewComponent {
     const target = event.target as HTMLElement | null;
     const block = target === null ? null : target.closest('.block');
     const id = block === null ? null : block.getAttribute('data-id');
+    this.beginEditing(id);
+  }
+
+  /**
+   * Enter the editor on a named block — the shared destination of the two
+   * doors that open it: a double-click on the block, and the right-click
+   * menu's Edit. Two doors because a double-click has other meanings nearby
+   * (the chapter chip renames, a note's first click raises the peek card),
+   * and a person whose double-click landed on one of those needs a door that
+   * cannot be misread.
+   */
+  private beginEditing(id: string | null): void {
     if (id === null || id === this.editingId()) return;
     // §5's sentence, exactly: the block is named, so the block is what comes back
     // focused. See `toBench` for why the caret does not come with it.
@@ -3850,6 +3871,8 @@ export class BookViewComponent {
   protected readonly context = signal<{
     x: number;
     y: number;
+    /** The block under the pointer — the menu's one block-scoped verb, Edit. */
+    id: string;
     colour: string;
     plural: string;
     ids: string[];
@@ -3867,12 +3890,21 @@ export class BookViewComponent {
     this.context.set({
       x: event.clientX,
       y: event.clientY,
+      id: line.row.id,
       colour: line.colour,
       // "Text" pluralises into nonsense; every other category reads naturally.
       plural: line.row.category === 'Text' ? 'text blocks' : `${line.label.toLowerCase()}s`,
       ids: kin.map((one) => one.row.id),
       unstruck: kin.filter((one) => one.row.struck !== true).map((one) => one.row.id),
     });
+  }
+
+  /** The menu's Edit: close the menu, open the same editor double-click does. */
+  protected editFromMenu(): void {
+    const open = this.context();
+    this.context.set(null);
+    if (open === null) return;
+    this.beginEditing(open.id);
   }
 
   /** The selection becomes the category — rails up, chips up, Delete waiting. */

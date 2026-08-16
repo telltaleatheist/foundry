@@ -163,6 +163,55 @@ function cutParts(parts: readonly BookPart[], cuts: readonly Cut[]): BookPart[] 
 }
 
 /**
+ * The divisions, each re-hung on the first row of it that survived.
+ *
+ * A chapter rule anchored to a struck block used to leave WITH the block, and
+ * the rule's title — the name somebody typed, the entry the spine and the nav
+ * are built from — went silently with it. That contradicts the surface the
+ * person was looking at: the edition register reads a division BEFORE the drop
+ * and lands it above the next surviving block (`edition.ts`, "What is absent,
+ * and what a division does about it"), so striking a printed chapter title
+ * showed a book still divided and named, and the export then compiled one
+ * chapter called nothing. The book file now says what the sheet shows: the
+ * division moves forward to the first held row after its anchor, in flow
+ * order, keyed to it.
+ *
+ * A division nothing survives under — every row from its anchor to the next
+ * division struck — is not re-hung past its own span: it would land on the
+ * NEXT chapter's opening and the book would say two chapters start there. It
+ * is dropped, which is the edition's own rule ("a division with nothing
+ * surviving under it is not a chapter the finished book has").
+ */
+function rehungChapters(
+  chapters: readonly BookChapter[],
+  flow: readonly ReplayedRow[],
+  held: ReadonlySet<string>,
+): BookChapter[] {
+  const at = new Map(flow.map((row, index) => [row.id, index] as const));
+  const opens = new Set(chapters.map((chapter) => chapter.id));
+  const rehung: BookChapter[] = [];
+  for (const chapter of chapters) {
+    if (held.has(chapter.id)) {
+      rehung.push(chapter);
+      continue;
+    }
+    const start = at.get(chapter.id);
+    if (start === undefined) continue;
+    for (let index = start + 1; index < flow.length; index += 1) {
+      const row = flow[index]!;
+      // The next division's block ends this one's span: nothing of this
+      // chapter survived, and re-hanging past the boundary would stack two
+      // divisions on one block.
+      if (opens.has(row.id)) break;
+      if (!held.has(row.id)) continue;
+      rehung.push({ ...chapter, id: row.id });
+      break;
+    }
+  }
+  return rehung;
+}
+
+/**
  * The book, with a chain replayed into it and written as the finished document.
  *
  * The order below is the whole of the correctness: the replay first, because
@@ -261,7 +310,7 @@ export function materialize(book: BookFile, ops: readonly BookOp[]): Materialize
         // The receipt this book is a pure function of, verbatim — including its
         // sha, which still identifies the bank underneath every id in the file.
         source: book.header.source,
-        chapters: replayed.chapters.filter((chapter) => held.has(chapter.id)),
+        chapters: rehungChapters(replayed.chapters, replayed.rows, held),
         typography: book.header.typography,
         /*
          * A DERIVED FILE'S SEAMS ARE SPENT DECISIONS. A seam is an offer to join
