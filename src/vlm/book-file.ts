@@ -56,7 +56,7 @@
  * text sits — because both are ratios that survive the addition.
  */
 import type { DotsBlock, DotsBox, DotsCategory } from './dots.js';
-import type { FlowBlock, FlowBook } from './dots-book.js';
+import { splitNotes, type FlowBlock, type FlowBook } from './dots-book.js';
 
 /** The format written into the file, so a reader can refuse a shape it cannot use. */
 export const BOOK_FILE_VERSION = 1;
@@ -113,6 +113,22 @@ export interface BookRow {
    * It is bookkeeping and not an address: nothing addresses a block but `id`.
    */
   src: string[];
+  /**
+   * Which note of its banked block this is, counted from 0 — set on a `Footnote`
+   * row and absent on every other kind.
+   *
+   * The model answers the whole foot of a page as ONE block, so five notes
+   * arrive as one answer with newlines between them. `splitNotes` cuts them
+   * apart, and it happens HERE rather than at assembly for the reason everything
+   * else in this file happens here: a note is a thing a person strikes, so it
+   * has to be a thing with a name.
+   *
+   * Kept beside the id rather than only encoded in it because the ordinal is a
+   * fact worth reading — it is what the old overlay grammar's `note` field
+   * pointed at, so a decision recorded before this format existed can be
+   * re-keyed by looking rather than by parsing a string.
+   */
+  note?: number;
 }
 
 /** `page:order` for a whole answer element, `page:order:part` for a piece of one. */
@@ -142,37 +158,108 @@ function mergedBox(parts: readonly DotsBlock[]): DotsBox {
   return { x1, y1: first.box.y1, x2, y2: first.box.y1 + height };
 }
 
-/** One flow block as a row. Exported for the one test that wants a row without a book. */
-export function bookRow(block: FlowBlock): BookRow {
+/**
+ * How much of a footnote area a note takes up — its characters, not its lines.
+ *
+ * COUNTING LINES WAS THE OBVIOUS THING AND IT IS WRONG HERE. The model reflows:
+ * a note that the printer set over three lines arrives as one long line of text
+ * with no break in it at all, so a line count says "1" about a note occupying a
+ * third of the area and "1" about the one-line note beside it, and the two get
+ * equal shares of a rectangle they very much do not equally fill. Measured on
+ * the book in hand: three notes on page 2, one counted line each, one of them
+ * plainly twice the length of the others.
+ *
+ * Characters have neither problem. Notes are set in ONE size and ONE column, so
+ * the height a note occupies is proportional to how much of it there is — which
+ * makes this a description of the page rather than a guess about it, and it is
+ * indifferent to whether the model kept the breaks.
+ */
+function textWeight(text: string): number {
+  return Math.max(1, text.replace(/\s+/g, ' ').trim().length);
+}
+
+/**
+ * One flow block as one or more rows.
+ *
+ * ── A FOOTNOTE BLOCK IS SEVERAL NOTES AND BECOMES SEVERAL ROWS ──────────────
+ *
+ * The model answers the whole foot of a page as ONE block, so five notes arrive
+ * as one answer with newlines between them, and until now they were cut apart at
+ * assembly — which meant a note had no name until a book was being written, and
+ * a person striking one was striking something that did not exist in any file.
+ *
+ * IT IS SAFE TO CUT THEM HERE because a note does not run over: *"footnotes will
+ * always be on the page of the note that contains them, and they will always be
+ * complete. standard publishing practice."* Checked against the book in hand
+ * before this was built — 16 footnote blocks, 51 notes, not one of them spanning
+ * a leaf. A book that breaks the convention costs a long note read as two, which
+ * is visible on the page and correctable like anything else here; nothing is
+ * lost and nothing is silently wrong.
+ *
+ * ── THE HEIGHT IS SHARED OUT AND NOT COPIED, WHICH MATTERS ──────────────────
+ *
+ * The obvious thing is to give every note its block's box. It would be wrong in
+ * the one way a box is used: type size is a box's HEIGHT OVER ITS LINE COUNT
+ * (`typography.ts`), so three notes each claiming the whole footnote area while
+ * carrying a third of its lines would each measure three times the type they are
+ * actually set in — and footnote size is exactly what that measurement exists to
+ * find. So the area is divided down the notes in proportion to the lines each
+ * one holds, stacked in order. They are set in one size and one column, which is
+ * what makes the division a description of the page rather than an invention.
+ */
+export function bookRow(block: FlowBlock): BookRow[] {
   const parts = block.parts.map((part) => part.block);
   const first = parts[0]!;
   const pages: number[] = [];
   for (const part of parts) if (pages[pages.length - 1] !== part.page) pages.push(part.page);
-  return {
-    id: `b${coordinate(first).replace(/:/g, '-')}`,
+  const box = mergedBox(parts);
+  const base = {
     category: block.category,
-    text: block.text,
     page: first.page,
     pages,
-    box: mergedBox(parts),
     pageWidth: first.pageWidth,
     pageHeight: first.pageHeight,
     src: parts.map(coordinate),
   };
+  const id = `b${coordinate(first).replace(/:/g, '-')}`;
+
+  if (block.category !== 'Footnote') {
+    return [{ ...base, id, text: block.text, box }];
+  }
+  const notes = splitNotes(block.text);
+  // A Footnote block the splitter finds one note in is one row, named exactly as
+  // it would be if the block held five: the id says which note, always, so
+  // nothing downstream needs a rule about the single case.
+  const weights = notes.map(textWeight);
+  const total = weights.reduce((sum, n) => sum + n, 0);
+  const height = box.y2 - box.y1;
+  let top = box.y1;
+  return notes.map((text, ordinal) => {
+    const share = (weights[ordinal]! / total) * height;
+    const row: BookRow = {
+      ...base,
+      id: `${id}#${ordinal}`,
+      text,
+      box: { x1: box.x1, y1: top, x2: box.x2, y2: top + share },
+      note: ordinal,
+    };
+    top += share;
+    return row;
+  });
 }
 
 /**
  * The whole book, in reading order.
  *
- * `flow.blocks` IS THE ANSWER and this function adds nothing to it but a name
- * and a box: the reflow already dropped the running heads, fused the hyphens,
- * reflowed the print lines, merged the two-line headings and joined the page
- * turns. That is deliberate — this file must never become a second place where
- * the book is decided, or the two will disagree and the one that loses will be
- * the one somebody edited.
+ * `flow.blocks` IS THE ANSWER and this function adds nothing to it but names,
+ * boxes and the note split: the reflow already dropped the running heads, fused
+ * the hyphens, reflowed the print lines, merged the two-line headings and joined
+ * the page turns. That is deliberate — this file must never become a second
+ * place where the book is decided, or the two will disagree and the one that
+ * loses will be the one somebody edited.
  */
 export function bookRows(flow: FlowBook): BookRow[] {
-  return flow.blocks.map(bookRow);
+  return flow.blocks.flatMap(bookRow);
 }
 
 /**

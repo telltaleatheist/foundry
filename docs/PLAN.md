@@ -577,12 +577,19 @@ system."*
      rectangle on no page and is still right about the two things
      anything asks it (type size, column width), because both are ratios.
 
-   **KNOWN GAP, not deferred silently: notes are not split yet.** A
-   Footnote row can still hold several notes with newlines between them
-   — `splitNotes` runs at assembly, as it always has. The user's op
-   grammar is note-level (`{at:{page,order,note}, strike}`), so either
-   the book file splits them into rows of their own (`b14-2#0`) or an op
-   keys `id#ordinal`. Wants a ruling before it is built.
+   - **Notes are rows of their own**, `b<page>-<order>#<ordinal>`, on the
+     user's ruling: *"footnotes will always be on the page of the note
+     that contains them, and they will always be complete. standard
+     publishing practice."* Checked against the book before building:
+     16 footnote blocks, 51 notes, not one spanning a leaf. 125 rows in
+     all, which is the same count the HTML page carries — the two
+     representations agree block for block.
+     The footnote area is shared out among its notes **by characters
+     rather than by lines**, because the model reflows: a note the
+     printer set over three lines arrives as one long line, so a line
+     count gives a wrapped note and a one-line note beside it equal
+     shares of a rectangle they do not equally fill. Notes are set in
+     one size and one column, so characters describe the page.
 
    **Also not built: the facsimile-first orchestration.** The engine can
    already do it (`vlm-convert --format pdf`); what is missing is the app
