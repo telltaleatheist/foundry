@@ -777,6 +777,7 @@ const SCROLL_SETTLE_MS = 400;
               [class.drop-target]="draggingRule()?.over === line.row.id"
               (pointerenter)="lightRow(line)"
               (pointerleave)="dim()"
+              (contextmenu)="blockMenu($event, line)"
             >
               <span class="gutter rail"></span>
               @if (!edition() && chosen().has(line.row.id)) {
@@ -955,6 +956,38 @@ const SCROLL_SETTLE_MS = 400;
               (click)="relabel(open.id, candidate.id)"
             >
               <span class="swatch" [style.background]="candidate.colour"></span>{{ candidate.label }}
+            </button>
+          }
+        </div>
+      }
+      <!--
+        THE BLOCK'S OWN MENU — right-click, the same small-menu vocabulary as
+        the category list above it. Two verbs about the whole CATEGORY of the
+        block under the pointer, because that is the book-wide gesture a
+        right-click reaches for (user ruling, 2026-08-16: select all the
+        footnotes, so they can go together). Select feeds the ordinary loop —
+        rails and chips come up, Delete strikes; Strike is the same destination
+        in one press. Both counts are in the labels, on the Apply button's rule:
+        a verb about forty rows says forty before it is pressed.
+      -->
+      @if (context(); as open) {
+        <div class="menu-scrim" (click)="context.set(null)" (contextmenu)="context.set(null)"></div>
+        <div
+          class="menu"
+          role="menu"
+          aria-label="About every block of this kind"
+          [style.left.px]="open.x"
+          [style.top.px]="open.y"
+          (keydown.escape)="context.set(null)"
+        >
+          <button role="menuitem" (click)="selectSimilar()">
+            <span class="swatch" [style.background]="open.colour"></span>
+            Select {{ open.ids.length === 1 ? 'the 1' : 'all ' + open.ids.length }} {{ open.plural }}
+          </button>
+          @if (open.unstruck.length > 0) {
+            <button role="menuitem" (click)="strikeSimilar()">
+              <span class="swatch" [style.background]="open.colour"></span>
+              Strike {{ open.unstruck.length === 1 ? 'the 1' : 'all ' + open.unstruck.length }} {{ open.plural }}
             </button>
           }
         </div>
@@ -3763,6 +3796,65 @@ export class BookViewComponent {
     const row = this.view()?.rows.find((candidate) => candidate.id === id);
     if (row === undefined || row.category === category) return;
     this.push({ op: 'category', id, category });
+  }
+
+  /**
+   * The right-click menu: two verbs about every block of this one's kind.
+   *
+   * The lists are computed AT OPEN over the flowing lines the sheet is drawing,
+   * so the counts in the labels are the counts the verbs will act on — a menu
+   * that counted at click time could say a number the replay had since moved.
+   * In the edition, and inside any editable, the browser keeps its own menu:
+   * the preview offers no verbs, and a caret's right-click is the caret's.
+   */
+  protected readonly context = signal<{
+    x: number;
+    y: number;
+    colour: string;
+    plural: string;
+    ids: string[];
+    unstruck: string[];
+  } | null>(null);
+
+  protected blockMenu(event: MouseEvent, line: Line): void {
+    if (this.edition()) return;
+    const target = event.target as HTMLElement | null;
+    if (target !== null && target.isContentEditable) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.peek.set(null);
+    const kin = this.lines().filter((one) => one.row.category === line.row.category);
+    this.context.set({
+      x: event.clientX,
+      y: event.clientY,
+      colour: line.colour,
+      // "Text" pluralises into nonsense; every other category reads naturally.
+      plural: line.row.category === 'Text' ? 'text blocks' : `${line.label.toLowerCase()}s`,
+      ids: kin.map((one) => one.row.id),
+      unstruck: kin.filter((one) => one.row.struck !== true).map((one) => one.row.id),
+    });
+  }
+
+  /** The selection becomes the category — rails up, chips up, Delete waiting. */
+  protected selectSimilar(): void {
+    const open = this.context();
+    this.context.set(null);
+    if (open === null) return;
+    this.chosen.set(new Set(open.ids));
+  }
+
+  /**
+   * The one-press destination: every unstruck block of the kind, cancelled.
+   * One op per block, exactly what selecting them and pressing Delete would
+   * push — so undo takes it back the same way, one gesture's worth at a time.
+   */
+  protected strikeSimilar(): void {
+    const open = this.context();
+    this.context.set(null);
+    if (open === null) return;
+    if (open.unstruck.length === 0) return;
+    this.push(...open.unstruck.map((id): BookOp => ({ op: 'strike', id })));
+    this.chosen.set(new Set(open.unstruck));
   }
 
   // ───────────────────────────────────────────────────────────────────────────
