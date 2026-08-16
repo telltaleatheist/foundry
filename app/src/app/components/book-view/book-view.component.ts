@@ -249,6 +249,16 @@ const DRAG_SLOP = 4;
 const PULSE_MS = 600;
 
 /**
+ * The jump's glide: the time constant of the chase (each frame closes
+ * `1 - e^(-dt/τ)` of what remains, so ~95% of the distance is travelled in 3τ —
+ * about three-quarters of a second of visible motion), and the bound that snaps
+ * whatever is left and ends it, because a chase over a live layout must end even
+ * if something keeps nudging the target. See `land`.
+ */
+const GLIDE_TAU_MS = 220;
+const GLIDE_MAX_MS = 1500;
+
+/**
  * The narrowest bench two sheets can breathe in, in rem — the lead's own number.
  *
  * Below it the aligned view is UNAVAILABLE rather than cramped: two columns of
@@ -2082,6 +2092,9 @@ export class BookViewComponent {
 
   private pulseTimer: ReturnType<typeof setTimeout> | null = null;
 
+  /** The jump's glide in flight, or null — so a second jump replaces the first. */
+  private gliding: number | null = null;
+
   /**
    * THE PEEK — which counterpart is on the card, and where the card sits.
    *
@@ -3210,40 +3223,63 @@ export class BookViewComponent {
   /**
    * The scroll and the pulse, once the list under them is the bench's.
    *
-   * ── THE JUMP IS INSTANT, AND IT LANDS TWICE ─────────────────────────────────
+   * ── A GLIDE THAT RE-AIMS EVERY FRAME, because the target MOVES ─────────────
    *
    * The sheet's bodies sit under `content-visibility: auto` with a 4rem
    * placeholder, so every block the viewport has never reached is ESTIMATED at
-   * 4rem — a fraction of what a paragraph actually measures. A single
-   * `scrollIntoView` therefore aims at a fiction: the browser scrolls to where
-   * the target would be if the estimates were true, the blocks between here and
-   * there render and take their real heights, and the target slides away —
-   * a click on a chapter-four heading put a reader down in the middle of
-   * chapter two. `smooth` made it worse, not better: the layout keeps growing
-   * UNDER a long animated scroll, so the miss compounds for its whole duration.
+   * 4rem — a fraction of what a paragraph actually measures. Any scroll aimed
+   * ONCE therefore aims at a fiction: as blocks near the destination render and
+   * take their real heights, the target slides away from wherever the scroll was
+   * told to go. One `scrollIntoView({smooth})` landed a chapter-four heading in
+   * the middle of chapter two; an instant jump with an after-the-fact settle
+   * still left the block half off the screen, because the placeholders around it
+   * resolve on the frames AFTER the one the settle checked.
    *
-   * So the jump is a plain center and then a settle: each frame, if the target
-   * has moved since the last one — which is exactly the estimates around it
-   * being replaced by measurements — it is centred again, until two frames
-   * agree. The loop is bounded because it must end even if something else
-   * scrolls the sheet mid-settle; a dozen frames is several times what the
-   * deepest jump needs. The pulse marks the landing either way.
+   * So the correction is not a step after the motion — it IS the motion. Each
+   * frame measures where the target's centre actually stands against the
+   * bench's, and closes a time-constant fraction of that distance: an ease-out
+   * glide of about three-quarters of a second that a reader can follow, whose
+   * aim is refreshed on every frame, so the layout growing underneath it is
+   * absorbed while it travels instead of discovered after it stops. The chase
+   * ends when the centres agree, and the bound snaps the last of the distance
+   * closed so a landing is centred even if the clock runs out first.
+   *
+   * THE SCROLLBAR STAYS THE READER'S. A wheel or a press on the sheet while the
+   * glide is in flight cancels it — the app asked to move the page, the person
+   * moved it instead, and the person wins. Reduced motion collapses the chase to
+   * its endpoint: the same loop with the whole distance closed each frame, which
+   * is an instant landing that still absorbs the late-resolving placeholders.
    */
   private land(id: string): void {
-    const element = this.host.nativeElement.querySelector(`[data-id="${CSS.escape(id)}"]`);
-    if (element === null) return;
-    element.scrollIntoView({ block: 'center' });
-    let last = element.getBoundingClientRect().top;
-    let spins = 0;
-    const settle = (): void => {
-      const top = element.getBoundingClientRect().top;
-      if (Math.abs(top - last) < 1 || spins >= 12) return;
-      last = top;
-      spins += 1;
-      element.scrollIntoView({ block: 'center' });
-      requestAnimationFrame(settle);
+    const element = this.host.nativeElement.querySelector(`[data-id="${CSS.escape(id)}"]`) as HTMLElement | null;
+    const bench = element?.closest('.bench, .context') as HTMLElement | null;
+    if (element === null || bench === null) return;
+    if (this.gliding !== null) cancelAnimationFrame(this.gliding);
+    const centreDelta = (): number => {
+      const box = element.getBoundingClientRect();
+      const view = bench.getBoundingClientRect();
+      return (box.top + box.height / 2) - (view.top + view.height / 2);
     };
-    requestAnimationFrame(settle);
+    const abort = (): void => {
+      if (this.gliding !== null) cancelAnimationFrame(this.gliding);
+      this.gliding = null;
+    };
+    bench.addEventListener('wheel', abort, { once: true, passive: true });
+    bench.addEventListener('pointerdown', abort, { once: true });
+    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const started = performance.now();
+    let last = started;
+    const step = (now: number): void => {
+      const delta = centreDelta();
+      const dt = now - last;
+      last = now;
+      const done = Math.abs(delta) < 0.5 || now - started > GLIDE_MAX_MS;
+      bench.scrollTop += done || reduced ? delta : delta * (1 - Math.exp(-dt / GLIDE_TAU_MS));
+      this.gliding = done && (reduced ? Math.abs(centreDelta()) < 0.5 : true)
+        ? null
+        : requestAnimationFrame(step);
+    };
+    this.gliding = requestAnimationFrame(step);
     if (this.pulseTimer !== null) clearTimeout(this.pulseTimer);
     this.pulse.set(id);
     this.pulseTimer = setTimeout(() => this.pulse.set(null), PULSE_MS);
