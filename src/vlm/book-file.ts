@@ -54,12 +54,61 @@
  * The result is a rectangle that is on no page and is right about the only two
  * things anything asks it — how tall a line of this type is, and how wide the
  * text sits — because both are ratios that survive the addition.
+ *
+ * ── VERSION 2: THE MARKERS, THE CHAPTERS AND THE TYPE ───────────────────────
+ *
+ * v1 was the rows. v2 is the rows plus the three facts the renderer would
+ * otherwise have to work out for itself, and every one of them is here because
+ * working it out twice is how two answers to one question get into a program.
+ *
+ * REFERENCE MARKERS ARE DATA NOW. A superscript `¹²` in the prose was, until
+ * this version, a shape in a string that only the EPUB emitter ever resolved —
+ * it matched marker to note while it concatenated markup, wrote an `<a>`, and
+ * threw the correspondence away with the string. An editing surface needs the
+ * correspondence itself: *"if i delete footnotes, it removes their
+ * corresponding reference numbers."* That is one op and a DERIVED fact, not two
+ * ops, and it is only derivable if the file says which marker belongs to which
+ * note. So every note row carries `refs` — where in the body its number is
+ * printed — resolved by the same printed-number match the emitter uses, and the
+ * ones that did not resolve are listed in the header rather than dropped. A
+ * marker with no note and a note with nothing pointing at it are the two
+ * LINKING flags the renderer draws in the margin, and they are structural facts
+ * about the book rather than suspicion about the scan.
+ *
+ * THE CHAPTER SEED. `detectChapters` exists so an app can seed a chapter list
+ * with exactly what a render would do, and it did it by parsing the bank a
+ * second time. The book file is already that pass's answer written down, so the
+ * seed rides along in the header — the same starts, through the same
+ * `sectionName`, so the seed and the render cannot disagree. Ownership passes
+ * to the ledger the moment a person touches it (RENDERER §2), which is why this
+ * is a seed and not a spine.
+ *
+ * THE TYPOGRAPHY REPORT, verbatim. It is a measurement of the whole book —
+ * medians over every block of a category — so it can only be taken where the
+ * whole book is, and the renderer needs it to set type the way the export does.
+ * Carrying it costs a few hundred bytes and saves the surface from measuring a
+ * book it is showing one screen of.
  */
-import type { DotsBlock, DotsBox, DotsCategory } from './dots.js';
-import { splitNotes, type FlowBlock, type FlowBook } from './dots-book.js';
+import type { DotsBlock, DotsBox, DotsCategory, DotsPageKind } from './dots.js';
+import { SUPERSCRIPT_RUN } from './dots.js';
+import {
+  KIND_LABEL,
+  printedNoteNumber,
+  sectionName,
+  splitNotes,
+  type FlowBlock,
+  type FlowBook,
+} from './dots-book.js';
+import type { TypographyReport } from './typography.js';
 
-/** The format written into the file, so a reader can refuse a shape it cannot use. */
-export const BOOK_FILE_VERSION = 1;
+/**
+ * The format written into the file, so a reader can refuse a shape it cannot use.
+ *
+ * 2 — the rows of version 1 unchanged, plus `refs` on the note rows and a
+ * header that carries the chapter seed, the typography report and the two
+ * linking flags. See this file's header for what each is for.
+ */
+export const BOOK_FILE_VERSION = 2;
 
 /**
  * One block of the finished book — one row of the file.
@@ -129,6 +178,91 @@ export interface BookRow {
    * re-keyed by looking rather than by parsing a string.
    */
   note?: number;
+  /**
+   * Every place in the body this note's number is printed — set on a `Footnote`
+   * row and on no other kind, and set on EVERY footnote row including the ones
+   * nothing points at, where it is `[]`.
+   *
+   * ── WHY THE LINK IS RECORDED ON THE NOTE AND NOT ON THE MARKER ─────────────
+   *
+   * The marker is not a thing. It is two characters inside a paragraph's text,
+   * and the paragraph is a string a person is about to edit — insert a clause
+   * before it and every offset after the caret moves. A ref stored on the body
+   * row would be a coordinate into a document that changes, maintained by
+   * whoever remembered to shift it. Stored on the NOTE it is a coordinate into
+   * a document at the moment this file was written, read by a renderer that
+   * already has the text in hand: it finds the run, binds an element to the
+   * note's id, and from then on the DOM holds the correspondence, not an
+   * integer that has to be nursed.
+   *
+   * It is also the direction the question is asked in. "Delete this note and
+   * its number goes with it" needs the note to know its markers; nothing needs
+   * a marker to know its note before it has been found.
+   *
+   * `at` is a character offset into the named row's FINAL text — after the
+   * dehyphenation, after the reflow, after the page turns were joined — because
+   * that string is what the file carries and the only one a reader has. `len`
+   * is the run's length in characters, which is the digit count and is not
+   * always 1: a book with more than nine notes to a page prints two.
+   */
+  refs?: BookRef[];
+}
+
+/** One printed reference to a note: where in the body its number stands. */
+export interface BookRef {
+  /** The body row whose text carries the marker. Never a `Footnote` row. */
+  block: string;
+  /** Character offset into that row's final text. */
+  at: number;
+  /** How many characters the superscript run is. */
+  len: number;
+}
+
+/**
+ * A marker the match could not place: its number is printed in the body and no
+ * note answers to it.
+ *
+ * IT IS IN THE HEADER RATHER THAN NOWHERE, which is the whole difference
+ * between this file and the emitter it takes its rule from. The emitter's answer
+ * to an unmatched marker is a plain `<sup>` — the number stays on the page and
+ * the fact that nothing was found is not written anywhere, so nobody can act on
+ * it. Here it is a row in a list a person can be shown and can fix by hand with
+ * a `link` op. `printed` is what the page set, so the list reads as the book
+ * reads.
+ */
+export interface BookLooseMarker extends BookRef {
+  printed: number;
+}
+
+/** One entry of the chapter seed — see this file's header on what a seed is. */
+export interface BookChapter {
+  /** The FIRST row of the block the section opens at. */
+  id: string;
+  title: string;
+  /** What the page classifier called it, where it called it anything. */
+  kind?: DotsPageKind;
+}
+
+/** The two linking flags, both directions, named where a person can read them. */
+export interface BookLoose {
+  markers: BookLooseMarker[];
+  /** The ids of the note rows nothing points at. Each still carries `refs: []`. */
+  notes: string[];
+}
+
+/**
+ * The whole file: the header's facts and the rows, as one value.
+ *
+ * The header stopped being decoration at version 2 — it carries the chapter
+ * seed, the type report and the linking flags — so a reader that got only the
+ * rows would be missing three things it needs and would have to open the file a
+ * second time to find them. One shape, everything in it.
+ */
+export interface BookFile {
+  rows: BookRow[];
+  chapters: BookChapter[];
+  typography: TypographyReport | null;
+  loose: BookLoose;
 }
 
 /** `page:order` for a whole answer element, `page:order:part` for a piece of one. */
@@ -249,30 +383,255 @@ export function bookRow(block: FlowBlock): BookRow[] {
 }
 
 /**
- * The whole book, in reading order.
+ * Where each part of a joined paragraph ends inside the block's one text, and
+ * which page it was printed on.
+ *
+ * ── WHY A MARKER'S PAGE IS NOT THE BLOCK'S PAGE ─────────────────────────────
+ *
+ * A note is matched to its marker by the PAGE they share — that is the whole of
+ * the rule, because printed numbering restarts too often for a number to name a
+ * note on its own. A paragraph that swallowed a page turn is one row with one
+ * `page` field, and a marker in its second half was printed on the page AFTER
+ * that one. Asking the row would put the marker on the wrong page and match it
+ * against the wrong page's notes — which is exactly the failure this rule
+ * exists to avoid, arrived at from the other side.
+ *
+ * The emitter has never had this problem because it writes a joined paragraph
+ * part by part and hands each part its own page (`buildChapterBody`, the
+ * default branch). This reconstructs the same division over the finished string,
+ * and it can, because the string is composed of the parts in order: the
+ * separator a `space` join inserted, then the word the column broke made whole,
+ * then what is left of the part. That is `joinedText`, read forwards.
+ *
+ * THE FUSED WORD BELONGS TO THE LATER PAGE, again because that is what the
+ * emitter does with it. It is half on each leaf and no answer is more true than
+ * the other; what matters is that both readers say the same one.
+ */
+function partSpans(block: FlowBlock): { end: number; page: number }[] {
+  const spans: { end: number; page: number }[] = [];
+  let at = 0;
+  for (const part of block.parts) {
+    if (part.join === 'space') at += 1;
+    if (part.fused !== null) at += part.fused.length;
+    at += part.text.length;
+    spans.push({ end: at, page: part.page });
+  }
+  return spans;
+}
+
+/** A superscript run found in the body, with the page it was printed on. */
+interface PrintedMarker {
+  block: string;
+  at: number;
+  len: number;
+  printed: number;
+  page: number;
+}
+
+/**
+ * Every reference marker in one body block, in reading order.
+ *
+ * THE SAME ALPHABET `splitNotes` KEYS ON, and it has to be: a note is cut out of
+ * the foot of a page by a superscript at the start of a line, and the number
+ * that cuts it is the number a marker in the prose has to match. `SUPERSCRIPT_RUN`
+ * is `dotsInline`'s own regular expression, imported rather than rewritten, so
+ * that a run this file calls a marker is a run the emitter would call one too.
+ *
+ * A Footnote row is never scanned — a superscript inside a note is the note's
+ * own number or a reference in its own prose, and the emitter renders a note's
+ * text with no page and therefore never links anything inside one either.
+ */
+function markersIn(block: FlowBlock, id: string): PrintedMarker[] {
+  const spans = partSpans(block);
+  const composed = spans[spans.length - 1]?.end ?? 0;
+  if (composed !== block.text.length) {
+    /*
+     * THE PARTS NO LONGER COMPOSE THE TEXT, which means the reflow and this file
+     * disagree about what the block says. There is no honest page for a marker
+     * in a string nothing can be divided into, so nothing is guessed: the run
+     * stops and names the block. See PLAN.md's rule — a fallback here would be a
+     * marker filed under a page it was not printed on, which reads as a correct
+     * link and is not one.
+     */
+    throw new BookFileError(
+      `block "${id}" is ${block.text.length} character(s) long and its ${block.parts.length} `
+      + `part(s) compose ${composed}, so there is no telling which page any of it was printed on`,
+    );
+  }
+  const markers: PrintedMarker[] = [];
+  for (const match of block.text.matchAll(SUPERSCRIPT_RUN)) {
+    const at = match.index;
+    const run = match[0];
+    markers.push({
+      block: id,
+      at,
+      len: run.length,
+      // Both assertions are the check above, spent: the run is superscript
+      // digits and nothing else, so it has a printed value; and the parts
+      // compose the text exactly, so every offset in it falls inside a part.
+      printed: printedNoteNumber(run)!,
+      page: spans.find((span) => at < span.end)!.page,
+    });
+  }
+  return markers;
+}
+
+/**
+ * Marker to note, by the emitter's own rule — and this is the one place the
+ * book file makes a decision, so it is the one place that has to be argued.
+ *
+ * THE RULE IS `buildChapterBody`'s `noteFor`, restated over rows: a note whose
+ * PRINTED number is the marker's, on the marker's page, or — the one-page grace
+ * — on the page after it, which covers a note whose block the model read onto
+ * the following leaf. The search never goes wider than that, for the emitter's
+ * reason: a wrong link is worse than no link, because a wrong one is invisible
+ * and a missing one is a flag in the margin somebody can act on.
+ *
+ * ONE ADDITION, AND IT IS DELIBERATE: A NOTE IS CLAIMED ONCE. The emitter can
+ * hand the same note to two markers and does not care, because it is writing an
+ * `<a href>` and two links to one note are harmless in a book. This file is
+ * writing the list a person is shown, and a note quietly taken twice would put a
+ * second, genuinely unmatched note into the "nothing points at this" flag with
+ * no way to see why. So the first marker in reading order takes it and the
+ * second falls through to the next eligible note, or to the loose list, where it
+ * is visible. `refs` stays a list because the shape is the contract and because
+ * a `link` op is free to add one by hand.
+ */
+function linkMarkers(
+  markers: readonly PrintedMarker[],
+  notes: readonly { row: BookRow; printed: number | null; page: number }[],
+): BookLooseMarker[] {
+  const loose: BookLooseMarker[] = [];
+  const claimed = new Set<string>();
+  const eligible = (marker: PrintedMarker, page: number) => notes.find(
+    (note) => note.printed === marker.printed && note.page === page && !claimed.has(note.row.id),
+  );
+  for (const marker of markers) {
+    const note = eligible(marker, marker.page) ?? eligible(marker, marker.page + 1);
+    if (note === undefined) {
+      loose.push({ block: marker.block, at: marker.at, len: marker.len, printed: marker.printed });
+      continue;
+    }
+    claimed.add(note.row.id);
+    note.row.refs!.push({ block: marker.block, at: marker.at, len: marker.len });
+  }
+  return loose;
+}
+
+/**
+ * The chapter seed: where the book divides, and what each division is called.
+ *
+ * NOT A SPINE AND NOT A DECISION. It is what a render with nobody's opinion in
+ * it would do, written down where the renderer can open with it — and the first
+ * chapter op in the ledger takes the list over (RENDERER §2). The names come
+ * through `sectionName` and `KIND_LABEL`, which is `detectChapters`' order and
+ * `buildDotsBook`'s order, because a seed that named a section differently from
+ * the book that gets built would make the editor's first act a change nobody
+ * asked for.
+ *
+ * The LEADING SPAN IS IN THIS LIST, unlike `detectChapters`', and the difference
+ * is what each is for. That list seeds a spine — front matter is what is left
+ * over rather than a chapter somebody named — while this one seeds a set of
+ * lines drawn across a document, and the line at the top of a book is where the
+ * front matter ends. A person can delete it; they cannot draw one that was never
+ * offered.
+ */
+function chapterSeed(flow: FlowBook, idOf: ReadonlyMap<FlowBlock, string>): BookChapter[] {
+  const chapters: BookChapter[] = [];
+  for (const [i, start] of flow.starts.entries()) {
+    const block = flow.blocks[start];
+    if (block === undefined) continue;
+    const proposal = flow.opens[i] ?? null;
+    const span = flow.blocks.slice(start, flow.starts[i + 1] ?? flow.blocks.length);
+    const title = sectionName(span, proposal)
+      || KIND_LABEL[proposal?.kind ?? 'chapter']
+      || `Chapter ${i + 1}`;
+    chapters.push({
+      id: idOf.get(block)!,
+      title,
+      ...(proposal?.kind != null ? { kind: proposal.kind } : {}),
+    });
+  }
+  return chapters;
+}
+
+/**
+ * The whole file, header and all — the book in reading order, the links between
+ * its prose and its apparatus, and the three facts the header carries.
  *
  * `flow.blocks` IS THE ANSWER and this function adds nothing to it but names,
  * boxes and the note split: the reflow already dropped the running heads, fused
  * the hyphens, reflowed the print lines, merged the two-line headings and joined
  * the page turns. That is deliberate — this file must never become a second
  * place where the book is decided, or the two will disagree and the one that
- * loses will be the one somebody edited.
+ * loses will be the one somebody edited. The marker match is the single
+ * exception, and it is not a decision about the book: it is the emitter's own
+ * rule, run over the same blocks, and written down instead of thrown away.
+ *
+ * ONE PASS, AND IT IS THE ONE WAY IN. A `bookRows` that handed back rows without
+ * their links used to sit beside this and was exactly the trap the paragraph
+ * above describes — a caller that used it wrote a book file whose notes pointed
+ * at nothing, and nothing about the file said so. There is one way to make this
+ * document now.
+ *
+ * The pass is single because the marker scan needs what a row throws away: a row
+ * knows the page it started on, and only the FLOW block knows where each of its
+ * parts ended. A marker in the second half of a joined paragraph was printed on
+ * the second half's page. See `partSpans`.
  */
-export function bookRows(flow: FlowBook): BookRow[] {
-  return flow.blocks.flatMap(bookRow);
+export function bookFile(flow: FlowBook): BookFile {
+  const rows: BookRow[] = [];
+  const idOf = new Map<FlowBlock, string>();
+  const markers: PrintedMarker[] = [];
+  const notes: { row: BookRow; printed: number | null; page: number }[] = [];
+
+  for (const block of flow.blocks) {
+    const made = bookRow(block);
+    idOf.set(block, made[0]!.id);
+    if (block.category === 'Footnote') {
+      // EVERY note row carries `refs`, including the empty ones. An absent field
+      // and an empty list would be two spellings of the same fact — "nothing
+      // points at this note" — and a reader would have to know which spelling
+      // this file uses. It uses one.
+      for (const row of made) {
+        row.refs = [];
+        notes.push({ row, printed: printedNoteNumber(row.text), page: row.page });
+      }
+    } else {
+      markers.push(...markersIn(block, made[0]!.id));
+    }
+    rows.push(...made);
+  }
+
+  const loose = linkMarkers(markers, notes);
+  return {
+    rows,
+    chapters: chapterSeed(flow, idOf),
+    typography: flow.typography,
+    loose: {
+      markers: loose,
+      notes: notes.filter((note) => note.row.refs!.length === 0).map((note) => note.row.id),
+    },
+  };
 }
 
 /**
- * The file: a version line, then one row per block.
+ * The file: a header line, then one row per block.
  *
  * JSONL AND NOT JSON, for the bank's own reason — a line is a record, a reader
  * can stream it, and a file that was cut short costs the rows after the cut
  * rather than the whole book. The header is a row like any other so that the
  * format is one grammar rather than two.
  */
-export function formatBookFile(rows: readonly BookRow[]): string {
-  const header = JSON.stringify({ book: BOOK_FILE_VERSION, blocks: rows.length });
-  return [header, ...rows.map((row) => JSON.stringify(row))].join('\n') + '\n';
+export function formatBookFile(book: BookFile): string {
+  const header = JSON.stringify({
+    book: BOOK_FILE_VERSION,
+    blocks: book.rows.length,
+    chapters: book.chapters,
+    typography: book.typography,
+    loose: book.loose,
+  });
+  return [header, ...book.rows.map((row) => JSON.stringify(row))].join('\n') + '\n';
 }
 
 export class BookFileError extends Error {
@@ -290,7 +649,7 @@ export class BookFileError extends Error {
  * happened to parse is a book with paragraphs silently missing and a curation
  * pointing at blocks that are no longer in it.
  */
-export function parseBookFile(text: string): BookRow[] {
+export function parseBookFile(text: string): BookFile {
   const lines = text.split('\n').filter((line) => line.trim().length > 0);
   const head = lines.shift();
   if (head === undefined) throw new BookFileError('the file is empty, so it is not a book');
@@ -301,9 +660,54 @@ export function parseBookFile(text: string): BookRow[] {
     throw new BookFileError(`its first line is not JSON (${(err as Error).message})`);
   }
   const version = (header as { book?: unknown }).book;
+  /*
+   * ── AN OLD BOOK FILE IS THROWN AWAY, NOT MIGRATED ───────────────────────────
+   *
+   * Version 1 has no reference markers, no chapter seed and no typography in it,
+   * and there is no reading of the rows that recovers them: the markers are
+   * matched against pages the file does not record per part, and the chapter
+   * starts were never written down at all. A migration could only invent them.
+   *
+   * It does not need one. This file is REGENERABLE — it is a pure function of
+   * the bank, it costs no model, no rasteriser and no PDF, and a three-hundred
+   * page book comes back in about as long as it takes to read the bank off the
+   * disk. So the honest answer is the cheap one, and it is said as an
+   * instruction rather than as a complaint.
+   */
+  if (version === 1) {
+    throw new BookFileError(
+      'it is a version 1 book file, written before reference markers, the chapter seed and the '
+      + 'typography report were in it, and none of the three can be recovered from its rows. '
+      + 'Regeneration is free: run vlm-book over the same bank again and it comes back in seconds, '
+      + 'with every block wearing the id it already had.',
+    );
+  }
   if (version !== BOOK_FILE_VERSION) {
     throw new BookFileError(
       `it declares book format ${String(version)} and this program writes ${BOOK_FILE_VERSION}`,
+    );
+  }
+  const { chapters, typography, loose } = header as Partial<BookFile>;
+  /*
+   * The header is checked as hard as a row is, and for the row check's reason:
+   * it stopped being decoration at version 2. A file whose seed or whose linking
+   * flags did not survive is a file the renderer would open with no chapter
+   * lines and no unlinked marks, silently — which is indistinguishable, on
+   * screen, from a book that has neither.
+   */
+  if (!Array.isArray(chapters)) {
+    throw new BookFileError('its header carries no chapter seed, and version 2 always writes one');
+  }
+  if (typography === undefined) {
+    throw new BookFileError(
+      'its header carries no typography report, and version 2 always writes one — null where the '
+      + 'book had nothing to measure, never absent',
+    );
+  }
+  if (loose === undefined || !Array.isArray(loose.markers) || !Array.isArray(loose.notes)) {
+    throw new BookFileError(
+      'its header carries no linking flags, and version 2 always writes both lists — empty where '
+      + 'every marker found its note, never absent',
     );
   }
 
@@ -332,5 +736,5 @@ export function parseBookFile(text: string): BookRow[] {
     }
     rows.push(row as BookRow);
   }
-  return rows;
+  return { rows, chapters, typography, loose };
 }

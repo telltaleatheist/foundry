@@ -28,7 +28,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { ensureDir } from '../fsdirs.js';
-import { bookRows, formatBookFile, type BookRow } from './book-file.js';
+import { bookFile, formatBookFile, type BookRow } from './book-file.js';
 import { DotsPageError, parseDotsPage, type DotsParsedPage } from './dots.js';
 import { reflowBook } from './dots-book.js';
 import { VlmReadings } from './readings.js';
@@ -123,7 +123,8 @@ export async function buildBookFile(opts: BookRunOptions): Promise<BookRunReport
   }
 
   const flow = reflowBook({ pages: parsed });
-  const rows = bookRows(flow);
+  const book = bookFile(flow);
+  const rows = book.rows;
   /*
    * The page turns that WERE joined, counted off the flow blocks themselves.
    *
@@ -148,7 +149,7 @@ export async function buildBookFile(opts: BookRunOptions): Promise<BookRunReport
 
   const resolved = path.resolve(opts.outPath);
   ensureDir(path.dirname(resolved));
-  fs.writeFileSync(resolved, formatBookFile(rows), 'utf8');
+  fs.writeFileSync(resolved, formatBookFile(book), 'utf8');
 
   opts.log(
     `vlm-book: ${rows.length} block(s) from ${parsed.length} page(s) — `
@@ -157,6 +158,22 @@ export async function buildBookFile(opts: BookRunOptions): Promise<BookRunReport
     + `${flow.mergedHeadings.length} heading(s) merged out of two boxes, `
     + `${flow.suppressedHeads.length} running head(s) dropped`
     + (unreadable.length === 0 ? '' : `, ${unreadable.length} page(s) UNREADABLE`),
+  );
+  /*
+   * The apparatus, counted — and the two failures are counted BESIDE the
+   * success rather than instead of it, because either number alone is
+   * unreadable. "12 markers linked" says nothing about whether that is all of
+   * them; "3 markers with no note" says nothing about whether the matcher is
+   * working at all. Together they are the shape of the book's apparatus in one
+   * line, and both failures are the LINKING flags the renderer will draw in the
+   * margin — structural facts about what the printer set, not suspicion about
+   * the scan.
+   */
+  const linked = rows.reduce((sum, row) => sum + (row.refs?.length ?? 0), 0);
+  opts.log(
+    `vlm-book: ${linked} reference marker(s) linked, `
+    + `${book.loose.markers.length} marker(s) with no note, `
+    + `${book.loose.notes.length} note(s) nothing points at`,
   );
   if (flow.unjoinedTurns.length > 0) {
     opts.log(

@@ -737,13 +737,21 @@ export interface DotsFold {
  * anything. A copyright page has no heading on it, and two consecutive sections
  * that are both nameless are two sections this rule knows nothing about.
  *
- * Takes a category and a text and nothing else, because both of its callers
- * hold a different kind of block: the fold works over the banked blocks, where
- * a section's index is settled, and `detectChapters` over the flowing ones. A
- * heading is never joined onto anything, so the two spans answer this question
- * identically — which is the point rather than a coincidence.
+ * Takes a category and a text and nothing else, because its callers hold
+ * different kinds of block: the fold works over the banked blocks, where a
+ * section's index is settled, and `detectChapters` and the book file's chapter
+ * seed (`book-file.ts`) over the flowing ones. A heading is never joined onto
+ * anything, so the spans answer this question identically — which is the point
+ * rather than a coincidence.
+ *
+ * EXPORTED FOR THAT THIRD READER AND FOR NO OTHER REASON. The book file carries
+ * a chapter seed the renderer opens with, and a seed that named its sections by
+ * a rule of its own would be a second answer to a question this file already
+ * answers — the failure `detectChapters`' own header describes, where the seed
+ * and the render disagree and the first thing a person does after opening the
+ * editor is silently change their book.
  */
-function sectionName(
+export function sectionName(
   span: readonly { category: DotsCategory; text: string }[],
   opens: DotsChapterProposal | null,
 ): string {
@@ -1328,7 +1336,7 @@ export function splitElements(blocks: readonly DotsBlock[]): Set<string> {
  * so the nav needs a word, and the honest word is the one the classifier used.
  * A part and a contents page usually carry their own and never reach this.
  */
-const KIND_LABEL: Partial<Record<DotsPageKind, string>> = {
+export const KIND_LABEL: Partial<Record<DotsPageKind, string>> = {
   'title-page': 'Title Page',
   copyright: 'Copyright',
   contents: 'Contents',
@@ -1526,6 +1534,25 @@ const SUPERSCRIPT_VALUE = '⁰¹²³⁴⁵⁶⁷⁸⁹';
 
 function printedNumber(run: string): number {
   return Number([...run].map((c) => String(SUPERSCRIPT_VALUE.indexOf(c))).join(''));
+}
+
+/**
+ * The number the BOOK printed on a note, read off the note's own first
+ * characters — or null where it printed none.
+ *
+ * ONE IMPLEMENTATION, TWO READERS, and the second one is why it is a function
+ * at all. `collectNotes` has always taken this here; the book file takes it
+ * again, over a note ROW, because a reference marker in the prose can only be
+ * matched to a note by the number the page set on both of them. Two readings of
+ * "which number is this note" that could drift apart would be two answers to
+ * the question the whole match is, so there is one and both ask it.
+ *
+ * The run has to LEAD. A superscript in the middle of a note is a reference
+ * inside the note's own prose — the same distinction `splitNotes` cuts on.
+ */
+export function printedNoteNumber(text: string): number | null {
+  const lead = LEADING_SUPERSCRIPT.exec(text);
+  return lead === null ? null : printedNumber(lead[0]);
 }
 
 /**
@@ -2851,11 +2878,10 @@ export function collectNotes(blocks: readonly FlowBlock[]): FlowNote[] {
      * the emitter included, gets the same answer without recomputing it.
      */
     for (const [ordinal, text] of splitNotes(block.text).entries()) {
-      const lead = LEADING_SUPERSCRIPT.exec(text);
       notes.push({
         source: block.source,
         text,
-        printed: lead ? printedNumber(lead[0]) : null,
+        printed: printedNoteNumber(text),
         ordinal,
       });
     }
