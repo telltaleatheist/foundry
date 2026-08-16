@@ -1,11 +1,13 @@
 # Foundry, for BookForge — the architecture after the refactor
 
 Written 2026-08-16, at the close of the renderer pivot (RENDERER.md waves
-R1–R6, all landed). This document is for the BookForge project: what Foundry
-is now, how its files are laid out, how editing a book actually works, and
-what each of the two integration routes would cost. Everything here describes
-`main` as of this writing; the format contracts cited (BOOK-FILE.md,
-RENDERER.md) are the living authorities if this summary ever drifts.
+R1–R6, all landed); refreshed later the same cycle after the facsimile
+ruling, the legacy sweep, and the EPUB 2 explode work. This document is for
+the BookForge project: what Foundry is now, how its files are laid out, how
+editing a book actually works, and what each of the two integration routes
+would cost. Everything here describes `main` as of this writing; the format
+contracts cited (BOOK-FILE.md, RENDERER.md) are the living authorities if
+this summary ever drifts.
 
 ---
 
@@ -42,13 +44,21 @@ shape — `archive/` is unchanged):
     <key>.<lang>[.<id8>].records.jsonl   a translation's answers (see §6)
     <key>.<lang>[.<id8>].book.jsonl      the derived translation book file
   ops/<id8>.jsonl               one file per Apply: the ops an edit step recorded
-  generated/                    machine products: the facsimile PDF
-  final/                        the user's export tray (EPUB/txt/PDF they asked for)
-  curations/                    frozen pre-pivot saves; read forever, written never
+  working/                      the PDF's live copy — the file the metadata
+                                dialog stamps (PDF-origin projects only)
+  generated/                    machine copies the app itself opens: the stamped
+                                copy of an imported EPUB; older projects may
+                                hold read-landing facsimiles here
+  final/                        the user's export tray (EPUB/txt/facsimile PDF)
+  curations/                    frozen pre-pivot saves; still read if present,
+                                written never — no current project has one
 ```
 
-Legacy folders (`overlays/`, `history/`, `working/`) may exist in old
-projects; nothing reads or writes them anymore.
+Legacy folders from before the pivot (`overlays/`, `history/`, the flat-era
+app-data directories) no longer exist anywhere, and the one-time migrations
+that adopted them were deleted with them — a project on disk is exactly the
+layout above. Note `working/` is *not* legacy: it is the PDF's live copy, a
+different tenant of a folder the unzipped-EPUB era also used.
 
 ## 3. The two-layer data model — the wall that makes everything else work
 
@@ -129,10 +139,13 @@ frozen files are never rewritten.
 
 ## 5. Products — how books come out
 
-- **Facsimile PDF**: made automatically the moment a reading lands
-  (`vlm-convert --format pdf --reuse-readings`), from the *raw bank only*,
-  into `generated/`. The page-for-page record; terminal — nothing is made
-  from it.
+- **Facsimile PDF**: made **on demand** — Export → Facsimile PDF — from the
+  *raw bank only* (`vlm-convert --format pdf --reuse-readings`), into
+  `final/`, and deletable like any export. It is no longer generated
+  automatically at the read landing: the bank is the protection, and a
+  reprint of it is free whenever it is asked for. The page-for-page record;
+  terminal — nothing is made from it. A project that arrived as an EPUB has
+  no pages, so the facsimile is refused there by name.
 - **EPUB / txt exports**: the position's replay is **materialized** into a
   derived book file (struck rows absent, struck notes' numbers cut from the
   prose, edits baked in), and the engine compiles it:
@@ -140,7 +153,12 @@ frozen files are never rewritten.
   [--images <dir>] [--title …] [--author …]`. Deterministic: same book, same
   flags, same bytes. Chapters split at the book's divisions, notes collect at
   chapter ends with linked noteref/backlink pairs, figures embed from the
-  images dir.
+  images dir. This works identically for EPUB-origin projects — no reading
+  exists or is needed; the archived container is the receipt. The compiled
+  nav nests Section-header entries under their chapter as `#sh<n>` fragment
+  links; only the spine's documents are chapters, so a consumer that (like
+  BookForge) builds chapters from the spine and titles them from the nav's
+  exact-href matches is unaffected by the sub-entries.
 - **Translations**: `foundry translate --book <book.jsonl> …` reads the
   materialized book, asks the model per flowing row, and appends **records**
   (`{key, parts:<blockId>, text, author?}` rows; the `key` is a hash of the
@@ -160,6 +178,19 @@ markup maps to categories, their `epub:type="noteref"` anchors mint exact
 markers. Rows mint `e-<n>` ids and carry a documented no-page frame (no
 geometry, no facsimile, base-sheet typography). Everything downstream — ops,
 panels, preview, export — is identical by construction.
+
+EPUB 2 is read in its own spellings, not just EPUB 3's declarations: the
+NCX is the contents where no nav document exists; a paragraph whose entire
+content is an image is a Picture row (how EPUB 2 sets every cover and
+plate); a `<p class="h1">` is the heading its class names; the rows at a
+contents entry's landing that print the entry's own name become Title
+blocks; and an anchor whose whole text is a number, resolved to a target
+that opens by printing the same number, is a noteref stated at both ends —
+either end alone converts nothing. A commercial EPUB 2 with zero semantic
+markup explodes with its chapters, pictures, titles and linked notes
+intact. NOTE: improving the explode shifts `e-<n>` ordinals, so a book
+imported before such a change is deleted and re-imported, never re-exploded
+under its existing ledger.
 
 ## 7. The engine CLI — the integration surface
 
@@ -206,7 +237,7 @@ and exchange **files** — the formats above are the contract.
   cribbed from it), so the spawn half exists.
 - The handoff is a directory: point Foundry at a project folder (or import
   the PDF/EPUB through it), let the user read/edit/export there, and BookForge
-  consumes the outputs — `final/*.epub`, `generated/` facsimiles, or the book
+  consumes the outputs — `final/` (exports and facsimiles alike), or the book
   file itself if BookForge wants structured text (it is trivial to parse:
   JSONL, header + rows, and `app/shared/book.ts` shows exactly how strictly).
 - Everything is regenerable-by-contract and deterministic, so BookForge can
