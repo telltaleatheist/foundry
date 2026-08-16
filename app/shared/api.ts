@@ -9,6 +9,7 @@
  */
 import type { BookOutcome } from './book';
 import type { ReadAsk } from './ledger';
+import type { BookOp } from './ops';
 import type { ReReadPrompt } from './reread';
 import type {
   AppQuestion,
@@ -874,6 +875,41 @@ export interface FoundryApi {
    */
   book: {
     load(projectDir: string): Promise<BookOutcome>;
+    /**
+     * THE STACK, WRITTEN DOWN — one Apply, one step, one file of ops.
+     *
+     * ── What the renderer is handing over ─────────────────────────────────────
+     *
+     * Everything on the pane's in-memory stack, in the order it was made: a
+     * DELTA against the book at the position the person is standing on, not a
+     * cumulative statement about the book (docs/RENDERER.md §3). Undo has already
+     * happened here — a popped op never reaches this call — so the list is
+     * exactly what somebody meant to keep.
+     *
+     * MAIN WRITES THE FILE BEFORE IT WRITES THE STEP, atomically, so a row naming
+     * a payload that failed to write is not a state this app can construct. The
+     * step lands as a CHILD OF THE POSITION, which is what makes editing from an
+     * older row a branch rather than an argument — the tree already draws
+     * branches — and the pointer follows onto it, because the ops reach the paper
+     * only through the chain from where you stand (`RETAINED_BESIDE_YOU`,
+     * shared/ledger.ts).
+     *
+     * ── And the answer is the whole history back ──────────────────────────────
+     *
+     * `recordCuration`'s shape and its reason: main hands back the ledger AND the
+     * rows it composed for it, so the gesture and what is on screen are one
+     * statement rather than a paint followed by a round trip that describes a
+     * catalogue a moment later. The pane clears its stack on this answer; the ops
+     * come back as chain ops on the reload the pointer move triggers.
+     *
+     * IT REJECTS rather than answering a sentence, unlike `load`. Every way this
+     * fails — a directory that is not a project, a book with no history to hang a
+     * step off, a disk that would not take the file — is a state where the
+     * person's changes are still on the stack in front of them and the honest
+     * thing is a refusal they can act on, not a sheet quietly redrawn as though
+     * nothing had been pressed.
+     */
+    apply(projectDir: string, ops: readonly BookOp[]): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
   };
 
   /**

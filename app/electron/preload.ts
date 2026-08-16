@@ -206,6 +206,7 @@ const api: FoundryApi = {
 
   book: {
     load: (projectDir) => ipcRenderer.invoke('book:load', projectDir),
+    apply: (projectDir, ops) => ipcRenderer.invoke('book:apply', projectDir, ops),
   },
 
   translation: {

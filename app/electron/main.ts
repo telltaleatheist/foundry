@@ -31,7 +31,7 @@ import {
 
 import { readAppSettings, writeAppSettings } from './app-settings';
 import { cancelSetup, setupWslEnv } from './backend-setup';
-import { bookFigureFile, loadBook } from './book';
+import { applyBookOps, bookFigureFile, loadBook } from './book';
 import { injectReporter, REPORTER_ID, REPORTER_MEMBER, REPORTER_SOURCE, sanitizeChapter } from './click-reporter';
 import {
   engineInfo,
@@ -127,6 +127,7 @@ import { fold, isBook } from '../shared/original';
 import { OverlayError, type OverlayFile } from '../shared/overlay';
 import { positionView } from '../shared/ledger';
 import type { ReadAsk } from '../shared/ledger';
+import type { BookOp } from '../shared/ops';
 import { RE_READ_CANCEL, RE_READ_PROCEED } from '../shared/reread';
 import type { ReReadPrompt } from '../shared/reread';
 import type { MenuAction } from '../shared/api';
@@ -192,6 +193,16 @@ let mainWindow: BrowserWindow | null = null;
 const SAVE = 'Save these corrections, then close';
 const CLOSE = 'Close it';
 const KEEP = 'Keep it open';
+/*
+ * The book pane's two, which say what its own gestures are called rather than
+ * borrowing the pair above. "Save these corrections" is the block editor's verb
+ * over the block editor's noun, and neither is what a person did on the proof
+ * sheet; "Close it" is too mild for a button that destroys the only copy of
+ * something, which is what closing over a stack does and what closing over a
+ * curation never does.
+ */
+const APPLY = 'Apply these changes, then close';
+const DISCARD = 'Discard them and close';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // foundry-file:// — how a book's chapters reach an <iframe>
@@ -1301,11 +1312,85 @@ function registerIpc(): void {
     'document:confirm-close',
     (_event, warning: CloseWarning): Asked<CloseAnswer> => ({
       kind: 'ask',
-      question: warning.corrections === null
-        ? aboutTheCopy(warning)
-        : aboutTheCorrections(warning, warning.corrections),
+      /*
+       * THE STACK LEADS WHEN THERE IS ONE, ahead of both the others, because it is
+       * the only loss on this card that is a loss. A book pane's unapplied changes
+       * are in memory and closing genuinely destroys them; the corrections are on
+       * disk and the filed copy is merely old. A card that opened with "your copy
+       * is out of date" while somebody was about to lose an afternoon's strikes
+       * would have buried the one sentence that mattered under the one that did
+       * not.
+       */
+      question: warning.edits !== null && warning.edits > 0
+        ? aboutTheEdits(warning, warning.edits)
+        : warning.corrections === null
+          ? aboutTheCopy(warning)
+          : aboutTheCorrections(warning, warning.corrections),
     }),
   );
+
+  /**
+   * THE ONE CARD IN THIS APP THAT IS ALLOWED TO SAY THE WORK WILL BE LOST.
+   *
+   * ── Why it is allowed, when its neighbour is forbidden ──────────────────────
+   *
+   * `aboutTheCorrections` below exists to STOP this app saying "you have unsaved
+   * changes that will be lost", because in the block editor it is false: every
+   * strike is written into the live curation as it is made. The book pane is the
+   * other case and the difference is the design's, not an accident. Changes on the
+   * proof sheet are a LIFO stack held in memory precisely so that undo is cheap
+   * and free of the disk, and the ruling that pays for that is the one this card
+   * reports: Apply writes them and clears the stack; closing without it scraps
+   * them (docs/RENDERER.md §3). So the true sentence here is the frightening one,
+   * and softening it would be the worse lie.
+   *
+   * WHICH IS EXACTLY WHY THE OFFER IS A BUTTON. A dialog whose only route to
+   * keeping the work is *cancel, find Apply, close again* has made the person do
+   * the app's job, and the way that ends is that they stop reading the box. Apply
+   * is offered first and is what Enter takes; Close is last and wears the error
+   * colour, so the button that destroys has to be aimed at.
+   *
+   * NO COUNT OF WHAT KIND. "5 changes" is what the card says, not "3 strikes, a
+   * relabel and an edit" — the changes themselves are on the paper behind the
+   * dialog, in the cancel marks and the changed paragraphs, and that is a better
+   * description of them than a tally of verbs would be.
+   */
+  function aboutTheEdits(warning: CloseWarning, edits: number): AppQuestion {
+    const changes = edits === 1 ? '1 change' : `${edits} changes`;
+    /*
+     * The corrections and the filed copy, when this tab owes those as well. Kept
+     * to a clause each and put last: they are smaller losses, and the buttons are
+     * about the stack. A book tab cannot currently owe the corrections warning —
+     * `questionBefore` asks it only of a scan or an EPUB — so this is the copy
+     * clause alone, written the way the other card writes it.
+     */
+    const alsoTheCopy = warning.modified
+      ? [
+        'The copy you filed for yourself is also older than this one, and closing does not bring '
+        + 'it up to date. Export the book again to replace it.',
+      ]
+      : [];
+    return {
+      title: 'Close and discard these changes?',
+      message: `“${warning.title}” has ${changes} that have not been applied.`,
+      detail: [
+        'Changes made on the book are held while you work so that taking one back is instant, and '
+        + 'they are not written down until you apply them. Closing throws them away — there is no '
+        + 'copy of them anywhere else and nothing brings them back.',
+        'Applying now records all of them as one row in Steps, which you can stand on, branch from '
+        + 'and delete afterwards. The book itself is untouched either way.',
+        ...alsoTheCopy,
+      ],
+      choices: [
+        { key: 'save', label: APPLY },
+        { key: 'keep', label: KEEP },
+        { key: 'close', label: DISCARD, danger: true },
+      ],
+      preferred: 'save',
+      dismissed: 'keep',
+      checkbox: null,
+    };
+  }
 
   /**
    * The filed copy is older than the book in front of you — the one thing left
@@ -3027,6 +3112,19 @@ function registerIpc(): void {
    * not the book being unavailable.
    */
   ipcMain.handle('book:load', (_event, projectDir: string) => loadBook(projectDir));
+  /*
+   * AND THE OTHER DIRECTION — the pane's stack, landed as a step.
+   *
+   * IT REJECTS WHERE `book:load` ANSWERS, which is the difference worth stating
+   * at the door rather than only in the module. A load with nothing to show has an
+   * empty sheet to put a sentence on; an Apply that fails has the person's changes
+   * still in front of them, and the honest thing is a refusal they can act on
+   * rather than a stack silently cleared. `applyBookOps` writes the file before
+   * the step and takes the file back if the step will not land, so there is no
+   * half-applied state for this handler to describe.
+   */
+  ipcMain.handle('book:apply', (_event, projectDir: string, ops: BookOp[]) =>
+    applyBookOps(projectDir, ops));
   ipcMain.handle('ledger:describe-delete', async (_event, projectDir: string, stepId: string) => {
     // Proven BEFORE the card is composed, so a warning is never put on screen for
     // something the delete would refuse a click later.

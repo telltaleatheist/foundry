@@ -48,8 +48,19 @@ import { promises as fsp } from 'node:fs';
 import * as path from 'node:path';
 
 import { writeBookFile } from './engine';
-import { bookAtPosition, imagesDirFor } from './projects';
+import { writeAtomically } from './epub-writer';
+import {
+  bookAtPosition,
+  imagesDirFor,
+  ledgerOf,
+  opsDir,
+  opsPayloadFor,
+  recordBookEdit,
+  type LedgerView,
+} from './projects';
 import { BookFileError, parseBookFile, type BookOutcome } from '../shared/book';
+import { editsInEffect } from '../shared/ledger';
+import { BookOpsError, formatOpsFile, parseOpsFile, type BookOp } from '../shared/ops';
 
 /** Does this path exist? Nothing else about it is asked. */
 async function exists(target: string): Promise<boolean> {
@@ -190,6 +201,45 @@ export async function loadBook(projectDir: string): Promise<BookOutcome> {
     const figures = parsed.rows.some((row) => row.image !== undefined)
       ? figuresPrefixFor(imagesDirFor(at.bank))
       : null;
+    /*
+     * THE CHAIN, AND IT IS A REFUSAL RATHER THAN A BEST EFFORT.
+     *
+     * Every edit step on the path from this reading to the position retained a
+     * file of ops, and what the person is looking at is that book with all of them
+     * replayed over it, in order (docs/RENDERER.md §3). A step whose file will not
+     * open or will not parse leaves this process holding two thirds of somebody's
+     * history — and drawing the book from the two thirds is the worst outcome
+     * available, because the sheet would look perfectly ordinary while the strikes
+     * from one Apply were silently absent and the next Apply recorded a delta
+     * against a state that never existed. So the whole load refuses, by the step's
+     * own name, and the sentence keeps the path out of it.
+     */
+    const chain: BookOp[] = [];
+    for (const step of editsInEffect(ledgerOf(at.manifest))) {
+      const file = path.join(at.dir, ...step.payload.split('/'));
+      let said: string;
+      try {
+        said = await fsp.readFile(file, 'utf8');
+      } catch (err) {
+        console.error(`[book] ${file} is the payload of step ${step.id} and could not be read: ${(err as Error).message}`);
+        return {
+          ok: false,
+          reason: `The changes recorded as “${step.label}” could not be read, so this book cannot be `
+            + 'drawn honestly — everything applied after them depends on them. Its own history is '
+            + 'intact; the file behind that row is not.',
+        };
+      }
+      try {
+        chain.push(...parseOpsFile(said));
+      } catch (err) {
+        if (!(err instanceof BookOpsError)) throw err;
+        console.error(`[book] ${file} is the payload of step ${step.id} and is not a list of changes: ${err.message}`);
+        return {
+          ok: false,
+          reason: `The changes recorded as “${step.label}” are not changes this build can read: ${err.message}`,
+        };
+      }
+    }
     return {
       ok: true,
       // THE TITLE IS THE PROJECT'S. A book file is a list of blocks and has no
@@ -203,6 +253,7 @@ export async function loadBook(projectDir: string): Promise<BookOutcome> {
       seams: parsed.header.seams,
       loose: parsed.header.loose,
       figures,
+      ops: chain,
     };
   } catch (err) {
     if (err instanceof BookFileError) {
@@ -211,6 +262,83 @@ export async function loadBook(projectDir: string): Promise<BookOutcome> {
       // rather than files, so this passes them through instead of paraphrasing.
       return { ok: false, reason: `This book could not be opened: ${err.message}` };
     }
+    throw err;
+  }
+}
+
+/**
+ * APPLY — the pane's stack, written down as a step.
+ *
+ * ── The order, which is the whole of the correctness here ───────────────────
+ *
+ * The ops are PROVEN, then the file is written ATOMICALLY, then the step lands.
+ * Every other order has a failure that leaves the project describing something
+ * that is not there: a step written first and a disk that then refuses leaves a
+ * row in somebody's history naming a payload that does not exist, and
+ * `loadBook` above rightly refuses the whole book for it — one full stop, forever,
+ * over a transient write error. A file written first and a step that never lands
+ * leaves eight kilobytes in `ops/` that nothing will ever mention again, which is
+ * the smaller failure by a wide margin and is the one this order chooses.
+ *
+ * ATOMICALLY means a temp file beside the target and a rename (`writeAtomically`,
+ * electron/epub-writer.ts): a rename is atomic on one volume, so an interrupted
+ * Apply leaves no file rather than half of one — and half a file of ops is a book
+ * that opens missing the second half of somebody's afternoon.
+ *
+ * ── Why the ops are re-read after being written out ─────────────────────────
+ *
+ * Because they arrived over IPC and a renderer is not a trusted author of a
+ * payload format. This app's rule for anything crossing that seam is that the
+ * receiving side proves it (`parseLedger`, `parseBookFile`, `parseTargetKey`), and
+ * the proof available here is exactly the one every later reader will apply: put
+ * it in the format and read it back with the format's own parser. A shape this
+ * build cannot replay is refused BY NAME here, before it is on anybody's disk,
+ * rather than by every open of the book from now on.
+ *
+ * ── It rejects, and that is deliberate ──────────────────────────────────────
+ *
+ * `loadBook` answers a sentence because there is nothing else to put on an empty
+ * sheet. This is the other case: the person's changes are still on the stack in
+ * front of them, so a refusal is something they can act on — and a resolve that
+ * quietly did nothing would clear a stack that had not been recorded.
+ */
+export async function applyBookOps(projectDir: string, ops: readonly BookOp[]): Promise<LedgerView> {
+  // The same gate every call in this family goes through, before anything is
+  // read or written: `bookAtPosition` resolves it through `deletableProjectDir`.
+  const at = await bookAtPosition(projectDir);
+  if (ops.length === 0) {
+    throw new BookOpsError(
+      'There are no changes waiting to be applied, and a step recording nothing would be a row in '
+      + 'this book\'s history that nobody can tell from the one above it.',
+    );
+  }
+  const bytes = formatOpsFile(ops);
+  // The round trip is the proof — see the header. It throws `BookOpsError` with a
+  // sentence naming the line and the field, which is what the caller shows.
+  parseOpsFile(bytes);
+
+  /*
+   * MINTED HERE, BEFORE THE FILE, because the file is named after it — the
+   * reading's arrangement (`ReadRequest.stepId`) for the reading's reason. It is
+   * spent on an append, which is every time: an edit is irreplaceable, so
+   * `reRunTarget` can never resolve one and every Apply is a row of its own.
+   */
+  const stepId = randomUUID();
+  const payload = opsPayloadFor(stepId);
+  await fsp.mkdir(opsDir(at.dir), { recursive: true });
+  await writeAtomically(path.join(at.dir, ...payload.split('/')), Buffer.from(bytes, 'utf8'));
+
+  try {
+    return await recordBookEdit(at.dir, payload, { ops: ops.length }, stepId);
+  } catch (err) {
+    /*
+     * THE FILE GOES WITH THE ROW THAT NEVER HAPPENED. It is named after a step id
+     * nothing else will ever mint, so leaving it would be bytes no screen in this
+     * app could ever mention again — the exact state `planStepSweep` exists to
+     * prevent at the other end of a step's life. `force` because the interesting
+     * failure is the one being rethrown.
+     */
+    await fsp.rm(path.join(at.dir, ...payload.split('/')), { force: true });
     throw err;
   }
 }

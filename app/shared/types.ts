@@ -1856,6 +1856,27 @@ export interface CloseWarning {
    * ask about — which is the ordinary answer for every book and every EPUB.
    */
   corrections: UncommittedCuration | null;
+  /**
+   * How many changes are on the book pane's stack with no Apply behind them, or
+   * null when this tab is not a book or has nothing waiting.
+   *
+   * ── The one loss in this app that closing genuinely destroys ────────────────
+   *
+   * `UncommittedCuration` exists to say that the block editor has NO unsaved
+   * state — every strike is written into the live curation as it is made, and
+   * what closing ends is the way BACK to a state, not the state. The book's stack
+   * is the opposite and the warning has to be too: it is in memory, it is the
+   * only copy, and the ruling is that closing without Apply scraps it
+   * (docs/RENDERER.md §3). So this is the rare case where "you will lose this"
+   * is the true sentence, and it is worth having a field of its own precisely so
+   * that the two cards cannot end up saying each other's words.
+   *
+   * A COUNT AND NOT A LIST. The card says how much is at stake; what each op says
+   * is on the paper behind the dialog, in the cancel marks and the changed
+   * paragraphs, which is a better description of five strikes than five lines of
+   * prose about them would be.
+   */
+  edits: number | null;
 }
 
 /**
@@ -2618,7 +2639,29 @@ export interface FrozenOverlayWire extends Omit<OverlayFileWire, 'frozen'> {
  * action belongs. If "what did I export and when" is ever wanted, it is an
  * export log — a separate thing, and not this.
  */
-export type StepAction = 'import' | 'read' | 'curate' | 'translate' | 'metadata';
+/*
+ * `edit` IS THE BOOK'S OWN ACTION, and it is the one this whole renderer plan is
+ * built around. What it retains is a JSONL file of OPS — one line per decision,
+ * keyed by block id (`shared/ops.ts`, docs/RENDERER.md §3) — written whole when
+ * somebody presses Apply and never appended to afterwards. It is a DELTA: what
+ * the book says at any position is the reflowed book file with the ops of every
+ * edit step on the path replayed over it, in order.
+ *
+ * IRREPLACEABLE, on the clause of the retention rule `curate` and `metadata` sit
+ * on. A strike, a retyped sentence and a relabelled heading are somebody's
+ * judgement about their book; no run remakes them at any price, and the fact that
+ * writing the file costs milliseconds is exactly what that rule exists to stop
+ * mattering.
+ *
+ * AND THE POINTER MOVES ONTO IT, which is where it parts company with a save.
+ * A curate step is retained BESIDE you because the live overlay already carries
+ * the decisions and standing on the snapshot would only take the editor
+ * read-only. An edit step is the opposite: its ops reach the page ONLY through
+ * the chain from the position, so a pointer left behind would mean pressing
+ * Apply and watching every change vanish off the paper. See `RETAINED_BESIDE_YOU`
+ * in shared/ledger.ts, where that is said once.
+ */
+export type StepAction = 'import' | 'read' | 'curate' | 'translate' | 'metadata' | 'edit';
 
 /**
  * What was ASKED FOR, and what the run recorded about the answer.
@@ -2687,6 +2730,17 @@ export interface LedgerParams {
   completedAt?: number;
   /** `curate` — how many decisions the snapshot froze. For the row's sentence. */
   amendments?: number;
+  /**
+   * `edit` — how many ops this Apply wrote. For the row's sentence, and nothing
+   * else.
+   *
+   * A TALLY AND NOT A RECORD, on `amendments`' precedent exactly: the ops
+   * themselves are the step's payload, because that is what a replay reads, and a
+   * params bag is not a place to keep a second copy of a thing the file already
+   * holds. The count is here so the row can say "Applied changes (5)" without
+   * opening a file to find out.
+   */
+  ops?: number;
   /**
    * `metadata` — WHICH FIELDS THIS EDIT SET, by name, for the row's sentence.
    *

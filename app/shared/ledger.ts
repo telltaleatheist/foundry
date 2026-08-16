@@ -92,7 +92,7 @@ export class StepLedgerError extends Error {
 }
 
 /** Every action there is, in the order a project meets them. */
-export const STEP_ACTIONS = ['import', 'read', 'curate', 'translate', 'metadata'] as const;
+export const STEP_ACTIONS = ['import', 'read', 'curate', 'translate', 'metadata', 'edit'] as const;
 
 /**
  * WHAT IT WOULD COST TO GET THIS PAYLOAD BACK, per action — the retention rule
@@ -119,6 +119,10 @@ export const RETENTION_OF: Readonly<Record<StepAction, LedgerStep['retention']>>
   // sentence above about machine cost, and `StepAction` for why a metadata edit
   // is a step at all.
   metadata: 'irreplaceable',
+  // A file of ops is somebody's decisions about four hundred blocks, written in
+  // seconds and remade by nothing. It is the sharpest case this table's rule was
+  // written for.
+  edit: 'irreplaceable',
 };
 
 /**
@@ -165,6 +169,19 @@ export const PARAMS_OF: Readonly<Record<StepAction, readonly (keyof LedgerParams
    * answer the spec asks for — each Apply is a deliberate act and appends.
    */
   metadata: ['fields'],
+  /*
+   * AN EDIT IS DESCRIBED BY HOW MANY CHANGES IT WROTE, and by nothing else. The
+   * changes themselves are the payload (`shared/ops.ts`), where the thing a
+   * replay reads belongs; a params bag carrying them too would be two copies of
+   * one fact with no rule about which wins — `metadata`'s argument, verbatim, one
+   * action over.
+   *
+   * NOTHING HERE IS IN `MINTED_BY_THE_RUN` for `metadata`'s reason and it costs
+   * nothing: `reRunTarget` never returns an irreplaceable step, so two Applies
+   * from one parent are two rows however this table reads. Which is the answer
+   * the design asks for — each Apply is a deliberate act, and it appends.
+   */
+  edit: ['ops'],
 };
 
 /**
@@ -211,6 +228,26 @@ export const RETAINED_BESIDE_YOU: Readonly<Record<StepAction, boolean>> = {
    * is the exact punishment this table was written to stop.
    */
   metadata: true,
+  /*
+   * AND AN EDIT IS THE ONE GESTURE OF THIS SHAPE THAT MUST NOT BE RETAINED BESIDE
+   * YOU, which is worth arguing rather than asserting, because it looks like a
+   * save and is not one.
+   *
+   * A curate step is retained beside you because the decisions it froze are
+   * ALREADY IN EFFECT: the live overlay is byte for byte the snapshot at the
+   * instant Apply is pressed, so the pointer has nothing to gain by moving and
+   * something to lose by it. An edit step's ops are in effect NOWHERE ELSE. What
+   * the pane draws is the reflowed book with the ops of every edit step on the
+   * path from the position replayed over it (`editsInEffect`), and the stack that
+   * held them in memory is cleared the moment the step lands. Leave the pointer
+   * where it was and that path does not include the step that was just written:
+   * the person presses Apply and watches every strike they made come back.
+   *
+   * So `false`, and the position follows onto the new row exactly as a reading's
+   * or a translation's does — because, exactly like those, it IS a new state of
+   * the book and there is somewhere new to stand.
+   */
+  edit: false,
 };
 
 /**
@@ -299,6 +336,9 @@ const MINTED_BY_THE_RUN: Readonly<Record<StepAction, readonly (keyof LedgerParam
   // step in any case — this entry exists so the table stays exhaustive rather
   // than because a comparison depends on it.
   metadata: [],
+  // The same sentence about the same kind of gesture: nobody asked for an Apply's
+  // ops, they ARE the Apply, and the count is read off the list as it is written.
+  edit: [],
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -371,6 +411,19 @@ export function labelFor(action: StepAction, params?: LedgerParams): string {
      * the plain word is the honest answer — the payload still holds every one of
      * them, and this is a label rather than a record.
      */
+    /*
+     * AN EDIT ROW SAYS THE SAME WORDS A SAVE DOES, and that is deliberate rather
+     * than an oversight. Both are the button labelled Apply changes; the person
+     * pressing it is doing one thing — committing what is on screen — and giving
+     * the two rows different names would ask them to work out which of this app's
+     * two mechanisms their gesture happened to go through, which is the app's
+     * bookkeeping and not theirs. What tells them apart in the tree is the count
+     * and the position, and what tells the CODE apart is the action.
+     */
+    case 'edit':
+      return params?.ops === undefined || params.ops <= 0
+        ? 'Applied changes'
+        : `Applied changes (${params.ops})`;
     case 'metadata': {
       const said = params?.fields ?? [];
       const printed = said.join(', ');
@@ -2047,6 +2100,19 @@ const BOUNDS_THE_WALK: Readonly<Record<StepAction, boolean>> = {
    * come through here, for the reason stated there.
    */
   metadata: false,
+  /*
+   * AN EDIT ROW IS TRANSPARENT TO THIS WALK TOO, and for a reason that is nearly
+   * the metadata one and not quite. It says nothing about which bank or which
+   * curation — it says what the BLOCKS of the bank below it now read — so
+   * standing on an edit must still find the reading underneath it, or the pane
+   * would have no book to replay the ops over at all.
+   *
+   * The edit chain has a walk of its own (`editsInEffect`) and it is bounded by a
+   * read for the reason this table's header gives: an op names a block id, and a
+   * block id from before a re-read names a block of somebody else's pass over the
+   * pages.
+   */
+  edit: false,
 };
 
 /**
@@ -2240,6 +2306,16 @@ const DISPLAYS_ITSELF: Readonly<Record<StepAction, boolean>> = {
    * standing there can still work.
    */
   metadata: false,
+  /*
+   * AN EDIT ROW FROZE NOBODY'S CORRECTIONS EITHER. What it retained is a list of
+   * ops against block ids in the book file — a different document, a different
+   * addressing scheme and a different surface from the block editor's overlay —
+   * so there is no snapshot of anybody's strikes to show and nothing to lock. The
+   * scan's editor goes on drawing the live corrections beside it, which is the
+   * honest picture: the two surfaces are not editing the same thing yet, and R6
+   * is where one of them stops existing.
+   */
+  edit: false,
 };
 
 /**
@@ -2296,6 +2372,62 @@ export function translationInEffect(
   at: LedgerStep | null = null,
 ): LedgerStep | null {
   return nearestUpward(ledger, 'translate', at);
+}
+
+/**
+ * EVERY EDIT ON THE PATH FROM THIS READING TO WHERE YOU ARE STANDING, oldest
+ * first — the chain a book is replayed through.
+ *
+ * ── Why this is a list where its neighbours are a single answer ─────────────
+ *
+ * Because an op file is a DELTA (docs/RENDERER.md §3). The other questions in this
+ * family — which bank, which curation, which translation — each have exactly one
+ * answer because each names a whole state of something. An edit names a change,
+ * and a change does not supersede the change before it: strike a running head on
+ * Monday, retype a paragraph on Tuesday, and both are in effect on Wednesday. So
+ * every row on the way comes back and the REPLAY decides what the book says
+ * (`replayOps`, shared/ops.ts), exactly as `metadataInEffect` hands back every
+ * patch and lets the merge decide the title.
+ *
+ * ── AND IT IS THE ANCESTRY, WHICH IS WHERE IT PARTS COMPANY WITH METADATA ───
+ *
+ * A metadata row is retained beside you, so it hangs off the position as a CHILD
+ * and an ancestry walk would find nothing — which is why that function asks
+ * "whose parent is on the path" instead. An edit row moves the pointer onto
+ * itself (`RETAINED_BESIDE_YOU`), so it is on the path by construction, and the
+ * ancestry is exactly right: the chain is the branch of the story you are
+ * standing in, and an edit made on a branch you stepped off is not part of this
+ * book any more than a translation on that branch is.
+ *
+ * ── BOUNDED BY THE READING, and that is the load-bearing part ───────────────
+ *
+ * `BOUNDS_THE_WALK`'s own rule, and an op is the sharpest case for it in the app.
+ * An op names a BLOCK ID, ids are minted from a bank's answers, and the engine
+ * archives a completed bank and reads every page again on a re-read — so
+ * `b7-14` above a read and `b7-14` below it are two different paragraphs. Ops from
+ * the far side would strike the wrong blocks with nothing on screen admitting it,
+ * which is the failure `ProjectReading` exists to describe. The walk stops at the
+ * read, and a chain that survived a re-read simply is not in effect.
+ *
+ * OLDEST FIRST, because replay is order-dependent and the order is the order they
+ * were made. The chain runs origin-first, so walking it backwards and unshifting
+ * puts them in the order the person did them.
+ */
+export function editsInEffect(
+  ledger: ProjectLedger,
+  /** The step to walk up from, or null for the position. See `nearestUpward`. */
+  at: LedgerStep | null = null,
+): LedgerStep[] {
+  const standing = at ?? positionOf(ledger);
+  if (standing === null) return [];
+  const chain = ancestry(ledger, standing.id);
+  const found: LedgerStep[] = [];
+  for (let walker = chain.length - 1; walker >= 0; walker -= 1) {
+    const step = chain[walker]!;
+    if (step.action === 'edit') found.unshift(step);
+    else if (BOUNDS_THE_WALK[step.action]) break;
+  }
+  return found;
 }
 
 /**
@@ -2509,6 +2641,13 @@ export const A_BOOK_OF_ITS_OWN: Readonly<Record<StepAction, boolean>> = {
    * what it holds. The document did not change identity because its title did.
    */
   metadata: false,
+  /*
+   * AN EDIT ROW'S PAYLOAD IS A LIST OF CHANGES, which is no more a thing a person
+   * reads than a curation snapshot is. What it shows is the project's one flowing
+   * book with those changes in it — the same book the read row shows, in the state
+   * this row is about — so it is a `read`'s answer and not the import's.
+   */
+  edit: false,
 };
 
 /** Everything that decides the picture at the position, in one answer. */
@@ -2548,6 +2687,18 @@ export interface PositionView {
    * cannot come to two opinions about it.
    */
   own: boolean;
+  /**
+   * The edit steps whose ops are replayed over the book here, oldest first.
+   *
+   * `editsInEffect`, unwrapped, and it is in the picture for the reason every
+   * other field is: it decides what is on screen. Two rows can share a reading, a
+   * curation and a translation and still be two different books — press Apply and
+   * the pointer moves onto a row that differs from the one below it by nothing a
+   * bank or an overlay knows about. Without this term `positionPicture` would call
+   * those two rows the same picture and the sheet would go on showing the book as
+   * it was before the changes were applied to it.
+   */
+  edits: LedgerStep[];
 }
 
 /**
@@ -2570,6 +2721,7 @@ export function positionView(ledger: ProjectLedger): PositionView {
     curation: displayedCuration(ledger),
     outlines: reading !== null,
     own: step !== null && A_BOOK_OF_ITS_OWN[step.action],
+    edits: editsInEffect(ledger),
   };
 }
 
@@ -2605,6 +2757,16 @@ export function positionPicture(view: PositionView): string {
     view.outlines ? view.reading?.id ?? '' : '',
     view.curation?.id ?? '',
     view.own ? view.step?.id ?? '' : '',
+    /*
+     * AND THE CHAIN OF EDITS, which is the fourth thing the ledger knows that
+     * decides what is on screen and the only one whose value is a LIST. A book
+     * five Applies deep is a different book from the same book four Applies deep,
+     * and stepping between those two rows has to repaint the sheet even though
+     * they share a bank, a curation and a translation. The IDS rather than a
+     * count, because stepping between two sibling edit branches off one reading
+     * changes neither the bank nor the number.
+     */
+    view.edits.map((step) => step.id).join(','),
   ].join('\u0000');
 }
 

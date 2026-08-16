@@ -471,6 +471,48 @@ interface ShownPicture {
   picture: string;
 }
 
+/**
+ * THE BOOK PANE'S STACK, as everything outside that pane needs it.
+ *
+ * ── Why a wire exists at all, when the selection deliberately has none ──────
+ *
+ * The book pane keeps its selection to itself on a stated rule: surface-local
+ * state stays local until something else genuinely needs it, and a wire with
+ * nothing on either end is worse than no wire. The stack is the case where
+ * something else does need it, and TWO things do.
+ *
+ * THE UNDO CHORD IS ROUTED, not listened for. Ctrl+Z is a menu accelerator that
+ * main swallows on its way past, and the renderer decides which of the undos a
+ * chord meant — a text box's, the rendered frame's, or the book's
+ * (`MenuAction`, shared/api.ts). `replay` is where that decision is made, and a
+ * global key listener added by the pane would be a second answer fighting the
+ * first.
+ *
+ * AND CLOSING IS ASKED ABOUT IN ONE PLACE. `questionBefore` is the one dialog a
+ * closing tab gets, on this file's own ruling that a person shutting a book is
+ * asked once about everything it costs. The stack is in memory and closing
+ * genuinely scraps it (docs/RENDERER.md §3), so that question has to be able to
+ * see it — and, because a card whose only route to keeping the work is *cancel,
+ * find Apply, close again* has made the user do the app's job, it has to be able
+ * to press Apply too.
+ *
+ * IT IS AN INTERFACE THE PANE IMPLEMENTS rather than state this service holds,
+ * which is the whole of what keeps the ruling intact: the ops still live in the
+ * component that makes them, and what crosses the boundary is three questions and
+ * two verbs.
+ */
+export interface BookStack {
+  /** How many changes are waiting with no Apply behind them. */
+  pending(): number;
+  /** True when there is anything to take back. Both directions, for the notice. */
+  canUndo(): boolean;
+  canRedo(): boolean;
+  undo(): void;
+  redo(): void;
+  /** Land the stack as a step. Resolves false when main refused; the sentence is its own. */
+  apply(): Promise<boolean>;
+}
+
 /** One project whose position has moved since this window last painted it. */
 interface PositionMove {
   /** The project directory, folded — the key `showing` is kept under. */
@@ -1408,7 +1450,19 @@ export class TabsService {
      * bookkeeping (`rememberShown`, `standForTab`'s guard, the sweep) reading one
      * fact rather than two.
      */
-    const swapped = view.step !== null && view.step.action === 'read'
+    /*
+     * AN EDIT ROW SHOWS THE BOOK TOO, and it is the same seam one action further
+     * along. An `edit` step retains a file of ops against the book file's blocks
+     * (docs/RENDERER.md §3) — there is no document of its own to point a viewer
+     * at, and what it is ABOUT is the proof sheet — so it goes where a read row
+     * goes and the sheet replays the chain up to it. Sending it through
+     * `showDocument` instead would open the cast EPUB beside the surface the
+     * changes were made on, which is the tab this whole wave exists to stop being
+     * the answer.
+     */
+    const onTheSheet = view.step !== null
+      && (view.step.action === 'read' || view.step.action === 'edit');
+    const swapped = onTheSheet
       ? this.showBook(move)
       : await this.showDocument(move, target);
     const readingMoved = (move.was?.view.reading?.id ?? null) !== (view.reading?.id ?? null);
@@ -1609,6 +1663,30 @@ export class TabsService {
     const home = this.paneAmong(mine);
     const split = this.splitNext.delete(move.key);
     const id = this.bookTabIn(move.dir);
+    /*
+     * AND IT RE-ASKS FOR THE BOOK, which revealing alone does not do.
+     *
+     * *"Standing on any step = replay of that chain."* (docs/RENDERER.md §3.) The
+     * pane's rows and its op chain both come from one call to main, and that call
+     * is keyed to the POSITION — so a move from a read row onto an edit row, or
+     * between two edit rows of one reading, changes what `book:load` would answer
+     * while the tab's own path (the project directory) does not move an inch.
+     * Without a revision the sheet would sit there showing the book as of whatever
+     * row it last loaded, which is precisely the complaint the position effect
+     * exists to answer: clicking a row in your own history and watching the app do
+     * nothing.
+     *
+     * It is the mechanism `showDocument` already uses to make a viewer re-read
+     * bytes it is already pointed at, used here for the same reason — the thing
+     * that changed is not visible in the path.
+     *
+     * ONLY ON A MOVE. This runs from `showPosition`, which the effect only reaches
+     * when the picture genuinely changed (`positionPicture` carries the edit chain
+     * for exactly this), so revealing a tab, focusing it or clicking the row you
+     * are already standing on costs nothing.
+     */
+    const already = this.byId(id);
+    if (already !== null) this.patch(id, { revision: already.revision + 1 });
     if (split) this.openInNewPane(id, this.indexOfPane(home) + 1);
     else this.reveal(id, false, home?.id ?? null);
     return false;
@@ -1666,6 +1744,31 @@ export class TabsService {
    * later move made for some other reason cannot inherit it.
    */
   private readonly splitNext = new Set<string>();
+
+  /**
+   * The open book panes' stacks, by tab id — see `BookStack`.
+   *
+   * A PLAIN MAP AND NOT A SIGNAL. Nothing draws from it: the chord reads it at the
+   * instant a chord arrives and the closing question reads it at the instant a tab
+   * goes, and both are events rather than repaints. A signal would make every push
+   * onto a stack a change-detection pass over a window that has already repainted
+   * for the same reason, one component down.
+   *
+   * The pane puts itself in on init and takes itself out on destroy, so an entry
+   * here is always a pane that exists — which is what lets both readers treat a
+   * missing entry as "that book has nothing waiting" rather than as an error.
+   */
+  private readonly bookStacks = new Map<string, BookStack>();
+
+  /** The book pane in this tab, announcing itself. Called once, on init. */
+  registerBookStack(tabId: string, stack: BookStack): void {
+    this.bookStacks.set(tabId, stack);
+  }
+
+  /** And letting go, on destroy — an entry for a pane that is gone answers for nothing. */
+  releaseBookStack(tabId: string): void {
+    this.bookStacks.delete(tabId);
+  }
 
   /** Set by the inspector's menu immediately before it moves the pointer. */
   splitNextIn(projectDir: string): void {
@@ -2741,16 +2844,44 @@ export class TabsService {
     const corrections = (current.kind === 'pdf' || current.kind === 'epub') && holders === 0
       ? await api.overlay.uncommitted(current.path).catch(() => null)
       : null;
-    if (!current.modified && corrections === null) return 'go';
+    /*
+     * ── THE SCRAP-GUARD, AND IT IS THE ONE REAL LOSS THIS CARD EVER DESCRIBES ──
+     *
+     * Everything else `questionBefore` asks about survives closing: the
+     * corrections are already written into the live curation, the book is in its
+     * project, Home still lists it. What ends is a way BACK. The book pane's stack
+     * is the opposite — in memory, the only copy, and scrapped by closing, which
+     * is the ruling (docs/RENDERER.md §3: "Apply writes and clears; closing
+     * without applying scraps it"). So it is asked about, and unlike the
+     * corrections it is asked about PER TAB rather than only when this is the last
+     * way back to the project: a stack belongs to one pane and closing that pane
+     * is the moment it goes, whatever else is open onto the same book.
+     */
+    const stack = current.kind === 'book' ? this.bookStacks.get(current.id) ?? null : null;
+    const edits = stack === null || stack.pending() === 0 ? null : stack.pending();
+    if (!current.modified && corrections === null && edits === null) return 'go';
 
     const answered = await api.confirmClose({
       title: current.title,
       modified: current.modified,
       savedPath: current.savedPath,
       corrections,
+      edits,
     });
     if (answered === 'keep') return 'stay';
-    if (answered === 'save') return await this.saveCorrections(id) ? 'go' : 'stay';
+    if (answered === 'save') {
+      /*
+       * ONE ANSWER, TWO GESTURES, DECIDED BY WHAT THE CARD WAS ABOUT. Main words
+       * the button as Apply for a book with a stack and as Save for a scan with
+       * corrections, and the two are different acts through different doors — so a
+       * card that offered "keep this work" has to reach the door its own sentence
+       * named. A REFUSAL LEAVES THE TAB OPEN, exactly as a refused commit does:
+       * closing anyway would throw away the very thing the answer asked to keep,
+       * and main's own sentence is already on the notice strip saying why.
+       */
+      if (stack !== null) return await stack.apply() ? 'go' : 'stay';
+      return await this.saveCorrections(id) ? 'go' : 'stay';
+    }
     return 'go';
   }
 
@@ -6258,14 +6389,46 @@ export class TabsService {
       return;
     }
     /*
-     * THE BOOK HAS NO STACK YET, and saying so is the rule this whole function
-     * obeys: a chord that quietly did nothing is indistinguishable from a chord
-     * that is broken. Its ops and their in-memory stack are the next wave's
-     * (docs/RENDERER.md §9, R3) — until they exist there is nothing on that
-     * surface for an undo to take back.
+     * THE BOOK'S STACK IS THE PANE'S, AND THE CHORD IS ROUTED TO IT.
+     *
+     * It is a LIFO of ops held in memory until Apply writes them down
+     * (docs/RENDERER.md §3), so this is the one undo in the app that touches no
+     * disk at all — no ledger to read back, no file to put a row into, nothing to
+     * await. What arrives here is a chord main swallowed as a menu accelerator,
+     * and this function is where the window decides which of its three undos it
+     * meant; the pane deliberately adds no listener of its own, because two
+     * answers to one keypress is how a book and a text field end up both taking
+     * one back.
+     *
+     * EVERY REFUSAL IS STILL A SENTENCE, which is this function's own rule: a
+     * chord that quietly did nothing cannot be told from a chord that is broken.
+     * "Nothing to undo" on a book that has never been touched and on a book whose
+     * stack has just been applied are the same true statement, and both are worth
+     * making — the second one especially, because Apply is exactly the moment
+     * somebody's next instinct is Ctrl+Z.
      */
     if (tab.kind === 'book') {
-      this.notice.set(`There is nothing to undo in ${tab.title}: the book is read-only on this surface for now.`);
+      const stack = this.bookStacks.get(tab.id);
+      if (stack === undefined) {
+        this.notice.set(`${tab.title} is still opening.`);
+        return;
+      }
+      if (direction === 'undo') {
+        if (!stack.canUndo()) {
+          this.notice.set(
+            `There is nothing to undo in ${tab.title}. Changes on the book are taken back until you `
+            + 'apply them; applying makes them a row in Steps you can stand on instead.',
+          );
+          return;
+        }
+        stack.undo();
+        return;
+      }
+      if (!stack.canRedo()) {
+        this.notice.set(`There is nothing to redo in ${tab.title}.`);
+        return;
+      }
+      stack.redo();
       return;
     }
     /*

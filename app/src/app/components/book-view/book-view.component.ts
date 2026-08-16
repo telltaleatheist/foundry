@@ -2,7 +2,10 @@ import { NgTemplateOutlet } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   ElementRef,
+  Injector,
+  afterNextRender,
   computed,
   effect,
   inject,
@@ -11,11 +14,13 @@ import {
   untracked,
 } from '@angular/core';
 
-import { pdfCategoryColour, pdfCategoryLabel } from '@shared/categories';
+import { PDF_BLOCK_CATEGORIES, pdfCategoryColour, pdfCategoryLabel } from '@shared/categories';
 import type { BookLoad, BookRow } from '@shared/book';
+import { replayOps, struckNotes, type BookOp, type ReplayedRow } from '@shared/ops';
 
 import { api } from '../../core/foundry';
-import type { Tab } from '../../core/tabs.service';
+import { LedgerService } from '../../core/ledger.service';
+import { TabsService, type BookStack, type Tab } from '../../core/tabs.service';
 
 /**
  * THE BOOK — a proof sheet on a dark workbench, and the one surface this app
@@ -31,15 +36,41 @@ import type { Tab } from '../../core/tabs.service';
  * joined — read over IPC and drawn as Angular DOM. No iframe, no sandbox, no
  * postMessage, no injected script, and no book unzipped anywhere.
  *
- * ── READ-ONLY, DELIBERATELY, AND ONLY FOR THIS WAVE ─────────────────────────
+ * ── WHAT IS ON SCREEN IS A PURE FUNCTION, AND THAT IS THE WHOLE DESIGN ──────
  *
- * Nothing here writes. There is no strike, no split, no merge, no drag, no
- * category change and no chapter move, because the op grammar and the replay
- * they all land in are the next unit's (docs/RENDERER.md §9, R3) — and a gesture
- * that changed what is on screen with nothing to write itself down as is the
- * exact failure the HTML editor was withdrawn for. What IS here is everything
- * the ops will be performed ON: the paper, the blocks, the chrome, the structure
- * marks, and a selection to hang them off.
+ * `view()` is `replayOps(rows, [...chain, ...pending])` and nothing else. There
+ * is no incremental mutation anywhere in this file: a strike does not reach into
+ * a row and set a flag, it PUSHES AN OP and the whole book is folded again. That
+ * is affordable because the fold is one pass over an array this component is
+ * already holding, and it is worth having at any price, because the alternative —
+ * a stack of ops beside a set of rows somebody edited to match — is two accounts
+ * of one book, which is the four-places-per-strike failure this wave exists to
+ * end (docs/RENDERER.md §1).
+ *
+ * The CHAIN is what main read off the edit steps on the path from the position
+ * (`BookLoad.ops`); PENDING is the LIFO stack of what has been done since. Undo
+ * pops, redo re-pushes, Apply writes the stack down as a step and clears it — at
+ * which point the pointer moves, the pane reloads, and the very same ops come
+ * back on the chain. Closing without Apply scraps the stack, which is the ruling
+ * (docs/RENDERER.md §3) and is what the closing question is about.
+ *
+ * ── FOUR OPS THIS WAVE, and the gestures for exactly those ──────────────────
+ *
+ * Strike and restore (Delete over a selection), text (double-click a block), and
+ * category (the margin chip's menu). Merge, split, move, join, chapter, link and
+ * restore-furniture are R4's: their shapes are declared in `shared/ops.ts` so the
+ * grammar is whole, and the replay refuses one by name rather than performing two
+ * thirds of somebody's history. The seam ghost still does nothing when pressed
+ * for exactly that reason — it is the join op's gesture and the join op is not
+ * built.
+ *
+ * ── The undo chord is ROUTED here, never listened for ───────────────────────
+ *
+ * Ctrl+Z is a menu accelerator main swallows, and the renderer decides which of
+ * its three undos a chord meant (`MenuAction`, shared/api.ts). `TabsService.replay`
+ * is where that decision lives; this component registers a `BookStack` with it and
+ * adds no key listener of its own, because two answers to one keypress is how a
+ * text field and a book both take something back.
  *
  * ── The selection is this component's and nothing else's ────────────────────
  *
@@ -95,6 +126,17 @@ interface Marker {
   len: number;
   /** The note row this number belongs to, or null when NOTHING carries it. */
   note: string | null;
+  /**
+   * True when the note this number belongs to is struck.
+   *
+   * DERIVED, AND NEVER AN OP OF ITS OWN. *"if i delete footnotes, it removes
+   * their corresponding reference numbers."* (docs/RENDERER.md §0, ruling 9.) The
+   * number belongs to the note, so striking the note strikes its numbers and
+   * restoring it brings them back — computed from the replayed rows (§2), which
+   * is one set lookup per marker because the replay already answers which notes
+   * are struck (`struckNotes`).
+   */
+  struck: boolean;
 }
 
 /** One run of a block's text: words, or a reference number drawn as an element. */
@@ -105,7 +147,7 @@ interface Piece {
 
 /** One block, with everything the sheet has to know to draw it. */
 interface Line {
-  row: BookRow;
+  row: ReplayedRow;
   /** The words, cut at the reference numbers the engine resolved. */
   pieces: Piece[];
   /** The category ink, from the one table. Rails, tints and chips only. */
@@ -189,6 +231,7 @@ const PULSE_MS = 600;
             class="marker"
             [attr.data-note]="marker.note"
             [class.unlinked]="marker.note === null"
+            [class.struck]="marker.struck"
             [class.lit]="marker.note !== null && lit() === marker.note"
             (pointerenter)="light(marker.note)"
             (pointerleave)="light(null)"
@@ -205,13 +248,40 @@ const PULSE_MS = 600;
       } @else if (loading()) {
         <div class="sheet"><p class="waiting">Opening the book…</p></div>
       } @else {
+        <!--
+          \`tabindex="-1"\` so the sheet can HOLD focus without being a tab stop.
+          The Delete key has to reach a selection that a marquee made over empty
+          paper, and a marquee focuses nothing; a press on the paper puts focus
+          here instead, and a press on a block focuses the block, whose keydown
+          bubbles to this handler anyway. One listener, both routes, and no
+          second tab stop in front of the book.
+        -->
         <div
           class="sheet"
+          tabindex="-1"
           (pointerdown)="press($event)"
           (pointermove)="drag($event)"
           (pointerup)="release($event)"
           (pointercancel)="release($event)"
+          (dblclick)="edit($event)"
+          (keydown.delete)="cancel($event)"
+          (keydown.backspace)="cancel($event)"
         >
+          <!--
+            THE OPS THAT LANDED ON NOTHING — reported, never guessed at
+            (docs/RENDERER.md §3), on the paper's top edge where the reader meets
+            it before the book. MUTED AND NOT AMBER: the flags in the gutters are
+            amber because each of them is a decision somebody has to make, and
+            this is not one. It is a fact about the history of this book — a
+            change recorded against a paragraph that a later reading of the pages
+            no longer has — and there is nothing here to do.
+          -->
+          @if (stranded(); as many) {
+            <p class="stranded">
+              {{ many }} recorded {{ many === 1 ? 'change names a block' : 'changes name blocks' }}
+              this book no longer has, so {{ many === 1 ? 'it was' : 'they were' }} left out.
+            </p>
+          }
           @for (line of lines(); track line.row.id) {
             <!--
               The seam sits FIRST in a line's group of marks so that in the DOM
@@ -235,6 +305,8 @@ const PULSE_MS = 600;
               [attr.data-jump]="line.jump"
               [style.color]="line.colour"
               [class.selected]="chosen().has(line.row.id)"
+              [class.struck]="line.row.struck === true"
+              [class.editing]="editingId() === line.row.id"
               [class.lit]="lit() === line.row.id"
               [class.pulse]="pulse() === line.row.id"
               [class.spanned]="spans(line)"
@@ -243,7 +315,23 @@ const PULSE_MS = 600;
             >
               <span class="gutter rail"></span>
               @if (chosen().has(line.row.id)) {
-                <span class="gutter chip">{{ line.label }}</span>
+                <!--
+                  THE CHIP IS THE CATEGORY'S DOOR. It already names the category
+                  of the block it sits beside, so it is the one place in the
+                  margin where "and this is what it could be instead" belongs.
+                  IT OPENS A LIST rather than cycling: a chip that cycled would
+                  be undiscoverable — nothing about it says there are eleven
+                  answers behind it — and every misclick would mutate the
+                  document. A button because it is one, which is also what makes
+                  it reachable from a keyboard.
+                -->
+                <button
+                  type="button"
+                  class="gutter chip"
+                  [attr.aria-label]="'Category of this block: ' + line.label"
+                  (pointerdown)="$event.stopPropagation()"
+                  (click)="openCategories($event, line.row.id)"
+                >{{ line.label }}</button>
               }
               @if (line.ordinal !== null) {
                 <span class="gutter ordinal">{{ line.ordinal }}</span>
@@ -260,6 +348,28 @@ const PULSE_MS = 600;
               }
 
               <div class="body">
+                <!--
+                  THE BLOCK ITSELF IS THE EDITOR (RENDERER-DESIGN.md §3): a caret
+                  in the words, a spruce rail and tint, no box and no textarea.
+                  \`plaintext-only\` because what is being edited is the model's
+                  SOURCE STRING — \`*italics*\` and superscript digits included
+                  (docs/RENDERER.md §2) — and a rich contenteditable would let a
+                  paste bring markup into a field whose whole content is meant to
+                  be characters. The marker cuts are gone for the duration and
+                  come back when the edit commits, which is the honest picture:
+                  while you are editing there are no resolved offsets, because
+                  the offsets are what the edit invalidates.
+                -->
+                @if (editingId() === line.row.id) {
+                  <p
+                    class="para editor"
+                    contenteditable="plaintext-only"
+                    [class.indent]="line.indent"
+                    [style.font-size.em]="line.size"
+                    (blur)="commit(line.row.id, $event)"
+                    (keydown.escape)="revert(line.row.text, $event)"
+                  >{{ line.row.text }}</p>
+                } @else {
                 @switch (line.row.category) {
                   @case ('Title') {
                     <h1 [style.font-size.em]="line.size">
@@ -333,6 +443,7 @@ const PULSE_MS = 600;
                     </p>
                   }
                 }
+                }
               </div>
             </div>
           }
@@ -344,6 +455,58 @@ const PULSE_MS = 600;
               [style.width.px]="box.width"
               [style.height.px]="box.height"
             ></div>
+          }
+        </div>
+        <!--
+          APPLY — the stack, written down. ON THE BENCH AND NOT ON THE PAPER,
+          which is the design law working rather than a placement preference:
+          chrome lives in the paper's gutters and backgrounds, and a button is
+          neither. It is the app's own \`.act\` in the app's own dark tokens, in
+          the corner of the workbench, because that is where this app puts a verb.
+
+          THE COUNT IS IN THE LABEL rather than beside it, on \`labelFor\`'s rule
+          for a step row: "Apply" alone does not say whether it is about to record
+          one strike or forty. DISABLED AT ZERO rather than hidden, so the
+          affordance is somewhere a person can learn it is there before they have
+          anything to press it with.
+        -->
+        <div class="tray">
+          @if (pending().length > 0) {
+            <button type="button" class="act ghost" (click)="undo()">Undo</button>
+          }
+          <button
+            type="button"
+            class="act"
+            [disabled]="pending().length === 0 || applying()"
+            (click)="apply()"
+          >{{ applying() ? 'Applying…' : applyLabel() }}</button>
+        </div>
+      }
+      <!--
+        The category list — the app's own small menu, scrim and all
+        (open-documents' \`.menu\`, which is where this vocabulary is settled). It
+        is the SHELL's dark style and not the paper's, deliberately:
+        RENDERER-DESIGN.md §5 keeps the paper vocabulary on the paper, and an
+        overlay floating above the sheet is not part of it.
+      -->
+      @if (menu(); as open) {
+        <div class="menu-scrim" (click)="menu.set(null)" (contextmenu)="menu.set(null)"></div>
+        <div
+          class="menu"
+          role="menu"
+          aria-label="What kind of block this is"
+          [style.left.px]="open.x"
+          [style.top.px]="open.y"
+          (keydown.escape)="menu.set(null)"
+        >
+          @for (candidate of categories; track candidate.id) {
+            <button
+              role="menuitem"
+              [class.current]="candidate.id === open.category"
+              (click)="relabel(open.id, candidate.id)"
+            >
+              <span class="swatch" [style.background]="candidate.colour"></span>{{ candidate.label }}
+            </button>
           }
         </div>
       }
@@ -390,6 +553,7 @@ const PULSE_MS = 600;
        chip longer than its gutter is chrome, and chrome must never be able to
        give the page a second scrollbar. */
     .bench {
+      position: relative;
       width: 100%;
       height: 100%;
       overflow: hidden auto;
@@ -423,8 +587,22 @@ const PULSE_MS = 600;
       user-select: none;
     }
 
+    .sheet:focus { outline: none; }
+
     .waiting, .failure { margin: 0; text-indent: 0; color: var(--ink-muted); }
     .waiting { text-align: center; }
+
+    /* A fact about the chain, not a decision to make — so it is \`--ink-muted\`
+       and not the amber the gutter flags wear. It sits above the first block,
+       inside the paper's own top padding, and it takes its own height because
+       it is only ever there when it has something to say. */
+    .stranded {
+      margin: -2rem 0 2rem;
+      text-indent: 0;
+      color: var(--ink-muted);
+      font-size: 0.8rem;
+      font-style: italic;
+    }
 
     /* ── §3 Block chrome. The text column NEVER reflows from any of it: rails
        and chips are absolute in the gutters, tints are backgrounds that bleed
@@ -477,6 +655,67 @@ const PULSE_MS = 600;
     /* The one place page provenance is visible, and deliberately a whisper. */
     .block.spanned .rail { opacity: 1; background: var(--ink-faint); }
 
+    /* ── §3 Struck: the proofreader's cancel ──────────────────────────────── */
+
+    /*
+     * COPIED FROM RENDERER-DESIGN.md §3 AND NOT REINTERPRETED. Line-through in
+     * the iron red at 55%, the whole block at .45, and the X drawn as two thin
+     * diagonal linear-gradients in the same ink at 50% with \`mix-blend-mode:
+     * multiply\` — which is what makes the mark sit ON the paper like ink rather
+     * than float over it as a graphic. It is on \`.body\`, whose background box
+     * already bleeds into the gutters, so the X crosses the block edge to edge
+     * with no element added and no layout moved.
+     *
+     * THE MARK SHOWS ALWAYS. Struck is a state of the document and not of a mode
+     * (landed rule), so there is no toggle anywhere that hides it — what leaves
+     * the mark out is the EDITION, which is a projection and not a view of this
+     * one.
+     */
+    .block.struck .body {
+      opacity: 0.45;
+      text-decoration: line-through;
+      text-decoration-color: color-mix(in srgb, var(--ink-strike) 55%, transparent);
+      background-image:
+        linear-gradient(to bottom right,
+          transparent calc(50% - 1px),
+          color-mix(in srgb, var(--ink-strike) 50%, transparent) calc(50% - 1px),
+          color-mix(in srgb, var(--ink-strike) 50%, transparent) calc(50% + 1px),
+          transparent calc(50% + 1px)),
+        linear-gradient(to top right,
+          transparent calc(50% - 1px),
+          color-mix(in srgb, var(--ink-strike) 50%, transparent) calc(50% - 1px),
+          color-mix(in srgb, var(--ink-strike) 50%, transparent) calc(50% + 1px),
+          transparent calc(50% + 1px));
+      background-repeat: no-repeat;
+      mix-blend-mode: multiply;
+      /* On strike the X fades and scales in; on restore it lifts. Scaling the
+         BACKGROUND rather than the box is what keeps the promise that no chrome
+         ever moves the text: the words stay exactly where they are while the
+         mark grows across them. */
+      background-size: 100% 100%;
+      transition:
+        opacity var(--t-med) var(--ease),
+        background-size var(--t-med) var(--ease);
+    }
+    .block:not(.struck) .body { background-size: 0% 0%; }
+
+    /* ── §3 Editing: the block IS the editor ─────────────────────────────── */
+
+    /* Spruce, at 7%, with the rail in the same ink — growth, not warning. No
+       box, no visible textarea, and no border anywhere: the only sign that this
+       paragraph is live is that it is tinted and there is a caret in it. */
+    .block.editing .body,
+    .block.editing:hover .body { background: color-mix(in srgb, var(--ink-edit) 7%, transparent); }
+    .block.editing .rail { opacity: 1; background: var(--ink-edit); }
+    /* The one place the sheet's own \`user-select: none\` is lifted, because a
+       caret with no selection is an editor nobody can correct a word in. */
+    .editor {
+      white-space: pre-wrap;
+      user-select: text;
+      outline: none;
+      caret-color: var(--ink-edit);
+    }
+
     .chip {
       top: 0;
       left: 0;
@@ -490,7 +729,18 @@ const PULSE_MS = 600;
       font-variant: small-caps;
       letter-spacing: 0.06em;
       white-space: nowrap;
+      /* It is a button now, so it undoes the four things a button brings with it
+         and takes back the pointer \`.gutter\` turns off. Everything else about it
+         — the ink, the hairline, the ground, the small caps — is §3's chip
+         unchanged, because it IS §3's chip: what it gained is a click. */
+      font-family: inherit;
+      color: inherit;
+      line-height: inherit;
+      cursor: pointer;
+      pointer-events: auto;
     }
+    .chip:hover { background: var(--paper); border-color: color-mix(in srgb, currentColor 70%, transparent); }
+    .chip:focus-visible { outline: 2px solid var(--ink-select); outline-offset: 2px; }
 
     /* §4 — the sienna ordinal beside a note, in the left gutter. */
     .ordinal {
@@ -647,10 +897,95 @@ const PULSE_MS = 600;
       text-decoration: underline dotted var(--ink-flag);
       text-underline-offset: 0.2em;
     }
+    /*
+     * §4 — "Deleting a note strikes its markers with it — derived, animated
+     * together." The number goes with the note because it BELONGS to the note,
+     * and it is cancelled in the same iron red the block wears rather than
+     * removed, for the same reason the block is: struck is a state, and the
+     * reader has to be able to see what they took out.
+     */
+    .marker.struck {
+      opacity: 0.45;
+      text-decoration: line-through;
+      text-decoration-color: color-mix(in srgb, var(--ink-strike) 55%, transparent);
+      transition: opacity var(--t-med) var(--ease);
+    }
+
+    /* ── The one verb on this surface, on the bench beside the paper ──────── */
+
+    .tray {
+      position: sticky;
+      z-index: 3;
+      bottom: 0;
+      display: flex;
+      gap: 6px;
+      justify-content: flex-end;
+      width: min(46rem, 92%);
+      margin: 0 auto;
+      padding: 0.75rem 0;
+      pointer-events: none;
+    }
+    /* The app's own act, in the app's own dark tokens — the shell's language,
+       because a button is the shell's furniture and not the paper's. */
+    .act {
+      padding: 5px 10px;
+      background: var(--bg-input);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      font-family: inherit;
+      font-size: 11px;
+      white-space: nowrap;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+    .act:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--border-strong); }
+    .act:disabled { opacity: 0.4; cursor: default; }
+    .act.ghost { background: transparent; color: var(--text-secondary); }
+
+    /* The app's small menu, copied from open-documents — one vocabulary for
+       one kind of thing, and the scrim is what makes the next click dismiss it
+       exactly once. */
+    .menu-scrim { position: fixed; inset: 0; z-index: 1000; }
+    .menu {
+      position: fixed;
+      z-index: 1001;
+      min-width: 180px;
+      max-height: 60vh;
+      overflow: hidden auto;
+      padding: 4px;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      box-shadow: 0 10px 20px -6px rgba(0, 0, 0, 0.35);
+    }
+    .menu button {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 6px 10px;
+      background: transparent;
+      border: none;
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      font-family: inherit;
+      font-size: 12px;
+      text-align: left;
+      cursor: pointer;
+    }
+    .menu button:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .menu button.current { color: var(--text-primary); }
+    /* The swatch is what settles the two close pairs — see shared/categories.ts,
+       which is the ONE table these colours come from. */
+    .swatch { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 2px; }
 
     /* ── §6 Motion. The states must read perfectly as stills. ─────────────── */
     @media (prefers-reduced-motion: reduce) {
-      .body, .rail, .marker, .flag .pill, .seam { transition-duration: 0ms; }
+      .body, .rail, .marker, .flag .pill, .seam,
+      .block.struck .body, .marker.struck { transition-duration: 0ms; }
     }
   `],
 })
@@ -658,6 +993,10 @@ export class BookViewComponent {
   readonly tab = input.required<Tab>();
 
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly tabs = inject(TabsService);
+  private readonly ledger = inject(LedgerService);
+  /** For `afterNextRender` from an event handler — see `edit`. */
+  private readonly injector = inject(Injector);
 
   private readonly book = signal<BookLoad | null>(null);
   protected readonly loading = signal(true);
@@ -674,6 +1013,34 @@ export class BookViewComponent {
   /** The rectangle being dragged, in the sheet's own coordinates. */
   protected readonly marquee =
     signal<{ left: number; top: number; width: number; height: number } | null>(null);
+
+  /**
+   * THE STACK — everything decided since the last Apply, oldest first.
+   *
+   * A LIFO in memory and nowhere else (docs/RENDERER.md §0, ruling 5). Undo pops
+   * the last one onto `undone`; redo puts it back; Apply writes the whole list as
+   * a step and empties both. Closing scraps it, which is what the closing question
+   * is about (`BookStack`, core/tabs.service.ts).
+   *
+   * IT IS A SIGNAL BECAUSE THE VIEW IS A FUNCTION OF IT. Every gesture on this
+   * surface ends as a push here, and the sheet is `replayOps` over the chain and
+   * this list — so a push repaints the book and there is no second place where a
+   * change is also applied by hand.
+   */
+  protected readonly pending = signal<readonly BookOp[]>([]);
+  /** What undo has taken off the stack, newest last. Cleared by any new gesture. */
+  private readonly undone = signal<readonly BookOp[]>([]);
+  /** True while `book:apply` is in flight, so the button cannot be pressed twice. */
+  protected readonly applying = signal(false);
+
+  /** The block being retyped, or null. Exactly one at a time, by construction. */
+  protected readonly editingId = signal<string | null>(null);
+
+  /** The category list, open over a block's chip. */
+  protected readonly menu = signal<{ id: string; category: string; x: number; y: number } | null>(null);
+
+  /** The categories the chip's list offers — the ONE table, in the engine's order. */
+  protected readonly categories = PDF_BLOCK_CATEGORIES;
 
   /**
    * Which load is the current one.
@@ -713,12 +1080,83 @@ export class BookViewComponent {
 
   private pulseTimer: ReturnType<typeof setTimeout> | null = null;
 
+  /**
+   * True between a successful Apply and the reload it causes — the one thing
+   * that tells the two reasons for a reload apart.
+   *
+   * ── Why the stack is NOT cleared the instant main answers ──────────────────
+   *
+   * Because the answer is not the reload. Main lands the step and moves the
+   * pointer; the history is adopted, the position effect notices, the tab's
+   * revision moves and `load` runs — three turns later, in Angular's own time.
+   * Clearing the ops on the answer would leave the sheet drawing the OLD chain
+   * with an empty stack over it for those three turns, which is the book without
+   * the changes somebody just applied: a flash of the unedited document, at the
+   * exact moment they are looking for confirmation that it worked. So the stack
+   * stands until the chain that replaces it has arrived.
+   *
+   * Which leaves `load` unable to tell "these were just written down" from "you
+   * stepped away and let them go", and both clear the same list. This is the
+   * difference, held for one round trip and spent by the first load that sees it.
+   * A boolean rather than the ids, because the question is which of two things
+   * happened and not which ops were involved.
+   */
+  private landed = false;
+
   constructor() {
     effect(() => {
       const dir = this.tab().path;
+      /*
+       * AND THE REVISION, which is what makes a pointer move reach this pane. The
+       * tab's path is the PROJECT directory and never changes; what changes when
+       * somebody clicks a row in Steps is which book `book:load` would answer with
+       * — a different reading, or the same reading with a different chain of
+       * applied changes over it. `TabsService.showBook` bumps this on a genuine
+       * position move and on nothing else, which is what keeps clicking the row you
+       * are already standing on free.
+       */
+      this.tab().revision;
       // Untracked, because the load writes the signals this component draws from,
       // and an effect that reads its own writes is a loop waiting for a disk.
       untracked(() => void this.load(dir));
+    });
+
+    /*
+     * THE STACK, ANNOUNCED — see `BookStack` (core/tabs.service.ts) for why the
+     * wire exists at all when the selection deliberately has none. Two things
+     * outside this pane need it: the undo chord, which main swallows as a menu
+     * accelerator and the window routes, and the closing question, which is asked
+     * once per tab about everything closing costs.
+     */
+    const tabs = this.tabs;
+    const stack: BookStack = {
+      pending: () => this.pending().length,
+      canUndo: () => this.pending().length > 0,
+      canRedo: () => this.undone().length > 0,
+      undo: () => this.undo(),
+      redo: () => this.redo(),
+      apply: () => this.apply(),
+    };
+    /*
+     * IN AN EFFECT AND NOT ON THIS LINE, because a required input has no value
+     * until the first change detection and the constructor runs before it. The
+     * effect also happens to make the registration correct rather than merely
+     * legal: a pane pointed at another tab lets go of the first id before it
+     * claims the second, so no stack is ever answered for by a pane that has
+     * stopped being about it.
+     */
+    let registered: string | null = null;
+    effect(() => {
+      const id = this.tab().id;
+      untracked(() => {
+        if (registered === id) return;
+        if (registered !== null) tabs.releaseBookStack(registered);
+        tabs.registerBookStack(id, stack);
+        registered = id;
+      });
+    });
+    inject(DestroyRef).onDestroy(() => {
+      if (registered !== null) tabs.releaseBookStack(registered);
     });
   }
 
@@ -744,6 +1182,37 @@ export class BookViewComponent {
     this.problem.set(null);
     this.book.set(null);
     this.chosen.set(new Set());
+    this.editingId.set(null);
+    this.menu.set(null);
+    /*
+     * THE STACK GOES WITH THE LOAD, and it is said out loud when it held anything.
+     *
+     * A reload happens for two reasons and the stack must not survive either. One
+     * is an Apply, where it has just been written down and the same ops are about
+     * to arrive on the chain — clearing is the whole point. The other is a pointer
+     * move: somebody clicked another row in Steps, and ops made against the book
+     * at the row they left are a delta against a state they are no longer in. The
+     * ruling is that unapplied changes are scrapped rather than carried
+     * (docs/RENDERER.md §3), and carrying them here would apply somebody's strikes
+     * to a document they made no decision about.
+     *
+     * SILENCE WOULD BE THE FAILURE. A stack that vanished with no sentence is
+     * indistinguishable from a stack that was applied, so the notice strip says
+     * what happened — the same strip every other "that did not do what you may
+     * have expected" in this window uses.
+     */
+    const scrapped = this.landed ? 0 : this.pending().length;
+    this.landed = false;
+    this.pending.set([]);
+    this.undone.set([]);
+    if (scrapped > 0) {
+      this.tabs.notice.set(
+        scrapped === 1
+          ? 'The change waiting on the book was not applied, so moving to another step let it go.'
+          : `The ${scrapped} changes waiting on the book were not applied, so moving to another step `
+            + 'let them go.',
+      );
+    }
     try {
       const loaded = await api.book.load(projectDir);
       if (ticket !== this.asked) return;
@@ -765,20 +1234,54 @@ export class BookViewComponent {
    * what removes its numbers (docs/RENDERER.md §2). Drawing wants the inverse,
    * taken once, rather than a search of every note in the book per block.
    */
-  private readonly printed = computed<ReadonlyMap<string, Marker[]>>(() => {
+  /**
+   * THE BOOK AS IT NOW READS — the file, with the chain and the stack replayed.
+   *
+   * ONE REPLAY, NO INCREMENTAL MUTATION. Every gesture on this surface pushes an
+   * op and this recomputes; nothing anywhere else edits a row to match. The two
+   * lists are concatenated in the only order they can be — what is already
+   * recorded, then what is waiting — because the stack is a delta against the
+   * state the chain produces, and the fold is order-dependent by design (last op
+   * wins, `replayOps`).
+   *
+   * IT CANNOT THROW IN PRACTICE and is not wrapped as though it could. The only
+   * refusal `replayOps` makes is an op kind this build cannot perform, and both
+   * sources are already proven: main refuses the whole load rather than hand over
+   * a chain it could not read (electron/book.ts), and the stack is minted by the
+   * four gestures below.
+   */
+  private readonly view = computed(() => {
     const book = this.book();
+    if (book === null) return null;
+    return replayOps(book.rows, [...book.ops, ...this.pending()], book.loose);
+  });
+
+  /** How many recorded changes named blocks this book no longer has. */
+  protected readonly stranded = computed(() => this.view()?.missing.length ?? 0);
+
+  /** The notes whose numbers are cancelled with them — derived, never an op (§2). */
+  private readonly struckNotes = computed<ReadonlySet<string>>(() => {
+    const replayed = this.view();
+    return replayed === null ? new Set<string>() : struckNotes(replayed.rows);
+  });
+
+  private readonly printed = computed<ReadonlyMap<string, Marker[]>>(() => {
+    const replayed = this.view();
     const out = new Map<string, Marker[]>();
-    if (book === null) return out;
+    if (replayed === null) return out;
+    const cancelled = this.struckNotes();
     const add = (block: string, marker: Marker): void => {
       const already = out.get(block);
       if (already === undefined) out.set(block, [marker]);
       else already.push(marker);
     };
-    for (const row of book.rows) {
-      for (const ref of row.refs ?? []) add(ref.block, { at: ref.at, len: ref.len, note: row.id });
+    for (const row of replayed.rows) {
+      for (const ref of row.refs ?? []) {
+        add(ref.block, { at: ref.at, len: ref.len, note: row.id, struck: cancelled.has(row.id) });
+      }
     }
-    for (const loose of book.loose.markers) {
-      add(loose.block, { at: loose.at, len: loose.len, note: null });
+    for (const loose of replayed.loose.markers) {
+      add(loose.block, { at: loose.at, len: loose.len, note: null, struck: false });
     }
     for (const markers of out.values()) markers.sort((one, other) => one.at - other.at);
     return out;
@@ -796,9 +1299,13 @@ export class BookViewComponent {
    */
   protected readonly lines = computed<Line[]>(() => {
     const book = this.book();
-    if (book === null) return [];
+    const replayed = this.view();
+    if (book === null || replayed === null) return [];
     const chapters = new Map(book.chapters.map((chapter) => [chapter.id, chapter.title] as const));
-    const orphans = new Set(book.loose.notes);
+    // The REPLAYED record of what is unlinked, not the file's: a text edit is the
+    // one gesture that can point a note at nothing or a number at no note, and
+    // `replayOps` is what re-derives both for the blocks it touched.
+    const orphans = new Set(replayed.loose.notes);
     /*
      * A seam is drawn above its `before` block. The `after` id is not needed to
      * draw it — the two are adjacent among the flowing prose by the format's own
@@ -811,7 +1318,7 @@ export class BookViewComponent {
     const out: Line[] = [];
     let previous: BookRow | null = null;
     let onPage = -1;
-    for (const row of book.rows) {
+    for (const row of replayed.rows) {
       /*
        * THE SHELF IS IN THE FILE AND NOT ON THE PAPER — §5 of the contract: a
        * shelved row is a block the model answered and the book does not contain
@@ -918,8 +1425,22 @@ export class BookViewComponent {
     if (event.button !== 0) return;
     const target = event.target as HTMLElement | null;
     const block = target === null ? null : target.closest('.block');
+    /*
+     * A PRESS INSIDE THE BLOCK BEING EDITED IS THE CARET'S, and nothing else's.
+     * Selection and the marquee both take pointer capture, and a captured pointer
+     * cannot place a caret or drag over a word — so while a block is live this
+     * function stands aside for it entirely. Everywhere else on the sheet the
+     * ordinary gestures still work, which is what makes a press on another
+     * paragraph commit the edit (through the editor's own blur) and select that
+     * paragraph in one movement.
+     */
+    const editing = this.editingId();
+    if (editing !== null && block !== null && block.getAttribute('data-id') === editing) return;
     const marker = target === null ? null : target.closest('.marker');
     const sheet = event.currentTarget as HTMLElement;
+    // The Delete key has to reach a marquee's selection, and a marquee focuses
+    // nothing — see the sheet's own `tabindex` in the template.
+    if (block === null) sheet.focus({ preventScroll: true });
     sheet.setPointerCapture(event.pointerId);
     this.pressed = {
       x: event.clientX,
@@ -1001,6 +1522,262 @@ export class BookViewComponent {
     }
     // A note goes the other way: to the first place its own number was printed.
     if (from.jump !== null) this.scrollTo(from.jump);
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // The stack: push, pop, and write it down
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * One decision, onto the stack.
+   *
+   * THE REDO PILE IS DROPPED BY ANY NEW GESTURE, which is what every undo stack
+   * in every program does and is the only coherent rule: the pile is a list of
+   * things that were true of a document that has just changed under them, and
+   * offering to re-apply a strike over a paragraph somebody has since retyped
+   * would put an op back into a book it was never about.
+   */
+  private push(...ops: readonly BookOp[]): void {
+    if (ops.length === 0) return;
+    this.pending.update((held) => [...held, ...ops]);
+    this.undone.set([]);
+  }
+
+  /** Ctrl+Z, routed from `TabsService.replay`. Pops one op; never touches a disk. */
+  protected undo(): void {
+    const held = this.pending();
+    const last = held[held.length - 1];
+    if (last === undefined) return;
+    this.pending.set(held.slice(0, -1));
+    this.undone.update((taken) => [...taken, last]);
+  }
+
+  /** Ctrl+Shift+Z / Ctrl+Y. Puts the last-undone op back where it was. */
+  protected redo(): void {
+    const taken = this.undone();
+    const last = taken[taken.length - 1];
+    if (last === undefined) return;
+    this.undone.set(taken.slice(0, -1));
+    this.pending.update((held) => [...held, last]);
+  }
+
+  /** What the button says. The count is IN the label, on `labelFor`'s rule. */
+  protected applyLabel(): string {
+    const many = this.pending().length;
+    return many === 1 ? 'Apply 1 change' : `Apply ${many} changes`;
+  }
+
+  /**
+   * APPLY — the stack, landed as a step.
+   *
+   * ── What happens afterwards, and why nothing here does it ───────────────────
+   *
+   * Main writes the ops file, lands an `edit` step as a child of the position and
+   * moves the pointer onto it (`applyBookOps`, electron/book.ts). Adopting the
+   * answer is all this does: `LedgerService.adopt` paints the history main handed
+   * back, the position effect in `TabsService` notices a picture it has not shown
+   * (`positionPicture` carries the edit chain for exactly this), and that bumps
+   * this tab's revision — which reloads the book with the ops on its CHAIN and
+   * clears the stack on the way. Clearing it here as well would be this component
+   * doing by hand the thing the round trip proves, and would put the unedited book
+   * on screen for the turns in between (see `landed`, which is what carries the
+   * one fact across that gap).
+   *
+   * A REFUSAL LEAVES THE STACK EXACTLY WHERE IT IS, with main's sentence on the
+   * notice strip. The changes are still on the paper in front of the person, which
+   * is the only honest state for a write that did not happen — and the closing
+   * question, which can call this, needs the false answer to keep the tab open.
+   */
+  protected async apply(): Promise<boolean> {
+    const ops = this.pending();
+    if (api === null || ops.length === 0 || this.applying()) return false;
+    // A block still live when Apply is pressed has words in it nobody has
+    // recorded yet. Committing first is what makes "apply what is on screen"
+    // true rather than "apply what was on screen before you started typing".
+    this.commitEditing();
+    const waiting = this.pending();
+    this.applying.set(true);
+    try {
+      const history = await api.book.apply(this.tab().path, waiting);
+      this.landed = true;
+      this.ledger.adopt(this.tab().path, history);
+      return true;
+    } catch (err) {
+      this.tabs.notice.set(err instanceof Error ? err.message : String(err));
+      return false;
+    } finally {
+      this.applying.set(false);
+    }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // The four gestures
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * DELETE STRIKES — and Delete again, over the same blocks, brings them back.
+   *
+   * *"if i click them and hit delete again, it should un-delete them."* One key,
+   * both directions, decided by what is under it: a selection with anything
+   * unstruck in it is a person saying "remove these", so the unstruck ones are
+   * struck and the ones already cancelled are left alone (striking them twice
+   * would be two ops for one state, and the second would be the op undo takes
+   * back first). A selection where EVERY block is already struck is the only
+   * reading of the gesture left, and it restores them.
+   *
+   * BACKSPACE TOO, because on a surface with no text field in focus the two keys
+   * mean one thing to a hand, and a gesture that worked on one keyboard's Delete
+   * and not on a laptop's is a gesture half the users do not have.
+   *
+   * NOT WHILE A BLOCK IS LIVE. Delete inside a caret is a character, and it
+   * belongs to the editor.
+   */
+  protected cancel(event: Event): void {
+    if (this.editingId() !== null) return;
+    const chosen = this.chosen();
+    if (chosen.size === 0) return;
+    event.preventDefault();
+    const replayed = this.view();
+    if (replayed === null) return;
+    const struck = new Set(replayed.rows.filter((row) => row.struck === true).map((row) => row.id));
+    const picked = replayed.rows.filter((row) => chosen.has(row.id));
+    const unstruck = picked.filter((row) => !struck.has(row.id));
+    this.push(...(unstruck.length > 0
+      ? unstruck.map((row): BookOp => ({ op: 'strike', id: row.id }))
+      : picked.map((row): BookOp => ({ op: 'restore', id: row.id }))));
+  }
+
+  /**
+   * Double-click puts the caret in the block.
+   *
+   * THE BLOCK ITSELF BECOMES THE EDITOR and the marker cuts go away for the
+   * duration, because what is being edited is the SOURCE STRING — the superscript
+   * digits and the `*markers*` are characters in it (docs/RENDERER.md §2), and an
+   * editor that hid them would be an editor somebody could not put a reference
+   * number back into. The cut pieces come back the moment it commits, re-derived
+   * against the new words.
+   *
+   * A SHELVED ROW IS NOT EDITABLE HERE because it is not drawn here; a struck one
+   * is, deliberately — striking is a state and not a removal, and correcting a
+   * paragraph you have cancelled is an ordinary thing to do on the way to
+   * restoring it.
+   */
+  protected edit(event: MouseEvent): void {
+    const target = event.target as HTMLElement | null;
+    const block = target === null ? null : target.closest('.block');
+    const id = block === null ? null : block.getAttribute('data-id');
+    if (id === null || id === this.editingId()) return;
+    this.commitEditing();
+    this.editingId.set(id);
+    this.chosen.set(new Set([id]));
+    /*
+     * FOCUSED AFTER THE FRAME THAT DRAWS IT. The editor element does not exist
+     * until the template has re-run for the new `editingId`, and this app is
+     * ZONELESS — so "after change detection" is a thing only Angular can promise,
+     * and a `setTimeout` or a microtask here would be a guess about the
+     * scheduler's own ordering. `afterNextRender` is that promise, and it needs
+     * the injector because this runs from an event handler rather than from a
+     * construction context.
+     *
+     * THE CARET GOES TO THE END rather than selecting the paragraph. A
+     * double-click that highlighted every word would make the next keystroke
+     * delete the block, which is a gesture nobody asked for arriving through one
+     * they did.
+     */
+    afterNextRender(() => {
+      const editor = this.host.nativeElement.querySelector('.editor') as HTMLElement | null;
+      if (editor === null) return;
+      editor.focus({ preventScroll: true });
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(false);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }, { injector: this.injector });
+  }
+
+  /**
+   * Blur commits — the pair the app's other in-place editor already uses.
+   *
+   * The chapter-title editor in the rendered frame *"commits on Enter or blur and
+   * cancels on Escape, which are the three endings the in-place block editor
+   * already taught this document"* (electron/click-reporter.ts). Two of those
+   * three are kept verbatim. ENTER IS NOT, and its absence is a reservation
+   * rather than an omission: a block is prose and a line break inside one is
+   * content the page had, and Enter-at-caret is the SPLIT gesture this surface
+   * owes (docs/RENDERER.md §5) — which is R4's. Binding it to commit now would be
+   * teaching a gesture the next wave has to take away.
+   *
+   * ONE OP, AND ONLY IF THE STRING MOVED. A double-click that put a caret
+   * somewhere and then went away has decided nothing, and a step recording it
+   * would be a row in somebody's history about a paragraph they looked at.
+   */
+  protected commit(id: string, event: Event): void {
+    if (this.editingId() !== id) return;
+    const editor = event.target as HTMLElement;
+    // `textContent` and not `innerText`: the second one is a rendering — it folds
+    // whitespace and inserts breaks the layout implies — and what is being read
+    // back is a source string that must survive a round trip unchanged.
+    const said = editor.textContent ?? '';
+    this.editingId.set(null);
+    const row = this.view()?.rows.find((candidate) => candidate.id === id);
+    if (row === undefined || row.text === said) return;
+    this.push({ op: 'text', id, text: said });
+  }
+
+  /**
+   * Escape reverts: the words go back and the blur that follows finds nothing
+   * changed.
+   *
+   * NO FLAG AND NO SECOND PATH. Putting the source string back into the element
+   * BEFORE letting go of focus means the commit above compares the text to
+   * itself, decides nothing happened and pushes nothing — one ending, reached two
+   * ways, rather than two endings that have to be kept agreeing with each other.
+   */
+  protected revert(text: string, event: Event): void {
+    const editor = event.target as HTMLElement;
+    editor.textContent = text;
+    editor.blur();
+  }
+
+  /** The live block, put to bed — for Apply, and for opening another editor. */
+  private commitEditing(): void {
+    const id = this.editingId();
+    if (id === null) return;
+    const editor = this.host.nativeElement.querySelector('.editor') as HTMLElement | null;
+    if (editor === null) {
+      this.editingId.set(null);
+      return;
+    }
+    // Through the same ending a person's own blur takes, so there is one place
+    // that decides whether a text op is owed.
+    editor.blur();
+  }
+
+  /**
+   * The margin chip's list of categories.
+   *
+   * FIXED-POSITIONED FROM THE CHIP'S OWN RECTANGLE, which is why the event is
+   * needed rather than only the id: the menu is `position: fixed` (the app's own
+   * `.menu`, so the scrim can be a full-window one) and the chip is inside a
+   * scrolling bench, so the only honest anchor is where the chip is at the moment
+   * it is pressed.
+   */
+  protected openCategories(event: MouseEvent, id: string): void {
+    event.stopPropagation();
+    const chip = event.currentTarget as HTMLElement;
+    const box = chip.getBoundingClientRect();
+    const row = this.view()?.rows.find((candidate) => candidate.id === id);
+    this.menu.set({ id, category: row?.category ?? '', x: box.left, y: box.bottom + 4 });
+  }
+
+  /** One choice, one op — and nothing at all for choosing what it already is. */
+  protected relabel(id: string, category: string): void {
+    this.menu.set(null);
+    const row = this.view()?.rows.find((candidate) => candidate.id === id);
+    if (row === undefined || row.category === category) return;
+    this.push({ op: 'category', id, category });
   }
 }
 

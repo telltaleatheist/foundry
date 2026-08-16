@@ -50,6 +50,8 @@
  * `readings/<key>.images/`, cut once when the book was made.
  */
 
+import type { BookOp } from './ops';
+
 /** The format this program reads. A file declaring anything else is refused. */
 export const BOOK_FILE_VERSION = 3;
 
@@ -330,6 +332,25 @@ export interface BookLoad {
   loose: BookLoose;
   /** Where the figures are served, ending in `/`, or null when none were cut. */
   figures: string | null;
+  /**
+   * EVERY CHANGE ON THE PATH FROM THE READING TO WHERE THE PERSON IS STANDING,
+   * flattened into one list in the order they were made.
+   *
+   * *"Standing on any step = replay of that chain."* (docs/RENDERER.md §3.) The
+   * rows above are the book as the reflow left it; these are the deltas the edit
+   * steps on the ancestry retained, oldest first, and what the pane draws is
+   * `replayOps(rows, [...these, ...whatever is on the stack])`. FLAT, and not one
+   * list per step, because replay is a fold and a step boundary is not a fact
+   * about a block — the ledger already holds the boundaries, and a pane that had
+   * to reassemble them would be a second opinion about the order.
+   *
+   * EMPTY IS THE ORDINARY ANSWER, for every book nobody has edited yet and for
+   * every position standing above the first edit. It is never absent: main
+   * refuses the whole load rather than hand over a chain it could only half read
+   * (electron/book.ts), because a book drawn without one of its own steps is a
+   * book that has silently lost somebody's work.
+   */
+  ops: BookOp[];
 }
 
 /**

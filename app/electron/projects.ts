@@ -250,6 +250,10 @@ const CURATIONS = 'curations';
  */
 const METADATA = 'metadata';
 /**
+ * The ninth: the book's ops, one file per Apply. See `opsDir`.
+ */
+const OPS = 'ops';
+/**
  * And the bank of the model's answers — hours of GPU, the thing every rendering
  * is made from, and the product of the one job in this app that costs anything.
  */
@@ -1196,6 +1200,46 @@ export function metadataDir(dir: string): string {
 }
 
 /**
+ * `<project>/ops/` — the changes each Apply on the book wrote, one file per step.
+ *
+ * A NINTH SIBLING, on `curations/`' and `metadata/`'s precedent and for the
+ * identical argument, with one clause of it sharper than either. An ops file is a
+ * RETAINED PAYLOAD: named by a step, deleted only when that step is, never
+ * archived aside — and READ AGAIN EVERY TIME THE BOOK IS OPENED, because standing
+ * anywhere means replaying the ops of every edit step on the path
+ * (docs/RENDERER.md §3). Nothing in this app may treat what it finds here as
+ * disposable, which is exactly what a sweep of `working/` or `overlays/` assumes
+ * about its contents.
+ *
+ * `<id8>.jsonl` — the front of the step's own uuid, which is the scheme a branch
+ * read and a branch translation already name their files with (`id8`,
+ * shared/ledger.ts). Not a name anybody reads, for `curationsDir`'s reason: the
+ * step's LABEL is what a person sees ("Applied changes (5)"), and a filename
+ * trying to say the same thing would be a second place for it to be said
+ * differently. Not the whole uuid either, because these sit beside each other in
+ * one folder and eight hex is already how this project distinguishes a branch's
+ * files from the trunk's.
+ */
+export function opsDir(dir: string): string {
+  return path.join(dir, OPS);
+}
+
+/**
+ * The PROJECT-RELATIVE payload an edit step names, composed in the ONE place that
+ * knows the spelling.
+ *
+ * Forward slashes, as every payload is (`LedgerStep.payload`): the ledger's
+ * spelling of a path is not this platform's, and a row carrying a backslash is a
+ * row no other machine could resolve. The step id is minted before the file is
+ * written — the reading's arrangement (`ReadRequest.stepId`), for its reason: the
+ * file is named after a row that does not exist yet, and minting a second id at
+ * the landing would leave it named after a step nobody created.
+ */
+export function opsPayloadFor(stepId: string): string {
+  return `${OPS}/${id8(stepId)}.jsonl`;
+}
+
+/**
  * A finished action, recorded against an OPEN manifest. The caller writes.
  *
  * ── The parent, and the two ways it can be wrong ────────────────────────────
@@ -1916,6 +1960,65 @@ export async function recordMetadata(
       throw new ProjectError(
         `${path.basename(resolved)} has no recorded history for a metadata edit to be filed against `
         + '— this app has no record of the document it was built on, so there is no step to hang one '
+        + 'off. Opening the book from Home imports it and gives this project an origin.',
+      );
+    }
+    await writeManifest(resolved, manifest);
+    return landing.ledger;
+  });
+  announceProjects();
+  return { ledger, rows: chronological(ledger) };
+}
+
+/**
+ * An Apply on the book: the ops file is already written, this is the step for it.
+ *
+ * THE SAME SHAPE AS `recordCuration` AND `recordMetadata` ABOVE, down to the
+ * reasons. The file work is the caller's (electron/book.ts writes the ops
+ * atomically and then calls this — file before step, always, because a row naming
+ * a payload that failed to write is a row describing nothing); the manifest
+ * surgery is this module's, because all of it happens behind `withManifest`.
+ *
+ * NO CAPTURED PARENT, and none is possible: an Apply is not a queue job. It
+ * happens the instant the button is pressed, so there is no gap between the
+ * gesture and the recording for a pointer move to slip through — and the position
+ * now IS the position they pressed it from. Which is also the whole of
+ * "branch-on-edit-at-old-step": `landStep` parents the row at the position and
+ * `appendStep` appends, so editing while standing three rows back mints a child of
+ * THAT row and leaves everything below it exactly where it was. Nothing here does
+ * anything about branching, because branching is what appending already is.
+ *
+ * AND THE POSITION MOVES ONTO IT AFTERWARDS, which is where this parts company
+ * with the two functions above it. `RETAINED_BESIDE_YOU` says so once, in the
+ * ledger, and `appendStep` obeys it — see that table's `edit` entry for why the
+ * pointer must follow here where it must not follow a save.
+ *
+ * THE STEP ID IS AN ARGUMENT because the caller has already spent it: the ops file
+ * is named after this step (`opsPayloadFor`), so minting a second one here would
+ * leave the file named after a row nobody created. `ReadRequest.stepId`'s
+ * arrangement exactly, and `landStep` spends it only on an append — which is every
+ * time, since `reRunTarget` cannot reach an irreplaceable step.
+ */
+export async function recordBookEdit(
+  dir: string,
+  payload: string,
+  params: LedgerParams,
+  stepId: string,
+): Promise<LedgerView> {
+  const resolved = deletableProjectDir(dir);
+  const ledger = await withManifest(resolved, async (manifest) => {
+    const landing = await landStep(manifest, {
+      action: 'edit',
+      parent: null,
+      payload,
+      params,
+      createdAt: Date.now(),
+      id: stepId,
+    });
+    if (landing === null) {
+      throw new ProjectError(
+        `${path.basename(resolved)} has no recorded history for these changes to be filed against — `
+        + 'this app has no record of the document it was built on, so there is no step to hang them '
         + 'off. Opening the book from Home imports it and gives this project an origin.',
       );
     }

@@ -92,6 +92,7 @@ import {
 } from './projects';
 import {
   curateCastFile,
+  editsInEffect,
   facsimileFile,
   languageTagFor,
   readingInEffect,
@@ -351,6 +352,63 @@ export async function planExport(
 }
 
 /**
+ * A CHAIN WITH APPLIED CHANGES IN IT CANNOT BE RENDERED YET, and this is the one
+ * place that says so.
+ *
+ * ── Why a refusal is the only honest answer here ────────────────────────────
+ *
+ * The engine compiles a book out of a readings bank and a curation. It has never
+ * heard of the op grammar, and it will not until export is rewired to compile
+ * from a MATERIALISED book file (docs/RENDERER.md §9, R5). So a Generate, an
+ * Export or a translation planned from a position with edit steps on its path
+ * would run perfectly and produce a document with none of those changes in it —
+ * the strikes back, the retyped sentences reverted, the relabelled headings as the
+ * model first read them — and nothing on screen saying so. A person who struck
+ * forty running heads and pressed Export would file a book that still has them.
+ * That is the worst outcome available: silent, plausible, and discovered in a
+ * finished file. NO FALLBACKS — the rule is a root fix or a refusal with a
+ * sentence, and the root fix is a later wave's.
+ *
+ * ── ONE CHOKE POINT, NOT ONE PER BUTTON ─────────────────────────────────────
+ *
+ * `planRendering` is where every rendering in this app is composed — Generate,
+ * Export, a landing's own cast, a facsimile — and `planTranslation` is where the
+ * only other engine run is. Two calls, and every door in the UI goes through one
+ * of them. Refusing at the buttons instead would be five copies of this rule and
+ * a sixth door somebody adds without it.
+ *
+ * ── ASKED OF THE STEP WHEN THE PLAN IS ABOUT ONE ────────────────────────────
+ *
+ * `planRendering`'s own rule, and it keeps this from firing where it must not. A
+ * read landing's facsimile is keyed to the read step, whose ancestry is the import
+ * and itself — an edit made afterwards is a CHILD of that row and not an ancestor
+ * of it — so the automatic reprint is never refused by an edit somebody makes
+ * later. A save's cast under an edit chain IS refused, and rightly: that book
+ * would be the same lie with a step's name on it, and `castStepBook` already
+ * treats a plan it cannot make as a console line rather than a failed save
+ * (electron/job-queue.ts).
+ *
+ * NAMED BY THE ROW, like every refusal in this function, and never by a file.
+ */
+function refuseOverEdits(ledger: ProjectLedger, forStep: LedgerStep | null): void {
+  const edits = editsInEffect(ledger, forStep);
+  const oldest = edits[0];
+  if (oldest === undefined) return;
+  throw new ProjectError(
+    edits.length === 1
+      ? `“${oldest.label}” is on the way to where you are standing, and Foundry cannot yet compile a `
+        + 'book that carries changes made on the proof sheet — the engine builds from the pages that '
+        + 'were read, and those changes live beside them. Making it anyway would hand you a document '
+        + 'with none of them in it. Stand on a step below that one to make this now.'
+      : `${edits.length} rows of applied changes are on the way to where you are standing, beginning `
+        + `with “${oldest.label}”, and Foundry cannot yet compile a book that carries them — the `
+        + 'engine builds from the pages that were read, and those changes live beside them. Making it '
+        + 'anyway would hand you a document with none of them in it. Stand on a step below the first '
+        + 'of them to make this now.',
+  );
+}
+
+/**
  * The two layers a rendering can be aimed at, spelled once.
  *
  * `electron/projects.ts` owns these names for the catalogue's purposes and keeps
@@ -407,6 +465,7 @@ async function planRendering(
    * of answers however many languages the book passed through (shared/pipeline.ts).
    */
   const pipeline = renderPipeline(ledger, forStep);
+  refuseOverEdits(ledger, forStep);
   /*
    * ── THE READING HAS TO BE FINISHED, AND THIS IS EVERY RENDERING ────────────
    *
@@ -808,6 +867,11 @@ export async function planTranslation(
    * for hours, and minting a second id at the landing would leave it named after a
    * row nobody created.
    */
+  // The same refusal `planRendering` makes, at the other engine door — a
+  // translation reads a CAST of the position's book, and a cast of a position
+  // with applied changes on its path is the document those changes are missing
+  // from. See `refuseOverEdits`.
+  refuseOverEdits(ledger, null);
   const planned = await recordsForTranslation(dir, targetLanguage);
   /*
    * ── WHAT THIS RUN IS ASKED OF, WHICH IS TWO SEPARATE FACTS ────────────────
