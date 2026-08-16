@@ -190,6 +190,56 @@ def cap_pixels(processor, max_pixels):
     sys.stderr.write('  pixel budget %d applied to %s\n' % (max_pixels, ', '.join(touched)))
 
 
+def write_png(pixmap, path):
+    """A pixmap onto the disk, without betting the run on a Windows delete.
+
+    MuPDF's own writer removes an existing file before it writes, and on
+    Windows that remove is refused the moment ANYTHING holds the old file
+    open without delete-sharing — the app showing the figure it cropped last
+    time, an antivirus pass over it, a sync client. One stale PNG then
+    killed an entire read landing (2026-08-16, a re-read over an existing
+    project). So the bytes are taken from the pixmap and written beside the
+    target, and the finished file is moved over the old one with os.replace,
+    which Windows allows in strictly more states than a bare delete. The
+    locks that remain are transient by nature, so the move is retried
+    briefly — and then the failure is the real one, named, with the file it
+    is about.
+    """
+    data = pixmap.tobytes('png')
+    last = None
+    for attempt in range(5):
+        if attempt > 0:
+            time.sleep(0.2)
+        # Truncate-and-write first: a reader that shares writing — which is how
+        # browsers and viewers open files — permits this even while it blocks
+        # every rename onto the name, because Windows keeps a deleted-or-
+        # replaced name occupied until the last handle closes.
+        try:
+            with open(path, 'wb') as out:
+                out.write(data)
+            return
+        except OSError as err:
+            last = err
+        # A holder that does not share writing may still share deletion; going
+        # through a sibling temp file also covers the case where the write
+        # above failed midway and the target must be re-made whole.
+        tmp = path + '.part'
+        try:
+            with open(tmp, 'wb') as out:
+                out.write(data)
+            os.replace(tmp, path)
+            return
+        except OSError as err:
+            last = err
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    fail('%s could not be written (%s). Something on this machine is holding the old file '
+         'open — a window showing it, a sync client, an antivirus scan. Close it and run '
+         'again; the readings are banked, so nothing is read twice.' % (path, last))
+
+
 def run_crop(config):
     """Cut boxes out of pages, straight from the PDF at the pinned dpi.
 
@@ -220,7 +270,7 @@ def run_crop(config):
             fail('the crop for %s on page %d rendered to a %dx%d image'
                  % (crop['name'], number, pixmap.width, pixmap.height))
         path = os.path.join(crops_dir, crop['name'])
-        pixmap.save(path)
+        write_png(pixmap, path)
         emit({'event': 'crop', 'name': crop['name'], 'path': path})
 
 
@@ -383,7 +433,9 @@ def main():
         render_start = time.time()
         pixmap = doc[index].get_pixmap(dpi=dpi)
         image_path = os.path.join(scratch, 'page-%04d.png' % number)
-        pixmap.save(image_path)
+        # Through the same writer as the crops: a kept renders directory is
+        # overwritten on every re-read, which is the exact exposure.
+        write_png(pixmap, image_path)
         if grayscale:
             write_pgm(os.path.join(scratch, 'page-%04d.pgm' % number),
                       fitz.Pixmap(fitz.csGRAY, pixmap))
