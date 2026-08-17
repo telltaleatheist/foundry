@@ -27,11 +27,13 @@ import { api } from './core/foundry';
  * 220-pixel document list, so 308 pixels of a window whose whole job is showing
  * pages were furniture before a book began. Along the bottom it costs about 58
  * pixels of height, which no page needs, and the width goes back to the
- * documents. The z-index ladder is untouched by the move (viewer < shield 30 <
- * rail 40 < shelf 900 < dialogs 1200): the dock is a flex row rather than a
- * floating bar, so it overlaps nothing, and the one thing that DID overlap it —
- * the shelf's pill, fixed at the bottom right — lifts itself by the dock's own
- * height token.
+ * documents. The z-index ladder is untouched by the move (viewer < rail 40 <
+ * shelf 900 < dialogs 1200): the dock is a flex row rather than a floating bar,
+ * so it overlaps nothing, and the one thing that DID overlap it — the shelf's
+ * pill, fixed at the bottom right — lifts itself by the dock's own height token.
+ * (There was a rung at 30 for the workspace's drag SHIELD, a sheet of glass over
+ * every pane so a book could be dropped onto an <iframe>; it went with the panes
+ * — docs/PLAN.md §4, unit 8b.)
  *
  * BOTH SIDE PANELS ARE IN THE SHELL AND NOT IN THE WORKSPACE PAGE, because
  * neither is a fact about a route: the lists stay up on Settings, and clicking a
@@ -50,17 +52,19 @@ import { api } from './core/foundry';
  *
  * ── The keyboard ─────────────────────────────────────────────────────────────
  *
- * Ctrl/Cmd+S, Ctrl/Cmd+W, Ctrl/Cmd+\ and Ctrl/Cmd+B are MENU items
- * (electron/main.ts) and arrive here as `menu:action`: a menu accelerator and a
- * keydown listener for the same chord both fire, and only the menu is
- * discoverable. Splitting is on the menu for exactly that reason — with one pane
- * open there is nothing on screen that says a second is possible, so the View
- * menu is where a person finds out — and the documents panel is there because a
- * panel you have hidden leaves nothing on screen to bring it back except the
- * rail. Ctrl/Cmd+Tab is handled here because a menu item labelled "Next tab" is
- * noise, Ctrl/Cmd+1…5 because a menu of five "Focus pane N" items is five items
- * of noise, and Escape because a dialog that will not dismiss on Escape is a
- * dialog people learn to avoid opening.
+ * Ctrl/Cmd+S, Ctrl/Cmd+W and Ctrl/Cmd+B are MENU items (electron/main.ts) and
+ * arrive here as `menu:action`: a menu accelerator and a keydown listener for the
+ * same chord both fire, and only the menu is discoverable. The documents panel is
+ * there because a panel you have hidden leaves nothing on screen to bring it back
+ * except the rail. Ctrl/Cmd+Tab is handled here because a menu item labelled
+ * "Next tab" is noise, and Escape because a dialog that will not dismiss on
+ * Escape is a dialog people learn to avoid opening.
+ *
+ * CTRL+\ AND CTRL+1…5 ARE NOT HERE ANY MORE. The first was View → Split right —
+ * on the menu precisely because a single-column workspace had nothing on screen
+ * saying a second column was possible — and the second focused one of the five.
+ * Both addressed columns, and there are none: one viewer, one document (ruling
+ * 2026-08-17, quoted in full in `TabsService`'s header).
  */
 @Component({
   selector: 'app-root',
@@ -222,9 +226,10 @@ export class App {
     });
 
     /*
-     * Export / Close tab / Split right / Documents. Every one of them acts on
-     * renderer state — the focused pane, its document, the panel — so main asks
-     * rather than does.
+     * Export / Close tab / Documents. Every one of them acts on renderer state —
+     * the document on screen, the panel — so main asks rather than does. (Split
+     * right was the fourth, and it went with the columns: docs/PLAN.md §4, unit
+     * 8b, and `TabsService`'s own header for the ruling.)
      *
      * `export` IS FIRST, AND THE ORDER IS NOT COSMETIC. This chain ends in a
      * fall-through to `closeActive`, which is a reasonable default for exactly as
@@ -240,7 +245,6 @@ export class App {
       if (action === 'export') this.ui.openExport();
       else if (action === 'save') void this.tabs.saveActive();
       else if (action === 'save-as') void this.tabs.saveActiveAs();
-      else if (action === 'split-right') this.tabs.newEmptyPane();
       else if (action === 'toggle-documents') this.toggleDocuments();
       else if (action === 'undo') this.undo(false);
       else if (action === 'redo') this.undo(true);
@@ -362,36 +366,22 @@ export class App {
     }
     // Ctrl+Tab. `event.key` is 'Tab' with ctrlKey, and preventDefault is what
     // stops the browser moving focus through the rail's buttons instead. It
-    // cycles the FOCUSED pane's strip — a Ctrl+Tab that walked all five panes'
-    // tabs in a row would move the document under a hand that meant "the next
-    // one over here".
+    // cycles the flat list of open documents, which is the only list there is —
+    // Ctrl+1…5 went with the columns it was addressing (docs/PLAN.md §4, 8b).
     if (event.key === 'Tab' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       this.tabs.nextTab();
-      return;
-    }
-    // Ctrl+1…5 puts the focus in a column, which is what the rail, the menu and
-    // Ctrl+S all follow. Shift is excluded so it cannot fire from a chord meant
-    // for something else, and the guard on `panes` keeps Ctrl+3 from doing
-    // anything at all in an app with two columns open.
-    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey
-      && event.key >= '1' && event.key <= '5') {
-      const index = Number(event.key) - 1;
-      if (index < this.tabs.panes().length) {
-        event.preventDefault();
-        this.tabs.focusPaneAt(index);
-      }
     }
   }
 
   /**
    * A FILE drag, and only a file drag.
    *
-   * A document is dragged out of the list into a column with the same platform
-   * mechanism, and without this test the veil ("Drop a PDF to open it") would
-   * slap itself over the whole window the moment a row left the panel. `types`
-   * is the only part of a drag payload readable before the drop, which is
-   * exactly what it is for.
+   * A row dragged inside the library — the loose files' reorder — uses the same
+   * platform mechanism, and without this test the veil ("Drop a PDF to open it")
+   * would slap itself over the whole window the moment one was picked up.
+   * `types` is the only part of a drag payload readable before the drop, which
+   * is exactly what it is for.
    */
   @HostListener('window:dragenter', ['$event'])
   protected onDragEnter(event: DragEvent): void {
@@ -431,7 +421,7 @@ export class App {
   }
 }
 
-/** Whether a drag is carrying files from outside the app, rather than a tab. */
+/** Whether a drag is carrying files from outside the app, rather than a library row. */
 function carriesFiles(event: DragEvent): boolean {
   return event.dataTransfer?.types.includes('Files') === true;
 }

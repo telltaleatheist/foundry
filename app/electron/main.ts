@@ -183,22 +183,18 @@ function buildMenu(): void {
       // anybody meant in a document app. Zooming a DOCUMENT is the PDF
       // viewer's own Ctrl+wheel/pinch and +/− buttons.
       submenu: [
-        {
-          /**
-           * The one place the split is DISCOVERABLE.
-           *
-           * A single-pane workspace is meant to look exactly like the app that
-           * had no panes at all — no divider, no split button, nothing hinting
-           * at a second column — so a person who has never used the feature
-           * would never find it on screen. They find it here. (Ctrl+\ is VS
-           * Code's chord for the same operation.) It opens an EMPTY column
-           * beside the focused one, which the user then fills from the document
-           * list; main owns none of that and only says "split".
-           */
-          label: 'Split right',
-          accelerator: 'CmdOrCtrl+\\',
-          click: () => sendMenuAction('split-right'),
-        },
+        /*
+         * SPLIT RIGHT WAS THE FIRST ITEM IN THIS MENU and it is gone with the
+         * columns it opened. It was here because it was the only DISCOVERABLE
+         * door onto them — a single-pane workspace was meant to look exactly like
+         * the app that had no panes at all, so a person who had never used the
+         * feature would never find it on screen — and the feature it advertised
+         * was ruled out entire: *"i dont think we should have tabs in foundry…
+         * the solution is to have a single viewer window/single tab, and if the
+         * user wants to compare two steps, theres a compare button they can
+         * click"* (user, 2026-08-17). Compare is a button on the viewer, not a
+         * menu item, so nothing replaces this here.
+         */
         {
           /**
            * The open-documents panel, hidden and brought back.

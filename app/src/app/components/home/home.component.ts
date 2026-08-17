@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { Router } from '@angular/router';
 
 import { typeLabel } from '@shared/documents';
@@ -55,21 +55,19 @@ import { UiService } from '../../core/ui.service';
  * one confirmation in this app, and it looks the same wherever the thing being
  * ended is — which is what stops a second, softer one being invented later.
  *
- * IT IS ALSO WHAT AN EMPTY COLUMN SHOWS. Ctrl+\ makes a column with nothing in
- * it, and the useful thing to put in a column with nothing in it is the library
- * — so opening a book from this list lands in the column you are looking at.
- * When it is drawn as a column rather than as the whole window it carries a ✕,
- * because a column you asked for and changed your mind about has to be a column
- * you can put away; the ✕ closes the COLUMN and never a document.
+ * IT IS ALWAYS THE WHOLE WINDOW NOW, and that is the single-viewer ruling
+ * reaching this file (docs/PLAN.md §4, unit 8b). It used to be two things: the
+ * app's first screen, AND what an empty COLUMN showed — Ctrl+\ made a column with
+ * nothing in it, and the useful thing to put in one was the library. Drawn as a
+ * column it carried a ✕ of its own, because a column you asked for and changed
+ * your mind about has to be a column you can put away. There are no columns, so
+ * there is no ✕ and no `pane` input: this screen appears when nothing is on
+ * screen and no project is held, and it fills the window it appears in.
  */
 @Component({
   selector: 'app-home',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    @if (closable()) {
-      <button class="close-column" title="Close this column" (click)="closeColumn()">✕</button>
-    }
-
     <div class="home">
       <div class="hero">
         <div class="mark">⬙</div>
@@ -184,23 +182,6 @@ import { UiService } from '../../core/ui.service';
   `,
   styles: [`
     :host { position: relative; display: block; height: 100%; overflow-y: auto; background: var(--bg-base); }
-
-    /* Sticky rather than absolute: this host scrolls, and a corner button that
-       scrolled away with the hero would be missing exactly when a long recents
-       list made the column feel permanent. */
-    .close-column {
-      position: sticky;
-      top: 8px;
-      float: right;
-      margin-right: 8px;
-      z-index: 1;
-      background: transparent; border: none; cursor: pointer;
-      color: var(--text-tertiary); font-size: 11px;
-      padding: 4px 6px; border-radius: var(--radius-sm);
-      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1),
-                  color 100ms cubic-bezier(0, 0, 0.2, 1);
-    }
-    .close-column:hover { background: var(--bg-hover); color: var(--text-primary); }
 
     .home {
       max-width: 720px;
@@ -354,33 +335,10 @@ import { UiService } from '../../core/ui.service';
 export class HomeComponent {
   protected readonly hosted = hosted;
 
-  /**
-   * The column this is filling, when it is filling one.
-   *
-   * Null — the default — is Home as the WHOLE WINDOW, which is what the app is
-   * with nothing open. The input exists only so the ✕ knows what it would be
-   * closing; everything else on this screen is the same either way.
-   */
-  readonly pane = input<string | null>(null);
-
   protected readonly projects = inject(ProjectsService);
   protected readonly tabs = inject(TabsService);
   protected readonly ui = inject(UiService);
   private readonly router = inject(Router);
-
-  /**
-   * Only with a neighbour to go back to. Closing the only column would leave
-   * zero columns, which draws this same screen across the same window — a
-   * button whose whole effect is invisible is a button that teaches people the
-   * app does not respond.
-   */
-  protected readonly closable = computed(() =>
-    this.pane() !== null && this.tabs.panes().length > 1);
-
-  protected closeColumn(): void {
-    const id = this.pane();
-    if (id !== null) this.tabs.closePane(id);
-  }
 
   constructor() {
     // Re-read every time Home is constructed, which is every time it comes back

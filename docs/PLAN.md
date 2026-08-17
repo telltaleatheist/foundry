@@ -735,7 +735,7 @@ longer earn their machinery. One selection was already the position
   ABOVE the pair; the book scrolls in its own box below. The bottom
   tray (Apply) keeps its sticky edge on purpose — a verb rides the
   scroll, a register holds still.
-- **8b — the single viewer.** Delete panes, strips, pin, drag-split,
+- **8b — the single viewer. LANDED (this commit).** Delete panes, strips, pin, drag-split,
   dividers, the drag shield, `MAX_PANES`, `focusPaneAt`/Ctrl+1–5, the
   `split-right` menu item (electron/main.ts + shared/api.ts + app.ts)
   and the `expectOwnPane`/`expectPane`/`expectReplace` bookkeeping —
@@ -771,6 +771,31 @@ longer earn their machinery. One selection was already the position
   book side reuses the `viewOnly` projection the export view already
   is; scroll-locking the two columns is deferred out loud (the aligned
   pair's machinery exists if it is ever asked for).
+
+- **8e — chapter markers at the hand (ruled 2026-08-17, LANDED
+  `7d34935`).** Same sitting, separate ruling: *"give me the ability
+  to delete a chapter marker inline. the green dotted line can have an
+  X next to the text. and give me the abiltiy to right-click a block
+  and hit 'add chapter marker', and itll add a chapter break above
+  that block."* Both gestures push the ops the Chapters panel already
+  speaks (`{op:'chapter', set/remove}`, title seeded from the block's
+  first line exactly as `makeSheetChapter` seeds it), so undo, Apply
+  and the panel agree about them for free. The ✕ rides the chip on the
+  rule, hover-revealed; the menu item hides where a division already
+  starts (a \`set\` there would retitle under a label that says add).
+
+**The BookForge constraint, binding on every unit above.** Foundry's
+`app/` is vendored WHOLESALE into BookForge (`foundry-app/`, a sealed
+snapshot laid down by `git archive` at a named commit, hash-verified;
+never hand-edited on that side; `VENDORED.md` records the commit).
+So the whole wave must stay inside `app/`; the mount seam
+(`app/electron/mount.ts`, `host.ts`) keeps its contract; every
+`hosted()` behaviour survives 8b (running out of documents closes the
+hosted window); 8b adds/removes/renames NO IPC channel; whatever
+channels 8d adds regenerate `docs/IPC-CHANNELS.md` in the landing
+commit so BookForge's keeper test stays green. After a unit lands and
+pushes, propagation is a STEP, not automatic: tell a BookForge session
+"re-vendor foundry".
 
 ### Then — the user's
 
@@ -889,6 +914,15 @@ supposed to be, and it exists so the same failure is visible next time.
   a part divider's label is composed by the page classifier before any
   substitution exists. Found and recorded by D1 rather than papered over;
   a fix belongs with whoever owns `partVerdict`.
+- **Hosted, the held bench is reachable while documents remain open**
+  (8b). Closing the shown document lands on the quiet bench even when
+  other documents are still open — before the single viewer, the strip
+  fell back to a neighbour, so a hosted window always had a document
+  up. The bench's "Back to the library" button points at a Home this
+  hosted window deliberately hides behind the hero drop target. Named
+  by the 8b builder; accepted rather than special-cased, because the
+  bench also says the tree is one click away, which is true and is the
+  way back a hosted user actually uses.
 
 ---
 

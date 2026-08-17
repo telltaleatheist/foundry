@@ -87,7 +87,17 @@ export type MenuAction =
   | 'save'
   | 'save-as'
   | 'close-tab'
-  | 'split-right'
+  /*
+   * `split-right` WAS HERE, and it is the one name that left this union rather
+   * than outliving its menu item. It was View → Split right (Ctrl+\), the one
+   * DISCOVERABLE door onto the workspace's columns — and the columns are gone:
+   * *"i dont think we should have tabs in foundry… the solution is to have a
+   * single viewer window/single tab, and if the user wants to compare two steps,
+   * theres a compare button they can click"* (user, 2026-08-17). `save` and
+   * `save-as` stayed when their menu items went because the renderer still
+   * carries both out; nothing in the renderer splits anything, so there is
+   * nothing left to name.
+   */
   | 'toggle-documents'
   | 'undo'
   | 'redo';

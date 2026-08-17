@@ -25,62 +25,55 @@ import { api, hosted } from './foundry';
  * this service never has to decide whether a path is real, and there is exactly
  * one code path that creates a tab.
  *
- * ── Panes ────────────────────────────────────────────────────────────────────
+ * ── ONE VIEWER, AND THIS COMMENT IS THE SECOND REVERSAL ─────────────────────
  *
- * The workspace is one to five PANES side by side, and A PANE HOLDS A STACK OF
- * DOCUMENTS AND SHOWS ONE OF THEM. They exist for one comparison in particular:
- * a book beside its translation, the German page and the English page under two
- * hands at once. Everything else about panes follows from that, including the
- * auto-open rule (a translation lands in a pane of its OWN, so it appears beside
- * its source rather than on top of it).
+ * This paragraph used to describe PANES — one to five columns side by side, each
+ * holding a stack of documents and showing one of them — and the paragraph after
+ * it recorded the reversal that brought each column's CHROME-STYLE STRIP back,
+ * with pin, drag-split and close as the three gestures a strip was for. Both are
+ * gone, and they are gone by the same ruling (2026-08-17):
  *
- * ── The strips came back, and this comment is the reversal ───────────────────
+ *   *"i dont think we should have tabs in foundry. i think its making things a
+ *   bit confusing. however, the user should be able to compare two steps
+ *   sometimes. so i think the solution is to have a single viewer window/single
+ *   tab, and if the user wants to compare two steps, theres a compare button
+ *   they can click and then they can choose the step to compare."*
  *
- * EACH PANE USED TO CARRY A CHROME-STYLE STRIP of its own — VS Code's editor
- * groups, a stack of tabs per column — and this paragraph used to record why
- * they were taken away: five columns on a 1920-wide window give each strip 370
- * pixels, three tabs in one of them are unreadable stubs, and a VERTICAL LIST in
- * a panel of its own (app-open-documents) does not degrade with the number of
- * columns. Every word of that is still true and it was still the wrong trade,
- * because it measured the strip as a NAVIGATOR and the strip's job was never
- * only navigation.
+ * So: ONE VIEWER SHOWING ONE DOCUMENT. No columns, no strips, no pin, no
+ * drag-split, no dividers, no drag shield, no five-column cap and no Ctrl+1…5.
  *
- * The user specced them back, in these words: *"clicking another file will
- * automatically close the one i was looking at and open the one i just clicked,
- * unless i pin the file by right-clicking the chrome-style tab at the top"*, and
- * *"if they grab the tab and drag it to one of the sides, it enters split screen
- * with the tab that was currently active when they dragged it"*. PIN, DRAG-SPLIT
- * AND CLOSE are what a strip is for this time — three gestures that need
- * something to point at, and a vertical list of every document in the window
- * cannot be that something, because none of the three is about the window. They
- * are about THIS COLUMN: what it is holding, what it may throw away when the next
- * click lands, and what it should tear off into a column of its own.
+ * IT IS NOT A CLIMBDOWN FROM THE COMPARISON — the comparison was the panes'
+ * whole founding argument (a book beside its translation, the German page and
+ * the English page under two hands at once) and it OUTLIVED them by being built
+ * somewhere better. app-book-view draws the translation beside its source as the
+ * Aligned pair, inside one viewer, scroll-linked, for the one comparison anybody
+ * actually made. What the columns were left carrying was the ability to arrange
+ * furniture, and the price of that was two selectors again: which column has the
+ * focus, and which step the project is standing on. Compare comes back as a
+ * BUTTON on the single viewer (docs/PLAN.md §4, unit 8d) — a chosen step beside
+ * the live one — which is the same capability with none of the arithmetic.
  *
- * The narrow-strip complaint is answered by the auto-close rule rather than by
- * removing the strip: a column accumulates tabs only where somebody PINNED one,
- * so the ordinary five-column window has one tab per strip and reads exactly as
- * it did without them. The documents list stays — it is the project and export
- * navigator, which is a different job, and it is still the only place a
- * document's order in the WINDOW lives.
+ * THE TABS STAY IN ONE FLAT LIST, and now it is the only list there is. It was
+ * already flat under the panes, on the rule that `patch()` — the one function
+ * every edit, save and flag in this file goes through — must never have to search
+ * a list of lists. What went with the columns is the second structure that held
+ * ids INTO it; the order in the list is the documents panel's, through `reorder`,
+ * and nothing else records a sequence.
  *
- * THE TABS STAY IN ONE FLAT LIST and the panes hold ids into it. A pane owning
- * whole Tab objects would put `patch()` — the one function every edit, save and
- * flag in this file goes through — behind a search of a list of lists, and the
- * first thing to rot would be an edit landing in one pane's copy of a tab while
- * another pane showed the other. One list, one identity per tab; the panes
- * decide only where each is shown and which of theirs is on top.
+ * ONE DOCUMENT IS SHOWN, and it is what the rail, the menu and the keyboard mean
+ * by "the document": `active()` is its id and `activeDocument()` is the tab.
+ * NULL IS HOME — exactly what an empty column used to be — or, where the window
+ * is still holding a project, the empty bench that says a step is one click away.
+ * Opening anything replaces what is shown; nothing is lost by that, because the
+ * displaced document is still open in the list with its unpack, its edits and its
+ * dot, one click from coming back. That is the user's own rule from the strips'
+ * day (*"clicking another file will automatically close the one i was looking
+ * at"*) with the exception — the pin — taken off it, which is why replacing needs
+ * no flag: it is the only behaviour there is.
  *
- * A DOCUMENT IS IN AT MOST ONE PANE, and the strips did not weaken that. It is
- * in at most one STRIP: clicking a row for something already on screen REVEALS
- * it rather than putting a second viewer over one unpack — the rule `adopt()`
- * has always enforced for files — and dragging a tab between strips MOVES it.
- * Two panes on one tab would also share its `chapterHref`, so the two columns
- * would look scroll-locked to each other for reasons nothing on screen explains.
- *
- * ONE PANE IS FOCUSED, and it is what the rail, the menu and the keyboard mean
- * by "the document": `active()` is the focused pane's document and nothing else.
- * With a single pane open, that is exactly the app that existed before panes did
- * — the feature is meant to be invisible until it is used.
+ * A DOCUMENT HAS AT MOST ONE TAB, unchanged and load-bearing. Clicking a row for
+ * something already open REVEALS it rather than putting a second viewer over one
+ * unpack — the rule `adopt()` has always enforced for files.
  *
  * ── TWO KINDS, WHICH IS WHERE R6c LEFT IT ───────────────────────────────────
  *
@@ -202,87 +195,17 @@ export interface Tab {
    *  along the bottom where it costs little, and Owen wants the pages in reach. */
   thumbnails: boolean;
   /**
-   * PINNED — right-clicked in its strip and told to stay.
-   *
-   * ── What it protects against, which is a rule and not an accident ───────────
-   *
-   * Clicking a document in the left nav REPLACES what the focused column was
-   * showing (see `place`), because the user asked for exactly that: *"clicking
-   * another file will automatically close the one i was looking at and open the
-   * one i just clicked, unless i pin the file by right-clicking the chrome-style
-   * tab at the top."* So the ordinary column holds one tab and browsing a
-   * project's documents does not accumulate a strip of them — and a pin is how
-   * somebody says "not this one" about the page they are working against.
-   *
-   * A PINNED TAB ALSO HIDES ITS ✕, which is the same statement said twice on
-   * purpose: the gesture that closes and the gesture that closes-by-replacement
-   * are one decision, and a pin that stopped only the quiet one would be a pin
-   * that fails in the way nobody tests.
-   *
-   * ON THE TAB, like `layerView`, and NOT PERSISTED for its reason exactly: five
-   * panes can each hold a different document, a global flag would pin all of
-   * them, and a pin restored from last week would be the app refusing to reuse a
-   * column for a reason nobody in the room remembers.
-   */
-  pinned: boolean;
-  /**
    * Bumped on every flush that reached disk.
    *
-   * It is what makes a pane re-read a document whose PATH did not change: a
+   * It is what makes the viewer re-read a document whose PATH did not change: a
    * rendering replaces the project's PDF at the same name, and a viewer with no
    * reason to believe the bytes moved would go on showing the old ones. The
-   * pdf.js pane watches path AND revision for exactly that.
+   * pdf.js viewer watches path AND revision for exactly that.
    */
   revision: number;
   /** Why this tab has nothing in it, when that happens. Never swallowed. */
   problem: string | null;
 }
-
-/**
- * A column of the workspace: a strip of documents, one of them on screen.
- *
- * IT WAS ONE `tabId` AND IT IS A LIST NOW, which is the strips coming back (see
- * this file's header). The two fields are separate rather than "the first of the
- * list is the active one" because the strip's ORDER is the user's — they drag
- * tabs around in it — and which one is on top is a different question they answer
- * by clicking. Folding the two would mean every activation reordered the strip
- * under the hand that clicked it.
- *
- * `activeTabId` of null means this pane is showing HOME — which is what a column
- * with nothing in it has always shown, back when there was only ever one. It is
- * what Ctrl+\ makes (an empty column to drop a document into, with an empty
- * strip), and it is also what the rail's Home button makes of a column that still
- * has a strip: the tabs stay listed, one click from coming back.
- */
-export interface Pane {
-  id: string;
-  /**
-   * The strip, left to right. Every id is in the flat tab list, and no id is in
-   * two panes' strips — see the header's "a document is in at most one pane".
-   */
-  tabIds: string[];
-  /** Which of them is on screen. Null is Home, including for an empty strip. */
-  activeTabId: string | null;
-  /**
-   * The pane's share of the row, as a flex-grow number.
-   *
-   * In memory only, and deliberately: a layout is a thing you arrange for the
-   * comparison you are doing right now, and restoring last week's column widths
-   * over this week's two books would be furniture arriving in the wrong room.
-   */
-  flex: number;
-}
-
-/**
- * Five, and the number is a judgement rather than a limit of the code.
- *
- * A sixth column on a 1920-wide window is 300 pixels of book, which is a column
- * of hyphens. The cap is also what makes the auto-open rule terminate: past it,
- * a finished job takes the RIGHTMOST column's slot instead of narrowing
- * everything — and the book that was there is still open in the list, one click
- * from coming back.
- */
-export const MAX_PANES = 5;
 
 /**
  * The job kinds that become a tab when they finish.
@@ -300,7 +223,7 @@ export const MAX_PANES = 5;
  * `.jsonl` is a bank's kind of thing — nobody reads it — and opening it here
  * produced a refusal notice per finished translation. The translated BOOK
  * still arrives in front of the person, by the other door: the position moves
- * onto the translate row, the pane follows through `showPosition`, and the
+ * onto the translate row, the viewer follows through `showPosition`, and the
  * cast that renders it carries `forStep`, which the auto-open effect already
  * skips.
  */
@@ -386,7 +309,7 @@ function bucket<K, V>(map: Map<K, V[]>, key: K): V[] {
 }
 
 /**
- * The picture one project's panes are showing, and the string that decides
+ * The picture one project is showing in the viewer, and the string that decides
  * whether it has moved.
  *
  * BOTH TOGETHER, never one without the other. The view is what a repaint acts on
@@ -500,7 +423,7 @@ interface PositionMove {
    * the identical reason.)
    */
   dir: string;
-  /** What the panes were showing, or null for a project this window has just met. */
+  /** What the viewer was showing, or null for a project this window has just met. */
   was: ShownPicture | null;
   now: ShownPicture;
 }
@@ -539,38 +462,43 @@ export class TabsService {
   private readonly ledger = inject(LedgerService);
 
   private readonly all = signal<Tab[]>([]);
-  private readonly columns = signal<Pane[]>([]);
-  private readonly focused = signal<string | null>(null);
+  private readonly shown = signal<string | null>(null);
 
   /**
    * Every open document, in the order the list shows them.
    *
-   * THE ORDER IS THIS LIST'S, now that the strips are gone: there is nowhere
-   * else a document sits in a sequence, so `reorder` writes here and the panel
+   * THE ORDER IS THIS LIST'S, and it is the only sequence in the window: there is
+   * nowhere else a document sits in one, so `reorder` writes here and the panel
    * renders it straight.
    */
   readonly tabs = this.all.asReadonly();
-  readonly panes = this.columns.asReadonly();
-  readonly focusedPaneId = this.focused.asReadonly();
-
-  readonly focusedPane = computed<Pane | null>(() =>
-    this.columns().find((pane) => pane.id === this.focused()) ?? null);
-
-  /** Null means Home — which is also what "no panes open at all" looks like. */
-  readonly activeId = computed<string | null>(() => this.focusedPane()?.activeTabId ?? null);
-  readonly active = computed<Tab | null>(() => this.byId(this.activeId()));
 
   /**
-   * The DOCUMENT the user is working on, which is not always the active tab.
+   * THE ONE DOCUMENT ON SCREEN, by id — the single source the whole window reads.
    *
-   * An editor tab is a face of its book, so with the editor pane focused the
-   * rail's Translate, the OCR dialog's source and Ctrl+S must all still mean
-   * the book. Everything that acts on "what I am looking at" reads this;
-   * `active()` stays literal, for the things that mean the tab itself.
+   * It was two computeds derived from a list of columns (`activeId` off the
+   * focused pane, `active` off that), and the derivation was the second selector
+   * in disguise: "which document" meant "which column has the focus", which is a
+   * fact about furniture rather than about a book. With one viewer there is no
+   * furniture, so this is written directly by the things that genuinely put a
+   * document in front of somebody — `reveal`, `adopt`, a position move, Ctrl+Tab
+   * — and read by everything else.
+   *
+   * NULL IS HOME, exactly as an empty column was: nothing is open, or the person
+   * pressed the rail's Home button, or the last document closed and the window is
+   * still holding its project (see `heldProject`).
    */
-  readonly activeDocument = computed<Tab | null>(() => this.active());
+  readonly active = this.shown.asReadonly();
 
-  readonly canSplit = computed(() => this.columns().length < MAX_PANES);
+  /**
+   * The DOCUMENT the user is working on — the tab behind `active()`.
+   *
+   * TWO NAMES FOR ONE THING, and the second one is what everything outside this
+   * file reads: the rail's Translate, the OCR dialog's source, Ctrl+S, the
+   * window's title. `active()` is the id, for the surfaces that only have to
+   * compare one (the rail's Home button asks whether it is null).
+   */
+  readonly activeDocument = computed<Tab | null>(() => this.byId(this.shown()));
 
   /**
    * The last thing that went wrong out here rather than inside a tab: a drop
@@ -582,22 +510,6 @@ export class TabsService {
 
   /** The tab whose chapter is being written right now, for the "Writing…" line. */
   readonly writingTo = signal<string | null>(null);
-
-  /**
-   * True from the moment a row leaves the document list until the drag ends.
-   *
-   * IT EXISTS BECAUSE OF THE <iframe>. A rendered chapter is a frame with its
-   * own browsing context, and a drag over it delivers dragover/drop to THAT
-   * document — the pane underneath would never see the pointer, so a book could
-   * not be dropped onto the one thing a person aims at. The workspace lays a
-   * transparent shield over every pane while this is on, and takes it away the
-   * instant the drag is over so nothing normal is intercepted.
-   *
-   * Whether a drag is happening, and NOT what it carries: the id is unreadable
-   * until the drop (that is the platform's rule, not ours), so the drop preview
-   * is still driven by the pointer's position alone.
-   */
-  readonly draggingDocument = signal(false);
 
   /** The most recent click-to-source, for whichever editor is watching that book. */
   readonly sourceJump = signal<SourceJump | null>(null);
@@ -613,28 +525,18 @@ export class TabsService {
    */
   private readonly expectUnsaved = new Set<string>();
 
-  /** Paths that will arrive wanting a pane of their own. Same round trip, same trick. */
-  private readonly expectOwnPane = new Set<string>();
-
-  /**
-   * Paths that will arrive meaning to TAKE THE PLACE of what the focused column
-   * is showing — the documents list's click, and nothing else.
+  /*
+   * THERE WERE THREE MORE OF THESE AND THEY WENT WITH THE COLUMNS.
    *
-   * The user's rule (`Tab.pinned`) is about the nav: browsing a project's
-   * documents reuses one column rather than stacking five tabs nobody asked for.
-   * Everything else that opens — a drop, a finished job, a step's document —
-   * JOINS the strip, because none of those is somebody saying "instead of this".
+   * `expectOwnPane`, `expectPane` and `expectReplace` rode the same round trip to
+   * say where a path should land when it came back: in a column of its own, in a
+   * NAMED column, or on top of what the focused one was showing. With one viewer
+   * there is one answer to all three — the thing that just opened is the thing you
+   * are looking at — so an intention that has to survive an IPC hop has nothing
+   * left to carry. `expectUnsaved` stays because it is not about placement at all:
+   * it is a fact about the FILE (nobody has filed a copy of this yet) that only
+   * the caller knows and only the tab can hold.
    */
-  private readonly expectReplace = new Set<string>();
-
-  /**
-   * Paths that will arrive wanting a NAMED column, keyed the same way.
-   *
-   * It is how a project's own book gets to the column that project is already
-   * being read in, rather than to whichever one happens to be focused. See
-   * `place`'s `intoPane`.
-   */
-  private readonly expectPane = new Map<string, string>();
 
   /** Conversions already turned into a tab, so a queue push cannot open a second. */
   private readonly openedJobs = new Set<string>();
@@ -651,7 +553,6 @@ export class TabsService {
   private readonly pendingFlush = new Map<string, () => Promise<void>>();
 
   private sequence = 0;
-  private paneSequence = 0;
 
   constructor() {
     api?.onDocumentOpened((absolutePath) => { this.adopt(absolutePath); });
@@ -668,7 +569,7 @@ export class TabsService {
      * shown, not about what was shut.
      */
     effect(() => {
-      const tab = this.active();
+      const tab = this.activeDocument();
       if (tab === null) return;
       const dir = this.projectDirOf(tab);
       if (dir !== null) this.heldProject.set(dir);
@@ -692,9 +593,13 @@ export class TabsService {
      * runs for hours, so the person who ordered it is not watching, and the
      * book appearing in a tab is how they find out it finished at all.
      *
-     * IN A PANE OF ITS OWN, which is what the panes are for: the translation
-     * arrives beside the book it was made from, and the two are readable
-     * against each other without a single gesture from the user.
+     * IN THE VIEWER, which is where everything that opens now goes. It used to
+     * be "in a pane of its OWN, beside the book it was made from" — the columns'
+     * founding argument, applied to the one job that runs long enough to need it
+     * — and with one viewer there is nowhere for a beside. Nothing is lost that
+     * the user asked to keep: the book it was made from is still open in the
+     * list, and reading the two against each other is Compare's job (docs/PLAN.md
+     * §4, unit 8d) rather than a side effect of a job finishing.
      *
      * Jobs already finished when this window loaded are marked as seen without
      * opening: a reload should not reopen five books somebody closed.
@@ -750,7 +655,7 @@ export class TabsService {
     });
 
     /**
-     * THE POINTER MOVED, SO THE PANES SHOW THE STEP THE USER IS STANDING ON.
+     * THE POINTER MOVED, SO THE VIEWER SHOWS THE STEP THE USER IS STANDING ON.
      *
      * ── What clicking a row used to do, which was very nearly nothing ────────
      *
@@ -758,21 +663,22 @@ export class TabsService {
      * that the position decides what the viewers show, and this effect used to
      * keep about a third of that promise. It re-read the CURATION and left the
      * blocks under it exactly where they were, which is correct only while both
-     * rows are about one reading: move between two readings and the pane went on
+     * rows are about one reading: move between two readings and the viewer went on
      * drawing the first reading's boxes with the second reading's corrections over
      * them, silently, with nothing on screen admitting the swap. And it was
-     * guarded on the pane already being in the block editor, so for a scan nobody
+     * guarded on the viewer already being in the block editor, so for a scan nobody
      * had pressed Blocks on — and for the import row, where the honest picture is
      * no outlines at all — a click on a row in somebody's own history did
      * literally nothing. That is what a user with a two-step project saw: they
      * clicked the import, they clicked the read, and the app sat there.
      *
-     * ── What it does now: make the pane match the answer ─────────────────────
+     * ── What it does now: make the viewer match the answer ───────────────────
      *
      * `positionView` (shared/ledger.ts) says what the picture at the position IS —
      * which reading's bank, which corrections over it, whether there are outlines
-     * at all — and this effect's whole job is to make the panes of that project
-     * agree with it. Nothing here re-derives any of that; the day a read row comes
+     * at all — and this effect's whole job is to make the viewer, where it is
+     * pointed at that project, agree with it. Nothing here re-derives any of
+     * that; the day a read row comes
      * to mean a reflowed HTML document rather than a scan with boxes on it
      * (docs/DERIVED-BOOK.md §6 phase B), the answer changes shape and this loop
      * does not.
@@ -789,8 +695,10 @@ export class TabsService {
      * ── Keyed by PROJECT, and the first sighting is a baseline ───────────────
      *
      * By project because the position is a fact about a book rather than about a
-     * viewer of one, and because two panes onto one project must not each decide
-     * separately what that book is standing on.
+     * viewer of one. It stays keyed that way with a single viewer because the
+     * memory it holds is per BOOK: five books can be open with one on screen, and
+     * the four that are not still have a position this window has to remember
+     * having painted.
      *
      * THE FIRST SIGHTING RECORDS, AND MOVES NOTHING EXCEPT ONTO THE SHEET.
      * Opening a document must not be read as a move: a pointer move is a
@@ -821,13 +729,14 @@ export class TabsService {
         moves.push({ key, dir, was, now });
       }
       /*
-       * WHICH COLUMNS ARE OPEN IS NO LONGER READ HERE, and its absence is the
-       * ruling rather than an oversight. This used to be tracked so that a move
-       * with nowhere to be shown could put a sentence on the strip and then re-ask
-       * once a column appeared. There is no such state any more: clicking a row is
-       * an instruction to LOOK at that step, so a document that is open but in no
-       * column is put in one and a document that is not open is opened. The app
-       * does the thing instead of explaining why it cannot.
+       * WHERE THE DOCUMENT WOULD GO IS NO LONGER READ HERE, and its absence is
+       * the ruling rather than an oversight. This used to track which columns
+       * were open, so that a move with nowhere to be shown could put a sentence
+       * on the notice strip and then re-ask once a column appeared. There is no
+       * such state any more, and with one viewer there cannot be: clicking a row
+       * is an instruction to LOOK at that step, so a document that is open is
+       * shown and a document that is not open is opened. The app does the thing
+       * instead of explaining why it cannot.
        */
       untracked(() => {
         for (const key of [...this.showing.keys()]) {
@@ -890,7 +799,7 @@ export class TabsService {
      *
      * ── An effect of its own, on the delete effect's precedent ─────────────────
      *
-     * The same shape as "a step was deleted, so the panes read their state again"
+     * The same shape as "a step was deleted, so the viewer reads its state again"
      * above: a fact the position cannot express, on a trigger of its own, acting
      * only where something actually CHANGED. `projects.items()` is that trigger —
      * main announces the projects whenever a catalogue does anything, which
@@ -948,8 +857,8 @@ export class TabsService {
   private readonly documentShown = signal<ReadonlyMap<string, string | null>>(new Map());
 
   /**
-   * The document this project's panes are pointed at, for a surface that acts on
-   * the position rather than on whatever tab happens to be focused.
+   * The document this project's viewer is pointed at, for a surface that acts on
+   * the position rather than on whatever tab happens to be shown.
    *
    * NULL IS THREE STATES AND THEY ARE DELIBERATELY ONE HERE: nothing has read this
    * project's history yet, the position names no document of its own, or there is
@@ -998,18 +907,18 @@ export class TabsService {
    * A document that is ALREADY the one the position is showing moves nothing. A
    * book resolves to the NEWEST step of its chain — the only step you can act from
    * — so without this, somebody standing on an older save and clicking into the
-   * pane to read it would be silently walked forward to the newest one, and the
+   * viewer to read it would be silently walked forward to the newest one, and the
    * next thing they exported would be a book they had deliberately stepped back
    * from. Standing still is not a gesture.
    *
    * ── Only user gestures reach this ───────────────────────────────────────────
    *
-   * The strip's own click, a pointerdown in a pane, Ctrl+Tab and Ctrl+1…5, and
-   * nothing else. It is emphatically NOT inside `activateInPane` or `reveal`,
-   * because `showPosition` reaches both of those on its way to satisfying a click
-   * on a library row: a mirror there would answer main's own answer with a
-   * question about it, and a position that had just been moved to an older step
-   * would move itself back the instant the pane obeyed.
+   * A pointerdown in the viewer and Ctrl+Tab, and nothing else. (It used to be
+   * four gestures: a strip's own click and Ctrl+1…5 went with the columns.) It is
+   * emphatically NOT inside `reveal`, because `showPosition` reaches that on its
+   * way to satisfying a click on a library row: a mirror there would answer main's
+   * own answer with a question about it, and a position that had just been moved
+   * to an older step would move itself back the instant the viewer obeyed.
    *
    * A LOOSE FILE HAS NO LEDGER AND NO POSITION, so it is a no-op — its actions go
    * on taking the file, which is the ruling for loose rows everywhere.
@@ -1026,8 +935,8 @@ export class TabsService {
     const subject = tab;
     /*
      * THE BOOK MOVES NOTHING, because it cannot disagree with the pointer. This
-     * mirror exists so that a pane and a position can never describe two different
-     * things — it answers "which step is this FILE" — and the book tab is not a
+     * mirror exists so that the viewer and the position can never describe two
+     * different things — it answers "which step is this FILE" — and the book tab is not a
      * file: it is put on screen BY a read row and shows whatever reading that row
      * is about (`showBook`). Asking main which step it belongs to would be asking
      * about a directory, and the honest answer for a directory is nothing. A book
@@ -1147,14 +1056,14 @@ export class TabsService {
   }
 
   /**
-   * The picture each project's panes are currently showing, keyed by the folded
+   * The picture each project was last given to the viewer, keyed by the folded
    * directory — this window's memory of where every open book was standing.
    */
   private readonly showing = new Map<string, ShownPicture>();
 
   /**
-   * What this project's panes OUGHT to be showing, or null while nothing has read
-   * its history.
+   * What this project OUGHT to be showing, or null while nothing has read its
+   * history.
    *
    * The view and the string it compares by are made together and never apart: a
    * caller holding one without the other would either compare pictures it cannot
@@ -1168,8 +1077,8 @@ export class TabsService {
   }
 
   /**
-   * Make this project's pane show the position — the DOCUMENT first, and then what
-   * is drawn over it.
+   * Make the viewer show this project's position — the DOCUMENT first, and then
+   * what is drawn over it.
    *
    * ── What a click used to be worth, and what the user said about it ──────────
    *
@@ -1188,24 +1097,24 @@ export class TabsService {
    * ── The ruling this is built to ─────────────────────────────────────────────
    *
    * CLICKING A ROW IS AN INSTRUCTION TO LOOK AT THAT STEP, and the app satisfies it
-   * rather than explaining why it cannot. In order: swap the pane to the step's
-   * document; if that document is open but in no column, put it in one; if it is
+   * rather than explaining why it cannot. In order: swap the viewer to the step's
+   * document; if that document is open but not the one shown, show it; if it is
    * not open at all, open it. Nothing here reports a state it could have fixed,
    * which is why this function no longer has a sentence to say.
    *
    * ── The three pictures over it, and what each costs ─────────────────────────
    *
-   * NO OUTLINES (the import, and any position with no reading above it): the pane
-   * comes out of the block editor. Nothing had been read at that point in the
-   * book's story, so boxes drawn there would be the pane making a claim about a
-   * step the user is standing BEFORE — which is the one thing the revert row exists
-   * to let somebody look at without.
+   * NO OUTLINES (the import, and any position with no reading above it): the
+   * viewer comes out of the block editor. Nothing had been read at that point in
+   * the book's story, so boxes drawn there would be the viewer making a claim
+   * about a step the user is standing BEFORE — which is the one thing the revert
+   * row exists to let somebody look at without.
    *
-   * OUTLINES, PANE NOT IN THE MODE: it goes into the mode and reads the bank. The
-   * expensive one, and it is expensive exactly once per genuinely different
+   * OUTLINES, VIEWER NOT IN THE MODE: it goes into the mode and reads the bank.
+   * The expensive one, and it is expensive exactly once per genuinely different
    * picture.
    *
-   * OUTLINES, PANE ALREADY IN THE MODE: the bank is re-read if the READING moved,
+   * OUTLINES, VIEWER ALREADY IN THE MODE: the bank is re-read if the READING moved,
    * or if the pages under it changed — a document swap is a different PDF, and
    * boxes measured against the old one would be drawn over the new one's pages.
    * Otherwise this is a few kilobytes of corrections off a disk, which is what
@@ -1237,7 +1146,7 @@ export class TabsService {
     /*
      * AND THE ANSWER IS DROPPED IF THE USER HAS MOVED AGAIN. Somebody clicking
      * down a history four rows deep issues four of these, and main answers them in
-     * whatever order the disk feels like — so without this the pane could settle on
+     * whatever order the disk feels like — so without this the viewer could settle on
      * the document of a row nobody is standing on any more, and stay there until
      * the next click. `showing` already holds the newest picture (the effect writes
      * it synchronously before starting any of this), so identity against it is the
@@ -1246,7 +1155,7 @@ export class TabsService {
      */
     if (this.showing.get(move.key) !== move.now) return;
     /*
-     * WHAT THE PANES ARE NOW POINTED AT, remembered here because this is the one
+     * WHAT THE VIEWER IS NOW POINTED AT, remembered here because this is the one
      * place that knows it. `followDocuments` compares against it to notice a
      * document that changed under a position that did not move; recording it
      * anywhere else would be recording an intention rather than what happened.
@@ -1265,7 +1174,7 @@ export class TabsService {
      * written against.
      *
      * SO A READ ROW OPENS THE BOOK TAB AND NOT THE CAST, and it is EITHER/OR
-     * rather than both — one project, one column, one thing on screen. A row that
+     * rather than both — one project, one viewer, one thing on screen. A row that
      * opened the sheet and then let `showDocument` put the EPUB beside it would be
      * two tabs for one instruction, and the second of them would be the surface
      * this wave exists to replace.
@@ -1301,11 +1210,12 @@ export class TabsService {
      * the surface the whole wave exists to replace.
      *
      * THE TEST ITSELF MOVED INTO `positionView`. It was spelled here and again,
-     * differently, at the split-pane door below, and two doors onto one surface
-     * that disagree about who may come through is a bug with no symptom until
-     * somebody uses the second one. `sheet` is now the one answer to "is the
-     * picture at this position the proof sheet", asked in the module that already
-     * owns every other question about a position.
+     * differently, at the split door that used to sit below — two doors onto one
+     * surface that disagreed about who may come through, which is a bug with no
+     * symptom until somebody uses the second one. That second door went with the
+     * columns; `sheet` is the one answer to "is the picture at this position the
+     * proof sheet", asked in the module that already owns every other question
+     * about a position.
      */
     const onTheSheet = view.sheet;
     const swapped = onTheSheet
@@ -1317,8 +1227,8 @@ export class TabsService {
      * It turned the block editor on and off from `view.outlines` and re-read the
      * bank whenever the reading moved. That editor is deleted (docs/RENDERER.md
      * §7, A1): a scan is a photograph and this app shows it, so a pointer move
-     * changes which DOCUMENT a pane holds — done above — and nothing about how it
-     * is drawn. `swapped` is still the answer this function owes its caller.
+     * changes which DOCUMENT the viewer holds — done above — and nothing about how
+     * it is drawn. `swapped` is still the answer this function owes its caller.
      */
     void swapped;
   }
@@ -1328,19 +1238,19 @@ export class TabsService {
    *
    * ── Three ways to satisfy one instruction ───────────────────────────────────
    *
-   * ALREADY THE DOCUMENT ON THAT TAB: `reveal`, which is a no-op when it is in a
-   * column and PUTS IT IN ONE when it is not. That second case is the exact state
-   * the app used to describe back at the user — their book was open, no column was
+   * ALREADY THE DOCUMENT ON THAT TAB: `reveal`, which is a no-op when it is the
+   * one on screen and SHOWS IT when it is not. That second case is the exact state
+   * the app used to describe back at the user — their book was open, nothing was
    * showing it, and they were told to go and click it in the list. Doing it for
    * them is the whole of the fix.
    *
    * A PDF THIS PROJECT ALREADY HAS A TAB FOR: the tab MOVES to the new file. One
-   * document per project per pane is what makes "the pane shows the step" true;
-   * opening the scan beside the reprint would leave two tabs with the same book's
-   * name in the list and neither of them following the pointer. `app-pdf-view`
-   * watches `tab.path` and re-opens when the string changes, so the swap is the
-   * patch and nothing else — the same mechanism `relocate` uses when an import
-   * moves a tab onto the project's copy.
+   * document per project in the viewer is what makes "the viewer shows the step"
+   * true; opening the scan beside the reprint would leave two tabs with the same
+   * book's name in the list and neither of them following the pointer.
+   * `app-pdf-view` watches `tab.path` and re-opens when the string changes, so the
+   * swap is the patch and nothing else — the same mechanism `relocate` uses when
+   * an import moves a tab onto the project's copy.
    *
    * ANYTHING ELSE: opened, through the one door every open in this app goes
    * through. That covers a translation's EPUB, which is emphatically NOT swapped
@@ -1351,11 +1261,11 @@ export class TabsService {
    *
    * ── Which tab follows the pointer, when the project has several ─────────────
    *
-   * The one in the focused column first, then any in a column, then any at all —
-   * and ONLY of the kind the target is. A person comparing the scan against the
-   * cast EPUB has two tabs of one project on screen, and swapping the EPUB's pane
-   * to a PDF because they clicked a read row would take away the book they were
-   * reading to answer a question about the pages.
+   * The one ON SCREEN first, then any at all — and ONLY of the kind the target
+   * is. A person who has both the scan and the cast EPUB open has two tabs of one
+   * project, and swapping the EPUB's tab to a PDF because they clicked a read row
+   * would take away the book they were reading to answer a question about the
+   * pages.
    *
    * ── AND A CHANGE OF KIND IS AN OPEN, NEVER A PATCH ──────────────────────────
    *
@@ -1363,13 +1273,13 @@ export class TabsService {
    * answers the scan and the read and curate rows answer the EPUB cast from the
    * reading (docs/WORKBENCH.md §4, Unit E). Patching a path across that boundary
    * would leave a PDF viewer pointed at a book — or an unpacked book's viewer
-   * serving chapters out of a tree belonging to a scan — so the two documents
-   * become two TABS IN ONE STRIP, and clicking between the steps activates
-   * between them. That is the whole reason the strips are back in a form that can
-   * hold more than one thing: nothing threads "this is a PDF" through the
-   * renderer, the seam is position → document → show it (DERIVED-BOOK §7), and a
-   * strip is what lets one column show whichever of a project's faces the
-   * position names without throwing the other away.
+   * serving chapters out of a tree belonging to a scan — so the two documents stay
+   * TWO TABS, and clicking between the steps swaps which of them the viewer holds.
+   * That is why the flat list has to be able to hold both faces of one book at
+   * once: nothing threads "this is a PDF" through the renderer, the seam is
+   * position → document → show it (DERIVED-BOOK §7), and keeping both tabs is what
+   * lets the viewer show whichever face the position names without throwing the
+   * other away.
    *
    * The same-kind swap SURVIVES for PDF↔PDF, and it is worth keeping for the one
    * thing it does that opening cannot: `app-pdf-view` keeps the page you were on
@@ -1381,32 +1291,17 @@ export class TabsService {
       const dir = this.projectDirOf(tab);
       return dir !== null && fold(dir) === move.key;
     });
-    /*
-     * THE COLUMN THIS BOOK IS ALREADY IN, worked out before anything moves. A
-     * project's documents belong together: the cast book has to arrive in the
-     * column the scan is being read in, not in whichever column the pointer
-     * happened to leave focused — which, for somebody reading two books, is
-     * routinely the other book's.
-     */
-    const home = this.paneAmong(mine);
-    // Right-click → "Open in split" on a step row, consumed exactly once. The
-    // menu sets it and then moves the pointer; this is where the move lands.
-    const split = this.splitNext.delete(move.key);
     if (target === null) {
       /*
        * NOTHING TO SWAP TO, AND STILL SOMETHING TO DO. A position with no document
        * of its own — a project with no reading yet, a payload since swept — is
-       * still a row somebody clicked, so if none of this book's tabs is in a column
-       * one of them goes in one. The instruction was "show me this step"; the
-       * honest answer is this book, where they can see it.
+       * still a row somebody clicked, so if none of this book's tabs is the one on
+       * screen, one of them is put there. The instruction was "show me this step";
+       * the honest answer is this book, where they can see it.
        */
       const first = mine[0];
       if (first === undefined) return false;
-      if (split) {
-        this.openInNewPane(first.id, this.indexOfPane(home) + 1);
-        return false;
-      }
-      if (mine.some((tab) => this.paneOf(tab.id) !== null)) return false;
+      if (mine.some((tab) => tab.id === this.shown())) return false;
       this.reveal(first.id);
       return false;
     }
@@ -1414,8 +1309,7 @@ export class TabsService {
     const key = normalise(target);
     const already = mine.find((tab) => normalise(tab.path) === key);
     if (already !== undefined) {
-      if (split) this.openInNewPane(already.id, this.indexOfPane(home) + 1);
-      else this.reveal(already.id, false, home?.id ?? null);
+      this.reveal(already.id);
       return false;
     }
 
@@ -1435,9 +1329,9 @@ export class TabsService {
      * AN EPUB IS NOT A DOCUMENT THIS APP SHOWS, and this is the one position that
      * can still name one: a translate step from before records, whose payload is
      * the book its run wrote. There is no viewer for it — the iframe reader is
-     * deleted (docs/RENDERER.md §7) and pointing pdf.js at a zip would be a pane
-     * with "This PDF would not open" on it. So the row is honest instead: the file
-     * is there, Reveal opens it, and the pane keeps what it had.
+     * deleted (docs/RENDERER.md §7) and pointing pdf.js at a zip would be a viewer
+     * with "This PDF would not open" in it. So the row is honest instead: the file
+     * is there, Reveal opens it, and the viewer keeps what it had.
      */
     if (key.endsWith('.epub')) {
       this.notice.set(
@@ -1449,8 +1343,6 @@ export class TabsService {
     }
     const follower = this.followerAmong(mine);
     if (follower === null) {
-      if (split) this.expectOwnPane.add(key);
-      else if (home !== null) this.expectPane.set(key, home.id);
       await this.openFile(target, madeByUs);
       return true;
     }
@@ -1460,8 +1352,8 @@ export class TabsService {
       // being about the copy Foundry made and start being about the user's own.
       unsaved: madeByUs,
       /*
-       * THE REVISION MOVES WITH THE PATH. It is what makes a pane re-read bytes it
-       * is already pointed at (see `openFinished`), and the two files this swaps
+       * THE REVISION MOVES WITH THE PATH. It is what makes the viewer re-read bytes
+       * it is already pointed at (see `openFinished`), and the two files this swaps
        * between can have the same name in two layers of one project — so a viewer
        * that compared only the string would faithfully conclude there was nothing
        * to do, which is the failure that whole comment exists about.
@@ -1475,8 +1367,7 @@ export class TabsService {
        */
       ...(follower.named ? {} : { title: this.nameFor(target) }),
     });
-    if (split) this.openInNewPane(follower.id, this.indexOfPane(home) + 1);
-    else this.reveal(follower.id, false, home?.id ?? null);
+    this.reveal(follower.id);
     return true;
   }
 
@@ -1493,12 +1384,12 @@ export class TabsService {
    * not on the original file."*
    *
    * Two selectors, one of them right. The rail reads the ledger the moment the
-   * history lands and highlights the tip correctly; the pane is whatever file the
-   * open gesture named, which for every door in this app is the project's ORIGINAL.
-   * Nothing reconciled them, because the first-sighting rule above (correctly)
-   * refuses to read "a tab appeared" as a pointer move — so the pane sat on the
-   * import while the rail said Applied changes, and the two clicks the user
-   * describes are them driving the position effect by hand to make it act.
+   * history lands and highlights the tip correctly; the viewer holds whatever file
+   * the open gesture named, which for every door in this app is the project's
+   * ORIGINAL. Nothing reconciled them, because the first-sighting rule above
+   * (correctly) refuses to read "a tab appeared" as a pointer move — so the viewer
+   * sat on the import while the rail said Applied changes, and the two clicks the
+   * user describes are them driving the position effect by hand to make it act.
    *
    * ── Why the sheet is the whole of the exception ─────────────────────────────
    *
@@ -1507,9 +1398,9 @@ export class TabsService {
    * on a first sighting would mean an open gesture that named a file answering with
    * a different one; the hosted "open THIS file" door (electron/mount.ts) is
    * exactly that gesture, and it is entitled to land where it was pointed. The
-   * sheet takes nothing away: the original's tab is still open, still in the strip,
-   * still one click off. So the correction ADDS the surface the position names and
-   * never removes the one that was asked for.
+   * sheet takes nothing away: the original's tab is still open, still listed in
+   * the library, still one click off. So the correction ADDS the surface the
+   * position names and never removes the one that was asked for.
    *
    * `positionView.sheet` is the same test `showPosition` asks (read, edit, curate,
    * translate, and an EPUB's own import row), asked in the same place, so there is
@@ -1543,28 +1434,23 @@ export class TabsService {
    * that is already open is therefore already correct for any read row of that
    * project, and revealing it is the whole of the work.
    *
-   * IT LANDS IN THE COLUMN THE PROJECT IS ALREADY BEING READ IN, which is
-   * `showDocument`'s rule and for `showDocument`'s reason: a project's documents
-   * belong together, and a person reading two books must not have this one arrive
-   * in the other one's column. "Open in split" is consumed here too — the flag
-   * rides on a position move and this is now one of the two places a move lands.
+   * IT SIMPLY BECOMES WHAT IS ON SCREEN. This used to have to work out WHICH
+   * COLUMN the project was already being read in, so that a person reading two
+   * books did not have this one arrive in the other one's column, and it used to
+   * consume the "Open in split" intention on its way past. Both were arithmetic
+   * about furniture; with one viewer the answer to "where does it go" is the only
+   * place there is.
    *
    * ANSWERS FALSE, ALWAYS: the boolean its caller wants is "did the PAGES under
-   * the block editor move", and nothing here points a PDF pane anywhere.
+   * the block editor move", and nothing here points a PDF viewer anywhere.
    */
   private showBook(move: PositionMove): boolean {
-    const mine = this.all().filter((tab) => {
-      const dir = this.projectDirOf(tab);
-      return dir !== null && fold(dir) === move.key;
-    });
-    const home = this.paneAmong(mine);
-    const split = this.splitNext.delete(move.key);
     const id = this.bookTabIn(move.dir);
     /*
      * AND IT RE-ASKS FOR THE BOOK, which revealing alone does not do.
      *
      * *"Standing on any step = replay of that chain."* (docs/RENDERER.md §3.) The
-     * pane's rows and its op chain both come from one call to main, and that call
+     * sheet's rows and its op chain both come from one call to main, and that call
      * is keyed to the POSITION — so a move from a read row onto an edit row, or
      * between two edit rows of one reading, changes what `book:load` would answer
      * while the tab's own path (the project directory) does not move an inch.
@@ -1579,13 +1465,12 @@ export class TabsService {
      *
      * ONLY ON A MOVE. This runs from `showPosition`, which the effect only reaches
      * when the picture genuinely changed (`positionPicture` carries the edit chain
-     * for exactly this), so revealing a tab, focusing it or clicking the row you
-     * are already standing on costs nothing.
+     * for exactly this), so revealing a tab or clicking the row you are already
+     * standing on costs nothing.
      */
     const already = this.byId(id);
     if (already !== null) this.patch(id, { revision: already.revision + 1 });
-    if (split) this.openInNewPane(id, this.indexOfPane(home) + 1);
-    else this.reveal(id, false, home?.id ?? null);
+    this.reveal(id);
     return false;
   }
 
@@ -1614,12 +1499,12 @@ export class TabsService {
     const key = fold(path);
     const already = this.all().find((tab) => tab.kind === 'book' && fold(tab.path) === key);
     if (already !== undefined) {
-      this.reveal(already.id, true);
+      this.reveal(already.id);
       return;
     }
     const made: Tab = { ...this.blankTab('book', path, title), viewOnly: true };
     this.all.update((tabs) => [...tabs, made]);
-    this.reveal(made.id, true);
+    this.reveal(made.id);
   }
 
   private bookTabIn(projectDir: string): string {
@@ -1632,40 +1517,7 @@ export class TabsService {
   }
 
   /**
-   * The column one of these documents is in — the focused one for preference.
-   *
-   * "For preference" is the whole of it: with two of a project's faces on screen
-   * the answer has to be the one the hand is in, or a click on a step row would
-   * repaint the column the user is not looking at.
-   */
-  private paneAmong(mine: readonly Tab[]): Pane | null {
-    const ids = new Set(mine.map((tab) => tab.id));
-    const focused = this.focusedPane();
-    if (focused && focused.tabIds.some((id) => ids.has(id))) return focused;
-    return this.columns().find((pane) => pane.tabIds.some((id) => ids.has(id))) ?? null;
-  }
-
-  /** Where a column sits left to right, or the focused one's place when it has none. */
-  private indexOfPane(pane: Pane | null): number {
-    const panes = this.columns();
-    const at = pane === null ? -1 : panes.findIndex((candidate) => candidate.id === pane.id);
-    return at >= 0 ? at : panes.findIndex((candidate) => candidate.id === this.focused());
-  }
-
-  /**
-   * Projects whose next position move puts its document in a COLUMN OF ITS OWN.
-   *
-   * The inspector's right-click → "Open in split" on a step row, which is two
-   * acts that have to arrive as one: stand on the step, and put what it shows
-   * beside what is already there. Standing is `LedgerService.go`, and what a step
-   * shows is only decided afterwards, by main, in `showDocument` — so the
-   * intention is left here for that answer to find. Consumed exactly once, so a
-   * later move made for some other reason cannot inherit it.
-   */
-  private readonly splitNext = new Set<string>();
-
-  /**
-   * The open book panes' stacks, by tab id — see `BookStack`.
+   * The open book viewers' stacks, by tab id — see `BookStack`.
    *
    * A SIGNAL OF A MAP, AND IT USED TO BE A PLAIN ONE. The argument for the plain
    * map was that nothing DREW from it: the undo chord reads it the instant a chord
@@ -1688,13 +1540,13 @@ export class TabsService {
   private readonly bookStacks = signal<ReadonlyMap<string, BookStack>>(new Map());
 
   /**
-   * A BOOK PANE'S UNWRITTEN STACK, HELD WHILE ITS TAB IS SHOWN ELSEWHERE.
+   * A BOOK VIEWER'S UNWRITTEN STACK, HELD WHILE ITS TAB IS NOT THE ONE SHOWN.
    *
-   * Switching a pane to another tab DESTROYS the book component (the viewer
-   * renders one tab at a time), and the first draft let the stack die with it —
+   * Showing another tab DESTROYS the book component (the viewer renders one tab
+   * at a time), and the first draft let the stack die with it —
    * a glance at the scan cost every strike since the last Apply (user report,
    * 2026-08-16). The ruling: the stack belongs to the TAB, not to the
-   * component's lifetime. The pane parks it here on destroy and claims it back
+   * component's lifetime. The viewer parks it here on destroy and claims it back
    * on load; it is dropped when the tab closes (after the closing question,
    * which consults it — see `questionBefore`) and let go with a notice when the
    * position moved while it was parked, because ops made against the book at
@@ -1759,77 +1611,30 @@ export class TabsService {
     return tabId === null ? null : this.bookStacks().get(tabId) ?? null;
   }
 
-  /** Set by the inspector's menu immediately before it moves the pointer. */
-  splitNextIn(projectDir: string): void {
-    this.splitNext.add(fold(projectDir));
-  }
-
-  /** Dropped when the move it was set for turns out not to happen. */
-  forgetSplitIn(projectDir: string): void {
-    this.splitNext.delete(fold(projectDir));
-  }
+  /*
+   * ── AND "OPEN IN SPLIT" USED TO LIVE HERE ──────────────────────────────────
+   *
+   * `splitNextIn`, `forgetSplitIn` and `splitAtPosition` were the three halves of
+   * one gesture: the library's right-click on a step row left an intention here,
+   * the position moved, and whatever main answered went into a column of its own
+   * instead of into the one in front. All three are gone with the columns, and
+   * the gesture they served comes back as Compare (docs/PLAN.md §4, unit 8d) —
+   * a button on the viewer that picks a step to put beside the live one, which
+   * is what the right-click was reaching for without the arrangement arithmetic.
+   */
 
   /**
-   * "Open in split" on the step somebody is ALREADY standing on.
+   * The PDF tab that follows the pointer: the one on screen, then any at all.
    *
-   * The flag above rides on a position MOVE, and a right-click on the current row
-   * is not one: main answers with the same ledger, the picture does not change,
-   * and nothing would ever consume it. So this asks main the same question
-   * `showPosition` asks — what document does this position name — and puts the
-   * answer in a column of its own.
+   * It used to be three preferences deep (the focused column's, then any column's,
+   * then any tab); the middle one was about which documents happened to be
+   * arranged on screen, and with one viewer it collapses into the first.
    */
-  async splitAtPosition(projectDir: string): Promise<void> {
-    this.forgetSplitIn(projectDir);
-    const at = this.indexOfPane(this.focusedPane());
-    /*
-     * A ROW WHOSE PICTURE IS THE SHEET SPLITS THE BOOK, for `showPosition`'s
-     * reason and so that the two gestures cannot disagree. Asking main which
-     * document this position names would answer with the cast EPUB — the surface
-     * the sheet replaces — and put it in a column of its own beside a book
-     * somebody was reading, which is the "one tab, not two" rule broken by the one
-     * door that went round it.
-     *
-     * IT IS `view.sheet` AND NO LONGER `action === 'read'`, which is the same
-     * expression the click uses and is why it is one expression now. This door had
-     * already drifted: an edit row opened the sheet on a click and the cast EPUB
-     * on a split, and nothing said so.
-     */
-    if (this.pictureIn(projectDir)?.view.sheet === true) {
-      this.openInNewPane(this.bookTabIn(projectDir), at + 1);
-      return;
-    }
-    const target = await this.ledger.documentAt(projectDir);
-    if (target === null) {
-      // The position names no document of its own, so the honest thing to put in
-      // the new column is this book — the same fallback `showDocument` makes.
-      const key = fold(projectDir);
-      const mine = this.all().find((tab) => {
-        const dir = this.projectDirOf(tab);
-        return dir !== null && fold(dir) === key;
-      });
-      if (mine !== undefined) this.openInNewPane(mine.id, at + 1);
-      return;
-    }
-    const normalised = normalise(target);
-    const already = this.all().find((tab) => normalise(tab.path) === normalised);
-    if (already !== undefined) {
-      this.openInNewPane(already.id, at + 1);
-      return;
-    }
-    const madeByUs = this.projects.projectFor(target)?.documents
-      .some((row) => normalise(row.path) === normalised && row.managed) === true;
-    this.expectOwnPane.add(normalised);
-    await this.openFile(target, madeByUs);
-  }
-
-  /** The PDF tab that follows the pointer: focused column, then any column, then any. */
   private followerAmong(mine: readonly Tab[]): Tab | null {
     const pdfs = mine.filter((tab) => tab.kind === 'pdf');
     if (pdfs.length === 0) return null;
-    const focused = this.focusedPane()?.activeTabId ?? null;
-    return pdfs.find((tab) => tab.id === focused)
-      ?? pdfs.find((tab) => this.paneOf(tab.id) !== null)
-      ?? pdfs[0]!;
+    const on = this.shown();
+    return pdfs.find((tab) => tab.id === on) ?? pdfs[0]!;
   }
 
   /**
@@ -1906,14 +1711,20 @@ export class TabsService {
    * The documents list's click on a row nothing has opened yet — including an
    * EXPORT row, which is a file in `final/` and opens like any other document.
    *
-   * IT REPLACES what the focused column is showing, which is the user's rule
-   * about browsing: *"clicking another file will automatically close the one i
-   * was looking at and open the one i just clicked, unless i pin the file"*. The
-   * displaced tab gets its ordinary closing question, so nothing with work in it
-   * goes without being asked.
+   * IT REPLACES WHAT IS ON SCREEN, which is what every door does now — the user's
+   * rule about browsing (*"clicking another file will automatically close the one
+   * i was looking at and open the one i just clicked"*) with its exception, the
+   * pin, taken away by the single-viewer ruling. So there is no flag: this is
+   * `openFile`, and it is kept as a name because the LIST is the thing the ruling
+   * was about and a caller that reads as "the library's click" is worth having.
+   *
+   * NOTHING IS CLOSED BY IT EITHER. Replacing used to close the tab it displaced
+   * — a strip that accumulated documents nobody asked for was the thing the rule
+   * guarded against — and with one flat list there is nothing to accumulate. The
+   * displaced document stays open, in the library, one click from coming back,
+   * and closing it is still the ✕ that has always meant that.
    */
   async openFromList(filePath: string, managed = false): Promise<void> {
-    this.expectReplace.add(normalise(filePath));
     await this.openFile(filePath, managed);
   }
 
@@ -1924,7 +1735,7 @@ export class TabsService {
    *
    * ── The complaint this answers ──────────────────────────────────────────────
    *
-   * Opening a project put the ORIGINAL document in the pane while the position
+   * Opening a project put the ORIGINAL document in the viewer while the position
    * stood on the newest step — an edit row, whose picture is the proof sheet —
    * and the first-sighting rule (correctly) refuses to read "a tab appeared" as
    * a move, so nothing ever corrected it. The user had to click the import row
@@ -1965,10 +1776,7 @@ export class TabsService {
     const admitted = await api.openPath(filePath);
     if (admitted === null) {
       this.expectUnsaved.delete(key);
-      this.expectOwnPane.delete(key);
-      this.expectReplace.delete(key);
-      this.expectPane.delete(key);
-      // NAMED, NOT SPELLED OUT. A path in the strip is this app showing its own
+      // NAMED, NOT SPELLED OUT. A path in the notice is this app showing its own
       // bookkeeping to somebody who asked for a book — and the whole path was
       // never readable in one line of a notice anyway. The row that failed to
       // open still carries the path in its tooltip, which is where a person
@@ -1978,7 +1786,7 @@ export class TabsService {
   }
 
   /**
-   * A rendering's output: unsaved, and in a pane of its own if there is room.
+   * A rendering's output: unsaved, and put in front of the person who ordered it.
    *
    * ── A NEW FILE UNDER AN OLD NAME ───────────────────────────────────────────
    *
@@ -1993,33 +1801,29 @@ export class TabsService {
    * So a document already open is REVEALED AND RELOADED. The revision bump is
    * this app's own idiom for exactly this — it is what makes an edited chapter
    * repaint in an <iframe> pointed at a URL it is already showing — and the PDF
-   * pane now watches it for the same reason.
+   * viewer now watches it for the same reason.
    *
    * A document that is NOT open takes the ordinary path and opens fresh.
    *
-   * ── A COLUMN OF ITS OWN, EXCEPT WHERE THAT IS A SECOND COLUMN OF ONE BOOK ───
+   * ── AND IT SIMPLY BECOMES WHAT IS ON SCREEN ────────────────────────────────
    *
-   * The pane-of-its-own rule was written for the translation and it is right for
-   * the translation: it runs for hours, the person who ordered it is not
-   * watching, and the whole point of it appearing is that they can read it
-   * AGAINST the source. Two columns is the feature.
+   * There used to be an argument here about WHERE it landed. A translation asked
+   * for a column of its own, because it runs for hours and the whole point of it
+   * appearing is that it can be read against the source; a reading's cast book
+   * asked to join the column its project was already in, because it is another
+   * face of the same book and a column nobody arranged is furniture in the way.
+   * Both halves of that go with the columns (see this file's header): the finished
+   * thing is put in front of the person who ordered it, and reading it against the
+   * source is Compare's job (docs/PLAN.md §4, unit 8d) rather than the side effect
+   * of a job finishing.
    *
-   * A READING NOW CASTS THE BOOK BY ITSELF (docs/WORKBENCH.md §4, Unit E), and
-   * nobody asked for that one at all. Under the old rule it arrived as a new
-   * column, unbidden, next to the scan it was cast from — and then the position
-   * effect, which is the thing that actually MEANT to put it on screen, found it
-   * already in a column and merely focused it. Two mechanisms, one book, and a
-   * column the user did not arrange: the read step's document turning up as
-   * furniture rather than as the step's document.
-   *
-   * So a landing whose project is already open in a column JOINS THAT COLUMN'S
-   * STRIP — it is another face of the same book, the same thing clicking the read
-   * row means — and only a translation still insists on a column of its own,
-   * because only a translation is a thing to be read beside rather than instead.
-   * A landing whose project has nothing open takes a column, because there is
-   * nothing for it to join.
+   * `kind` SURVIVES IN THE SIGNATURE AND IS NOT READ. It is what told the
+   * translation from the rest, and it is left in place because the caller has it
+   * and the set of kinds that open themselves is the thing most likely to want it
+   * back — the alternative is a parameter deleted here and re-threaded there.
    */
   private openFinished(filePath: string, kind: JobKind): void {
+    void kind;
     const key = normalise(filePath);
     const already = this.all().find((tab) => normalise(tab.path) === key);
     if (already) {
@@ -2027,56 +1831,27 @@ export class TabsService {
       this.patch(already.id, { revision: already.revision + 1, unsaved: true, savedPath: null });
       return;
     }
-    const home = kind === 'translate' ? null : this.paneHolding(filePath);
-    if (home !== null) this.expectPane.set(key, home.id);
-    else this.expectOwnPane.add(key);
     void this.openFile(filePath, true);
   }
 
   /**
-   * The column this file's PROJECT is already being read in, or null.
-   *
-   * The focused one first, so a person reading two books gets the answer about
-   * the one in front of them; then any column holding a tab of that project.
-   */
-  private paneHolding(filePath: string): Pane | null {
-    const dir = this.projects.projectFor(filePath)?.dir ?? null;
-    if (dir === null) return null;
-    const key = fold(dir);
-    const mine = new Set(this.all()
-      .filter((tab) => {
-        const own = this.projectDirOf(tab);
-        return own !== null && fold(own) === key;
-      })
-      .map((tab) => tab.id));
-    if (mine.size === 0) return null;
-    const focused = this.focusedPane();
-    if (focused && focused.tabIds.some((id) => mine.has(id))) return focused;
-    return this.columns().find((pane) => pane.tabIds.some((id) => mine.has(id))) ?? null;
-  }
-
-  /**
-   * The single tab factory. Focuses an existing tab for the same file rather
+   * The single tab factory. Shows an existing tab for the same file rather
    * than opening a second — two tabs onto one book are two scroll positions
-   * fighting over one document, and with panes it would be two of them fighting
-   * over one unpack.
+   * fighting over one document, and two viewers onto one unpack.
    */
   private adopt(absolutePath: string): void {
     const key = normalise(absolutePath);
-    const ownPane = this.expectOwnPane.delete(key);
-    const replace = this.expectReplace.delete(key);
-    const intoPane = this.expectPane.get(key) ?? null;
-    this.expectPane.delete(key);
     /*
-     * DRAINED WITH ITS THREE SIBLINGS AND NOT AT THE POINT OF USE, which is the
-     * only reason this line is up here: the EPUB branch below returns without
-     * making a tab, and an expectation left in a map by a path that never takes
-     * one is an entry nothing will ever clear.
+     * DRAINED BEFORE THE EPUB BRANCH AND NOT AT THE POINT OF USE, which is the
+     * only reason this line is up here: that branch returns without making a tab,
+     * and an expectation left in the set by a path that never takes one is an
+     * entry nothing will ever clear. (It had three siblings saying where the tab
+     * should land; those went with the columns.)
      */
     const unsaved = this.expectUnsaved.delete(key);
     const existing = this.all().find((tab) => normalise(tab.path) === key);
     if (existing) {
-      this.reveal(existing.id, replace, intoPane);
+      this.reveal(existing.id);
       return;
     }
 
@@ -2095,13 +1870,15 @@ export class TabsService {
      * immediate for an EPUB already in the library.
      */
     if (key.endsWith('.epub')) {
-      this.awaitBook(absolutePath, ownPane, intoPane);
+      this.awaitBook(absolutePath);
       return;
     }
     const tab = this.blankTab('pdf', absolutePath, this.nameFor(absolutePath));
     tab.unsaved = unsaved;
     this.all.update((tabs) => [...tabs, tab]);
-    this.place(tab.id, ownPane, null, replace, intoPane);
+    // A NEW DOCUMENT IS THE ONE YOU ARE LOOKING AT, which is the whole of what
+    // `place` used to work out across five columns and three expectation sets.
+    this.shown.set(tab.id);
   }
 
   /**
@@ -2122,22 +1899,20 @@ export class TabsService {
    * never lands leaves one path in a set — which is the cheapest possible way to
    * be wrong about a book nobody can open anyway.
    */
-  private readonly awaitingBooks = new Map<string, { ownPane: boolean; intoPane: string | null }>();
+  private readonly awaitingBooks = new Set<string>();
 
-  private awaitBook(filePath: string, ownPane: boolean, intoPane: string | null): void {
-    this.awaitingBooks.set(normalise(filePath), { ownPane, intoPane });
+  private awaitBook(filePath: string): void {
+    this.awaitingBooks.add(normalise(filePath));
     this.openAwaitedBooks();
   }
 
   /** Every awaited EPUB whose project this window can now see. */
   private openAwaitedBooks(): void {
-    for (const [key, where] of [...this.awaitingBooks]) {
+    for (const key of [...this.awaitingBooks]) {
       const dir = this.projects.projectFor(key)?.dir ?? null;
       if (dir === null) continue;
       this.awaitingBooks.delete(key);
-      const id = this.bookTabIn(dir);
-      if (where.ownPane) this.openInNewPane(id, this.columns().length);
-      else this.reveal(id, false, where.intoPane);
+      this.reveal(this.bookTabIn(dir));
     }
   }
 
@@ -2164,10 +1939,10 @@ export class TabsService {
    * `adopt` would make a new tab for the new path, which is exactly the failure
    * this exists to prevent: two viewers onto one document, two scroll positions,
    * and the user watching their book apparently open twice. So this PATCHES —
-   * the tab keeps its id, its pane, its ledger, its selection and its place in
-   * the list, and only its idea of where the file is changes.
+   * the tab keeps its id, its ledger, its selection and its place in the list,
+   * and only its idea of where the file is changes.
    *
-   * A PDF pane reloads by itself: `app-pdf-view` watches `tab.path` through a
+   * A PDF viewer reloads by itself: `app-pdf-view` watches `tab.path` through a
    * computed and re-opens when the string changes, which is a repaint of the
    * same pages from the same bytes. A book does not reload at all — it is
    * already unpacked, and it is unpacked from the SAME project, because the
@@ -2195,9 +1970,8 @@ export class TabsService {
       // No tab for it, which for an EPUB is the ordinary case: `adopt` made none
       // and is waiting for the project this move announces.
       if (this.awaitingBooks.has(was)) {
-        const where = this.awaitingBooks.get(was)!;
         this.awaitingBooks.delete(was);
-        this.awaitBook(to, where.ownPane, where.intoPane);
+        this.awaitBook(to);
       }
       return;
     }
@@ -2267,13 +2041,12 @@ export class TabsService {
       savedPath: null,
       layerView: false,
       thumbnails: true,
-      pinned: false,
       revision: 0,
       problem: null,
     };
   }
 
-  // ── Panes ────────────────────────────────────────────────────────────────
+  // ── The viewer ───────────────────────────────────────────────────────────
 
   byId(id: string | null): Tab | null {
     if (id === null) return null;
@@ -2281,361 +2054,42 @@ export class TabsService {
   }
 
   /**
-   * The column HOLDING this document, if any is. At most one, by construction.
+   * PUT A DOCUMENT IN FRONT OF THE USER — the one door onto the viewer.
    *
-   * Holding and not showing: a tab sitting in a strip behind another one is in
-   * that column, and every caller of this asks the question that way — "is it on
-   * screen somewhere" means "is there a column I can bring it to the front of".
-   * `paneShowing` is the narrower question, for the surfaces that draw the
-   * difference.
+   * A click on its row in the library, a step whose document is already open, a
+   * finished job, an export view. All of them mean the same thing now, which is
+   * why they all call this and why it takes nothing but an id.
+   *
+   * ── What it used to have to decide ──────────────────────────────────────────
+   *
+   * It took two more arguments and reached a private `place` behind them:
+   * `replace` (the documents list's auto-close rule, which closed whatever the
+   * column had been showing unless it was pinned) and `intoPane` (the column this
+   * book already lived in, so that a project's faces did not scatter across the
+   * window). Both were answers to "WHICH of the five", and the single-viewer
+   * ruling deletes the question — see this file's header. Replacing is the only
+   * behaviour, and it needs no flag to be the only behaviour.
+   *
+   * NOTHING IS CLOSED BY REVEALING. A document displaced from the screen keeps
+   * its tab, its unpack, its edits and its dot, and is one click away in the
+   * library; closing it is the ✕, which is a different gesture with a different
+   * question attached.
+   *
+   * AN ID THIS WINDOW DOES NOT HOLD IS A NO-OP rather than a null screen: every
+   * caller here is acting on something it just looked up, and a stale id is a
+   * race with a close rather than an instruction to show nothing.
    */
-  paneOf(tabId: string): Pane | null {
-    return this.columns().find((pane) => pane.tabIds.includes(tabId)) ?? null;
-  }
-
-  /** The column with this document ON TOP — what the documents list marks as on screen. */
-  paneShowing(tabId: string): Pane | null {
-    return this.columns().find((pane) => pane.activeTabId === tabId) ?? null;
-  }
-
-  /** True while nothing may close this tab out from under the user. */
-  isPinned(tabId: string): boolean {
-    return this.byId(tabId)?.pinned === true;
-  }
-
-  /**
-   * Right-click → Pin / Unpin, on a tab in a strip.
-   *
-   * A TOGGLE AND NOT TWO METHODS, because the menu draws one item whose label is
-   * the answer to the same question this reads.
-   */
-  togglePin(tabId: string): void {
-    const tab = this.byId(tabId);
-    if (tab === null) return;
-    this.patch(tabId, { pinned: !tab.pinned });
-  }
-
-  /**
-   * The strip's own click: bring this tab to the front of the column it is in.
-   *
-   * NOT `reveal`. Reveal would put a tab that is in no column into the FOCUSED
-   * one, which is right for a row in the documents list and wrong for a strip —
-   * a strip only ever draws tabs that are already in its own pane, so the pane is
-   * known and there is nothing to place.
-   */
-  activateInPane(paneId: string, tabId: string): void {
-    this.columns.update((panes) => panes.map((pane) => (
-      pane.id === paneId && pane.tabIds.includes(tabId)
-        ? { ...pane, activeTabId: tabId }
-        : pane)));
-    this.focused.set(paneId);
-  }
-
-  /**
-   * Clicking anywhere in a pane focuses it — that is the whole focus model, and
-   * it is why nothing else in the app has to ask which pane it is in.
-   */
-  focusPane(paneId: string): void {
-    if (this.focused() === paneId) return;
-    if (this.columns().some((pane) => pane.id === paneId)) this.focused.set(paneId);
-  }
-
-  /**
-   * Ctrl+1…5. Out of range is a no-op rather than a clamp — 4 means the fourth.
-   *
-   * IT MIRRORS THE FOCUS ONTO THE POSITION, and it mirrors HERE rather than at the
-   * call site because the chord IS this method: `app.ts`'s key handler is its only
-   * caller, and nothing in this file reaches it. A pane is focused by the position
-   * effect through `this.focused.set` directly, which is the seam that keeps a
-   * programmatic reveal out of this door.
-   */
-  focusPaneAt(index: number): void {
-    const pane = this.columns()[index];
-    if (!pane) return;
-    this.focused.set(pane.id);
-    if (pane.activeTabId !== null) void this.standForTab(pane.activeTabId);
-  }
-
-  /**
-   * Put a newly opened tab in a pane and give it the focus.
-   *
-   * The first document makes the first pane. After that: a finished job asks
-   * for one of its own (up to the cap, past which it takes the rightmost pane's
-   * slot), and everything else — a drop, Home's list, the shelf's Open — lands
-   * in the pane the user is working in, because they aimed at it.
-   *
-   * LANDING IN THE FOCUSED PANE NOW REPLACES what that pane was showing, since
-   * a pane holds one document. Nothing is lost: the displaced document stays
-   * open in the list with its unpack, its edits and its dot, one click from
-   * being back on screen. What it is NOT allowed to do is displace a book with
-   * a translation of it — that is why a finished job still asks for a column of
-   * its own, and why the two rules read differently.
-   *
-   * `beside` names a pane the new one must open DIRECTLY to the right of, which
-   * is what an HTML editor asks for: it is a face of one particular book, and a
-   * column of source three panes away from the page it belongs to helps nobody.
-   * A conversion's output passes nothing and lands on the end.
-   *
-   * ── And it JOINS a strip rather than emptying one ───────────────────────────
-   *
-   * Landing in a column used to overwrite what that column held, because a column
-   * held one thing. It now inserts into the strip beside the active tab and takes
-   * the front — nothing is displaced by arriving.
-   *
-   * `replace` is the user's auto-close rule and it is a DIFFERENT act, asked for
-   * by the caller rather than implied by landing: *"clicking another file will
-   * automatically close the one i was looking at… unless i pin the file"*. So the
-   * documents list passes it, the position effect does not (a scan and the book
-   * cast from it are two rows of one project and must be able to sit in one strip
-   * together), and a finished job does not (it is a comparison, not a
-   * replacement). What it does is CLOSE the tab it took the front from — through
-   * the ordinary close, so a document with something to lose still gets its
-   * question and a "keep" leaves it exactly where it was, in the strip, beside
-   * the new one. A pinned tab is never the one it takes.
-   */
-  private place(
-    tabId: string,
-    ownPane: boolean,
-    beside: string | null = null,
-    replace = false,
-    intoPane: string | null = null,
-  ): void {
-    const panes = this.columns();
-    if (panes.length === 0) {
-      const pane = this.makePane(tabId);
-      this.columns.set([pane]);
-      this.focused.set(pane.id);
-      return;
-    }
-    if (ownPane && panes.length < MAX_PANES) {
-      const pane = this.makePane(tabId);
-      const at = beside === null ? -1 : panes.findIndex((candidate) => candidate.id === beside);
-      const next = at < 0
-        ? [...panes, pane]
-        : [...panes.slice(0, at + 1), pane, ...panes.slice(at + 1)];
-      this.columns.set(equalise(next));
-      this.focused.set(pane.id);
-      return;
-    }
-    /*
-     * `intoPane` NAMES THE COLUMN THIS BOOK ALREADY LIVES IN, and it is what
-     * keeps the position effect from scattering one project across the window.
-     * Clicking the read row opens the cast book; without this it would land in
-     * whichever column happened to be focused — the OTHER book's, if the user was
-     * reading two — and the scan it is meant to replace on screen would stay
-     * exactly where it was, in a column nobody was looking at.
-     */
-    const named = intoPane === null
-      ? null
-      : panes.find((pane) => pane.id === intoPane) ?? null;
-    const target = named
-      ?? (ownPane
-        ? crowdedTarget(panes, beside)
-        : (this.focusedPane() ?? panes[panes.length - 1]!));
-    const displaced = replace ? this.byId(target.activeTabId) : null;
-    this.columns.set(panes.map((pane) => (
-      pane.id === target.id ? addToStrip(pane, tabId) : pane)));
-    this.focused.set(target.id);
-    if (displaced !== null && displaced.id !== tabId && !displaced.pinned) {
-      void this.close(displaced.id);
-    }
-  }
-
-  private makePane(tabId: string | null): Pane {
-    this.paneSequence += 1;
-    return {
-      id: `pane-${this.paneSequence}`,
-      tabIds: tabId === null ? [] : [tabId],
-      activeTabId: tabId,
-      flex: 1,
-    };
-  }
-
-  /**
-   * Put a document in front of the user — a click on its row in the list, or a
-   * step whose document is already open.
-   *
-   * IN A STRIP ALREADY: it comes to the front of the column it is in, and the
-   * focus goes there. A second viewer over one unpack is two scroll positions
-   * fighting over one document — the thing `adopt` refuses to make for two files
-   * — and (because `chapterHref` lives on the tab) two columns that appear
-   * scroll-locked with nothing on screen saying why.
-   *
-   * IN NO STRIP: it joins the focused pane's. `replace` is the documents list's
-   * auto-close rule; everything that reveals for its own reasons leaves it off.
-   */
-  reveal(tabId: string, replace = false, intoPane: string | null = null): void {
+  reveal(tabId: string): void {
     if (this.byId(tabId) === null) return;
-    const pane = this.paneOf(tabId);
-    if (pane) {
-      this.activateInPane(pane.id, tabId);
-      return;
-    }
-    this.place(tabId, false, null, replace, intoPane);
-  }
-
-  /**
-   * Show a document in a named column — a row dropped on a pane's middle, or a
-   * tab dragged from one strip into another.
-   *
-   * IT LEAVES THE STRIP IT CAME FROM, when it had one: a document is in at most
-   * one pane. The source column survives with its remaining tabs and only goes
-   * when the move emptied it — an empty column nobody asked for is furniture in
-   * the way of the two the user is comparing. (An empty column somebody DID ask
-   * for — Ctrl+\ — is a different thing and stays until it is filled or closed,
-   * which is why this only drops a column the move itself emptied.)
-   */
-  show(tabId: string, paneId: string): void {
-    const panes = this.columns();
-    if (this.byId(tabId) === null || !panes.some((pane) => pane.id === paneId)) return;
-    const from = panes.find((pane) => pane.tabIds.includes(tabId)) ?? null;
-    if (from !== null && from.id === paneId) {
-      this.activateInPane(paneId, tabId);
-      return;
-    }
-    const going = new Set([tabId]);
-    this.columns.set(panes
-      .map((pane) => {
-        if (pane.id === paneId) return addToStrip(pane, tabId);
-        return pane.id === from?.id ? withoutTabs(pane, going) : pane;
-      })
-      .filter((pane) => pane.id !== from?.id || pane.tabIds.length > 0));
-    this.focused.set(paneId);
-  }
-
-  /**
-   * A tab dropped INTO A STRIP — reordered inside its own column, or moved into
-   * another one, landing in front of `beforeTabId` (null means the end).
-   *
-   * ONE METHOD FOR BOTH, because from the hand's side they are one gesture: pick
-   * a tab up, put it down between two others. Which column it started in is this
-   * function's problem and not the drag's, and splitting it in two would mean the
-   * workspace deciding — from a drop's geometry — which of two service calls it
-   * was making, and getting it wrong at exactly the boundary between them.
-   *
-   * The column it left goes only if the move emptied it, which is `show`'s rule
-   * and for `show`'s reason.
-   */
-  dropInStrip(tabId: string, paneId: string, beforeTabId: string | null): void {
-    const panes = this.columns();
-    if (this.byId(tabId) === null || tabId === beforeTabId) return;
-    const to = panes.find((pane) => pane.id === paneId);
-    if (to === undefined) return;
-    const from = panes.find((pane) => pane.tabIds.includes(tabId)) ?? null;
-    const without = to.tabIds.filter((id) => id !== tabId);
-    const at = beforeTabId === null ? -1 : without.indexOf(beforeTabId);
-    const index = at < 0 ? without.length : at;
-    const landed: Pane = {
-      ...to,
-      tabIds: [...without.slice(0, index), tabId, ...without.slice(index)],
-      activeTabId: tabId,
-    };
-    const going = new Set([tabId]);
-    this.columns.set(panes
-      .map((pane) => {
-        if (pane.id === paneId) return landed;
-        return pane.id === from?.id ? withoutTabs(pane, going) : pane;
-      })
-      .filter((pane) => pane.id === paneId || pane.id !== from?.id || pane.tabIds.length > 0));
-    this.focused.set(paneId);
-  }
-
-  /**
-   * Insert a column at `atIndex` showing this document — a row dropped on the
-   * left or right edge band of a pane.
-   *
-   * THE CAP IS SAID BY NAME. The drop preview does not light up an edge band
-   * once there are five columns (a target that lights and then does nothing is
-   * worse than one that visibly will not take it), so this is only reachable by
-   * a drop the preview never promised — and a gesture that lands on nothing has
-   * to say why. Refused even when the document is already in a column and the
-   * move would be net-zero: the preview cannot offer that without knowing what
-   * the drag carries, and an operation that works only when you cannot see that
-   * it will is not an operation.
-   */
-  openInNewPane(tabId: string, atIndex: number): void {
-    const panes = this.columns();
-    if (this.byId(tabId) === null) return;
-    if (panes.length >= MAX_PANES) {
-      this.notice.set(`${MAX_PANES} columns is as wide as this window splits — close one first.`);
-      return;
-    }
-    const from = panes.find((pane) => pane.tabIds.includes(tabId)) ?? null;
-    const going = new Set([tabId]);
-    const fresh = this.makePane(tabId);
-    const at = Math.max(0, Math.min(atIndex, panes.length));
-    // The source column KEEPS ITS OTHER TABS and only goes when tearing this one
-    // out left it with nothing — the strip is what makes the difference from the
-    // one-document-per-column version of this, where the source was always empty.
-    this.columns.set(equalise([...panes.slice(0, at), fresh, ...panes.slice(at)]
-      .map((pane) => (pane.id === from?.id ? withoutTabs(pane, going) : pane))
-      .filter((pane) => pane.id !== from?.id || pane.tabIds.length > 0)));
-    this.focused.set(fresh.id);
-  }
-
-  /**
-   * Ctrl+\ and View → Split right: an EMPTY column beside the focused one.
-   *
-   * It used to move the active tab out of a stack, which is an operation that
-   * no longer exists — a pane holds one document, so there is nothing to move
-   * out of it. What the chord means now is "make me somewhere to put something",
-   * and the user fills it by clicking a row in the list, dragging one onto it,
-   * or opening a book from the Home page it shows until they do.
-   *
-   * ALL THREE REFUSALS ARE SAID. This is reachable from a menu item and a
-   * keyboard chord, neither of which can grey itself out against renderer
-   * state, so the ways it cannot happen have to arrive as sentences — a Ctrl+\
-   * that silently does nothing is indistinguishable from a Ctrl+\ that is broken.
-   */
-  newEmptyPane(): void {
-    const panes = this.columns();
-    if (panes.length === 0) {
-      this.notice.set('There is nothing open to put a column beside — open a document first.');
-      return;
-    }
-    if (panes.length >= MAX_PANES) {
-      this.notice.set(`${MAX_PANES} columns is as wide as this window splits — close one first.`);
-      return;
-    }
-    const at = panes.findIndex((pane) => pane.id === this.focused());
-    if (at >= 0 && panes[at]!.tabIds.length === 0) {
-      this.notice.set('This column is already empty — put a document in it before making another.');
-      return;
-    }
-    const fresh = this.makePane(null);
-    const index = at < 0 ? panes.length : at + 1;
-    this.columns.set(equalise([...panes.slice(0, index), fresh, ...panes.slice(index)]));
-    this.focused.set(fresh.id);
-  }
-
-  /**
-   * Take a column away without closing what is in it.
-   *
-   * The ✕ on an empty column's Home page, which is the only way an empty one
-   * can go: a column with a document in it is closed by closing the document
-   * (see `dropFromPanes`), and there is deliberately no gesture that puts a book
-   * away and leaves a hole where it was.
-   */
-  closePane(paneId: string): void {
-    const panes = this.columns();
-    const at = panes.findIndex((pane) => pane.id === paneId);
-    if (at < 0) return;
-    const kept = panes.filter((pane) => pane.id !== paneId);
-    // Not equalised, for the reason `dropFromPanes` gives: the survivors keep
-    // the shares the user dragged and flex reflows them across the width.
-    this.columns.set(kept);
-    if (this.focused() === paneId) {
-      this.focused.set(kept[Math.min(at, kept.length - 1)]?.id ?? null);
-    }
-    this.leaveIfHostedAndEmpty();
+    this.shown.set(tabId);
   }
 
   /**
    * Move a document in the list — a row dragged onto another row.
    *
    * `beforeTabId` names the document it lands in front of; null means the end.
-   * This is the ONLY place a document's order is decided now that the strips
-   * are gone, which is why it writes the flat list rather than any pane.
+   * This is the ONLY place a document's order is decided, which is why it writes
+   * the flat list — there is no second sequence anywhere in the window.
    */
   reorder(tabId: string, beforeTabId: string | null): void {
     if (tabId === beforeTabId) return;
@@ -2648,36 +2102,18 @@ export class TabsService {
     this.all.set([...without.slice(0, index), moving, ...without.slice(index)]);
   }
 
-  /**
-   * A divider drag. Two neighbours, one number moved between them.
-   *
-   * Only the pair either side of the divider changes, so the rest of the row
-   * does not twitch while a divider is dragged — the caller does the pixel
-   * arithmetic against the real widths and hands back the two shares.
-   */
-  resize(leftPaneId: string, leftFlex: number, rightPaneId: string, rightFlex: number): void {
-    this.columns.update((panes) => panes.map((pane) => {
-      if (pane.id === leftPaneId) return { ...pane, flex: Math.max(0.05, leftFlex) };
-      if (pane.id === rightPaneId) return { ...pane, flex: Math.max(0.05, rightFlex) };
-      return pane;
-    }));
-  }
-
   // ── Living with them ─────────────────────────────────────────────────────
 
   /**
-   * The rail's Home. Home is "this column is showing nothing", not a document.
+   * The rail's Home. Home is "the viewer is showing nothing", not a document.
    *
-   * THE STRIP STAYS. Nothing was closed — the tabs are still this column's, still
-   * drawn along its top, and one click from coming back — which is a better Home
-   * than the one that emptied the column, because it does not make somebody go
-   * and find their book in the list again to undo pressing a button.
+   * NOTHING IS CLOSED. Every document is still open, still listed in the library,
+   * and one click from coming back — which is a better Home than the one that
+   * emptied the workspace, because it does not make somebody go and find their
+   * book in the list again to undo pressing a button.
    */
   goHome(): void {
-    const pane = this.focusedPane();
-    if (!pane) return;
-    this.columns.update((panes) => panes.map((candidate) =>
-      (candidate.id === pane.id ? { ...candidate, activeTabId: null } : candidate)));
+    this.shown.set(null);
   }
 
   /**
@@ -2693,34 +2129,35 @@ export class TabsService {
   }
 
   /**
-   * Ctrl/Cmd+Tab. Walks THE FOCUSED COLUMN'S OWN STRIP, wrapping.
+   * Ctrl/Cmd+Tab. Walks THE FLAT LIST, wrapping — every open document in the
+   * order the library draws them.
    *
-   * IT MEANS WHAT IT SAYS NOW. It used to walk the whole window's flat list and
-   * pull whichever document came next INTO this column — skipping the ones
-   * another column had, because taking one would have swapped two columns'
-   * contents rather than advanced one. That was the best a chord called "next
-   * tab" could do in an app with no tabs: a cycle that moved documents between
-   * columns to simulate a strip that was not there.
+   * IT HAS MEANT THREE THINGS AND THIS IS THE HONEST ONE. Before the columns it
+   * walked the flat list and pulled the next document into the one place there
+   * was; with the columns it had to skip whatever another column held (taking one
+   * would have swapped two columns' contents rather than advanced one); with the
+   * strips it walked the focused column's own strip and left the other four
+   * columns' documents alone. All three were the best a chord called "next tab"
+   * could do in the arrangement it found. There is one viewer and one list now, so
+   * the chord means exactly what it says.
    *
-   * There is a strip now, so this is the strip's own cycle: the next tab in this
-   * column, then round. A column holding one document has nowhere to go and the
-   * chord does nothing, which is honest — the other four columns' documents are
-   * not this column's to riffle through.
+   * FROM HOME IT SHOWS THE FIRST DOCUMENT, which is what `-1` wrapping to `0`
+   * gives: with nothing on screen and books open, "next" has an obvious answer and
+   * refusing to give it would be the chord pretending the list is empty.
    *
-   * AND IT MOVES THE POSITION WITH IT, on `focusPaneAt`'s reasoning: the chord is
-   * this method, `app.ts` is its only caller, and stepping from the scan to the
-   * book with a keystroke is the same statement as clicking the tab. The mirror is
-   * outside `activateInPane` on purpose — that one is also how a library click
-   * lands its document (see `standForTab`).
+   * AND IT MOVES THE POSITION WITH IT: `app.ts` is this method's only caller, and
+   * stepping from the scan to the book with a keystroke is the same statement as
+   * clicking the row. The mirror is here and not in `reveal`, because `reveal` is
+   * also how a library click lands its document (see `standForTab`).
    */
   nextTab(): void {
-    const pane = this.focusedPane();
-    if (!pane || pane.tabIds.length === 0) return;
-    const at = pane.activeTabId === null ? -1 : pane.tabIds.indexOf(pane.activeTabId);
-    const next = pane.tabIds[(at + 1) % pane.tabIds.length];
+    const tabs = this.all();
+    if (tabs.length === 0) return;
+    const at = tabs.findIndex((tab) => tab.id === this.shown());
+    const next = tabs[(at + 1) % tabs.length];
     if (next === undefined) return;
-    this.activateInPane(pane.id, next);
-    void this.standForTab(next);
+    this.reveal(next.id);
+    void this.standForTab(next.id);
   }
 
   /**
@@ -2730,7 +2167,7 @@ export class TabsService {
    * ── Why it is the paths and not a tab id ────────────────────────────────────
    *
    * A step delete names PAYLOADS, not tabs: main is destroying `generated/<book>
-   * (en).epub` and knows nothing about which panes this window has open, and only
+   * (en).epub` and knows nothing about which documents this window has open, and only
    * this side can close one. So the caller hands over the list main gave it and
    * this matches whole paths, folded — never a basename, because a project holds
    * `archive/Book.pdf`, `working/Book.pdf` and `generated/Book.pdf` at once and
@@ -2836,7 +2273,7 @@ export class TabsService {
    * A dialog whose only route to keeping the work is *cancel, hunt for Apply,
    * close again* has made the user do the app's job, and the way that ends is
    * that they stop reading the box. So the answer can be "apply these changes,
-   * then close" — and it goes through the pane's own `apply`, the same path the
+   * then close" — and it goes through the viewer's own `apply`, the same path the
    * sheet's own button takes, rather than a second commit written for this
    * dialog. AN APPLY MAIN REFUSES LEAVES THE TAB OPEN: closing anyway would have
    * thrown away the very thing the answer asked to keep, and main's own sentence
@@ -2857,19 +2294,20 @@ export class TabsService {
      *
      * The other thing this used to ask about — the block editor's uncommitted
      * CURATION — is gone with that editor, and it was never a loss: every strike
-     * was already on disk and what ended was a way back. The book pane's stack is
-     * the opposite — in memory, the only copy, and scrapped by closing, which is
+     * was already on disk and what ended was a way back. The book viewer's stack
+     * is the opposite — in memory, the only copy, and scrapped by closing, which is
      * the ruling (docs/RENDERER.md §3: "Apply writes and clears; closing without
-     * applying scraps it"). It is asked about PER TAB: a stack belongs to one pane
-     * and closing that pane is the moment it goes, whatever else is open onto the
-     * same book.
+     * applying scraps it"). It is asked about PER TAB: a stack belongs to one
+     * tab's book viewer and closing that tab is the moment it goes, whatever else
+     * is open onto the same book.
      */
     const stack = current.kind === 'book' ? this.bookStackFor(current.id) : null;
     /*
-     * A BACKGROUND BOOK TAB HAS NO LIVE PANE AND STILL HAS A STACK — the parked
-     * one (`parkedStacks`). Closing it from the strip while another tab is up
-     * would otherwise skip this question entirely and drop unwritten work with
-     * no sentence anywhere, which is the one loss this card exists to prevent.
+     * A BOOK TAB THAT IS NOT THE ONE SHOWN HAS NO LIVE VIEWER AND STILL HAS A
+     * STACK — the parked one (`parkedStacks`). Closing it from the library while
+     * another document is up would otherwise skip this question entirely and drop
+     * unwritten work with no sentence anywhere, which is the one loss this card
+     * exists to prevent.
      */
     const parked = stack === null && current.kind === 'book'
       ? this.parkedStacks.get(current.id) ?? null
@@ -2896,11 +2334,11 @@ export class TabsService {
     if (answered === 'save' && stack !== null) return await stack.apply() ? 'go' : 'stay';
     if (answered === 'save' && parked !== null) {
       /*
-       * APPLYING A PARKED STACK NEEDS NO PANE: the doors are main's
+       * APPLYING A PARKED STACK NEEDS NO VIEWER: the doors are main's
        * (`book:amend` rewrites the tip the person was standing on;
-       * `book:apply` lands a step), and the pane was only ever the thing that
+       * `book:apply` lands a step), and the viewer was only ever the thing that
        * pressed them. Amend when the parked stack grew out of a recorded tip,
-       * exactly as the pane itself decides.
+       * exactly as the viewer itself decides.
        */
       try {
         const history = parked.landed.length > 0
@@ -2967,69 +2405,42 @@ export class TabsService {
     const tabs = this.all();
     if (!tabs.some((candidate) => candidate.id === id)) return;
 
-    const going = new Set<string>([id]);
     // The parked stack goes with the tab — the closing question above already
     // asked about it, so this is the scrap the person chose.
     this.parkedStacks.delete(id);
-    this.all.set(tabs.filter((candidate) => !going.has(candidate.id)));
+    this.all.set(tabs.filter((candidate) => candidate.id !== id));
     /*
      * NOTHING PER-TAB IS LEFT TO FORGET, and the emptiness is the wave landing.
      * A close used to drop five maps keyed by tab id — the frame's selection and
      * category tally, the persisted undo ledger, whether a block was being typed
      * in, and the translation world a word edit belonged to — and every one of
      * them served a surface that is deleted (docs/RENDERER.md §7). What a tab
-     * still owns is its BookStack, and that is released by the pane that
-     * registered it (`releaseBookStack`), because the pane is what knows the
-     * stack has finished with the document rather than merely lost its column.
+     * still owns is its BookStack, and that is released by the viewer that
+     * registered it (`releaseBookStack`), because the viewer is what knows the
+     * stack has finished with the document rather than merely stopped being drawn.
      */
-    this.dropFromPanes(going);
-  }
-
-  /**
-   * CLOSING A DOCUMENT FALLS BACK TO ITS NEIGHBOUR IN THE STRIP, and closing the
-   * LAST of a column closes the column.
-   *
-   * The neighbour is the strips' whole difference here. Before them a pane held
-   * one document and had nothing to fall back to, so every close took a column
-   * with it; now a column with three tabs in it loses one and keeps its place,
-   * which is what a person closing a document out of a stack means.
-   *
-   * An EMPTIED column still goes. Leaving one behind would mean closing four
-   * books left four Home pages side by side, which is a workspace nobody
-   * arranged — and closing the last document takes the last column with it, so
-   * the window is Home again exactly as it was before any of this.
-   *
-   * The focus lands on the column that took the closed one's place, which is
-   * the browser's rule for tabs one level up.
-   */
-  private dropFromPanes(going: ReadonlySet<string>): void {
-    const panes = this.columns();
-    const kept: Pane[] = [];
-    let focusAt = -1;
-    for (const pane of panes) {
-      const left = withoutTabs(pane, going);
-      // EMPTIED BY THIS CLOSE, and not merely empty. A column somebody made with
-      // Ctrl+\ is empty on purpose and waiting to be filled; dropping it because
-      // a document closed three columns away would take away the place they had
-      // just made to put something.
-      if (pane.tabIds.length > 0 && left.tabIds.length === 0) {
-        if (pane.id === this.focused()) focusAt = kept.length;
-        continue;
-      }
-      kept.push(left);
-    }
-    // Not equalised: the panes that remain keep their shares and flex reflows
-    // them across the width, which is what the user arranged. Only ADDING a
-    // pane resets to equal, because a new column has no share to keep.
-    this.columns.set(kept);
-    if (focusAt >= 0) {
-      this.focused.set(kept[Math.min(focusAt, kept.length - 1)]?.id ?? null);
-    }
+    /*
+     * ── CLOSING WHAT IS ON SCREEN GOES TO HOME, AND THAT IS THE WHOLE RULE ────
+     *
+     * There was a fall-back ladder here: the neighbour to the right in the strip,
+     * then the one to the left, then the column that took the closed one's place.
+     * It was the browser's rule for tabs, and it was right for a strip, where the
+     * documents beside the one you shut are the ones you had deliberately arranged
+     * beside it. It is NOT right for a flat list of every book in the window: the
+     * "neighbour" of the scan you just closed is whatever happens to have been
+     * opened after it, which is a document nobody chose to be looking at.
+     *
+     * So Home. It is the honest empty state, it is what the window already shows
+     * when the last document goes, and where a project is still held it is the
+     * bench with that project's tree beside it — one click from any step. The
+     * displaced-guessing is left to the person, who is the only one who knows.
+     */
+    if (this.shown() === id) this.shown.set(null);
     this.leaveIfHostedAndEmpty();
   }
 
   /**
-   * HOSTED, THE LAST COLUMN GOING TAKES THE WINDOW WITH IT.
+   * HOSTED, THE LAST DOCUMENT GOING TAKES THE WINDOW WITH IT.
    *
    * *"when I closed the tabs it brought me to the 'foundry home', which is a
    * project picker. It shouldn't bring me there. It should just close the window
@@ -3044,19 +2455,21 @@ export class TabsService {
    * tab is last month's ruling about being thrown out of the room you were
    * working in (see the constructor's `heldProject` effect).
    *
-   * ASKED ONLY WHERE A CLOSE EMPTIED THE COLUMNS, never from an effect on the
-   * count. A hosted window has no columns for the moment between loading and the
+   * ASKED ONLY WHERE A CLOSE EMPTIED THE WINDOW, never from an effect on the
+   * count. A hosted window has nothing open for the moment between loading and the
    * document it was opened for arriving (`openFoundryWindow`, electron/mount.ts),
-   * and a watcher on "no columns" would shut the window before the file got
-   * there. Both callers here are gestures — the last document closed, and the ✕
-   * on the last empty column — which is what "runs out of tabs" means.
+   * and a watcher on "nothing open" would shut the window before the file got
+   * there. Its one caller is a gesture — the last document closed — which is what
+   * "runs out of tabs" means. (There were two while an empty column had a ✕ of its
+   * own; there are no columns to close now, so the last document is the whole of
+   * it, and the behaviour a hosted window sees is unchanged.)
    *
    * IT IS THE ✕'S OWN PATH. `closeWindow` re-enters the window's close handler in
    * main, so the documents are asked what closing costs exactly as they always
    * are — an answer of yes, immediately, with nothing left open.
    */
   private leaveIfHostedAndEmpty(): void {
-    if (!hosted() || this.columns().length > 0) return;
+    if (!hosted() || this.all().length > 0) return;
     // `hosted()` is only ever true because main answered `app:hosted`, so there
     // is a bridge here by construction. The `?.` is this file's spelling for
     // reaching main, not a second opinion about whether one exists.
@@ -3064,7 +2477,7 @@ export class TabsService {
   }
 
   async closeActive(): Promise<void> {
-    const tab = this.active();
+    const tab = this.activeDocument();
     if (tab) await this.close(tab.id);
   }
 
@@ -3096,7 +2509,7 @@ export class TabsService {
     return this.projects.items().find((project) => fold(project.dir) === key)?.dir ?? null;
   }
 
-  /** Ctrl/Cmd+Z, from the Edit menu. The focused document's, never a global one. */
+  /** Ctrl/Cmd+Z, from the Edit menu. The shown document's, never a global one. */
   async undo(): Promise<void> {
     await this.replay('undo');
   }
@@ -3110,7 +2523,7 @@ export class TabsService {
    * Put one change back — which is now one stack, in one place.
    *
    * THERE WERE FIVE DOORS INTO THIS FUNCTION AND THERE IS ONE. The chord used to
-   * be routed by what the focused tab was: a caret in an iframe took the typing
+   * be routed by what the shown tab was: a caret in an iframe took the typing
    * back, a scan replayed rows into the live curation, a cast book replayed them
    * into somebody's markup, and two of those three consulted a persisted ledger
    * on disk. All of it is deleted with the surfaces that had it
@@ -3134,14 +2547,14 @@ export class TabsService {
       return;
     }
     /*
-     * THE BOOK'S STACK IS THE PANE'S, AND THE CHORD IS ROUTED TO IT.
+     * THE BOOK'S STACK IS THE VIEWER'S, AND THE CHORD IS ROUTED TO IT.
      *
      * It is a LIFO of ops held in memory until Apply writes them down
      * (docs/RENDERER.md §3), so this is the one undo in the app that touches no
      * disk at all — no ledger to read back, no file to put a row into, nothing to
      * await. What arrives here is a chord main swallowed as a menu accelerator,
      * and this function is where the window decides which of its three undos it
-     * meant; the pane deliberately adds no listener of its own, because two
+     * meant; the viewer deliberately adds no listener of its own, because two
      * answers to one keypress is how a book and a text field end up both taking
      * one back.
      *
@@ -3198,7 +2611,7 @@ export class TabsService {
    * of whatever was last filed, so Save has work to do.
    *
    * NO REVISION BUMP, deliberately. Nothing in any chapter's markup moved, and
-   * reloading the rendered pane would cost the reader their place in order to
+   * reloading the rendered viewer would cost the reader their place in order to
    * repaint a page that looks identical.
    */
   noteDocumentEdited(id: string): void {
@@ -3257,9 +2670,9 @@ export class TabsService {
     }
   }
 
-  /** The menu's Save / Save As. The focused pane's document. */
+  /** The menu's Save / Save As. The document in the viewer. */
   async saveActive(): Promise<void> {
-    const tab = this.active();
+    const tab = this.activeDocument();
     if (tab === null) return;
     /*
      * CTRL+S OVER AN EXPORT VIEW SAVES A COPY — the user's own reading of the
@@ -3278,7 +2691,7 @@ export class TabsService {
   }
 
   async saveActiveAs(): Promise<void> {
-    const tab = this.active();
+    const tab = this.activeDocument();
     if (tab === null) return;
     if (tab.viewOnly === true) {
       await api?.saveExport(tab.path).catch((err: unknown) => {
@@ -3295,84 +2708,15 @@ export class TabsService {
   }
 }
 
-/**
- * Every pane an equal share.
- *
- * Applied when a pane is ADDED and not when one is removed: a new column has no
- * share of its own to keep, and taking the row back to equal is the only
- * arrangement that does not favour whichever neighbour happened to be widest.
- * Removing a pane leaves the others alone — flex already reflows them in
- * proportion, which is the arrangement the user made.
+/*
+ * FOUR HELPERS LIVED HERE AND THEY WERE ALL COLUMN ARITHMETIC: `equalise` (every
+ * pane an equal share of the row), `addToStrip` (insert directly after the tab on
+ * top, which is where a person expects the next thing to appear), `withoutTabs`
+ * (closing falls back to the neighbour on the right, then the left) and
+ * `crowdedTarget` (which of five columns a document that wanted one of its own has
+ * to settle for). Every one of them answered a question the single viewer does not
+ * ask — see this file's header for the ruling that stopped asking it.
  */
-function equalise(panes: readonly Pane[]): Pane[] {
-  return panes.map((pane) => ({ ...pane, flex: 1 }));
-}
-
-/**
- * Put a document into this column's strip and bring it to the front.
- *
- * DIRECTLY AFTER THE ACTIVE TAB rather than at the end, because that is where a
- * person looking at one thing expects the next thing to appear — the browser's
- * rule for "open in new tab" from the page you are on, and the only placement
- * under which the auto-close rule leaves the strip in the order it was in.
- *
- * Already in this strip is an ACTIVATION and nothing else: the order is the
- * user's and re-inserting a tab they had dragged somewhere would move it under
- * the click that only meant "show me that one".
- */
-function addToStrip(pane: Pane, tabId: string): Pane {
-  if (pane.tabIds.includes(tabId)) return { ...pane, activeTabId: tabId };
-  const at = pane.activeTabId === null ? -1 : pane.tabIds.indexOf(pane.activeTabId);
-  const index = at < 0 ? pane.tabIds.length : at + 1;
-  return {
-    ...pane,
-    tabIds: [...pane.tabIds.slice(0, index), tabId, ...pane.tabIds.slice(index)],
-    activeTabId: tabId,
-  };
-}
-
-/**
- * Take documents out of a strip, and answer what the column shows now.
- *
- * THE NEIGHBOUR TO THE RIGHT, then the one to the left — the browser's rule for
- * closing a tab, and the one that does not make a person hunt for where they
- * were. A strip emptied entirely goes to Home, which is what the caller then
- * decides whether to keep as a column at all.
- */
-function withoutTabs(pane: Pane, going: ReadonlySet<string>): Pane {
-  if (!pane.tabIds.some((id) => going.has(id))) return pane;
-  const at = pane.activeTabId === null ? -1 : pane.tabIds.indexOf(pane.activeTabId);
-  const tabIds = pane.tabIds.filter((id) => !going.has(id));
-  if (pane.activeTabId !== null && !going.has(pane.activeTabId)) {
-    return { ...pane, tabIds };
-  }
-  const after = pane.tabIds.slice(at + 1).find((id) => !going.has(id));
-  const before = [...pane.tabIds.slice(0, Math.max(0, at))].reverse().find((id) => !going.has(id));
-  return { ...pane, tabIds, activeTabId: after ?? before ?? tabIds[0] ?? null };
-}
-
-/**
- * Which column a document that wanted one of its OWN has to settle for, once
- * there are five and there are no more to make.
- *
- * The rightmost, normally — a conversion's output has no opinion about where it
- * lands, and the far end displaces the least of what the user was looking at.
- *
- * BUT NOT WHEN IT ASKED TO BE BESIDE SOMETHING. An HTML editor is a face of one
- * particular book, and at the cap "the rightmost column" can BE that book's
- * column: pressing Edit HTML would then replace the page with its own source,
- * which is the one arrangement the feature exists to avoid. So it takes the
- * column just right of the book instead, or just left when the book is already
- * the last one. Something is displaced either way — that is what a full window
- * means — but never the document the gesture was about.
- */
-function crowdedTarget(panes: readonly Pane[], beside: string | null): Pane {
-  const last = panes[panes.length - 1]!;
-  if (beside === null) return last;
-  const at = panes.findIndex((pane) => pane.id === beside);
-  if (at < 0) return last;
-  return panes[at + 1] ?? panes[at - 1] ?? last;
-}
 
 /** Windows paths differ by case and separator and are the same file. */
 function normalise(filePath: string): string {

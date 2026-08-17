@@ -41,7 +41,7 @@ import { UiService } from '../../core/ui.service';
         @if (!hosted()) {
           <button
             class="rail-item"
-            [class.active]="tabs.activeId() === null"
+            [class.active]="tabs.active() === null"
             title="Home"
             (click)="home()"
           >
