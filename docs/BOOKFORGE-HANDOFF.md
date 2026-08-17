@@ -459,6 +459,29 @@ export interface ExportLanding {
   way: `mountFoundry`, `openFoundryWindow`, `stopFoundry` and `ExportLanding`
   are not channels.
 
+**2026-08-16 — contract addendum: `onImport`, the first-contact announcement
+(`7e0bf21`).**
+
+`FoundryHost` gains one OPTIONAL member; everything else in the letter above
+stands unchanged:
+
+```ts
+onImport?(landing: ImportLanding): void;
+// ImportLanding (shared/types.ts):
+//   { projectDir: string; originalPath: string; kind: string /* 'pdf' | 'epub' */ }
+```
+
+Fired when an import from OUTSIDE the library lands — the moment a file
+becomes a project — after the manifest is durably written. `originalPath` is
+the host's matching thread for the Import-via-Foundry door: bare window, user
+imports inside it, the host learns which project key the book was given.
+Fires on re-import of the same book deliberately (mapping recovery); handlers
+should be idempotent. Throws are caught and logged on Foundry's side. And a
+clarification recorded so nobody re-derives it: `project:open` DESCRIBES what
+exists (`originalPath` resolved by main from the catalogue; `managed` = did
+Foundry make the document) — `openFoundryWindow` never creates a project, and
+import happens only inside the window by the user's own gesture.
+
 **2026-08-16 — Wave 7 is complete. The copy may start.**
 
 The renderer half landed: `project:open` is consumed (the hosted door and
