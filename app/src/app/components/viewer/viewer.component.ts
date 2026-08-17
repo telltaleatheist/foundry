@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 
 import { BookViewComponent } from '../book-view/book-view.component';
 import { PdfViewComponent } from '../pdf-view/pdf-view.component';
-import type { Tab } from '../../core/tabs.service';
+import type { Tab } from '../../core/documents.service';
 
 /**
  * Whatever the tab holds, filling its pane.

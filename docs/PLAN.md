@@ -746,7 +746,16 @@ longer earn their machinery. One selection was already the position
   `releaseProject`, Ctrl+Tab cycling the flat list, the auto-open of
   finished jobs (now: activate in THE viewer), and every closing/saving
   question. `active` becomes one signal; Home is `active === null`.
-- **8c — the service split.** `TabsService` (3.4k lines, ~14 injection
+- **8c — the service split. LANDED (this commit).** One deliberate
+  amendment to the shape below: the RAW pointer signal lives in
+  `OpenDocumentsService` (every door that opens a document ends by
+  showing it, and four of the five doors are IPC- or effect-driven with
+  no caller to hoist to), while its MEANING — `active` as a computed
+  validated against the list on read — lives in `StageService` exactly
+  as specified, so the arrow still runs one way. Undo/redo take the tab
+  as an argument for the same reason. Dead orphans of the iframe-editor
+  world went with the split (`SourceJump`, `FrameSelection`,
+  `CategoryCounts`, `bucket`). `TabsService` (3.4k lines, ~14 injection
   sites) breaks along its real seams AFTER 8b shrinks it:
   `NoticeService` (the strip's sentence — half the dialogs inject the
   whole service for this one signal); `OpenDocumentsService` (the flat

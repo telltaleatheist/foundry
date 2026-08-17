@@ -4,7 +4,8 @@ import { HomeComponent } from '../../components/home/home.component';
 import { NoticeBarComponent } from '../../components/notice-bar/notice-bar.component';
 import { ViewerComponent } from '../../components/viewer/viewer.component';
 import { ProjectsService } from '../../core/projects.service';
-import { TabsService } from '../../core/tabs.service';
+import { PositionSyncService } from '../../core/position-sync.service';
+import { StageService } from '../../core/stage.service';
 
 /**
  * The workspace: ONE DOCUMENT, filling the window.
@@ -27,7 +28,7 @@ import { TabsService } from '../../core/tabs.service';
  *   tab, and if the user wants to compare two steps, theres a compare button
  *   they can click and then they can choose the step to compare."*
  *
- * `TabsService`'s header carries the argument in full, including why the
+ * `StageService`'s header carries the argument in full, including why the
  * comparison the columns were built for survives them (it is the Aligned pair
  * inside app-book-view, and Compare is docs/PLAN.md §4, unit 8d). What is left
  * here is the three things this page ever actually had to decide.
@@ -57,7 +58,7 @@ import { TabsService } from '../../core/tabs.service';
  *
  * There is ONE selection (docs/WORKBENCH.md §6c). Clicking a row in the library
  * moves the position and puts its document on screen; a pointerdown in the viewer
- * moves the position back, through `TabsService.standForTab`, so that the viewer
+ * moves the position back, through `PositionSyncService.standForTab`, so that the viewer
  * and the pointer can never describe two different things. Without it a person
  * reads the book, presses Translate and translates the scan.
  *
@@ -80,14 +81,14 @@ import { TabsService } from '../../core/tabs.service';
   template: `
     <app-notice-bar />
 
-    @if (tabs.activeDocument(); as tab) {
+    @if (stage.activeDocument(); as tab) {
       <section class="stage" (pointerdown)="stand(tab.id)">
         <app-viewer [tab]="tab" />
       </section>
     } @else if (heldTitle(); as title) {
       <!--
         NOTHING OPEN IS NOT NO PROJECT. The window keeps the book it was working
-        on (TabsService.heldProject): the tree stays up on the left, and this
+        on (StageService.heldProject): the tree stays up on the left, and this
         bench says the way back is one click away. Home is where you go on
         purpose, by the button.
       -->
@@ -147,7 +148,8 @@ import { TabsService } from '../../core/tabs.service';
   `],
 })
 export class WorkspaceComponent {
-  protected readonly tabs = inject(TabsService);
+  protected readonly stage = inject(StageService);
+  private readonly positions = inject(PositionSyncService);
   private readonly projects = inject(ProjectsService);
 
   /**
@@ -156,13 +158,13 @@ export class WorkspaceComponent {
    * sends the empty workspace back to Home rather than naming a ghost.
    */
   protected readonly heldTitle = computed(() => {
-    const held = this.tabs.heldProject();
+    const held = this.stage.heldProject();
     if (held === null) return null;
     return this.projects.projectFor(held)?.title ?? null;
   });
 
   protected leave(): void {
-    this.tabs.releaseProject();
+    this.stage.releaseProject();
   }
 
   /**
@@ -171,6 +173,6 @@ export class WorkspaceComponent {
    * when nothing about the screen changed.
    */
   protected stand(tabId: string): void {
-    void this.tabs.standForTab(tabId);
+    void this.positions.standForTab(tabId);
   }
 }

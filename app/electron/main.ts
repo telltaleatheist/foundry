@@ -137,7 +137,7 @@ function buildMenu(): void {
        *
        * It was `{ role: 'editMenu' }` — the platform's own, whose Undo is
        * `webContents.undo()`, which means the focused text field's undo and
-       * nothing else. There is a DOCUMENT history now (TabsService), and
+       * nothing else. There is a DOCUMENT history now (BookStacksService), and
        * Ctrl/Cmd+Z has to be able to reach it, so the two items are ours and
        * the renderer decides which of the two things the chord meant: a caret
        * in a text box gets the box's own undo, a caret in a block gets the

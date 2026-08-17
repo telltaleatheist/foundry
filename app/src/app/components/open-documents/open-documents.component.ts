@@ -19,7 +19,9 @@ import { api } from '../../core/foundry';
 import { HostOpsService } from '../../core/host-ops.service';
 import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';
-import { TabsService, type Tab } from '../../core/tabs.service';
+import { OpenDocumentsService, type Tab } from '../../core/documents.service';
+import { NoticeService } from '../../core/notice.service';
+import { StageService } from '../../core/stage.service';
 import { UiService } from '../../core/ui.service';
 
 /**
@@ -365,7 +367,7 @@ import { UiService } from '../../core/ui.service';
              library — and Final Cut's word for the same shelf, which is where
              the whole arrangement comes from (docs/WORKBENCH.md §6c). -->
         <span class="label">Library</span>
-        <span class="count">{{ tabs.tabs().length }}</span>
+        <span class="count">{{ documents.tabs().length }}</span>
       </header>
 
       <!--
@@ -1182,7 +1184,9 @@ import { UiService } from '../../core/ui.service';
   `],
 })
 export class OpenDocumentsComponent {
-  protected readonly tabs = inject(TabsService);
+  protected readonly documents = inject(OpenDocumentsService);
+  private readonly stage = inject(StageService);
+  private readonly notices = inject(NoticeService);
   protected readonly projects = inject(ProjectsService);
   private readonly ledger = inject(LedgerService);
   /**
@@ -1206,7 +1210,7 @@ export class OpenDocumentsComponent {
      * re-trigger the effect that asked for it.
      */
     effect(() => {
-      this.tabs.tabs().map((tab) => tab.path).join('\u0000');
+      this.documents.tabs().map((tab) => tab.path).join('\u0000');
       void this.projects.refresh();
     });
 
@@ -1217,7 +1221,7 @@ export class OpenDocumentsComponent {
      * Until this panel drew trees, the only surfaces that needed a ledger were
      * the inspector — which asks for the FOCUSED document's project — and the
      * block editor, which asks when the mode comes up (`loadBlockView`,
-     * tabs.service.ts). Neither of those covers this one: five books can be open
+     * position-sync.service.ts). Neither of those covers this one: five books can be open
      * with one focused, and the four unfocused ones would have drawn a root with
      * nothing under it until somebody clicked into them. So the library asks for
      * its own, for every book it is about to draw.
@@ -1282,12 +1286,12 @@ export class OpenDocumentsComponent {
    * tabs and main's catalogue and nothing else.
    */
   private readonly openProjects = computed<readonly ProjectSummary[]>(() => {
-    const paths = this.tabs.tabs().map((tab) => tab.path);
+    const paths = this.documents.tabs().map((tab) => tab.path);
     // The held project draws even with no tab open: closing the last document
     // keeps the window in the project, and this tree is the door back into it
-    // (`TabsService.heldProject`). One project, not a history — the hold is
+    // (`StageService.heldProject`). One project, not a history — the hold is
     // where you ARE, not where you have been.
-    const held = this.tabs.heldProject();
+    const held = this.stage.heldProject();
     return this.projects.items().filter((project) => project.problem === null
       && (paths.some((path) => inProject(path, project.dir))
         || (held !== null && inProject(held, project.dir))));
@@ -1305,8 +1309,8 @@ export class OpenDocumentsComponent {
    * pair collapses onto it.
    */
   protected readonly rows = computed<Row[]>(() => {
-    const tabs = this.tabs.tabs();
-    const on = this.tabs.active();
+    const tabs = this.documents.tabs();
+    const on = this.stage.active();
     const out: Row[] = [];
     const emit = (tab: Tab, indent: boolean): void => {
       out.push({
@@ -1601,7 +1605,7 @@ export class OpenDocumentsComponent {
         /*
          * THE BOOK IS THE READ STEP, and the read step is already a card up
          * there — the one called "The book", which is what standing on it opens
-         * (`showBook`, core/tabs.service.ts). It cannot be claimed by the
+         * (`showBook`, core/position-sync.service.ts). It cannot be claimed by the
          * catalogue test below because it is not a file in the catalogue: its
          * path is the PROJECT's own directory, which is the whole of how a tab
          * for something that is not a file names what it is about. Without this
@@ -1825,7 +1829,7 @@ export class OpenDocumentsComponent {
    */
   protected pick(tab: Tab): void {
     void this.router.navigateByUrl('/');
-    this.tabs.reveal(tab.id);
+    this.stage.reveal(tab.id);
   }
 
   /**
@@ -1902,7 +1906,7 @@ export class OpenDocumentsComponent {
          * has no book inside it to show.
          */
         if (row.path.toLowerCase().endsWith('.epub')) {
-          this.tabs.openExportView(row.path, row.title);
+          this.documents.openExportView(row.path, row.title);
         } else {
           void api?.reveal(row.path);
         }
@@ -1910,7 +1914,7 @@ export class OpenDocumentsComponent {
       return;
     }
     void this.router.navigateByUrl('/');
-    void this.tabs.openFromList(row.path, row.managed === true);
+    void this.documents.openFromList(row.path, row.managed === true);
   }
 
   /**
@@ -1947,7 +1951,7 @@ export class OpenDocumentsComponent {
       const nodeId = row.node !== null ? row.node.id : row.step?.id ?? null;
       if (nodeId === null) return;
       void this.hostOps.invoke(act.host, row.dir, nodeId).catch((err: unknown) => {
-        this.tabs.notice.set(err instanceof Error ? err.message : String(err));
+        this.notices.notice.set(err instanceof Error ? err.message : String(err));
       });
       return;
     }
@@ -1981,7 +1985,7 @@ export class OpenDocumentsComponent {
       // Main's words. It refuses an id this project does not hold, which means
       // the two sides are looking at different ledgers — not something to smooth
       // over.
-      this.tabs.notice.set(err instanceof Error ? err.message : String(err));
+      this.notices.notice.set(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -2008,7 +2012,7 @@ export class OpenDocumentsComponent {
    * loop would be reading a list that is being emptied underneath.
    */
   protected closeProject(group: Group): void {
-    for (const id of [...group.tabIds]) void this.tabs.close(id);
+    for (const id of [...group.tabIds]) void this.documents.close(id);
   }
 
   /**
@@ -2051,22 +2055,22 @@ export class OpenDocumentsComponent {
          * do it: tabs are the renderer's, and main's own reader is only told
          * about EPUBs.
          */
-        // Without asking: see `TabsService.close`. The delete's own card is the
+        // Without asking: see `OpenDocumentsService.close`. The delete's own card is the
         // question, and it has already been answered yes. RETURNED rather than
         // voided, so the delete waits for this window to let go of the file.
         if (row.tab === null) return undefined;
-        return this.tabs.close(row.tab.id, false);
+        return this.documents.close(row.tab.id, false);
       });
-      if (said !== null) this.tabs.notice.set(said);
+      if (said !== null) this.notices.notice.set(said);
     } catch (err) {
-      this.tabs.notice.set(err instanceof Error ? err.message : String(err));
+      this.notices.notice.set(err instanceof Error ? err.message : String(err));
     }
   }
 
   /*
    * `openInSplit` LIVED HERE — the right-click's "Open in split", moved in from
    * the inspector's Steps section and built as two acts arriving as one: leave an
-   * intention with `TabsService`, move the pointer, and let the answer main sends
+   * intention with the tabs service, move the pointer, and let the answer main sends
    * back (which only arrives asynchronously, inside the effect that watches the
    * position) open into a NEW COLUMN instead of into the one in front. There was
    * a second door for the card you were already standing on, because `go` on your
@@ -2103,9 +2107,9 @@ export class OpenDocumentsComponent {
        * refusal one line after the user said yes. Main cannot do it: tabs are
        * the renderer's.
        */
-      await this.ledger.remove(row.dir, row.step.id, (files) => this.tabs.closeShowing(files));
+      await this.ledger.remove(row.dir, row.step.id, (files) => this.documents.closeShowing(files));
     } catch (err) {
-      this.tabs.notice.set(err instanceof Error ? err.message : String(err));
+      this.notices.notice.set(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -2133,14 +2137,14 @@ export class OpenDocumentsComponent {
         return;
       case 'save-copy':
         void api?.saveExport(row.path).catch((err: unknown) => {
-          this.tabs.notice.set(err instanceof Error ? err.message : String(err));
+          this.notices.notice.set(err instanceof Error ? err.message : String(err));
         });
         return;
       case 'view':
-        this.tabs.openExportView(row.path, row.title);
+        this.documents.openExportView(row.path, row.title);
         return;
       case 'close':
-        if (row.tab !== null) void this.tabs.close(row.tab.id);
+        if (row.tab !== null) void this.documents.close(row.tab.id);
         return;
       case 'close-project': {
         const group = this.groups().find((one) => fold(one.dir) === fold(row.path));
@@ -2160,14 +2164,14 @@ export class OpenDocumentsComponent {
     // Without this the click also lands on the card and reveals what is about to
     // be closed, which flashes the document on screen for one frame.
     event.stopPropagation();
-    void this.tabs.close(tab.id);
+    void this.documents.close(tab.id);
   }
 
   /** Middle-click. `auxclick` and not `mousedown`, so a middle-drag scroll is not a close. */
   protected onAux(event: MouseEvent, tab: Tab | null): void {
     if (tab === null || event.button !== 1) return;
     event.preventDefault();
-    void this.tabs.close(tab.id);
+    void this.documents.close(tab.id);
   }
 
   // ── Dragging a row ───────────────────────────────────────────────────────
@@ -2189,8 +2193,9 @@ export class OpenDocumentsComponent {
     event.dataTransfer?.setData('text/plain', tab.title);
     if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
     /*
-     * IT USED TO RAISE A SHIELD OVER THE WORKSPACE — `TabsService.
-     * draggingDocument`, a transparent sheet over every pane, because a rendered
+     * IT USED TO RAISE A SHIELD OVER THE WORKSPACE — a `draggingDocument`
+     * signal on the old tabs service, a transparent sheet over every pane,
+     * because a rendered
      * chapter is an <iframe> and a drag over one is delivered to the frame rather
      * than to the pane the user is aiming at. The drop it existed for (a row onto
      * a column) has nowhere to land now that there is one viewer, so the shield
@@ -2272,10 +2277,10 @@ export class OpenDocumentsComponent {
     if (!id) return;
     event.preventDefault();
     event.stopPropagation();
-    const moving = this.tabs.byId(id);
+    const moving = this.documents.byId(id);
     if (moving === null) return;
     if ((onto !== null && onto.dir !== null) || this.inBook(moving.id)) {
-      this.tabs.notice.set(
+      this.notices.notice.set(
         'Documents in a book are listed in the order it holds them, so they cannot be reordered '
         + 'here. Click one to open it.',
       );
@@ -2283,7 +2288,7 @@ export class OpenDocumentsComponent {
     }
     // No navigation: a reorder is bookkeeping about the list, not a request to
     // look at something, so it leaves a person on Settings where they were.
-    this.tabs.reorder(id, target);
+    this.documents.reorder(id, target);
   }
 
   /** Is this open tab one of a book's, rather than a loose file? */
@@ -2670,7 +2675,7 @@ function drawLineage(rows: Row[]): Row[] {
  * Is this open document inside this project — or IS it this project?
  *
  * THE SECOND HALF IS THE BOOK TAB, and it is the one tab in this app whose path
- * is a directory rather than a file (`TabKind`, core/tabs.service.ts). Every
+ * is a directory rather than a file (`TabKind`, core/documents.service.ts). Every
  * other row here is a file somewhere under the project, so the prefix test with
  * the separator appended is the whole rule — and the separator is what stops
  * `Kershaw-a1b2c3d4` from claiming the documents of `Kershaw-a1b2c3d4-notes`

@@ -13,8 +13,12 @@ import { SimplifyDialogComponent } from './components/simplify-dialog/simplify-d
 import { TranslateDialogComponent } from './components/translate-dialog/translate-dialog.component';
 import { QueueShelfComponent } from './components/queue-shelf/queue-shelf.component';
 import { ToolRailComponent } from './components/tool-rail/tool-rail.component';
+import { BookStacksService } from './core/book-stacks.service';
+import { OpenDocumentsService } from './core/documents.service';
+import { NoticeService } from './core/notice.service';
+import { PositionSyncService } from './core/position-sync.service';
 import { ProjectsService } from './core/projects.service';
-import { TabsService } from './core/tabs.service';
+import { StageService } from './core/stage.service';
 import { UiService } from './core/ui.service';
 import { api } from './core/foundry';
 
@@ -64,7 +68,7 @@ import { api } from './core/foundry';
  * on the menu precisely because a single-column workspace had nothing on screen
  * saying a second column was possible — and the second focused one of the five.
  * Both addressed columns, and there are none: one viewer, one document (ruling
- * 2026-08-17, quoted in full in `TabsService`'s header).
+ * 2026-08-17, quoted in full in `StageService`'s header).
  */
 @Component({
   selector: 'app-root',
@@ -150,7 +154,27 @@ import { api } from './core/foundry';
   `],
 })
 export class App {
-  private readonly tabs = inject(TabsService);
+  private readonly documents = inject(OpenDocumentsService);
+  private readonly stage = inject(StageService);
+  private readonly notices = inject(NoticeService);
+  private readonly stacks = inject(BookStacksService);
+  /**
+   * THE POSITION SYNC IS INJECTED AND NEVER CALLED, and that is the point.
+   *
+   * `PositionSyncService` is three effects and a focus mirror: the pointer moving
+   * and the viewer following, a project met for the first time opening on the
+   * picture its position names, and a document that changed under a position that
+   * did not move. Nothing reads it — the two surfaces that ask `documentShownFor`
+   * inject it themselves — so with `providedIn: 'root'` it would simply never be
+   * CONSTRUCTED, its effects would never register, and every one of those
+   * promises would stop being kept with nothing on screen to say so.
+   *
+   * The shell is where that instantiation belongs: it is the one component that
+   * exists for the whole life of the window, and before unit 8c the same guarantee
+   * came for free because all of this lived in the class App injected for its
+   * other members (docs/PLAN.md §4).
+   */
+  private readonly positions = inject(PositionSyncService);
   /**
    * The library, read for one question: has this app imported the document in
    * front of the user? A scan with a project behind it has a history worth a
@@ -175,7 +199,7 @@ export class App {
   // its tree is the door back to every step, and hiding the door with the
   // last tab would strand the empty workspace it was closed into.
   protected readonly documentsUp = computed(
-    () => this.tabs.tabs().length > 0 || this.tabs.heldProject() !== null);
+    () => this.documents.tabs().length > 0 || this.stage.heldProject() !== null);
 
   /**
    * The inspector is up when there is something to inspect.
@@ -200,7 +224,7 @@ export class App {
    * window that Home wanted.
    */
   protected readonly inspectorUp = computed(() => {
-    const tab = this.tabs.activeDocument();
+    const tab = this.stage.activeDocument();
     if (tab === null) return false;
     if (tab.kind === 'book') return true;
     const project = this.projects.projectFor(tab.path);
@@ -222,14 +246,14 @@ export class App {
      * ledger says the book is standing on. Standalone, nothing sends this.
      */
     api?.onProjectOpen((project) => {
-      void this.tabs.openProject(project.dir, project.originalPath, project.managed);
+      void this.documents.openProject(project.dir, project.originalPath, project.managed);
     });
 
     /*
      * Export / Close tab / Documents. Every one of them acts on renderer state —
      * the document on screen, the panel — so main asks rather than does. (Split
      * right was the fourth, and it went with the columns: docs/PLAN.md §4, unit
-     * 8b, and `TabsService`'s own header for the ruling.)
+     * 8b, and `StageService`'s own header for the ruling.)
      *
      * `export` IS FIRST, AND THE ORDER IS NOT COSMETIC. This chain ends in a
      * fall-through to `closeActive`, which is a reasonable default for exactly as
@@ -243,12 +267,12 @@ export class App {
      */
     api?.onMenuAction((action) => {
       if (action === 'export') this.ui.openExport();
-      else if (action === 'save') void this.tabs.saveActive();
-      else if (action === 'save-as') void this.tabs.saveActiveAs();
+      else if (action === 'save') void this.stage.saveActive();
+      else if (action === 'save-as') void this.stage.saveActiveAs();
       else if (action === 'toggle-documents') this.toggleDocuments();
       else if (action === 'undo') this.undo(false);
       else if (action === 'redo') this.undo(true);
-      else void this.tabs.closeActive();
+      else void this.stage.closeActive();
     });
 
     /*
@@ -267,7 +291,7 @@ export class App {
      * app because this code threw would be the larger of the two failures.
      */
     api?.onWindowClosing(() => {
-      void this.tabs.letGo()
+      void this.documents.letGo()
         .catch(() => true)
         .then((go) => api?.letWindowClose(go));
     });
@@ -280,7 +304,7 @@ export class App {
     // "Bleak House — HTML" with no dot on it would be lying twice about a book
     // that has unsaved edits.
     effect(() => {
-      const tab = this.tabs.activeDocument();
+      const tab = this.stage.activeDocument();
       if (tab === null) {
         document.title = 'Foundry';
         return;
@@ -301,8 +325,8 @@ export class App {
    * have been swallowed.
    */
   private toggleDocuments(): void {
-    if (this.tabs.tabs().length === 0) {
-      this.tabs.notice.set('There are no open documents to list — the panel appears with the first one.');
+    if (this.documents.tabs().length === 0) {
+      this.notices.notice.set('There are no open documents to list — the panel appears with the first one.');
       return;
     }
     this.ui.toggleDocuments();
@@ -317,13 +341,21 @@ export class App {
    * expects to keep it; that is what `role: 'undo'` used to give it, and taking it
    * away so the book could have the chord would have made typing worse to make
    * editing better. So a text field gets `execCommand`, which is exactly what the
-   * role menu did, and everything else goes to the book pane's stack. (There were
-   * three while a chapter could be typed into an iframe this window could not see
-   * a caret in; that frame is deleted — docs/RENDERER.md §7.)
+   * role menu did, and everything else goes to the book viewer's stack. (There
+   * were three while a chapter could be typed into an iframe this window could not
+   * see a caret in; that frame is deleted — docs/RENDERER.md §7.)
    *
    * `execCommand` is deprecated and there is no replacement for programmatic
    * undo of a text field. It is what the platform still implements, and the
    * alternative is a chord that does nothing in a textarea.
+   *
+   * THE DOCUMENT IS RESOLVED HERE AND HANDED DOWN. `BookStacksService` sits at
+   * the bottom of the service chain (docs/PLAN.md §4, unit 8c) and knows about a
+   * map keyed by tab id and nothing else; "what is in front of the user" is the
+   * stage's question. So the chord's raiser asks the stage and passes the answer,
+   * which is the same shape the routing always had — it is only that the two
+   * halves now live in the two services that own them. Null is legitimate and
+   * gets its own sentence: the chord arrived over Home.
    */
   private undo(redo: boolean): void {
     const focused = document.activeElement;
@@ -334,7 +366,8 @@ export class App {
       document.execCommand(redo ? 'redo' : 'undo');
       return;
     }
-    void (redo ? this.tabs.redo() : this.tabs.undo());
+    const tab = this.stage.activeDocument();
+    void (redo ? this.stacks.redo(tab) : this.stacks.undo(tab));
   }
 
   @HostListener('window:keydown', ['$event'])
@@ -364,13 +397,24 @@ export class App {
       this.ui.closeMetadata();
       return;
     }
-    // Ctrl+Tab. `event.key` is 'Tab' with ctrlKey, and preventDefault is what
-    // stops the browser moving focus through the rail's buttons instead. It
-    // cycles the flat list of open documents, which is the only list there is —
-    // Ctrl+1…5 went with the columns it was addressing (docs/PLAN.md §4, 8b).
+    /*
+     * Ctrl+Tab. `event.key` is 'Tab' with ctrlKey, and preventDefault is what
+     * stops the browser moving focus through the rail's buttons instead. It
+     * cycles the flat list of open documents, which is the only list there is —
+     * Ctrl+1…5 went with the columns it was addressing (docs/PLAN.md §4, 8b).
+     *
+     * TWO HALVES, HERE, because stepping to the next document is the same
+     * statement as clicking its row and the position has to follow. The mirror
+     * (`standForTab`) is in `PositionSyncService`, which sits ABOVE the stage in
+     * the dependency chain, so the stage answers with the id it landed on and the
+     * gesture's own handler does the second half. It is exactly what the
+     * workspace's pointerdown already does for the other gesture that means
+     * "this one".
+     */
     if (event.key === 'Tab' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
-      this.tabs.nextTab();
+      const next = this.stage.nextTab();
+      if (next !== null) void this.positions.standForTab(next);
     }
   }
 
@@ -416,7 +460,7 @@ export class App {
     // Every file, not just the first: a drop of three books is three tabs, which
     // is the whole reason there are tabs.
     for (const file of Array.from(event.dataTransfer?.files ?? [])) {
-      void this.tabs.openDropped(file);
+      void this.documents.openDropped(file);
     }
   }
 }

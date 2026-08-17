@@ -395,7 +395,7 @@ export function registerIpc(): void {
    * A book pane's unapplied changes are genuinely destroyed by closing, and a
    * book's filed copy can be out of date. They are two different losses and this
    * app has already ruled that a closing document is asked about once
-   * (`closeShowing`, tabs.service.ts): a second card on top of the first is the
+   * (`closeShowing`, core/documents.service.ts): a second card on top of the first is the
    * app arguing with an answer it already has.
    *
    * IT WAS THREE. The third — "no copy of this exists anywhere you chose" — went
@@ -492,7 +492,7 @@ export function registerIpc(): void {
    *
    * This function used to fork on `warning.unsaved` and say, for a book with no
    * copy anywhere the user chose, that nothing else on the machine knew about it.
-   * `questionBefore` (tabs.service.ts) no longer asks anything for a bare
+   * `questionBefore` (core/documents.service.ts) no longer asks anything for a bare
    * `unsaved`, so that branch became unreachable the moment the ruling landed —
    * and it was also, by then, untrue: the book is in its project, Home lists it,
    * and the way a copy leaves this app is the export modal (docs/WORKBENCH.md

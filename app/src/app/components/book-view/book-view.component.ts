@@ -24,7 +24,9 @@ import { replayOps, struckNotes, unwritten, type BookOp, type ReplayedRow } from
 
 import { api } from '../../core/foundry';
 import { LedgerService } from '../../core/ledger.service';
-import { TabsService, type BookStack, type Tab } from '../../core/tabs.service';
+import { BookStacksService, type BookStack } from '../../core/book-stacks.service';
+import { type Tab } from '../../core/documents.service';
+import { NoticeService } from '../../core/notice.service';
 import { editionFlow, editionPieces } from './edition';
 import { chapterOrder, flowNeighbours, seamJoins, sharedAnchor } from './flow';
 
@@ -69,7 +71,7 @@ import { chapterOrder, flowNeighbours, seamJoins, sharedAnchor } from './flow';
  * two, Ctrl+J joins two blocks a person picked, and a double-click on a chapter
  * chip renames the division in place. The panels in the shell mint the rest —
  * link, restore-furniture and the four other chapter verbs — onto this same
- * stack, through the registry (`BookStack`, core/tabs.service.ts).
+ * stack, through the registry (`BookStack`, core/book-stacks.service.ts).
  *
  * TWO GESTURES ARE DEFERRED OUT LOUD and their ops exist regardless: dragging a
  * block to repair reading order (`move`) and dragging a chapter rule to another
@@ -79,7 +81,7 @@ import { chapterOrder, flowNeighbours, seamJoins, sharedAnchor } from './flow';
  * ── The undo chord is ROUTED here, never listened for ───────────────────────
  *
  * Ctrl+Z is a menu accelerator main swallows, and the renderer decides which of
- * its three undos a chord meant (`MenuAction`, shared/api.ts). `TabsService.replay`
+ * its three undos a chord meant (`MenuAction`, shared/api.ts). `BookStacksService.replay`
  * is where that decision lives; this component registers a `BookStack` with it and
  * adds no key listener of its own, because two answers to one keypress is how a
  * text field and a book both take something back.
@@ -88,7 +90,8 @@ import { chapterOrder, flowNeighbours, seamJoins, sharedAnchor } from './flow';
  *
  * It is not a fact about the book, it is in no undo stack, nothing on disk
  * records it and a reload starts with nothing selected — the same ruling the
- * frame selection has always had (`FrameSelection`, core/tabs.service.ts). It
+ * frame selection has always had — a set of block ids and the category they
+ * share, held by the surface that draws them. It
  * lives here rather than in the service because nothing outside this pane can
  * act on it yet; the day the inspector can, it moves up, and moving it before
  * then would be a wire with nothing on either end.
@@ -1923,7 +1926,8 @@ export class BookViewComponent {
   readonly tab = input.required<Tab>();
 
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
-  private readonly tabs = inject(TabsService);
+  private readonly stacks = inject(BookStacksService);
+  private readonly notices = inject(NoticeService);
   private readonly ledger = inject(LedgerService);
   /** For `afterNextRender` from an event handler — see `edit`. */
   private readonly injector = inject(Injector);
@@ -1964,7 +1968,7 @@ export class BookViewComponent {
    * A LIFO in memory and nowhere else (docs/RENDERER.md §0, ruling 5). Undo pops
    * the last one onto `undone`; redo puts it back; Apply writes the whole list as
    * a step and empties both. Closing scraps it, which is what the closing question
-   * is about (`BookStack`, core/tabs.service.ts).
+   * is about (`BookStack`, core/book-stacks.service.ts).
    *
    * IT IS A SIGNAL BECAUSE THE VIEW IS A FUNCTION OF IT. Every gesture on this
    * surface ends as a push here, and the sheet is `replayOps` over the chain and
@@ -2250,7 +2254,7 @@ export class BookViewComponent {
        * tab's path is the PROJECT directory and never changes; what changes when
        * somebody clicks a row in Steps is which book `book:load` would answer with
        * — a different reading, or the same reading with a different chain of
-       * applied changes over it. `TabsService.showBook` bumps this on a genuine
+       * applied changes over it. `PositionSyncService.showBook` bumps this on a genuine
        * position move and on nothing else, which is what keeps clicking the row you
        * are already standing on free.
        */
@@ -2261,7 +2265,7 @@ export class BookViewComponent {
     });
 
     /*
-     * THE STACK, ANNOUNCED — see `BookStack` (core/tabs.service.ts) for the whole
+     * THE STACK, ANNOUNCED — see `BookStack` (core/book-stacks.service.ts) for the whole
      * argument. Four things outside this pane need it now: the undo chord, which
      * main swallows as a menu accelerator and the window routes; the closing
      * question, asked once per tab about everything closing costs; and the Notes,
@@ -2274,7 +2278,7 @@ export class BookViewComponent {
      * this book says — there is nothing to keep in step, because there is only one
      * of it.
      */
-    const tabs = this.tabs;
+    const stacks = this.stacks;
     const stack: BookStack = {
       pending: () => this.waiting(),
       canUndo: () => this.pending().length > 0,
@@ -2301,14 +2305,14 @@ export class BookViewComponent {
       const id = this.tab().id;
       untracked(() => {
         if (registered === id) return;
-        if (registered !== null) tabs.releaseBookStack(registered);
-        tabs.registerBookStack(id, stack);
+        if (registered !== null) stacks.releaseBookStack(registered);
+        stacks.registerBookStack(id, stack);
         registered = id;
       });
     });
     const destroy = inject(DestroyRef);
     destroy.onDestroy(() => {
-      if (registered !== null) tabs.releaseBookStack(registered);
+      if (registered !== null) stacks.releaseBookStack(registered);
       /*
        * UNWRITTEN WORK RIDES THE TAB, NOT THE COMPONENT. This pane dies every
        * time its pane shows another tab — a glance at the scan — and the stack
@@ -2320,7 +2324,7 @@ export class BookViewComponent {
        */
       if (registered !== null
         && (this.waiting() > 0 || this.undone().length > 0)) {
-        tabs.parkBookStack(registered, {
+        stacks.parkBookStack(registered, {
           revision: this.tab().revision,
           landed: this.landedOps(),
           pending: this.pending(),
@@ -2486,7 +2490,7 @@ export class BookViewComponent {
     const scrapped = this.landed ? 0 : this.waiting();
     this.landed = false;
     if (scrapped > 0) {
-      this.tabs.notice.set(
+      this.notices.notice.set(
         scrapped === 1
           ? 'The change waiting on the book was not applied, so moving to another step let it go.'
           : `The ${scrapped} changes waiting on the book were not applied, so moving to another step `
@@ -2532,7 +2536,7 @@ export class BookViewComponent {
          * load's re-parsed ones. When it does not, the loss is said out loud;
          * silence here would be indistinguishable from a successful return.
          */
-        const parked = this.tabs.claimBookStack(this.tab().id);
+        const parked = this.stacks.claimBookStack(this.tab().id);
         if (parked !== null) {
           const same = parked.revision === this.tab().revision
             && JSON.stringify(parked.landed) === JSON.stringify(tip);
@@ -2542,7 +2546,7 @@ export class BookViewComponent {
             this.undone.set([...parked.undone]);
           } else if (unwritten(parked.landed, parked.pending) > 0) {
             const lost = unwritten(parked.landed, parked.pending);
-            this.tabs.notice.set(
+            this.notices.notice.set(
               lost === 1
                 ? 'The change waiting on this book was let go — the book here changed while you '
                   + 'were looking at another tab.'
@@ -2992,7 +2996,7 @@ export class BookViewComponent {
     if (which === 'aligned') {
       const refused = this.alignRefusal();
       if (refused !== null) {
-        this.tabs.notice.set(refused);
+        this.notices.notice.set(refused);
         return;
       }
     }
@@ -3631,7 +3635,7 @@ export class BookViewComponent {
      * app keeps refusing to ship.
      */
     if (this.viewing()) {
-      this.tabs.notice.set(
+      this.notices.notice.set(
         'This tab shows a finished export. To change the book, open it from its step in the tree '
         + 'and export again.',
       );
@@ -3660,7 +3664,7 @@ export class BookViewComponent {
   }
 
   /**
-   * Ctrl+Z, routed from `TabsService.replay`. Pops one op; never touches a disk.
+   * Ctrl+Z, routed from `BookStacksService.replay`. Pops one op; never touches a disk.
    *
    * ── THE CHORD FLIPS TO THE BENCH FIRST, AND THAT WAS A CHOICE ──────────────
    *
@@ -3709,7 +3713,7 @@ export class BookViewComponent {
    * Main writes the ops file, lands an `edit` step as a child of the position and
    * moves the pointer onto it (`applyBookOps`, electron/book.ts). Adopting the
    * answer is all this does: `LedgerService.adopt` paints the history main handed
-   * back, the position effect in `TabsService` notices a picture it has not shown
+   * back, the position effect in `PositionSyncService` notices a picture it has not shown
    * (`positionPicture` carries the edit chain for exactly this), and that bumps
    * this tab's revision — which reloads the book with the ops on its CHAIN and
    * clears the stack on the way. Clearing it here as well would be this component
@@ -3758,7 +3762,7 @@ export class BookViewComponent {
       this.ledger.adopt(this.tab().path, history);
       return true;
     } catch (err) {
-      this.tabs.notice.set(err instanceof Error ? err.message : String(err));
+      this.notices.notice.set(err instanceof Error ? err.message : String(err));
       return false;
     } finally {
       this.applying.set(false);
@@ -3984,7 +3988,7 @@ export class BookViewComponent {
      * machine's words is the failure this whole door exists to prevent.
      */
     if (this.correcting) {
-      this.tabs.notice.set(
+      this.notices.notice.set(
         'The last corrected paragraph is still being written into this translation\'s records, so '
         + 'this one was not — it is showing its recorded words again. Make the edit once more.',
       );
@@ -4009,7 +4013,7 @@ export class BookViewComponent {
       return false;
     } catch (err) {
       if (ticket !== this.asked) return false;
-      this.tabs.notice.set(err instanceof Error ? err.message : String(err));
+      this.notices.notice.set(err instanceof Error ? err.message : String(err));
       return false;
     } finally {
       this.correcting = false;
@@ -4251,7 +4255,7 @@ export class BookViewComponent {
     if (replayed === null) return;
     const picked = [...this.chosen()];
     if (picked.length !== 2) {
-      this.tabs.notice.set(
+      this.notices.notice.set(
         'Joining is a decision about two blocks: pick the paragraph that ends and the one that '
         + 'carries on from it, then press it again.',
       );
@@ -4259,7 +4263,7 @@ export class BookViewComponent {
     }
     const pair = flowNeighbours(replayed.rows, picked[0]!, picked[1]!);
     if (pair === null) {
-      this.tabs.notice.set(
+      this.notices.notice.set(
         'Those two blocks do not sit next to each other in the book, and joining them would put '
         + 'words from either side of whatever stands between them into one paragraph.',
       );
@@ -4268,7 +4272,7 @@ export class BookViewComponent {
     const held = new Map(replayed.rows.map((row) => [row.id, row] as const));
     const note = [pair.earlier, pair.later].some((id) => held.get(id)?.category === 'Footnote');
     if (note) {
-      this.tabs.notice.set(
+      this.notices.notice.set(
         'A note is one piece of apparatus, printed whole at the foot of its page. Joining one to '
         + 'anything is not a repair this program offers.',
       );
@@ -4318,14 +4322,14 @@ export class BookViewComponent {
     const said = editor.textContent ?? '';
     const at = caretOffsetIn(editor);
     if (at === null) {
-      this.tabs.notice.set(
+      this.notices.notice.set(
         'A paragraph is cut where the caret is, and there are words selected rather than a caret '
         + 'in them. A cut cannot also delete what is highlighted.',
       );
       return;
     }
     if (at <= 0 || at >= said.length) {
-      this.tabs.notice.set(
+      this.notices.notice.set(
         `The caret is at the very ${at <= 0 ? 'start' : 'end'} of this paragraph, and cutting there `
         + 'would leave one of the two halves with nothing in it.',
       );
@@ -4436,7 +4440,7 @@ export class BookViewComponent {
     if (said === was) return;
     if (said.length === 0) {
       chip.textContent = was;
-      this.tabs.notice.set(
+      this.notices.notice.set(
         'A chapter chip with no words on it could not be double-clicked again, so the division kept '
         + 'the name it had. Take the division away in the panel if the book should not divide there.',
       );

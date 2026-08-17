@@ -32,7 +32,7 @@ import {
   type RenderTask,
 } from 'pdfjs-dist/legacy/build/pdf.mjs';
 
-import { TabsService, type Tab } from '../../core/tabs.service';
+import { OpenDocumentsService, type Tab } from '../../core/documents.service';
 import { api } from '../../core/foundry';
 
 /**
@@ -131,13 +131,13 @@ import { api } from '../../core/foundry';
           class="ghost"
           [class.on]="tab().layerView"
           [disabled]="doc() === null"
-          (click)="tabs.toggleLayerView(tab().id)"
+          (click)="documents.toggleLayerView(tab().id)"
         >{{ tab().layerView ? 'Hide text layer' : 'Text layer' }}</button>
         <button
           class="ghost"
           [class.on]="tab().thumbnails"
           [disabled]="doc() === null"
-          (click)="tabs.toggleThumbnails(tab().id)"
+          (click)="documents.toggleThumbnails(tab().id)"
         >Thumbnails</button>
         <!--
           ── THERE IS NO BLOCKS BUTTON AND THERE IS NO BLOCK LAYER ──
@@ -458,7 +458,7 @@ import { api } from '../../core/foundry';
 export class PdfViewComponent implements OnDestroy {
   readonly tab = input.required<Tab>();
 
-  protected readonly tabs = inject(TabsService);
+  protected readonly documents = inject(OpenDocumentsService);
 
   protected readonly doc = signal<PDFDocumentProxy | null>(null);
   protected readonly problem = signal<string | null>(null);

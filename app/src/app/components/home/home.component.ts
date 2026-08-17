@@ -6,7 +6,8 @@ import type { ProjectSummary } from '@shared/types';
 
 import { api, hosted } from '../../core/foundry';
 import { ProjectsService } from '../../core/projects.service';
-import { TabsService } from '../../core/tabs.service';
+import { OpenDocumentsService } from '../../core/documents.service';
+import { NoticeService } from '../../core/notice.service';
 import { UiService } from '../../core/ui.service';
 
 /**
@@ -79,7 +80,7 @@ import { UiService } from '../../core/ui.service';
         </div>
 
         <div class="actions">
-          <button class="primary" (click)="tabs.openViaDialog()">Open a document…</button>
+          <button class="primary" (click)="documents.openViaDialog()">Open a document…</button>
           <button class="ghost" (click)="ui.openOcr()">OCR…</button>
           <button class="ghost" (click)="settings()">Settings</button>
         </div>
@@ -336,7 +337,8 @@ export class HomeComponent {
   protected readonly hosted = hosted;
 
   protected readonly projects = inject(ProjectsService);
-  protected readonly tabs = inject(TabsService);
+  protected readonly documents = inject(OpenDocumentsService);
+  private readonly notices = inject(NoticeService);
   protected readonly ui = inject(UiService);
   private readonly router = inject(Router);
 
@@ -402,9 +404,9 @@ export class HomeComponent {
      * THE PROJECT DOOR AND NOT THE FILE DOOR: the row is a book, and opening a
      * book means landing where its position stands — the proof sheet, for any
      * project with edits or a reading — with the original adopted underneath it
-     * exactly as before. `TabsService.openProject` owns the reasoning.
+     * exactly as before. `OpenDocumentsService.openProject` owns the reasoning.
      */
-    void this.tabs.openProject(project.dir, original.path, original.managed);
+    void this.documents.openProject(project.dir, original.path, original.managed);
   }
 
   /**
@@ -451,7 +453,7 @@ export class HomeComponent {
      * specific book got "Open a PDF first" over the book they had just pointed
      * at, and the only way out was to close the dialog and press it again.
      */
-    await this.tabs.openFile(original.path, original.managed);
+    await this.documents.openFile(original.path, original.managed);
     this.ui.openOcr();
   }
 
@@ -483,9 +485,9 @@ export class HomeComponent {
    * which is where this app says what it just did.
    */
   protected async remove(project: ProjectSummary): Promise<void> {
-    const open = this.tabs.tabs().find((tab) => within(project.dir, tab.path));
+    const open = this.documents.tabs().find((tab) => within(project.dir, tab.path));
     if (open !== undefined) {
-      this.tabs.notice.set(
+      this.notices.notice.set(
         `“${open.title}” is open from this project, so it cannot be deleted while you are `
         + 'reading it — the delete would leave this tab showing files that no longer exist. '
         + 'Close it, then try again.',
@@ -494,9 +496,9 @@ export class HomeComponent {
     }
     try {
       const said = await this.projects.remove(project);
-      if (said !== null) this.tabs.notice.set(said);
+      if (said !== null) this.notices.notice.set(said);
     } catch (err) {
-      this.tabs.notice.set(err instanceof Error ? err.message : String(err));
+      this.notices.notice.set(err instanceof Error ? err.message : String(err));
     }
   }
 

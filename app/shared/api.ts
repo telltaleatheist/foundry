@@ -166,7 +166,7 @@ export interface FoundryApi {
    *
    * ONE QUESTION FOR BOTH REASONS, and that is deliberate rather than
    * economical. This app has already ruled that stacking dialogs about one
-   * closing document is wrong (see `closeShowing` in tabs.service.ts): a person
+   * closing document is wrong (see `closeShowing` in core/documents.service.ts): a person
    * shutting a book should be asked once, about everything that closing it costs,
    * and a second card on top of the first is the app arguing with an answer it
    * already has. Main picks the wording from the flags — "the copy you chose is
