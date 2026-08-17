@@ -905,10 +905,18 @@ function packageLanguage(opfSource: string): string | null {
   return null;
 }
 
-/** One entry of the publisher's contents: the href it points at and its label. */
+/** One entry of the publisher's contents: the href, its label, how deep it nests. */
 interface NavEntry {
   href: string;
   title: string;
+  /**
+   * How many contents entries this one sits INSIDE — 0 for a top-level entry.
+   * Not decoration: together with the href it is how the division builder tells
+   * a chapter nested under a part from a heading printed inside a chapter, which
+   * is a distinction the flat list this used to be could not carry (see the
+   * builder's own comment for what that cost).
+   */
+  depth: number;
 }
 
 /**
@@ -919,9 +927,12 @@ interface NavEntry {
  * and a good many EPUB 3s that kept one for old reading systems. Both are read the
  * same way and neither is interpreted: the label is the label, verbatim.
  *
- * EVERY ENTRY AND NOT ONLY THE TOP LEVEL. A nested entry is a division the
- * publisher drew, and a chapter list that quietly dropped the sub-entries would be
- * this program deciding which of somebody's divisions count.
+ * EVERY ENTRY AND NOT ONLY THE TOP LEVEL, each carrying its depth. Dropping the
+ * sub-entries here would be this function deciding which of somebody's contents
+ * count, and it decides nothing — but the CALLER has to (a nested entry can be a
+ * chapter inside a part or a heading inside a chapter, and only the hrefs can
+ * tell those apart), so what nests under what leaves here as a number instead of
+ * being flattened away.
  */
 function navEntries(navSource: string | null, ncxSource: string | null): NavEntry[] {
   if (navSource !== null) {
@@ -930,15 +941,30 @@ function navEntries(navSource: string | null, ncxSource: string | null): NavEntr
     const toc = navs.find((nav) => epubTypes(nav).includes('toc')) ?? navs[0];
     if (toc !== undefined) {
       const out: NavEntry[] = [];
-      for (const anchor of findElements(toc, 'a')) {
-        const href = anchor.attrs.get('href');
-        if (href === undefined || href.length === 0) continue;
-        const title = decodeEntities(navSource.slice(anchor.innerStart, anchor.innerEnd))
-          .replace(/<[^>]*>/g, '')
-          .replace(/\s+/g, ' ')
-          .trim();
-        if (title.length > 0) out.push({ href, title });
-      }
+      /*
+       * The depth is `<ol>` nesting: the toc's own list is the surface, so an
+       * anchor in it lands at 0 and each list inside a list adds one. The walk
+       * starts at -1 because the nav element itself is not a level — and the
+       * result is clamped, so an anchor a malformed nav left outside any list
+       * reads as top-level rather than inventing a hierarchy below zero.
+       */
+      const walk = (el: XmlElement, depth: number): void => {
+        for (const child of el.children) {
+          if (child.kind !== 'element') continue;
+          if (child.tag === 'a') {
+            const href = child.attrs.get('href');
+            if (href === undefined || href.length === 0) continue;
+            const title = decodeEntities(navSource.slice(child.innerStart, child.innerEnd))
+              .replace(/<[^>]*>/g, '')
+              .replace(/\s+/g, ' ')
+              .trim();
+            if (title.length > 0) out.push({ href, title, depth: Math.max(0, depth) });
+            continue;
+          }
+          walk(child, child.tag === 'ol' ? depth + 1 : depth);
+        }
+      };
+      walk(toc, -1);
       if (out.length > 0) return out;
     }
   }
@@ -947,25 +973,35 @@ function navEntries(navSource: string | null, ncxSource: string | null): NavEntr
   const out: NavEntry[] = [];
   /*
    * THE NEEDLE IS LOWER-CASE BECAUSE THE PARSER'S TAGS ARE. `src/epub/xml.ts`
-   * spells every tag it reads `name.toLowerCase()` and `findElements` compares
+   * spells every tag it reads `name.toLowerCase()` and the comparisons below run
    * against that, so a needle written the way the NCX DTD writes it — `navPoint`,
    * camel-cased — matched nothing, ever. It cost every EPUB 2 book its entire
    * table of contents, silently, because an NCX with no `navPoint` in it is
    * indistinguishable here from a book that declared no contents at all.
+   *
+   * The walk recurses because an NCX nests its navPoints the way a nav nests its
+   * lists, and the depth is the count of navPoint ancestors: a point met inside
+   * no other point is 0, exactly as an anchor in the toc's own list is.
    */
-  for (const point of findElements(root, 'navpoint')) {
-    const content = point.children.find(
-      (child): child is XmlElement => child.kind === 'element' && child.tag.endsWith('content'),
-    );
-    const href = content?.attrs.get('src');
-    if (href === undefined || href.length === 0) continue;
-    const label = findElements(point, 'text')[0];
-    if (label === undefined) continue;
-    const title = decodeEntities(ncxSource.slice(label.innerStart, label.innerEnd))
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (title.length > 0) out.push({ href, title });
-  }
+  const dig = (el: XmlElement, depth: number): void => {
+    for (const child of el.children) {
+      if (child.kind !== 'element') continue;
+      if (child.tag !== 'navpoint') { dig(child, depth); continue; }
+      const content = child.children.find(
+        (grand): grand is XmlElement => grand.kind === 'element' && grand.tag.endsWith('content'),
+      );
+      const href = content?.attrs.get('src');
+      const label = findElements(child, 'text')[0];
+      if (href !== undefined && href.length > 0 && label !== undefined) {
+        const title = decodeEntities(ncxSource.slice(label.innerStart, label.innerEnd))
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (title.length > 0) out.push({ href, title, depth });
+      }
+      dig(child, depth + 1);
+    }
+  };
+  dig(root, 0);
   return out;
 }
 
@@ -1151,11 +1187,37 @@ export function bookFromEpub(
   const navDir = container.navPath === null ? directoryOf(container.opfPath) : directoryOf(container.navPath);
   const chapters: BookChapter[] = [];
   const seen = new Set<string>();
+  /** The documents the accepted divisions open, for the heading test below. */
+  const divided = new Set<string>();
   let unplaced = 0;
+  let inside = 0;
   for (const entry of navEntries(navSource, ncx === undefined ? null : ncx.text())) {
     const hash = entry.href.indexOf('#');
     const base = hash < 0 ? entry.href : entry.href.slice(0, hash);
     const document = resolveHref(navDir, base);
+    /*
+     * ── A NESTED ENTRY POINTING INSIDE A CHAPTER IS A HEADING, NOT A DIVISION ──
+     *
+     * This loop used to make a division of every entry at every depth, on the
+     * argument that a nested entry is a division the publisher drew — and for
+     * the entries that name documents of their own that argument stands: a
+     * chapter nested under a part is a division wherever the publisher nested
+     * it, and it still becomes one here. But a nested entry whose href is a
+     * FRAGMENT into a document an entry above it already claimed is the
+     * publisher pointing at a heading INSIDE that chapter, and this model
+     * already has a word for those: the row's own Section-header category,
+     * which the element table gave it on the walk. Minting a division for it
+     * flattened every sub-heading into a top-level chapter, and Foundry's own
+     * export was the proof — the cast writes sections as nested entries under
+     * their chapter, so a book exported and reopened came back with every
+     * section wearing a chapter's dot (user report, 2026-08-17: *"they all
+     * show up as chapters instead of just the proper chapters"*). The model
+     * must survive its own round trip: divisions stay divisions, headings stay
+     * headings, in both directions — and a publisher's book keeps the same
+     * two-register reading, which the app can then indent exactly as it
+     * indents its own.
+     */
+    if (entry.depth > 0 && hash >= 0 && divided.has(document)) { inside += 1; continue; }
     const id = hash < 0
       ? book.opens.get(document)
       : book.anchors.get(`${document}#${entry.href.slice(hash + 1)}`) ?? book.opens.get(document);
@@ -1165,6 +1227,7 @@ export function bookFromEpub(
     // block that is not there, which every reader of this file refuses by name.
     if (id === undefined || seen.has(id)) { unplaced += 1; continue; }
     seen.add(id);
+    divided.add(document);
     chapters.push({ id, title: entry.title });
   }
 
@@ -1265,6 +1328,10 @@ export function bookFromEpub(
   if (unplaced > 0) {
     opts.log(`vlm-book: ${unplaced} contents entry(ies) name a place with no block in it, so no division `
       + 'was drawn there.');
+  }
+  if (inside > 0) {
+    opts.log(`vlm-book: ${inside} contents entry(ies) point at headings inside a chapter; they stay `
+      + 'headings on the page rather than divisions of the book.');
   }
 
   return {
