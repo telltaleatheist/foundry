@@ -478,6 +478,97 @@ const SCROLL_SETTLE_MS = 400;
       trays, the marquee's coordinates — would be measuring a different thing
       depending on a mode.
     -->
+    <!--
+      THE TWO REGISTERS — *"a two-segment control … \`Workbench | Edition\`,
+      styled like the app's existing acts"* (RENDERER-DESIGN.md §5).
+
+      ABOVE THE SCROLLER AND NOT IN IT, which reverses where this control
+      stood and is the user's own ruling (2026-08-17): the head used to open
+      the sheet's column and stick to the scrollport's top edge, and a stuck
+      tray is a tray the words pass UNDER — *"the workspace/final version
+      buttons at the top cover the file when i scroll down."* So the register
+      stands in a row of the host's own column above the pair, the book
+      scrolls in the box below it, and nothing the sheet says can arrive
+      beneath these buttons because they are not over the sheet at all. The
+      BOTTOM tray keeps its sticky edge: Apply is a verb somebody reaches for
+      mid-page, and it should ride the scroll; the head is a REGISTER — a
+      fact about the page rather than a verb on it — and a fact can hold
+      still.
+
+      A GROUP OF TWO BUTTONS AND NOT A CHECKBOX. \`aria-pressed\` on each says
+      which one is in force in the one vocabulary a screen reader already has
+      for a segmented control, and buttons are reachable, pressable and
+      focusable from a keyboard with nothing added.
+    -->
+    <!--
+      AN EXPORT VIEW HAS NO HEAD AT ALL: one register, no pair, no verbs —
+      a control whose every segment is refused is furniture explaining
+      itself, and the absence says "this is the finished file" better. A
+      problem and a load still in flight have none either, now that the head
+      stands outside the sheet's own column: a register over a bench holding
+      only a sentence would be a claim about a book that is not there.
+    -->
+    @if (!problem() && !loading()) {
+      <div class="tray head" [style.display]="viewing() ? 'none' : null">
+        <div class="segments" role="group" aria-label="How this book is shown">
+          <button
+            type="button"
+            class="act segment"
+            [class.on]="!edition()"
+            [attr.aria-pressed]="!edition()"
+            (click)="show('workbench')"
+          >Workbench</button>
+          <button
+            type="button"
+            class="act segment"
+            [class.on]="edition()"
+            [attr.aria-pressed]="edition()"
+            (click)="show('edition')"
+          >Final version</button>
+        </div>
+        <!--
+          AND THE SECOND CONTROL, WHICH IS NOT A THIRD SEGMENT.
+
+          \`Workbench | Edition\` is the REGISTER — what kind of thing this page
+          is — and Aligned is not a third kind of page: it composes with the
+          workbench (chrome on the live column, the source beside it) and is
+          meaningless against the edition, which is the finished book and has one
+          column. A third segment would have said the three were alternatives and
+          put "the finished book, with a working column beside it" on the list of
+          things a person could ask for.
+
+          IT IS ONLY THERE ON A TRANSLATED POSITION. There is no source to set
+          beside a book in its own language, and a control that was permanently
+          dimmed on every ordinary book would be furniture nobody could ever use.
+
+          REFUSED RATHER THAN DISABLED. \`aria-disabled\` and not \`disabled\`,
+          because a control that cannot be reached cannot say why it cannot be
+          used: the title is for a pointer that pauses, and a PRESS puts the same
+          sentence on the window's notice strip, where the rest of this app says
+          what it would not do.
+        -->
+        @if (translation() !== null) {
+          <div class="segments" role="group" [attr.aria-label]="'Where the source of this ' + pass() + ' is shown'">
+            <button
+              type="button"
+              class="act segment"
+              [class.on]="!aligned()"
+              [attr.aria-pressed]="!aligned()"
+              (click)="align('alone')"
+            >Alone</button>
+            <button
+              type="button"
+              class="act segment"
+              [class.on]="aligned()"
+              [attr.aria-pressed]="aligned()"
+              [attr.aria-disabled]="alignRefusal() !== null ? 'true' : null"
+              [attr.title]="alignRefusal()"
+              (click)="align('aligned')"
+            >Aligned</button>
+          </div>
+        }
+      </div>
+    }
     <div class="pair" [class.aligned]="aligned()">
       @if (aligned()) {
         <!--
@@ -548,88 +639,6 @@ const SCROLL_SETTLE_MS = 400;
             </ul>
           </div>
         }
-        <!--
-          THE TWO REGISTERS — *"a two-segment control … \`Workbench | Edition\`,
-          styled like the app's existing acts"* (RENDERER-DESIGN.md §5).
-
-          IT IS AT THE HEAD OF THE SHEET'S OWN COLUMN, mirroring the tray at the
-          foot of it, because this pane has no toolbar and the tray is the whole
-          of the grammar it does have: the app's dark \`.act\` on the bench, in
-          the paper's own measure, pinned to the column's edge and never on the
-          paper (§5 keeps the paper vocabulary on the paper). The tray holds the
-          VERB and the head holds the REGISTER — what this is, against what to do
-          with it — and the two of them bracket the sheet rather than crowding one
-          corner of it.
-
-          A GROUP OF TWO BUTTONS AND NOT A CHECKBOX. \`aria-pressed\` on each says
-          which one is in force in the one vocabulary a screen reader already has
-          for a segmented control, and buttons are reachable, pressable and
-          focusable from a keyboard with nothing added.
-        -->
-        <!--
-          AN EXPORT VIEW HAS NO HEAD AT ALL: one register, no pair, no verbs —
-          a control whose every segment is refused is furniture explaining
-          itself, and the absence says "this is the finished file" better.
-        -->
-        <div class="tray head" [style.display]="viewing() ? 'none' : null">
-          <div class="segments" role="group" aria-label="How this book is shown">
-            <button
-              type="button"
-              class="act segment"
-              [class.on]="!edition()"
-              [attr.aria-pressed]="!edition()"
-              (click)="show('workbench')"
-            >Workbench</button>
-            <button
-              type="button"
-              class="act segment"
-              [class.on]="edition()"
-              [attr.aria-pressed]="edition()"
-              (click)="show('edition')"
-            >Final version</button>
-          </div>
-          <!--
-            AND THE SECOND CONTROL, WHICH IS NOT A THIRD SEGMENT.
-
-            \`Workbench | Edition\` is the REGISTER — what kind of thing this page
-            is — and Aligned is not a third kind of page: it composes with the
-            workbench (chrome on the live column, the source beside it) and is
-            meaningless against the edition, which is the finished book and has one
-            column. A third segment would have said the three were alternatives and
-            put "the finished book, with a working column beside it" on the list of
-            things a person could ask for.
-
-            IT IS ONLY THERE ON A TRANSLATED POSITION. There is no source to set
-            beside a book in its own language, and a control that was permanently
-            dimmed on every ordinary book would be furniture nobody could ever use.
-
-            REFUSED RATHER THAN DISABLED. \`aria-disabled\` and not \`disabled\`,
-            because a control that cannot be reached cannot say why it cannot be
-            used: the title is for a pointer that pauses, and a PRESS puts the same
-            sentence on the window's notice strip, where the rest of this app says
-            what it would not do.
-          -->
-          @if (translation() !== null) {
-            <div class="segments" role="group" [attr.aria-label]="'Where the source of this ' + pass() + ' is shown'">
-              <button
-                type="button"
-                class="act segment"
-                [class.on]="!aligned()"
-                [attr.aria-pressed]="!aligned()"
-                (click)="align('alone')"
-              >Alone</button>
-              <button
-                type="button"
-                class="act segment"
-                [class.on]="aligned()"
-                [attr.aria-pressed]="aligned()"
-                [attr.aria-disabled]="alignRefusal() !== null ? 'true' : null"
-                [attr.title]="alignRefusal()"
-                (click)="align('aligned')"
-              >Aligned</button>
-            </div>
-          }
-        </div>
         <!--
           \`tabindex="-1"\` so the sheet can HOLD focus without being a tab stop.
           The Delete key has to reach a selection that a marquee made over empty
@@ -1059,9 +1068,16 @@ const SCROLL_SETTLE_MS = 400;
       --t-fast:       120ms;
       --t-med:        180ms;
 
-      display: block;
+      /* A COLUMN NOW: the head row first, the pair filling the rest. The
+         bench ground is painted on the host itself because the head row is
+         narrower than the pane — the strip either side of it would otherwise
+         be the viewer's own darker sunken tone showing through a surface
+         that is meant to read as one bench. */
+      display: flex;
+      flex-direction: column;
       width: 100%;
       height: 100%;
+      background: var(--bench);
       /*
        * WHAT LETS A BLOCK COLLAPSE FROM THE HEIGHT IT HAPPENS TO HAVE. §6 asks
        * that things which leave the document collapse, and a block's height is
@@ -1145,7 +1161,7 @@ const SCROLL_SETTLE_MS = 400;
 
     /* ── §5 The pair ──────────────────────────────────────────────────────── */
 
-    .pair { display: flex; width: 100%; height: 100%; }
+    .pair { display: flex; width: 100%; flex: 1 1 0; min-height: 0; }
     /*
      * *"Both sheets narrow to fit: min(38rem, 46%) each."* — the lead's measure,
      * written here against the COLUMN because that is the box a sheet is centred
@@ -1656,9 +1672,11 @@ const SCROLL_SETTLE_MS = 400;
 
     /* ── §5 The register, at the head of the column the tray closes ────────── */
 
-    /* The tray's own rule, turned over: same measure, same sticky edge-of-column
-       placement, the other edge. */
-    .head { top: 0; bottom: auto; padding: 0 0 0.75rem; }
+    /* The tray's measure without the tray's stickiness: the head stands
+       OUTSIDE the scroller now (the template's own comment carries the
+       ruling), a row of the host's column above the pair, so \`position\`
+       goes back to static and the paper below cannot pass under it. */
+    .head { position: static; flex: 0 0 auto; padding: 0.75rem 0; }
 
     /* Two acts made one control: the seam between them is a shared hairline
        (the second pulled back a pixel onto the first's border) and only the

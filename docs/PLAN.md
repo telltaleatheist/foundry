@@ -712,6 +712,66 @@ of the contract in its `#foundrynotes`. All five obligations landed:
   from their side: zero full-name collisions, no prefix on either
   side.
 
+### Wave 8 — one viewer, no tabs (ruled 2026-08-17)
+
+The user ruled out the tab system entirely: *"i dont think we should have
+tabs in foundry. i think its making things a bit confusing. however, the
+user should be able to compare two steps sometimes. so i think the
+solution is to have a single viewer window/single tab, and if the user
+wants to compare two steps, theres a compare button they can click and
+then they can choose the step to compare."* This REVERSES the strips'
+return (the reversal-of-the-reversal; TabsService's header carries the
+first one) and RETIRES the pane model with them — the panes' founding
+comparison, a translation beside its source, has lived inside
+app-book-view as the Aligned pair since §5 landed, so the columns no
+longer earn their machinery. One selection was already the position
+(WORKBENCH.md §6c); after this wave there is one viewer obeying it.
+
+- **8a — the head off the paper. LANDED (this commit).** The
+  `Workbench | Final version` register was `position: sticky` inside the
+  bench scroller, so the words scrolled UNDER the buttons (user: *"the
+  workspace/final version buttons at the top cover the file when i
+  scroll down"*). The head now stands in a row of the host's column
+  ABOVE the pair; the book scrolls in its own box below. The bottom
+  tray (Apply) keeps its sticky edge on purpose — a verb rides the
+  scroll, a register holds still.
+- **8b — the single viewer.** Delete panes, strips, pin, drag-split,
+  dividers, the drag shield, `MAX_PANES`, `focusPaneAt`/Ctrl+1–5, the
+  `split-right` menu item (electron/main.ts + shared/api.ts + app.ts)
+  and the `expectOwnPane`/`expectPane`/`expectReplace` bookkeeping —
+  with one viewer, replace-what-is-showing is the only behaviour and
+  needs no flags. KEEP: the flat tab list and its state (modified,
+  savedPath, revision, thumbnails, layerView), the documents list as
+  navigator (`reorder` included), `heldProject`/`goHome`/
+  `releaseProject`, Ctrl+Tab cycling the flat list, the auto-open of
+  finished jobs (now: activate in THE viewer), and every closing/saving
+  question. `active` becomes one signal; Home is `active === null`.
+- **8c — the service split.** `TabsService` (3.4k lines, ~14 injection
+  sites) breaks along its real seams AFTER 8b shrinks it:
+  `NoticeService` (the strip's sentence — half the dialogs inject the
+  whole service for this one signal); `OpenDocumentsService` (the flat
+  list, identity, naming, flags, adopt/relocate, opening doors,
+  closing/saving + `pendingFlush`); `StageService` (what is on screen:
+  the active pointer as a `computed` that falls back to null when the
+  list loses it — so close never has to reach into the stage;
+  `heldProject`; later the compare state); `PositionSyncService` (the
+  three constructor effects, `showPosition`/`followDocuments`/
+  `standForTab`/`documentShown` — depends on all three above plus
+  ledger/projects, nothing depends on it); `BookStacksService` (the
+  `BookStack` registry, park/claim, undo/redo routing). Dependencies
+  run one way: Notice ← Documents ← Stage ← PositionSync.
+- **8d — Compare.** A Compare button on the single viewer opens a step
+  picker (the ledger's own rows, the app's scrim+menu idiom); picking
+  one splits the workspace into the live position-driven viewer beside
+  a READ-ONLY viewer locked to the chosen step, ✕ to leave, state
+  session-only. Main grows step-addressed reads beside the
+  position-addressed ones: `book:load-at(projectDir, stepId)` (replay
+  as of that step; refactor of `openBookAtPosition`'s position→row
+  resolution) and a step-addressed document resolve for pdf steps. The
+  book side reuses the `viewOnly` projection the export view already
+  is; scroll-locking the two columns is deferred out loud (the aligned
+  pair's machinery exists if it is ever asked for).
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the
