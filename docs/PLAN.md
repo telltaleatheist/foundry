@@ -769,7 +769,15 @@ longer earn their machinery. One selection was already the position
   ledger/projects, nothing depends on it); `BookStacksService` (the
   `BookStack` registry, park/claim, undo/redo routing). Dependencies
   run one way: Notice ← Documents ← Stage ← PositionSync.
-- **8d — Compare.** A Compare button on the single viewer opens a step
+- **8d — Compare. LANDED (this commit), closing the wave.** Two
+  channels added (`book:load-at`, `ledger:document-at-step`),
+  IPC-CHANNELS.md regenerated (66 → 68, keeper-shape verified against
+  source). Every clearing rule is a computed on the stage, not a
+  callback: live document closed, project changed, compared step
+  deleted. One decision to revisit if the user asks: the compare column
+  renders the FINISHED-BOOK projection (the `viewOnly` register), so a
+  compared edit step shows as its edition, not its workbench — chosen
+  over threading register state between columns. A Compare button on the single viewer opens a step
   picker (the ledger's own rows, the app's scrim+menu idiom); picking
   one splits the workspace into the live position-driven viewer beside
   a READ-ONLY viewer locked to the chosen step, ✕ to leave, state

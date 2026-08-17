@@ -1,6 +1,9 @@
 import { Injectable, computed, effect, inject, signal } from '@angular/core';
 
+import { fold } from '@shared/original';
+
 import { OpenDocumentsService, type Tab } from './documents.service';
+import { LedgerService } from './ledger.service';
 
 /**
  * WHAT IS ON SCREEN — one document, or Home.
@@ -49,6 +52,15 @@ import { OpenDocumentsService, type Tab } from './documents.service';
 @Injectable({ providedIn: 'root' })
 export class StageService {
   private readonly documents = inject(OpenDocumentsService);
+  /**
+   * The ledger, read for ONE question: does the compared step still exist?
+   *
+   * It is what makes `compare` below a computed rather than a signal somebody has
+   * to remember to clear — see its docblock. Nothing else on this class touches
+   * the ledger, and the position stays `PositionSyncService`'s subject entirely:
+   * this asks whether a row is in a list, not what the book is standing on.
+   */
+  private readonly ledger = inject(LedgerService);
 
   /**
    * THE ONE DOCUMENT ON SCREEN, by id — the single source the whole window reads.
@@ -82,6 +94,89 @@ export class StageService {
    * kept when the last of them closes, cleared only by leaving on purpose.
    */
   readonly heldProject = signal<string | null>(null);
+
+  /**
+   * THE STEP BEING COMPARED AGAINST, as the person asked for it — the raw wish.
+   *
+   * SESSION-ONLY AND DELIBERATELY NOT PERSISTED: a comparison is a thing you set
+   * up for the question you are asking right now, and a window that reopened
+   * yesterday's second column would be furniture arriving in a room nobody
+   * arranged. It is also never more than ONE — Compare is not the panes coming
+   * back (docs/PLAN.md §4, unit 8d) — which is why this is a nullable record and
+   * not a list.
+   *
+   * THE PROJECT RIDES WITH THE STEP because a step id alone is not enough to know
+   * whether the wish is still about the book on screen. Somebody comparing two
+   * rows of one book and then clicking a DIFFERENT book in the library has left
+   * the comparison behind; carrying only the id would leave a column open over a
+   * step belonging to a project nobody is looking at.
+   */
+  private readonly comparing = signal<{ projectDir: string; stepId: string } | null>(null);
+
+  /**
+   * THE COMPARISON, VALIDATED — null unless it is still about a real step of the
+   * book in front of the person.
+   *
+   * ── Every clearing rule the brief asks for, made structural ─────────────────
+   *
+   * A comparison has to end in three ways, and a signal somebody has to remember
+   * to clear would have three call sites to keep true. It is a computed instead,
+   * on exactly the precedent `active` above set: derive it and the rules cannot be
+   * forgotten.
+   *
+   *   THE LIVE DOCUMENT CLOSED, or the person pressed Home — `activeDocument()`
+   *   is null, so there is no project to be comparing within, so this is null.
+   *
+   *   THE SHOWN DOCUMENT'S PROJECT CHANGED — they clicked another book. The
+   *   recorded directory no longer matches the live one and the column goes with
+   *   the book it belonged to.
+   *
+   *   THE COMPARED STEP WAS DELETED — the ledger this window holds no longer has
+   *   a row with that id. A delete rewrites the held ledger (`LedgerService`
+   *   re-reads on `projects:changed`, which every delete fires), so the row
+   *   vanishing from the list IS the announcement, read where it lands rather than
+   *   subscribed to somewhere else and hoped for.
+   *
+   * A LEDGER THIS WINDOW HAS NOT READ YET IS NOT A CLEAR. `historyFor` answers
+   * null while a project's history is still in flight, and treating that silence
+   * as "the step is gone" would close the column somebody just opened. The
+   * comparison survives an unread ledger and is judged the moment there is a list
+   * to judge it against — the same shape `standForTab`'s first-focus guard uses.
+   */
+  readonly compare = computed<{ projectDir: string; stepId: string } | null>(() => {
+    const wish = this.comparing();
+    if (wish === null) return null;
+    const tab = this.activeDocument();
+    if (tab === null) return null;
+    const dir = this.documents.projectDirOf(tab);
+    if (dir === null || fold(dir) !== fold(wish.projectDir)) return null;
+    const history = this.ledger.historyFor(wish.projectDir);
+    if (history === null) return wish;
+    return history.ledger.steps.some((step) => step.id === wish.stepId) ? wish : null;
+  });
+
+  /**
+   * Put a second, read-only column beside the live one, locked to this step.
+   *
+   * THE PROJECT IS TAKEN FROM WHAT IS ON SCREEN rather than passed in, and that is
+   * what makes the picker's job small: a caller has a row of the ledger it is
+   * already drawing for the document in front of the person, so the only thing it
+   * can honestly name is the row. Nothing to compare against means nothing
+   * happens — with no document up there is no book for a second column to be a
+   * second view OF.
+   */
+  startCompare(stepId: string): void {
+    const tab = this.activeDocument();
+    if (tab === null) return;
+    const dir = this.documents.projectDirOf(tab);
+    if (dir === null) return;
+    this.comparing.set({ projectDir: dir, stepId });
+  }
+
+  /** The ✕ on the compare column. Nothing is closed; a second view is put away. */
+  stopCompare(): void {
+    this.comparing.set(null);
+  }
 
   constructor() {
     /*

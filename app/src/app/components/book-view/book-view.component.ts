@@ -24,6 +24,7 @@ import { replayOps, struckNotes, unwritten, type BookOp, type ReplayedRow } from
 
 import { api } from '../../core/foundry';
 import { LedgerService } from '../../core/ledger.service';
+import { ComparePickerComponent } from '../compare/compare-picker.component';
 import { BookStacksService, type BookStack } from '../../core/book-stacks.service';
 import { type Tab } from '../../core/documents.service';
 import { NoticeService } from '../../core/notice.service';
@@ -294,7 +295,7 @@ const SCROLL_SETTLE_MS = 400;
 
 @Component({
   selector: 'app-book-view',
-  imports: [NgTemplateOutlet],
+  imports: [NgTemplateOutlet, ComparePickerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <!--
@@ -513,6 +514,15 @@ const SCROLL_SETTLE_MS = 400;
     -->
     @if (!problem() && !loading()) {
       <div class="tray head" [style.display]="viewing() ? 'none' : null">
+        <!--
+          COMPARE SITS IN THE HEAD ROW, beside the registers, because this row is
+          already the answer to "what am I looking at, and how" — and a second
+          step beside this one is one more answer to that. It is drawn only where
+          this viewer is the LIVE one: the head is hidden entirely while
+          \`viewing()\` (an export view, and a compare column), so the control
+          cannot appear inside the very column it opens.
+        -->
+        <app-compare-picker />
         <div class="segments" role="group" aria-label="How this book is shown">
           <button
             type="button"
@@ -1924,6 +1934,23 @@ const SCROLL_SETTLE_MS = 400;
 })
 export class BookViewComponent {
   readonly tab = input.required<Tab>();
+  /**
+   * THE STEP THIS VIEWER IS LOCKED TO, or null for the ordinary case — the
+   * position.
+   *
+   * Compare's one wire into this component (docs/PLAN.md §4, unit 8d). Set, it
+   * changes exactly three things and nothing else: the book is read through
+   * `book:load-at` for the named row instead of `book:load` for the pointer,
+   * `viewing()` goes true so the whole read-only projection the export view has
+   * used for months applies, and no stack is registered — see each of the three.
+   *
+   * IT IS AN INPUT AND NOT A FLAG ON THE TAB, because a compare column's tab is
+   * synthetic (`CompareColumnComponent`) and `Tab` is the shape of a document the
+   * window HAS OPEN. Putting a step id on it would make every real tab carry a
+   * field that is meaningless for it, and would invite something in the documents
+   * service to start meaning something by it.
+   */
+  readonly atStep = input<string | null>(null);
 
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly stacks = inject(BookStacksService);
@@ -2037,7 +2064,8 @@ export class BookViewComponent {
    * no stack, no Apply, no register toggle, and every door that would edit
    * says where editing lives instead.
    */
-  protected readonly viewing = computed(() => this.tab().viewOnly === true);
+  protected readonly viewing = computed(() =>
+    this.tab().viewOnly === true || this.atStep() !== null);
 
   /**
    * WHETHER THE SOURCE STANDS BESIDE THE TRANSLATION — the second control, and
@@ -2259,6 +2287,18 @@ export class BookViewComponent {
        * are already standing on free.
        */
       this.tab().revision;
+      /*
+       * AND THE COMPARED STEP, which is the same fact one door along. A compare
+       * column's tab never moves — its path is the project and its revision is
+       * frozen at zero — so `atStep` is the only thing that says which book this
+       * instance is about, and picking a second row without leaving compare mode
+       * has to reach the load. Reading it HERE rather than only inside `load` is
+       * what makes that true of the component rather than of the way its host
+       * happens to be written: the compare column does destroy and rebuild this
+       * viewer between steps today, and a correctness that depends on somebody
+       * else's re-render is a correctness that ends the day they optimise it.
+       */
+      this.atStep();
       // Untracked, because the load writes the signals this component draws from,
       // and an effect that reads its own writes is a loop waiting for a disk.
       untracked(() => void this.load(dir));
@@ -2303,6 +2343,16 @@ export class BookViewComponent {
     let registered: string | null = null;
     effect(() => {
       const id = this.tab().id;
+      /*
+       * A COMPARED COLUMN REGISTERS NOTHING. The registry answers "which book
+       * viewer is in this tab" for the undo chord and the closing question, and a
+       * compare column is neither: it has no tab in the list to be closed, and
+       * Ctrl+Z means the document in front of the person, which is the OTHER
+       * column. Registering under a synthetic id would put an entry in the map
+       * that nothing can reach and that a future reader would have to work out is
+       * unreachable.
+       */
+      if (this.atStep() !== null) return;
       untracked(() => {
         if (registered === id) return;
         if (registered !== null) stacks.releaseBookStack(registered);
@@ -2498,9 +2548,24 @@ export class BookViewComponent {
       );
     }
     try {
-      const loaded = this.viewing()
-        ? await api.book.view(projectDir)
-        : await api.book.load(projectDir);
+      /*
+       * THREE DOORS ONTO ONE SHEET, and which one is asked is decided here.
+       *
+       * A COMPARED STEP goes first, because it is the narrowest: `atStep` names a
+       * row of this project's own history and `book:load-at` replays the chain to
+       * it. It is tested before `viewing()` even though it turns `viewing()` on —
+       * an export view is a FILE and a compared step is a POSITION in a project,
+       * and the two reach entirely different books.
+       *
+       * AN EXPORT VIEW is a finished file exploded read-only; the position is
+       * everything else, which is every ordinary open of this viewer.
+       */
+      const at = this.atStep();
+      const loaded = at !== null
+        ? await api.book.loadAt(projectDir, at)
+        : this.viewing()
+          ? await api.book.view(projectDir)
+          : await api.book.load(projectDir);
       if (ticket !== this.asked) return;
       if (loaded.ok) {
         this.book.set(loaded);

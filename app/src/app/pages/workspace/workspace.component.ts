@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 
+import { CompareColumnComponent } from '../../components/compare/compare-column.component';
 import { HomeComponent } from '../../components/home/home.component';
 import { NoticeBarComponent } from '../../components/notice-bar/notice-bar.component';
 import { ViewerComponent } from '../../components/viewer/viewer.component';
@@ -35,7 +36,13 @@ import { StageService } from '../../core/stage.service';
  *
  * ── The three states, in the order they are asked ────────────────────────────
  *
- * A DOCUMENT IS SHOWN: `app-viewer` fills the window with it.
+ * A DOCUMENT IS SHOWN: `app-viewer` fills the window with it — beside a second,
+ * READ-ONLY column while a comparison is up (unit 8d). That second column is the
+ * only thing that has been added back to this page since the panes left, and the
+ * shape of it is the argument for why it is not them coming back: there is one,
+ * it is driven by one signal on the stage, it takes no gesture that could change
+ * anything, and it has an ✕. See the `.row` styles for the layout rule, which is
+ * "two equal halves or one whole" and nothing else.
  *
  * NOTHING IS SHOWN AND A PROJECT IS HELD: the quiet bench. Closing the last
  * document used to bounce the window to Home, which reads as being thrown out of
@@ -76,15 +83,28 @@ import { StageService } from '../../core/stage.service';
  */
 @Component({
   selector: 'app-workspace',
-  imports: [HomeComponent, NoticeBarComponent, ViewerComponent],
+  imports: [CompareColumnComponent, HomeComponent, NoticeBarComponent, ViewerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <app-notice-bar />
 
     @if (stage.activeDocument(); as tab) {
-      <section class="stage" (pointerdown)="stand(tab.id)">
-        <app-viewer [tab]="tab" />
-      </section>
+      <!--
+        ONE COLUMN, OR TWO WHILE A COMPARISON IS UP.
+
+        The row is present either way and holds one child in the ordinary case,
+        so the live viewer's box is the same element whether or not a second
+        column is beside it — a viewer that was re-created by opening a
+        comparison would lose the reader's place in the book they were reading.
+      -->
+      <div class="row">
+        <section class="stage" (pointerdown)="stand(tab.id)">
+          <app-viewer [tab]="tab" />
+        </section>
+        @if (stage.compare() !== null) {
+          <app-compare-column />
+        }
+      </div>
     } @else if (heldTitle(); as title) {
       <!--
         NOTHING OPEN IS NOT NO PROJECT. The window keeps the book it was working
@@ -107,19 +127,42 @@ import { StageService } from '../../core/stage.service';
     :host { display: flex; flex-direction: column; height: 100%; }
 
     /*
-      THE STAGE IS THE WHOLE WINDOW. There is nothing to lay out beside it, so
-      there is no \`min-width\` floor to argue about and no divider to clamp
-      against — the two numbers this file used to carry (280px of column, a
-      quarter of the pane as an edge band) were both about arrangements that no
-      longer exist.
+      THE ROW IS ONE COLUMN OR TWO, AND NOTHING ARRANGES IT.
+
+      This is not the panes coming back (docs/PLAN.md §4, unit 8d). There is no
+      divider, no drag, no flex the user can move and no number remembered
+      anywhere: two equal halves while a comparison is up, one whole while it is
+      not. A COMPARISON IS A QUESTION, NOT A LAYOUT — it has a beginning (the
+      Compare button) and an end (the ✕ on the second column), and the moment it
+      grew a draggable edge it would start being furniture somebody has to tidy.
+
+      FIFTY-FIFTY IS THE WHOLE RULE, and it is v1 said out loud rather than a
+      first step towards a splitter. Two books being read against each other want
+      the same width; the one case that might not — a narrow scan beside a wide
+      reflow — is answered by the PDF viewer's own zoom, which is a read and
+      already there.
     */
-    .stage {
-      flex: 1;
+    .row { display: flex; flex: 1; min-height: 0; }
+
+    /*
+      \`min-width: 0\` and no floor, which is the flat rule the columns never
+      managed to have. A hard minimum would make the pair overflow a narrow
+      window — the row would scroll sideways and half a book would be off screen,
+      which is worse than a cramped one. With at most two children and no
+      dragging, cramped is the only failure available and it is recoverable by
+      pressing ✕.
+    */
+    .stage, app-compare-column {
+      flex: 1 1 0;
+      min-width: 0;
       min-height: 0;
       display: flex;
       flex-direction: column;
       overflow: hidden;
     }
+    /* The seam between the two, drawn on the second column so a single column
+       never carries a border it has nothing to be separated from. */
+    app-compare-column { border-left: 1px solid var(--border-default); }
     app-viewer, app-home { flex: 1; min-height: 0; }
 
     /* The empty workspace of a held project: the shell's own quiet, not the
