@@ -577,3 +577,112 @@ message channel). Mount contract acknowledged as the letter; one open
 question posted on the message channel: what exactly the copy takes
 (`app/` source vs built artifacts, and the build command). Full
 family-by-family table in `C:\tmp\bookforge-to-foundry.md` (19:20 entry).
+
+**2026-08-17 — the provenance tree is the pipeline composer now, and the mount
+contract has a HOST-OPERATIONS SOCKET. Built in your repo, on
+`tree/composer-and-host-ops`.**
+
+Owen approved a pipeline redesign; half of it is Foundry's and we built that
+half here, the same arrangement as the `window:close` work — review at your
+leisure and correct us on this channel or in `#foundrynotes`. Two things
+landed, and the second is a contract addition, so it is written out in full.
+
+**1. The tree redesign** (`app/src/app/components/open-documents/`). The
+indented row list is node CARDS on a drawn lineage line: a state dot on a
+spine, a card to the right of it, branches curving off with a rounded elbow
+into an indented lane. Solid line and filled dot mean it exists; dashed line
+and hollow dot mean it is the plan. Titles are sentences derived from the
+step's action and params ("Translated into German", "Simplified into plain
+terms", "Applied changes") with `from **<parent>**` underneath.
+**`LedgerStep.label` is untouched** — it is still the record of what the act
+was called when it happened and it is still what the tooltip says; the
+sentences are display, composed from `params` and never stored. Every
+behavioural ruling is intact: a click on a node still MOVES THE POSITION and
+is not a tab, exports are still terminal children of the root at the Book's
+indent, a step card still wears no ✕, collapse is still a session. What
+changed is geometry and language. The panel is 288px rather than 220px, which
+is the redesign's one real cost.
+
+A selected card grows a **"from here" footer** offering Translate, Simplify
+and Export — the same `UiService` dialogs the dock opens, aimed the way aiming
+has always worked here (stand on the node, then open the dialog). The dock
+stays exactly where it is.
+
+**2. The socket.** `FoundryHost` gains one optional member, and `mount.ts`
+exports one new function:
+
+```ts
+// app/electron/mount.ts
+export interface FoundryHost {
+  libraryDir: string;
+  onExport(landing: ExportLanding): void;
+  onImport?(landing: ImportLanding): void;
+  hostOperations?: readonly HostOperation[];   // NEW — read once, at mount
+}
+
+export interface HostOperation {        // electron/host-ops.ts, re-exported by mount
+  id: string;                           // yours; what invoke is named by
+  label: string;                        // "Narrate"
+  kind: 'narrate' | 'enhance' | 'assemble';  // picks the icon and the amber tint
+  appliesTo: 'book' | 'audio';          // what a node must PRODUCE to offer this
+  invoke(projectDir: string, nodeId: string): void | Promise<void>;
+}
+
+export function setHostNodes(projectDir: string, nodes: readonly HostNode[]): void;
+
+export interface HostNode {             // shared/types.ts
+  id: string;                           // yours, unique within the project
+  parentStepId: string;                 // a LEDGER step id — learned from invoke
+  title: string;                        // "Narrating with Leah"
+  detail: string;                       // "queued · 2nd in line" / the failure sentence
+  kind: 'narrate' | 'enhance' | 'assemble';
+  state: 'queued' | 'running' | 'done' | 'failed';
+  progress?: { percent: number; message: string; eta: string };
+}
+```
+
+- **Registration is mount-time and final.** One process, one mount, so the
+  offers are a fact for the life of the window — the renderer asks once,
+  exactly as it asks `app:hosted`. What changes while the app runs is what you
+  are MAKING, and that is the push.
+- **`setHostNodes` is the push door, and it takes the WHOLE SET for one
+  project.** `queue:changed`'s precedent: a diff between two processes goes
+  wrong silently, and the set is a handful of rows. Pushing without a node is
+  how a node leaves; pushing `[]` is a real statement and is kept as one.
+  Nothing is written to disk on this side, so a BookForge restart that pushes
+  nothing means there were never any audio nodes — the honest answer, since the
+  queue that knew about them is gone too.
+- **YOUR NODES ARE NOT LEDGER STEPS AND NEVER WILL BE.** They are display rows
+  parented on a ledger step, with the lifetime of your own queue. They cannot
+  be stood on, split, deleted, dragged or right-clicked; they are never
+  anybody's parent in `project.json`; they do not exist standalone. A
+  `parentStepId` naming a step the project does not have simply draws nothing —
+  we do not refuse a push, because you learned that id from us.
+- **Chaining is expressed by the node id.** The footer offers your operations
+  from any node whose OUTPUT matches `appliesTo` — including one that is still
+  `queued` — and `invoke` is handed the id of the node the user pressed it on:
+  a ledger step id when the act was ordered from something Foundry made, one of
+  YOUR node ids when it was chained onto work that has not finished. You minted
+  one of them, so you can tell them apart. `appliesTo` gates in both
+  directions: Translate is never offered on a narration, Assemble is never
+  offered on a book.
+- **A rejection from `invoke` is NOT swallowed** — unlike `onExport`/`onImport`,
+  which are announcements about something that already happened. This is a
+  button somebody pressed, so your sentence travels back and lands on Foundry's
+  notice strip verbatim.
+- **New channels, all in a `host-ops:` family** — `host-ops:offers`,
+  `host-ops:nodes`, `host-ops:invoke` (handles) and `host-ops:changed` (push).
+  The family is new on purpose: you own nothing in it, so the socket is
+  collision-safe by construction rather than by re-running the audit every time
+  it grows a door. `docs/IPC-CHANNELS.md` is regenerated — 66 handles, 12
+  pushes, 25 families.
+- **Standalone Foundry is unchanged.** No host means no operations and nobody
+  pushing; both doors answer empty and the tree draws what it drew before.
+  There is no `hosted()` branch anywhere in the tree — the socket is lists, and
+  empty lists draw nothing.
+
+One amber token was introduced for this (`--audio: #f0a860`, `styles.scss`):
+the accent stays this app's own work on the words, amber is the host's work on
+the audio, and a branch that changes hands is legible without reading a title.
+
+Gates green: both `tsc` configs, `ng build`, 384 bun tests.
