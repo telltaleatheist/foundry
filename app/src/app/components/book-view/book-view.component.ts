@@ -729,39 +729,63 @@ const SCROLL_SETTLE_MS = 400;
             }
             @if (line.chapter; as title) {
               <div class="chapter">
-                @if (renaming() === line.row.id) {
-                  <!--
-                    *"Double-click the chip to rename in place"* — §4, and the chip
-                    itself is the field, exactly as the block itself is the editor
-                    one level down. \`plaintext-only\` for the same reason: a title
-                    is characters, and a rich contenteditable would let a paste
-                    bring markup into one.
-                  -->
-                  <span
-                    class="chapter-chip naming"
-                    contenteditable="plaintext-only"
-                    (pointerdown)="$event.stopPropagation()"
-                    (blur)="commitChapter(line.row.id, title, $event)"
-                    (keydown.enter)="commitChapter(line.row.id, title, $event)"
-                    (keydown.escape)="abandonChapter(title, $event)"
-                  >{{ title }}</span>
-                } @else {
-                  <!--
-                    Drag to move the division (§4: the rule lifts, the candidate
-                    seams glow, the drop settles it) — pointer-captured on the
-                    chip, engaged past the same slop that separates a click from
-                    a marquee, so the double-click rename underneath survives.
-                  -->
-                  <span
-                    class="chapter-chip"
-                    [class.grabbed]="draggingRule()?.id === line.row.id"
-                    (pointerdown)="grabRule($event, line.row.id)"
-                    (pointermove)="dragRule($event)"
-                    (pointerup)="dropRule($event)"
-                    (pointercancel)="dropRule($event)"
-                    (dblclick)="rename(line.row.id, $event)"
-                  >{{ title }}</span>
-                }
+                <div class="chapter-head">
+                  @if (renaming() === line.row.id) {
+                    <!--
+                      *"Double-click the chip to rename in place"* — §4, and the chip
+                      itself is the field, exactly as the block itself is the editor
+                      one level down. \`plaintext-only\` for the same reason: a title
+                      is characters, and a rich contenteditable would let a paste
+                      bring markup into one.
+                    -->
+                    <span
+                      class="chapter-chip naming"
+                      contenteditable="plaintext-only"
+                      (pointerdown)="$event.stopPropagation()"
+                      (blur)="commitChapter(line.row.id, title, $event)"
+                      (keydown.enter)="commitChapter(line.row.id, title, $event)"
+                      (keydown.escape)="abandonChapter(title, $event)"
+                    >{{ title }}</span>
+                  } @else {
+                    <!--
+                      Drag to move the division (§4: the rule lifts, the candidate
+                      seams glow, the drop settles it) — pointer-captured on the
+                      chip, engaged past the same slop that separates a click from
+                      a marquee, so the double-click rename underneath survives.
+                    -->
+                    <span
+                      class="chapter-chip"
+                      [class.grabbed]="draggingRule()?.id === line.row.id"
+                      (pointerdown)="grabRule($event, line.row.id)"
+                      (pointermove)="dragRule($event)"
+                      (pointerup)="dropRule($event)"
+                      (pointercancel)="dropRule($event)"
+                      (dblclick)="rename(line.row.id, $event)"
+                    >{{ title }}</span>
+                    <!--
+                      THE MARKER'S OWN ✕ — *"the green dotted line can have an X
+                      next to the text"* (user ruling, 2026-08-17). Removing a
+                      division used to live only in the Chapters panel, which made
+                      the one place a person SEES the rule the one place they could
+                      not take it away. Revealed on hover of the rule rather than
+                      always drawn, because the paper's marks stay quiet until the
+                      hand is near them — and the space is held either way, so
+                      nothing shifts under the pointer. \`pointerdown\` is stopped
+                      for the chip's own reason: a press on the sheet takes pointer
+                      capture, and a captured pointer retargets the click that
+                      follows to the sheet, where it would arrive with no idea
+                      which rule it had been about.
+                    -->
+                    <button
+                      type="button"
+                      class="chapter-x"
+                      aria-label="Remove this chapter marker — the text stays; the division goes"
+                      title="Remove this chapter marker"
+                      (pointerdown)="$event.stopPropagation()"
+                      (click)="dropChapter(line.row.id)"
+                    >✕</button>
+                  }
+                </div>
               </div>
             }
             <!--
@@ -1024,6 +1048,22 @@ const SCROLL_SETTLE_MS = 400;
             <span class="swatch" [style.background]="open.colour"></span>
             Edit this block
           </button>
+          <!--
+            *"right-click a block and hit 'add chapter marker', and itll add a
+            chapter break above that block"* (user ruling, 2026-08-17). The
+            second block-scoped verb, beside Edit — the panel's "chapter starts
+            here" button said the same thing about a block picked on the paper,
+            and this is that verb offered where the block already is, without
+            the trip through a selection. The swatch wears the chapter ink
+            rather than the category's, because the verb is about the green
+            world of divisions and not about what kind of block this is.
+          -->
+          @if (!open.chapter) {
+            <button role="menuitem" (click)="chapterFromMenu()">
+              <span class="swatch" style="background: var(--ink-chapter)"></span>
+              Add a chapter marker above this block
+            </button>
+          }
           <button role="menuitem" (click)="selectSimilar()">
             <span class="swatch" [style.background]="open.colour"></span>
             Select {{ open.ids.length === 1 ? 'the 1' : 'all ' + open.ids.length }} {{ open.plural }}
@@ -1562,10 +1602,18 @@ const SCROLL_SETTLE_MS = 400;
       margin: 2rem 0 1.25rem;
       border-top: 2px dashed color-mix(in srgb, var(--ink-chapter) 65%, transparent);
     }
-    .chapter-chip {
+    /* The chip and its ✕ ride the rule together: the group carries the
+       absolute anchoring the chip used to carry alone, so the ✕ sits beside
+       the title wherever the title ends without arithmetic about its width. */
+    .chapter-head {
       position: absolute;
       top: -0.8em;
       left: calc(var(--gutter) * -1 + 0.9rem);
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+    .chapter-chip {
       padding: 0.1rem 0.45rem;
       border: 1px solid color-mix(in srgb, var(--ink-chapter) 45%, transparent);
       border-radius: 999px;
@@ -1596,6 +1644,23 @@ const SCROLL_SETTLE_MS = 400;
       box-shadow: 0 1px 3px rgb(0 0 0 / .25);
       touch-action: none;
     }
+    /* The marker's ✕ — quiet until the hand is near the rule, and the space
+       held either way so nothing shifts under the pointer on its way to it. */
+    .chapter-x {
+      padding: 0 0.32rem;
+      border: 1px solid color-mix(in srgb, var(--ink-chapter) 45%, transparent);
+      border-radius: 999px;
+      background: var(--paper-high);
+      color: var(--ink-chapter);
+      font-size: 10px;
+      line-height: 1.5;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity var(--t-fast) var(--ease);
+    }
+    .chapter:hover .chapter-x, .chapter-x:focus-visible { opacity: 1; }
+    .chapter-x:hover { background: color-mix(in srgb, var(--ink-chapter) 12%, var(--paper-high)); }
+    .chapter-x:focus-visible { outline: 2px solid var(--ink-select); outline-offset: 2px; }
     .block.drop-target::before {
       content: '';
       position: absolute;
@@ -4017,8 +4082,16 @@ export class BookViewComponent {
   protected readonly context = signal<{
     x: number;
     y: number;
-    /** The block under the pointer — the menu's one block-scoped verb, Edit. */
+    /** The block under the pointer — the menu's block-scoped verbs act on it. */
     id: string;
+    /**
+     * True when a division already starts at this block, so the menu does not
+     * offer to add one that is already there. \`set\` would legally retitle it
+     * (ChapterSetOp says so on purpose), but a menu item that RENAMES under a
+     * label that says ADD is the kind of quiet lie the chip's own double-click
+     * rename exists to make unnecessary.
+     */
+    chapter: boolean;
     colour: string;
     plural: string;
     ids: string[];
@@ -4037,6 +4110,7 @@ export class BookViewComponent {
       x: event.clientX,
       y: event.clientY,
       id: line.row.id,
+      chapter: line.chapter !== null,
       colour: line.colour,
       // "Text" pluralises into nonsense; every other category reads naturally.
       plural: line.row.category === 'Text' ? 'text blocks' : `${line.label.toLowerCase()}s`,
@@ -4051,6 +4125,36 @@ export class BookViewComponent {
     this.context.set(null);
     if (open === null) return;
     this.beginEditing(open.id);
+  }
+
+  /**
+   * The menu's "add a chapter marker": a division above the block, titled with
+   * the block's own first line.
+   *
+   * THE SEED IS THE PANEL'S SEED, deliberately (`makeSheetChapter`,
+   * inspector.component.ts): it is right far more often than any other guess,
+   * it is exactly what the detection would have called it, and it is a starting
+   * point rather than a rule — the chip is renameable the moment it appears.
+   * One op, so Ctrl+Z takes the whole gesture back.
+   */
+  protected chapterFromMenu(): void {
+    const open = this.context();
+    this.context.set(null);
+    if (open === null || open.chapter) return;
+    const row = this.view()?.rows.find((one) => one.id === open.id);
+    if (row === undefined) return;
+    const words = row.text.split('\n')[0]?.trim() ?? '';
+    this.push({ op: 'chapter', set: open.id, title: words.slice(0, 120) });
+  }
+
+  /**
+   * The chip's ✕ — the division above this block, taken away where it is drawn.
+   * The op the Chapters panel's remove has always pushed (`dropSheetChapter`),
+   * said from the paper: the block stays, the rule goes, and undo brings it
+   * back title and all because the title travels with the op it reverses.
+   */
+  protected dropChapter(id: string): void {
+    this.push({ op: 'chapter', remove: id });
   }
 
   /** The selection becomes the category — rails up, chips up, Delete waiting. */
