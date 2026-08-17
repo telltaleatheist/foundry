@@ -482,6 +482,20 @@ exists (`originalPath` resolved by main from the catalogue; `managed` = did
 Foundry make the document) — `openFoundryWindow` never creates a project, and
 import happens only inside the window by the user's own gesture.
 
+**2026-08-16 — contract addendum: the deep-link learns to name a file.**
+
+```ts
+export function openFoundryWindow(projectDir?: string, opts?: { document?: string }): void;
+```
+
+A named `document` (absolute path) IS the landing: it goes through
+`openDocument` — the single door the menu, a drop and argv use — so the same
+admission rules apply and a host can never open a file a drop would have
+refused. The project context comes free (a file inside a project adopts into
+it); `project:open` is deliberately not also sent, because a button named
+Open lands on the file, not on the proof sheet beside it. A refusal is a
+logged console line. Built for the host's per-version Open button.
+
 **2026-08-16 — contract addendum: `foundryBusy`, the probe a host's dangerous
 doors gate on.**
 
