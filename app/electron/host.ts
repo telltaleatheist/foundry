@@ -18,7 +18,7 @@
  * the whole reason the record is here rather than in `mount.ts`, the module that
  * writes it and that sits at the top of everything.
  */
-import type { ExportLanding } from '../shared/types';
+import type { ExportLanding, ImportLanding } from '../shared/types';
 
 /**
  * What a host tells Foundry about itself, and the one thing it asks to be told.
@@ -47,6 +47,17 @@ export interface FoundryHost {
    * not turn a landed export into a failed job.
    */
   onExport(landing: ExportLanding): void;
+  /**
+   * A file from outside the library just became a project — the first-contact
+   * announcement, so a host that opened the bare window for one of its books
+   * can learn which project key Foundry minted for it (`ImportLanding`,
+   * shared/types.ts, which carries the why). OPTIONAL where `onExport` is not:
+   * exports are the reason a host mounts Foundry at all, while a host may
+   * track its books some other way and have no use for first contact.
+   *
+   * Same error posture as `onExport`: caught and logged at the call.
+   */
+  onImport?(landing: ImportLanding): void;
 }
 
 let host: FoundryHost | null = null;

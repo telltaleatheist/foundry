@@ -96,6 +96,7 @@ import { stampEpub } from './engine';
 import { openedAtFor } from './recents';
 import type {
   ConversionKind,
+  ImportLanding,
   LedgerParams,
   LedgerStep,
   MetadataPatch,
@@ -956,6 +957,23 @@ async function stampImported(file: string): Promise<string | null> {
  * put it. Copied and never written, because from here on the working copy is
  * what this app edits.
  */
+/**
+ * What an import from outside the library announces, the moment it lands —
+ * `onQueueChanged`'s shape for `onQueueChanged`'s reason: this module's business
+ * is the projects on disk, not who is hosting the app, and the one place that
+ * knows whether anybody is listening (electron/mount.ts) wires it. One listener,
+ * replaced rather than appended, exactly like the queue's pair.
+ *
+ * Fired for the OUTSIDE branch of `importDocument` only: a path already inside a
+ * project is the app noticing its own file, and there is no first contact to
+ * witness.
+ */
+let importLanded: (landing: ImportLanding) => void = () => { /* set by mount */ };
+
+export function onImportLanded(listener: (landing: ImportLanding) => void): void {
+  importLanded = listener;
+}
+
 export async function importDocument(
   filePath: string,
   kind: 'pdf' | 'epub',
@@ -975,7 +993,7 @@ export async function importDocument(
   const dir = path.join(projectsDir(), key);
   const live = kind === 'pdf' ? WORKING : GENERATED;
 
-  return withCreatedProject(dir, key, stemOf(name), async (manifest) => {
+  const imported = await withCreatedProject(dir, key, stemOf(name), async (manifest) => {
     // `manifest.stem` and NOT the name this call computed. A project adopted
     // from the flat workspace was named after a slug, and every file already in
     // it carries that name; a second name arriving with a later import would put
@@ -1112,6 +1130,21 @@ export async function importDocument(
     announceProjects();
     return { dir, entry: `${live}/${liveFile}`, key, stem: manifest.stem, notice };
   });
+  /*
+   * AFTER the manifest is durably written — a host that goes looking at the
+   * folder this names must find a catalogue in it. Caught here for the queue's
+   * reason at its own settle: the import has landed whatever a listener does
+   * with the news.
+   */
+  try {
+    importLanded({ projectDir: dir, originalPath: resolved, kind });
+  } catch (err) {
+    console.error(
+      `[projects] the import-landed listener threw for ${resolved}: `
+      + `${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  return imported;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

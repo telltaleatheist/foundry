@@ -1214,6 +1214,36 @@ export interface ExportLanding {
 }
 
 /**
+ * AN IMPORT, THE MOMENT IT LANDS — the other thing Foundry says out loud to a
+ * host, and the mirror of `ExportLanding`: that one is how finished work leaves
+ * the window, this one is how a book's very first contact is witnessed.
+ *
+ * ── The problem it exists to close ──────────────────────────────────────────
+ *
+ * Hosted, a book with no Foundry project yet is opened through a BARE window —
+ * the host cannot deep-link into a project that does not exist — and the user
+ * imports the file inside it. Foundry mints the project and chooses its key,
+ * and without this announcement the host never learns which key belongs to
+ * which of its books: its export matching would refuse every landing from a
+ * first-import project as unknown. So the moment an import from OUTSIDE the
+ * library lands, the host is told which file became which project, and
+ * `originalPath` is the thread it matches on — the file it watched the user
+ * open is a file it already knows.
+ *
+ * FIRES ON RE-IMPORT TOO, deliberately: importing the same book twice resolves
+ * to the same project, and a host that lost its mapping gets it back by the
+ * same announcement rather than by a recovery door nobody would build.
+ */
+export interface ImportLanding {
+  /** The project the import minted (or resolved to) — the folder, absolute. */
+  projectDir: string;
+  /** The file the user imported, absolute, at its own home outside the library. */
+  originalPath: string;
+  /** `pdf` or `epub` — which kind of origin the project now holds. */
+  kind: string;
+}
+
+/**
  * One reading's page-for-page reprint, in `generated/`. See
  * `ProjectSummary.facsimiles`, which is the only thing that carries these and
  * where the whole argument for the shape lives.

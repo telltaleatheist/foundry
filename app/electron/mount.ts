@@ -52,7 +52,7 @@ import { bookFigureFile } from './book';
 import { type FoundryHost, recordHost } from './host';
 import { registerIpc } from './ipc';
 import * as queue from './job-queue';
-import { listProjects } from './projects';
+import { listProjects, onImportLanded } from './projects';
 import * as vllm from './vllm-server';
 import { isDev, openWindow, whenRendererReady } from './window';
 import { originalOf } from '../shared/original';
@@ -270,6 +270,22 @@ export function mountFoundry(host?: FoundryHost): void {
         );
       }
     });
+    // First contact, for the host that asked to hear it — how the bare-window
+    // import door (Import via Foundry) tells the host which project key its
+    // book was given. Optional where onExport is not; see FoundryHost.
+    const heardImport = host.onImport?.bind(host);
+    if (heardImport !== undefined) {
+      onImportLanded((landing) => {
+        try {
+          heardImport(landing);
+        } catch (err) {
+          console.error(
+            `[mount] the host's onImport threw for ${landing.originalPath}: `
+            + `${err instanceof Error ? err.message : String(err)}. The import itself landed.`,
+          );
+        }
+      });
+    }
   }
   applyContentSecurityPolicy();
   registerFileProtocol();
