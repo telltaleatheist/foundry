@@ -8,7 +8,7 @@ import type { JobKind } from '@shared/types';
 import { LedgerService } from './ledger.service';
 import { ProjectsService } from './projects.service';
 import { QueueService } from './queue.service';
-import { api } from './foundry';
+import { api, hosted } from './foundry';
 
 /**
  * The open documents — the list down the left, and the one place that knows
@@ -2572,6 +2572,7 @@ export class TabsService {
     if (this.focused() === paneId) {
       this.focused.set(kept[Math.min(at, kept.length - 1)]?.id ?? null);
     }
+    this.leaveIfHostedAndEmpty();
   }
 
   /**
@@ -2969,6 +2970,42 @@ export class TabsService {
     if (focusAt >= 0) {
       this.focused.set(kept[Math.min(focusAt, kept.length - 1)]?.id ?? null);
     }
+    this.leaveIfHostedAndEmpty();
+  }
+
+  /**
+   * HOSTED, THE LAST COLUMN GOING TAKES THE WINDOW WITH IT.
+   *
+   * *"when I closed the tabs it brought me to the 'foundry home', which is a
+   * project picker. It shouldn't bring me there. It should just close the window
+   * if it runs out of tabs."* (User ruling, 2026-08-16.) Hosted, the books are
+   * BookForge's and Home is a second answer to "what books do I have" — the same
+   * rule that already takes the dock's Home button and Home's own recents away
+   * (`hosted`, core/foundry.ts). The held bench above it is no better: it offers
+   * a tree and a way back to a library this window is not the app for.
+   *
+   * STANDALONE NOTHING CHANGES, and that is not a concession — Home is where the
+   * app legitimately begins, and the bench that keeps the project past its last
+   * tab is last month's ruling about being thrown out of the room you were
+   * working in (see the constructor's `heldProject` effect).
+   *
+   * ASKED ONLY WHERE A CLOSE EMPTIED THE COLUMNS, never from an effect on the
+   * count. A hosted window has no columns for the moment between loading and the
+   * document it was opened for arriving (`openFoundryWindow`, electron/mount.ts),
+   * and a watcher on "no columns" would shut the window before the file got
+   * there. Both callers here are gestures — the last document closed, and the ✕
+   * on the last empty column — which is what "runs out of tabs" means.
+   *
+   * IT IS THE ✕'S OWN PATH. `closeWindow` re-enters the window's close handler in
+   * main, so the documents are asked what closing costs exactly as they always
+   * are — an answer of yes, immediately, with nothing left open.
+   */
+  private leaveIfHostedAndEmpty(): void {
+    if (!hosted() || this.columns().length > 0) return;
+    // `hosted()` is only ever true because main answered `app:hosted`, so there
+    // is a bridge here by construction. The `?.` is this file's spelling for
+    // reaching main, not a second opinion about whether one exists.
+    void api?.closeWindow();
   }
 
   async closeActive(): Promise<void> {
