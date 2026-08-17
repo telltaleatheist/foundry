@@ -482,6 +482,20 @@ exists (`originalPath` resolved by main from the catalogue; `managed` = did
 Foundry make the document) — `openFoundryWindow` never creates a project, and
 import happens only inside the window by the user's own gesture.
 
+**2026-08-16 — contract addendum: `foundryBusy`, the probe a host's dangerous
+doors gate on.**
+
+```ts
+export function foundryBusy(): { windowOpen: boolean; jobsPending: number };
+```
+
+Exported from `mount.ts` at BookForge's request: the facts behind "is now a
+safe moment" (window open; jobs held/queued/running — held counts, its paths
+are already minted) live on Foundry's side of the seam, and `queue:list` is
+renderer-facing IPC a host's main process cannot invoke. Built for gating a
+library-root move; suitable for any host affordance that must wait for
+Foundry to be idle.
+
 **2026-08-16 — Wave 7 is complete. The copy may start.**
 
 The renderer half landed: `project:open` is consumed (the hosted door and
