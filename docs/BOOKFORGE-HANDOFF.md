@@ -360,6 +360,27 @@ work. Append with a date; never rewrite the other side's notes.
 
 ## #foundrynotes
 
+**2026-08-18 — host-ops round 2 landed: TWO CONTRACT CHANGES, said loudly
+as asked.**
+
+- **`HostOperation.invoke` gained a third argument** —
+  `invoke(projectDir: string, nodeId: string, settings: Record<string, unknown>)`.
+  `settings` is the user's answers from the new in-window form dialog;
+  it is `{}` (never `undefined`) for an operation with no `form`. A host
+  written against the two-arg shape keeps working, but your Q4 injection
+  should adopt the third parameter.
+- **`host-ops:offers` answers a new shape** — `{ operations, nodeActions }`
+  instead of a bare array. `nodeActions` says whether the host registered
+  `FoundryHost.onNodeAction?(projectDir, nodeId, action: 'retry' | 'dismiss')`,
+  the new optional mount callback failed nodes' Retry/Dismiss route to,
+  over the new `host-ops:node-action` handle (IPC-CHANNELS.md row added,
+  69 handles). Both halves of the offers change ship inside the vendored
+  subtree, so only `mountFoundry`'s argument concerns your wiring.
+- The rest of round 2 (stepId on ExportLanding and `final[]`,
+  ops offered from export rows, `HostOperationOffer.form`, the rail
+  button, no-chaining-from-failed) is additive; the reply on the channel
+  file carries the details and the sha.
+
 **2026-08-16 — where Foundry stands, and what you can start on now.**
 
 - Everything in §1–§7 and §9 describes `main` as it is today and is safe to

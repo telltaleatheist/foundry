@@ -826,6 +826,50 @@ commit so BookForge's keeper test stays green. After a unit lands and
 pushes, propagation is a STEP, not automatic: tell a BookForge session
 "re-vendor foundry".
 
+### Wave 9 — host-ops round 2 — LANDED (this commit)
+### (BookForge channel, 2026-08-18; Owen's rulings from first real use)
+
+The inbound section "2026-08-18 — host-ops round 2" of
+C:\tmp\bookforge-to-foundry.md is the letter of the ask. Four items, all
+additive, socket shape survives. BookForge is vendored at `6925d21` and
+re-vendors after this lands; if `invoke`'s signature changes it must be
+announced loudly on the outbound channel and in #foundrynotes.
+
+- **9a — `stepId` on ExportLanding and on `final[]`.** The landing
+  carries the ledger step the export replayed to; `final[]` rows in
+  project.json record it so the host's sweep can read it for landings
+  it missed; the tree's export rows learn their parent step. Backward
+  compatible: absent stepId = unique-export-or-refuse, exactly today.
+  ExportLanding's docblock currently argues "no step, no ledger" — the
+  reversal is recorded there in BookForge's words, not papered over.
+- **9b — host operations offered from EXPORT rows.** The export row IS
+  the file narration consumes; `offeredFrom` runs for export rows with
+  `appliesTo: 'book'` ops appearing there, invoke carrying the precise
+  target 9a makes possible.
+- **9c — the in-window operation dialog + rail button.**
+  `HostOperationOffer` grows optional `form?: HostOpField[]` (select /
+  number / toggle / text, options, default, min/max, help);
+  Foundry renders a generic dialog from it in the translate dialog's
+  visual language; `invoke(projectDir, nodeId, settings)` gains the
+  answers. An op without `form` invokes immediately, exactly today.
+  The nav rail offers hosted ops with forms against the current book's
+  export target (per 9a/9b rules) — host-agnostic: no Foundry surface
+  says "narrate".
+- **9d — NOT WANTED, recorded so nobody builds it:** no queue tray in
+  the Foundry window. Tree state via setHostNodes is the whole of it.
+- **9e — failed host nodes (the same-day addendum).** A failed narrate
+  card offered "from here: Enhance / Assemble" — chaining onto audio
+  that was never produced — and no way out of the window Owen stood
+  in. Two rules: a node whose state is failed or cancelled offers NO
+  chaining ops (display logic, no contract); failed nodes offer
+  `Retry` and `Dismiss` instead, as a fixed pair — the contract shape
+  is ours and is: `FoundryHost.onNodeAction?(projectDir, nodeId,
+  action: 'retry' | 'dismiss')`, invoked over a new
+  `host-ops:node-action` handle on invoke's own error-travel rule (a
+  rejection is said where the button was). The buttons render only
+  when the host registered the callback — a button that silently does
+  nothing is the socket's one forbidden outcome.
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the
