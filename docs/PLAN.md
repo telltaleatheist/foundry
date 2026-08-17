@@ -676,12 +676,24 @@ Supersessions, so nothing dangles:
   the ledger, the PDF reduced to view-and-produce-facsimile. Deletes what
   C, D and K replace, so it goes last.
 
-### Wave 6
+### Wave 6 — CLOSED AT R6c (verified against the code 2026-08-17)
 
-- **The branched-read overlay ping-pong.** Banks went per-step; the live
-  overlay did not, so hopping between two read branches archives the
-  working corrections back and forth. Half-fixed for months, now
-  scheduled: per-read-branch overlay files on the bank scheme.
+- ~~**The branched-read overlay ping-pong.**~~ Banks went per-step; the
+  live overlay did not, so hopping between two read branches archived
+  the working corrections back and forth. Scheduled as per-read-branch
+  overlay files on the bank scheme — and R6c delivered the same end a
+  different way before this was ever started: corrections are RETAINED
+  PAYLOADS now, one file per step (`curations/<uuid>.json`,
+  `ops/<id8>.jsonl`), so every branch's decisions are keyed to the row
+  that made them and there is no live overlay left to ping-pong.
+  Verified before starting the work rather than assumed: `overlays/`
+  is neither read nor written anywhere (projects.ts names it a legacy
+  sibling of the departed system), the archive-on-generation-mismatch
+  machinery has no implementation left to find, and the one remaining
+  reader is `countAmendments`, which walks the legacy folder so the
+  delete card still counts a v1 project's work. Two comments that
+  spoke of the machinery as alive were corrected with this closure
+  (projects.ts `curationsDir`, workspace.ts `samePath`).
 
 ### Wave 7 — the BookForge hosting seam (ruled 2026-08-16, LANDED same cycle)
 

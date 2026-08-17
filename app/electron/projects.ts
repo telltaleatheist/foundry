@@ -1181,14 +1181,16 @@ function originLedger(payload: string, label: string, createdAt: number): Projec
  * `<project>/curations/` — the frozen snapshots of the block editor's overlay.
  *
  * A SEVENTH SIBLING, on `overlays/`'s precedent and NOT inside it, which is the
- * decision worth writing down. `overlays/` is the live pair and its archive
- * folders, and everything that walks it — `countAmendments` for the delete card,
- * the archive-on-generation-mismatch machinery — treats what it finds there as
- * one book's current curation and its discarded predecessors. A snapshot is
- * neither: it is a RETAINED PAYLOAD, named by a step, deleted only when that step
+ * decision worth writing down. `overlays/` held the live pair and its archive
+ * folders, and everything that walked it treated what it found there as one
+ * book's current curation and its discarded predecessors — the
+ * archive-on-generation-mismatch machinery went with the overlay system
+ * (docs/RENDERER.md §7), and `countAmendments` still walks the legacy folder so
+ * the delete card counts a v1 project's work. A snapshot is neither of those
+ * things: it is a RETAINED PAYLOAD, named by a step, deleted only when that step
  * is, and never archived aside because it was never bound to the live file's
- * fate. Filing it under `overlays/` would put it in the path of a sweep whose
- * entire premise is that what it finds there is disposable.
+ * fate. Filing it under `overlays/` would have put it in the path of a sweep
+ * whose entire premise was that what it finds there is disposable.
  *
  * `<uuid>.json` rather than a name anybody reads: the step's LABEL is what a
  * person sees ("Applied changes (23)"), and a filename that tried to say the
