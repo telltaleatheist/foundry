@@ -910,6 +910,34 @@ a refusal is not drawn. Two halves:
   function per act, so the button and the refusal can never disagree
   about what a stage can do).
 
+### Wave 11 — six rulings from the first real narrate (Owen, 2026-08-17 22:30, via the bridge) — LANDED (this commit)
+
+The inbound section is the letter; his numbering kept. No lockstep with
+BookForge needed; partial landings fine; say the sha per subset.
+
+- **11a** — the export row's footer drops the "from here" label — just
+  the button. Steps keep the label (things are made FROM them).
+- **11b** — `HostOperationOffer.submitLabel?: string`; the dialog's
+  submit says it when declared ("Add to queue"), keeps today's default
+  when absent. Only the host knows whether an invoke runs now or files
+  work. Payload-section row in IPC-CHANNELS.md.
+- **11c** — the export row's press sends a nodeId that names the EXPORT
+  ROW (spelling ours, documented, told to BookForge), and host nodes
+  whose `parentStepId` names an export draw as children of that export
+  row. Step-named parents keep working. BookForge echoes parentStepId
+  verbatim already; their invoke's unique-epub fallback covers
+  resolution — confirmed on the bridge before relying on it.
+- **11d** — the EPUB export row nests under its `madeFrom` step. Owen
+  overrules the tray doctrine ("records what was made, never the
+  position") — lineage is drawn. A null-`madeFrom` export keeps its
+  current home under the book, said out loud where the code decides.
+- **11e** — the sidebar widens again, slightly (346 → ~384).
+- **11f** — the rail's buttons move INTO the left sidebar, pinned to
+  its bottom; the tree pins to the top and scrolls in the space above
+  them. The bottom dock row goes; the collapsed sidebar's stub keeps a
+  way to reopen; what the stub shows of the buttons is the builder's
+  call, said in the report.
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the
