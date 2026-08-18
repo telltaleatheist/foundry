@@ -1024,6 +1024,59 @@ none. Foundry's half only; the host's half is built against it.
   the gray no longer counts exports. `hasEpubExport` stays, meaning what
   it says and nothing more.
 
+### Wave 14 — the host's acts move up, and the host gets a chip (Owen, 2026-08-18) — LANDED (this commit)
+
+Two rulings, one about where an act sits and one about what a hosted
+window owes the application around it.
+
+- **14a — the host's acts sit next to Translate and Simplify.** Owen,
+  verbatim: *"there should be a narration button in the options sidebar
+  menu, right next to translate and simplify. it makes sense for it to be
+  there."* They were LAST among the acts, argued from run order — audio
+  is made from the export, so it came after the export. That is true of
+  the pipeline and turned out not to be true of the MENU: a list is
+  searched rather than stepped through, and what a person searching holds
+  in mind is what the act is aimed at. Translate, Simplify and a
+  narration all take the book in front of you and make another version of
+  it; Export files what is there and Metadata edits a claim about it. So
+  the acts read Read → Translate → Simplify → the host's → Export →
+  Metadata, and run order still decides everything else. **Graying,
+  pressing and the ids sent are untouched** — one group moved position,
+  nothing changed behaviour, and the docblock now argues Owen's grouping
+  rather than a sequence it had stopped describing.
+- **14b — a HOST STATUS CHIP in the window's chrome.** The host runs a
+  queue Foundry knows nothing about; in the host's own windows its state
+  is in the top corner, and in this window it was invisible, so somebody
+  editing a book here had to go and find another window to learn whether
+  the work they ordered was moving. The chip is that corner, lent out:
+  `setHostStatus(status | null)` on the mount seam, pushed on
+  `host-ops:status-changed`, seeded from `host-ops:status`, drawn as the
+  first row of the shell above the body and pinned right.
+  **Domain-blind by construction** — a headline, an optional second line,
+  an optional percent and an optional pending count (`HostStatus`,
+  shared/host-ops.ts), all the host's own words, drawn verbatim and read
+  by this app for length and nothing else. There is no word about queues,
+  narration or books anywhere in the component.
+  **Conditional by construction** — null (standalone always, and hosted
+  until the host speaks) is `display: none` on the chip's own host
+  element, padding included, so a window nobody mounted is unchanged in
+  every pixel and there is no "am I hosted" branch anywhere.
+- **14c — the click is optional and its absence is drawn.**
+  `FoundryHost.onStatusOpen?: () => void` — registering it makes the chip
+  a `<button>` with cursor, hover and focus ring; leaving it out makes the
+  chip a readout that plainly cannot be pressed. Two elements rather than
+  one with its affordances switched off, on the socket's standing rule
+  that a button which silently does nothing is the one forbidden outcome.
+  The probe rides on the `host-ops:status` answer (`openable`) for
+  `host-ops:offers`' reason: same question, same round trip, no extra name
+  for BookForge's keeper to audit.
+- **14d — docs.** Three rows added to IPC-CHANNELS.md (two doors, one
+  push; counts 69→71 and 12→13 pushes, 6→7 broadcasts) and a payload
+  section for `HostStatus`; the contract, the host's obligations and the
+  `onStatusOpen` semantics are in the handoff's `#foundrynotes`.
+- Nothing moves on BookForge's side until they want the chip; they
+  re-vendor at the sha and call `setHostStatus` when they do.
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the

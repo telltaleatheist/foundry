@@ -360,6 +360,75 @@ work. Append with a date; never rewrite the other side's notes.
 
 ## #foundrynotes
 
+**2026-08-18 — THE HOST STATUS CHIP: one surface of Foundry's chrome is
+yours now. Entirely additive; do nothing and nothing appears.**
+
+Owen wants your queue's state visible in the Foundry window the way it is
+in your own windows. Foundry stays domain-blind about it — it draws
+whatever you push and knows nothing about queues, narration or books — so
+what crosses is words you chose, and the chip does not exist until you
+send some.
+
+```ts
+// app/shared/host-ops.ts — new, and re-exported from mount.ts
+export interface HostStatus {
+  readonly headline: string;   // one line, your own words
+  readonly detail?: string;    // a second, dimmer line
+  readonly percent?: number;   // 0–100, when you can say
+  readonly pending?: number;   // how many wait behind the current one
+}
+
+// app/electron/mount.ts — new, beside setHostNodes
+export function setHostStatus(status: HostStatus | null): void;
+export type { HostStatus };
+
+// app/electron/host.ts — FoundryHost gains ONE optional member
+onStatusOpen?(): void;
+```
+
+- **Push on every change of your queue, and clear with `null`.** Same
+  mechanics as `setHostNodes`: the WHOLE value every time, no diffs,
+  broadcast to the Foundry window on `host-ops:status-changed`. Foundry
+  has no timer, polls nothing and advances no number by itself — a chip
+  showing a stale line is a push you did not make. `setHostStatus(null)`
+  when your queue drains: the chip leaves the chrome entirely, and that
+  is the same state as never having pushed.
+- **It is ONE status for the process, not one per project**, which is the
+  one way it differs from `setHostNodes`. A node describes a thing being
+  made from a particular book and hangs on that book's tree; the status
+  describes your queue, which is one queue whichever book the window is
+  standing in. Do not try to scope it — Foundry keeps a single value.
+- **Nothing in it is validated, corrected or interpreted.** The headline
+  is drawn verbatim (ellipsed if it is longer than the chip, never
+  abbreviated), the detail is drawn dimmer under it, `pending` is a badge,
+  `percent` is a hairline along the bottom edge, and a percent over a
+  hundred simply fills the bar. Foundry reads the headline for LENGTH and
+  for nothing else, so anything you want a person to know has to be in
+  the words you send.
+- **`onStatusOpen` is what makes the chip clickable, and leaving it out is
+  a complete answer.** Register it and the chip becomes a button — cursor,
+  hover, focus ring — and a click calls it with no arguments and expects
+  nothing back (raise your own queue window is the obvious reading; it is
+  entirely yours). Do not register it and the chip is drawn as a plain
+  readout with no affordance at all, because a chip that looked pressable
+  and did nothing is the one outcome this socket refuses. The probe rides
+  on `host-ops:status`'s answer as `openable`, so there is no extra
+  channel name to audit.
+- **Three channel names, all in `host-ops:`** — `host-ops:status`
+  (invoke; answers `{ status, openable }`), `host-ops:status-changed`
+  (push; `HostStatus | null`), `host-ops:status-open` (invoke; refuses by
+  name if you registered nothing). Rows are in IPC-CHANNELS.md.
+- **Standalone and un-pushed are the same as before this existed.** The
+  chip's host element is `display: none` with its padding on it, so a
+  Foundry window nobody has pushed to is unchanged in every pixel. There
+  is no flag to set and no capability to declare.
+
+**Also in this wave, and it costs you nothing:** the host's acts moved up
+the action menu to sit immediately after Simplify, before Export — Owen:
+*"there should be a narration button in the options sidebar menu, right
+next to translate and simplify. it makes sense for it to be there."* Same
+graying, same press, same node ids sent; position only.
+
 **2026-08-18 — narrate from any step: ONE WIDENING AND ONE NEW SEAM
 FUNCTION. Both are yours to use; neither breaks what you have.**
 
