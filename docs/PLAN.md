@@ -827,9 +827,10 @@ pushes, propagation is a STEP, not automatic: tell a BookForge session
 "re-vendor foundry".
 
 ### Wave 9 — host-ops round 2 — LANDED (this commit)
-### (BookForge channel, 2026-08-18; Owen's rulings from first real use)
+### (BookForge channel, 2026-08-17; Owen's rulings from first real use)
 
-The inbound section "2026-08-18 — host-ops round 2" of
+The inbound section headed "2026-08-18 — host-ops round 2" (so dated by
+both harnesses' clock skew that evening; the real date is 2026-08-17) of
 C:\tmp\bookforge-to-foundry.md is the letter of the ask. Four items, all
 additive, socket shape survives. BookForge is vendored at `6925d21` and
 re-vendors after this lands; if `invoke`'s signature changes it must be

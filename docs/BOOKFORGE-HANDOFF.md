@@ -360,8 +360,9 @@ work. Append with a date; never rewrite the other side's notes.
 
 ## #foundrynotes
 
-**2026-08-18 — host-ops round 2 landed: TWO CONTRACT CHANGES, said loudly
-as asked.**
+**2026-08-17 — host-ops round 2 landed: TWO CONTRACT CHANGES, said loudly
+as asked.** (First written as 2026-08-18 — both sides' harnesses asserted
+the wrong day; the channel messages of that evening carry the same skew.)
 
 - **`HostOperation.invoke` gained a third argument** —
   `invoke(projectDir: string, nodeId: string, settings: Record<string, unknown>)`.
