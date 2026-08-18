@@ -888,6 +888,21 @@ a refusal is not drawn. Two halves:
   moves narrate onto the new member at its next re-vendor; the member
   is grown in the same commit as everything that understands it, per
   the union's own doc rule.
+- **10c — the two rulings minutes after 10a shipped (LANDED, the
+  commit after 10a/10b's).** (1) The export-row footer was RIGHT in
+  rule and unreachable in gesture — `pickRow` cleared the selection for
+  every file row on a premise 10a had just made false, so narrate's one
+  correct home never drew its footer (Owen: *"theres no narration step
+  available to press under the epub i generated"*; BookForge traced it
+  to the line). An export row takes the selection now, alongside
+  everything its click already did; a copy still clears. Also: only the
+  EPUB export row produces `'export'` — a txt or reprint offering a
+  file-consuming act could only refuse. (2) The rail's host acts GRAY
+  when the project has no EPUB export (Owen: *"if the step the user has
+  selected cant run tts then its grayed out"*), on a new
+  `hasEpubExport` predicate in stages.ts — the same function the press
+  refuses by, and the press's target now counts only EPUBs so a txt in
+  the tray cannot cause a false ambiguity refusal.
 - **10b — Foundry's own offers obey the same rule.** Translate,
   Simplify, Export and the rest are drawn on a stage only where the
   act is POSSIBLE from that stage — and each offer's possibility test
