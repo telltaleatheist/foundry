@@ -970,6 +970,60 @@ menu. [icon] [action], one after another."*
   menu pinned bottom, tree scrolls in the space above.
 - Nothing moves on BookForge's side; they re-vendor at the sha.
 
+### Wave 13 — narrate from any step (Owen, 2026-08-18, via the bridge) — LANDED (this commit)
+
+Owen, on finding the host's acts offered only where a file already
+existed, verbatim: *"i dont think its intuitive to know you have to
+create an epub before you can narrate. i think we should make any of the
+steps possible to narrate. if they arent doing it from an epub then we
+export the epub automatically and then run the task they assigned."*
+
+Wave 10 taught the socket to say "this act consumes the finished FILE",
+which was the right spelling of the wrong premise: it put narrate where
+the file was rather than where the person was. This wave keeps the
+spelling and removes the premise — an act may now say it consumes BOTH,
+and Foundry will make the export when the step it was ordered from has
+none. Foundry's half only; the host's half is built against it.
+
+- **13a — `HostOperationOffer.appliesTo` accepts a list.**
+  `NodeOutput | readonly NodeOutput[]`, read through one test in
+  `offeredFrom` (shared/host-ops.ts), so a host declaring a single value
+  behaves byte for byte as it did. A host that wants an act on both the
+  steps and the export rows declares `['book', 'export']` and the tree
+  offers it in both places with no special case anywhere. Payload-section
+  row in IPC-CHANNELS.md; the contract is spelled in the handoff's
+  `#foundrynotes`.
+- **13b — the mount seam grows `exportEpubFromStep(projectDir, stepId)`.**
+  The export dialog's own path with nobody in front of it: same
+  `planExport`, same request shape, same queue, same `final/` name, same
+  rotation, same tray row, same landing — because an export made for a
+  host must be indistinguishable from one somebody pressed for. It
+  resolves with the `ExportLanding` (re-exported from mount.ts for the
+  host to type) and rejects with main's own sentences when the plan
+  refuses or the run files nothing.
+- **13c — the queue publishes a settle.** `onJobSettled` — many
+  listeners, each unsubscribing — because a job that FAILS announces
+  nothing and an unattended export cannot wait forever for a landing that
+  is not coming. It fires LAST, after whatever the settle produced, so a
+  waiter sees the landing before it hears the ending; a row somebody
+  removes from the shelf counts as one, since for a waiter it is the only
+  ending it will get. No polling.
+- **13d — the render-from step and the facsimile key come apart.**
+  `planRendering` read one parameter as both "render from this row" and
+  "name the file after this row", which is true of a facsimile and false
+  of an export ordered from a step — that export is still the BOOK's and
+  keeps its `final/<stem>.epub` name (and the `(hu)` arm, resolved from
+  the passed step rather than from the pointer). `materializeBook` takes
+  the step too, which `openBookAtPosition` always could.
+- **13e — the action menu greys on the STAGE, not on the tray.**
+  `canRunHostActFrom` (shared/stages.ts) — `hasBookAt` by name, the same
+  test Export greys by, read by the gray AND by the press, per that
+  module's one rule. An act consuming the book sends the standing step's
+  own id (the id the tree row would send); an act consuming only the
+  export keeps one-export-or-refuse, which is reachable again now that
+  the gray no longer counts exports. `hasEpubExport` stays, meaning what
+  it says and nothing more.
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the

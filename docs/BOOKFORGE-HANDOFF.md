@@ -360,6 +360,57 @@ work. Append with a date; never rewrite the other side's notes.
 
 ## #foundrynotes
 
+**2026-08-18 — narrate from any step: ONE WIDENING AND ONE NEW SEAM
+FUNCTION. Both are yours to use; neither breaks what you have.**
+
+Owen's ruling, verbatim: *"i dont think its intuitive to know you have to
+create an epub before you can narrate. i think we should make any of the
+steps possible to narrate. if they arent doing it from an epub then we
+export the epub automatically and then run the task they assigned."*
+Foundry's half is landed; the half that decides WHEN to ask is yours.
+
+```ts
+// app/shared/host-ops.ts — a pure widening
+appliesTo: NodeOutput | readonly NodeOutput[];   // was: NodeOutput
+
+// app/electron/mount.ts — new, and ExportLanding is re-exported beside it
+export function exportEpubFromStep(
+  projectDir: string,
+  stepId: string,
+): Promise<ExportLanding>;
+export type { ExportLanding };
+```
+
+- **Declare narrate on both currencies** — `appliesTo: ['book', 'export']`
+  — and it is offered from every ledger step that has words behind it AND
+  from the EPUB export rows, in the tree and on the action menu. A single
+  value behaves byte for byte as it does today (`offeredFrom` reads both
+  shapes through one test), so nothing forces the change and nothing
+  breaks if you take your time over it.
+- **A step press sends the bare step uuid**, exactly as it always has; an
+  export press sends `export:<project-relative file>`, unchanged. What is
+  new is that the step you are handed may have NO export behind it — that
+  is the whole point — so an invoke that cannot find one calls
+  `exportEpubFromStep(projectDir, nodeId)` and runs its work against the
+  landing it resolves with.
+- **The export it makes is an ordinary export.** Same `final/<stem>.epub`
+  name (with the `(hu)` arm under a translation, resolved from the step you
+  named rather than from wherever the window is pointing), same rotation of
+  a predecessor, same `final[]` row with `stepId` on it, same `onExport`
+  announcement — which fires BEFORE the promise resolves, so your handler
+  has already seen the row by the time your act starts. Deduped on the
+  output path: if the user pressed Export on that same row a second
+  earlier, you get that job's landing rather than a second run.
+- **It rejects rather than hanging.** Plan-time refusals throw main's own
+  sentences (the book nobody has read, the reading that was interrupted,
+  changes that would not replay) — show them to the user verbatim, they are
+  written for one. A run that fails rejects with the engine's stderr; a
+  cancel, or a row the user removed from the shelf, rejects with a sentence
+  saying so. Nothing polls and nothing times out.
+- **The action menu's gray moved with the ruling**: it was "this project
+  has no EPUB export", it is now "there is no book at the step you are
+  standing on" — the unread scan and the import row, and nothing else.
+
 **2026-08-17 — host-ops round 2 landed: TWO CONTRACT CHANGES, said loudly
 as asked.** (First written as 2026-08-18 — both sides' harnesses asserted
 the wrong day; the channel messages of that evening carry the same skew.)
