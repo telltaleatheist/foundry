@@ -910,7 +910,7 @@ a refusal is not drawn. Two halves:
   function per act, so the button and the refusal can never disagree
   about what a stage can do).
 
-### Wave 11 — six rulings from the first real narrate (Owen, 2026-08-17 22:30, via the bridge) — LANDED (this commit)
+### Wave 11 — six rulings from the first real narrate (Owen, 2026-08-17 22:30, via the bridge) — LANDED (`e8396b4`)
 
 The inbound section is the letter; his numbering kept. No lockstep with
 BookForge needed; partial landings fine; say the sha per subset.
@@ -937,6 +937,38 @@ BookForge needed; partial landings fine; say the sha per subset.
   them. The bottom dock row goes; the collapsed sidebar's stub keeps a
   way to reopen; what the stub shows of the buttons is the builder's
   call, said in the report.
+
+### Wave 12 — the action menu (Owen, 2026-08-18 01:05, via the bridge) — LANDED (this commit)
+
+Owen, on seeing Wave 11's dock in the sidebar, verbatim: *"instead of
+clustering the buttons on the bottom left like that, lets make an ordered
+list of actions for the user. no longer a nav rail, now its an action
+menu. [icon] [action], one after another."*
+
+- Vertical rows, one action per row, icon then the action's name in
+  words, in a deliberate order — the pipeline's own reading order is the
+  obvious spelling (read, then the acts that consume the words, then the
+  host's audio work), but the order is the builder's to pick and state.
+  **Landed as three groups divided by rules:** Home and Documents
+  (navigation, above the first rule); then Read the pages, Translate,
+  Simplify, Export, Metadata and the host's acts (the pipeline in the
+  order it runs — Export moved down from beside OCR, because exporting
+  before translating exports the wrong book, and Metadata is last of
+  ours because it is a record ABOUT the book rather than a step in
+  making one); then Settings below a rule of its own, unchanged, on the
+  reason it always had — it is not a tool.
+- **Renamed with the geometry**, because *"no longer a nav rail, now
+  its an action menu"* is a naming ruling too: `ActionMenuComponent`,
+  `app-action-menu`, `action-menu.component.ts`, and the CSS
+  vocabulary inside it (`.menu`, `.menu-item`, `.menu-icon`,
+  `.menu-label`) renamed with it. Button LABELS are untouched — the
+  ruling is about arrangement and the component's name, and renaming
+  "OCR" would be a second opinion nobody asked for.
+- The graying ruling stands unchanged: a row whose stage cannot run it
+  is present and disabled, never hidden.
+- Everything else about the sidebar stands as landed: tree pinned top,
+  menu pinned bottom, tree scrolls in the space above.
+- Nothing moves on BookForge's side; they re-vendor at the sha.
 
 ### Then — the user's
 
