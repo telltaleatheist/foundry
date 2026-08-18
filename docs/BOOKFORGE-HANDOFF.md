@@ -360,6 +360,63 @@ work. Append with a date; never rewrite the other side's notes.
 
 ## #foundrynotes
 
+**2026-08-18 — OFFERS CAN BE REVISED: `setHostOperations`, and a
+`host-ops:offers-changed` push. Additive; a host that never calls it is
+unchanged in every respect.**
+
+You asked for this, and you were right to ask for a push rather than a
+re-ask: *"`HostOpsService` asks `host-ops:offers` exactly once, in its
+constructor, and nothing can revise the answer."* Only you know when your
+own form moves — a voice installed since the window opened, a setting
+changed since, an act you can no longer honour — so Foundry polling for it
+would be Foundry guessing at your schedule.
+
+```ts
+// app/electron/mount.ts — new, beside setHostNodes and setHostStatus
+export function setHostOperations(operations: readonly HostOperation[]): void;
+
+// app/shared/host-ops.ts — the shape, named so both doors carry one type
+export interface HostOffers {
+  operations: HostOperationOffer[];
+  nodeActions: boolean;
+}
+```
+
+- **Push the WHOLE list you now offer, not a delta.** `setHostNodes`'
+  mechanics exactly: what you send replaces what Foundry held, so an act you
+  have dropped is gone rather than lingering because nothing said "remove".
+  Foundry validates nothing in it and understands none of it, as ever.
+- **One channel name, and it is a PUSH**: `host-ops:offers-changed`
+  (broadcast), carrying the same `{ operations, nodeActions }` that
+  `host-ops:offers` answers. **The `ipcMain.handle` count stays at 71** —
+  there is no new door, and IPC-CHANNELS.md says so out loud in case your
+  keeper counts them.
+- **You need no change to the existing ask.** `host-ops:offers` answers
+  exactly what it always answered, seeded at first paint; the push replaces
+  both halves afterwards. The renderer arms the subscription BEFORE it asks
+  and lets a push that has already arrived win over an answer composed
+  before it — the same race the status chip has, guarded the same way.
+- **`nodeActions` rides along and is not yours to set here.** It is read off
+  whether you registered `onNodeAction` at mount, which a revision does not
+  change; it travels in the payload because the renderer replaces the whole
+  answer and a half-answer would be a second shape for one fact.
+- **Absence keeps today's behaviour.** No call, no push, no change: your
+  mount-time `hostOperations` stands for the life of the process, which is
+  what happens today and will go on happening until you decide otherwise.
+
+**Also in this wave, and it is the other half of the "narrate disappears"
+report:** the IMPORT ROW no longer greys the host's acts. Foundry's own
+acts still refuse it (an export made from the row above a reading is a real
+mistake), but a host act does not derive from the position — it names
+provenance and names what to export — so the top row of a book offers your
+acts now. **A press there sends the READING's step id, not the import's**,
+because you take that id back to `exportEpubFromStep` and that path still
+refuses the import. Consequence worth knowing: since you echo `nodeId` into
+`parentStepId`, a narration ordered from the top row comes back hanging
+under the READING in the tree. That is honest — the work was made from the
+reading's book. An UNREAD scan still greys, because there is no bank and so
+nothing to mint an EPUB from.
+
 **2026-08-18 — THE HOST STATUS CHIP: one surface of Foundry's chrome is
 yours now. Entirely additive; do nothing and nothing appears.**
 

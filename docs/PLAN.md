@@ -1077,6 +1077,59 @@ window owes the application around it.
 - Nothing moves on BookForge's side until they want the chip; they
   re-vendor at the sha and call `setHostStatus` when they do.
 
+### Wave 15 — narrate is available where the user clicks (Owen, 2026-08-18, via the switchboard) — LANDED (this commit)
+
+Owen, using the hosted window: *"the narrate button in the bottom left of
+the foundry window is disappearing and disabling seemingly at random. it
+should be available pretty much anywhere the user clicks, but if theres no
+epub already minted, it mints an epub from that position and then queues
+the narration."*
+
+Three causes, enumerated from source by bookforge-pc-2 and re-verified
+here. The DISAPPEARING half was theirs and is fixed (bookforge
+`577a70db`: an un-awaited narrate-form refresh raced our constructor's one
+and only `host-ops:offers` ask). The two below are ours.
+
+- **15a — the import row stops greying a host act, and a press there
+  names the reading.** `canRunHostActFrom` delegates to `hasBookAt`, which
+  refuses `standing.action === 'import'`; clicking the top row of the tree
+  is an ordinary thing to do, so from the chair that IS "disabling at
+  random". The refusal's own reasoning (WORKBENCH §6c — stepping back PAST
+  a reading, to act on the untouched scan) is about acts that DERIVE from
+  the position, and a host act does not: its position names provenance and
+  what to export, and the import row's book is the reading's book. So the
+  clause goes for host acts only — Foundry's own acts keep it — and a press
+  from the import row sends the READING's step id, because
+  `exportEpubFromStep` will be asked for that position and `canExportFrom`
+  refuses the import. An UNREAD scan stays greyed: no bank, no book,
+  nothing to mint from, and Read is already the act offered there.
+- **15b — offers can be revised: a `host-ops:offers-changed` push.**
+  `HostOpsService` asks `host-ops:offers` exactly once, in its constructor,
+  and nothing can revise the answer — so a host whose form legitimately
+  changes while the window is up (voices installed since, settings changed
+  since) cannot publish it. bookforge-pc-2 asked for the push in preference
+  to a re-ask, and they are right: it is the problem `setHostStatus` solved
+  for the chip, one surface along, and the pattern to copy is directly
+  below the ask in the same file. A PUSH, so the handle count stays 71 and
+  the push table grows.
+- **15c — what the build settled, since both units forced a choice.** The gray
+  and the id are now TWO questions: `canRunHostActFrom(project)` takes no step
+  at all (on `canReadPages`' precedent — once the import clause goes, nothing
+  left in it reads a position), and `hostActPositionFrom(ledger, standing)`
+  beside it answers what a press names. Its third answer is a REFUSAL: a scan
+  whose bank exists but whose ledger holds no `read` step — real, because
+  `summarise` accepts the engine's own completion marker, so a bank filled from
+  a terminal makes `reading.done` true with nothing in the history to name — is
+  told to press the step it means rather than handed an id whose export would
+  decline. The tree's press was wired to the same resolver though it cannot
+  reach that answer today (a root row offers host acts only where the import IS
+  the book, and such an import names itself); one rule, two sites, not two
+  versions. The mount seam is `setHostOperations`, named for `hostOperations`
+  on `FoundryHost` and shaped like `setHostNodes`/`setHostStatus`, and both the
+  ask and the push are one expression in main (`hostOffers`) so they cannot
+  drift. IPC-CHANNELS.md regenerated from source: **71 handles, unchanged**;
+  pushes 13→14 and broadcasts 7→8.
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the
