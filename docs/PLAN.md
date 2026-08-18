@@ -871,6 +871,30 @@ announced loudly on the outbound channel and in #foundrynotes.
   when the host registered the callback — a button that silently does
   nothing is the socket's one forbidden outcome.
 
+### Wave 10 — only the possible is offered — LANDED (this commit)
+### (Owen's ruling, 2026-08-17 20:30, via the bridge)
+
+Owen, after using the tree on a project with no export: *"just put
+'export EPUB' as the only option on things that aren't capable of
+narration or whatever. The only options that exist are the ones that
+are possible for that stage."* A button whose only possible outcome is
+a refusal is not drawn. Two halves:
+
+- **10a — `NodeOutput` grows `'export'`.** Export rows produce it;
+  ledger steps never do; an op with `appliesTo: 'export'` is therefore
+  offered ONLY on export rows. Two-member hosts (`'book' | 'audio'`)
+  keep working unchanged — their `'book'` ops keep landing on steps.
+  The rail's formed-op gate accepts `'book' | 'export'`. BookForge
+  moves narrate onto the new member at its next re-vendor; the member
+  is grown in the same commit as everything that understands it, per
+  the union's own doc rule.
+- **10b — Foundry's own offers obey the same rule.** Translate,
+  Simplify, Export and the rest are drawn on a stage only where the
+  act is POSSIBLE from that stage — and each offer's possibility test
+  must be the same predicate the act itself checks on invocation (one
+  function per act, so the button and the refusal can never disagree
+  about what a stage can do).
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the

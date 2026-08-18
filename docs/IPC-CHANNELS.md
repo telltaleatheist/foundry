@@ -2,7 +2,7 @@
 
 Every channel name this app owns, enumerated from `app/electron` rather than
 from memory, regenerated on 2026-08-17 (host-ops round 2: the failed-node door,
-and two payloads that grew). It exists
+two payloads that grew, and the third `NodeOutput` member). It exists
 because of the fifth thing Foundry owes BookForge before the first copy: *"A
 channel audit. Enumerate both apps' IPC names once before the copy; Foundry's
 are namespaced, so this is a check, not a design"*
@@ -61,6 +61,17 @@ a name-collision audit.
   only where the host registered `FoundryHost.onNodeAction`. It rides here rather
   than on a channel of its own because it is the same question in the same round
   trip, and a new name would be one more thing to audit.
+- `NodeOutput` — the vocabulary of `HostOperationOffer.appliesTo` on
+  `host-ops:offers`, and of `HostNode`'s implied output — grew a third member,
+  `'export'`, beside `'book'` and `'audio'`. **No channel changed and no payload
+  field was added or removed**; one enum inside an existing field accepts one more
+  string. It exists so an operation can say it consumes the FINISHED FILE rather
+  than the words: export rows produce `'export'` and ledger steps never do, so an
+  op declaring it lands on `final/` rows alone (Owen's ruling, 2026-08-17 20:30 —
+  *"The only options that exist are the ones that are possible for that stage"*).
+  **A two-member host is unaffected**: `offeredFrom` is still one comparison, so
+  an op still declaring `'book'` still lands on every book-producing step exactly
+  as before. Recorded here because a keeper that parses names would not see it.
 
 **`host-ops` was invented rather than found**, and the reason belongs in this
 file: it is the host-operations socket (the provenance tree's audio work, ordered
