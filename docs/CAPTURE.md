@@ -335,7 +335,18 @@ Conventions, pinned:
   unsplit photo would have to invent a split to hold the second, and
   one quad onto a split photo would leave its right-hand page
   half-updated; neither is what was asked for. Every skip, all three
-  kinds, NAMES the photographs it skipped in the notice bar.
+  kinds, NAMES the photographs it skipped in the notice bar. **The
+LIMIT of the whole family, named from the finished PDF (P2, seq 67):
+the aspect rule protects against a DIFFERENTLY-SHAPED photograph, not
+against a same-shaped photograph OF A DIFFERENT THING at a different
+orientation.** The real shoot contains both: IMG_0238 (landscape,
+caught and struck) and a same-shaped modern magazine page that
+inherits the volume's three turns and comes out sideways — wrong in a
+way no check can see and no rule can catch, because sameShape
+truthfully says yes. Nothing detects it but a person looking at the
+grid, WHICH IS WHAT THE GRID IS FOR. Not a defect; a boundary,
+written down so apply-to-all skips what it must not touch is never
+read as covering it.
 - **Quad corner order is [top-left, top-right, bottom-right, bottom-left]
   OF THE OUTPUT PAGE.** The corner assignment IS the orientation: the
   rotate gesture permutes the assignment, and no separate rotation field
@@ -656,6 +667,22 @@ edits this document first and says so on the channel.
    quads[0] jumped on every drag; the drag read the photograph's X
    while the line lay along the quad — invisible while everything is
    upright, wrong the moment a spread is turned).
+7. **THE REHEARSAL (P2, seq 67): the 52-page book a person would
+   actually want, minted through the shipped geometry — 8/8 checks,
+   identity ratios 0.01—0.02 on a book where EVERY page is 2016x3024
+   (the header fingerprint is degenerate there and C8's pixel contest
+   still separates facing halves of the same spread by 60x). The
+   gesture sequence, measured not guessed: THREE quarter turns (one is
+   180 degrees short — minted and read upside down before anybody
+   believed it; turning is the one gesture whose correctness no number
+   shows), split at 0.5, apply-to-all across the 26 same-shaped
+   frames, strike IMG_0238, then crop (undone as yet: each half still
+   carries a strip of desk and a sliver of the facing page). What
+   remains is PERSON-SIZED, not measurable: nobody has pressed the
+   button in a running window, and the foundry-file capture host has
+   never served a byte to a real renderer — the first thing a live
+   session exercises and the first thing that will break if anything
+   is going to.
 
 ## Deferred out loud
 

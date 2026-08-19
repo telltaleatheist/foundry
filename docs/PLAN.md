@@ -1557,7 +1557,7 @@ middle of the paragraph. `split`/`join` has no such interpretation. The
 same class of trap as the defect above: a character that means one thing
 to a human reader and another to the machine handling it.
 
-### Wave 20 — the capture stage: photographs become the book (Owen, 2026-08-19) — PLANNED, docs/CAPTURE.md
+### Wave 20 — the capture stage: photographs become the book (Owen, 2026-08-19) — BUILT AND MEASURED 2026-08-19, main ea6dc36; human acceptance pending, docs/CAPTURE.md
 
 Owen photographed bound volumes at the American Atheists archive and wants
 photo -> light table (reorder / rotate / split / quad-crop) -> minted
