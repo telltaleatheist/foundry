@@ -283,10 +283,10 @@ Handles (all `capture:` prefixed; P3 regenerates `docs/IPC-CHANNELS.md`):
 
 | Channel | Direction | Signature |
 | --- | --- | --- |
-| `capture:intake` | invoke | `{projectId, paths: string[]}` → `{recipe}` — copy, hash, EXIF-read, append photos, inherit prior photo's settings |
-| `capture:recipe-load` | invoke | `{projectId}` → `{recipe}` |
+| `capture:intake` | invoke | `{projectId, paths: string[]}` → `{recipe, token}` — copy, hash, EXIF-read, decode + working copy + thumb, append photos, inherit prior photo's settings; token because intake is the other moment a project first has pixels to show |
+| `capture:recipe-load` | invoke | `{projectId}` → `{recipe, token}` — the token mints the door's allow-list entry for this project (the `book:load` pattern) |
 | `capture:recipe-save` | invoke | `{projectId, recipe}` → `{ok}` — whole document; renderer debounces |
-| `capture:mint-begin` | invoke | `{projectId}` → `{mintId, pages: [{pageId, photoFile, quad, outWidth, outHeight}]}` — **main computes the final list; the renderer renders exactly that list** |
+| `capture:mint-begin` | invoke | `{projectId}` → `{mintId, pages: [{pageId, workingCopy, quadPx, sourceWidth, sourceHeight, outWidth, outHeight}]}` — **main computes the final list; the renderer renders exactly that list.** `quadPx` is WORKING-COPY PIXELS, denormalized ONCE by main (the recipe stays fractions; the unit is in the name so no reader has to remember which side of the bridge they are on). `workingCopy` is the door NAME for `foundry-file://capture/<token>/<name>`, never a filesystem path. `sourceWidth`/`sourceHeight` let the renderer assert its decoded bitmap matches what main measured rather than trusting it |
 | `capture:mint-page` | invoke | `{mintId, index, jpeg: ArrayBuffer}` → `{ok}` |
 | `capture:mint-commit` | invoke | `{mintId}` → `{step}` — writes the PDF, appends the minted step |
 | `capture:mint-abort` | invoke | `{mintId}` → `{ok}` |
