@@ -1107,7 +1107,28 @@ Built (P2 seq 136, ruled in by foundry-pc-2):
   exactly 2.00% on five quads) after the first sweep turned out
   never to run the floor at all -- smallest half 12.8%, the
   gate-nobody-has-watched-fail shape, caught by looking at the
-  numbers instead of the verdict.
+  numbers instead of the verdict. AND THE SECOND GESTURE (P2 seq
+  145, probed through the shipped chord): the LINE-SLIDE broke the
+  floor on every quad -- two seatSplit calls, each clamping the end
+  it moves against the partner AS IT STOOD, and in the second call
+  the partner is the end the first call already moved, so two
+  individually-correct clamps walk the pair past a limit neither
+  thought it was crossing (to 0.28% of the sheet, and beyond that
+  to segments halvesOf refuses). The floor had been modelled on the
+  gesture that CANNOT make a sliver -- one end fixed holds the cut
+  open, worst case 23-25% -- while the slide is the gesture that
+  CAN, because it moves the end doing the holding: the {x} disease
+  once more, a rule measured on the case that cannot go wrong.
+  RULED: `slideSplit(quad, split, by) -> CaptureSplit` joins the
+  chord (P1), the whole segment moved with the floor and the
+  opposite-edges invariant applied ONCE TO THE PAIR -- it is a
+  constructor from a pointer, so it lives where seatSplit lives,
+  for the same reason: the invariant must be inexpressible, not
+  checked afterwards, and the alternative was a second body of
+  0.02 in the editor. The clamp's one visible seam (P1 seq 144):
+  at the floor the returned point is deliberately NOT under the
+  pointer -- everything must draw from the returned segment, never
+  the raw pointer, or the line and the handle separate.
 - NO HAND HAS TOUCHED ANY OF IT: four gates, nine order cases, and
   the chord numbers underneath -- and the modal has never been
   opened by a person. First act when the gate lifts: open the modal
