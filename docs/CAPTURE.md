@@ -1155,10 +1155,24 @@ Built (P2 seq 136, ruled in by foundry-pc-2):
   and A FILE-BORN SLIVER CANNOT BE SLID DEEPER BUT CAN BE SLID
   BACK OUT TO A PAGE (measured 0.1% -> 46.8%) -- the floor guards
   against MAKING a sliver, not against a person rescuing one.
-- NO HAND HAS TOUCHED ANY OF IT: four gates, nine order cases, and
-  the chord numbers underneath -- and the modal has never been
-  opened by a person. First act when the gate lifts: open the modal
-  and split one spread.
+- WAVE 21 IS COMPLETE ON BRANCHES AND HOLDING (P1 e6267c9, P2
+  10ec907 on top of it; the lead ran a TRIAL MERGE onto main and
+  all gates passed -- 384/0, three typechecks, ng build 674.39 kB,
+  control scan clean over the ten files -- so the lift is one move
+  on Owen's word). P2's final pass closed four more cross-surface
+  defects the contract walk cannot reach, because they are not
+  lines of the contract: the notice repeated its reason per name
+  instead of per group; the corner mark never reached the modal;
+  THE ARROWS STEPPED TWICE (view and modal both answered window
+  keydown -- window listeners are SIBLINGS on one target, not a
+  chain, so nothing the modal does can stop the view hearing the
+  same key: the question is which surface OWNS a key, not which
+  handles it); the table answered Delete from behind the modal;
+  and a photograph leaving the recipe stranded the screen with a
+  modal that owned Escape and no longer existed. NO HAND HAS
+  TOUCHED ANY OF IT -- the modal has never been opened by a
+  person, the gutter never dragged, the stage never crossed. First
+  act when the gate lifts: open the modal and split one spread.
 
 Package split: P1 — schema (byHand, split segment), validator, mint
 chord measurement, migration of {x}, the shared chord; P2 — the modal,
