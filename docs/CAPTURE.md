@@ -835,9 +835,44 @@ page, we're in a new stage where we can change it per-page."
    UI). The Turned/Split/Crop set acknowledgements and the corner mark
    carry over into the modal.
 
+Clarified by P1's plan-back (seq 125), all five accepted:
+
+- The validator CARRIES `byHand` and refuses a non-boolean (the `name`
+  rule); it never CONSULTS it. "Ignore" was the wrong word: validRecipe
+  REBUILDS pages field by field, so an unlisted field is not ignored,
+  it is DROPPED — and the mark would not have survived one save. The
+  mint ignores it for real.
+- Split POINTS are stored as ruled but are GESTURE STATE (the quads
+  stay authoritative, as `split` always was): a corner drag after a
+  split leaves the stored segment stale against the crop, so the modal
+  RE-SEATS endpoints on their nearest edges rather than trusting them.
+  Endpoints resolving to ADJACENT edges are refused (a corner cut is a
+  triangle and a pentagon, not two printable quads).
+- `joined()` generalizes with the same edge knowledge: the vertical-only
+  reconstruction returns a BOW TIE for a horizontal cut, and the editor
+  draws its gutter from it.
+- Page order generalizes by one word: THE HALF HOLDING THE QUAD'S
+  TOP-LEFT CORNER COMES FIRST — same answer as left-then-right for
+  every vertical split, right answer for horizontal, orientation-aware
+  for free because the corner order IS the orientation.
+- The chord lives in shared/capture.ts beside outputSizeFor, sameShape
+  and mintedPageIds — the FOURTH application of one-implementation, the
+  first applied at design time: `halvesOf(quad, split) ->
+  [CaptureQuad, CaptureQuad] | null` (null = segment does not resolve
+  to opposite edges; validator refuses, editor re-seats) and
+  `joinedQuad(quads)`. Main needs it for the {x} migration; the
+  renderer for the handles; two bodies of the chord would be found in
+  a minted PDF.
+- Migration of `{x}` happens ON READ, every open, not one-shot — an old
+  recipe stays readable forever and the next save writes the new form.
+- Mint chord expectation ("needs nothing — quads were never
+  axis-aligned") is stated as a HYPOTHESIS to be measured through
+  mintBegin, not assumed.
+
 Package split: P1 — schema (byHand, split segment), validator, mint
-chord sampling, migration of {x}; P2 — the modal, stages, buttons,
-edge-riding handles, grid double-click/Enter/selection rework.
+chord measurement, migration of {x}, the shared chord; P2 — the modal,
+stages, buttons, edge-riding handles, grid double-click/Enter/selection
+rework, building against P1's halvesOf signature.
 Frontend-design skill pointer applies to the modal treatment.
 
 ## Deferred out loud
