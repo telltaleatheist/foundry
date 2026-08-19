@@ -71,12 +71,31 @@ the produced PDF, **parented to the capture step and marked as minted** —
 shaped so that everything downstream that asks "where is the document?"
 finds the same answer it finds for an imported PDF.
 
-The exact shape of that step (a new action vs. an `import` step with minted
-provenance) is settled by P3's audit of `app/shared/stages.ts` — every
-predicate in that file (`canRunHostActFrom`, `hostActPositionFrom`,
-`hasBookAt`, `arrivedAsBook`, `importedAsEpub`, and the rest) gets walked
-against the capture arrival, and the audit result is written back into this
-document. Wave 15's Narrate gating and Wave 16's queue seam are the two
+**The exact shape of that step is SETTLED (P1's narrow audit, seq 50,
+measured by grep across three layers): action `import`, parented to the
+capture step, retention `irreplaceable`.** Seven sites branch on a step's
+action and all seven test for 'import' — with `import` every one is
+correct for a minted PDF with zero edits; a new 'mint' action makes all
+seven silently wrong-by-default, the Merge 1 defaulting-switch shape
+times seven. The marker for minted costs no new field: `originStep`
+(ledger.ts:431) is the ONLY construction site of an import step and
+always writes `parent: null`, so **an import step WITH a parent is a
+mint by construction**. Stronger than honest — FORCED: parseLedger
+enforces one root (ledger.ts:664), and a capture ledger's root is the
+capture step, so a null-parent mint would be a second root and the
+ledger would be REFUSED. Retention stays `irreplaceable` because it is
+true: a re-mint is a NEW document and readings do not follow it; the
+only false thing was the discard sentence, which now branches on
+`parent === null` — the question it always meant (did this come from
+OUTSIDE?). Accepted wording for the minted branch: Discarding X
+destroys the pages you minted and every reading hung off them. The
+photographs and their recipe stay, so you can mint again — but a new
+mint is a new document, and readings do not follow it. Merge 4 also
+catches the docblock at ledger.ts:414 (the only step whose parent is
+null — already stale since captureStep). The REST of the audit
+(canRunHostActFrom against an unminted capture, Wave 15's Narrate
+gating, Wave 16's queue seam) is UNRUN and stays in the Merge 5 pool;
+nothing here vouches for it. Wave 15's Narrate gating and Wave 16's queue seam are the two
 places most likely to notice; neither may regress. Until a PDF is minted,
 nothing downstream is offered — no read, no narrate, no export. P1
 measured the structural half already: `reading.needed` keys off
