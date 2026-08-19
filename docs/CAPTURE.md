@@ -742,8 +742,23 @@ edits this document first and says so on the channel.
    veil wording remain unexercised by any probe. The rule the ledger
    takes from it: A PROBE FINDS ITS TARGET BY IDENTITY, NOT BY PATTERN
    — a right-looking string under a confident label is worse than a
-   wrong number, because a wrong number makes you look. Still
-   person-sized: the drag gesture itself, under Owen's hands.
+   wrong number, because a wrong number makes you look. RETIRED at seq
+   82 by P2's branch-detection method run on P1's rig: a synthetic
+   DataTransfer needs no real paths because the two branches answer
+   with two different sentences. Measured: .drop-veil BY IDENTITY,
+   null before the drag, present during it, carrying dropSays()'s two
+   real strings by front tab; a drop with a light table in front
+   produced capture.service.ts:216's refusal — the ONE emitter in the
+   codebase, so its appearance proves INTAKE RAN — and Owen's
+   documents.service sentence did not appear. Control honestly
+   bounded: with Home in front intake did NOT run (its sentence
+   absent), but the document path emitted nothing, so which branch
+   declined is untested (hypothesis only: a synthetic file has no
+   path). Second probe-defect in the same hour, recorded: the notice
+   bar never dismisses on a timer, so the FIRST drop's sentence was
+   still on screen when the control read it — RESET WHAT YOU ARE ABOUT
+   TO MEASURE, and never quote a probe's hardcoded summary line as a
+   finding. What remains for hands: the real drag with real HEICs.
 
 ## Deferred out loud
 
