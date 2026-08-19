@@ -74,10 +74,10 @@ const PAGE_MIME = 'application/x-foundry-capture-page';
     <div class="column">
     <header>
       <span class="count">{{ cards().length }} pages</span>
-      <button type="button" (click)="reverse.emit()" [disabled]="ordered()">
+      <button type="button" (click)="reverse.emit()" [disabled]="arranged()">
         {{ descending() ? 'Oldest first' : 'Newest first' }}
       </button>
-      @if (ordered()) {
+      @if (arranged()) {
         <!--
           Said out loud rather than just disabling the button: the sort is gone
           because the person arranged the pages themselves, and a control that
@@ -201,7 +201,7 @@ export class CaptureGridComponent {
   /** Which way the capture-time sort runs, while there still is one. */
   readonly descending = input.required<boolean>();
   /** True once the person has dragged, after which the sort no longer applies. */
-  readonly ordered = input.required<boolean>();
+  readonly arranged = input.required<boolean>();
 
   /** The whole list of ids, rearranged — never a single move. */
   readonly reorder = output<readonly string[]>();
