@@ -24,6 +24,7 @@ import {
   toPixels,
   withCorner,
 } from './geometry';
+import type { ApplyToAll } from '../../core/capture.service';
 import { Rectifier } from './rectify';
 
 /**
@@ -128,14 +129,16 @@ import { Rectifier } from './rectify';
         <div class="gestures">
           <button type="button" (click)="turn(-1)" title="Turn this page anticlockwise">⟲</button>
           <button type="button" (click)="turn(1)" title="Turn this page clockwise">⟳</button>
-          <button type="button" (click)="applyToAll.emit('rotate')">Apply turn to all</button>
+          <button type="button" (click)="applyTurnToAll()" [disabled]="turnsApplied() === 0">
+            Apply turn to all
+          </button>
           @if (quads().length === 1) {
             <button type="button" (click)="split()">Split</button>
           }
-          <button type="button" (click)="applyToAll.emit('split')" [disabled]="quads().length < 2">
+          <button type="button" (click)="applySplitToAll()" [disabled]="quads().length < 2">
             Apply split to all
           </button>
-          <button type="button" (click)="applyToAll.emit('quad')">Apply crop to all</button>
+          <button type="button" (click)="applyToAll.emit({ kind: 'quad' })">Apply crop to all</button>
         </div>
       </div>
 
@@ -227,7 +230,7 @@ export class CapturePageEditorComponent {
    * copy onto other photographs, and only the service holds those — including
    * the shape test that decides which of them are skipped.
    */
-  readonly applyToAll = output<'rotate' | 'split' | 'quad'>();
+  readonly applyToAll = output<ApplyToAll>();
 
   private readonly picture = viewChild.required<ElementRef<HTMLElement>>('picture');
   private readonly photo = viewChild.required<ElementRef<HTMLImageElement>>('photo');
@@ -241,6 +244,8 @@ export class CapturePageEditorComponent {
 
   /** Which corner is under the pointer right now, or null between drags. */
   protected readonly held = signal<{ quad: number; corner: 0 | 1 | 2 | 3 } | null>(null);
+  /** Quarter turns applied to this photograph since it was opened. */
+  protected readonly turnsApplied = signal(0);
   private draggingSplit = false;
 
   protected readonly aspectRatio = computed(() => {
@@ -370,9 +375,31 @@ export class CapturePageEditorComponent {
     }
   }
 
-  /** A quarter turn of every page on THIS photograph. */
+  /**
+   * A quarter turn of every page on THIS photograph.
+   *
+   * The count is REMEMBERED because "apply to all" stamps THE TURN on every
+   * photograph rather than this photograph's corners: a turn is a permutation,
+   * and every other photo has corners of its own to permute. Without the count
+   * the service would have to infer a rotation by comparing two quads, which is
+   * arithmetic on floats standing in for a fact we already knew.
+   */
   protected turn(turns: number): void {
+    this.turnsApplied.update((sofar) => sofar + turns);
     this.quadsChange.emit(this.quads().map((quad) => rotate(quad, turns)));
+  }
+
+  /** Stamp the accumulated turn onto every photograph of the same shape. */
+  protected applyTurnToAll(): void {
+    this.applyToAll.emit({ kind: 'rotate', turns: this.turnsApplied() });
+  }
+
+  /**
+   * Stamp this split onto every UNSPLIT photograph — the service enforces that
+   * half of the rule, since only it can see the others.
+   */
+  protected applySplitToAll(): void {
+    this.applyToAll.emit({ kind: 'split', at: this.splitFraction() ?? 0.5 });
   }
 
   /**
