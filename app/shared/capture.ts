@@ -263,12 +263,18 @@ function cornersOf(edge: QuadEdge): readonly [0 | 1 | 2 | 3, 0 | 1 | 2 | 3] {
   }
 }
 
-function alongEdge(quad: CaptureQuad, edge: QuadEdge, point: CapturePoint): SplitSeat {
+/** The point a given way along an edge, 0..1 from its first corner. */
+function pointAt(quad: CaptureQuad, edge: QuadEdge, at: number): CapturePoint {
   const [from, to] = cornersOf(edge);
   const [ax, ay] = quad[from];
   const [bx, by] = quad[to];
+  return [ax + (bx - ax) * at, ay + (by - ay) * at];
+}
+
+function alongEdge(quad: CaptureQuad, edge: QuadEdge, point: CapturePoint): SplitSeat {
+  const [from, to] = cornersOf(edge);
   const { at } = seatOn(quad[from], quad[to], point);
-  return { edge, at, point: [ax + (bx - ax) * at, ay + (by - ay) * at] };
+  return { edge, at, point: pointAt(quad, edge, at) };
 }
 
 function nearestEdge(quad: CaptureQuad, point: CapturePoint): SplitSeat {
@@ -382,16 +388,108 @@ export function halvesOf(quad: CaptureQuad, split: CaptureSplit): readonly [Capt
  * rest of the session. A gutter that draws and will not save is the same bug
  * with a different handle.
  *
- * WHAT IT DOES NOT DO is stop an end reaching a corner, where one half becomes
- * a sliver. That is a legal cut and a bad one, and a floor on it is a question
- * about the gesture rather than about the geometry.
+ * ── AND IT LEAVES A PAGE ON EITHER SIDE ───────────────────────────────────
+ *
+ * The end is also held back from any position that would cut a page smaller
+ * than `SLIVER_FLOOR` of the sheet. THE CORNER IS NOT THE SLIVER, which is the
+ * part that makes this arithmetic rather than a clamp: on a leaning cut an end
+ * driven all the way onto a corner still leaves a tenth of the sheet beside it
+ * — a whole page — while both ends crowding the same side makes a strip with
+ * neither of them near a corner. So it is a question about the AREA that comes
+ * out, and the old rule about how near an end may get to a corner was only ever
+ * right for cuts parallel to the sides.
+ *
+ * Only the DRAG is held. A `{ x }` being migrated and a fraction from the Split
+ * button pass through `splitFromFraction` untouched: reading a file must return
+ * what the file says, and a stored sliver is a fact about somebody’s project
+ * rather than a gesture to intercept.
  */
+/**
+ * The least of the sheet a page may be left with, as a share of its area.
+ *
+ * NOT A NEW LINE. The clamp that shipped before the segment held the gutter 2%
+ * off either end of the edge it ran along, and for a cut parallel to the sides
+ * — the only cut that existed — 2% ALONG THE EDGE IS 2% OF THE AREA. This is
+ * the same rule restated in the measure that survives a lean.
+ *
+ * IT IS A FLOOR AGAINST DEGENERACY, NOT AN OPINION ABOUT HOW A BOOK DIVIDES,
+ * which is the argument for keeping it low. There is no override on it, so a
+ * tasteful 5% would silently refuse a legitimate unequal cut — a narrow column,
+ * an inset, a foldout leaf — and a person would experience it as the handle
+ * sticking for no reason they can see. The judgement about whether a cut looks
+ * right already has a surface: the preview draws each half at the size it will
+ * mint, through the same shader, which is a better place for taste than a clamp.
+ */
+const SLIVER_FLOOR = 0.02;
+
+/** A quad’s area, by the shoelace, written out so nothing is indexed. */
+function areaOf(quad: CaptureQuad): number {
+  const [topLeft, topRight, bottomRight, bottomLeft] = quad;
+  const cross = (from: CapturePoint, to: CapturePoint): number => from[0] * to[1] - to[0] * from[1];
+  return Math.abs(
+    cross(topLeft, topRight) + cross(topRight, bottomRight)
+    + cross(bottomRight, bottomLeft) + cross(bottomLeft, topLeft),
+  ) / 2;
+}
+
+/**
+ * The nearest place along this edge that still leaves a page on either side.
+ *
+ * ── The solve is exact, because the area really is a straight line in `at` ──
+ *
+ * Moving one end of the cut moves EXACTLY ONE VERTEX of each half; the shoelace
+ * is linear in every vertex coordinate; and the seat is linear in `at`. So each
+ * half’s share of the sheet is AFFINE in `at` for every quad — not just for a
+ * photographed trapezoid — and the two ends of the line are enough to invert it.
+ * No search, no tolerance, and the lean is already inside the arithmetic because
+ * the other end is part of it.
+ *
+ * ── THE GRADIENT IS PER-QUAD AND MUST NEVER BE CARRIED ────────────────────
+ *
+ * The line is straight for every quad; how steeply it climbs depends on the
+ * quad’s shape and on where the fixed end sits — measured across five quads it
+ * runs from 0.41 to 0.51 per unit. So this evaluates BOTH ENDS FOR THE QUAD IN
+ * HAND every time. A constant lifted from one shoot would be right on that
+ * shoot and wrong on the next book by a fifth, which is exactly what `{x}` was:
+ * correct for the case it was measured on.
+ *
+ * ── Where no position works at all ────────────────────────────────────────
+ *
+ * If the other end is itself crowding a corner, no place for this one leaves
+ * two pages. Refusing to move would read as a dead handle, so it gives the
+ * evenest cut available instead — the position where the halves come nearest to
+ * equal — which is both the most helpful answer and the one a person can see is
+ * not what they asked for.
+ */
+function offTheEdgeOfNothing(quad: CaptureQuad, partner: CapturePoint, edge: QuadEdge, wanted: number): number {
+  const sheet = areaOf(quad);
+  if (sheet <= 0) return wanted;
+  const shareAt = (at: number): number => {
+    const halves = halvesOf(quad, { a: pointAt(quad, edge, at), b: partner });
+    return halves === null ? 0.5 : areaOf(halves[0]) / sheet;
+  };
+  const low = shareAt(0);
+  const slope = shareAt(1) - low;
+  // Moving this end does not change how the sheet divides, so there is nothing
+  // to solve and nothing this clamp could improve.
+  if (Math.abs(slope) < 1e-12) return wanted;
+  const seatFor = (share: number): number => (share - low) / slope;
+  const first = seatFor(SLIVER_FLOOR);
+  const second = seatFor(1 - SLIVER_FLOOR);
+  const from = Math.max(0, Math.min(first, second));
+  const to = Math.min(1, Math.max(first, second));
+  if (from > to) return Math.min(1, Math.max(0, seatFor(0.5)));
+  return Math.min(to, Math.max(from, wanted));
+}
+
 export function seatSplit(quad: CaptureQuad, split: CaptureSplit, which: 'a' | 'b', to: CapturePoint): CaptureSplit {
   const partner = nearestEdge(quad, which === 'a' ? split.b : split.a);
-  const moved = alongEdge(quad, ((partner.edge + 2) % 4) as QuadEdge, to);
+  const edge = ((partner.edge + 2) % 4) as QuadEdge;
+  const asked = alongEdge(quad, edge, to);
+  const moved = pointAt(quad, edge, offTheEdgeOfNothing(quad, partner.point, edge, asked.at));
   return which === 'a'
-    ? { a: moved.point, b: partner.point }
-    : { a: partner.point, b: moved.point };
+    ? { a: moved, b: partner.point }
+    : { a: partner.point, b: moved };
 }
 
 /**
