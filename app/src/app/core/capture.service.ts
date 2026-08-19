@@ -811,6 +811,11 @@ const SAVE_AFTER_MS = 400;
  * and nowhere else, because the light table draws the same cards either way and
  * the number in the footer is the same fifty-four.
  *
+ * AND THE SINGLE GESTURE IS THE QUIETER ONE (P1, channel seq 138): split ONE
+ * spread on a shoot of twenty-five and A:0 B:0 becomes A:0 B:0 A:1 -- one page
+ * adrift at the back of an otherwise perfect book. That is the version somebody
+ * reaches for first, and the version that survives a reading of the grid.
+ *
  * It has been live for as long as splitting has, and it survived because
  * nothing had split a real shoot yet: Owen's recipe holds twenty-five
  * photographs and no splits at all.

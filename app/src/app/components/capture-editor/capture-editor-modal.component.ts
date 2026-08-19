@@ -2,6 +2,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   HostListener,
+  computed,
   effect,
   input,
   output,
@@ -102,7 +103,7 @@ import type { ApplyToAll } from '../../core/capture.service';
           @if (quads().length === 1) {
             <button type="button" (click)="splitInTwo()">Split</button>
           }
-          @if (stage() === 2) {
+          @if (showing() === 2) {
             <!--
               KEPT IN STAGE 2 ONLY, ruled at channel seq 129: it is the single
               act that changes every page WITHOUT overwriting hand-set crops,
@@ -122,7 +123,7 @@ import type { ApplyToAll } from '../../core/capture.service';
 
         <span class="grow"></span>
 
-        @if (stage() === 1) {
+        @if (showing() === 1) {
           <!--
             ONE BUTTON, AND IT IS THE WHOLE OF STAGE 1. The sentence beside it
             says what it will do, because this is the press that changes every
@@ -133,7 +134,7 @@ import type { ApplyToAll } from '../../core/capture.service';
             class="act"
             type="button"
             [class.applied]="justApplied() === 'stamp'"
-            (click)="applyToAll.emit({ kind: 'stamp', includeHandSet: false })"
+            (click)="stampEverything()"
           >{{ justApplied() === 'stamp' ? 'Applied ✓' : 'Apply to every page' }}</button>
         } @else {
           @if (handSet() > 0) {
@@ -315,12 +316,12 @@ export class CaptureEditorModalComponent {
   readonly split = input<CaptureSplit | null>(null);
 
   /**
-   * 1 while nobody has set anything on this project, 2 afterwards.
+   * WHICH STAGE THIS PROJECT OPENS IN — derived by the service from the recipe,
+   * never stored, never decided here.
    *
-   * DERIVED BY THE SERVICE AND HANDED DOWN, never decided here and never
-   * remembered across an open. A stage this component kept for itself would
-   * reset every time the modal was closed, which is exactly the failure the
-   * derivation exists to prevent.
+   * A stage this component owned outright would reset every time the modal was
+   * closed, which is the failure the derivation exists to prevent: an evening of
+   * per-page work, reopened onto the button that stamps over all of it.
    */
   readonly stage = input.required<1 | 2>();
 
@@ -359,6 +360,46 @@ export class CaptureEditorModalComponent {
    * somebody switched on for a reason they had an hour ago.
    */
   protected readonly includeHandSet = signal(false);
+
+  /**
+   * WHETHER APPLY HAS BEEN PRESSED SINCE THIS MODAL OPENED.
+   *
+   * ── The derivation cannot see a press that changed nothing ─────────────────
+   *
+   * docs/CAPTURE.md point 2: Apply stamps every same-shaped page "even if
+   * nothing was changed first; pressing Apply IS what advances the stage". On a
+   * virgin project that press copies whole-frame quads onto whole-frame quads
+   * and clears a byHand nobody had set -- so the recipe afterwards is byte for
+   * byte the recipe before, the derivation still reads "nobody has set
+   * anything", and the person stays in stage 1 having pressed the one button
+   * that was supposed to take them out of it.
+   *
+   * Measured before it was fixed: three untouched photographs, stamp from the
+   * first, stage 1 before and stage 1 after.
+   *
+   * ── Which is why the two are not the same question ─────────────────────────
+   *
+   * The input answers WHERE THIS PROJECT OPENS, from what is on disk. This
+   * answers WHAT HAS HAPPENED SINCE, and it is deliberately as short-lived as
+   * the modal: closing without having changed anything and reopening in stage 1
+   * is correct, because nothing has been set and stage 1 is where nothing-set
+   * belongs. The dangerous case -- reopening after real work -- is answered by
+   * the derivation, which by then has something to see.
+   */
+  private readonly advanced = signal(false);
+
+  /** The stage actually on screen: where the project opened, or past it. */
+  protected readonly showing = computed<1 | 2>(() => (this.advanced() ? 2 : this.stage()));
+
+  /**
+   * Stage 1's Apply. It advances whatever the stamp did or did not touch --
+   * point 2 is unconditional, and a button that sometimes moved the person on
+   * would be a button they had to press twice to find out about.
+   */
+  protected stampEverything(): void {
+    this.advanced.set(true);
+    this.applyToAll.emit({ kind: 'stamp', includeHandSet: false });
+  }
 
   protected toggleOverride(event: Event): void {
     const box = event.target;
