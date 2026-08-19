@@ -1096,7 +1096,18 @@ Built (P2 seq 136, ruled in by foundry-pc-2):
   measured number, which would be right on the acceptance shoot and
   wrong on the next book by twenty percent. seatSplit clamps, so
   the surface still cannot express a state anything downstream
-  refuses.
+  refuses. BUILT (P1 seq 142): SLIVER_FLOOR = 0.02 beside the chord,
+  applied inside seatSplit only. The clamp stops AT the boundary
+  (the handle gives way there instead of jumping to the middle); a
+  mid cut is untouched to the last bit and a corner wedge is
+  untouched at 15% of the sheet. READING IS NOT A GESTURE: a stored
+  {x: 0.001} still migrates to the 0.1% sliver it is, unclamped --
+  the floor guards the hand, never the file. Verified by the case
+  that BITES (both ends crowded to one side of the sheet -> held at
+  exactly 2.00% on five quads) after the first sweep turned out
+  never to run the floor at all -- smallest half 12.8%, the
+  gate-nobody-has-watched-fail shape, caught by looking at the
+  numbers instead of the verdict.
 - NO HAND HAS TOUCHED ANY OF IT: four gates, nine order cases, and
   the chord numbers underneath -- and the modal has never been
   opened by a person. First act when the gate lifts: open the modal
