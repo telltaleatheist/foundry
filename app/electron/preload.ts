@@ -13,6 +13,7 @@ import type { HostOffers, HostStatus } from '../shared/host-ops';
 import type {
   AppQuestion,
   Asked,
+  CaptureIntakeProgress,
   CloseAnswer,
   EnvInstallProgress,
   HostNodes,
@@ -263,6 +264,7 @@ const api: FoundryApi = {
   capture: {
     create: (title) => ipcRenderer.invoke('capture:create', title),
     intake: (projectDir, paths) => ipcRenderer.invoke('capture:intake', projectDir, paths),
+    onIntakeProgress: (listener) => subscribe<CaptureIntakeProgress>('capture:intake-progress', listener),
     recipeLoad: (projectDir) => ipcRenderer.invoke('capture:recipe-load', projectDir),
     recipeSave: (projectDir, recipe) => ipcRenderer.invoke('capture:recipe-save', projectDir, recipe),
     mintBegin: (projectDir) => ipcRenderer.invoke('capture:mint-begin', projectDir),

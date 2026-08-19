@@ -3059,6 +3059,36 @@ export interface CaptureCreated extends CaptureOpened {
  * cards to work out what happened to their afternoon. The surface says what
  * arrived, what was already here, and what was refused and why.
  */
+/**
+ * How far an intake has got, pushed once per photograph while it runs.
+ *
+ * ── WHY A PUSH AND NOT A RETURN VALUE ───────────────────────────────────────
+ *
+ * `capture:intake` is one invoke that takes about two seconds PER PHOTOGRAPH —
+ * on the acceptance shoot, the better part of a minute. Owen dropped 27 and got
+ * a window he could not even move, with nothing on screen to say the app was
+ * working rather than dead. A promise that resolves at the end cannot say
+ * anything at all until there is nothing left to say.
+ *
+ * `env:install-progress` is the precedent, followed exactly: main broadcasts
+ * during the invoke, the renderer subscribes through preload, and the invoke
+ * still answers with the whole result when it finishes.
+ *
+ * `done` COUNTS FINISHED PHOTOGRAPHS AND `file` NAMES THE ONE IN HAND, so a
+ * modal can read "3 of 27 — IMG_0214.HEIC" without arithmetic. `done` is
+ * therefore behind `file` by one photograph, which is the honest pairing: the
+ * named file is the work being done, not work already done.
+ */
+export interface CaptureIntakeProgress {
+  projectDir: string;
+  /** Photographs finished. Zero while the first one is being read. */
+  done: number;
+  /** How many were asked for, refusals and duplicates included. */
+  total: number;
+  /** The basename of the photograph in hand. */
+  file: string;
+}
+
 export interface CaptureIntaken extends CaptureOpened {
   /** How many photographs this intake added. */
   added: number;

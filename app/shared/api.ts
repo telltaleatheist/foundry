@@ -17,6 +17,7 @@ import type {
   BackendSettingsPatch,
   CaptureCreated,
   CaptureIntaken,
+  CaptureIntakeProgress,
   CaptureMintBegun,
   CaptureOpened,
   CaptureRecipe,
@@ -1079,6 +1080,14 @@ export interface FoundryApi {
      * already holds, must not look identical to a drop that worked.
      */
     intake(projectDir: string, paths: string[]): Promise<CaptureIntaken>;
+    /**
+     * Where an intake has got to, once per photograph, while it runs.
+     *
+     * A PUSH BECAUSE THE INVOKE CANNOT SPEAK UNTIL IT IS DONE, and it is not
+     * done for the better part of a minute. `env:install-progress` is the
+     * precedent and this follows it exactly, down to returning the unsubscribe.
+     */
+    onIntakeProgress(listener: (progress: CaptureIntakeProgress) => void): () => void;
     /** The recipe, and the door token that makes its pictures loadable. */
     recipeLoad(projectDir: string): Promise<CaptureOpened>;
     /** The whole document, every time. The renderer debounces; this does not. */

@@ -57,11 +57,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
 import * as path from 'node:path';
 import * as zlib from 'node:zlib';
+import { promisify } from 'node:util';
 import { nativeImage } from 'electron';
 
 import { PDFDocument } from 'pdf-lib';
 
 import type {
+  CaptureIntakeProgress,
   CaptureMintBegun,
   CaptureMintPage,
   CapturePage,
@@ -191,6 +193,47 @@ function withRecipe<T>(projectDir: string, work: () => Promise<T>): Promise<T> {
 
 // `emptyRecipe` and `recipeBytes` come from shared/ — see the argument there.
 export { emptyRecipe };
+
+/*
+ * ── HOW AN INTAKE SAYS WHERE IT HAS GOT TO ──────────────────────────────────
+ *
+ * One listener, replaced rather than appended, exactly as `onEnvInstallProgress`
+ * does it: this module's business is photographs on disk, not who is hosting
+ * the app, and the one place that knows whether anybody is listening
+ * (electron/ipc.ts) wires it to a broadcast.
+ */
+let intakeProgress: (progress: CaptureIntakeProgress) => void = () => { /* set by ipc */ };
+
+export function onIntakeProgress(listener: (progress: CaptureIntakeProgress) => void): void {
+  intakeProgress = listener;
+}
+
+/**
+ * Hand the event loop back, so the window stays alive between photographs.
+ *
+ * ── THE FREEZE THIS EXISTS FOR ──────────────────────────────────────────────
+ *
+ * Decoding a HEIC is wasm running IN THIS PROCESS and it does not yield. Owen
+ * dropped 27 photographs and could not move the window for the better part of a
+ * minute: every IPC reply, every paint, every drag of the title bar was behind
+ * work that never let go. `setImmediate` between files is not a fix for that —
+ * it is the difference between one unbroken minute and twenty-seven two-second
+ * pauses with a progress line moving in between.
+ *
+ * THE REAL ANSWER IS A UTILITY PROCESS and it is deferred out loud in
+ * docs/CAPTURE.md rather than built at midnight while somebody is mid-run.
+ */
+const breathe = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve); });
+
+/**
+ * Deflate off the main thread.
+ *
+ * `deflateSync` was ~600 ms of unbroken main-thread work per photograph, on top
+ * of the decode — a third of the freeze, and the third that did not have to be
+ * there at all. The async form hands the compression to libuv’s pool, so the
+ * event loop keeps turning while a 36 MiB raster is squeezed.
+ */
+const deflate = promisify(zlib.deflate);
 
 
 /**
@@ -567,7 +610,7 @@ function pngChunk(type: string, data: Buffer): Buffer {
  * to be big; it is not meant to be slow, and 27 of them are decoded in one
  * intake.
  */
-function encodePng(image: DecodedImage): Buffer {
+async function encodePng(image: DecodedImage): Promise<Buffer> {
   const { width, height, rgba } = image;
   const stride = width * 3;
   const raw = Buffer.alloc((stride + 1) * height);
@@ -591,7 +634,7 @@ function encodePng(image: DecodedImage): Buffer {
   return Buffer.concat([
     PNG_SIGNATURE,
     pngChunk('IHDR', header),
-    pngChunk('IDAT', zlib.deflateSync(raw, { level: 3 })),
+    pngChunk('IDAT', await deflate(raw, { level: 3 })),
     pngChunk('IEND', Buffer.alloc(0)),
   ]);
 }
@@ -871,12 +914,47 @@ export async function intakePhotos(projectDir: string, paths: readonly string[])
     const photos = [...recipe.photos];
     const order = [...recipe.order];
     const duplicates: string[] = [];
+    /*
+     * GUARDED, because a listener is somebody else’s code running inside our
+     * loop: a throw from a window that closed mid-intake must not abandon a
+     * photograph half-copied. The same argument `importLanded` makes at its own
+     * settle, for the same reason.
+     */
+    const report = (progress: CaptureIntakeProgress): void => {
+      try {
+        intakeProgress(progress);
+      } catch (err) {
+        console.error(
+          '[capture] the intake-progress listener threw: '
+          + `${err instanceof Error ? err.message : String(err)}. The intake continues.`,
+        );
+      }
+    };
     const refused: { file: string; why: string }[] = [];
     let added = 0;
 
     for (const each of paths) {
       const resolved = path.resolve(each);
       const name = path.basename(resolved);
+      /*
+       * SAID BEFORE THE WORK, NOT AFTER IT. A progress line that appears once a
+       * photograph is finished names the one the person has already waited for;
+       * this names the one they are waiting ON.
+       *
+       * And it is emitted for EVERY path, including those about to be refused or
+       * recognised as duplicates: a total counting only successes would make the
+       * count jump backwards the moment somebody drops a stray file in with the
+       * photographs.
+       */
+      report({
+        projectDir,
+        done: added + duplicates.length + refused.length,
+        total: paths.length,
+        file: name,
+      });
+      // Between photographs, never inside one: the decode cannot be interrupted,
+      // so this is the only place the window gets a chance to breathe.
+      await breathe();
       const extension = path.extname(resolved).toLowerCase();
       if (!READABLE.has(extension)) {
         refused.push({
@@ -916,7 +994,7 @@ export async function intakePhotos(projectDir: string, paths: readonly string[])
       const original = `${id}${extension}`;
       const workingCopy = `${id}.png`;
       const thumb = `${id}.${THUMB_EDGE}.jpg`;
-      const png = encodePng(decoded);
+      const png = await encodePng(decoded);
       await writeAtomically(path.join(originals, original), bytes);
       await writeAtomically(path.join(derived, workingCopy), png);
       await writeAtomically(path.join(derived, thumb), encodeThumbnail(png, decoded));
@@ -940,6 +1018,10 @@ export async function intakePhotos(projectDir: string, paths: readonly string[])
       order.push(...pages.map((page) => page.id));
       added += 1;
     }
+
+    // The last word: everything asked for is accounted for. Without it a modal
+    // driven by this sits at 26 of 27 while the recipe is written.
+    report({ projectDir, done: paths.length, total: paths.length, file: '' });
 
     const next: CaptureRecipe = { version: 1, photos, order };
     await writeAtomically(recipeFile(projectDir), Buffer.from(recipeBytes(next)));

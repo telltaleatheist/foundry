@@ -31,6 +31,7 @@ import {
   mintBegin,
   mintCommit,
   mintPage,
+  onIntakeProgress,
   openCapture,
   writeRecipe,
 } from './capture';
@@ -2038,4 +2039,8 @@ export function registerIpc(): void {
   // Published beside the job row, not instead of it: the shelf reads the queue,
   // the settings card reads this, and neither of them owns the run.
   onEnvInstallProgress((progress) => broadcast('env:install-progress', progress));
+  // The same shape one door along: main talks while the invoke is still open,
+  // because an intake of a whole shoot is a minute long and a promise that
+  // resolves at the end cannot say anything until there is nothing to say.
+  onIntakeProgress((progress) => broadcast('capture:intake-progress', progress));
 }
