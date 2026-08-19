@@ -865,6 +865,18 @@ edits this document first and says so on the channel.
   keep following later changes to the global): a real schema change
   with merge semantics; the v1 surface (apply-to-all named "global" +
   per-page overrides) covers the workflow without it.
+- A time-provenance badge (P1, seq 122, found by the unread-field
+  grep): the grid sorts by takenAt, and a photograph whose time FELL
+  BACK TO MTIME sits in Newest first at a position that is not a fact
+  about when it was taken -- a copied or re-saved file carries a
+  modification time with no relation to the shutter. On a mixed shoot
+  the sort silently interleaves two kinds of time. Unreachable on the
+  acceptance shoot (27/27 exif-offset, measured); when a capture
+  project ever holds an mtime photograph, one badge on the card or one
+  sentence at sort time says the order is not trustworthy for it.
+  takenAtSource itself stays write-only ON PURPOSE -- provenance on
+  disk, askable, is a legitimate never-read shape, unlike an unwired
+  boolean.
 - Whether Mint is ALSO an act orderable from the action rail: the mint
   button lives on the light table's own footer (you press it looking at
   the pages it will make); the rail question is about the rail's
