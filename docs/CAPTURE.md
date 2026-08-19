@@ -172,6 +172,8 @@ photos is kilobytes of JSON):
     {
       "id": "9f2c…",
       "file": "originals/9f2c….jpg",
+      "workingCopy": "9f2c….png",
+      "thumb": "9f2c….640.jpg",
       "width": 3024,
       "height": 4032,
       "takenAt": "2026-08-17T14:03:22Z",
@@ -191,6 +193,13 @@ photos is kilobytes of JSON):
 Conventions, pinned:
 
 - `id` is the sha of the original bytes. `pages[].id` is `<photoId>:<n>`.
+- `workingCopy` and `thumb` are DOOR NAMES, written by intake (seq 37:
+  the grid needs 27 thumbnail URLs before any mint exists, and the one
+  file the recipe named was the HEIC original — exactly the file an
+  `img` must never point at). Nothing derives layout by convention;
+  `CaptureMintPage.workingCopy` repeats a fact the recipe carries
+  rather than being its only home, and the on-disk layout is intake's
+  business alone.
 - `width`/`height` are the DECODED working-copy dimensions, stored so
   the 2% aspect rule is answerable without decoding anything — and
   because EXIF's dimensions are the other grid and must never be the
@@ -264,7 +273,7 @@ spelling one rotation four ways in P2 — shader, corner hit-testing,
 split line, drag maths.) The original bytes stay the bank, untouched.
 
 **Intake also emits a display thumbnail beside each working copy**
-(`capture/thumbs/<sha>.jpg`, 640 px long edge, JPEG ~0.85 — display
+(`capture/working/<sha>.640.jpg`, 640 px long edge, JPEG ~0.85 — display
 only, never in any quality chain). Ruled after both packages converged
 on it: intake already holds the decoded RGBA, so a thumbnail costs one
 downscale and one encode, and it spares the grid pulling ~540 MiB of
@@ -340,6 +349,16 @@ existing CSP (`img-src … foundry-file:`) with no CSP edit, while
 `fetch()` on the scheme stays refused by `connect-src`. Working copies
 and thumbnails NEVER move as IPC bytes for display; only mint page
 JPEGs cross the bridge, one at a time, renderer to main.
+
+**The served layout (ruled from P2's seq 37, option a — P1 may
+overrule from the door's own ground before Merge 2 lands, since the
+door is theirs):** ONE served directory, `capture/working/`, holding
+`<sha>.png` and `<sha>.640.jpg` side by side; the token maps to that
+directory and names are PLAIN BASENAMES — the book host's rule kept
+exactly (no `/`, no `\`, no `..`; an allow-list plus a flat name
+beats a path check that has to stay right forever). Stated
+consequence worth having: `capture/originals/` is NEVER served — the
+bank has no door, so no renderer bug can reach it.
 
 ## Work packages
 
