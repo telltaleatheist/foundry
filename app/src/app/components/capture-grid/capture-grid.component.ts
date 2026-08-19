@@ -57,14 +57,25 @@ const PAGE_MIME = 'application/x-foundry-capture-page';
  * emits `reverse` and the service, which holds the photos, does it properly.
  * Reversing the array here would be exactly the bug the doc names.
  *
- * ── The drop zone stops the drop, deliberately ──────────────────────────────
+ * ── The drop zone stops the drop, and that was NOT ENOUGH ───────────────────
  *
- * The window has its own file-drop handler (app.ts) which opens EVERY dropped
- * file as a document. A drop of twenty-seven photographs onto this grid would
- * otherwise become twenty-seven attempts to open a HEIC as a book, and
- * twenty-seven refusals in the notice bar. So the zone calls
- * `stopPropagation`: the window listener is on the bubble path and never sees
- * an event this grid has already answered.
+ * This zone calls `stopPropagation` so the window’s own file-drop handler does
+ * not also answer a drop the grid has taken. That much was always right and it
+ * still is. What it was NOT is sufficient, and Owen found out in the first
+ * minutes of the acceptance run: the zone is a STRIP DOWN ONE SIDE, so a drop
+ * on the table, on the empty state, or on the header sailed past it to the
+ * window and came back as “IMG_0238.HEIC is not something Foundry opens”.
+ *
+ * The window handler now routes a drop to intake whenever a capture tab is in
+ * front (app.ts, `intaking`), which is the app’s own philosophy applied where
+ * it had not been: dropping a book at the app is not aiming at a rectangle, and
+ * neither is dropping photographs. So this strip is no longer the only way in —
+ * it is the OBVIOUS one, kept because a gesture with nowhere visible to aim is
+ * a gesture people do not discover.
+ *
+ * `stopPropagation` therefore now prevents a DOUBLE INTAKE rather than a wrong
+ * one. Both paths call the same `intake`, and without it a drop on the strip
+ * would be answered twice.
  */
 @Component({
   selector: 'app-capture-grid',
@@ -281,8 +292,8 @@ export class CaptureGridComponent {
     this.cool();
     if (!carriesFiles(event)) return;
     event.preventDefault();
-    // See the class docblock: the window's own handler would otherwise open
-    // every one of these as a document.
+    // See the class docblock: the window now intakes too, so without this a
+    // drop on the strip would be answered twice.
     event.stopPropagation();
     const files = Array.from(event.dataTransfer?.files ?? []);
     if (files.length > 0) this.dropped.emit(files);

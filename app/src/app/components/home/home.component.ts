@@ -87,37 +87,11 @@ import { UiService } from '../../core/ui.service';
 
         <div class="actions">
           <button class="primary" (click)="documents.openViaDialog()">Open a document…</button>
-          <button class="ghost" (click)="naming.set(true)">Photograph a book…</button>
+          <button class="ghost" (click)="ui.openCaptureNew()">Photograph a book…</button>
           <button class="ghost" (click)="ui.openOcr()">OCR…</button>
           <button class="ghost" (click)="settings()">Settings</button>
         </div>
 
-        @if (naming()) {
-          <!--
-            AN INLINE FIELD RATHER THAN A DIALOG, and it is asked at all for one
-            reason: the project's folder name is made from this and is ONE-SHOT
-            (docs/CAPTURE.md — the catalogue never renames files under anybody).
-            A default of "Photographs" would be permanent, and permanent is too
-            long to live with a name nobody chose.
-
-            Not window.prompt: Electron's renderer does not implement it, so the
-            call returns null and the button would look broken.
-          -->
-          <form class="naming" (submit)="$event.preventDefault(); void photograph()">
-            <input
-              #titleField
-              autofocus
-              placeholder="What book is this?"
-              [value]="title()"
-              (input)="title.set(titleField.value)"
-              (keydown.escape)="naming.set(false)"
-            />
-            <button class="primary" type="submit" [disabled]="making()">
-              {{ making() ? 'Making…' : 'Start' }}
-            </button>
-            <button class="ghost" type="button" (click)="naming.set(false)">Cancel</button>
-          </form>
-        }
       </div>
 
       <!-- Hosted, the list below IS the host's own book list said again from the
@@ -370,12 +344,6 @@ import { UiService } from '../../core/ui.service';
 export class HomeComponent {
   protected readonly hosted = hosted;
 
-  /** Whether the "what book is this?" field is up. */
-  protected readonly naming = signal(false);
-  protected readonly title = signal('');
-  /** True while capture:create is in flight — it makes a folder, so not twice. */
-  protected readonly making = signal(false);
-
   protected readonly projects = inject(ProjectsService);
   protected readonly documents = inject(OpenDocumentsService);
   private readonly notices = inject(NoticeService);
@@ -543,38 +511,6 @@ export class HomeComponent {
     }
   }
 
-  /**
-   * START A PROJECT FROM PHOTOGRAPHS — the only door in this app that makes a
-   * project without a file.
-   *
-   * Every other project here is born by importing a document and keyed by the
-   * hash of its bytes. A book that exists only as pictures on a phone has no
-   * such file, and the photographs cannot land anywhere until the project they
-   * land in exists — so `capture:create` makes it empty, with the capture step
-   * already on it, and answers with the directory that is now the only handle
-   * anything has on it.
-   *
-   * The tab is opened from the directory rather than from a path, exactly as a
-   * book tab is: there is nothing here for main to be asked permission about.
-   */
-  protected async photograph(): Promise<void> {
-    if (this.making()) return;
-    this.making.set(true);
-    try {
-      const made = await this.captures.create(this.title().trim());
-      if (made === null) return;
-      this.naming.set(false);
-      this.title.set('');
-      // No navigation: Home IS the workspace with no document up, exactly as
-      // openProject above assumes — showing the tab is what puts the light table
-      // on screen. (An earlier line here navigated to '/workspace', which is not
-      // a route: the workspace is '', and it only appeared to work by falling
-      // through the wildcard redirect.)
-      this.documents.show(this.documents.captureTabIn(made));
-    } finally {
-      this.making.set(false);
-    }
-  }
 
   protected settings(): void {
     void this.router.navigateByUrl('/settings');
