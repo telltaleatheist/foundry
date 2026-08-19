@@ -220,7 +220,12 @@ Conventions, pinned:
   So **apply-to-all and late-drop inheritance SKIP any photo whose
   baked aspect ratio differs from the source's by more than 2%**, and
   the surface names what it skipped and why. A skipped photo keeps its
-  own quads. On the acceptance shoot exactly one card skips, which is
+  own quads. **A new photo inherits from `photos[photos.length - 1]`,
+  the last photo in ARRAY order (intake order), not the last in
+  `order` (the arrangement)** — ruled from P1 seq 45: at intake time
+  "the previous photograph" means the one that most recently arrived,
+  and the two differ the moment anyone drags a card.
+  On the acceptance shoot exactly one card skips, which is
   correct: a landscape frame in a portrait shoot is a different
   photograph, not one the same crop happens to fit. Two more skips,
   same family (P2, seq 43), both REFUSALS rather than guesses,
@@ -360,8 +365,8 @@ already carries the failure:
 
 | Channel | Direction | Signature |
 | --- | --- | --- |
-| `capture:create` | invoke | `{title}` → `{projectDir, recipe, token}` — the EIGHTH door (seq 36): births the project through the same serialized path `importDocument` uses, keys it `slugify(title)-<8 random hex>` per the creation-id ruling, writes the empty recipe, mints the door token, and **appends the capture step AT CREATE** — forced by the light-table-belongs-to-the-step ruling, because a project between New Project and the first drop must already have the surface that receives the drop. An abandoned empty capture is an honest record, same shape as an adopted project with an empty ledger. Title is what the person typed; empty becomes `Photographs`; the stem is ONE-SHOT (the catalogue never renames files under anybody) |
-| `capture:intake` | invoke | `{projectDir, paths: string[]}` → `{recipe, token}` — copy, hash, EXIF-read, decode + working copy + thumb, append photos, inherit prior photo's settings; token because intake is the other moment a project first has pixels to show |
+| `capture:create` | invoke | `{title}` → `{projectDir, recipe, token}` — the EIGHTH door (seq 36): births the project through the same serialized path `importDocument` uses, keys it `slugify(title)-<8 random hex>` per the creation-id ruling, writes the empty recipe, mints the door token, and **appends the capture step AT CREATE** — forced by the light-table-belongs-to-the-step ruling, because a project between New Project and the first drop must already have the surface that receives the drop. An abandoned empty capture is an honest record, same shape as an adopted project with an empty ledger. Title is what the person typed; empty becomes `Photographs`; the stem is ONE-SHOT (the catalogue never renames files under anybody). Answers with ImportedDocument-shaped data whose `entry` is `capture/recipe.json` — there is no document yet, so do NOT read that entry as a file to open |
+| `capture:intake` | invoke | `{projectDir, paths: string[]}` → `{recipe, token}` — copy, hash, EXIF-read, decode + working copy + thumb, append photos, inherit prior photo's settings; token because intake is the other moment a project first has pixels to show. **Answer is `CaptureIntaken`: `{recipe, token, added, duplicates: string[], refused: [{file, why}]}`** (P1 departure, seq 45, accepted: without it a drop holding a JPEG and three photos the project already has is indistinguishable from a clean import of nothing). The refusal wording is USER-VISIBLE by design ('.txt is not a photograph this stage reads yet -- HEIC only for now') -- a named refusal is a sentence a person can act on. **v1 intake is HEIC ONLY**: a JPEG would decode through Electron on a path where EXIF Orientation is applied by somebody else's rules, the exact hazard that nearly turned this shoot 90 degrees wrong; JPEG/PNG intake is deferred below, orientation measured first |
 | `capture:recipe-load` | invoke | `{projectDir}` → `{recipe, token}` — the token mints the door's allow-list entry for this project (the `book:load` pattern) |
 | `capture:recipe-save` | invoke | `{projectDir, recipe}` → `void` — whole document; renderer debounces |
 | `capture:mint-begin` | invoke | `{projectDir}` → `{mintId, pages: [{pageId, workingCopy, quadPx, sourceWidth, sourceHeight, outWidth, outHeight}]}` — **main computes the final list; the renderer renders exactly that list.** `quadPx` is WORKING-COPY PIXELS, denormalized ONCE by main (the recipe stays fractions; the unit is in the name so no reader has to remember which side of the bridge they are on). `workingCopy` is the door NAME for `foundry-file://capture/<token>/<name>`, never a filesystem path. `sourceWidth`/`sourceHeight` let the renderer assert its decoded bitmap matches what main measured rather than trusting it |
@@ -486,10 +491,25 @@ edits this document first and says so on the channel.
   + PNG working copies preserve everything a later pivot would need.
   The lever that actually helps small print is the READ budget, which
   is per-run and adjustable today.
-- A PNG-encode dependency: P1 writes the encoder in-house (zlib +
-  IHDR/IDAT — the buffer format is fully under our control) and asks
-  for `pngjs` BY NAME if that does not come out clean, rather than
-  quietly hand-rolling something fragile.
+- ~~A PNG-encode dependency~~ SETTLED at Merge 2: the encoder is
+  hand-written (zlib + IHDR/IDAT/IEND, ~40 lines) and came out clean
+  — real signature, correct dimensions, colour type 2, verified on
+  all 27. The reason stands in capture.ts’s docblock:
+  `nativeImage.createFromBitmap`’s buffer is BGRA or RGBA by platform
+  and premultiplied on some, an ambiguity nobody should resolve by
+  trying it on the one file every page of the finished book is
+  sampled from. Electron IS used for the thumbnail, handed the
+  encoded PNG so there is no channel order to get wrong.
+- An intake progress channel: **27 photographs take 55.2 s (2.0 s
+  each, measured on this machine at Merge 2)** and `capture:intake`
+  is a plain invoke, so the renderer holds a spinner for a minute
+  with nothing to show. Deferred rather than invented mid-merge;
+  when it comes, decide whether the mint’s job-row shape belongs to
+  intake too, so progress has ONE shape in this feature, not two.
+- JPEG/PNG intake: v1 refuses them by name. Before adding, MEASURE
+  who applies EXIF Orientation on Electron’s decode path, the same
+  question libheif already answered for HEIC (a wrong answer turns
+  a shoot sideways silently).
 - An exhaustiveness helper on defaulting switch arms over StepAction
   (read-back section 4): the two Translated-stamp defects compiled green
   because default: hides a widened union; a never-check would make the
@@ -502,7 +522,7 @@ edits this document first and says so on the channel.
 The five, as always, run by the lead before any commit: `bun test` (384),
 root `bunx tsc --noEmit`, from `app/`: `tsc -p tsconfig.electron.json`,
 `tsc -p tsconfig.app.json`, `ng build` — never `app/tsconfig.json` — plus
-the raw-control-byte scan. Agents never commit; the lead verifies, commits,
+the raw-control-byte scan, WHOSE FILE LIST COMES FROM git show --name-only HEAD, never git status --porcelain (P1, seq 45: a clean tree makes the status list empty, so the scan reads nothing and prints CLEAN -- a gate that cannot fail, found because P1 watched it pass suspiciously fast). Two more gate hazards, both measured: npx tsc exits 0 without compiling at THREE sites on this machine now, so the leaf configs run ./node_modules/.bin/tsc by path; and bunx at root, never npx. Agents never commit; the lead verifies, commits,
 and pushes. **`bunx`, never `npx`**: at this repo's root, `npx tsc`
 fetches a joke package that prints "This is not the tsc command you are
 looking for" and EXITS 0 — the vacuous gate in its purest form,
