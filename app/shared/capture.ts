@@ -38,6 +38,44 @@ import type { CaptureRecipe, PixelQuad } from './types';
 export const CAPTURE_RECIPE_PAYLOAD = 'capture/recipe.json';
 
 /**
+ * The pages a mint would produce, in the order it would produce them.
+ *
+ * ── THE THIRD TIME THIS RULE HAS HAD MORE THAN ONE BODY ─────────────────────
+ *
+ * "Walk `order`, skip the struck ones" was written three times independently:
+ * `mintBegin` in electron/capture.ts, the light table footer's `mintable`, and
+ * the editor readout that tells somebody they are on pages 9-10 of 54. All
+ * three agreed, because all three were written from the same sentence — which
+ * is exactly what `outputSizeFor` and `sameShape` did before each of them was
+ * moved here, and two of these were thirty lines apart in one file.
+ *
+ * THE NUMBERS ARE THE POINT. The footer promises a page count, the readout
+ * promises a position in a book of that many, and the mint decides what the
+ * book actually is. A person crops for an hour, reads "of 54", and counts the
+ * PDF: any drift between those three is a number that lied to somebody about
+ * work they had already done.
+ *
+ * ── WHY THEY CANNOT DISAGREE TODAY, WHICH IS NOT AN ACCIDENT ────────────────
+ *
+ * An id in `order` naming no page would be counted differently by each of them
+ * — the renderer skips it, the mint throws. That state cannot reach disk
+ * because `writeRecipe`'s validator refuses a recipe whose order and pages are
+ * not the same set. This function is where that guarantee is spent; if the
+ * validator is ever relaxed, these numbers become able to differ again.
+ */
+export function mintedPageIds(recipe: CaptureRecipe): string[] {
+  const struck = new Set<string>();
+  const known = new Set<string>();
+  for (const photo of recipe.photos) {
+    for (const page of photo.pages) {
+      known.add(page.id);
+      if (page.struck) struck.add(page.id);
+    }
+  }
+  return recipe.order.filter((id) => known.has(id) && !struck.has(id));
+}
+
+/**
  * A recipe with no photographs in it yet.
  *
  * IN `shared/` FOR THE SAME REASON THE PATH IS. Two electron modules write

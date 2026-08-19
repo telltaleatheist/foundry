@@ -77,6 +77,7 @@ import type {
 import {
   CAPTURE_RECIPE_PAYLOAD,
   emptyRecipe,
+  mintedPageIds,
   outputSizeFor,
   recipeBytes,
   sameShape,
@@ -1115,17 +1116,27 @@ export async function mintBegin(projectDir: string): Promise<CaptureMintBegun> {
   }
 
   const pages: CaptureMintPage[] = [];
-  for (const pageId of recipe.order) {
+  /*
+   * THE LIST COMES FROM `shared/`, so the number the footer promised and the
+   * number the editor read out are the number this prints. Three bodies of one
+   * rule became one (see `mintedPageIds`).
+   */
+  for (const pageId of mintedPageIds(recipe)) {
     const page = pageOf.get(pageId);
     const photo = photoOf.get(pageId);
-    // The validator already refuses a recipe whose order and pages disagree, so
-    // reaching here means the file changed under us between load and mint.
+    /*
+     * STILL REFUSED HERE RATHER THAN TRUSTED. `mintedPageIds` drops an id that
+     * names no page, which is the right answer for a COUNT on screen — a number
+     * beside a button must not throw. It is the wrong answer for the mint: a
+     * book quietly short a leaf is the failure the order cross-check exists to
+     * prevent, so reaching this means the file changed under us between the load
+     * and the mint, and that is worth stopping for.
+     */
     if (page === undefined || photo === undefined) {
       throw new CaptureError(
         `The recipe lists a page (${pageId}) that no photograph holds. Reopen the project before minting.`,
       );
     }
-    if (page.struck) continue;
     const quadPx = page.quad.map(
       ([x, y]) => [x * photo.width, y * photo.height] as const,
     ) as unknown as PixelQuad;
