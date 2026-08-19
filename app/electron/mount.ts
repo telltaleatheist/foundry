@@ -95,6 +95,7 @@ import { pathToFileURL } from 'node:url';
 import { net, protocol, session } from 'electron';
 
 import { bookFigureFile } from './book';
+import { captureDerivedFile } from './capture';
 import { openDocument } from './documents';
 import { type FoundryHost, recordHost } from './host';
 import {
@@ -296,6 +297,31 @@ function registerFileProtocol(): void {
       return serveFile(figure, { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
     }
 
+    if (url.host === 'capture') {
+      /*
+       * `/<token>/<name>` — a working copy or a thumbnail of ONE capture
+       * project, out of the single directory that token was minted for
+       * (`captureDerivedFile`, electron/capture.ts). The shape is the book
+       * host’s above, deliberately: allow-list, plain basename, 403 for
+       * anything else, and no path check anybody has to keep right.
+       *
+       * THE ORIGINALS HAVE NO HOST AND CANNOT BE GIVEN ONE FROM HERE. The
+       * token maps to `capture/derived/`, and every file under it is
+       * reconstructible from the photographs plus the recipe. The photographs
+       * themselves — which for an archive shoot may be the only copies that
+       * exist — are not addressable through this scheme at all.
+       */
+      const segments = url.pathname.split('/').filter((part) => part.length > 0);
+      const token = segments.shift();
+      if (token === undefined || segments.length !== 1) {
+        return new Response('No project and picture were named.', { status: 400 });
+      }
+      const picture = captureDerivedFile(token, decodeURIComponent(segments[0]!));
+      if (picture === null) {
+        return new Response('That project\u2019s photographs are not open in this app.', { status: 403 });
+      }
+      return serveFile(picture, { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+    }
     // The old `open` and `epub` hosts are both gone — the first with Chromium's
     // PDF viewer, the second with the iframe reader. 404 rather than silence, so
     // a stale URL says what happened to it.

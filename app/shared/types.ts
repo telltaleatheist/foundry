@@ -2908,8 +2908,27 @@ export type CaptureTimeSource =
 export interface CapturePhoto {
   /** The sha of the ORIGINAL bytes. The identity of everything derived from it. */
   id: string;
-  /** Relative to the capture directory: `originals/<sha>.<ext>`, extension kept. */
+  /**
+   * Relative to the capture directory: `originals/<sha>.<ext>`, extension kept.
+   *
+   * NAMED HERE AND UNREACHABLE FROM THE RENDERER, which is not a contradiction.
+   * The original is HEIC, which Chromium cannot decode, so it is the one file
+   * the grid must never point an `img` at — and the capture door serves only
+   * `derived/`, so no URL a renderer can compose reaches it at all. This field
+   * is provenance: it says which bytes everything else here was made from.
+   */
   file: string;
+  /**
+   * The upright PNG, as the DOOR names it — a plain basename, not a path.
+   *
+   * `foundry-file://capture/<token>/<workingCopy>` is the whole address. It is
+   * stored rather than composed from the id because a convention held in two
+   * heads across a bridge is discovered as a wall of broken images rather than
+   * as an error, and because the layout on disk then belongs to intake alone.
+   */
+  workingCopy: string;
+  /** The 640 px JPEG the grid draws, same door, same basename rule. */
+  thumb: string;
   /**
    * The DECODED working copy's dimensions — never EXIF's.
    *
@@ -2957,6 +2976,39 @@ export interface CaptureRecipe {
 export interface CaptureOpened {
   recipe: CaptureRecipe;
   token: string;
+}
+
+/**
+ * What `capture:create` answers with — an empty project that already exists.
+ *
+ * THE DIRECTORY IS THE POINT. Every other project in this app is born by
+ * importing a file, and is keyed by the content hash of that file; a capture project
+ * must exist EMPTY, before there is any content to hash, so it is keyed from a
+ * random id at creation instead and its directory is the only handle anything
+ * has on it. One round trip: the caller receives the directory, the recipe and
+ * the door token together, and never needs a load on the create path.
+ */
+export interface CaptureCreated extends CaptureOpened {
+  projectDir: string;
+}
+
+/**
+ * What `capture:intake` answers with — the recipe, and what it would not do.
+ *
+ * MORE THAN `CaptureOpened` BECAUSE THE ALTERNATIVE IS SILENCE. A person drags
+ * in a folder; some of it is already here, and some of it is a file this stage
+ * does not read. Answering with the recipe alone makes both outcomes look
+ * identical to a successful import of nothing, and the person is left counting
+ * cards to work out what happened to their afternoon. The surface says what
+ * arrived, what was already here, and what was refused and why.
+ */
+export interface CaptureIntaken extends CaptureOpened {
+  /** How many photographs this intake added. */
+  added: number;
+  /** Filenames whose bytes this project already held — copied once, not twice. */
+  duplicates: string[];
+  /** What was not read, each with a sentence saying why. */
+  refused: { file: string; why: string }[];
 }
 
 /**

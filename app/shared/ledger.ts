@@ -432,6 +432,43 @@ export function originStep(
 }
 
 /**
+ * The other origin — the one a project gets when it arrives as PHOTOGRAPHS.
+ *
+ * ── A SIBLING OF `originStep` AND NOT A PARAMETER ON IT ─────────────────────
+ *
+ * The two are the same shape and mean different things, and a function called
+ * `originStep` that sometimes returns a capture step would be one name over two
+ * meanings — the defect this feature has already found four times in its own
+ * plan. Reading either of these tells you what it makes without checking what
+ * was passed to it.
+ *
+ * ── APPENDED AT CREATION, WITH AN EMPTY RECIPE, WHICH IS FORCED ─────────────
+ *
+ * The light table belongs to the CAPTURE STEP rather than to a project that has
+ * no PDF yet (docs/CAPTURE.md), so the step has to exist before the photographs
+ * do: no step, no light table, and nowhere for the first photograph to land. A
+ * capture step whose recipe holds zero photographs is therefore the ordinary
+ * first state of one of these projects and not a hole in the record — the same
+ * shape as the empty ledger an adoption leaves behind.
+ *
+ * IRREPLACEABLE, on the import clause of the rule rather than a new one. What
+ * it stands for is an afternoon in an archive with a book that does not leave
+ * the building, and hand-placed corners over every page of it. No run remakes
+ * either at any price.
+ *
+ * THE ID IS AN ARGUMENT for `originStep`s reason: this module holds no clock
+ * and no randomness on purpose, and main mints both.
+ */
+export function captureStep(
+  id: string,
+  payload: string,
+  createdAt: number,
+  label = labelFor('capture'),
+): LedgerStep {
+  return { id, parent: null, action: 'capture', payload, retention: RETENTION_OF.capture, createdAt, label };
+}
+
+/**
  * What a step is CALLED, in the app's voice — never a filename.
  *
  * The count is in the label rather than beside it because the row is one line

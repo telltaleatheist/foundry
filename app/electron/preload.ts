@@ -261,6 +261,7 @@ const api: FoundryApi = {
   },
 
   capture: {
+    create: (title) => ipcRenderer.invoke('capture:create', title),
     intake: (projectDir, paths) => ipcRenderer.invoke('capture:intake', projectDir, paths),
     recipeLoad: (projectDir) => ipcRenderer.invoke('capture:recipe-load', projectDir),
     recipeSave: (projectDir, recipe) => ipcRenderer.invoke('capture:recipe-save', projectDir, recipe),

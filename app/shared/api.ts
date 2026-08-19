@@ -15,6 +15,8 @@ import type { ReReadPrompt } from './reread';
 import type {
   AppQuestion,
   BackendSettingsPatch,
+  CaptureCreated,
+  CaptureIntaken,
   CaptureMintBegun,
   CaptureOpened,
   CaptureRecipe,
@@ -1057,11 +1059,26 @@ export interface FoundryApi {
    */
   capture: {
     /**
+     * Make an empty capture project and answer with everywhere it lives.
+     *
+     * THE ONLY DOOR IN THIS APP THAT CREATES A PROJECT WITHOUT A FILE. Every
+     * other project is born by importing a document and keyed by the hash of its
+     * bytes; photographs have to have somewhere to land before any of them
+     * exist, so this one is keyed from a random id and hands back the directory
+     * that is now the only handle on it. The recipe and token come back in the
+     * same round trip, so the create path never needs a load after it.
+     */
+    create(title: string): Promise<CaptureCreated>;
+    /**
      * Copy the named files in, hash them, decode, read their capture times, and
      * append them to the recipe. Late arrivals inherit the settings of the photo
      * before them — except where the aspect rule refuses the copy.
+     *
+     * ANSWERS WITH WHAT IT WOULD NOT DO, as well as what it did: a drop that
+     * contained files this stage does not read, or photographs this project
+     * already holds, must not look identical to a drop that worked.
      */
-    intake(projectDir: string, paths: string[]): Promise<CaptureOpened>;
+    intake(projectDir: string, paths: string[]): Promise<CaptureIntaken>;
     /** The recipe, and the door token that makes its pictures loadable. */
     recipeLoad(projectDir: string): Promise<CaptureOpened>;
     /** The whole document, every time. The renderer debounces; this does not. */

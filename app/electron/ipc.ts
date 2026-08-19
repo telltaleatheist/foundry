@@ -25,6 +25,12 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { readAppSettings, writeAppSettings } from './app-settings';
 import { cancelSetup, setupWslEnv } from './backend-setup';
 import {
+  ensureCapture,
+  intakePhotos,
+  openCapture,
+  writeRecipe,
+} from './capture';
+import {
   amendBookOps,
   applyBookOps,
   correctBookBlock,
@@ -48,6 +54,7 @@ import {
 import type { HostNodeAction } from '../shared/host-ops';
 import * as queue from './job-queue';
 import {
+  createCaptureProject,
   deletableStep,
   deleteDocument,
   deleteProject,
@@ -1601,12 +1608,36 @@ export function registerIpc(): void {
       + 'in later merges (docs/CAPTURE.md).',
     );
   };
-  ipcMain.handle('capture:intake', (_event, _projectDir: string, _paths: string[]) =>
-    captureNotYet('capture:intake'));
-  ipcMain.handle('capture:recipe-load', (_event, _projectDir: string) =>
-    captureNotYet('capture:recipe-load'));
-  ipcMain.handle('capture:recipe-save', (_event, _projectDir: string, _recipe: CaptureRecipe) =>
-    captureNotYet('capture:recipe-save'));
+  /*
+   * `capture:create` MAKES A PROJECT, which no other door here does. It answers
+   * with the directory because that directory is the only handle anything has
+   * on a project keyed from a random id rather than from a document — and with
+   * the recipe and token beside it, so the light table opens in one round trip
+   * rather than creating and then immediately loading.
+   */
+  ipcMain.handle('capture:create', async (_event, title: string) => {
+    const made = await createCaptureProject(title);
+    return { projectDir: made.dir, ...(await ensureCapture(made.dir)) };
+  });
+  /*
+   * INTAKE IS THE LONG ONE. Every photograph is copied, hashed, decoded, encoded
+   * to a lossless working copy and thumbnailed, one at a time — seconds each,
+   * and the acceptance shoot is twenty-seven of them. It is an `invoke` like the
+   * others because the contract says so; a person watching a spinner for a
+   * minute is a surface problem, and inventing a progress channel here would
+   * make it a protocol one.
+   */
+  ipcMain.handle('capture:intake', (_event, projectDir: string, paths: string[]) =>
+    intakePhotos(projectDir, paths));
+  ipcMain.handle('capture:recipe-load', (_event, projectDir: string) => openCapture(projectDir));
+  /*
+   * SAVED WHOLE AND VALIDATED WHOLE. The renderer debounces; this does not, and
+   * it refuses a recipe it cannot read rather than writing it — a malformed
+   * recipe on disk is not a bug that throws, it is a project that will not open
+   * tomorrow, holding photographs nobody can remake.
+   */
+  ipcMain.handle('capture:recipe-save', (_event, projectDir: string, recipe: CaptureRecipe) =>
+    writeRecipe(projectDir, recipe));
   ipcMain.handle('capture:mint-begin', (_event, _projectDir: string) =>
     captureNotYet('capture:mint-begin'));
   ipcMain.handle('capture:mint-page', (_event, _mintId: string, _index: number, _jpeg: ArrayBuffer) =>

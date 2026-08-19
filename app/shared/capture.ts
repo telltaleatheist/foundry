@@ -26,6 +26,17 @@
  */
 import type { PixelQuad } from './types';
 
+/**
+ * The recipe's path inside a project, and the capture step's payload.
+ *
+ * IN `shared/` BECAUSE TWO MODULES NAME IT AND NEITHER SHOULD IMPORT THE OTHER:
+ * `electron/capture.ts` reads and writes the file, and `electron/projects.ts`
+ * writes it into the step it appends at creation. Spelling it twice would put
+ * a step's payload and the file it points at in two places, free to disagree
+ * the day the layout moves.
+ */
+export const CAPTURE_RECIPE_PAYLOAD = 'capture/recipe.json';
+
 /** A rectified page's size in pixels. Whole pixels: it is a raster's extent. */
 export interface OutputSize {
   width: number;

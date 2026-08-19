@@ -84,7 +84,7 @@
  * then have to go and delete by hand, which is not a kindness, it is a lie about
  * what the button did.
  */
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { constants as fsconst, createReadStream, promises as fsp, type Dirent } from 'node:fs';
 import * as path from 'node:path';
 
@@ -125,6 +125,7 @@ import { STEP_LABELS, migrateToSteps, readTypeRecords } from '../shared/steps';
 import {
   A_BOOK_OF_ITS_OWN,
   askedOf,
+  captureStep,
   chainsWithout,
   chronological,
   deleteCost,
@@ -160,6 +161,7 @@ import {
   type ReadAsk,
 } from '../shared/ledger';
 import { GENERATED_ROLE_FOR } from '../shared/documents';
+import { CAPTURE_RECIPE_PAYLOAD } from '../shared/capture';
 // The records `parts` grammar is the overlay's target grammar — one spelling,
 // three readers — so the validator is the same function the curation uses.
 // One spelling for a path, so Windows' three become one — and the same one the
@@ -988,6 +990,65 @@ export function onImportLanded(listener: (landing: ImportLanding) => void): void
   importLanded = listener;
 }
 
+/**
+ * Make an empty project for photographs, and give it its first step.
+ *
+ * ── WHY THIS IS NOT `importDocument` WITH A THIRD KIND ──────────────────────
+ *
+ * Every project above is born FROM A FILE and keyed by the hash of that file’s
+ * bytes, which is what makes importing the same book twice land in the same
+ * folder. A capture project has no file yet: it must exist EMPTY, so that a
+ * light table has somewhere to put the first photograph. So it is keyed from a
+ * random id instead, and this comment says so rather than leaving a reader to
+ * wonder why one project in the library is not content-addressed.
+ *
+ * THE KEY NEVER CHANGES ON A RE-MINT. A project is its identity, not its
+ * current PDF: minting again produces a new step and a new document inside the
+ * same folder, and a key that followed the newest PDF would draw one project
+ * as two rows on Home.
+ *
+ * THE TITLE IS WHAT THE PERSON TYPED, and the stem with it — there is no
+ * filename to take either from. An empty title becomes “Photographs” rather
+ * than an empty row on Home. One shot: the stem never changes after creation,
+ * because renaming files under somebody is not a thing a catalogue does.
+ *
+ * THE STEP IS APPENDED HERE, WITH AN EMPTY RECIPE, and `captureStep` carries
+ * the argument for why that is forced rather than tidy.
+ */
+export async function createCaptureProject(title: string): Promise<ImportedDocument> {
+  const named = title.trim().length > 0 ? title.trim() : 'Photographs';
+  const key = `${slugify(named)}-${randomBytes(4).toString('hex')}`;
+  const dir = path.join(projectsDir(), key);
+  return withCreatedProject(dir, key, named, async (manifest) => {
+    /*
+     * ONLY INTO AN EMPTY LEDGER, on `importDocument`’s reason: a create that
+     * somehow met an existing project must not write a second account of where
+     * its photographs came from. The random key makes that collision very
+     * nearly impossible, which is not the same as impossible.
+     */
+    if (ledgerOf(manifest).steps.length === 0) {
+      manifest.ledger = {
+        steps: [captureStep(
+          randomUUID(),
+          CAPTURE_RECIPE_PAYLOAD,
+          manifest.createdAt > 0 ? manifest.createdAt : Date.now(),
+        )],
+      };
+      await writeManifest(dir, manifest);
+    }
+    // A project was made. Home has no other way to hear about it.
+    announceProjects();
+    return {
+      dir,
+      // No document exists yet, which is the whole point of this arrival: the
+      // recipe stands in the entry slot until a mint makes one.
+      entry: CAPTURE_RECIPE_PAYLOAD,
+      key: manifest.key,
+      stem: manifest.stem,
+      notice: null,
+    };
+  });
+}
 export async function importDocument(
   filePath: string,
   kind: 'pdf' | 'epub',
