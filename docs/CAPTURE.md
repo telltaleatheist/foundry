@@ -122,8 +122,44 @@ and inferring capture from emptiness would turn a genuinely broken
 project into a light table and hide the one message that says the
 files are gone. A row's page-count tag (reading the recipe) is deferred;
 the boolean is enough to open the light table and tell the truth.
-Until it lands, Home draws a fresh capture project disabled and
-mislabelled — known, temporary, blocks a row and not the feature.
+Landed with Merge 4 (f4f1fca), which also fixed TWO defects already on
+main, both found by the FIRST end-to-end run rather than by reading:
+
+- **The union and the runtime list were two spellings of one set.**
+  `STEP_ACTIONS` (runtime array, ledger.ts) never gained `capture` when
+  the `StepAction` union (types.ts) did, and parseLedger validates
+  against THE ARRAY — so every capture project the app created was
+  REFUSED by the app that wrote it, thirty seconds later. Fix is the
+  cause, not the symptom: `StepAction` is now DERIVED
+  (`typeof STEP_ACTIONS[number]`), so adding an action is one edit and
+  the compiler resumes naming every consequence. Note P1's Merge 2
+  scope sentence (manifest write typechecked, not run) turned out to be
+  covering an actual break, not a theoretical gap — honest scope
+  statements are where the next bug lives.
+- **A step is the retained payload of an action; minting one whose
+  payload does not exist is writing a promise the project cannot
+  keep.** createCaptureProject appended the capture step but only the
+  IPC handler knew to also write the recipe — creation alone made a
+  project that refused to open. Creation now writes the recipe ITSELF,
+  before the step; `emptyRecipe`/`recipeBytes` live in shared/capture.ts
+  so both writers import one implementation (the dependency arrow only
+  goes one way: capture.ts already depends on projects.ts).
+
+**Ruled from P2 seq 57 (P1 lands, small follow-up): a missing DECODER
+throws OUT of intakePhotos — one loud failure naming the installation
+— rather than becoming N per-file refusals.** The per-file try/catch is
+exactly right for a file that will not decode (a truncated HEIC among
+27 good ones is what CaptureIntaken exists to report) and exactly wrong
+for an absent decoder, which refuses EVERY file and tells the person 27
+times that their photographs are unreadable, in a sentence carrying a
+require stack. The distinction is the pdf-lib one: a refusal is about
+the FILE; this is about the INSTALLATION. Same packaged-build shape,
+worse failure mode: not a crash, a book that silently refuses every
+photograph.
+
+Until ProjectSummary.capture is used by P2, Home draws a fresh capture
+project disabled and mislabelled — known, temporary, blocks a row and
+not the feature.
 Related fact, checked by P2 and recorded so nobody re-raises it:
 `hasBookAt` is correctly FALSE on an unminted capture project — line
 120 refuses on !reading.done && !arrived before the action test can
@@ -402,8 +438,8 @@ Node resolution from `app/electron` walks up and finds the root copy,
 so the import works in dev and through every gate, and the first thing
 to break would be the PACKAGED build — electron-builder ships the
 app's own production dependencies, not the root's — in the mint, on a
-user's machine. **Merge 4 adds pdf-lib to `app/package.json` as a real
-dependency.** Version pins here are EXACT, never caret: npm wrote
+user's machine. **Merge 4 LANDED pdf-lib in `app/package.json` at an exact 1.17.1
+(f4f1fca) — trap closed.** Version pins here are EXACT, never caret: npm wrote
 `^1.19.8` for libheif-js where this doc pins 1.19.8, and a caret bump
 arriving on a routine install would silently change whether the
 decoder still applies `irot` — the one measurement the upright rule
@@ -420,7 +456,13 @@ main is seconds per page against WebGL's milliseconds.
 
 Consequence, recorded: **the mint needs the window alive.** Acceptable — it
 is an interactive stage in an interactive app; the job row still shows in
-the queue with progress. The mint is never routed to the host scheduler
+the queue with progress. **Mechanism, as built (seq 56): the shelf row is
+born `running`, never `queued` — pump selects only `queued`, so it
+never sees the row; no exclusion list, no second gate, and a mint and a
+read genuinely run at once.** env-install is the precedent for a row
+nobody enqueued, different in exactly one recorded way: an install DOES
+take the slot because it competes for the same disk and network; a mint
+competes with nothing. The mint is never routed to the host scheduler
 (it is not model expense); the host still sees it via the Wave 16 shelf
 mirror. P3 audits that seam.
 
@@ -618,7 +660,19 @@ OUTPUT must rebuild inside the same command as the run -- P1 edited
 the validator, ran the acceptance against a stale app/dist, and
 watched four just-written checks fail against the previous file;
 had the stale build happened to agree, a green run would have vouched
-for code that never executed. Two more gate hazards, both measured: npx tsc exits 0 without compiling at THREE sites on this machine now, so the leaf configs run ./node_modules/.bin/tsc by path; and bunx at root, never npx. Agents never commit; the lead verifies, commits,
+for code that never executed. Fourth (P1, seq 56), the sharpest: a green typecheck over a set the
+type system was not the authority on — the StepAction union and the
+STEP_ACTIONS runtime array were hand-maintained twins, the union
+widened and the array did not, and no compile can see a runtime list
+disagree with a type. The fix (derive the type from the list) is the
+only gate that works there. Fifth (P2, seq 57), the boundary itself:
+EVERY gate we run is a compile, and a compile cannot see an absent
+runtime dependency — three green gates on a worktree whose decoder
+was missing. Rule: after rebasing onto a merge that touches
+package.json, INSTALL BEFORE BELIEVING A GATE. Two more gate hazards,
+both measured: npx tsc exits 0 without compiling at THREE sites on
+this machine now, so the leaf configs run ./node_modules/.bin/tsc by
+path; and bunx at root, never npx. Agents never commit; the lead verifies, commits,
 and pushes. **`bunx`, never `npx`**: at this repo's root, `npx tsc`
 fetches a joke package that prints "This is not the tsc command you are
 looking for" and EXITS 0 — the vacuous gate in its purest form,
