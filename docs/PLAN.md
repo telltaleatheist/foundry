@@ -1361,6 +1361,150 @@ NOT IN THIS WAVE, recorded so it is not lost: a reading never fires
 it hangs rather than fails, so it wants its own wave), and Owen's
 emphasis/Table ruling is Wave 18.
 
+### Wave 18 — the model's formatting reaches the page (Owen, 2026-08-19, via the switchboard) — LANDED (this commit)
+
+Owen: *"i also notice that the vlm is returning things with **asterisks**,
+and those are printing to the epub. i believe (possibly) the vlm prints
+them as asterisks to signify when something should be bolded or
+italicized. lets make sure that text effect makes it to the
+workbench/'final version' and into the eventual epub. the bank should
+display it correctly, basically. the table of contents in the pokemon
+book also came through as actual html rather than displaying it."*
+
+Measured on his Pokemon project by BookForge: 20 of 156 raw bank pages
+carry `**`, becoming 124 rows in the book file; exactly one `Table` row,
+whose category is ALREADY correct and whose text is the model's own HTML.
+
+THE CONSTRAINT THAT DECIDES THE WHOLE DESIGN, and it is not obvious:
+**Foundry's edit ops index into block text BY CHARACTER OFFSET** — a
+split names a cut at an offset, a delete names `from` and `len`, and
+`BookRef`s carry offsets into a block (shared/ops.ts, whose own comment
+at ~817 says a text edit invalidates every ref offset into that block).
+So parsing at reflow and STRIPPING the markers would shift every offset
+in every edited block by four characters per pair, and replaying a
+curated project's ops would land its strikes and splits in the wrong
+places, silently. THE BANK AND THE BOOK FILE DO NOT CHANGE. Interpretation
+happens only where text is DISPLAYED.
+
+- **18a — one `productOf(request)`.** The row-identity rule (a read is
+  its BANK, a translate its RECORDS, anything else its product) is
+  spelled in three functions — `enqueueHere`, `enqueueTranslate` and
+  `runJob` — all correct today, and Wave 16 added the third. BookForge
+  shipped a defect of exactly this shape hours ago (`readingsPath ??
+  outputPath`, which made every rendering dedupe against the read that
+  fills the same bank) and their diagnosis was *"I had written the
+  correct rule once and the wrong rule twice, three functions apart."*
+  Three correct copies is a defect with a delay on it.
+- **18b — emphasis becomes the effect, in BOTH display surfaces.** The
+  `**` is prose to every layer today: the engine escapes it into the
+  EPUB as literal asterisks and the renderer draws them as characters.
+  A minimal, defined subset, parsed at display: `**bold**`, and italics
+  in whichever spelling the model actually produces. UNBALANCED MARKERS
+  DEGRADE TO LITERAL TEXT, because a strike or a split can cut a block
+  mid-pair and a greedy parser would swallow the rest of the paragraph.
+- **18c — the Table block draws as a table, IN THE RENDERER ONLY.** The
+  EPUB is already correct on both engine routes (`compile.ts` emits
+  `checkTableHtml`, which returns the fragment or throws and never
+  escapes; `dots-book.ts` uses `flow.text` and not `words`, deliberately,
+  with its own essay). What escapes it is the renderer's `@default`,
+  which catches Text, Table, Formula and List-item alike — a gap this
+  file already deferred out loud (*"their own shapes are later waves"*).
+  Model-authored markup is NOT trusted input: a strict allowlist, never
+  raw innerHTML of whatever arrived.
+
+- **18d — what the build settled**, and the first item is a correction to
+  this entry rather than a detail of it.
+  - **THE ENGINE HALF OF 18b WAS ALREADY BUILT, AND THE SPEC ABOVE IS WRONG
+    ABOUT IT.** *"The `**` is prose to every layer today: the engine escapes
+    it into the EPUB as literal asterisks"* — it does not, and has not for as
+    long as `dotsInline` has existed. `src/vlm/dots.ts:492-493` applies
+    `**bold**` → `<strong>` and `*italic*` → `<em>`, after escaping and before
+    the note-marker pass; BOTH writers reach it (`compile.ts`'s `worded`,
+    `dots-book.ts`'s `inline`); `test/vlm/dots.test.ts:235` has asserted it all
+    along; and `src/translate/textmask.ts` masks the same two patterns so a
+    translation keeps its emphasis. PROVED ON THE DISK rather than argued: the
+    EPUB already sitting in the user's own `Killing America` project carries
+    `<strong>` elements and **not one asterisk** in any of its XHTML. So the
+    engine was NOT TOUCHED — touching it would have been improvising against
+    working code — and what Owen saw was the WORKBENCH, which is the surface
+    that drew four asterisks around the name of every person who blurbed his
+    book. Recorded at length because the wave's premise named the wrong
+    culprit and the survey is what caught it, which is this file's own rule
+    working.
+  - **The parse is MIRRORED, not shared, and `app/shared/inline.ts` already
+    argued why.** That file exists to restate the engine's inline alphabet on
+    the app side, with the engine's files named as the contract, on the
+    standing ground that *"the app never imports a line of the engine — it
+    spawns it"*. The two emphasis expressions are now its third entry, beside
+    the superscript run and the printed note number. This is the repo's
+    established answer to this exact question, not a new one; the engine is the
+    reference implementation and the mirror cites it.
+  - **VERIFIED BY EQUIVALENCE, ON REAL DATA.** A throwaway script rendered
+    every asterisk-bearing block in the user's library through BOTH
+    implementations and compared them character by character with per-character
+    bold/italic flags: **734 blocks, ZERO disagreements.** The degradation
+    cases were checked by hand and agree too — `**Kari Lake` (a pair cut by a
+    split) stays literal, `* Intercede for your city` stays a bullet and does
+    not become an italic, `**a *b* c**` nests.
+  - **THE SUBSET IS `**bold**` AND `*italic*`, ESTABLISHED FROM THE DATA.**
+    Across every bank in the library: those two in quantity, `***` never,
+    `_underscore_` never, `~~` never, backticks never, `[text](href)` never.
+    No general Markdown parser was written. **Found and deliberately NOT
+    implemented:** the model sometimes writes an ATX heading marker into a
+    heading's own text (`## Heroes Arise`, four occurrences, always on a block
+    already categorised `Page-header` or `Section-header`). It is a structure
+    marker and not a text effect, the category already carries the fact, and
+    interpreting it would mean DELETING characters the engine keeps — which
+    would make the bench and the export disagree about the same string. It is
+    named here rather than done quietly.
+  - **Emphasis is cut in ONE walk with the note markers**, in the renderer's
+    `cut()`, because both are offsets into the same source string and two
+    passes over one string are two chances to disagree about where character
+    forty is. The BLOCK EDITOR IS UNTOUCHED: it renders `line.row.text`
+    verbatim on the standing ruling that what is edited is the model's source
+    string, and the split's caret arithmetic counts that string, so an edit
+    still commits exactly the characters the bank holds.
+  - **The table sanitiser is stronger than an allowlist over `innerHTML` and
+    was built that way on purpose.** Not one character of the model's string
+    becomes markup: `readTable` reads the fragment into rows, cells and two
+    clamped integers, and the component draws THAT with its own template. No
+    `innerHTML`, no `bypassSecurityTrust*`, no `DomSanitizer` — nothing a later
+    hand could relax. What it does with what it rejects, all three stated in
+    the file: an unlisted element inside a cell keeps its words and loses its
+    tag (except `script`/`style`/`template`, whose contents are code and are
+    dropped with them); an unlisted element where a row or cell belongs is not
+    drawn; and **a fragment with no rows at all is REFUSED VISIBLY** — the
+    model's string is printed as prose, exactly as it was before this wave,
+    under an amber sentence saying this app looked at it and could not make a
+    table of it. A blank block was never an option. Exercised against a real
+    DOM: script payloads, `img onerror`, nested tables, absurd `colspan`,
+    junk spans, bare `<tr>` runs, `<tfoot>`, unclosed cells — all correct.
+  - **Three losses named rather than hidden**: a `<caption>`'s words are not
+    drawn, a `<tfoot>`'s rows ARE (they are `tr`s, and dropping a table's
+    totals silently is the failure the section is written against), and two
+    tables in one fragment draw the first.
+  - **`productOf` takes the WIDE request type**, so `enqueueHere` and
+    `enqueueTranslate` each hand it a narrower one. Narrowing the parameter to
+    fit either caller would have put the fork straight back where it came from.
+    All three answers are byte-identical to what they were.
+  - **Nothing was verified by eye.** The emphasis is proved by equivalence
+    against the engine and the table by a real DOM; how the grid and the amber
+    refusal LOOK on the paper is the hand-test's.
+
+FOUND WHILE VERIFYING, NOT IN ANY FENCE AND NOT FIXED: a translate mask
+token leaked into a stored records file. `Working-Towards-The-Fuhrer`'s
+`.de.records.jsonl` and `.de.book.jsonl` contain `⟧/e1⟧` — the model
+answered with the CLOSING bracket where `textmask.ts`'s `TOKEN` expects
+the opening one, so `restoreText` did not match it, did not restore the
+emphasis it named, and wrote this program's private syntax into a book a
+reader will see. It is pre-existing, it is in the translate path rather
+than in any display surface, and it wants its own wave.
+
+STILL DEFERRED, out loud: a reading never fires `onJobSettled` (nothing
+on BookForge's side subscribes, confirmed by them, but it hangs rather
+than fails and wants its own wave), and the table GRID EDITOR, which is
+a later wave than merely drawing one.
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the
