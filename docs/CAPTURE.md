@@ -89,11 +89,15 @@ Three rulings recorded from P1's plan-back (items 3, 5, 6):
 - **The mint sets the manifest archive as well as appending the step.**
   A step alone leaves `reading.needed` false forever and the minted
   book unreadable. Both writes at the same commit point.
-- **A capture project is keyed at creation from a random 8-hex id** —
-  it must exist empty, before any content exists to hash, so
-  `contentKey` for captures is a creation id rather than a content
-  hash, and its doc comment says so. The key never changes on re-mint:
-  the project is its identity, not its current PDF.
+- **A capture project is keyed at creation as `slugify(title)-<8
+  random hex>`** — it must exist empty, before any content exists to
+  hash, so `contentKey` for captures is a creation id rather than a
+  content hash, and its doc comment says so. The key never changes on
+  re-mint: the project is its identity, not its current PDF. Creation
+  happens only through `capture:create` (the eighth door), and the
+  ledger grows a `captureStep` SIBLING of `originStep` rather than a
+  parameter on it — a function named originStep that sometimes makes
+  a capture step would be the two-things-one-name defect again.
 - **`takenAt` stays a UTC instant.** Intake applies
   `OffsetTimeOriginal` when present (all 27 shoot files carry it);
   wall time with no offset is interpreted in the machine's zone and
@@ -315,6 +319,7 @@ already carries the failure:
 
 | Channel | Direction | Signature |
 | --- | --- | --- |
+| `capture:create` | invoke | `{title}` → `{projectDir, recipe, token}` — the EIGHTH door (seq 36): births the project through the same serialized path `importDocument` uses, keys it `slugify(title)-<8 random hex>` per the creation-id ruling, writes the empty recipe, mints the door token, and **appends the capture step AT CREATE** — forced by the light-table-belongs-to-the-step ruling, because a project between New Project and the first drop must already have the surface that receives the drop. An abandoned empty capture is an honest record, same shape as an adopted project with an empty ledger. Title is what the person typed; empty becomes `Photographs`; the stem is ONE-SHOT (the catalogue never renames files under anybody) |
 | `capture:intake` | invoke | `{projectDir, paths: string[]}` → `{recipe, token}` — copy, hash, EXIF-read, decode + working copy + thumb, append photos, inherit prior photo's settings; token because intake is the other moment a project first has pixels to show |
 | `capture:recipe-load` | invoke | `{projectDir}` → `{recipe, token}` — the token mints the door's allow-list entry for this project (the `book:load` pattern) |
 | `capture:recipe-save` | invoke | `{projectDir, recipe}` → `void` — whole document; renderer debounces |
