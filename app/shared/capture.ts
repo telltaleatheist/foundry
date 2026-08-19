@@ -493,6 +493,96 @@ export function seatSplit(quad: CaptureQuad, split: CaptureSplit, which: 'a' | '
 }
 
 /**
+ * Slide the whole cut, keeping it a cut — the floor applied ONCE TO THE PAIR.
+ *
+ * ── Why this is not two `seatSplit` calls, which is how it was found ──────
+ *
+ * Carrying both ends by the pointer and handing each to `seatSplit` gives two
+ * calls that are each individually correct and together wrong. The second call
+ * clamps against a partner THE FIRST CALL ALREADY MOVED, so each believes a
+ * partner that is no longer where its floor was computed for, and the pair walks
+ * past a limit neither call thought it was crossing. Measured before this
+ * existed: a half of 0.28% of the sheet against a floor of 2%, and past a point
+ * a segment `halvesOf` refuses outright, because both ends had reached corners of
+ * the same edge and there was no opposite pair left to name.
+ *
+ * ── AND THE FLOOR WAS MODELLED ON THE GESTURE THAT CANNOT MAKE A SLIVER ────
+ *
+ * Moving ONE end while the other stays put barely can: the fixed end holds the
+ * cut open, which is why a one-end drag pushed to every extreme never brought a
+ * half within ten times the floor, and why the first hunt for a case that made
+ * the clamp bite could not find one until the other end was crowded by hand. THE
+ * SLIDE MOVES THE END THAT WAS DOING THE HOLDING. It is the gesture the floor is
+ * actually for, and it was written against the one that is nearly incapable of
+ * the failure — the same shape as `{ x }` once more: a rule measured on the case
+ * that cannot go wrong.
+ *
+ * ── The edges are decided ONCE, before anything moves ─────────────────────
+ *
+ * Each end keeps the edge it was already riding for the whole slide, rather than
+ * being re-seated onto whatever edge it drifts nearest. That is what makes the
+ * refusal unreachable rather than merely unlikely: opposite in, opposite out, so
+ * there is no position of the pointer that leaves `cutOf` with nothing to name.
+ *
+ * ── Backing off is a bisection, and it is exact because the sweep is ordered ─
+ *
+ * The one-end solve inverts a straight line. This cannot: seating CLAMPS at the
+ * ends of an edge, so with both ends moving the area is piecewise-quadratic in
+ * how far the slide has gone rather than affine, and a closed form would be four
+ * cases guarding one answer.
+ *
+ * What holds instead is an ordering: sliding in a fixed direction sweeps the cut
+ * across the sheet, so one half grows through the whole slide and the other
+ * shrinks, and the SMALLER half’s share rises to the even cut and falls away
+ * after it. A single hump means the places where the floor holds form ONE
+ * stretch, and the slide starts inside it — so the last position that holds can
+ * be halved into exactly, and sixty halvings put it beyond any pixel. The
+ * ordering is measured rather than asserted (see the acceptance).
+ */
+export function slideSplit(quad: CaptureQuad, split: CaptureSplit, by: CapturePoint): CaptureSplit {
+  const a = nearestEdge(quad, split.a);
+  const b = nearestEdge(quad, split.b);
+  // Not a cut this can slide — the caller is holding something hand-edited, and
+  // sliding it would be inventing an interpretation of it.
+  if ((a.edge + 2) % 4 !== b.edge) return split;
+  const sheet = areaOf(quad);
+  if (sheet <= 0) return split;
+  /*
+   * A POINTER THAT HAS NOT MOVED MUST LEAVE THE FILE ALONE. Re-seating is a
+   * projection, and projecting a point already on its edge returns it to within
+   * a bit rather than exactly (measured: 5.6e-17). That is nothing on a page and
+   * everything to a recipe, because this runs on every pointermove: a slide of
+   * no distance would rewrite two coordinates in the last place and mark the
+   * project changed, over and over, for a hand holding still.
+   */
+  if (by[0] === 0 && by[1] === 0) return split;
+
+  const carried = (share: number): CaptureSplit => ({
+    a: alongEdge(quad, a.edge, [split.a[0] + by[0] * share, split.a[1] + by[1] * share]).point,
+    b: alongEdge(quad, b.edge, [split.b[0] + by[0] * share, split.b[1] + by[1] * share]).point,
+  });
+  const holds = (candidate: CaptureSplit): boolean => {
+    const halves = halvesOf(quad, candidate);
+    if (halves === null) return false;
+    return Math.min(areaOf(halves[0]), areaOf(halves[1])) / sheet >= SLIVER_FLOOR;
+  };
+
+  const wanted = carried(1);
+  if (holds(wanted)) return wanted;
+  // The cut was already under the floor before anybody touched it — a sliver
+  // read from a file, which the floor guards nothing about. Sliding is not the
+  // gesture that should silently repair it.
+  if (!holds(split)) return split;
+  let held = 0;
+  let refused = 1;
+  for (let halving = 0; halving < 60; halving += 1) {
+    const between = (held + refused) / 2;
+    if (holds(carried(between))) held = between;
+    else refused = between;
+  }
+  return carried(held);
+}
+/**
  * The segment an old `{ x }` split always meant: across the page at that
  * fraction, from the top edge to the bottom one.
  *
