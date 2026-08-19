@@ -108,7 +108,29 @@ lineage line rather than the project title. One wording item recorded
 so it is not re-found: parseLedger's refusal (a project begins with the
 file that was imported) and appendStep's (every step after the import)
 are both stale of a capture project — reachable only through a
-programming error, not worth a merge, known. Wave 15's Narrate gating and Wave 16's queue seam are the two
+programming error, not worth a merge, known.
+
+**`ProjectSummary` gains `capture: boolean` (ruled from P2 seq 54; P1
+lands it — shared/types.ts and projects.ts are its ground; additive,
+ahead of or with Merge 4).** Main answers it from the LEDGER for free
+(createCaptureProject writes the capture step), never by reading the
+recipe. It is NOT inferred from an empty document list, for P2's reason,
+recorded because it looks like an oversight and is the opposite: an
+empty document list is exactly what a project whose files have all gone
+missing looks like — that is what the nothing-to-open tag EXISTS for,
+and inferring capture from emptiness would turn a genuinely broken
+project into a light table and hide the one message that says the
+files are gone. A row's page-count tag (reading the recipe) is deferred;
+the boolean is enough to open the light table and tell the truth.
+Until it lands, Home draws a fresh capture project disabled and
+mislabelled — known, temporary, blocks a row and not the feature.
+Related fact, checked by P2 and recorded so nobody re-raises it:
+`hasBookAt` is correctly FALSE on an unminted capture project — line
+120 refuses on !reading.done && !arrived before the action test can
+answer true. And the renderer names the seven this-tab-is-a-project
+sites ONCE (`pathIsProject`, a type predicate — the compile promptly
+proved one old `=== 'book'` test was doing invisible load-bearing
+narrowing); a fourth directory-shaped kind joins by being added there. Wave 15's Narrate gating and Wave 16's queue seam are the two
 places most likely to notice; neither may regress. Until a PDF is minted,
 nothing downstream is offered — no read, no narrate, no export. P1
 measured the structural half already: `reading.needed` keys off
@@ -578,6 +600,10 @@ edits this document first and says so on the channel.
   (read-back section 4): the two Translated-stamp defects compiled green
   because default: hides a widened union; a never-check would make the
   compiler name them. Out of scope tonight, worth its own small pass.
+- Whether Mint is ALSO an act orderable from the action rail: the mint
+  button lives on the light table's own footer (you press it looking at
+  the pages it will make); the rail question is about the rail's
+  grammar, not about capture (P2, seq 54).
 - Fine (non-quarter) rotation as a separate gesture — the quad already
   absorbs small tilt; a dedicated dial can come with de-skew.
 
