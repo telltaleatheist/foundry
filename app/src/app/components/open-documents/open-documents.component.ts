@@ -29,7 +29,7 @@ import { api } from '../../core/foundry';
 import { HostOpsService } from '../../core/host-ops.service';
 import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';
-import { OpenDocumentsService, type Tab } from '../../core/documents.service';
+import { OpenDocumentsService, pathIsProject, type Tab } from '../../core/documents.service';
 import { NoticeService } from '../../core/notice.service';
 import { StageService } from '../../core/stage.service';
 import { UiService } from '../../core/ui.service';
@@ -333,6 +333,13 @@ import { ActionMenuComponent } from '../action-menu/action-menu.component';
           </symbol>
           <symbol id="ft-cross" viewBox="0 0 24 24">
             <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="3.2"
+                  stroke-linecap="round" />
+          </symbol>
+          <!-- A camera: photographs before they are pages. Beside ft-scan, which is
+               a scanned SHEET and the thing a light table is not yet. -->
+          <symbol id="ft-capture" viewBox="0 0 24 24">
+            <path d="M4 8h3l2-2h6l2 2h3v11H4z M12 16.5a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4z"
+                  fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"
                   stroke-linecap="round" />
           </symbol>
           <symbol id="ft-scan" viewBox="0 0 24 24">
@@ -1795,7 +1802,7 @@ export class OpenDocumentsComponent {
          * announcing itself as a copy the reader went and opened by hand — the
          * exact confusion the merge of steps and documents exists to end.
          */
-        if (row.tab?.kind === 'book') {
+        if (row.tab !== null && row.tab !== undefined && pathIsProject(row.tab)) {
           claimed.add(row.key);
           continue;
         }
@@ -1814,7 +1821,11 @@ export class OpenDocumentsComponent {
          * allowed to fall back to; the honest answer is that this is a copy the
          * reader went and opened themselves, with the path one hover away.
          */
-        const named = row.tab === null ? '' : typeLabel(row.tab.kind);
+        // Only a FILE-backed tab can be a loose copy — both directory kinds are
+        // claimed above and never reach here. Asked explicitly rather than left to
+        // narrowing, which could prove it while there were two kinds and cannot
+        // now that there are three.
+        const named = row.tab?.kind === 'pdf' ? typeLabel(row.tab.kind) : '';
         extras.push({
           ...row,
           title: named.length > 0 ? named : row.title,
@@ -3322,6 +3333,10 @@ function extensionOf(payload: string): string {
 function iconForTab(tab: Tab): string {
   // The book wears the reading's own mark, because the book IS the reading — the
   // same symbol `iconForStep` gives the card that opens it.
+  // A light table is neither a book nor a page: it is the photographs before
+  // either exists, and drawing it as a page would announce it as a document the
+  // reader went and opened by hand.
+  if (tab.kind === 'capture') return 'ft-capture';
   return tab.kind === 'book' ? 'ft-book' : 'ft-page';
 }
 

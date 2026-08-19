@@ -15,7 +15,7 @@ import { SimplifyDialogComponent } from './components/simplify-dialog/simplify-d
 import { TranslateDialogComponent } from './components/translate-dialog/translate-dialog.component';
 import { QueueShelfComponent } from './components/queue-shelf/queue-shelf.component';
 import { BookStacksService } from './core/book-stacks.service';
-import { OpenDocumentsService } from './core/documents.service';
+import { OpenDocumentsService, pathIsProject } from './core/documents.service';
 import { NoticeService } from './core/notice.service';
 import { PositionSyncService } from './core/position-sync.service';
 import { ProjectsService } from './core/projects.service';
@@ -302,7 +302,9 @@ export class App {
   protected readonly inspectorUp = computed(() => {
     const tab = this.stage.activeDocument();
     if (tab === null) return false;
-    if (tab.kind === 'book') return true;
+    // A light table is a project's own surface exactly as a book is: it has a
+    // history, it has steps, and the 260 pixels are what the person came for.
+    if (pathIsProject(tab)) return true;
     const project = this.projects.projectFor(tab.path);
     return project !== null && project.problem === null;
   });
