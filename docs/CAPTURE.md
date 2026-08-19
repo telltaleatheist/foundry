@@ -265,6 +265,24 @@ Conventions, pinned:
   page that no typecheck catches. MediaBox at a nominal 300 dpi; the
   read renders at 200 dpi under a 2 MP budget downstream, so nominal is
   fine.
+- **The aspect-agreement predicate has ONE implementation too** (ruled
+  from P2 seq 46 -- the same drift outputSizeFor already survived,
+  caught this time while the two copies still agree): main side
+  |a-b|/source <= 0.02 and renderer sameShape |a-b| <= 0.02*source are
+  algebraically identical TODAY, so the function moves to
+  app/shared/capture.ts beside outputSizeFor, keeps the height-zero
+  guard, and both sides import it. P1 lands the shared move (its file,
+  its main-side caller); P2 switches its import on rebase and deletes
+  sameShape.
+- **Editor corners CLAMP to [0,1] at the drag site** (P2 seq 46, its
+  own find against its own docblock): there is nothing outside the
+  frame, so a crop hanging off the edge is not a crop of anything, and
+  preventing it beats narrating it. Unclamped, one drag past the frame
+  edge made every subsequent debounced save fail validation -- a live
+  surface over a file that stopped listening, the worst shape
+  available. withinSource stays as the shader honest report and
+  becomes should-never-happen. The validator stays strict; the fix is
+  P2 side.
 
 ## Where the work runs — and why
 
@@ -368,7 +386,7 @@ already carries the failure:
 | `capture:create` | invoke | `{title}` → `{projectDir, recipe, token}` — the EIGHTH door (seq 36): births the project through the same serialized path `importDocument` uses, keys it `slugify(title)-<8 random hex>` per the creation-id ruling, writes the empty recipe, mints the door token, and **appends the capture step AT CREATE** — forced by the light-table-belongs-to-the-step ruling, because a project between New Project and the first drop must already have the surface that receives the drop. An abandoned empty capture is an honest record, same shape as an adopted project with an empty ledger. Title is what the person typed; empty becomes `Photographs`; the stem is ONE-SHOT (the catalogue never renames files under anybody). Answers with ImportedDocument-shaped data whose `entry` is `capture/recipe.json` — there is no document yet, so do NOT read that entry as a file to open |
 | `capture:intake` | invoke | `{projectDir, paths: string[]}` → `{recipe, token}` — copy, hash, EXIF-read, decode + working copy + thumb, append photos, inherit prior photo's settings; token because intake is the other moment a project first has pixels to show. **Answer is `CaptureIntaken`: `{recipe, token, added, duplicates: string[], refused: [{file, why}]}`** (P1 departure, seq 45, accepted: without it a drop holding a JPEG and three photos the project already has is indistinguishable from a clean import of nothing). The refusal wording is USER-VISIBLE by design ('.txt is not a photograph this stage reads yet -- HEIC only for now') -- a named refusal is a sentence a person can act on. **v1 intake is HEIC ONLY**: a JPEG would decode through Electron on a path where EXIF Orientation is applied by somebody else's rules, the exact hazard that nearly turned this shoot 90 degrees wrong; JPEG/PNG intake is deferred below, orientation measured first |
 | `capture:recipe-load` | invoke | `{projectDir}` → `{recipe, token}` — the token mints the door's allow-list entry for this project (the `book:load` pattern) |
-| `capture:recipe-save` | invoke | `{projectDir, recipe}` → `void` — whole document; renderer debounces |
+| `capture:recipe-save` | invoke | `{projectDir, recipe}` → `void` — whole document; renderer debounces. The validator ALSO cross-checks internal consistency (ruled from P2 seq 46, P1 lands it): order and the pages describe the SAME SET -- every page id exactly once, no orphans, no repeats; split non-null means pages.length === 2; pages.length is 1 or 2. An inconsistent recipe accepted at the door loses a leaf invisibly (the grid cannot draw a page the order omits) or mints one twice |
 | `capture:mint-begin` | invoke | `{projectDir}` → `{mintId, pages: [{pageId, workingCopy, quadPx, sourceWidth, sourceHeight, outWidth, outHeight}]}` — **main computes the final list; the renderer renders exactly that list.** `quadPx` is WORKING-COPY PIXELS, denormalized ONCE by main (the recipe stays fractions; the unit is in the name so no reader has to remember which side of the bridge they are on). `workingCopy` is the door NAME for `foundry-file://capture/<token>/<name>`, never a filesystem path. `sourceWidth`/`sourceHeight` let the renderer assert its decoded bitmap matches what main measured rather than trusting it |
 | `capture:mint-page` | invoke | `{mintId, index, jpeg: ArrayBuffer}` → `void` |
 | `capture:mint-commit` | invoke | `{mintId}` → `{step}` — writes the PDF, appends the minted step |
