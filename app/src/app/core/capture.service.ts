@@ -1,6 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 
 import type {
+  CaptureIntaken,
   CapturePhoto,
   CaptureQuad,
   CaptureRecipe,
@@ -186,17 +187,27 @@ export class CaptureService {
     const paths: string[] = [];
     for (const file of files) {
       const path = api.pathForFile(file);
-      if (path === '') {
-        this.notices.notice.set(`${file.name} could not be read from where it was dragged from.`);
-        continue;
-      }
-      paths.push(path);
+      // COUNTED, NOT ANNOUNCED HERE. A per-file notice inside this loop
+      // overwrites itself: drag in twenty photographs out of another
+      // application's virtual folder and the bar shows the twentieth name and
+      // nothing about the other nineteen. The one sentence at the end says how
+      // many, beside everything else that happened.
+      if (path !== '') paths.push(path);
     }
-    if (paths.length === 0) return;
+    const unreadable = files.length - paths.length;
+    if (paths.length === 0) {
+      this.notices.notice.set(
+        unreadable === 1
+          ? 'That file could not be read from where it was dragged from.'
+          : `None of those ${unreadable} files could be read from where they were dragged from.`,
+      );
+      return;
+    }
     try {
-      const opened = await api.capture.intake(dir, paths);
-      this.door.set(opened.token);
-      this.current.set(opened.recipe);
+      const intaken = await api.capture.intake(dir, paths);
+      this.door.set(intaken.token);
+      this.current.set(intaken.recipe);
+      this.notices.notice.set(reportOn(intaken, unreadable));
     } catch (err) {
       this.complain(err);
     }
@@ -483,4 +494,35 @@ function runsWith(values: readonly string[], direction: 1 | -1): boolean {
     if (values[index - 1].localeCompare(values[index]) * direction > 0) return false;
   }
   return true;
+}
+
+/**
+ * What an intake DID, in one sentence a person can act on.
+ *
+ * Main answers with more than the recipe on purpose (`CaptureIntaken`): a drop
+ * containing a screenshot and four photographs this project already holds
+ * otherwise looks exactly like a clean import of nothing, and the person is left
+ * counting cards to work out what happened to their afternoon. Every clause here
+ * exists because its absence is silence.
+ *
+ * The refusals carry MAIN'S OWN WORDING rather than a rephrasing — it is the
+ * side that knows why, and ".txt is not a photograph this stage reads yet" is
+ * already a sentence. Two are shown and the rest counted, because a notice bar
+ * holding twenty reasons is a notice bar nobody reads.
+ */
+function reportOn(intaken: CaptureIntaken, unreadable: number): string {
+  const said: string[] = [];
+  said.push(intaken.added === 1 ? 'One photograph added.' : `${intaken.added} photographs added.`);
+  if (intaken.duplicates.length > 0) {
+    said.push(
+      `${intaken.duplicates.length} already in this project (${intaken.duplicates.slice(0, 2).join(', ')}`
+      + `${intaken.duplicates.length > 2 ? ', …' : ''}) — copied once, not twice.`,
+    );
+  }
+  for (const { file, why } of intaken.refused.slice(0, 2)) said.push(`${file}: ${why}`);
+  if (intaken.refused.length > 2) said.push(`${intaken.refused.length - 2} more refused.`);
+  if (unreadable > 0) {
+    said.push(`${unreadable} could not be read from where they were dragged from.`);
+  }
+  return said.join(' ');
 }
