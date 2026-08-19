@@ -14,6 +14,7 @@ import { mintedPageIds } from '@shared/capture';
 import type { CaptureQuad } from '@shared/types';
 
 import { CaptureMintService } from '../../core/capture-mint.service';
+import { ConfirmService } from '../../core/confirm.service';
 import { type ApplyToAll, CaptureService } from '../../core/capture.service';
 import type { Tab } from '../../core/documents.service';
 import { CapturePageEditorComponent } from '../capture-editor/capture-page-editor.component';
@@ -76,6 +77,7 @@ const ACKNOWLEDGED_FOR_MS = 1600;
           (strike)="captures.toggleStrike($event)"
           (reverse)="captures.reverse()"
           (dropped)="captures.intake(tab().path, $event)"
+          (remove)="void confirmRemoval($event)"
         />
       } @else if (opened(); as photo) {
         <header class="bar">
@@ -218,6 +220,7 @@ const ACKNOWLEDGED_FOR_MS = 1600;
 export class CaptureViewComponent {
   protected readonly captures = inject(CaptureService);
   protected readonly mint = inject(CaptureMintService);
+  private readonly confirm = inject(ConfirmService);
 
   readonly tab = input.required<Tab>();
 
@@ -377,6 +380,49 @@ export class CaptureViewComponent {
     }
     event.preventDefault();
     this.step(event.key === 'ArrowLeft' ? -1 : 1);
+  }
+
+  /**
+   * Ask before removing, then remove.
+   *
+   * ── The question names what CANNOT be undone, and what is not lost ──────────
+   *
+   * Removal deletes the bank copy as well as the derived files, which sounds
+   * worse than it is and has to be SAID rather than softened: the originals in
+   * a capture project are copies, and the files the person dragged in are still
+   * wherever they dragged them from. A confirm that hid that would be asking
+   * somebody to be frightened of the wrong thing; one that omitted the deletion
+   * would be hiding the real cost.
+   *
+   * The marquee chooses PAGES and removal takes PHOTOGRAPHS, so the ids are
+   * folded to their photographs first -- otherwise removing the left half of a
+   * spread would silently take the right half with it and the count in the
+   * question would have been a lie.
+   */
+  protected async confirmRemoval(pageIds: readonly string[]): Promise<void> {
+    const recipe = this.captures.recipe();
+    if (recipe === null) return;
+    const photos = new Set<string>();
+    for (const pageId of pageIds) {
+      const owner = recipe.photos.find((one) => one.pages.some((page) => page.id === pageId));
+      if (owner !== undefined) photos.add(owner.id);
+    }
+    if (photos.size === 0) return;
+
+    const many = photos.size !== 1;
+    const agreed = await this.confirm.ask({
+      message: many
+        ? `Remove ${photos.size} photographs from this project?`
+        : 'Remove this photograph from this project?',
+      detail: [
+        many
+          ? 'Their pages leave the book, and the copies this project made of them are deleted.'
+          : 'Its pages leave the book, and the copies this project made of it are deleted.',
+        'The files you dragged in are untouched, wherever you dragged them from.',
+      ],
+      confirm: many ? `Remove ${photos.size}` : 'Remove',
+    });
+    if (agreed) await this.captures.remove([...photos]);
   }
 
   /** A card was clicked: the editor opens on the PHOTOGRAPH that page is on. */

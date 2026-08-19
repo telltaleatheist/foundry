@@ -181,7 +181,7 @@ import { Rectifier } from './rectify';
             [class.applied]="justApplied() === 'rotate'"
             (click)="applyTurnToAll()"
             [disabled]="turnsApplied() === 0"
-          >{{ justApplied() === 'rotate' ? 'Applied ✓' : 'Turn all by the same amount' }}</button>
+          >{{ justApplied() === 'rotate' ? 'Turned ✓' : 'Turn all by the same amount' }}</button>
           @if (quads().length === 1) {
             <button type="button" (click)="split()">Split</button>
           }
@@ -191,7 +191,7 @@ import { Rectifier } from './rectify';
             (click)="applySplitToAll()"
             [disabled]="quads().length < 2"
           >
-            Apply split to all
+            {{ justApplied() === 'split' ? 'Split ✓' : 'Apply split to all' }}
           </button>
           <!--
             OWEN'S "GLOBAL". He asked to "set the global position of the rect"
@@ -210,7 +210,7 @@ import { Rectifier } from './rectify';
             type="button"
             [class.applied]="justApplied() === 'quad'"
             (click)="applyToAll.emit({ kind: 'quad' })"
-          >{{ justApplied() === 'quad' ? 'Applied ✓' : 'Set this crop for all pages' }}</button>
+          >{{ justApplied() === 'quad' ? 'Crop set ✓' : 'Set this crop for all pages' }}</button>
         </div>
       </div>
 
@@ -308,7 +308,15 @@ import { Rectifier } from './rectify';
        control: it changes every page, and the three beside it change one. */
     .gestures .wide { flex-basis: 100%; }
     /*
-     * THE ACKNOWLEDGEMENT. Quiet on purpose -- the house has no precedent for a
+     * THE ACKNOWLEDGEMENT, AND EACH BUTTON SAYS ITS OWN ACT BACK.
+     *
+     * Owen asked for "applied or something". The something matters: an action
+     * should keep its name through the whole flow, so the button that says Turn
+     * reports Turned and the notice bar says "Turned 25 photographs". One shared
+     * word -- Applied -- would have made the person map it back to whichever of
+     * three buttons they pressed, which is work the interface can do for them.
+     *
+     * Quiet on purpose -- the house has no precedent for a
      * transient confirmed state, so this borrows the accent it uses for "the
      * thing worth pressing" and does not animate. The notice bar still carries
      * the count and the skips; this carries only the fact that it ran, where

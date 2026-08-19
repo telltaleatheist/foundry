@@ -1,5 +1,14 @@
 import type { CaptureQuad } from '@shared/types';
-import { ChangeDetectionStrategy, Component, input, output, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  ElementRef,
+  HostListener,
+  inject,
+  input,
+  output,
+  signal,
+} from '@angular/core';
 
 import { CaptureCardComponent } from './capture-card.component';
 
@@ -80,6 +89,13 @@ const PAGE_MIME = 'application/x-foundry-capture-page';
  * one. Both paths call the same `intake`, and without it a drop on the strip
  * would be answered twice.
  */
+/**
+ * How far a pointer must travel before a press becomes a sweep rather than a
+ * click. Small enough that a deliberate drag is caught immediately, large
+ * enough that a click with a shaky hand is still a click.
+ */
+const SWEEP_STARTS_AT = 5;
+
 @Component({
   selector: 'app-capture-grid',
   imports: [CaptureCardComponent],
@@ -106,10 +122,33 @@ const PAGE_MIME = 'application/x-foundry-capture-page';
       }
     </header>
 
-    <div class="table">
+    <!--
+      THE MARQUEE IS ON THE TABLE, NOT ON THE CARDS. A rubber band that started
+      only on empty space would be unusable at twenty-seven cards, where almost
+      every pixel is a card -- so the press starts anywhere and a card decides on
+      RELEASE whether it was a click or the beginning of a sweep.
+    -->
+    <div
+      class="table"
+      (pointerdown)="startSweep($event)"
+      (pointermove)="moveSweep($event)"
+      (pointerup)="endSweep($event)"
+      (pointercancel)="endSweep($event)"
+      (contextmenu)="openMenu($event)"
+    >
+      @if (band(); as box) {
+        <div
+          class="band"
+          [style.left.px]="box.left"
+          [style.top.px]="box.top"
+          [style.width.px]="box.width"
+          [style.height.px]="box.height"
+        ></div>
+      }
       @for (card of cards(); track card.id; let index = $index) {
         <div
           class="slot"
+          [attr.data-id]="card.id"
           [class.landing]="landing() === index"
           draggable="true"
           (dragstart)="pickUp($event, card.id)"
@@ -118,6 +157,7 @@ const PAGE_MIME = 'application/x-foundry-capture-page';
           (drop)="land($event, index)"
         >
           <app-capture-card
+            [chosen]="chosen().includes(card.id)"
             [thumb]="card.thumb"
             [label]="card.label"
             [struck]="card.struck"
@@ -147,6 +187,20 @@ const PAGE_MIME = 'application/x-foundry-capture-page';
       when something is dragged over it. A zone that only appears mid-drag is a
       zone you have to already know about.
     -->
+    @if (menu(); as at) {
+      <!--
+        Owen's flow: sweep, then right-click the highlighted cards. The menu is
+        the only place Delete is offered by mouse, so it names the count rather
+        than the word "selection" -- somebody about to destroy nine photographs
+        should read the nine.
+      -->
+      <div class="menu" [style.left.px]="at.x" [style.top.px]="at.y">
+        <button type="button" (click)="removeChosen()">
+          Delete {{ chosen().length }} {{ chosen().length === 1 ? 'photograph' : 'photographs' }}…
+        </button>
+      </div>
+    }
+
     <aside
       class="dropzone"
       [class.hot]="hot()"
@@ -159,6 +213,28 @@ const PAGE_MIME = 'application/x-foundry-capture-page';
     </aside>
   `,
   styles: [`
+    .table { position: relative; }
+    /* A hairline and a wash. The band is a statement about a region, not an
+       object in its own right, so it does not compete with the photographs. */
+    .band {
+      position: absolute;
+      z-index: 2;
+      border: 1px solid var(--accent);
+      background: var(--accent-faint);
+      pointer-events: none;
+    }
+    .menu {
+      position: fixed;
+      z-index: 1100;
+      padding: 4px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.5);
+    }
+    .menu button { border: none; background: transparent; white-space: nowrap; }
+    .menu button:hover { background: var(--bg-hover); }
+
     /* The table and the strip side by side; the header above the table only. */
     :host { display: flex; flex-direction: row; height: 100%; min-height: 0; }
     .column { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
@@ -225,6 +301,127 @@ const PAGE_MIME = 'application/x-foundry-capture-page';
   `],
 })
 export class CaptureGridComponent {
+  private readonly host = inject(ElementRef<HTMLElement>);
+
+  /** The page ids the marquee has chosen, in grid order. */
+  protected readonly chosen = signal<readonly string[]>([]);
+  /** The rubber band while it is being drawn, in table coordinates. */
+  protected readonly band = signal<{ left: number; top: number; width: number; height: number } | null>(null);
+  /** Where the context menu is, or null. */
+  protected readonly menu = signal<{ x: number; y: number } | null>(null);
+
+  private sweepFrom: { x: number; y: number } | null = null;
+  private sweptFar = false;
+
+  /**
+   * A press on the table, which might become a sweep and might stay a click.
+   *
+   * IT DOES NOT DECIDE YET. At twenty-seven cards almost every pixel of the
+   * table is a card, so a marquee that only started on empty space would be a
+   * marquee nobody could start. The press is remembered, the band appears once
+   * the pointer has actually travelled, and a card's own click still fires when
+   * it has not -- so the two gestures share a starting position and separate on
+   * evidence rather than on where the finger landed.
+   */
+  protected startSweep(event: PointerEvent): void {
+    if (event.button !== 0) return;
+    this.menu.set(null);
+    this.sweepFrom = { x: event.clientX, y: event.clientY };
+    this.sweptFar = false;
+  }
+
+  protected moveSweep(event: PointerEvent): void {
+    const from = this.sweepFrom;
+    if (from === null) return;
+    const travelled = Math.hypot(event.clientX - from.x, event.clientY - from.y);
+    // Below the threshold this is still a click with a shaky hand.
+    if (!this.sweptFar && travelled < SWEEP_STARTS_AT) return;
+    this.sweptFar = true;
+
+    const table = this.tableBox();
+    if (table === null) return;
+    const left = Math.min(from.x, event.clientX);
+    const top = Math.min(from.y, event.clientY);
+    this.band.set({
+      left: left - table.left,
+      top: top - table.top,
+      width: Math.abs(event.clientX - from.x),
+      height: Math.abs(event.clientY - from.y),
+    });
+    this.chosen.set(this.within(left, top, Math.abs(event.clientX - from.x), Math.abs(event.clientY - from.y)));
+  }
+
+  protected endSweep(event: PointerEvent): void {
+    const swept = this.sweptFar;
+    this.sweepFrom = null;
+    this.sweptFar = false;
+    this.band.set(null);
+    if (!swept) {
+      // A press that never travelled: the card under it handles its own click,
+      // and a selection the person did not draw should not survive the attempt.
+      if (!event.ctrlKey && !event.metaKey) this.chosen.set([]);
+      return;
+    }
+    this.chose.emit(this.chosen());
+  }
+
+  /** Which cards the band covers, in grid order — geometry, not hit testing. */
+  private within(left: number, top: number, width: number, height: number): string[] {
+    const chosen: string[] = [];
+    const slots: NodeListOf<HTMLElement> = this.host.nativeElement.querySelectorAll('[data-id]');
+    for (const slot of Array.from(slots)) {
+      const box = slot.getBoundingClientRect();
+      const overlaps = box.right >= left && box.left <= left + width
+        && box.bottom >= top && box.top <= top + height;
+      const id = slot.getAttribute('data-id');
+      if (overlaps && id !== null) chosen.push(id);
+    }
+    return chosen;
+  }
+
+  private tableBox(): DOMRect | null {
+    const table: HTMLElement | null = this.host.nativeElement.querySelector('.table');
+    return table === null ? null : table.getBoundingClientRect();
+  }
+
+  /**
+   * Right-click on the selection. Owen's own flow: sweep, then right-click the
+   * highlighted cards.
+   *
+   * A right-click on NOTHING chosen is left to the platform rather than
+   * answered with an empty menu -- a menu whose only item would be "Delete 0"
+   * is a menu that exists to say no.
+   */
+  protected openMenu(event: MouseEvent): void {
+    if (this.chosen().length === 0) return;
+    event.preventDefault();
+    this.menu.set({ x: event.clientX, y: event.clientY });
+  }
+
+  protected removeChosen(): void {
+    const chosen = this.chosen();
+    this.menu.set(null);
+    if (chosen.length > 0) this.remove.emit(chosen);
+  }
+
+  /**
+   * Delete asks the same question the menu does.
+   *
+   * Ignored while a field has focus, and while nothing is chosen -- a Delete
+   * key that did something invisible would be the worst key on the board.
+   */
+  @HostListener('window:keydown', ['$event'])
+  protected onKey(event: KeyboardEvent): void {
+    if (event.key !== 'Delete' || this.chosen().length === 0) return;
+    const target = event.target;
+    if (target instanceof HTMLElement) {
+      const tag = target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return;
+    }
+    event.preventDefault();
+    this.removeChosen();
+  }
+
   /** The pages, in the order they should be drawn. */
   readonly cards = input.required<readonly CaptureCard[]>();
   /** Which way the capture-time sort runs, while there still is one. */
@@ -244,6 +441,10 @@ export class CaptureGridComponent {
    * the service does that, and hands the paths to `capture:intake`.
    */
   readonly dropped = output<readonly File[]>();
+  /** The marquee's selection, whenever it changes. Page ids, in grid order. */
+  readonly chose = output<readonly string[]>();
+  /** Delete these — the surface asks, the owner confirms and calls the door. */
+  readonly remove = output<readonly string[]>();
 
   /** The slot a dragged card would land in front of, or null when nothing is up. */
   protected readonly landing = signal<number | null>(null);

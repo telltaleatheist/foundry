@@ -327,6 +327,38 @@ export class CaptureService {
     });
   }
 
+  /**
+   * Remove photographs from the project, bank and all.
+   *
+   * NOT A STRIKE, and the surface must never let the two be confused: a strike
+   * leaves a photograph in the project and out of the book, and this deletes the
+   * recipe entry, the working copy, the thumbnail AND the original together, so
+   * nothing is left orphaned.
+   *
+   * ONE CALL FOR THE WHOLE HANDFUL. The person answered one question about nine
+   * photographs; nine calls would be nine recipe writes, nine chances to fail
+   * half way, and a project that lost four of them. Main writes once.
+   *
+   * The recipe comes back rather than being re-read, because removal changes
+   * which pages exist and the grid must not draw a card for a photograph whose
+   * thumbnail has just been deleted underneath it.
+   */
+  async remove(photoIds: readonly string[]): Promise<void> {
+    const dir = this.directory();
+    if (api === null || dir === null || photoIds.length === 0) return;
+    try {
+      const recipe = await api.capture.remove(dir, [...photoIds]);
+      this.current.set(recipe);
+      this.notices.notice.set(
+        photoIds.length === 1
+          ? 'One photograph was removed from this project.'
+          : `${photoIds.length} photographs were removed from this project.`,
+      );
+    } catch (err) {
+      this.complain(err);
+    }
+  }
+
   /** Strike a page, or put it back. Struck pages stay on the table. */
   toggleStrike(pageId: string): void {
     this.change((recipe) => ({

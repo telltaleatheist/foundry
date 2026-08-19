@@ -41,7 +41,13 @@ import type { CaptureQuad } from '@shared/types';
   selector: 'app-capture-card',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <button type="button" class="page" [class.struck]="struck()" (click)="open.emit()">
+    <button
+      type="button"
+      class="page"
+      [class.struck]="struck()"
+      [class.chosen]="chosen()"
+      (click)="open.emit()"
+    >
       <!--
         \`loading="lazy"\` because a shoot is dozens of these and the grid scrolls:
         the thumbnails below the fold are fetched when they are approached rather
@@ -86,6 +92,17 @@ import type { CaptureQuad } from '@shared/types';
       text-align: left;
     }
     .page:hover { border-color: var(--border-default); background: var(--bg-hover); }
+    /*
+     * CHOSEN IS A BORDER AND A WASH, not a tint over the picture. The
+     * photographs are the only bright thing on this table and a selection that
+     * dimmed or coloured them would be selecting by damaging what somebody is
+     * trying to look at.
+     */
+    .page.chosen {
+      border-color: var(--accent);
+      background: var(--accent-faint);
+    }
+    .page.chosen:hover { background: var(--accent-soft); }
 
     /* The picture and its overlay share one box, so the SVG's fraction space
        is the thumbnail's own. */
@@ -161,6 +178,15 @@ export class CaptureCardComponent {
   readonly label = input.required<string>();
   /** Struck pages stay on the table and stay out of the mint. */
   readonly struck = input.required<boolean>();
+  /**
+   * Whether this card is in the marquee's selection.
+   *
+   * DRAWN, NOT INFERRED FROM FOCUS. A selection of nine cards has one focused
+   * element and nine chosen ones, and the person needs to see all nine before
+   * they press Delete on the lot.
+   */
+  readonly chosen = input<boolean>(false);
+
   /** The page this card will mint, in the thumbnail's own fraction space. */
   readonly quad = input.required<CaptureQuad>();
 
