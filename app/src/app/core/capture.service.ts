@@ -440,17 +440,22 @@ export class CaptureService {
        * taken from the ARRANGEMENT — first appearance in the order — for the
        * same reason the editor's walk is.
        *
-       * (The name it arrived under would be better still and is not available:
-       * `CapturePhoto` has no field for it. Raised for the contract rather than
-       * invented here — a second naming scheme is how surfaces start disagreeing
-       * about which photograph is which.)
+       * THE NAME IT ARRIVED UNDER IS PREFERRED where there is one. P1 added
+       * `CapturePhoto.name` after finding that intake had the filename, used it
+       * for the refusal and duplicate lists, and then threw it away — so no
+       * reach here could ever have printed IMG_0238.HEIC. It is OPTIONAL and
+       * must stay so: a recipe written before that field cannot be migrated,
+       * because the copy is named by hash and the source path was never
+       * recorded. Owen's project is one of those, so position is not a
+       * fallback for tidiness — it is the only thing the oldest recipes can say.
        */
       const position = new Map<string, number>();
       for (const pageId of recipe.order) {
         const owner = recipe.photos.find((one) => one.pages.some((page) => page.id === pageId));
         if (owner !== undefined && !position.has(owner.id)) position.set(owner.id, position.size + 1);
       }
-      const name = (photo: CapturePhoto): string => `Photograph ${position.get(photo.id) ?? '?'}`;
+      const name = (photo: CapturePhoto): string =>
+        photo.name ?? `Photograph ${position.get(photo.id) ?? '?'}`;
 
       const photos = recipe.photos.map((photo) => {
         if (photo.id === source.id) return photo;

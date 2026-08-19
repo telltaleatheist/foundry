@@ -177,7 +177,7 @@ import { Rectifier } from './rectify';
           <button type="button" (click)="turn(-1)" title="Turn this page anticlockwise">⟲</button>
           <button type="button" (click)="turn(1)" title="Turn this page clockwise">⟳</button>
           <button type="button" (click)="applyTurnToAll()" [disabled]="turnsApplied() === 0">
-            Apply turn to all
+            Turn all by the same amount
           </button>
           @if (quads().length === 1) {
             <button type="button" (click)="split()">Split</button>
@@ -519,7 +519,22 @@ export class CapturePageEditorComponent {
     this.quadsChange.emit(this.quads().map((quad) => rotate(quad, turns)));
   }
 
-  /** Stamp the accumulated turn onto every photograph of the same shape. */
+  /**
+   * Turn every photograph of the same shape BY the amount this one has turned.
+   *
+   * BY, NOT TO, and the button now says so. P1 noticed the difference while
+   * reading the service: this adds the accumulated turn to each photograph is
+   * CURRENT orientation rather than bringing them all to a common one, so a
+   * photograph somebody had already turned by hand ends up turned twice.
+   *
+   * Ruled as BY, deliberately. TO a common orientation would mean knowing each
+   * photograph is absolute orientation, and a quad only encodes orientation
+   * relative to its own frame -- derivable for a whole-frame quad, not for an
+   * arbitrary crop, so the well-defined version is the one that adds. On this
+   * shoot the distinction is invisible (nothing has been turned individually
+   * before the global) and the label is what stops it being a surprise the day
+   * it is not.
+   */
   protected applyTurnToAll(): void {
     this.applyToAll.emit({ kind: 'rotate', turns: this.turnsApplied() });
   }
