@@ -1570,6 +1570,14 @@ and stays silent. One line plus a sentence, in the app's oldest drop
 path; found by the capture routing control at foundry-feature seq
 82/83. Not capture work; do when next in that file.
 
+Same date, same family: EIGHT components now carry identical private
+copies of the ghost/primary button rules (confirm, export, host-op,
+metadata, ocr, simplify, translate, capture-new). House pattern joined
+rather than changed unilaterally, but eight copies of one visual
+decision is the drift shape refused five times tonight in code,
+wearing CSS. Lift to one shared sheet when next doing renderer-wide
+work. (foundry-feature seq 87.)
+
 ### Wave 20 — the capture stage: photographs become the book (Owen, 2026-08-19) — BUILT AND MEASURED 2026-08-19, main ea6dc36; human acceptance pending, docs/CAPTURE.md
 
 Owen photographed bound volumes at the American Atheists archive and wants
