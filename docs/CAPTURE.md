@@ -706,6 +706,16 @@ edits this document first and says so on the channel.
    46, now verified by running), fetch() on the scheme (the CSP doing
    what the plan said with no CSP edit ever written) — and THE
    ORIGINAL HEIC: the bank has no door, measured rather than argued.
+9. **THE SURFACE RUNS (P1, seq 75): the real AOT renderer from
+   dist/renderer, bootstrapped in a never-shown window (the show()
+   handler simply not attached — openWindow's own mechanism, minus one
+   listener), same preload, isolated userData.** All eight capture
+   methods on the bridge; recipeLoad from the RENDERER returned a real
+   recipe; zero renderer console errors. Narrows the live drop defect
+   to ROUTING ALONE, and corroborates the seq 72 layering reading from
+   the running app: the window-level veil text owns the gesture. Still
+   person-sized: the capture components' interactive behavior under
+   real hands — which is being exercised by Owen right now.
 
 ## Deferred out loud
 
