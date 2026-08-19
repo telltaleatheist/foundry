@@ -643,9 +643,15 @@ edits this document first and says so on the channel.
    agreement to C8, which diffs each minted page against its own source
    AND two decoy neighbours and passes only on a clear-margin win
    (measured: correct pages win at 0.11—0.20, a swapped pair loses at
-   5.5, line at 0.6). A fixture generator injects twelve specific
+   5.5, line at 0.6). A fixture generator injects THIRTEEN specific
    defects; the self-test proves each is caught BY THE CHECK THAT
-   CLAIMS IT, and that a correct project passes clean. Scratch tooling,
+   CLAIMS IT, and that a correct project passes clean. (Corrected from
+   twelve at seq 73: a pages-swapped defect existed in the fixture with
+   no row in the self-test map — a gap in the thing whose job is
+   finding gaps, caught by P2 re-reading its own parked run. The fixed
+   row asserts BOTH halves: check.js blind to the swap AND page-diff.js
+   catching it — before that, C8's value was the one claim taken on
+   trust. 13/13 is the number the parked README carries.) Scratch tooling,
    not a committed test (the no-unasked-tests rule); it takes a project
    directory and a PDF and nothing else, so it runs unchanged against
    the real 27 the day the mint lands. Limits stated: drawn axis-
