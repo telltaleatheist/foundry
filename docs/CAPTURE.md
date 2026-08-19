@@ -1061,12 +1061,31 @@ Built (P2 seq 136, ruled in by foundry-pc-2):
   rule all along: at a corner, a leaning cut's smaller half is still
   14.7% of the sheet -- the corner is not the sliver and the sliver
   is not at the corner (the {x} disease again: a rule only right for
-  cuts parallel to the sides). FLOOR = 5% OF THE SHEET PER HALF, a
-  named constant beside the chord -- a product default, Owen moves
-  it by asking; the smallest real half anyone splits (an asymmetric
-  spread) sits far above it, and 5% of a sheet is a caption, not a
-  page. seatSplit clamps, so the surface still cannot express a
-  state anything downstream refuses.
+  cuts parallel to the sides). FLOOR = 2% OF THE SHEET PER HALF --
+  NOT A NEW DECISION (P2 seq 139, overturning the lead's first 5%):
+  the pre-Wave-21 clamp was 2% along the edge, and for the only cut
+  that then existed 2% along the edge IS 2% of the area, so this is
+  the old rule restated in the measure that survives a lean, and
+  Owen does not have to be asked. It stays LOW because a floor has
+  NO OVERRIDE: 5% would silently refuse a legitimate unequal cut (a
+  narrow column, an inset, a foldout leaf) as a handle that sticks
+  for no reason -- degeneracy is the clamp's job, taste is the
+  preview's, which draws each half at mint size through the same
+  shader. The floor almost never binds: even an end ON the corner
+  leaves the smaller half 10.7-11.5% of the sheet; the only thing
+  2% catches is both ends crowding the same side, which is the
+  sliver. TWO IMPLEMENTATION FACTS THAT MUST NOT BE LOST: the
+  affinity is PROVABLE, not just measured (dragging one end moves
+  exactly one vertex of each half, shoelace is linear in each
+  vertex, the seat is linear in t -- confirmed on five quads, worst
+  second difference 3.3e-16), and THE SLOPE IS PER-QUAD, NOT A
+  CONSTANT (0.410-0.505 across five shapes): the solve evaluates
+  the half's area at t=0 and t=1 for the quad in hand and inverts
+  that line -- two area calls and a divide -- and never carries a
+  measured number, which would be right on the acceptance shoot and
+  wrong on the next book by twenty percent. seatSplit clamps, so
+  the surface still cannot express a state anything downstream
+  refuses.
 - NO HAND HAS TOUCHED ANY OF IT: four gates, nine order cases, and
   the chord numbers underneath -- and the modal has never been
   opened by a person. First act when the gate lifts: open the modal
