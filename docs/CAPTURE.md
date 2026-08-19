@@ -834,7 +834,18 @@ page, we're in a new stage where we can change it per-page."
    never stored -- the modal opens in stage 1 only on a virgin project
    (all whole-frame, unsplit, nothing byHand); anything else opens
    stage 2, so reopening to fix page 31 can never land on the button
-   that stamps everything. The two applies are ONE BODY that ALWAYS
+   that stamps everything. REFINED BY MEASUREMENT (P2 seq 141, found
+   at their own audit): on a virgin project the stage-1 stamp is a
+   byte-identical no-op, so a stage derived ONLY from disk read
+   "nothing set" after the very press that was supposed to advance
+   it -- Apply left you in stage 1 with no other way out. The stage
+   is TWO questions kept apart: the DERIVED INPUT answers where this
+   project OPENS (from disk -- the dangerous case is still guarded,
+   reopening after an evening of per-page work cannot land on the
+   stamp), and a MODAL-LIVED FLAG answers what has happened since
+   (from what was pressed). The flag dying with the modal is right:
+   closing a virgin project untouched and reopening in stage 1 is
+   where nothing-set belongs. The two applies are ONE BODY that ALWAYS
    skips byHand and names the skips -- stage 1 is just the call where
    the byHand set is empty, which makes a wrong stage derivation fail
    SAFE (skips and says so) instead of destructive. Within one stamp,
@@ -1229,7 +1240,15 @@ TESTING THE FUNCTION BEFORE BELIEVING IT: the docblock and the code
 disagreed, and the docblock was the true one. Rule: a probe must
 hold at least one fact the code under test does not derive (here,
 the human-known right order), or it measures agreement, not
-correctness. Two more gate hazards,
+correctness. Seventh (P2, seq 141), worse than a stale docblock and
+asked to be recorded as worse: A CONTRACT LINE THAT NO CODE
+SATISFIES. Point 2's exact sentence -- pressing Apply IS what
+advances the stage -- was ruled, plan-backed, unambiguous, and not
+built; nothing in four gates has an opinion about whether a doc
+line was implemented. The habit that catches it, adopted as cadence
+for every numbered contract: AFTER BUILDING, RE-READ THE NUMBERED
+POINTS AND NAME THE LINE OF CODE THAT ANSWERS EACH -- one minute,
+and the only check that reaches a promise. Two more gate hazards,
 both measured: npx tsc exits 0 without compiling at THREE sites on
 this machine now, so the leaf configs run ./node_modules/.bin/tsc by
 path; and bunx at root, never npx. Agents never commit; the lead verifies, commits,
