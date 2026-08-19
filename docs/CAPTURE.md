@@ -236,6 +236,24 @@ sort is history and their order is the order.
   the left page still precedes the right. Reversing raw page cards would
   silently swap every pair.
 
+**Drops are window-scoped when a light table is in front** (Owen live
+defect, seqs 72/76, fixed 75c7bea): the grid's drop zone is a STRIP
+down one side — kept as the obvious place to aim, not the only one —
+and the window handler routes a drop ANYWHERE to intake when the front
+tab is a capture project, in ONE batched call (intake answers once; a
+call per file would write the recipe per photograph and overwrite the
+notice bar 26 times). Writing the fix exposed the tenth
+two-things-one-name: the handler routed on the FRONT TAB while
+intake() read the root-provided SERVICE's directory — two facts about
+which project is being worked on that can name different ones, plus a
+silent null during recipe load. intake now TAKES the project
+directory; one fact. New Project is a MODAL (CaptureNewDialogComponent
+matching confirm-dialog, registered in UiService's dialog list; Enter
+submits, Escape/scrim cancel, nothing cancels while create is in
+flight because it makes a folder) — Owen's ruling, and the house
+convention: five dialogs existed and the inline field was the
+deviation.
+
 **The gestures**, each on a single page with an "apply to all" affordance:
 
 - **Rotate** — quarter turns. Apply-to-all stamps the turn on every page.
@@ -712,10 +730,20 @@ edits this document first and says so on the channel.
    listener), same preload, isolated userData.** All eight capture
    methods on the bridge; recipeLoad from the RENDERER returned a real
    recipe; zero renderer console errors. Narrows the live drop defect
-   to ROUTING ALONE, and corroborates the seq 72 layering reading from
-   the running app: the window-level veil text owns the gesture. Still
-   person-sized: the capture components' interactive behavior under
-   real hands — which is being exercised by Owen right now.
+   to ROUTING ALONE. Second probe (seq 78, corrected at 79/80): the New
+   Project modal opens, focuses its field, takes Enter, creates a
+   project with capture=true, closes itself, and the light table
+   renders — measured BY IDENTITY (querySelector, activeElement,
+   listProjects) and standing. A companion claim ("the veil flipped;
+   the front-tab signal is live") was WITHDRAWN at seq 80: the probe
+   matched /Drop / by PATTERN, took the last hit, and printed it under
+   a self-written label — the veil lives behind @if (dropping()) and
+   cannot render without a real dragenter, so the drop ROUTING and the
+   veil wording remain unexercised by any probe. The rule the ledger
+   takes from it: A PROBE FINDS ITS TARGET BY IDENTITY, NOT BY PATTERN
+   — a right-looking string under a confident label is worse than a
+   wrong number, because a wrong number makes you look. Still
+   person-sized: the drag gesture itself, under Owen's hands.
 
 ## Deferred out loud
 
