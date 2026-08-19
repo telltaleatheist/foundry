@@ -872,8 +872,15 @@ edits this document first and says so on the channel.
   modification time with no relation to the shutter. On a mixed shoot
   the sort silently interleaves two kinds of time. Unreachable on the
   acceptance shoot (27/27 exif-offset, measured); when a capture
-  project ever holds an mtime photograph, one badge on the card or one
-  sentence at sort time says the order is not trustworthy for it.
+  project ever holds an mtime photograph, ONE SENTENCE in the grid
+  header (the sibling of Your order -- the capture-time sort no longer
+  applies, same place, same voice: N of these times are file dates,
+  not capture times) -- never a per-card badge, because the mark is
+  about the ORDER, not the photographs, and the photographs are the
+  one bright thing on that table (P2, seq 123). The sort DERIVATION is
+  unbroken either way, checked: an mtime is still a time, so
+  monotonicity has the same answer; what breaks is what Newest first
+  MEANS -- truthfulness, not correctness, which is why nothing fails.
   takenAtSource itself stays write-only ON PURPOSE -- provenance on
   disk, askable, is a legitimate never-read shape, unlike an unwired
   boolean.
