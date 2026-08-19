@@ -155,7 +155,12 @@ times that their photographs are unreadable, in a sentence carrying a
 require stack. The distinction is the pdf-lib one: a refusal is about
 the FILE; this is about the INSTALLATION. Same packaged-build shape,
 worse failure mode: not a crash, a book that silently refuses every
-photograph.
+photograph. LANDED at 7e72d1b, measured by REMOVING the module: throws
+once before the first mkdir (an intake that cannot work leaves nothing
+behind — not even copied originals), the sentence names the decoder
+and says nothing is wrong with the photographs, no require stack
+reaches the person. The gate ledger's summary line is P1's: THE
+GATES PROVE THE CODE COMPILES, AND ONLY RUNNING IT PROVES IT RUNS.
 
 Until ProjectSummary.capture is used by P2, Home draws a fresh capture
 project disabled and mislabelled — known, temporary, blocks a row and
