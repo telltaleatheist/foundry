@@ -1001,6 +1001,57 @@ costs a named skip and one click of the override; under-marking
 costs an evening of cropping. Measured on his recipe read-only:
 exactly one page comes back marked, and it is IMG_0212.
 
+Built (P2 seq 136, ruled in by foundry-pc-2):
+
+- THE orderFor DEFECT, LIVE ON MAIN SINCE SPLITTING EXISTED: the
+  docblock promised to fold a newly-cut page in beside the page it
+  came from; the code recognised a new page by the old id VANISHING.
+  A cut adds :1 and leaves :0 in place, so the id never vanishes and
+  every right-hand page fell to the sweep at the end -- four
+  photographs split in one act gave A:0 B:0 C:0 D:0 A:1 B:1 C:1 D:1,
+  a whole book of versos then a whole book of rectos, visible in the
+  minted PDF and nowhere before it. It survived because nothing had
+  ever split a real shoot. Fixed on the branch by the NARROWER rule:
+  a page the arrangement already names keeps its own slot; only a
+  page it has never heard of is folded in beside its sibling --
+  narrower because somebody who dragged the halves of a spread apart
+  has an order that says so, and "keep a photograph's pages
+  together" would quietly undo it on the next stamp. Nine cases run
+  against the real function body. UNTIL THE WAVE 21 MERGE, SPLITTING
+  AND MINTING ON MAIN PRODUCES A MIS-ORDERED BOOK.
+- THE STAMP DISSOLVED split-before-rect RATHER THAN NEEDING IT: the
+  stamp copies THE SOURCE'S PAGES, and the split, crop, and turn are
+  already in those quads -- one assignment, no sequence, nothing to
+  get backwards. The 5b line stands as intent; it is enforced by
+  there being one act, not by an order between two. This also
+  retires the PAGE-COUNT SKIP on the stamp arm (that refusal existed
+  because a quad copy could not invent a split; this arm copies the
+  split too, so the count follows). byHand is the only guard left
+  on the stamp arm, which is what the ruling wanted; the aspect skip
+  stands.
+- PER-PAGE APPLY MOVES NO CORNER (ratified): corners save as they
+  are dragged -- that is what stops a flip losing an adjustment --
+  so the button's whole job is the part that was never expressible:
+  this setting was chosen FOR THIS PAGE. It TOGGLES byHand (a mark
+  set by mistake must not need a global-with-override to escape);
+  the label states the state: Apply, then Set by hand.
+- THE INCLUDE-HAND-SET OVERRIDE IS DRAWN ONLY WHEN HAND-SET PAGES
+  EXIST, carrying the count ("including the 3 set by hand") -- a
+  permanently present tick box about a condition that usually does
+  not hold is a control people learn to stop reading.
+- OPEN REGRESSION, SAID OUT LOUD AND ASSIGNED (P2, next): the old
+  split clamped the gutter 2% off either end; seatSplit deliberately
+  has no floor yet, so A SLIVER PAGE IS CURRENTLY DRAGGABLE (it
+  mints, and the preview shows it -- visible, not silent). The floor
+  must express "leave a page on each side" for a cut that LEANS,
+  which a one-end-at-a-time clamp cannot; P2 builds it properly
+  rather than approximating. Wanted before Owen's hands land on the
+  modal.
+- NO HAND HAS TOUCHED ANY OF IT: four gates, nine order cases, and
+  the chord numbers underneath -- and the modal has never been
+  opened by a person. First act when the gate lifts: open the modal
+  and split one spread.
+
 Package split: P1 — schema (byHand, split segment), validator, mint
 chord measurement, migration of {x}, the shared chord; P2 — the modal,
 stages, buttons, edge-riding handles, grid double-click/Enter/selection
@@ -1130,7 +1181,16 @@ only gate that works there. Fifth (P2, seq 57), the boundary itself:
 EVERY gate we run is a compile, and a compile cannot see an absent
 runtime dependency — three green gates on a worktree whose decoder
 was missing. Rule: after rebasing onto a merge that touches
-package.json, INSTALL BEFORE BELIEVING A GATE. Two more gate hazards,
+package.json, INSTALL BEFORE BELIEVING A GATE. Sixth (P2, seq 136),
+the probe that agrees with the bug: orderFor shipped broken under
+green gates AND green end-to-end probes, because the probes diffed
+each split page against the source they had COMPUTED for it -- the
+same wrong assumption twice is not a check. The defect was found by
+TESTING THE FUNCTION BEFORE BELIEVING IT: the docblock and the code
+disagreed, and the docblock was the true one. Rule: a probe must
+hold at least one fact the code under test does not derive (here,
+the human-known right order), or it measures agreement, not
+correctness. Two more gate hazards,
 both measured: npx tsc exits 0 without compiling at THREE sites on
 this machine now, so the leaf configs run ./node_modules/.bin/tsc by
 path; and bunx at root, never npx. Agents never commit; the lead verifies, commits,
