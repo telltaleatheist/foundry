@@ -216,16 +216,23 @@ JPEG working copy would bake in a second before any page reached the
 mint. PNG is lossless; the only cost is disk on a file that is
 derivable and disposable.
 
-**The working copy is UPRIGHT: intake bakes orientation into the PNG.**
-Ruled from both plan-backs — all 27 shoot files carry EXIF Orientation
-6 or 3, none is 1, and NOT baking would mean spelling one rotation four
-ways in P2 (shader, corner hit-testing, split line, drag maths). Recipe
-coordinates are the WORKING COPY's grid — the grid the editor draws on
-and the mint samples from. One grid, one meaning, no orientation field
-to disagree with the quad. Stated consequence: working-copy dimensions
-TRANSPOSE the original's for orientations 6 and 8; nothing downstream
-cares, because nothing downstream addresses the original's grid. The
-original bytes stay the bank, untouched.
+**The working copy is UPRIGHT — and upright is the DECODER'S DEFAULT,
+not work** (measured, channel seq 19): libheif applies the container's
+`irot` during decode, so the buffer comes back already upright and
+intake writes it to PNG unchanged. **Applying EXIF Orientation on top
+is a DOUBLE ROTATION** — it would have turned 26 of 27 shoot photos 90°
+wrong, uniformly enough to look deliberate. The dependency and version
+are pinned because this is libheif behaviour, not format truth:
+**`libheif-js@1.19.8`**, accepted as P1's dependency; any future bump
+re-runs the two-line dimension probe. **Dimensions come from the
+DECODER, never from EXIF**: EXIF says 4032x3024 for a file the decoder
+returns as 3024x4032 — both correct about different grids, the
+two-things-sharing-a-name shape in a new hat. Recipe coordinates,
+quads, and the grid are all the DECODED grid — the one the editor
+draws on and the mint samples from, with no orientation field anywhere
+to disagree. (Had baking been needed, not baking would have meant
+spelling one rotation four ways in P2 — shader, corner hit-testing,
+split line, drag maths.) The original bytes stay the bank, untouched.
 
 **Intake also emits a display thumbnail beside each working copy**
 (`capture/thumbs/<sha>.jpg`, 640 px long edge, JPEG ~0.85 — display
@@ -350,15 +357,15 @@ edits this document first and says so on the channel.
    CSP edit.
 3. **The `stages.ts` audit list** (P1 walks every predicate, writes the
    verdict here via the lead).
-4. **The HEIC double-rotation measurement, BEFORE any rotation code is
-   written** (P2's hazard): HEIC records rotation twice — the
-   container's `irot`/`imir` boxes and the EXIF Orientation tag — and
-   libheif may apply `irot` during decode. P1's FIRST decode prints the
-   decoded dimensions of one Orientation-6 file: 4032x3024 back means
-   apply EXIF rotation yourself; 3024x4032 back means it is already
-   upright and applying EXIF on top would turn 26 of 27 photos 90°
-   wrong, uniformly enough to look deliberate. Verdict to the channel
-   and this doc before Merge 3.
+4. **The HEIC double-rotation measurement — SETTLED at channel seq 19,
+   before any rotation code existed** (P2 named the hazard and both
+   branches; P1 ran the decode): IMG_0211 (EXIF Orientation 6, stored
+   4032x3024) decodes to 3024x4032 under libheif-js 1.19.8, and the
+   container `irot` agrees with the EXIF tag in both probed files. So
+   the buffer is ALREADY upright: intake applies nothing, and the rule
+   lives in the working-copy section above. Scope honestly stated:
+   two files probed, dimensions only — colour, chroma and alpha are
+   Merge 3 acceptance concerns.
 
 ## Deferred out loud
 
