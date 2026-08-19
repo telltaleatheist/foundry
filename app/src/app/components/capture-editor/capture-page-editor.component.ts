@@ -22,7 +22,7 @@ import {
   toPixels,
   withCorner,
 } from './geometry';
-import { cutOf, joinedQuad, outputSizeFor, seatSplit } from '@shared/capture';
+import { cutOf, joinedQuad, outputSizeFor, seatSplit, slideSplit } from '@shared/capture';
 import type { CaptureQuad, CaptureSplit } from '@shared/types';
 
 import { Rectifier } from './rectify';
@@ -563,25 +563,36 @@ export class CapturePageEditorComponent {
 
       if (gutter === 'line') {
         /*
-         * BOTH ENDS BY THE POINTER'S OWN TRAVEL, and then seated.
+         * THE WHOLE CUT MOVES AS ONE ACT, THROUGH ONE FUNCTION.
          *
-         * Each end is carried by the same offset and handed to `seatSplit`,
-         * which projects it back onto the edge it rides. So the cut slides
-         * along the page and keeps its lean, and neither end can leave its
-         * edge -- the invariant is enforced by the one function that is
-         * allowed to build a segment from a pointer rather than by arithmetic
-         * here that would have to agree with it.
+         * This used to carry each end by the offset and hand each to
+         * `seatSplit` in turn. Both calls were individually correct and the
+         * composition was not: each clamps the end it moves against THE
+         * PARTNER AS IT STANDS, and in the second call the partner is the end
+         * the first already moved -- so each believed a partner that was no
+         * longer where its floor had been computed for, and the pair walked
+         * past a limit neither call thought it was crossing.
          *
-         * Twice, because `seatSplit` moves one end and re-seats the other; the
-         * second call moves the one the first left alone.
+         * Measured through the shipped chord: the smaller half reached 0.28%
+         * of the sheet on a skewed quad, a seventh of the floor, and past a
+         * point both ends landed on corners of one edge and halvesOf refused
+         * the segment outright. So the gesture could produce a state the
+         * validator rejects -- the draws-fine-refuses-to-save class, which is
+         * exactly what putting the seating in shared/ was supposed to make
+         * impossible.
+         *
+         * `slideSplit` fixes the edges before anything moves and applies the
+         * floor and the edge-riding rule as ONE predicate to the pair, so the
+         * slide stops where the first of them binds. The lesson is the one
+         * this feature keeps paying for: an invariant enforced once is a rule,
+         * and an invariant enforced twice is two rules that agree until they
+         * do not.
          */
         const from = this.slidFrom;
         if (from === null) return;
-        const by: FractionPoint = [at[0] - from.at[0], at[1] - from.at[1]];
-        const carried = (point: readonly [number, number]): FractionPoint =>
-          [point[0] + by[0], point[1] + by[1]];
-        const movedA = seatSplit(sheet, from.split, 'a', carried(from.split.a));
-        this.splitChange.emit(seatSplit(sheet, movedA, 'b', carried(from.split.b)));
+        this.splitChange.emit(
+          slideSplit(sheet, from.split, [at[0] - from.at[0], at[1] - from.at[1]]),
+        );
         return;
       }
 
