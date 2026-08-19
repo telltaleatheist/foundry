@@ -59,14 +59,28 @@ import * as path from 'node:path';
 import * as zlib from 'node:zlib';
 import { nativeImage } from 'electron';
 
+import { PDFDocument } from 'pdf-lib';
+
 import type {
+  CaptureMintBegun,
+  CaptureMintPage,
   CapturePage,
   CapturePhoto,
   CaptureQuad,
   CaptureRecipe,
   CaptureTimeSource,
+  LedgerStep,
+  PixelQuad,
 } from '../shared/types';
-import { CAPTURE_RECIPE_PAYLOAD, sameShape } from '../shared/capture';
+import {
+  CAPTURE_RECIPE_PAYLOAD,
+  emptyRecipe,
+  outputSizeFor,
+  recipeBytes,
+  sameShape,
+} from '../shared/capture';
+import { beginMint, cancelHere, mintCancelled, noteMintPage, settleMint } from './job-queue';
+import { readManifest, recordMint } from './projects';
 import { writeAtomically } from './atomic';
 
 // Re-exported so a caller that already imports this module does not need to
@@ -77,6 +91,10 @@ const CAPTURE = 'capture';
 const ORIGINALS = 'originals';
 const DERIVED = 'derived';
 const RECIPE = 'recipe.json';
+// Staging for a mint in progress. NOT served: the door reaches `derived/`
+// and nothing else, and a half-finished book is nobody's business but
+// this module's.
+const MINTS = 'mints';
 
 /** Refusals from this module, named so a caller can tell them from an fs error. */
 export class CaptureError extends Error {
@@ -171,21 +189,9 @@ function withRecipe<T>(projectDir: string, work: () => Promise<T>): Promise<T> {
   return next;
 }
 
-export function emptyRecipe(): CaptureRecipe {
-  return { version: 1, photos: [], order: [] };
-}
+// `emptyRecipe` and `recipeBytes` come from shared/ — see the argument there.
+export { emptyRecipe };
 
-/**
- * The bytes a recipe is written as — indented, and ending in a newline.
- *
- * ONE SPELLING FOR THREE WRITERS (create, save, intake). All three spelled the
- * identical `JSON.stringify` call, which is how one of them eventually acquires
- * a different indent and every save after it rewrites the whole file as a diff
- * nobody asked for.
- */
-function recipeBytes(recipe: CaptureRecipe): Buffer {
-  return Buffer.from(`${JSON.stringify(recipe, null, 2)}\n`, 'utf8');
-}
 
 /**
  * The recipe this project holds.
@@ -228,7 +234,7 @@ export async function readRecipe(projectDir: string): Promise<CaptureRecipe> {
 export async function writeRecipe(projectDir: string, recipe: CaptureRecipe): Promise<void> {
   const checked = validRecipe(recipe, recipeFile(projectDir));
   await withRecipe(projectDir, async () => {
-    await writeAtomically(recipeFile(projectDir), recipeBytes(checked));
+    await writeAtomically(recipeFile(projectDir), Buffer.from(recipeBytes(checked)));
   });
 }
 
@@ -407,7 +413,7 @@ export async function ensureCapture(projectDir: string): Promise<{ recipe: Captu
   try {
     await fsp.access(file);
   } catch {
-    await writeAtomically(file, recipeBytes(emptyRecipe()));
+    await writeAtomically(file, Buffer.from(recipeBytes(emptyRecipe())));
   }
   return openCapture(projectDir);
 }
@@ -893,7 +899,232 @@ export async function intakePhotos(projectDir: string, paths: readonly string[])
     }
 
     const next: CaptureRecipe = { version: 1, photos, order };
-    await writeAtomically(recipeFile(projectDir), recipeBytes(next));
+    await writeAtomically(recipeFile(projectDir), Buffer.from(recipeBytes(next)));
     return { recipe: next, token: tokenForDerived(derived), added, duplicates, refused };
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The mint
+// ─────────────────────────────────────────────────────────────────────────────
+
+/*
+ * ── WHO DOES WHAT, AND WHY IT IS SPLIT THIS WAY ─────────────────────────────
+ *
+ * MAIN decides the list, the sizes and the order; THE RENDERER rasterizes
+ * exactly that list and sends back one JPEG at a time; MAIN assembles the PDF.
+ * The rectifying happens in the renderer because it is a WebGL shader the
+ * editor already runs for its live preview — one implementation, native speed —
+ * and doing it here would mean a second one in JavaScript, seconds a page.
+ *
+ * ONE PAGE AT A TIME ACROSS THE BRIDGE, and each one lands on disk before the
+ * next is asked for. A shoot is hundreds of megabytes of JPEG; holding it in
+ * one heap to assemble at the end would put the whole book in memory twice, in
+ * a process that also has an app in it.
+ *
+ * THE PAGES ARE STAGED INSIDE THE PROJECT rather than in the system temp
+ * directory. A mint interrupted by a crash leaves a numbered directory under
+ * `capture/mints/` that nothing reads and the next mint does not touch. That is
+ * a visible mess in one folder, which is better than an invisible one in
+ * %TEMP% — and it cannot become a cross-volume rename at commit.
+ */
+interface MintSession {
+  projectDir: string;
+  /** The shelf row. The renderer never sees this; a cancel arrives through it. */
+  jobId: string;
+  staging: string;
+  pages: CaptureMintPage[];
+  received: Set<number>;
+}
+
+const mints = new Map<string, MintSession>();
+
+/** Nominal dots per inch for the page box. 72 points to the inch. */
+const MINT_DPI = 300;
+
+function sessionOf(mintId: string): MintSession {
+  const session = mints.get(mintId);
+  if (session === undefined) {
+    throw new CaptureError(
+      `There is no mint called ${mintId} in progress. It was finished, given up on, or belongs to a `
+      + 'run of this app that has since closed.',
+    );
+  }
+  return session;
+}
+
+async function forget(session: MintSession, mintId: string): Promise<void> {
+  mints.delete(mintId);
+  await fsp.rm(session.staging, { recursive: true, force: true }).catch(() => { /* best effort */ });
+}
+
+/**
+ * Work out what this mint will print, and open a session for it.
+ *
+ * ── MAIN DENORMALIZES EXACTLY ONCE, AND THIS IS THE ONCE ────────────────────
+ *
+ * The recipe is fractions from end to end. Here they are multiplied by the
+ * working copy's decoded dimensions and never again — the renderer is handed
+ * `quadPx` in pixels beside the `sourceWidth`/`sourceHeight` they were computed
+ * against, so it can ASSERT its decoded bitmap matches what main measured
+ * rather than trusting it. There is no second conversion anywhere to disagree
+ * with this one, which is the guarantee that makes `PixelQuad` being a mere
+ * alias tolerable.
+ *
+ * ── THE ORDER IS THE ORDER, AND STRIKES ARE DROPPED HERE ────────────────────
+ *
+ * `recipe.order` lists every page id including struck ones, and this is the one
+ * place they are filtered. The renderer receives a list that is already the
+ * book: no strike logic on that side, no chance of the two sides disagreeing
+ * about which leaf is in.
+ */
+export async function mintBegin(projectDir: string): Promise<CaptureMintBegun> {
+  const recipe = await readRecipe(projectDir);
+  const photoOf = new Map<string, CapturePhoto>();
+  const pageOf = new Map<string, CapturePage>();
+  for (const photo of recipe.photos) {
+    for (const page of photo.pages) {
+      photoOf.set(page.id, photo);
+      pageOf.set(page.id, page);
+    }
+  }
+
+  const pages: CaptureMintPage[] = [];
+  for (const pageId of recipe.order) {
+    const page = pageOf.get(pageId);
+    const photo = photoOf.get(pageId);
+    // The validator already refuses a recipe whose order and pages disagree, so
+    // reaching here means the file changed under us between load and mint.
+    if (page === undefined || photo === undefined) {
+      throw new CaptureError(
+        `The recipe lists a page (${pageId}) that no photograph holds. Reopen the project before minting.`,
+      );
+    }
+    if (page.struck) continue;
+    const quadPx = page.quad.map(
+      ([x, y]) => [x * photo.width, y * photo.height] as const,
+    ) as unknown as PixelQuad;
+    const size = outputSizeFor(quadPx);
+    pages.push({
+      pageId,
+      workingCopy: photo.workingCopy,
+      quadPx,
+      sourceWidth: photo.width,
+      sourceHeight: photo.height,
+      outWidth: size.width,
+      outHeight: size.height,
+    });
+  }
+
+  if (pages.length === 0) {
+    throw new CaptureError(
+      'Every page in this project is struck, so there is nothing to mint. Restore a page first.',
+    );
+  }
+
+  const mintId = randomUUID();
+  const staging = path.join(captureDir(projectDir), MINTS, mintId);
+  await fsp.mkdir(staging, { recursive: true });
+  const manifest = await readManifest(projectDir).catch(() => null);
+  mints.set(mintId, {
+    projectDir,
+    jobId: beginMint(projectDir, manifest?.title ?? path.basename(projectDir), pages.length),
+    staging,
+    pages,
+    received: new Set<number>(),
+  });
+  return { mintId, pages };
+}
+
+/**
+ * One rectified page, as the renderer finished it.
+ *
+ * THE CANCEL IS CHECKED HERE and nowhere else. Pressing ✕ sets the shelf row to
+ * cancelled in a microsecond, but the renderer is midway through a page and will
+ * keep sending; nothing in main can reach across and stop it. So the first page
+ * to arrive after a cancel is refused, the staging directory goes, and the
+ * renderer learns the mint is over by being told no. Within one page, rather
+ * than instantly — which for a stage measured in minutes is the same thing.
+ */
+export async function mintPage(mintId: string, index: number, jpeg: ArrayBuffer): Promise<void> {
+  const session = sessionOf(mintId);
+  if (mintCancelled(session.jobId)) {
+    await forget(session, mintId);
+    throw new CaptureError('This mint was cancelled, so its pages are no longer being collected.');
+  }
+  if (!Number.isInteger(index) || index < 0 || index >= session.pages.length) {
+    throw new CaptureError(
+      `Page ${index} is not one of the ${session.pages.length} pages this mint asked for.`,
+    );
+  }
+  await writeAtomically(path.join(session.staging, `${index}.jpg`), Buffer.from(jpeg));
+  session.received.add(index);
+  noteMintPage(session.jobId, session.received.size);
+}
+
+/**
+ * Assemble the PDF, file it as the project's document, and answer with the step.
+ *
+ * ── AN IMAGE-ONLY PDF, WHICH IS THE ENTIRE OUTPUT OF THIS STAGE ─────────────
+ *
+ * One JPEG per page, drawn to fill its own page box, no text layer and no
+ * fonts. From here the book is an ordinary scanned PDF and nothing downstream
+ * knows a photograph was ever involved — which is the seam this whole feature
+ * was designed around.
+ *
+ * THE PAGE BOX IS THE PIXELS AT A NOMINAL 300 DPI. Nothing is resampled: the
+ * JPEG goes in at its own resolution and the box is sized to suit it, so the
+ * declared page is roughly the physical page it was photographed from. The read
+ * stage rasterizes at its own budget later; this number never constrains it.
+ *
+ * REFUSES A BOOK WITH A HOLE IN IT. Every page main asked for must have come
+ * back. A missing one would print a book quietly short a leaf, which is exactly
+ * the failure the order cross-check exists to prevent one layer up.
+ */
+export async function mintCommit(mintId: string): Promise<LedgerStep> {
+  const session = sessionOf(mintId);
+  if (mintCancelled(session.jobId)) {
+    await forget(session, mintId);
+    throw new CaptureError('This mint was cancelled before it could be finished.');
+  }
+  const missing = session.pages
+    .map((_page, index) => index)
+    .filter((index) => !session.received.has(index));
+  if (missing.length > 0) {
+    throw new CaptureError(
+      `${missing.length} of ${session.pages.length} pages never arrived, so this book would be `
+      + `short a leaf. Missing: ${missing.slice(0, 8).join(', ')}${missing.length > 8 ? '…' : ''}.`,
+    );
+  }
+
+  try {
+    const pdf = await PDFDocument.create();
+    for (let index = 0; index < session.pages.length; index++) {
+      const asked = session.pages[index]!;
+      const jpeg = await fsp.readFile(path.join(session.staging, `${index}.jpg`));
+      const image = await pdf.embedJpg(jpeg);
+      const width = (asked.outWidth * 72) / MINT_DPI;
+      const height = (asked.outHeight * 72) / MINT_DPI;
+      pdf.addPage([width, height]).drawImage(image, { x: 0, y: 0, width, height });
+    }
+    const bytes = Buffer.from(await pdf.save());
+    const step = await recordMint(session.projectDir, bytes, session.pages.length);
+    settleMint(session.jobId, { file: path.join(session.projectDir, ...step.payload.split('/')) });
+    await forget(session, mintId);
+    return step;
+  } catch (err) {
+    // The row must not sit at `running` for the rest of the session because an
+    // embed threw. The staging pages are kept: the failure is worth looking at.
+    settleMint(session.jobId, { error: err instanceof Error ? err.message : String(err) });
+    mints.delete(mintId);
+    throw err;
+  }
+}
+
+/** Give up. Nothing is left behind and no step is appended. */
+export async function mintAbort(mintId: string): Promise<void> {
+  const session = mints.get(mintId);
+  if (session === undefined) return; // giving up twice is giving up
+  cancelHere(session.jobId);
+  await forget(session, mintId);
 }

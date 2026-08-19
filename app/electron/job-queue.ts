@@ -1021,6 +1021,93 @@ export function cancel(id: string): void {
  * has. Standalone `detachedRuns` is always empty and this reads exactly as it
  * always did.
  */
+/*
+ * ── THE MINT ROW, WHICH IS A ROW AND NOT A JOB THE PUMP RUNS ────────────────
+ *
+ * A mint is minutes of work and it belongs on the shelf with progress and a
+ * cancel, exactly like a read. It must NEVER occupy the serial slot.
+ *
+ * WHY NOT, PRECISELY. `pump` runs one job at a time (`running !== null` is the
+ * whole gate), and that serialisation exists because the engine is one process
+ * against one GPU: two reads at once are slower than two reads in a row. A mint
+ * is neither — the rasterizing happens in the RENDERER, driven by a person who
+ * is watching it, and main only assembles what arrives. Putting it in the slot
+ * would mean a read queued behind somebody cropping photographs waits for them
+ * to finish, and a mint queued behind a read cannot start until the GPU does,
+ * which for an interactive stage reads as the button being broken.
+ *
+ * THE MECHANISM IS THE STATE AND NOT A FLAG. `pump` selects `state === queued`
+ * and nothing else, so a row born `running` is invisible to it — no exclusion
+ * list to keep up to date, no second gate to remember. The same trick the hold
+ * uses in reverse, and it means a mint and a read genuinely run at once.
+ *
+ * `env-install` is the precedent for a row the OCR panel never enqueued, and
+ * this departs from it in exactly one way: an install DOES take the slot
+ * (`pump` dispatches it), because an install and a read compete for the same
+ * disk and the same network. A mint competes with nothing.
+ */
+export function beginMint(projectDir: string, title: string, pages: number): string {
+  const job: Job = {
+    id: randomUUID(),
+    // No document exists yet — that is what this row is making. The project
+    // directory is what the shelf can usefully reveal.
+    inputPath: projectDir,
+    outputPath: projectDir,
+    kind: 'mint',
+    title,
+    // BORN RUNNING. See above: `queued` would put it in the pump's path, and
+    // `held` would wait for a start gesture that already happened.
+    state: 'running',
+    // `render` because that is literally the pass: the renderer is rasterizing
+    // page quads, and the shelf already knows how to say "page 3/27: rendered".
+    progress: { page: 0, total: pages, phase: 'render' },
+    envProgress: null,
+    createdAt: Date.now(),
+  };
+  jobs.push(job);
+  changed();
+  return job.id;
+}
+
+/** One more page is in the book. */
+export function noteMintPage(id: string, page: number): void {
+  const job = jobs.find((row) => row.id === id);
+  if (job === undefined || job.state !== 'running') return;
+  job.progress = { page, total: job.progress?.total ?? page, phase: 'render' };
+  changed();
+}
+
+/**
+ * Has somebody pressed the ✕ on this mint?
+ *
+ * THE MINT ASKS RATHER THAN BEING TOLD, because the work is happening on the
+ * other side of the bridge: `cancelHere` can set this row to `cancelled` in a
+ * microsecond, but the renderer is midway through rasterizing a page and will
+ * keep sending. So the session checks this as each page arrives and refuses the
+ * next one — the cancel takes effect within one page rather than instantly, and
+ * nothing has to reach into the renderer to stop it.
+ */
+export function mintCancelled(id: string): boolean {
+  const job = jobs.find((row) => row.id === id);
+  return job === undefined || job.state === 'cancelled';
+}
+
+/** The mint finished, or it did not. */
+export function settleMint(id: string, outcome: { file: string } | { error: string }): void {
+  const job = jobs.find((row) => row.id === id);
+  if (job === undefined || job.state !== 'running') return;
+  if ('file' in outcome) {
+    job.state = 'done';
+    job.outputPath = outcome.file;
+    job.progress = { page: job.progress?.total ?? 0, total: job.progress?.total ?? 0, phase: 'render' };
+  } else {
+    job.state = 'failed';
+    job.error = outcome.error;
+  }
+  job.finishedAt = Date.now();
+  changed();
+  settled(job);
+}
 export function cancelHere(id: string): void {
   const job = jobs.find((j) => j.id === id);
   if (!job) return;

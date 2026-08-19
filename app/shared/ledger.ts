@@ -60,6 +60,7 @@
  */
 
 import {
+  STEP_ACTIONS,
   WHY_HANDMADE,
   WHY_IMPORTED,
   WHY_MODEL_PASS,
@@ -92,8 +93,15 @@ export class StepLedgerError extends Error {
   }
 }
 
-/** Every action there is, in the order a project meets them. */
-export const STEP_ACTIONS = ['import', 'read', 'curate', 'translate', 'metadata', 'edit'] as const;
+/*
+ * `STEP_ACTIONS` now lives beside `StepAction` in shared/types.ts, which
+ * DERIVES the union from it — see the argument there. It was declared here and
+ * the union was declared there, and the two disagreed for exactly as long as it
+ * took to write a capture project to disk and try to read it back.
+ *
+ * Re-exported because this is where every reader of the ledger looks for it.
+ */
+export { STEP_ACTIONS };
 
 /**
  * EVERY REWRITE THERE IS, and the two or three words a row calls it by.
@@ -411,7 +419,18 @@ export function emptyLedger(): ProjectLedger {
 }
 
 /**
- * The origin — the import, and the only step whose parent is null.
+ * The origin — an IMPORT, and one of the two steps a project can be rooted at.
+ *
+ * IT IS NO LONGER THE ONLY NULL-PARENTED STEP and this line used to say it was.
+ * `captureStep` below is the other root: a project that arrived as photographs
+ * is rooted at the capture rather than at a document, because there is no
+ * document until something is minted. `parseLedger` still enforces exactly ONE
+ * root per ledger, so the two are alternatives and never neighbours.
+ *
+ * NOR IS EVERY IMPORT NULL-PARENTED ANY MORE, which is the other half of what
+ * this comment got wrong. `mintedStep` makes an import step WITH a parent, and
+ * that is the whole marker distinguishing a minted PDF from an imported one —
+ * see the argument there.
  *
  * It is not produced by a queue job and never was: importing is a file copy, and
  * the thing it retains is the untouched original, which is irreplaceable for the
@@ -466,6 +485,51 @@ export function captureStep(
   label = labelFor('capture'),
 ): LedgerStep {
   return { id, parent: null, action: 'capture', payload, retention: RETENTION_OF.capture, createdAt, label };
+}
+
+/**
+ * The PDF a mint made out of a capture — an import step WITH a parent.
+ *
+ * ── WHY THIS IS AN `import` AND NOT AN ACTION OF ITS OWN ────────────────────
+ *
+ * A minted PDF has to behave downstream exactly as an imported scan does, and
+ * SEVEN places decide that by asking whether the step they are standing on is
+ * an import: `hasBookAt` and `hostActPositionFrom` (shared/stages.ts),
+ * `positionView`’s sheet (below), `documentOfStep` (electron/projects.ts), and
+ * three renderer sites. Measured, not assumed. With `import` all seven are
+ * right with no edits: there is no book until something reads the PDF, the host
+ * acts on the reading rather than on the PDF row, and standing here opens the
+ * live copy. A new action would have made every one of them silently wrong in
+ * the same direction, and a missed one would not fail — it would just offer a
+ * person a translation of a book that does not exist yet.
+ *
+ * ── AND THE PARENT IS THE MARKER, WHICH COSTS NOTHING TO ADD ────────────────
+ *
+ * `originStep` is the ONLY other place that builds an `import` step and it
+ * hard-codes `parent: null`. So an import step with a parent is, by
+ * construction, a mint — no new action, no new field, and nothing to keep in
+ * sync. The parent is also FORCED rather than merely tidy: a capture ledger is
+ * already rooted at its capture step, and `parseLedger` refuses a ledger with
+ * two roots, so a null-parented mint would not load at all.
+ *
+ * ── IRREPLACEABLE, AND THAT IS NOT A HEDGE ─────────────────────────────────
+ *
+ * Retention is settled by the action (`parseLedger` refuses a step that
+ * disagrees), so this is `irreplaceable` whether or not we like it — but it is
+ * also true, for a reason that is easy to miss. The photographs and the recipe
+ * do survive, so another mint is always possible; what cannot be recovered is
+ * THIS document. A re-mint appends a NEW step, and the readings hanging off the
+ * old one do not follow it. Discarding this destroys the thing every reading of
+ * it was about. The discard wording is what had to change, not the field.
+ */
+export function mintedStep(
+  id: string,
+  parent: string,
+  payload: string,
+  createdAt: number,
+  label = 'The pages you minted',
+): LedgerStep {
+  return { id, parent, action: 'import', payload, retention: RETENTION_OF.import, createdAt, label };
 }
 
 /**
@@ -2134,9 +2198,26 @@ export function deleteCost(step: LedgerStep): string {
           + 'you typed — this is the record of them, so what is lost is that anything made from '
           + 'here stops carrying them.';
       }
-      return step.action === 'import'
-        ? `Discarding “${step.label}” destroys ${WHY_IMPORTED}. There is nowhere to fetch it back from.`
-        : `Discarding “${step.label}” destroys ${WHY_HANDMADE}. No run remakes it, at any price.`;
+      if (step.action === 'import') {
+        /*
+         * AN IMPORT WITH A PARENT IS A MINT (see `mintedStep`), and the two owe a
+         * person completely different sentences. The old one said "the only copy
+         * of this document Foundry knows of — nobody knows where it came from",
+         * which is false twice over about a minted PDF: Foundry knows exactly
+         * where it came from, and it is not the only copy of anything — the
+         * photographs are, and they are staying.
+         *
+         * WHAT IS ACTUALLY LOST IS THE READINGS. A re-mint is a new document and
+         * nothing hung off this one follows it across, so the honest warning is
+         * about the work done ON these pages rather than about the pages.
+         */
+        return step.parent === null
+          ? `Discarding “${step.label}” destroys ${WHY_IMPORTED}. There is nowhere to fetch it back from.`
+          : `Discarding “${step.label}” destroys the pages you minted and every reading hung off them. `
+            + 'The photographs and their recipe stay, so you can mint again — but a new mint is a new '
+            + 'document, and readings do not follow it.';
+      }
+      return `Discarding “${step.label}” destroys ${WHY_HANDMADE}. No run remakes it, at any price.`;
     case 'expensive':
       return `Discarding “${step.label}” costs a paid run to undo: ${WHY_MODEL_PASS}.`;
     default:

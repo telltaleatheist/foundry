@@ -24,7 +24,7 @@
  * noticed until they compared the two closely. The prose did not say which, and
  * a rule that does not say which is a rule with two readings.
  */
-import type { PixelQuad } from './types';
+import type { CaptureRecipe, PixelQuad } from './types';
 
 /**
  * The recipe's path inside a project, and the capture step's payload.
@@ -36,6 +36,32 @@ import type { PixelQuad } from './types';
  * the day the layout moves.
  */
 export const CAPTURE_RECIPE_PAYLOAD = 'capture/recipe.json';
+
+/**
+ * A recipe with no photographs in it yet.
+ *
+ * IN `shared/` FOR THE SAME REASON THE PATH IS. Two electron modules write
+ * this file — `projects.ts` when a capture project is created, `capture.ts`
+ * every time one is edited — and they cannot import each other (capture.ts
+ * already depends on projects.ts for the manifest). A second spelling of the
+ * empty recipe would be a second answer to "what does a new project hold",
+ * free to drift the day a field is added.
+ */
+export function emptyRecipe(): CaptureRecipe {
+  return { version: 1, photos: [], order: [] };
+}
+
+/**
+ * The bytes a recipe is written as — indented, and ending in a newline.
+ *
+ * ONE SPELLING FOR FOUR WRITERS (create, save, intake, and the empty file a
+ * creation lays down). They all spelled the identical `JSON.stringify` call,
+ * which is how one of them eventually acquires a different indent and every
+ * save after it rewrites the whole file as a diff nobody asked for.
+ */
+export function recipeBytes(recipe: CaptureRecipe): Uint8Array {
+  return new TextEncoder().encode(`${JSON.stringify(recipe, null, 2)}\n`);
+}
 
 /**
  * How far two photographs’ aspect ratios may differ and still share a crop.

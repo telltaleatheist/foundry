@@ -1817,6 +1817,8 @@ export const WHY_IMPORTED =
   'the only copy of this document Foundry knows of — nobody knows where it came from';
 export const WHY_MODEL_PASS =
   'hours of GPU: a model read every page of it';
+export const WHY_MINTED =
+  'the pages you minted and every reading hung off them';
 export const WHY_HANDMADE =
   'changes you made by hand, which nothing can reproduce';
 
@@ -2068,6 +2070,29 @@ export interface ProjectSummary {
   reading: ProjectReadingState;
   /** True once anything has been filed into `final/`. */
   filed: boolean;
+  /**
+   * Did this project arrive as PHOTOGRAPHS?
+   *
+   * ── AND WHY IT IS A FIELD RATHER THAN SOMETHING HOME WORKS OUT ─────────────
+   *
+   * A capture project between New Project and its first mint holds no documents
+   * at all, and that is its healthy state for as long as somebody is
+   * photographing a book. Home disables a row with no document and tags it
+   * "nothing to open", which for these is false twice over: there is plenty to
+   * open, and nothing is missing.
+   *
+   * IT MUST NOT BE INFERRED FROM AN EMPTY DOCUMENT LIST, which is the whole
+   * reason this field exists (P2, feature channel seq 54). An empty list is
+   * ALSO exactly what a project whose files have gone missing looks like — that
+   * is the case the "nothing to open" tag was written for. Inferring capture
+   * from emptiness would turn a genuinely broken project into a light table and
+   * swallow the one message that would have told somebody their files were gone.
+   *
+   * ANSWERED FROM THE LEDGER, not from the directory: the capture step is
+   * written at creation and is the root of these projects, so the catalogue
+   * already knows without opening the recipe or listing a folder.
+   */
+  capture: boolean;
   /**
    * The terminal documents this project has produced — what the left nav lists,
    * indented under the project row.
@@ -2451,8 +2476,40 @@ export type DocumentMetadata =
  * with that reading and each says so; P3's audit walks them one at a time against
  * a real capture project and writes the verdict into docs/CAPTURE.md.
  */
-export type StepAction =
-  'import' | 'capture' | 'read' | 'curate' | 'translate' | 'metadata' | 'edit';
+export type StepAction = typeof STEP_ACTIONS[number];
+
+/**
+ * Every action there is, in the order a project meets them.
+ *
+ * ── THE LIST IS THE TRUTH AND THE TYPE IS DERIVED FROM IT ───────────────────
+ *
+ * These used to be two declarations: this array in `shared/ledger.ts`, and a
+ * hand-written union here. `parseLedger` checks a stored action against the
+ * ARRAY, so the array is what decides whether a project on disk will open —
+ * and nothing checked the two against each other.
+ *
+ * WHAT THAT COST, EXACTLY, because it is the whole argument for this shape:
+ * `capture` was added to the union, and the compiler dutifully named all seven
+ * `Record<StepAction, …>` tables that needed an entry. The array was not one of
+ * them. So a capture project was created, a capture step was written to disk,
+ * and every later read of that project was REFUSED by the validator — "capture,
+ * which is not something this app does" — about a step this app had just
+ * written itself. The type said yes and the file said no.
+ *
+ * Deriving the union from the array makes the array the only place the set
+ * lives, so widening it is one edit and the compiler goes back to naming every
+ * consequence. The `Record<StepAction, …>` tables next door already worked this
+ * way; this is the same lesson, learned again by a validator instead of a table.
+ */
+export const STEP_ACTIONS = [
+  'import',
+  'capture',
+  'read',
+  'curate',
+  'translate',
+  'metadata',
+  'edit',
+] as const;
 
 /**
  * What was ASKED FOR, and what the run recorded about the answer.

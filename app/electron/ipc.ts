@@ -27,6 +27,10 @@ import { cancelSetup, setupWslEnv } from './backend-setup';
 import {
   ensureCapture,
   intakePhotos,
+  mintAbort,
+  mintBegin,
+  mintCommit,
+  mintPage,
   openCapture,
   writeRecipe,
 } from './capture';
@@ -1602,12 +1606,7 @@ export function registerIpc(): void {
    * channel `docs/IPC-CHANNELS.md` cannot enumerate and the audit cannot see;
    * the seven names are the contract, and the contract is what ships first.
    */
-  const captureNotYet = (channel: string): never => {
-    throw new Error(
-      `${channel} is registered but not implemented yet — the capture stage lands `
-      + 'in later merges (docs/CAPTURE.md).',
-    );
-  };
+
   /*
    * `capture:create` MAKES A PROJECT, which no other door here does. It answers
    * with the directory because that directory is the only handle anything has
@@ -1638,14 +1637,18 @@ export function registerIpc(): void {
    */
   ipcMain.handle('capture:recipe-save', (_event, projectDir: string, recipe: CaptureRecipe) =>
     writeRecipe(projectDir, recipe));
-  ipcMain.handle('capture:mint-begin', (_event, _projectDir: string) =>
-    captureNotYet('capture:mint-begin'));
-  ipcMain.handle('capture:mint-page', (_event, _mintId: string, _index: number, _jpeg: ArrayBuffer) =>
-    captureNotYet('capture:mint-page'));
-  ipcMain.handle('capture:mint-commit', (_event, _mintId: string) =>
-    captureNotYet('capture:mint-commit'));
-  ipcMain.handle('capture:mint-abort', (_event, _mintId: string) =>
-    captureNotYet('capture:mint-abort'));
+  /*
+   * THE MINT IS A SESSION AND NOT A CALL, which is why there are four of these.
+   * Main decides the list, the renderer sends back one finished page at a time,
+   * and the commit is the single point at which a document appears. Nothing is
+   * written into the project until then: a mint given up on halfway leaves the
+   * catalogue exactly as it found it.
+   */
+  ipcMain.handle('capture:mint-begin', (_event, projectDir: string) => mintBegin(projectDir));
+  ipcMain.handle('capture:mint-page', (_event, mintId: string, index: number, jpeg: ArrayBuffer) =>
+    mintPage(mintId, index, jpeg));
+  ipcMain.handle('capture:mint-commit', (_event, mintId: string) => mintCommit(mintId));
+  ipcMain.handle('capture:mint-abort', (_event, mintId: string) => mintAbort(mintId));
   ipcMain.handle('ledger:read', (_event, projectDir: string) => readStepLedger(projectDir));
   ipcMain.handle('ledger:go', (_event, projectDir: string, stepId: string) =>
     goToStep(projectDir, stepId));

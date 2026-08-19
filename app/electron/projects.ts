@@ -118,12 +118,13 @@ import type {
   StepDeletion,
   StepRow,
 } from '../shared/types';
-import { WHY_HANDMADE, WHY_IMPORTED, WHY_MODEL_PASS } from '../shared/types';
+import { WHY_HANDMADE, WHY_IMPORTED, WHY_MINTED, WHY_MODEL_PASS } from '../shared/types';
 import { spokenStem } from '../shared/documents';
 import { readJson } from '../shared/json';
 import { STEP_LABELS, migrateToSteps, readTypeRecords } from '../shared/steps';
 import {
   A_BOOK_OF_ITS_OWN,
+  appendStep,
   askedOf,
   captureStep,
   chainsWithout,
@@ -138,6 +139,7 @@ import {
   mergedMetadata,
   metadataInEffect,
   migrateLedger,
+  mintedStep,
   orphanedBanks,
   originOf,
   originStep,
@@ -161,7 +163,7 @@ import {
   type ReadAsk,
 } from '../shared/ledger';
 import { GENERATED_ROLE_FOR } from '../shared/documents';
-import { CAPTURE_RECIPE_PAYLOAD } from '../shared/capture';
+import { CAPTURE_RECIPE_PAYLOAD, emptyRecipe, recipeBytes } from '../shared/capture';
 // The records `parts` grammar is the overlay's target grammar — one spelling,
 // three readers — so the validator is the same function the curation uses.
 // One spelling for a path, so Windows' three become one — and the same one the
@@ -1026,6 +1028,19 @@ export async function createCaptureProject(title: string): Promise<ImportedDocum
      * its photographs came from. The random key makes that collision very
      * nearly impossible, which is not the same as impossible.
      */
+    /*
+     * THE RECIPE IS WRITTEN BEFORE THE STEP THAT POINTS AT IT, and in the same
+     * function, which it was not for one build. Creation appended a capture step
+     * whose payload is `capture/recipe.json` and left the FILE to whoever called
+     * next — so calling this alone produced a project that refused to open, and
+     * a crash between the two calls left one on disk permanently. A step is the
+     * retained payload of an action; minting one whose payload does not exist is
+     * writing a promise the project cannot keep.
+     */
+    await writeAtomically(
+      path.join(dir, ...CAPTURE_RECIPE_PAYLOAD.split('/')),
+      Buffer.from(recipeBytes(emptyRecipe())),
+    );
     if (ledgerOf(manifest).steps.length === 0) {
       manifest.ledger = {
         steps: [captureStep(
@@ -1920,6 +1935,107 @@ export async function deleteStep(dir: string, stepId: string): Promise<LedgerVie
  * knows what a curate step does to it, which is the point of putting the rule in
  * the ledger rather than at this call site.
  */
+
+/**
+ * The PDF a mint made, filed as this project’s document.
+ *
+ * ── TWO WRITES, ONE COMMIT POINT, AND THAT IS THE WHOLE POINT ───────────────
+ *
+ * A minted step alone leaves `manifest.archive` null, and `reading.needed` keys
+ * off `archive?.kind === "pdf"` — so the ledger would show a document nothing
+ * downstream would ever offer to read. The archive and the step are set inside
+ * ONE `withManifest`, so a project can never hold one without the other.
+ *
+ * ── A RE-MINT IS A NEW DOCUMENT AND MUST NOT LAND ON THE OLD ONE ────────────
+ *
+ * Every mint writes its own file in `archive/`, named apart from the last one:
+ * readings hang off the STEP, whose payload is that path, and overwriting it
+ * would silently re-point every reading of the first mint at pages that are not
+ * the ones it read.
+ *
+ * The append is safe for a second reason worth writing down, because it looks
+ * like luck and is not: `recordLanding` would normally look for a step to
+ * REPLACE when the same action lands under the same parent with the same params
+ * — which is exactly the shape of a re-mint — but `reRunTarget` refuses any
+ * candidate whose retention is `irreplaceable`. The retention that makes the
+ * discard warning honest is the same field that stops a re-mint eating the
+ * document before it. This builds the step directly regardless, so the
+ * guarantee does not rest on a helper’s exclusion list staying as it is.
+ *
+ * WORKING/ STILL HOLDS ONE PDF, which is the app’s rule and not this one’s. So
+ * a re-mint replaces the live copy, and standing on an EARLIER mint resolves to
+ * no document — its archive copy is still on disk and its readings are still in
+ * the ledger, but the row will not open. Recorded rather than fixed: giving
+ * `working/` more than one tenant is a change to a rule five other things obey.
+ */
+/**
+ * What a minted PDF is called, in the app's voice.
+ *
+ * ONE SPELLING FOR THREE WRITERS: the ledger step, the per-type chain, and
+ * `mintedStep`'s own default all say these words. A label is STORED rather than
+ * derived, so two spellings would sit side by side in one project's history and
+ * read as two different events that happened to the same file.
+ */
+const MINTED_LABEL = 'The pages you minted';
+
+export async function recordMint(dir: string, pdf: Buffer, pages: number): Promise<LedgerStep> {
+  const resolved = deletableProjectDir(dir);
+  const step = await withManifest(resolved, async (manifest) => {
+    const ledger = ledgerOf(manifest);
+    const capture = ledger.steps.find((row) => row.action === 'capture');
+    if (capture === undefined) {
+      throw new ProjectError(
+        `${path.basename(resolved)} has no capture step, so there are no photographs for a mint to be `
+        + 'made from. Only a project that arrived as photographs can be minted.',
+      );
+    }
+
+    // Named apart from every mint before it. The stem stays the document’s name;
+    // the suffix only appears once there is something to tell apart.
+    await fsp.mkdir(path.join(resolved, ARCHIVE), { recursive: true });
+    let name = `${manifest.stem}.pdf`;
+    for (let n = 2; await exists(path.join(resolved, ARCHIVE, name)); n++) {
+      name = `${manifest.stem} (${n}).pdf`;
+    }
+    await writeAtomically(path.join(resolved, ARCHIVE, name), pdf);
+
+    // The live copy, which is what standing on this step opens. `liveCopyOf`
+    // matches the working row’s `from` against the step’s payload, so these two
+    // strings have to be the same one.
+    const archived = `${ARCHIVE}/${name}`;
+    const liveFile = `${manifest.stem}.pdf`;
+    await fsp.mkdir(path.join(resolved, WORKING), { recursive: true });
+    await writeAtomically(path.join(resolved, WORKING, liveFile), pdf);
+
+    manifest.archive = {
+      file: name,
+      kind: 'pdf',
+      contentKey: createHash('sha256').update(pdf).digest('hex').slice(0, 8),
+      // There is no path this came from: it was made here, out of photographs
+      // this project already holds. The recipe is the honest answer.
+      originPath: path.join(resolved, ...CAPTURE_RECIPE_PAYLOAD.split('/')),
+    };
+    manifest.working.files = [
+      ...manifest.working.files.filter((row) => row.file !== liveFile),
+      { file: liveFile, kind: 'pdf', from: archived, madeAt: Date.now() },
+    ];
+    recordStep(manifest, 'pdf', {
+      file: archived,
+      label: MINTED_LABEL,
+      appliedAt: Date.now(),
+      kind: 'origin',
+      retention: 'irreplaceable',
+      why: WHY_MINTED,
+    });
+
+    const minted = mintedStep(randomUUID(), capture.id, archived, Date.now(), MINTED_LABEL);
+    manifest.ledger = appendStep(ledger, minted);
+    await writeManifest(resolved, manifest);
+    return minted;
+  });
+  announceProjects();
+  return step;
+}
 export async function recordCuration(
   dir: string,
   payload: string,
@@ -4436,6 +4552,10 @@ async function summarise(dir: string, name: string): Promise<ProjectSummary> {
       // offering a next step for a folder this app cannot describe.
       reading: { done: false, needed: false, pages: 0 },
       filed: false,
+      // A catalogue that will not parse cannot say what kind of project this is,
+      // and claiming `capture` here would send Home to open a light table over a
+      // folder it has already failed to describe. `problem` is what this row says.
+      capture: false,
       // Nothing can be listed out of a catalogue that will not parse, and guessing
       // at a tray by reading the directory would offer files this app cannot say
       // it made. The row offers Reveal, which is the honest door into a folder.
@@ -4567,6 +4687,9 @@ async function summarise(dir: string, name: string): Promise<ProjectSummary> {
     documents,
     reading: await readingState(dir, manifest),
     filed: manifest.final.length > 0,
+    // The ledger already knows: a capture step is written at creation and is the
+    // root of such a project. No recipe is read and no directory is listed.
+    capture: ledgerOf(manifest).steps.some((step) => step.action === 'capture'),
     exports: await filedDocuments(dir, manifest),
     facsimiles: await facsimilesOf(dir, manifest),
     problem: null,
