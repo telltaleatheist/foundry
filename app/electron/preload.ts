@@ -266,6 +266,7 @@ const api: FoundryApi = {
     intake: (projectDir, paths) => ipcRenderer.invoke('capture:intake', projectDir, paths),
     onIntakeProgress: (listener) => subscribe<CaptureIntakeProgress>('capture:intake-progress', listener),
     recipeLoad: (projectDir) => ipcRenderer.invoke('capture:recipe-load', projectDir),
+    remove: (projectDir, photoIds) => ipcRenderer.invoke('capture:remove', projectDir, photoIds),
     recipeSave: (projectDir, recipe) => ipcRenderer.invoke('capture:recipe-save', projectDir, recipe),
     mintBegin: (projectDir) => ipcRenderer.invoke('capture:mint-begin', projectDir),
     mintPage: (mintId, index, jpeg) => ipcRenderer.invoke('capture:mint-page', mintId, index, jpeg),

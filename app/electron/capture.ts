@@ -1257,6 +1257,96 @@ export async function mintCommit(mintId: string): Promise<LedgerStep> {
   }
 }
 
+
+/**
+ * Take photographs out of the project — the recipe, the pixels and the bank.
+ *
+ * ── REMOVAL IS NOT A STRIKE, AND THE DIFFERENCE IS THE WHOLE FEATURE ────────
+ *
+ * A strike keeps the photograph and leaves it out of the mint: it is a decision
+ * about the BOOK, and it is reversible by looking at the grid and changing your
+ * mind. This is a decision about the PROJECT — Owen dragged in the wrong files
+ * and wants them gone. So everything goes together: the recipe entry, its pages
+ * out of `order`, the derived working copy and thumbnail, AND the original in
+ * the bank. Leaving any of those behind would orphan it: a file no recipe names,
+ * that nothing will ever delete, in a directory whose whole promise is that
+ * everything in it is accounted for.
+ *
+ * ── DELETING THE BANK IS SAFE TO SAY OUT LOUD, WHICH IS WHY WE SAY IT ───────
+ *
+ * Everywhere else in this stage the bank is sacred — it is the irreplaceable
+ * half, and the door cannot even address it. It is deletable HERE and only here
+ * because it holds COPIES: the files the person dragged in still exist wherever
+ * they dragged them from. The confirm dialog says exactly that, with the count,
+ * before any of this runs. This function does not ask; the surface has already
+ * asked, and a door that re-asked would be a second opinion about a decision
+ * somebody already made.
+ *
+ * ── REFUSED MID-MINT ───────────────────────────────────────────────────────
+ *
+ * A mint holds a list of working copies it is part way through rasterizing. A
+ * photograph vanishing under it would be a book quietly short a leaf, or a read
+ * of a file that is no longer there — the first is invisible and the second is a
+ * crash. Neither is worth allowing so that somebody can tidy up eight seconds
+ * earlier.
+ *
+ * ── AN ID THAT NAMES NOTHING IS NOT AN ERROR ───────────────────────────────
+ *
+ * The surface sends ids off the grid it drew; by the time they arrive one may
+ * already be gone (two windows, a repeated Delete). Deleting something already
+ * deleted is SUCCESS — the world is in the state that was asked for. Refusing
+ * the whole batch for one stale id would strand the other twenty-six.
+ */
+export async function removePhotos(
+  projectDir: string,
+  photoIds: readonly string[],
+): Promise<CaptureRecipe> {
+  const resolved = path.resolve(projectDir).toLowerCase();
+  for (const session of mints.values()) {
+    if (path.resolve(session.projectDir).toLowerCase() === resolved) {
+      throw new CaptureError(
+        'This project is being minted right now. Wait for it to finish, or stop it, before '
+        + 'removing photographs — a mint that lost a page half way through would print a book '
+        + 'with a leaf missing.',
+      );
+    }
+  }
+
+  return withRecipe(projectDir, async () => {
+    const recipe = await readRecipe(projectDir);
+    const going = new Set(photoIds);
+    const doomed = recipe.photos.filter((photo) => going.has(photo.id));
+    if (doomed.length === 0) return recipe;
+
+    const orphanedPages = new Set(doomed.flatMap((photo) => photo.pages.map((page) => page.id)));
+    const next: CaptureRecipe = {
+      version: 1,
+      photos: recipe.photos.filter((photo) => !going.has(photo.id)),
+      order: recipe.order.filter((id) => !orphanedPages.has(id)),
+    };
+
+    /*
+     * THE RECIPE FIRST, THEN THE FILES. If this crashes between the two, what is
+     * left is a project whose recipe is correct and whose `derived/` holds a few
+     * files nobody names — wasted disk, and everything on screen is still true.
+     * The other order would leave the recipe naming pictures that no longer
+     * exist, which is a grid of broken images and a mint that throws.
+     */
+    await writeAtomically(recipeFile(projectDir), Buffer.from(recipeBytes(next)));
+
+    const derived = derivedDir(projectDir);
+    const originals = originalsDir(projectDir);
+    for (const photo of doomed) {
+      // `force` on every one: a file already gone is the outcome we wanted, and
+      // one missing thumbnail must not strand the twenty-six deletions after it.
+      await fsp.rm(path.join(derived, photo.workingCopy), { force: true });
+      await fsp.rm(path.join(derived, photo.thumb), { force: true });
+      await fsp.rm(path.join(projectDir, CAPTURE, ...photo.file.split('/')), { force: true });
+    }
+    return next;
+  });
+}
+
 /** Give up. Nothing is left behind and no step is appended. */
 export async function mintAbort(mintId: string): Promise<void> {
   const session = mints.get(mintId);

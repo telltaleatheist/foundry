@@ -33,6 +33,7 @@ import {
   mintPage,
   onIntakeProgress,
   openCapture,
+  removePhotos,
   writeRecipe,
 } from './capture';
 import {
@@ -1630,6 +1631,14 @@ export function registerIpc(): void {
   ipcMain.handle('capture:intake', (_event, projectDir: string, paths: string[]) =>
     intakePhotos(projectDir, paths));
   ipcMain.handle('capture:recipe-load', (_event, projectDir: string) => openCapture(projectDir));
+  /*
+   * REMOVAL, WHICH IS THE ONE DOOR THAT DELETES ANYTHING IRREPLACEABLE. It is
+   * allowed to because the bank holds copies of files that still exist where
+   * the person dragged them from, and because the surface has already asked
+   * them, by name and by count. Refused while this project is being minted.
+   */
+  ipcMain.handle('capture:remove', (_event, projectDir: string, photoIds: string[]) =>
+    removePhotos(projectDir, photoIds));
   /*
    * SAVED WHOLE AND VALIDATED WHOLE. The renderer debounces; this does not, and
    * it refuses a recipe it cannot read rather than writing it — a malformed

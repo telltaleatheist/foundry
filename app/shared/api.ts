@@ -1090,6 +1090,21 @@ export interface FoundryApi {
     onIntakeProgress(listener: (progress: CaptureIntakeProgress) => void): () => void;
     /** The recipe, and the door token that makes its pictures loadable. */
     recipeLoad(projectDir: string): Promise<CaptureOpened>;
+    /**
+     * Take photographs out of the project altogether, and answer with what is
+     * left.
+     *
+     * NOT A STRIKE. A strike leaves a photograph in the project and out of the
+     * book; this deletes the recipe entry, the working copy, the thumbnail AND
+     * the original, together, so nothing is orphaned. The bank copies go too,
+     * which is safe to say because they ARE copies — the dragged-in files still
+     * exist where they came from, and the confirm says so with the count.
+     *
+     * A LIST, NOT ONE ID, because the marquee selects a handful and the person
+     * answered one confirm about all of them. One call, one recipe write, one
+     * answer. Refused while a mint of this project is running.
+     */
+    remove(projectDir: string, photoIds: string[]): Promise<CaptureRecipe>;
     /** The whole document, every time. The renderer debounces; this does not. */
     recipeSave(projectDir: string, recipe: CaptureRecipe): Promise<void>;
     /**
