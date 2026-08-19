@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   HostListener,
   computed,
   effect,
@@ -56,6 +57,9 @@ import { CaptureGridComponent } from '../capture-grid/capture-grid.component';
  * two tables showing one recipe — would look like a redraw bug rather than a
  * scoping one.
  */
+/** How long the button says so. Long enough to read, short enough not to nag. */
+const ACKNOWLEDGED_FOR_MS = 1600;
+
 @Component({
   selector: 'app-capture-view',
   imports: [CaptureGridComponent, CapturePageEditorComponent],
@@ -104,6 +108,7 @@ import { CaptureGridComponent } from '../capture-grid/capture-grid.component';
           [splitFraction]="photo.split"
           (quadsChange)="setQuads(photo.id, $event)"
           (splitChange)="captures.setSplit(photo.id, $event)"
+          [justApplied]="justApplied()"
           (applyToAll)="applyToAll(photo.id, $event)"
         />
       } @else {
@@ -219,6 +224,10 @@ export class CaptureViewComponent {
   /** The photograph on the editor, by photo id, or null for the whole table. */
   protected readonly open = signal<string | null>(null);
 
+  /** Which apply-to-all just landed, for the button that was pressed. */
+  protected readonly justApplied = signal<ApplyToAll['kind'] | null>(null);
+  private applauseTimer: ReturnType<typeof setTimeout> | null = null;
+
   /**
    * THE PHOTOGRAPHS IN THE ARRANGEMENT'S OWN SEQUENCE, for prev/next.
    *
@@ -268,6 +277,9 @@ export class CaptureViewComponent {
   });
 
   constructor() {
+    inject(DestroyRef).onDestroy(() => {
+      if (this.applauseTimer !== null) clearTimeout(this.applauseTimer);
+    });
     effect(() => {
       const directory = this.tab().path;
       // Back to the table whenever the project changes: an id from one recipe
@@ -384,8 +396,30 @@ export class CaptureViewComponent {
     this.captures.setQuads(photoId, quads as readonly CaptureQuad[]);
   }
 
+  /**
+   * Run an apply-to-all and let the button say so for a moment.
+   *
+   * ── Tied to the ACT, not to the click ───────────────────────────────────────
+   *
+   * Owen: "If it did run then there should be an indication. Maybe have the
+   * button change colors and say applied or something." His eyes are on the
+   * button he pressed, three hundred pixels from the notice bar.
+   *
+   * It acknowledges only when something was actually applied. An apply where
+   * every candidate was skipped -- a crop from the odd landscape frame, say --
+   * lights nothing, because a button flashing "Applied" over a bar explaining
+   * that nothing was is a surface arguing with itself. The sentence still
+   * carries the count and the reasons; the button carries only the fact.
+   */
   protected applyToAll(photoId: string, gesture: ApplyToAll): void {
-    this.captures.applyToAll(photoId, gesture);
+    const outcome = this.captures.applyToAll(photoId, gesture);
+    if (outcome.applied === 0) return;
+    if (this.applauseTimer !== null) clearTimeout(this.applauseTimer);
+    this.justApplied.set(gesture.kind);
+    this.applauseTimer = setTimeout(() => {
+      this.justApplied.set(null);
+      this.applauseTimer = null;
+    }, ACKNOWLEDGED_FOR_MS);
   }
 
   protected startMint(): void {

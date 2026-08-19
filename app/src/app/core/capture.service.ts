@@ -418,12 +418,18 @@ export class CaptureService {
    * page untouched and half-updated. Neither is a thing the person asked for, so
    * both are skips with a reason.
    */
-  applyToAll(from: string, gesture: ApplyToAll): void {
+  applyToAll(from: string, gesture: ApplyToAll): ApplyOutcome {
+    /*
+     * HOISTED OUT OF THE EDIT so the caller can be told what happened. The
+     * surface needs it: Owen asked for the BUTTON to acknowledge, and a button
+     * that lit up on the click rather than on the act would say "Applied" over
+     * a notice bar reporting that everything was skipped.
+     */
+    const skipped: string[] = [];
+    let applied = 0;
     this.change((recipe) => {
       const source = recipe.photos.find((photo) => photo.id === from);
       if (source === undefined) return recipe;
-      const skipped: string[] = [];
-      let applied = 0;
       /*
        * NAMED BY POSITION, NEVER BY FILE.
        *
@@ -533,6 +539,7 @@ export class CaptureService {
         ? { ...recipe, photos, order: orderFor(photos, recipe.order) }
         : { ...recipe, photos };
     });
+    return { applied, skipped: skipped.length };
   }
 
   /** The page and the photo it belongs to, or null. */
@@ -598,6 +605,12 @@ export class CaptureService {
 }
 
 /** What "apply to all" is applying — the gesture, with what it needs to repeat. */
+/** What an apply-to-all did, for a surface that has to acknowledge it. */
+export interface ApplyOutcome {
+  applied: number;
+  skipped: number;
+}
+
 export type ApplyToAll =
   /** Quarter turns, so every photo gets the TURN rather than this photo's corners. */
   | { kind: 'rotate'; turns: number }

@@ -176,13 +176,21 @@ import { Rectifier } from './rectify';
         <div class="gestures">
           <button type="button" (click)="turn(-1)" title="Turn this page anticlockwise">⟲</button>
           <button type="button" (click)="turn(1)" title="Turn this page clockwise">⟳</button>
-          <button type="button" (click)="applyTurnToAll()" [disabled]="turnsApplied() === 0">
-            Turn all by the same amount
-          </button>
+          <button
+            type="button"
+            [class.applied]="justApplied() === 'rotate'"
+            (click)="applyTurnToAll()"
+            [disabled]="turnsApplied() === 0"
+          >{{ justApplied() === 'rotate' ? 'Applied ✓' : 'Turn all by the same amount' }}</button>
           @if (quads().length === 1) {
             <button type="button" (click)="split()">Split</button>
           }
-          <button type="button" (click)="applySplitToAll()" [disabled]="quads().length < 2">
+          <button
+            type="button"
+            [class.applied]="justApplied() === 'split'"
+            (click)="applySplitToAll()"
+            [disabled]="quads().length < 2"
+          >
             Apply split to all
           </button>
           <!--
@@ -197,9 +205,12 @@ import { Rectifier } from './rectify';
             kind of quad, and a page that is dragged afterwards does not keep
             following later globals. That deferral is in the ledger by name.
           -->
-          <button class="wide" type="button" (click)="applyToAll.emit({ kind: 'quad' })">
-            Set this crop for all pages
-          </button>
+          <button
+            class="wide"
+            type="button"
+            [class.applied]="justApplied() === 'quad'"
+            (click)="applyToAll.emit({ kind: 'quad' })"
+          >{{ justApplied() === 'quad' ? 'Applied ✓' : 'Set this crop for all pages' }}</button>
         </div>
       </div>
 
@@ -296,6 +307,18 @@ import { Rectifier } from './rectify';
     /* The global act reads as the act it is rather than as a fourth small
        control: it changes every page, and the three beside it change one. */
     .gestures .wide { flex-basis: 100%; }
+    /*
+     * THE ACKNOWLEDGEMENT. Quiet on purpose -- the house has no precedent for a
+     * transient confirmed state, so this borrows the accent it uses for "the
+     * thing worth pressing" and does not animate. The notice bar still carries
+     * the count and the skips; this carries only the fact that it ran, where
+     * the eyes already are.
+     */
+    .gestures button.applied {
+      background: var(--accent-strong);
+      border-color: var(--accent-strong);
+      color: var(--text-inverse);
+    }
     .gestures button {
       padding: 4px 10px;
       border: 1px solid var(--border-default);
@@ -332,6 +355,14 @@ export class CapturePageEditorComponent {
    * the shape test that decides which of them are skipped.
    */
   readonly applyToAll = output<ApplyToAll>();
+
+  /**
+   * Which apply-to-all just landed, or null. The SURFACE owns the timing --
+   * this component does not know whether an act succeeded, and a button that
+   * congratulated itself on its own click would be exactly the lie Owen was
+   * complaining about.
+   */
+  readonly justApplied = input<ApplyToAll['kind'] | null>(null);
 
   /**
    * The listening surface. Capture is set here rather than on the picture
