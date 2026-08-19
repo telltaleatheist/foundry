@@ -1,4 +1,6 @@
-import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
+
+import type { CaptureQuad } from '@shared/types';
 
 /**
  * ONE PAGE ON THE LIGHT TABLE.
@@ -7,6 +9,24 @@ import { ChangeDetectionStrategy, Component, input, output } from '@angular/core
  * state and reaches nothing: the grid owns the order and the service owns the
  * recipe, so a card is a picture with two things it can say — "open me" and
  * "strike me".
+ *
+ * ── IT DRAWS THE CROP, BECAUSE OTHERWISE NOTHING SHOWS ─────────────────────
+ *
+ * The card used to be the raw thumbnail and nothing else, so a photograph that
+ * had been turned and cropped looked identical to one nobody had touched. Owen
+ * ran apply-to-all across twenty-five photographs, it worked, and he reported
+ * it as "didnt work... there was no indicator" -- which is the correct reading
+ * of a grid that shows the same picture before and after.
+ *
+ * So the quad is drawn over the thumbnail: the outline of the page that will be
+ * minted, and a mark on the corner that becomes its TOP-LEFT. The mark is what
+ * makes a turn visible at all -- a quarter turn permutes the corner assignment
+ * without moving any of them, so the outline alone is identical before and
+ * after and only the mark moves.
+ *
+ * It is an overlay in the thumbnail's own fraction space (viewBox 0 0 1 1),
+ * exactly as the editor's handles are, so nothing here measures pixels and the
+ * card can be any size.
  *
  * ── A STRUCK CARD STAYS ON THE TABLE ────────────────────────────────────────
  *
@@ -28,7 +48,18 @@ import { ChangeDetectionStrategy, Component, input, output } from '@angular/core
         than all at once on open. They are 640 px JPEGs served through the
         capture door, so each is a small read (docs/CAPTURE.md, thumbnails).
       -->
-      <img [src]="thumb()" [alt]="label()" loading="lazy" draggable="false" />
+      <span class="shot">
+        <img [src]="thumb()" [alt]="label()" loading="lazy" draggable="false" />
+        <svg class="crop" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true">
+          <polygon [attr.points]="outline()" />
+          <!--
+            The corner that becomes the minted page's top-left. Without it a
+            quarter turn is invisible: the four corners are the same four
+            points, and only which one is FIRST has changed.
+          -->
+          <circle [attr.cx]="corner()[0]" [attr.cy]="corner()[1]" r="0.04" />
+        </svg>
+      </span>
       <span class="label">{{ label() }}</span>
     </button>
 
@@ -55,6 +86,27 @@ import { ChangeDetectionStrategy, Component, input, output } from '@angular/core
       text-align: left;
     }
     .page:hover { border-color: var(--border-default); background: var(--bg-hover); }
+
+    /* The picture and its overlay share one box, so the SVG's fraction space
+       is the thumbnail's own. */
+    .shot { position: relative; display: block; }
+    .crop {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    .crop polygon {
+      fill: none;
+      stroke: var(--accent, #4c9aff);
+      stroke-width: 2;
+      vector-effect: non-scaling-stroke;
+    }
+    .crop circle { fill: var(--accent, #4c9aff); }
+    /* A struck page's crop goes quiet with the rest of the card rather than
+       staying bright over a dimmed picture. */
+    .page.struck .crop { opacity: 0.35; }
 
     .page img {
       display: block;
@@ -109,6 +161,14 @@ export class CaptureCardComponent {
   readonly label = input.required<string>();
   /** Struck pages stay on the table and stay out of the mint. */
   readonly struck = input.required<boolean>();
+  /** The page this card will mint, in the thumbnail's own fraction space. */
+  readonly quad = input.required<CaptureQuad>();
+
+  protected readonly outline = computed(() =>
+    this.quad().map(([x, y]) => `${x},${y}`).join(' '),
+  );
+  /** The quad's FIRST corner — the minted page's top-left. See the docblock. */
+  protected readonly corner = computed(() => this.quad()[0]);
 
   readonly open = output<void>();
   readonly strike = output<void>();

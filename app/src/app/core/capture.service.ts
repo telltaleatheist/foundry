@@ -116,6 +116,9 @@ export class CaptureService {
         thumb: this.url(found.photo.thumb),
         label: `Page ${cards.length + 1}`,
         struck: found.page.struck,
+        // The card draws it, so a turn and a crop are visible on the table
+        // rather than only inside the editor.
+        quad: found.page.quad,
       });
     }
     return cards;
@@ -420,21 +423,56 @@ export class CaptureService {
       const source = recipe.photos.find((photo) => photo.id === from);
       if (source === undefined) return recipe;
       const skipped: string[] = [];
+      let applied = 0;
+      /*
+       * NAMED BY POSITION, NEVER BY FILE.
+       *
+       * This sentence used to print `photo.file`, which is
+       * `originals/<sha>.heic` — content-addressed, because the recipe does not
+       * keep the name a photograph arrived under. Owen ran apply-to-all, it
+       * worked on twenty-five photographs and skipped the landscape frame
+       * exactly as ruled, and the only thing the surface told him was a hex
+       * digest. He read the whole act as broken.
+       *
+       * A person cannot act on a sha. They CAN act on "Photograph 27", because
+       * that is what the grid counts and what the editor's own readout says, so
+       * the two surfaces agree on how a photograph is referred to. Position is
+       * taken from the ARRANGEMENT — first appearance in the order — for the
+       * same reason the editor's walk is.
+       *
+       * (The name it arrived under would be better still and is not available:
+       * `CapturePhoto` has no field for it. Raised for the contract rather than
+       * invented here — a second naming scheme is how surfaces start disagreeing
+       * about which photograph is which.)
+       */
+      const position = new Map<string, number>();
+      for (const pageId of recipe.order) {
+        const owner = recipe.photos.find((one) => one.pages.some((page) => page.id === pageId));
+        if (owner !== undefined && !position.has(owner.id)) position.set(owner.id, position.size + 1);
+      }
+      const name = (photo: CapturePhoto): string => `Photograph ${position.get(photo.id) ?? '?'}`;
 
       const photos = recipe.photos.map((photo) => {
         if (photo.id === source.id) return photo;
         if (!sameShape(source, photo)) {
-          skipped.push(`${photo.file} (a different shape)`);
+          skipped.push(`${name(photo)} (a different shape)`);
           return photo;
         }
         switch (gesture.kind) {
           case 'rotate':
+            applied += 1;
             return {
               ...photo,
               pages: photo.pages.map((page) => ({ ...page, quad: rotate(page.quad, gesture.turns) })),
             };
           case 'split': {
-            if (photo.split !== null) return photo;
+            if (photo.split !== null) {
+              // It had a sentence in the docblock and none on screen. A skip
+              // nobody is told about is the same silence as a skip with no rule.
+              skipped.push(`${name(photo)} (already split)`);
+              return photo;
+            }
+            applied += 1;
             const [left, right] = splitAt(photo.pages[0]?.quad ?? WHOLE, gesture.at);
             return {
               ...photo,
@@ -447,9 +485,10 @@ export class CaptureService {
           }
           case 'quad': {
             if (photo.pages.length !== source.pages.length) {
-              skipped.push(`${photo.file} (${photo.pages.length} pages, not ${source.pages.length})`);
+              skipped.push(`${name(photo)} (${photo.pages.length} pages, not ${source.pages.length})`);
               return photo;
             }
+            applied += 1;
             return {
               ...photo,
               pages: photo.pages.map((page, index) => ({
@@ -461,11 +500,29 @@ export class CaptureService {
         }
       });
 
-      if (skipped.length > 0) {
-        this.notices.notice.set(
-          `Left alone: ${skipped.join(', ')}. A crop only copies between photographs of the same shape.`,
-        );
-      }
+      /*
+       * IT ALWAYS SAYS WHAT IT DID, and that is the fix Owen actually needed.
+       *
+       * This used to speak only when something was SKIPPED, so an apply-to-all
+       * that worked perfectly said nothing whatever — and the grid draws raw
+       * thumbnails, so twenty-five turned photographs look exactly like
+       * twenty-five untouched ones. "didnt work... maybe it takes a while but
+       * there was no indicator" is the correct reading of a surface that
+       * reports only its own refusals.
+       *
+       * The verb is the gesture's, because "applied to 25" makes somebody work
+       * out what was applied. They pressed a button that said what it would do;
+       * the sentence should say it happened.
+       */
+      const did = gesture.kind === 'rotate'
+        ? 'Turned'
+        : gesture.kind === 'split' ? 'Split' : 'Set the crop on';
+      const count = applied === 1 ? '1 photograph' : `${applied} photographs`;
+      this.notices.notice.set(
+        skipped.length === 0
+          ? `${did} ${count}.`
+          : `${did} ${count}. Left alone: ${skipped.join(', ')}.`,
+      );
       // A split changes which pages exist, so the order has to grow with it.
       return gesture.kind === 'split'
         ? { ...recipe, photos, order: orderFor(photos, recipe.order) }

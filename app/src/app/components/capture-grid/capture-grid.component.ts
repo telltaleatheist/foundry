@@ -1,3 +1,4 @@
+import type { CaptureQuad } from '@shared/types';
 import { ChangeDetectionStrategy, Component, input, output, signal } from '@angular/core';
 
 import { CaptureCardComponent } from './capture-card.component';
@@ -12,6 +13,8 @@ export interface CaptureCard {
   readonly label: string;
   /** Struck pages stay on the table and out of the mint. */
   readonly struck: boolean;
+  /** The page this card will mint, for the crop drawn over its thumbnail. */
+  quad: CaptureQuad;
 }
 
 /**
@@ -118,6 +121,7 @@ const PAGE_MIME = 'application/x-foundry-capture-page';
             [thumb]="card.thumb"
             [label]="card.label"
             [struck]="card.struck"
+            [quad]="card.quad"
             (open)="open.emit(card.id)"
             (strike)="strike.emit(card.id)"
           />
