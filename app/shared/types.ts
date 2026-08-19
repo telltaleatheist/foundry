@@ -2987,6 +2987,30 @@ export interface CapturePhoto {
   /** The 640 px JPEG the grid draws, same door, same basename rule. */
   thumb: string;
   /**
+   * WHAT THE PERSON CALLED IT — the basename of the file they dragged in.
+   *
+   * ── A PERSON MUST NEVER BE SHOWN A SHA ──────────────────────────────────
+   *
+   * Everything else here is content-addressed, which is right for storage and
+   * useless for a sentence: Owen ran apply-to-all and was told "Left alone:
+   * originals/493d3fd7….heic (a different shape)" about a photograph he knows
+   * as IMG_0238.HEIC. The surface was not reaching for the wrong field — there
+   * was no field, and nothing on disk remembered the name.
+   *
+   * ── OPTIONAL, AND THAT IS NOT TIDINESS ─────────────────────────────────
+   *
+   * Recipes written before this field existed CANNOT BE MIGRATED: the original
+   * filename is not derivable from anything kept — the copy is named by hash,
+   * and where it was dragged from was never recorded. So a project intaken
+   * yesterday has photographs with no name and always will, and making this
+   * required would refuse to open the one project that actually has photographs
+   * in it tonight.
+   *
+   * A surface that has no name must say something a person can act on -- the
+   * position in the grid is the honest stand-in, never the sha.
+   */
+  name?: string;
+  /**
    * The DECODED working copy's dimensions — never EXIF's.
    *
    * EXIF describes the STORED grid and the decoder returns the UPRIGHT one, and

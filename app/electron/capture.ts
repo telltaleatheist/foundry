@@ -380,9 +380,21 @@ function validRecipe(value: unknown, file: string): CaptureRecipe {
     if (splitAt !== null && checkedPages.length !== 2) {
       fail(file, `photograph ${index} is split but holds ${checkedPages.length} page(s)`);
     }
+    /*
+     * ABSENT IS LEGAL, EMPTY IS NOT. A recipe from before the field existed has
+     * no name and cannot be given one (see `CapturePhoto.name`); a recipe that
+     * carries the key with nothing in it is a writer that thinks it set a name
+     * and did not, and that is worth refusing rather than rendering as a blank.
+     */
+    const dropped = photo['name'];
+    if (dropped !== undefined && (typeof dropped !== 'string' || dropped.length === 0)) {
+      fail(file, `photograph ${index} has a name that is not a name`);
+    }
+
     return {
       id,
       file: text('file'),
+      ...(typeof dropped === 'string' ? { name: dropped } : {}),
       workingCopy: text('workingCopy'),
       thumb: text('thumb'),
       width: count('width'),
@@ -1005,6 +1017,10 @@ export async function intakePhotos(projectDir: string, paths: readonly string[])
       photos.push({
         id,
         file: `${ORIGINALS}/${original}`,
+        // The name the person dragged in, kept because nothing else here
+        // remembers it: the copy is named by hash and the source path is not
+        // recorded. It is the only word a sentence about this photograph can use.
+        name,
         workingCopy,
         thumb,
         // THE DECODER'S DIMENSIONS. EXIF's are about the other grid, and storing
