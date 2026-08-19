@@ -1557,6 +1557,19 @@ middle of the paragraph. `split`/`join` has no such interpretation. The
 same class of trap as the defect above: a character that means one thing
 to a human reader and another to the machine handling it.
 
+### Small known defect, pre-existing, deferred out loud (2026-08-19)
+
+openDropped (documents.service.ts) silently ignores a File with no
+path: `if (!candidate) return;` two lines before its refusal sentence.
+Real case, not synthetic: a drag out of another application's virtual
+folder (Outlook attachment, zip preview) yields a File without a path,
+and the app does nothing at all — no notice, no tab, no reason. The
+capture intake path already answers the same case with "could not be
+read from where it was dragged from"; the document path predates it
+and stays silent. One line plus a sentence, in the app's oldest drop
+path; found by the capture routing control at foundry-feature seq
+82/83. Not capture work; do when next in that file.
+
 ### Wave 20 — the capture stage: photographs become the book (Owen, 2026-08-19) — BUILT AND MEASURED 2026-08-19, main ea6dc36; human acceptance pending, docs/CAPTURE.md
 
 Owen photographed bound volumes at the American Atheists archive and wants

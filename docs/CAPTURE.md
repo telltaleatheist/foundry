@@ -752,9 +752,12 @@ edits this document first and says so on the channel.
    codebase, so its appearance proves INTAKE RAN — and Owen's
    documents.service sentence did not appear. Control honestly
    bounded: with Home in front intake did NOT run (its sentence
-   absent), but the document path emitted nothing, so which branch
-   declined is untested (hypothesis only: a synthetic file has no
-   path). Second probe-defect in the same hour, recorded: the notice
+   absent), and the silence was traced TO SOURCE at seq 83: openDropped
+   returns on an empty path two lines before it could speak, so the
+   quiet control is an artefact of synthetic files, not a defect — and
+   the ROUTING claim (capture front → intake; Home front → not) is
+   MEASURED IN FULL, both halves, unique discriminator. The residue is
+   a fact about openDropped, older than capture, recorded in PLAN.md. Second probe-defect in the same hour, recorded: the notice
    bar never dismisses on a timer, so the FIRST drop's sentence was
    still on screen when the control read it — RESET WHAT YOU ARE ABOUT
    TO MEASURE, and never quote a probe's hardcoded summary line as a
