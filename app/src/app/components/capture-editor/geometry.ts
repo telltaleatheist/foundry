@@ -216,8 +216,24 @@ export function sameShape(source: Dimensions, target: Dimensions): boolean {
  * been asked for. Two implementations of one sentence is exactly the defect this
  * package keeps finding, and the honest fix is for this function to move to
  * `shared/` and be imported by both the moment the recipe types land there.
- * Raised on the feature channel; until it is ruled, this is the renderer's copy
- * and the doc's sentence is the thing both must match.
+ *
+ * RAISED AND RULED: feature channel seq 25 (the ask, with this exact formula
+ * written out to diff against) and seq 26 (the ruling). `outputSizeFor(quadPx)`
+ * joins P1's contract merge in `app/shared/` beside the recipe types, both sides
+ * import it, and the doc now pins the formula INCLUDING THE ROUNDING —
+ * opposite-edge maxima by `Math.hypot` on working-copy pixels, `Math.round`,
+ * clamped to a minimum of 1. The rounding is written down because `Math.round`
+ * against `Math.floor` is a one-pixel disagreement per page between the preview
+ * and the minted file, and no typecheck could ever catch it.
+ *
+ * THIS COPY IS TEMPORARY: it goes when that merge lands on main and this file
+ * imports the shared one instead.
+ *
+ * (An earlier revision of this paragraph said "Raised on the feature channel"
+ * before it had been — the present tense describing an intention, which reads as
+ * a record of something that happened. Corrected out loud on the channel rather
+ * than quietly, because a comment claiming a decision was discussed is exactly
+ * what a later reader trusts without checking.)
  */
 export function outputSize(quad: PixelQuad): Dimensions {
   const [topLeft, topRight, bottomRight, bottomLeft] = quad;
