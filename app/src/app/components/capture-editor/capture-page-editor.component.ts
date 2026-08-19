@@ -98,15 +98,37 @@ import { Rectifier } from './rectify';
           THE FRAME OWNS THE LEFTOVER HEIGHT. See the styles: without it the
           picture sized itself against the whole column and overflowed it.
         -->
-        <div class="frame">
+        <!--
+          THE LISTENERS ARE ON THE FRAME, NOT ON THE PICTURE, and that is the
+          whole of Owen's "cant grab the top two".
+
+          A handle is 18px wide and centred ON its corner with a -9px margin, so
+          a quad hugging an edge -- which the whole-frame default is, on every
+          photograph of this shoot -- puts HALF of each edge handle outside the
+          picture. A press aimed at the visible dot then lands on whatever is
+          behind it, and grab() never runs. The bottom corners happened to sit
+          far enough inside the visible area on his screen for their circles to
+          be fully over the listener, which is the entire asymmetry: the top two
+          were not special, they were just the ones at an edge he pressed above.
+
+          The frame owns the leftover space and is padded (see the styles), so
+          every handle now has listening surface all the way around it. The
+          fraction conversion still measures the PICTURE, so a press that starts
+          in the padding is simply a fraction slightly outside [0,1] -- which the
+          drag already clamps, and which cornerNear already measures honestly.
+        -->
         <div
-          class="picture"
-          #picture
-          [style.aspect-ratio]="aspectRatio()"
+          class="frame"
+          #frame
           (pointerdown)="grab($event)"
           (pointermove)="drag($event)"
           (pointerup)="release($event)"
           (pointercancel)="release($event)"
+        >
+        <div
+          class="picture"
+          #picture
+          [style.aspect-ratio]="aspectRatio()"
         >
           <img #photo [src]="source()" [alt]="'The photograph being edited'" draggable="false" />
 
@@ -230,6 +252,15 @@ import { Rectifier } from './rectify';
       align-items: center;
       justify-content: center;
       overflow: hidden;
+      /*
+       * ROOM FOR THE HANDLES TO HANG OVER THE EDGE. Half a handle is 9px, so 12
+       * leaves a margin for the hand as well as for the dot. Without it a
+       * picture that exactly fills the frame would put its edge handles hard
+       * against the clip again, and moving the listeners here would have bought
+       * nothing at the one place it was needed.
+       */
+      padding: 12px;
+      touch-action: none;
     }
 
     /*
@@ -241,7 +272,6 @@ import { Rectifier } from './rectify';
       position: relative;
       max-width: 100%;
       max-height: 100%;
-      touch-action: none;
       user-select: none;
       background: var(--bg-sunken);
     }
@@ -303,6 +333,12 @@ export class CapturePageEditorComponent {
    */
   readonly applyToAll = output<ApplyToAll>();
 
+  /**
+   * The listening surface. Capture is set here rather than on the picture
+   * because a pointer is captured by the element that HEARD the press, and a
+   * press on a handle overhanging the edge is heard by this one.
+   */
+  private readonly frame = viewChild.required<ElementRef<HTMLElement>>('frame');
   private readonly picture = viewChild.required<ElementRef<HTMLElement>>('picture');
   private readonly photo = viewChild.required<ElementRef<HTMLImageElement>>('photo');
   /*
@@ -414,7 +450,7 @@ export class CapturePageEditorComponent {
       const corner = cornerNear(toPixels(quads[index]!, UNIT), [at[0], at[1]], radius);
       if (corner !== null) {
         this.held.set({ quad: index, corner });
-        this.picture().nativeElement.setPointerCapture(event.pointerId);
+        this.frame().nativeElement.setPointerCapture(event.pointerId);
         return;
       }
     }
@@ -428,7 +464,7 @@ export class CapturePageEditorComponent {
     const line = this.splitLine();
     if (line !== null && distanceToEdge(at, line.from, line.to) <= radius) {
       this.draggingSplit = true;
-      this.picture().nativeElement.setPointerCapture(event.pointerId);
+      this.frame().nativeElement.setPointerCapture(event.pointerId);
     }
   }
 
@@ -461,8 +497,11 @@ export class CapturePageEditorComponent {
     if (this.held() === null && !this.draggingSplit) return;
     this.held.set(null);
     this.draggingSplit = false;
-    if (this.picture().nativeElement.hasPointerCapture(event.pointerId)) {
-      this.picture().nativeElement.releasePointerCapture(event.pointerId);
+    // Asked of the FRAME, which is what took the capture. Asking the picture
+    // would be asking an element that never holds one, so the release below
+    // would never run and the next press would arrive already captured.
+    if (this.frame().nativeElement.hasPointerCapture(event.pointerId)) {
+      this.frame().nativeElement.releasePointerCapture(event.pointerId);
     }
   }
 
