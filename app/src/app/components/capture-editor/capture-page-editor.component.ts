@@ -18,12 +18,13 @@ import {
   type FractionPoint,
   type FractionQuad,
   cornerNear,
-  outputSize,
   rotate,
   splitAt,
   toPixels,
   withCorner,
 } from './geometry';
+import { outputSizeFor } from '@shared/capture';
+
 import type { ApplyToAll } from '../../core/capture.service';
 import { Rectifier } from './rectify';
 
@@ -50,8 +51,23 @@ import { Rectifier } from './rectify';
  * the preview are "one shader, not two implementations", so what a person sees
  * while dragging a corner is the page they are going to get rather than a
  * promise about it. It also means the doc's own out-of-bounds hazard is visible
- * here: `withinSource` comes back false and the panel says so, rather than
- * quietly rendering the smeared border the clamp produces.
+ * here: `withinSource` comes back false and the panel says so.
+ *
+ * ── CORNERS CLAMP TO THE PHOTOGRAPH, WHICH THEY DID NOT AT FIRST ────────────
+ *
+ * An earlier revision let a corner be dragged off the frame and merely SAID so
+ * in the preview panel, on the reasoning that a crop is somebody's choice. Two
+ * things killed it. There is nothing out there — sampling past the edge clamps
+ * to the last row of pixels, so an off-frame crop is a smear rather than a
+ * choice — and `validQuad` in electron/capture.ts refuses any coordinate
+ * outside [0,1] when the recipe is saved. Together those made one drag past the
+ * edge stop the recipe SAVING, for the rest of the session, while the light
+ * table went on looking alive. Pointer capture means the pointer is routinely
+ * outside the picture box, so it was not a corner case.
+ *
+ * So the drag clamps, the way the split line always did, and `withinSource`
+ * stops being a routine notice and becomes what it should have been: a
+ * should-never-happen that says the shader was handed something impossible.
  *
  * ── Geometry lives next door, not here ──────────────────────────────────────
  *
@@ -280,7 +296,7 @@ export class CapturePageEditorComponent {
   /** The size each page will mint at, and whether its corners are on the photo. */
   protected readonly previews = computed(() =>
     this.quads().map((quad, index) => {
-      const size = outputSize(toPixels(quad, this.dimensions()));
+      const size = outputSizeFor(toPixels(quad, this.dimensions()));
       const longest = Math.max(size.width, size.height);
       const scale = longest > 200 ? 200 / longest : 1;
       return {
@@ -359,9 +375,13 @@ export class CapturePageEditorComponent {
       return;
     }
 
+    // Clamped HERE and nowhere else, because this is the only place a corner is
+    // invented: `rotate` permutes the tuple and `splitAt` lerps between corners
+    // that are already inside, so neither can carry a quad back out of range.
+    const inside: FractionPoint = [clamp(at[0]), clamp(at[1])];
     const quads = this.quads();
     const moved = quads.map((quad, index) =>
-      index === holding!.quad ? withCorner(quad, holding!.corner, at) : quad,
+      index === holding!.quad ? withCorner(quad, holding!.corner, inside) : quad,
     );
     this.quadsChange.emit(moved);
   }

@@ -198,50 +198,17 @@ export function sameShape(source: Dimensions, target: Dimensions): boolean {
   return Math.abs(sourceAspect - targetAspect) <= ASPECT_TOLERANCE * sourceAspect;
 }
 
-/**
- * The size the page this quad describes should be minted at, in pixels of the
- * working copy.
+/*
+ * THE OUTPUT-SIZE RULE USED TO BE COPIED HERE and is not any more.
  *
- * ── One rule, and it currently has two homes ────────────────────────────────
- *
- * docs/CAPTURE.md pins it: "Output page size = the quad's opposite-edge
- * maxima". The longer of the two horizontal edges decides the width and the
- * longer of the two vertical edges the height, so a page seen in perspective
- * comes out at the size of its nearest edge rather than being squeezed to its
- * furthest.
- *
- * MAIN COMPUTES THIS FOR THE MINT — `capture:mint-begin` returns `outWidth` and
- * `outHeight` per page and "the renderer renders exactly that list" — so this
- * copy exists for the EDITOR, which has to shape a preview before any mint has
- * been asked for. Two implementations of one sentence is exactly the defect this
- * package keeps finding, and the honest fix is for this function to move to
- * `shared/` and be imported by both the moment the recipe types land there.
- *
- * RAISED AND RULED: feature channel seq 25 (the ask, with this exact formula
- * written out to diff against) and seq 26 (the ruling). `outputSizeFor(quadPx)`
- * joins P1's contract merge in `app/shared/` beside the recipe types, both sides
- * import it, and the doc now pins the formula INCLUDING THE ROUNDING —
- * opposite-edge maxima by `Math.hypot` on working-copy pixels, `Math.round`,
- * clamped to a minimum of 1. The rounding is written down because `Math.round`
- * against `Math.floor` is a one-pixel disagreement per page between the preview
- * and the minted file, and no typecheck could ever catch it.
- *
- * THIS COPY IS TEMPORARY: it goes when that merge lands on main and this file
- * imports the shared one instead.
- *
- * (An earlier revision of this paragraph said "Raised on the feature channel"
- * before it had been — the present tense describing an intention, which reads as
- * a record of something that happened. Corrected out loud on the channel rather
- * than quietly, because a comment claiming a decision was discussed is exactly
- * what a later reader trusts without checking.)
+ * "Output page size = the quad's opposite-edge maxima" had two implementations
+ * for as long as the editor needed a preview size and main needed `outWidth`.
+ * Raised on the feature channel at seq 25 with the formula written out to diff
+ * against, ruled at seq 26, and `outputSizeFor` now lives in
+ * `shared/capture.ts` where both sides import it. The two copies agreed to the
+ * pixel when this one was deleted — which is the point: they agreed until they
+ * did not, and nothing would have said when.
  */
-export function outputSize(quad: PixelQuad): Dimensions {
-  const [topLeft, topRight, bottomRight, bottomLeft] = quad;
-  const width = Math.max(distance(topLeft, topRight), distance(bottomLeft, bottomRight));
-  const height = Math.max(distance(topLeft, bottomLeft), distance(topRight, bottomRight));
-  return { width: Math.max(1, Math.round(width)), height: Math.max(1, Math.round(height)) };
-}
-
 function distance(from: PixelPoint, to: PixelPoint): number {
   return Math.hypot(to[0] - from[0], to[1] - from[1]);
 }

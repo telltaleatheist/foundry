@@ -223,8 +223,17 @@ export class CaptureService {
     this.change((recipe) => {
       const groups = new Map<string, string[]>();
       for (const id of recipe.order) {
-        const photoId = this.pageIn(recipe, id)?.photo.id;
-        if (photoId === undefined) continue;
+        /*
+         * An id no photograph claims groups UNDER ITSELF rather than being
+         * skipped. Skipping it dropped it from the order the reversal returned,
+         * which is a page deleted from the book by a button that says
+         * "Newest first" — and invisibly, because `cards` does not draw an
+         * unresolvable id either. It cannot arise from anything this service
+         * writes; it can arise from a hand-edited recipe, and electron's
+         * validator does not cross-check `order` against the declared pages
+         * (raised, channel seq 46). Preserving it costs one `?? id`.
+         */
+        const photoId = this.pageIn(recipe, id)?.photo.id ?? id;
         const group = groups.get(photoId);
         if (group === undefined) groups.set(photoId, [id]);
         else group.push(id);
