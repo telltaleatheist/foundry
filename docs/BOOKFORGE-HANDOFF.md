@@ -360,6 +360,126 @@ work. Append with a date; never rewrite the other side's notes.
 
 ## #foundrynotes
 
+**2026-08-18 — THE QUEUE CENTRALIZES IN BOOKFORGE. `mountFoundry({ …,
+hostQueue })`, and three functions back across the seam. Additive; a host that
+registers no queue is unchanged in every respect, and standalone Foundry is
+untouched by all of it.**
+
+Owen's ruling, verbatim: *"we need to centralize the queue in bookforge. foundry
+has their own queue but things shouldnt be queued in foundry's queue from within
+bookforge."* It is urgent rather than tidy — your engine schedules on a declared
+`gpu` resource and Foundry's `pump()` is a second scheduler that knows nothing
+about it, so a Foundry reading and a narration can both hold the 4090. One
+machine's GPU needs one owner.
+
+**THE SPLIT: you decide WHEN, we still do the WORK.** Your queue never
+reimplements the ledger writes, the bank, the rotations or the export landings.
+Two copies of that bookkeeping is how the two apps start disagreeing about what a
+book is.
+
+```ts
+// app/electron/mount.ts — what Foundry EXPORTS (you call these)
+
+export async function runJob(
+  request: JobRequest | TranslateRequest,
+  opts?: {
+    parentStep?: string | null;          // hand back what our enqueue gave you
+    onProgress?: (line: string) => void; // every line the engine writes
+    signal?: AbortSignal;                // your cancel, mapped onto ours
+  },
+): Promise<Job>;
+
+export function setHostQueueRows(projectDir: string, rows: readonly FoundryJobRow[]): void;
+
+export function hostQueueDrained(): void;
+
+// …and what YOU provide, all of it optional:
+export interface FoundryHostQueue {
+  enqueue(request: JobRequest | TranslateRequest, parentStep: string | null): FoundryJobRow;
+  cancel?(id: string): void;
+  remove?(id: string): void;
+  start?(): void;
+  clearFinished?(): void;
+  rows?(projectDir: string): readonly FoundryJobRow[];
+}
+// FoundryHost gains: hostQueue?: FoundryHostQueue;
+```
+
+`FoundryJobRow` is `Job` — an alias, exported from the seam so your file can name
+whose row it is. Nothing is added to the shape.
+
+**`runJob` RESOLVES WITH THE SETTLED `Job` ROW, and this corrects two written
+contracts that disagreed before either side built against them.** Owen used the
+word `Settled` in a channel message; there is no such type in this codebase, and
+you reasonably turned it into `{ok:true} | {ok:false, error}`. Both spellings are
+wrong the same way: **neither can say CANCELLED.** `JobState` (shared/types.ts)
+distinguishes `'done' | 'failed' | 'cancelled'` deliberately — a cancel is
+somebody spending GPU and then taking it back, not a failure, and filing it as
+one would let a retry path restart work the user just stopped. So you receive the
+row: `state` says which of the three, `error` carries the engine's own stderr
+unparaphrased, and it is the same shape you minted going in and push back through
+`setHostQueueRows`. One account of what happened rather than two that can drift.
+
+**It still mints a row on our side, and that is load-bearing rather than
+bookkeeping.** `runJob` fires `onJobSettled` and `onExportLanded` exactly as a
+pressed job does, because those are what `exportEpubFromStep` awaits and what
+your node reconciliation reads — a `runJob` that bypassed the row would break
+your own narrate. What disappears hosted is the WAITING: the row is born
+`running`, never held, never queued.
+
+**ONLY WHAT A PERSON PRESSED IN THE HOSTED WINDOW ROUTES.** The `queue:*` IPC
+doors route to your `enqueue`. Work you ordered through the mount seam does not —
+specifically `exportEpubFromStep`, which enqueues on Foundry's internal queue.
+**This is the rule that keeps your scheduler from being re-entered from inside a
+call it is awaiting**: by calling us you have already made the scheduling
+decision, and routing that enqueue would file the export into the very queue that
+is blocked waiting for its landing. Environment installs never route either
+(they are a precondition of the engine running at all, and filing one behind a
+queue files it behind the job that needs it). The essay lives at the call in
+`app/electron/mount.ts` because it is the least obvious line in the wave.
+
+**THE SHELF DRAWS YOUR ROWS, and never a merge.** `setHostQueueRows` is
+per project because that is how you know your own work; Foundry's shelf is ONE
+GLOBAL LIST across the library, so the pushes accumulate into one list keyed by
+the folded directory and flatten on the way out. **An empty push is the falling
+edge and the one piece of news the mirror cannot infer** — send it once when a
+project loses its last row. Nothing is validated on our side. `rows(projectDir)`,
+if you offer it, is asked when a window draws a book (it rides on the existing
+`host-ops:nodes` ask — no new channel), so a window opened after your last push
+still paints.
+
+**`hostQueueDrained()` — and drain stops being ours to derive.** The reading
+server's lifetime hangs off queue drain, and `keepServerWarmMinutes` DEFAULTS TO
+0, which is not a short timer: `noteQueueIdle(0)` stops the server outright.
+Under a host queue our own list is empty between every pair of your rows, so
+deriving drain from it would tear the server down after each one and a batch of N
+readings would pay N model loads. **Call this once when your queue has drained of
+Foundry work, after your pump has chosen.** BUSY STAYS OURS — every job start
+says so from inside the run, through `runJob` as much as through our own pump.
+
+**What we ask of your `enqueue`:** it is SYNCHRONOUS and returns your row, because
+ours is synchronous so the shelf row exists in the same turn as the press. Defer
+your own pump so nothing has started before it returns.
+
+**AND THE DEDUPE MOVES TO YOU, which is the one obligation that is easy to
+miss.** Foundry's `enqueue` refuses to hold two live rows writing one file and
+hands back the pending one instead — two runs writing one output is the worst
+outcome available, because the second overwrites the first while the first is
+still writing and the file ends up neither. Routed, that check never runs: your
+row is minted in your list, and by the time we see the work again it is a
+`runJob` that has already been decided. `runJob` deliberately does NOT second-
+guess it (answering "no, have this other row" would be Foundry overruling a
+decision it was told about rather than asked for), so **please refuse a second
+row for an output one of yours is already live for, and hand back the first** —
+the renderer's "you pressed Add twice, nothing changed" notice is also reading
+that answer. The identity is `outputPath`, which for a reading is the BANK
+(`readingsPath`) and for a translation is the RECORDS file (`recordsPath`).
+
+**Nothing in `docs/IPC-CHANNELS.md` moved** — 71 handles, 14 pushes, counted from
+source. `queue:list` and `queue:changed` carry the same `Job[]` shape and, hosted,
+a different list. The three functions above are main-process exports, not
+channels, exactly as `exportEpubFromStep` was.
+
 **2026-08-18 — OFFERS CAN BE REVISED: `setHostOperations`, and a
 `host-ops:offers-changed` push. Additive; a host that never calls it is
 unchanged in every respect.**

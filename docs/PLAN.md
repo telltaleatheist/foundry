@@ -1130,6 +1130,136 @@ and only `host-ops:offers` ask). The two below are ours.
   drift. IPC-CHANNELS.md regenerated from source: **71 handles, unchanged**;
   pushes 13→14 and broadcasts 7→8.
 
+### Wave 16 — the queue centralizes in BookForge (Owen, 2026-08-18, via the switchboard) — LANDED (this commit)
+
+Owen, verbatim: *"we need to centralize the queue in bookforge. foundry
+has their own queue but things shouldnt be queued in foundry's queue from
+within bookforge. we need to centralize the queue."*
+
+STANDALONE FOUNDRY IS UNTOUCHED BY ALL OF IT. This is the hosted window
+only, and the compatibility posture is `appliesTo`'s: a host that has not
+moved gets exactly today's behaviour.
+
+WHY IT IS URGENT RATHER THAN TIDY: BookForge's engine schedules on a
+declared `gpu` resource and Foundry's pump is a second scheduler that
+knows nothing about it, so a Foundry read and a BookForge narration can
+both hold the 4090. One machine's GPU needs one owner.
+
+THE SPLIT: they decide WHEN, we still do the WORK. Their queue never
+reimplements the ledger writes, the bank, the rotations or the export
+landings — two copies of that bookkeeping is how the two apps start
+disagreeing about what a book is.
+
+- **16a — `runJob(request, {parentStep, onProgress, signal})`.** Execute
+  ONE job now, no waiting. It still MINTS A Job ROW and still fires
+  `onJobSettled` / `onExportLanded`: those listeners are what
+  `exportEpubFromStep` awaits and what the host's node reconciliation
+  reads, so a runJob that bypassed the row would break the host's own
+  narrate. What disappears in hosted mode is the WAITING — a row is born
+  running.
+- **16b — `hostQueue` on `mountFoundry`, and the routing switch.**
+  Present: `enqueue` mints no local row and returns the host's.
+  Absent: everything is exactly as today. `cancel`, `remove`, `start`,
+  `clearFinished` forward. **Only what a PERSON PRESSED in the hosted
+  window routes** — work the host itself ordered through the mount seam
+  (`exportEpubFromStep`) stays on the internal path, because by calling
+  us the host has already made the scheduling decision. That line is what
+  keeps their scheduler from being re-entered while inside a call it is
+  awaiting.
+- **16c — `setHostQueueRows` and the mirrored shelf.** The hosted shelf
+  draws the HOST's rows for the whole machine, never a second list that
+  can disagree. The shelf mirrors one global list across projects, so the
+  push carries an empty list once on the falling edge (a project that
+  loses its last row) — the one piece of news the mirror cannot infer.
+- **16d — `hostQueueDrained()`, and drain stops being ours to derive.**
+  The reading server's lifetime hangs off queue drain
+  (`noteQueueIdle`/`noteQueueBusy`), and `keepServerWarmMinutes` DEFAULTS
+  TO 0, which stops the server outright rather than arming a timer. Under
+  `hostQueue` the local list is empty after every job, so deriving drain
+  from it would tear the server down between every pair of the host's
+  rows. The host says when its queue has drained of Foundry work, after
+  its pump has chosen; busy stays ours, because every job start already
+  says so.
+- **16e — env installs stay ours.** They are a precondition of the engine
+  running at all, not GPU work, and routing them through a host queue
+  would deadlock the first install behind a job that needs it.
+- **16f — what the build settled, since every unit forced a choice.**
+  - **The pump split in two along the line it already had.** `pump()` is the
+    SCHEDULER (the serial slot, the hold, the drain) and `executeJob()` is
+    everything that used to happen after a row was chosen — one body, two
+    callers, no host test anywhere inside it. The two things the callers
+    genuinely differ about are an interface of two members plus an optional
+    third (`RunWires`: `claim` the live child, `release` it, and `watch` the
+    lines): the pump claims into its serial slot, `runJob` claims into a
+    `detachedRuns` registry beside it. Every `void pump()` that used to sit at
+    the end of a landing arm is now ONE call in the scheduler, which is what
+    makes the executor reusable and is why the arms read shorter.
+  - **A run ordered by the host is OUTSIDE the serial slot, deliberately.** It
+    must not wait for the slot (the host said now, and a `runJob` that queued
+    behind Foundry's own work would hang the host's pump on a list it cannot
+    see) and it must not hold it (a host awaiting `exportEpubFromStep` while a
+    three-hour reading held the slot would be waiting for that reading — a
+    deadlock built from two correct-looking rules). `shutdown` stops both kinds
+    of child; `cancelHere` looks in both places.
+  - **Routed versus internal is a DOOR, not a flag.** `enqueue` routes and
+    `enqueueHere` never does; `cancel` routes and `cancelHere` never does;
+    `enqueueEnvInstall` and `runJob` have no routed twin at all. The internal
+    doors exist exactly where there is an internal caller, and the one that
+    proves the pattern is `cancelEnvInstalls`, which would otherwise have sent
+    one of OUR ids into the host's list while the download went on running.
+    Nothing beneath the doors asks the question — `hostQueue()` appears in the
+    six gestures, the drain and the two mirror functions, and nowhere else.
+  - **`runJob` resolves with the settled `Job` row** (the lead's mid-build
+    correction, taken as given and argued in the docblock): a result type
+    cannot say CANCELLED, and a cancel filed as a failure is how a retry
+    restarts work somebody just stopped.
+  - **Drain: the local signal is kept AND guarded.** `pump()`'s idle branch
+    still declares drain for the internal path, and `runJob` deliberately does
+    NOT pump when it ends — if it did, that branch would be reached between
+    every pair of the host's rows and stop the server after each one, which is
+    the whole hazard 16d names. The one remaining crossing (an env install
+    finishing while a host READING posts pages) is closed by a guard: a live
+    detached run holds the drain, because `noteQueueIdle(0)` is an immediate
+    stop with no window for a busy signal to beat.
+  - **The mirror is one function, `shelfJobs()`** — the host's accumulated rows
+    where a host queue is registered, `listJobs()` otherwise — and both the
+    `queue:list` door and the `queue:changed` push are that one expression, on
+    `hostOffers`' rule. `listJobs()` stays OURS and is what `foundryBusy` and
+    the delete guards read, so a host-ordered run still refuses a project
+    delete. **The first paint rides on `host-ops:nodes`** rather than arriving
+    as a new door: it is the only moment main learns which project a window is
+    drawing, and no channel moved (71 handles, 14 pushes, counted from source).
+  - **`clearFinished` forwards AND sweeps our own list.** Hosted there are two
+    lists and only one is visible; every `runJob` row lives in ours, and a press
+    that cleared only what was on screen would leave the invisible half growing
+    for the life of the process.
+  - **The dedupe moves to the host with the scheduling, and is written into the
+    handoff as an obligation.** `enqueueHere` still refuses two live rows
+    writing one file; routed, that check never runs, and `runJob` deliberately
+    does not re-impose it (answering a scheduler's decision with somebody else's
+    row would be overruling a decision we were told about rather than asked
+    for). The guard is available in one line inside `runJob` — `pendingFor` over
+    our own list would catch two concurrent runs on one output — if BookForge
+    would rather Foundry kept it.
+  - **Two things reported rather than quietly fixed**, neither touched: (1) the
+    READ landing arm has never called `settled()` — a reading has always ended
+    without publishing a settle, which predates this wave; `runJob` answers with
+    its own row and does not depend on it, but a host waiting on `onJobSettled`
+    for a reading would wait forever. (2) Hosted with a host queue, an ENV
+    INSTALL row is invisible in the shelf and in the settings card's
+    `busy`/failure display, because the mirror draws the host's rows and never a
+    merge — the progress bar itself still works (`env:install-progress` is its
+    own push) and `env:cancel` still stops it. The one-line change if the ruling
+    ever softens is a union of the host's rows with our `env-install` rows,
+    which cannot double-count because an install never routes.
+
+DEFERRED OUT LOUD: the queue has no persistence — no state file, no
+restore path — so an app restart drops a held read silently and a read is
+hours. Centralizing makes the host's persisted engine the store for
+hosted work; standalone Foundry still wants it, as its own later wave,
+because building a store here now is building one we are about to stop
+using for the hosted case.
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the
