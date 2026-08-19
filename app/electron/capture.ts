@@ -66,7 +66,7 @@ import type {
   CaptureRecipe,
   CaptureTimeSource,
 } from '../shared/types';
-import { CAPTURE_RECIPE_PAYLOAD } from '../shared/capture';
+import { CAPTURE_RECIPE_PAYLOAD, sameShape } from '../shared/capture';
 import { writeAtomically } from './atomic';
 
 // Re-exported so a caller that already imports this module does not need to
@@ -314,6 +314,22 @@ function validRecipe(value: unknown, file: string): CaptureRecipe {
         struck: held['struck'] as boolean,
       };
     });
+    /*
+     * A PHOTOGRAPH IS ONE PAGE OR TWO, and a split means two.
+     *
+     * The split line is the gesture that DERIVES the second quad, so a recipe
+     * claiming a split over one page has lost one of them somewhere between the
+     * editor and here — and the mint would print a spread as a single page
+     * without ever noticing the other was gone. The converse is deliberately
+     * NOT checked: two quads and no split line is a person who cropped both
+     * halves by hand, which is allowed.
+     */
+    if (checkedPages.length < 1 || checkedPages.length > 2) {
+      fail(file, `photograph ${index} has ${checkedPages.length} pages, and a photograph is one page or two`);
+    }
+    if (splitAt !== null && checkedPages.length !== 2) {
+      fail(file, `photograph ${index} is split but holds ${checkedPages.length} page(s)`);
+    }
     return {
       id,
       file: text('file'),
@@ -327,6 +343,31 @@ function validRecipe(value: unknown, file: string): CaptureRecipe {
       pages: checkedPages,
     };
   });
+
+  /*
+   * ── THE ORDER AND THE PAGES MUST BE THE SAME SET ──────────────────────────
+   *
+   * `order` is the only stored truth about arrangement, and the mint walks IT
+   * rather than the photographs. So a page id missing from it is a leaf that is
+   * never printed and never drawn — invisible on the grid, so nobody can even
+   * see that it is gone — and a repeated id mints the same page twice.
+   *
+   * FOUND ON P2’S READ-BACK, and not hypothetically: their reverse() dropped an
+   * id it could not resolve instead of preserving it, so an inconsistent recipe
+   * accepted here would have had a page silently deleted by the next press of a
+   * button. Each half of that was nearly unreachable alone. Together they were a
+   * path, which is what most real losses are made of.
+   */
+  const pageIds = checked.flatMap((photo) => photo.pages.map((page) => page.id));
+  const listed = new Set(order as string[]);
+  if (listed.size !== order.length) fail(file, 'its order lists the same page twice');
+  if (listed.size !== pageIds.length || pageIds.some((id) => !listed.has(id))) {
+    const missing = pageIds.filter((id) => !listed.has(id));
+    const unknown = (order as string[]).filter((id) => !pageIds.includes(id));
+    fail(file, 'its order does not list every page exactly once'
+      + (missing.length > 0 ? ` (missing ${missing.length})` : '')
+      + (unknown.length > 0 ? ` (naming ${unknown.length} that do not exist)` : ''));
+  }
 
   return { version: 1, photos: checked, order: order as string[] };
 }
@@ -709,36 +750,12 @@ function takenAtFrom(times: ExifTimes, modifiedAt: Date): TakenAt {
  */
 const WHOLE_FRAME: CaptureQuad = [[0, 0], [1, 0], [1, 1], [0, 1]];
 
-/** How far two photographs' aspect ratios may differ and still share a crop. */
-const ASPECT_TOLERANCE = 0.02;
-
-function aspectOf(photo: { width: number; height: number }): number {
-  return photo.width / photo.height;
-}
-
-/**
- * Whether the settings of one photograph may be copied onto another.
- *
- * NORMALIZING THE COORDINATES DID NOT MAKE THIS SAFE, which is the part worth
- * knowing. A fraction copied from a portrait photograph onto a landscape one
- * lands IN BOUNDS and plausible and silently STRETCHED — the failure survives
- * every check that asks whether a number is between zero and one, and shows up
- * as a subtly squashed page in a finished PDF. On the acceptance shoot exactly
- * one photograph fails this test (IMG_0238, landscape at 5712x4284, among 26
- * portrait frames), and skipping it is correct: a landscape frame in a portrait
- * shoot is a different photograph, not one the same crop happens to fit.
- */
-function mayInherit(from: CapturePhoto, to: { width: number; height: number }): boolean {
-  const source = aspectOf(from);
-  return Math.abs(aspectOf(to) - source) / source <= ASPECT_TOLERANCE;
-}
-
 function pagesFor(photoId: string, from: CapturePhoto | null, decoded: DecodedImage): {
   pages: CapturePage[];
   split: { x: number } | null;
   inherited: boolean;
 } {
-  if (from !== null && mayInherit(from, decoded) && from.pages.length > 0) {
+  if (from !== null && sameShape(from, decoded) && from.pages.length > 0) {
     return {
       pages: from.pages.map((page, index) => ({
         id: `${photoId}:${index}`,

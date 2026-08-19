@@ -37,6 +37,57 @@ import type { PixelQuad } from './types';
  */
 export const CAPTURE_RECIPE_PAYLOAD = 'capture/recipe.json';
 
+/**
+ * How far two photographs’ aspect ratios may differ and still share a crop.
+ *
+ * Two per cent is a tolerance for sensor rounding and nothing else. It is not
+ * a judgement about how similar two pictures look: a frame that differs by more
+ * than this is a differently shaped photograph, and a crop drawn for one is not
+ * a crop of the other.
+ */
+export const ASPECT_TOLERANCE = 0.02;
+
+/**
+ * May a crop drawn for `source` be copied onto `candidate`?
+ *
+ * ── WHY NORMALIZED COORDINATES DID NOT MAKE COPYING SAFE ────────────────────
+ *
+ * Every coordinate in the recipe is a fraction, which guarantees a copied quad
+ * lands INSIDE the target photograph. It guarantees nothing about landing on
+ * the same part of it. Copy a portrait crop onto a landscape frame and the
+ * fractions resolve to a region of the wrong proportions — in bounds,
+ * plausible, and silently STRETCHED all the way into the finished PDF, where it
+ * reads as a slightly squashed page rather than as an error. On the acceptance
+ * shoot exactly one photograph fails this test (IMG_0238, landscape at
+ * 5712x4284, among 26 portrait frames), and skipping it is the correct answer:
+ * a landscape frame in a portrait shoot is a different photograph, not one the
+ * same crop happens to fit.
+ *
+ * ── IN `shared/` FOR `outputSizeFor`’S REASON, ONE RULING LATER ─────────────
+ *
+ * This had two bodies within hours of the first being written: intake needs it
+ * to decide what a late arrival inherits, and the light table needs it to decide
+ * which cards an apply-to-all skips. They were algebraically identical and
+ * therefore agreed — which is exactly what the two `outputSizeFor`s did before
+ * one of them would have drifted. Found on P2’s read-back of Merge 2 and moved
+ * here under the same ruling, before the drift rather than after it.
+ *
+ * THE TOLERANCE IS RELATIVE TO THE SOURCE, so this is not symmetric: it asks
+ * whether the candidate is close enough to the shape the crop was DRAWN FOR.
+ * A photograph with no height is not the same shape as anything, including
+ * itself.
+ */
+export function sameShape(
+  source: { width: number; height: number },
+  candidate: { width: number; height: number },
+): boolean {
+  if (source.height <= 0 || candidate.height <= 0) return false;
+  const drawnFor = source.width / source.height;
+  // Multiplied out rather than divided: the division form has a denominator
+  // that can be zero, and a rule about shapes should not have a hole in it.
+  return Math.abs(candidate.width / candidate.height - drawnFor) <= ASPECT_TOLERANCE * drawnFor;
+}
+
 /** A rectified page's size in pixels. Whole pixels: it is a raster's extent. */
 export interface OutputSize {
   width: number;
