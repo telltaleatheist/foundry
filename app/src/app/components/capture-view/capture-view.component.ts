@@ -10,14 +10,14 @@ import {
   signal,
 } from '@angular/core';
 
-import { cutOf, joinedQuad, mintedPageIds } from '@shared/capture';
-import type { CaptureQuad } from '@shared/types';
+import { mintedPageIds } from '@shared/capture';
+import type { CaptureQuad, CaptureSplit } from '@shared/types';
 
 import { CaptureMintService } from '../../core/capture-mint.service';
 import { ConfirmService } from '../../core/confirm.service';
 import { type ApplyToAll, CaptureService } from '../../core/capture.service';
 import type { Tab } from '../../core/documents.service';
-import { CapturePageEditorComponent } from '../capture-editor/capture-page-editor.component';
+import { CaptureEditorModalComponent } from '../capture-editor/capture-editor-modal.component';
 import type { FractionQuad } from '../capture-editor/geometry';
 import { CaptureGridComponent } from '../capture-grid/capture-grid.component';
 
@@ -63,12 +63,17 @@ const ACKNOWLEDGED_FOR_MS = 1600;
 
 @Component({
   selector: 'app-capture-view',
-  imports: [CaptureGridComponent, CapturePageEditorComponent],
+  imports: [CaptureGridComponent, CaptureEditorModalComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="table">
-      @if (open() === null) {
-        <app-capture-grid
+      <!--
+        THE TABLE IS ALWAYS DRAWN NOW. The editor used to REPLACE it, so leaving
+        meant a button called "All photographs" and coming back meant finding
+        your card again. It is a modal since Wave 21, and a modal is something
+        you open rather than somewhere you go.
+      -->
+      <app-capture-grid
           [cards]="captures.cards()"
           [descending]="captures.descending()"
           [arranged]="captures.arranged()"
@@ -77,51 +82,40 @@ const ACKNOWLEDGED_FOR_MS = 1600;
           (strike)="captures.toggleStrike($event)"
           (reverse)="captures.reverse()"
           (dropped)="captures.intake(tab().path, $event)"
-          (remove)="void confirmRemoval($event)"
-        />
-      } @else if (opened(); as photo) {
-        <header class="bar">
-          <button class="quiet" type="button" (click)="open.set(null)">← All photographs</button>
-          <span class="grow"></span>
-          <!--
-            PREV/NEXT WALKS PHOTOGRAPHS, NOT PAGES, and the readout says both
-            numbers so neither is a lie. See the walk computed for why.
-          -->
-          <button
-            class="quiet"
-            type="button"
-            [disabled]="walkIndex() <= 0"
-            title="Previous photograph (left arrow)"
-            (click)="step(-1)"
-          >‹</button>
-          <span class="which">{{ photo.label }}</span>
-          <button
-            class="quiet"
-            type="button"
-            [disabled]="walkIndex() >= walk().length - 1"
-            title="Next photograph (right arrow)"
-            (click)="step(1)"
-          >›</button>
-        </header>
-        <app-capture-page-editor
+        (remove)="void confirmRemoval($event)"
+      />
+    </div>
+
+    @if (open() !== null) {
+      @if (opened(); as photo) {
+        <app-capture-editor-modal
+          [label]="photo.label"
           [source]="captures.url(photo.workingCopy)"
           [dimensions]="photo.dimensions"
           [quads]="photo.quads"
-          [splitFraction]="photo.split"
+          [split]="photo.split"
+          [stage]="captures.stage()"
+          [hasPrevious]="walkIndex() > 0"
+          [hasNext]="walkIndex() < walk().length - 1"
+          [handSet]="handSet()"
+          [handSetHere]="photo.handSet"
+          [justApplied]="justApplied()"
           (quadsChange)="setQuads(photo.id, $event)"
           (splitChange)="captures.setSplit(photo.id, $event)"
-          [justApplied]="justApplied()"
           (applyToAll)="applyToAll(photo.id, $event)"
+          (keep)="captures.keep(photo.id)"
+          (step)="step($event)"
+          (close)="open.set(null)"
         />
       } @else {
         <!--
           The open photograph left the recipe under us — only reachable through
-          a hand-edited file today. Said rather than drawn as an empty editor.
+          a hand-edited file today. The modal closes rather than drawing an
+          empty room around a picture that is not there.
         -->
         <p class="gone">That photograph is no longer in this project.</p>
-        <button class="quiet" type="button" (click)="open.set(null)">Back to the table</button>
       }
-    </div>
+    }
 
     <footer class="mint">
       @if (mint.progress(); as running) {
@@ -328,16 +322,10 @@ export class CaptureViewComponent {
       workingCopy: photo.workingCopy,
       dimensions: { width: photo.width, height: photo.height },
       quads: photo.pages.map((page) => page.quad) as readonly FractionQuad[],
-      /*
-       * THE EDITOR STILL TAKES A FRACTION, so the segment is measured back
-       * into one here: how far along its edge the first end sits. For every
-       * split this app can currently make — all of them cut from the top edge
-       * to the bottom — that is the number that used to be stored, to the
-       * digit. The staged editor takes the segment itself and this seam goes.
-       */
-      split: photo.split === null
-        ? null
-        : cutOf(joinedQuad(photo.pages.map((page) => page.quad), photo.split), photo.split)?.a.at ?? null,
+      // The segment itself. The interim seam that measured it back into a
+      // fraction for the old editor is gone with the editor that needed one.
+      split: photo.split,
+      handSet: photo.pages.some((page) => page.byHand === true),
     };
   });
 
@@ -350,6 +338,19 @@ export class CaptureViewComponent {
    * an hour, reads "of 54" and then counts the PDF is owed all three being the
    * same arithmetic rather than the same intention.
    */
+  /**
+   * How many PHOTOGRAPHS somebody has set by hand — what the override offers to
+   * override, and the reason it is only drawn when there is one.
+   *
+   * Photographs and not pages, like every other count this surface shows a
+   * person: a split spread whose crop was adjusted is one thing they did.
+   */
+  protected readonly handSet = computed(() => {
+    const recipe = this.captures.recipe();
+    if (recipe === null) return 0;
+    return recipe.photos.filter((photo) => photo.pages.some((page) => page.byHand === true)).length;
+  });
+
   protected readonly mintable = computed(() => {
     const recipe = this.captures.recipe();
     return recipe === null ? 0 : mintedPageIds(recipe).length;
@@ -444,6 +445,11 @@ export class CaptureViewComponent {
 
   protected setQuads(photoId: string, quads: readonly FractionQuad[]): void {
     this.captures.setQuads(photoId, quads as readonly CaptureQuad[]);
+  }
+
+  /** Kept so the template has one name for it whatever the segment type is. */
+  protected setSplit(photoId: string, split: CaptureSplit): void {
+    this.captures.setSplit(photoId, split);
   }
 
   /**

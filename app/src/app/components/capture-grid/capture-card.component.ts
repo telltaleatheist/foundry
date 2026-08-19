@@ -48,7 +48,7 @@ import type { CaptureQuad } from '@shared/types';
       [class.chosen]="chosen()"
       (click)="choose.emit($event)"
       (dblclick)="open.emit()"
-      (keydown.enter)="activate($event)"
+      (keydown)="activate($event)"
     >
       <!--
         \`loading="lazy"\` because a shoot is dozens of these and the grid scrolls:
@@ -227,6 +227,9 @@ export class CaptureCardComponent {
    * meant, which is the focused-versus-chosen mismatch in miniature.
    */
   protected activate(event: KeyboardEvent): void {
+    // (keydown) and not (keydown.enter): the pseudo-event hands the template an
+    // Event rather than a KeyboardEvent, so the key has to be read here anyway.
+    if (event.key !== 'Enter') return;
     event.preventDefault();
     event.stopPropagation();
     this.open.emit();
