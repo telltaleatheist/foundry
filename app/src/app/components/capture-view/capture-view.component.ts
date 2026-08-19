@@ -69,7 +69,7 @@ import { CaptureGridComponent } from '../capture-grid/capture-grid.component';
           (open)="openPage($event)"
           (strike)="captures.toggleStrike($event)"
           (reverse)="captures.reverse()"
-          (dropped)="captures.intake($event)"
+          (dropped)="captures.intake(tab().path, $event)"
         />
       } @else if (opened(); as photo) {
         <header class="bar">

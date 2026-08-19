@@ -585,12 +585,13 @@ export class App {
     this.dropping.set(false);
     const files = Array.from(event.dataTransfer?.files ?? []);
 
-    if (this.intaking() !== null) {
+    const front = this.intaking();
+    if (front !== null) {
       // One call with every file: intake copies, hashes and decodes them as a
       // batch and answers once with what it did and would not do. Handing them
       // over one at a time would be a recipe write per photograph and a notice
       // bar that overwrites itself twenty-six times.
-      void this.captures.intake(files);
+      void this.captures.intake(front.path, files);
       return;
     }
 

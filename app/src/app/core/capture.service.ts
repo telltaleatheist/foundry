@@ -183,9 +183,22 @@ export class CaptureService {
    * another application's virtual folder, and the person deserves to know their
    * photograph did not arrive.
    */
-  async intake(files: readonly File[]): Promise<void> {
-    const dir = this.directory();
-    if (api === null || dir === null) return;
+  async intake(projectDir: string, files: readonly File[]): Promise<void> {
+    /*
+     * THE CALLER NAMES THE PROJECT, and that is not ceremony.
+     *
+     * This used to read `this.directory()`, which is set only AFTER
+     * `recipeLoad` resolves. Two things came of that. A drop that landed while
+     * the recipe was still loading found it null and returned in SILENCE — the
+     * photographs simply did not arrive and nothing said so. And the window
+     * drop handler routes on the front TAB while this read the SERVICE, so the
+     * two could name different projects and the photographs would land in the
+     * wrong one.
+     *
+     * The tab knows which project it is. Taking it as an argument makes the two
+     * one fact, and lets a drop work during the load rather than vanish into it.
+     */
+    if (api === null) return;
     const paths: string[] = [];
     for (const file of files) {
       const path = api.pathForFile(file);
@@ -206,7 +219,8 @@ export class CaptureService {
       return;
     }
     try {
-      const intaken = await api.capture.intake(dir, paths);
+      const intaken = await api.capture.intake(projectDir, paths);
+      this.directory.set(projectDir);
       this.door.set(intaken.token);
       this.current.set(intaken.recipe);
       this.notices.notice.set(reportOn(intaken, unreadable));
