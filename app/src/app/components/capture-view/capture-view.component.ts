@@ -394,25 +394,20 @@ export class CaptureViewComponent {
    * somebody to be frightened of the wrong thing; one that omitted the deletion
    * would be hiding the real cost.
    *
-   * The marquee chooses PAGES and removal takes PHOTOGRAPHS, so the ids are
-   * folded to their photographs first -- otherwise removing the left half of a
-   * spread would silently take the right half with it and the count in the
-   * question would have been a lie.
+   * ── IT TAKES PHOTOGRAPHS, ALREADY FOLDED ────────────────────────────────────
+   *
+   * This used to fold page ids to photographs itself, which was correct and was
+   * the SECOND place doing it -- the grid's context menu counted raw pages and
+   * called them photographs, so on a split shoot the menu offered to delete 52
+   * and this asked about 27. The fold moved into the grid, where the menu can
+   * see it, and this takes what that offered. One fold, one number, one act.
    */
-  protected async confirmRemoval(pageIds: readonly string[]): Promise<void> {
-    const recipe = this.captures.recipe();
-    if (recipe === null) return;
-    const photos = new Set<string>();
-    for (const pageId of pageIds) {
-      const owner = recipe.photos.find((one) => one.pages.some((page) => page.id === pageId));
-      if (owner !== undefined) photos.add(owner.id);
-    }
-    if (photos.size === 0) return;
-
-    const many = photos.size !== 1;
+  protected async confirmRemoval(photoIds: readonly string[]): Promise<void> {
+    if (photoIds.length === 0) return;
+    const many = photoIds.length !== 1;
     const agreed = await this.confirm.ask({
       message: many
-        ? `Remove ${photos.size} photographs from this project?`
+        ? `Remove ${photoIds.length} photographs from this project?`
         : 'Remove this photograph from this project?',
       detail: [
         many
@@ -420,9 +415,9 @@ export class CaptureViewComponent {
           : 'Its pages leave the book, and the copies this project made of it are deleted.',
         'The files you dragged in are untouched, wherever you dragged them from.',
       ],
-      confirm: many ? `Remove ${photos.size}` : 'Remove',
+      confirm: many ? `Remove ${photoIds.length}` : 'Remove',
     });
-    if (agreed) await this.captures.remove([...photos]);
+    if (agreed) await this.captures.remove(photoIds);
   }
 
   /** A card was clicked: the editor opens on the PHOTOGRAPH that page is on. */

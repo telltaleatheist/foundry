@@ -113,6 +113,7 @@ export class CaptureService {
       if (found === null) continue;
       cards.push({
         id,
+        photoId: found.photo.id,
         thumb: this.url(found.photo.thumb),
         label: `Page ${cards.length + 1}`,
         struck: found.page.struck,

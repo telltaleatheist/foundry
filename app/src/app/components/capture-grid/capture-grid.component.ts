@@ -2,6 +2,7 @@ import type { CaptureQuad } from '@shared/types';
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   ElementRef,
   HostListener,
   inject,
@@ -16,6 +17,15 @@ import { CaptureCardComponent } from './capture-card.component';
 export interface CaptureCard {
   /** The page id — `<photoId>:<n>`, the recipe's own. */
   readonly id: string;
+  /**
+   * The PHOTOGRAPH this page is on.
+   *
+   * Here so the grid can count photographs without holding a recipe. It could
+   * be parsed out of the id, and must not be: a surface that derives an
+   * identity by splitting a string is a surface that keeps working until the
+   * day the id format changes under it.
+   */
+  readonly photoId: string;
   /** The 640 px thumbnail's URL, through the capture door. */
   readonly thumb: string;
   /** What to call it on the table. */
@@ -196,7 +206,8 @@ const SWEEP_STARTS_AT = 5;
       -->
       <div class="menu" [style.left.px]="at.x" [style.top.px]="at.y">
         <button type="button" (click)="removeChosen()">
-          Delete {{ chosen().length }} {{ chosen().length === 1 ? 'photograph' : 'photographs' }}…
+          Delete {{ chosenPhotos().length }}
+          {{ chosenPhotos().length === 1 ? 'photograph' : 'photographs' }}…
         </button>
       </div>
     }
@@ -305,6 +316,26 @@ export class CaptureGridComponent {
 
   /** The page ids the marquee has chosen, in grid order. */
   protected readonly chosen = signal<readonly string[]>([]);
+  /**
+   * THE PHOTOGRAPHS THOSE PAGES ARE ON, which is what removal actually takes.
+   *
+   * The menu used to count `chosen()` and call the result photographs. On a
+   * split shoot that is wrong by exactly double: 27 photographs are 52 pages,
+   * so sweeping the table offered to "Delete 52 photographs" and the confirm
+   * behind it said "Remove 27". Two numbers for one act on the destructive
+   * path, and the FIRST one is the one that decides whether somebody clicks.
+   *
+   * The fold lives HERE, once, and the parent no longer repeats it. Two folds
+   * that agree today are the shape this feature has now paid for three times.
+   */
+  protected readonly chosenPhotos = computed(() => {
+    const pages = new Set(this.chosen());
+    const photos: string[] = [];
+    for (const card of this.cards()) {
+      if (pages.has(card.id) && !photos.includes(card.photoId)) photos.push(card.photoId);
+    }
+    return photos;
+  });
   /** The rubber band while it is being drawn, in table coordinates. */
   protected readonly band = signal<{ left: number; top: number; width: number; height: number } | null>(null);
   /** Where the context menu is, or null. */
@@ -399,9 +430,11 @@ export class CaptureGridComponent {
   }
 
   protected removeChosen(): void {
-    const chosen = this.chosen();
+    // PHOTOGRAPHS, matching the number the menu just showed. The parent asks
+    // the question about exactly what this offered to do.
+    const photos = this.chosenPhotos();
     this.menu.set(null);
-    if (chosen.length > 0) this.remove.emit(chosen);
+    if (photos.length > 0) this.remove.emit(photos);
   }
 
   /**
@@ -443,7 +476,7 @@ export class CaptureGridComponent {
   readonly dropped = output<readonly File[]>();
   /** The marquee's selection, whenever it changes. Page ids, in grid order. */
   readonly chose = output<readonly string[]>();
-  /** Delete these — the surface asks, the owner confirms and calls the door. */
+  /** Delete these PHOTOGRAPHS — the owner confirms and calls the door. */
   readonly remove = output<readonly string[]>();
 
   /** The slot a dragged card would land in front of, or null when nothing is up. */
