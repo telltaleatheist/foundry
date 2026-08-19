@@ -473,8 +473,28 @@ read genuinely run at once.** env-install is the precedent for a row
 nobody enqueued, different in exactly one recorded way: an install DOES
 take the slot because it competes for the same disk and network; a mint
 competes with nothing. The mint is never routed to the host scheduler
-(it is not model expense); the host still sees it via the Wave 16 shelf
-mirror. P3 audits that seam.
+(it is not model expense). **The shelf sentence, NARROWED to what the
+audit measured (P1, seq 65, correcting this doc's earlier claim): a mint
+row is drawn on FOUNDRY'S shelf, hosted or not, and its cancel works
+locally. The mirror is ONE-WAY — FoundryHostQueue has no outbound row
+channel, so nothing can tell a host about a row it did not schedule.**
+Whether a person hosted inside BookForge looks at Foundry's shelf or
+BookForge's own is not answerable from this repo; it goes to the
+BookForge channel with the vendoring notice, and if the answer is
+BookForge's shelf, that is a new outbound channel — real work, not
+wording. The audit itself (five positions, nine predicates, minted vs
+imported control): ZERO differences between the minted and imported
+PDF on all nine — the sentence the feature rests on, measured. Two
+defects found and fixed at e296188: hasBookAt/hostActPositionFrom said
+'import' where they meant ARRIVAL (standing on the photographs of a
+read project offered Translate/Simplify/Export; both now read
+BOUNDS_THE_WALK — one fact, one table, not a second pair of trues to
+drift); and three queue-seam sites asked kind === 'env-install' where
+they meant DID THIS ROW EVER ROUTE — hosted, a mint drew NO ROW and
+its cancel forwarded our id to a host that never heard of it; now a
+Readonly<Record<JobKind, boolean>> (NEVER_ROUTED), the STEP_ACTIONS
+lesson applied in a second file. Unwalked and said so: Narrate gating
+(narrate is not a stages.ts export), and no hosted run was performed.
 
 ## The IPC surface — the contract, pinned
 
