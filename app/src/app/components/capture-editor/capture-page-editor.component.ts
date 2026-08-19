@@ -94,6 +94,11 @@ import { Rectifier } from './rectify';
   template: `
     <div class="editor">
       <div class="picture-column">
+        <!--
+          THE FRAME OWNS THE LEFTOVER HEIGHT. See the styles: without it the
+          picture sized itself against the whole column and overflowed it.
+        -->
+        <div class="frame">
         <div
           class="picture"
           #picture
@@ -144,6 +149,7 @@ import { Rectifier } from './rectify';
             ></span>
           }
         </div>
+        </div>
 
         <div class="gestures">
           <button type="button" (click)="turn(-1)" title="Turn this page anticlockwise">⟲</button>
@@ -180,7 +186,37 @@ import { Rectifier } from './rectify';
     :host { display: flex; height: 100%; min-height: 0; }
     .editor { display: flex; flex: 1; min-width: 0; gap: 16px; padding: 12px; }
 
-    .picture-column { display: flex; flex-direction: column; min-width: 0; flex: 1 1 0; gap: 8px; }
+    .picture-column { display: flex; flex-direction: column; min-width: 0; min-height: 0; flex: 1 1 0; gap: 8px; }
+
+    /*
+     * THE FRAME, AND WHY THE TOP TWO CORNERS COULD NOT BE GRABBED.
+     *
+     * The picture used to be a direct child of the column, sized with a
+     * max-height of 100% and centred with an auto margin. That 100% resolves
+     * against THE WHOLE COLUMN, which also holds the gestures row and a gap --
+     * so the picture was allowed to be as tall as everything, the column
+     * overflowed, and the auto margin split the overflow evenly above and below.
+     *
+     * CONTENT PUSHED ABOVE A CONTAINERS START EDGE CANNOT BE SCROLLED TO. So the
+     * top of the photograph, and the two corner handles on it, were off screen
+     * and unclickable while the bottom two were reachable. Owen found it as
+     * "cant grab the top two", which is exactly what that looks like from the
+     * outside: a hit test that works at one end of the picture and not the
+     * other. The hit test was never wrong.
+     *
+     * The frame takes the leftover height as a flex item, so the max-height on
+     * the picture now resolves against the space that is actually free, and the
+     * centring is done by the container rather than by an auto margin that can
+     * push its own item out of reach.
+     */
+    .frame {
+      flex: 1 1 0;
+      min-height: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
 
     /*
       The box IS the picture — see the class docblock. \`max-height: 100%\` with
@@ -191,7 +227,6 @@ import { Rectifier } from './rectify';
       position: relative;
       max-width: 100%;
       max-height: 100%;
-      margin: auto;
       touch-action: none;
       user-select: none;
       background: var(--bg-sunken);
