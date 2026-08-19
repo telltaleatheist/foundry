@@ -539,7 +539,17 @@ export class CaptureService {
      * that lit up on the click rather than on the act would say "Applied" over
      * a notice bar reporting that everything was skipped.
      */
-    const skipped: string[] = [];
+    /*
+     * KEPT AS A REASON PER PHOTOGRAPH so the sentence can GROUP them.
+     *
+     * It used to be a list of finished strings, which forced the reason to be
+     * repeated once per name: "Left alone: IMG_0212 (you set that one by hand),
+     * IMG_0215 (you set that one by hand), IMG_0220 (you set that one by hand)."
+     * docs/CAPTURE.md asks for the other shape -- "Left alone: pages 3, 7 --
+     * you set those by hand" -- which says the reason once and is the voice the
+     * rest of this surface already speaks in.
+     */
+    const skipped: { name: string; why: 'byHand' | 'shape' }[] = [];
     let applied = 0;
     this.change((recipe) => {
       const source = recipe.photos.find((photo) => photo.id === from);
@@ -580,7 +590,7 @@ export class CaptureService {
       const photos = recipe.photos.map((photo) => {
         if (photo.id === source.id) return photo;
         if (!sameShape(source, photo)) {
-          skipped.push(`${name(photo)} (a different shape)`);
+          skipped.push({ name: name(photo), why: 'shape' });
           return photo;
         }
         switch (gesture.kind) {
@@ -605,7 +615,7 @@ export class CaptureService {
              * configuration and the count follows rather than blocking.
              */
             if (photo.pages.some((page) => page.byHand === true) && !gesture.includeHandSet) {
-              skipped.push(`${name(photo)} (you set that one by hand)`);
+              skipped.push({ name: name(photo), why: 'byHand' });
               return photo;
             }
             applied += 1;
@@ -668,7 +678,7 @@ export class CaptureService {
       this.notices.notice.set(
         skipped.length === 0
           ? `${did} ${count}.`
-          : `${did} ${count}. Left alone: ${skipped.join(', ')}.`,
+          : `${did} ${count}. Left alone: ${leftAlone(skipped)}.`,
       );
       /*
        * ALWAYS REBUILT, because a stamp can now change how many pages a
@@ -787,6 +797,33 @@ const WHOLE: CaptureQuad = [[0, 0], [1, 0], [1, 1], [0, 1]];
 function isWholeFrame(quad: CaptureQuad): boolean {
   return quad.every((corner, index) =>
     corner[0] === WHOLE_FRAME[index]![0] && corner[1] === WHOLE_FRAME[index]![1]);
+}
+
+/**
+ * The photographs a stamp would not touch, said once per reason.
+ *
+ * Grouped rather than listed, because the reason belongs to the GROUP and
+ * repeating it per name is how a sentence stops being read: three hand-set
+ * photographs produced the same eight words three times over. The order is the
+ * order the reasons were first met, so the sentence follows the arrangement
+ * rather than an alphabet nobody chose.
+ */
+function leftAlone(skipped: readonly { name: string; why: 'byHand' | 'shape' }[]): string {
+  const groups: { why: 'byHand' | 'shape'; names: string[] }[] = [];
+  for (const one of skipped) {
+    const group = groups.find((each) => each.why === one.why);
+    if (group === undefined) groups.push({ why: one.why, names: [one.name] });
+    else group.names.push(one.name);
+  }
+  return groups
+    .map(({ why, names }) => {
+      const many = names.length !== 1;
+      const because = why === 'byHand'
+        ? `you set ${many ? 'those' : 'that one'} by hand`
+        : `${many ? 'different shapes' : 'a different shape'}`;
+      return `${names.join(', ')} — ${because}`;
+    })
+    .join('; ');
 }
 
 /** Quiet before a write. Long enough that a drag is one save, short enough to be invisible. */

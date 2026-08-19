@@ -169,6 +169,7 @@ import { Rectifier } from './rectify';
           @for (handle of handles(); track handle.key) {
             <span
               class="handle"
+              [class.first]="handle.corner === 0"
               [class.held]="held()?.quad === handle.quad && held()?.corner === handle.corner"
               [style.left.%]="handle.at[0] * 100"
               [style.top.%]="handle.at[1] * 100"
@@ -291,7 +292,31 @@ import { Rectifier } from './rectify';
       background: var(--bg-raised, #fff);
       pointer-events: none;
     }
-    .handle.held { background: var(--accent, #4c9aff); }
+    /*
+     * THE CORNER MARK, CARRIED IN FROM THE CARD (Wave 21 point 5).
+     *
+     * A quarter turn permutes the corner assignment WITHOUT MOVING ANY OF THEM,
+     * so the outline is identical before and after and four identical handles
+     * say nothing about which way the page comes out. The card already solved
+     * this with a filled dot on the corner that becomes the minted page's
+     * top-left; this is the same device in the same colour, so the mark means
+     * one thing in both places rather than two things that resemble each other.
+     *
+     * It matters most on exactly this shoot: every spread of the 1876 volume
+     * lies sideways and wants THREE quarter turns, and without the mark the
+     * only way to see that a turn happened is to look away at the preview.
+     */
+    .handle.first { background: var(--accent, #4c9aff); }
+
+    /*
+     * HELD IS A RING AND A LIFT, not a fill, now that a fill means something
+     * else. Filling on grab would have made every held corner look like the
+     * first one -- two things sharing a name, in a colour.
+     */
+    .handle.held {
+      transform: scale(1.15);
+      box-shadow: 0 0 0 3px var(--accent-faint);
+    }
 
     /* The gutter's ends take the split line's own colour, so the line and the
        thing that moves it read as one object rather than two controls. */

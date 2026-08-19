@@ -206,7 +206,8 @@ export function outputSizeFor(quad: PixelQuad): OutputSize {
  * The whole photograph as a page, before anybody has dragged a corner.
  *
  * THE THIRD BODY OF THIS ONE WOULD HAVE BEEN WRITTEN HERE. Intake spells it
- * (`WHOLE_FRAME` in electron/capture.ts), the editor spells it (`wholeFrame()`),
+ * (`WHOLE_FRAME` in electron/capture.ts), the editor spelled it
+ * (`wholeFrame()`, deleted with the rest of the renderer's split geometry),
  * and `joinedQuad` below needs an answer for "no quads at all" — so it goes
  * where the other shared rules went rather than becoming a third opinion about
  * what an uncropped page is. The corner order is the tuple order everywhere:
