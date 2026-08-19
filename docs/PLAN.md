@@ -1555,6 +1555,20 @@ middle of the paragraph. `split`/`join` has no such interpretation. The
 same class of trap as the defect above: a character that means one thing
 to a human reader and another to the machine handling it.
 
+### Wave 20 — the capture stage: photographs become the book (Owen, 2026-08-19) — PLANNED, docs/CAPTURE.md
+
+Owen photographed bound volumes at the American Atheists archive and wants
+photo -> light table (reorder / rotate / split / quad-crop) -> minted
+image-only PDF -> the existing pipeline, unchanged from the PDF onward.
+Ruled: inside the project as a new arrival kind; quad crop that also
+removes perspective lean; apply-to-all assist, no CV. The full plan of
+record — model, recipe schema, IPC contract, three work packages for the
+foundry-feature channel — is docs/CAPTURE.md, not duplicated here.
+
+DEFERRED OUT LOUD, per Owen: automatic de-skew and AI sharpen come after
+this lands; re-mint reading reuse and CV auto-detect are recorded in the
+doc's deferral list.
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the
