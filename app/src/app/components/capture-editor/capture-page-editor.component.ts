@@ -17,7 +17,10 @@ import {
   type Dimensions,
   type FractionPoint,
   type FractionQuad,
+  alongQuad,
   cornerNear,
+  distanceToEdge,
+  joined,
   rotate,
   splitAt,
   toPixels,
@@ -282,14 +285,20 @@ export class CapturePageEditorComponent {
   );
 
   /**
-   * The split handle, drawn across the first quad — which before a split is the
-   * whole page, and after one is the left half, so the line stays on the gutter
-   * it was dragged onto.
+   * The split handle, drawn across THE WHOLE PAGE — `joined`, not the first
+   * quad.
+   *
+   * An earlier revision split `quads()[0]` and a docblock here claimed that
+   * kept the line on the gutter. It did the opposite: after a split that quad
+   * is the LEFT HALF, so the line was drawn at `at` of the half rather than of
+   * the page — it jumped to a quarter the instant the split landed, and halved
+   * again with every drag. The comment asserting the behaviour is what made it
+   * survive a reading; it was found by looking at a minted page.
    */
   protected readonly splitLine = computed(() => {
     const at = this.splitFraction();
     if (at === null) return null;
-    const [left] = splitAt(this.quads()[0] ?? [[0, 0], [1, 0], [1, 1], [0, 1]], at);
+    const [left] = splitAt(joined(this.quads()), at);
     return { from: left[1], to: left[2] };
   });
 
@@ -358,8 +367,14 @@ export class CapturePageEditorComponent {
       }
     }
 
-    const split = this.splitFraction();
-    if (split !== null && Math.abs(at[0] - split) <= radius) {
+    /*
+     * HIT THE LINE THAT IS DRAWN, not the photograph's x. `|at[0] - split|`
+     * asked how far the pointer was from a vertical line at that fraction of
+     * the frame — true only while the quad is upright, and every photograph on
+     * the acceptance shoot is turned a quarter before anything else happens.
+     */
+    const line = this.splitLine();
+    if (line !== null && distanceToEdge(at, line.from, line.to) <= radius) {
       this.draggingSplit = true;
       this.picture().nativeElement.setPointerCapture(event.pointerId);
     }
@@ -371,7 +386,11 @@ export class CapturePageEditorComponent {
     const at = this.fractionOf(event);
 
     if (this.draggingSplit) {
-      this.splitChange.emit(clamp(at[0]));
+      // Along the QUAD's own axis, and kept off both ends: a split at 0 is a
+      // page of no width, which outputSizeFor rescues into one pixel. A page a
+      // person can see is wrong beats a page they cannot, but a gutter they
+      // cannot drag off the edge in the first place beats both.
+      this.splitChange.emit(offEnds(alongQuad(joined(this.quads()), at)));
       return;
     }
 
@@ -491,4 +510,11 @@ const UNIT: Dimensions = { width: 1, height: 1 };
 
 function clamp(value: number): number {
   return Math.min(1, Math.max(0, value));
+}
+
+/** A gutter has to leave a page on each side of it. */
+const SPLIT_MARGIN = 0.02;
+
+function offEnds(value: number): number {
+  return Math.min(1 - SPLIT_MARGIN, Math.max(SPLIT_MARGIN, value));
 }

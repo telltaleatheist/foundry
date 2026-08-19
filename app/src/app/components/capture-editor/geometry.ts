@@ -140,6 +140,66 @@ export function rotate(quad: FractionQuad, turns: number): FractionQuad {
  * authoritative for the mint (docs/CAPTURE.md pins that), so the recipe's
  * `split` only ever has to reproduce the handle they dragged.
  */
+/**
+ * THE ONE PAGE A SPLIT IS A FRACTION OF, whether or not it has been split yet.
+ *
+ * `split.x` means "this far along the page", and after a split the page is no
+ * longer any single quad in the list — it is the two halves seen as the sheet
+ * they were cut from. Asking one HALF for that fraction is the mistake this
+ * function exists to stop, and it is not hypothetical: the editor drew its
+ * gutter by re-splitting `quads[0]`, which after a split is the LEFT half, so
+ * the handle jumped to a quarter of the page the moment the split landed and
+ * halved again on every drag afterwards.
+ *
+ * Two halves share their cut edge, so the outer corners are simply the first
+ * quad's left pair and the second's right pair.
+ */
+export function joined(quads: readonly FractionQuad[]): FractionQuad {
+  const first = quads[0];
+  if (first === undefined) return wholeFrame();
+  const second = quads[1];
+  if (second === undefined) return first;
+  return [first[0], second[1], second[2], first[3]];
+}
+
+/**
+ * How far along a quad's own left-to-right axis a point falls, as 0..1.
+ *
+ * THE SPLIT HANDLE IS DRAGGED IN THE PHOTOGRAPH AND MEASURED ALONG THE QUAD,
+ * and those are the same thing only while the quad is upright. On the
+ * acceptance shoot every photograph is a spread lying sideways in the frame, so
+ * the first thing anybody does is turn it a quarter — and after that the
+ * gutter runs vertically on screen while the drag was reading the pointer's
+ * horizontal position. The line went one way and the hand went the other.
+ *
+ * Projected onto the axis between the midpoints of the left and right edges:
+ * exact for a parallelogram, and for a photographed page's slight trapezoid it
+ * agrees with `splitAt`'s own edge interpolation closely enough that the line
+ * lands under the pointer. `splitAt` argues the same approximation at greater
+ * length, and the two have to make it the same way or the handle drifts from
+ * the line it draws.
+ */
+export function alongQuad(quad: FractionQuad, point: FractionPoint): number {
+  const [topLeft, topRight, bottomRight, bottomLeft] = quad;
+  const leftMid: FractionPoint = [(topLeft[0] + bottomLeft[0]) / 2, (topLeft[1] + bottomLeft[1]) / 2];
+  const rightMid: FractionPoint = [(topRight[0] + bottomRight[0]) / 2, (topRight[1] + bottomRight[1]) / 2];
+  const axis: FractionPoint = [rightMid[0] - leftMid[0], rightMid[1] - leftMid[1]];
+  const span = axis[0] * axis[0] + axis[1] * axis[1];
+  if (span === 0) return 0.5;
+  const from: FractionPoint = [point[0] - leftMid[0], point[1] - leftMid[1]];
+  return Math.min(1, Math.max(0, (from[0] * axis[0] + from[1] * axis[1]) / span));
+}
+
+/** How far a point is from a line SEGMENT — the split handle's hit test. */
+export function distanceToEdge(point: FractionPoint, from: FractionPoint, to: FractionPoint): number {
+  const run: FractionPoint = [to[0] - from[0], to[1] - from[1]];
+  const span = run[0] * run[0] + run[1] * run[1];
+  const at = span === 0
+    ? 0
+    : Math.min(1, Math.max(0, ((point[0] - from[0]) * run[0] + (point[1] - from[1]) * run[1]) / span));
+  return Math.hypot(point[0] - (from[0] + run[0] * at), point[1] - (from[1] + run[1] * at));
+}
+
 export function splitAt(quad: FractionQuad, at: number): readonly [FractionQuad, FractionQuad] {
   const cut = Math.min(1, Math.max(0, at));
   const [topLeft, topRight, bottomRight, bottomLeft] = quad;

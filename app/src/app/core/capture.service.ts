@@ -9,7 +9,7 @@ import type {
 
 import { sameShape } from '@shared/capture';
 
-import { rotate, splitAt } from '../components/capture-editor/geometry';
+import { joined, rotate, splitAt } from '../components/capture-editor/geometry';
 import type { CaptureCard } from '../components/capture-grid/capture-grid.component';
 import { api } from './foundry';
 import { NoticeService } from './notice.service';
@@ -291,12 +291,37 @@ export class CaptureService {
 
   /** The editor dragged the split handle. */
   setSplit(photoId: string, at: number): void {
-    this.change((recipe) => ({
-      ...recipe,
-      photos: recipe.photos.map((photo) =>
-        photo.id === photoId ? { ...photo, split: { x: at } } : photo,
-      ),
-    }));
+    this.change((recipe) => {
+      const photos = recipe.photos.map((photo) => {
+        if (photo.id !== photoId) return photo;
+        /*
+         * ALWAYS FROM THE WHOLE PAGE. This used to record `split.x` and stop —
+         * so on the photograph somebody was actually looking at, dragging the
+         * gutter stored a number and produced no second page, while
+         * `applyToAll` (which skips the source) split every OTHER photograph
+         * correctly. The one photo the gesture was performed on was the one
+         * photo it did not act on.
+         *
+         * `joined` and not `pages[0]`, for the same reason the editor draws
+         * from it: after the first drag `pages[0]` is the left half, and
+         * re-splitting that would halve the page again on every adjustment.
+         */
+        const whole = joined(photo.pages.map((page) => page.quad));
+        const [left, right] = splitAt(whole, at);
+        return {
+          ...photo,
+          split: { x: at },
+          pages: [
+            // Strikes survive a re-drag: which half is a page is a decision
+            // about the book, and moving the gutter is not taking it back.
+            { id: `${photo.id}:0`, quad: left, struck: photo.pages[0]?.struck ?? false },
+            { id: `${photo.id}:1`, quad: right, struck: photo.pages[1]?.struck ?? false },
+          ],
+        };
+      });
+      // A split changes which pages exist, so the order grows with it.
+      return { ...recipe, photos, order: orderFor(photos, recipe.order) };
+    });
   }
 
   /**
