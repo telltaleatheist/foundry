@@ -2,6 +2,7 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 
 import type {
   CaptureIntaken,
+  CaptureIntakeProgress,
   CapturePhoto,
   CaptureQuad,
   CaptureRecipe,
@@ -60,6 +61,24 @@ export class CaptureService {
   private readonly directory = signal<string | null>(null);
   private readonly door = signal<string | null>(null);
   private readonly current = signal<CaptureRecipe | null>(null);
+
+  /**
+   * HOW FAR AN INTAKE HAS GOT, or null when none is running.
+   *
+   * A PUSH RATHER THAN THE INVOKE'S ANSWER, because the invoke cannot speak
+   * until it is finished and it is not finished for the better part of a minute
+   * (`capture:intake-progress`, main's side). The subscription is armed once
+   * for the life of the service rather than per intake: an intake that started
+   * before anybody subscribed would push into nothing, and there is no second
+   * chance at a progress event.
+   *
+   * SET BEFORE THE INVOKE AND CLEARED IN A FINALLY. Main's first push does not
+   * arrive until the first photograph is in hand, which on this shoot is over a
+   * second — so waiting for it would leave the window frozen with nothing on
+   * screen, which is the exact complaint the card exists to answer.
+   */
+  private readonly run = signal<CaptureIntakeProgress | null>(null);
+  readonly intakeProgress = this.run.asReadonly();
 
   /** The recipe on screen, or null when no capture project is open. */
   readonly recipe = this.current.asReadonly();
@@ -131,6 +150,16 @@ export class CaptureService {
     const times = this.orderedTimes();
     return runsWith(times, -1) && !runsWith(times, 1);
   });
+
+  constructor() {
+    /*
+     * ARMED FOR THE LIFE OF THE SERVICE, and never torn down: this is a root
+     * singleton that lives as long as the window, so an unsubscribe would only
+     * ever run at shutdown. Holding the returned function and never calling it
+     * would be ceremony that reads like a leak somebody forgot to close.
+     */
+    api?.capture.onIntakeProgress((progress) => this.run.set(progress));
+  }
 
   /** A door URL for a name intake wrote. Never a path this service composed. */
   url(name: string): string {
@@ -218,6 +247,9 @@ export class CaptureService {
       );
       return;
     }
+    // Shown from the moment the ask is made rather than from main's first
+    // push, which does not arrive until a photograph is decoded.
+    this.run.set({ projectDir, done: 0, total: paths.length, file: '' });
     try {
       const intaken = await api.capture.intake(projectDir, paths);
       this.directory.set(projectDir);
@@ -226,6 +258,12 @@ export class CaptureService {
       this.notices.notice.set(reportOn(intaken, unreadable));
     } catch (err) {
       this.complain(err);
+    } finally {
+      // Cleared here and nowhere else: main's closing push says done === total,
+      // but the recipe is not on screen until the invoke has answered, and a
+      // card that vanished at the last push would uncover a grid that has not
+      // caught up yet.
+      this.run.set(null);
     }
   }
 

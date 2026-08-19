@@ -14,6 +14,7 @@ import { MetadataDialogComponent } from './components/metadata-dialog/metadata-d
 import { SimplifyDialogComponent } from './components/simplify-dialog/simplify-dialog.component';
 import { TranslateDialogComponent } from './components/translate-dialog/translate-dialog.component';
 import { CaptureNewDialogComponent } from './components/capture-new-dialog/capture-new-dialog.component';
+import { CaptureProgressComponent } from './components/capture-progress/capture-progress.component';
 import { QueueShelfComponent } from './components/queue-shelf/queue-shelf.component';
 import { BookStacksService } from './core/book-stacks.service';
 import { CaptureService } from './core/capture.service';
@@ -98,7 +99,7 @@ import { api } from './core/foundry';
     QueueShelfComponent, OcrDialogComponent, ExportDialogComponent, TranslateDialogComponent,
     SimplifyDialogComponent, MetadataDialogComponent,
     ConfirmDialogComponent, HostOpDialogComponent, HostStatusComponent,
-    CaptureNewDialogComponent,
+    CaptureNewDialogComponent, CaptureProgressComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
@@ -171,6 +172,15 @@ import { api } from './core/foundry';
       @if (ui.captureNewOpen()) {
         <app-capture-new-dialog />
       }
+
+      <!--
+        NOT IN UiService's ONE-QUESTION LIST, and not gated on a flag at all.
+        That list exists because a modal is a QUESTION and only one can be asked
+        at a time; this is a REPORT about work already under way, so only()
+        closing it when something else opens would be exactly wrong. It draws
+        while the service says an intake is running and not otherwise.
+      -->
+      <app-capture-progress />
 
       <!--
         THE HOST'S OWN ACT, CONFIGURED IN THIS WINDOW. Opened by a request
