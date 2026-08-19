@@ -442,9 +442,44 @@ interface HeifImage {
 interface HeifModule { HeifDecoder: new () => { decode(bytes: Buffer): HeifImage[] } }
 
 let heif: HeifModule | null = null;
+
+/**
+ * The decoder, or a refusal that says the APP is missing something.
+ *
+ * ── WHY THIS FAILURE IS NOT A PER-FILE REFUSAL ─────────────────────────────
+ *
+ * `intakePhotos` reports what it could not read file by file, which is exactly
+ * right for a truncated HEIC among twenty-seven good ones — that is what the
+ * refusal list is for. It is exactly WRONG for an absent decoder, because that
+ * condition fails every file: a person who dropped a folder is told twenty-seven
+ * times that their photographs are unreadable, in a sentence containing a Node
+ * require stack, and the true cause is nowhere in the message. They would report
+ * it as "capture is broken" and be right about the symptom and helpless about the
+ * reason.
+ *
+ * Found by P2 running this intake against real files on a worktree whose
+ * `node_modules` predated the dependency (feature channel, seq 57). The
+ * distinction is the one the pdf-lib note already made: a per-file refusal is
+ * ABOUT THE FILE, and this is about the installation.
+ *
+ * IT IS ALSO THE PACKAGED-BUILD SHAPE. `libheif-js` is a real dependency of
+ * app/package.json, so a packaged build carries it — but if that ever stops
+ * being true, the failure a person meets must say so rather than blame the only
+ * copies of an afternoon in an archive.
+ */
 function decoderModule(): HeifModule {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  heif ??= require('libheif-js') as HeifModule;
+  if (heif === null) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      heif = require('libheif-js') as HeifModule;
+    } catch (err) {
+      throw new CaptureError(
+        'This copy of Foundry cannot read photographs: its HEIC decoder (libheif-js) is not '
+        + 'installed beside the app. Nothing is wrong with your photographs and none of them '
+        + `were read. (${err instanceof Error ? err.message.split(String.fromCharCode(10))[0] : String(err)})`,
+      );
+    }
+  }
   return heif;
 }
 
@@ -818,6 +853,14 @@ const READABLE = new Set(['.heic', '.heif']);
  * leaves every photograph before the failure fully written and catalogued.
  */
 export async function intakePhotos(projectDir: string, paths: readonly string[]): Promise<IntakeReport> {
+  /*
+   * ASKED FOR ONCE, BEFORE ANY DIRECTORY IS MADE OR ANY FILE IS COPIED. If the
+   * decoder is missing this throws HERE — one loud failure about the app —
+   * rather than inside the loop, where it would become one refusal per
+   * photograph about the photographs. Failing before the first `mkdir` also
+   * means an intake that cannot possibly work leaves nothing behind.
+   */
+  decoderModule();
   const originals = originalsDir(projectDir);
   const derived = derivedDir(projectDir);
   await fsp.mkdir(originals, { recursive: true });
