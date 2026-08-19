@@ -273,7 +273,7 @@ spelling one rotation four ways in P2 — shader, corner hit-testing,
 split line, drag maths.) The original bytes stay the bank, untouched.
 
 **Intake also emits a display thumbnail beside each working copy**
-(`capture/working/<sha>.640.jpg`, 640 px long edge, JPEG ~0.85 — display
+(`capture/derived/<sha>.640.jpg`, 640 px long edge, JPEG ~0.85 — display
 only, never in any quality chain). Ruled after both packages converged
 on it: intake already holds the decoded RGBA, so a thumbnail costs one
 downscale and one encode, and it spares the grid pulling ~540 MiB of
@@ -298,10 +298,25 @@ primitives; the editor
 needs the identical transform for its live preview anyway, so the mint and
 the preview are one shader, not two implementations. Zero new dependencies.
 
-**Main assembles the PDF with `pdf-lib` — already a dependency** (six files
-use it today: `src/commands.ts`, `src/pdf/meta.ts`, `src/vlm/pdf-text.ts`,
-`app/electron/engine.ts`, `ipc.ts`, `job-queue.ts`). Page JPEGs cross IPC
-one page at a time so no full-book buffer ever exists in one heap.
+**Main assembles the PDF with `pdf-lib` — which is NOT yet a dependency
+of the app, and the lead's earlier claim that it was rested on a grep
+that counted comment MENTIONS as imports** (corrected by P1 at seq 40:
+the only real imports are `src/pdf/meta.ts` and `src/vlm/pdf-text.ts`,
+both in the ROOT package — the bun-compiled engine, a different program
+with a different package.json). The trap is worse than the correction:
+Node resolution from `app/electron` walks up and finds the root copy,
+so the import works in dev and through every gate, and the first thing
+to break would be the PACKAGED build — electron-builder ships the
+app's own production dependencies, not the root's — in the mint, on a
+user's machine. **Merge 4 adds pdf-lib to `app/package.json` as a real
+dependency.** Version pins here are EXACT, never caret: npm wrote
+`^1.19.8` for libheif-js where this doc pins 1.19.8, and a caret bump
+arriving on a routine install would silently change whether the
+decoder still applies `irot` — the one measurement the upright rule
+rests on. Fixed to exact in package.json and the lockfile.
+
+Page JPEGs cross IPC one page at a time so no full-book buffer ever
+exists in one heap.
 
 Alternatives considered and refused, for the record: PyMuPDF (the engine's
 rasterizer) is Python-side and would drag an interpreter into a stage that
@@ -350,15 +365,31 @@ existing CSP (`img-src … foundry-file:`) with no CSP edit, while
 and thumbnails NEVER move as IPC bytes for display; only mint page
 JPEGs cross the bridge, one at a time, renderer to main.
 
-**The served layout (ruled from P2's seq 37, option a — P1 may
-overrule from the door's own ground before Merge 2 lands, since the
-door is theirs):** ONE served directory, `capture/working/`, holding
-`<sha>.png` and `<sha>.640.jpg` side by side; the token maps to that
-directory and names are PLAIN BASENAMES — the book host's rule kept
-exactly (no `/`, no `\`, no `..`; an allow-list plus a flat name
-beats a path check that has to stay right forever). Stated
-consequence worth having: `capture/originals/` is NEVER served — the
-bank has no door, so no renderer bug can reach it.
+**The served layout — ruled by P1 from the door's own ground (seq 40),
+option (a) with the directory renamed:**
+
+    capture/originals/<sha>.<ext>   the bank. HEIC. NEVER served, never written
+    capture/derived/<sha>.png       the upright working copy
+    capture/derived/<sha>.640.jpg   the 640 px thumbnail
+    capture/recipe.json             the recipe
+
+`derived/` and never `working/`: `projects.ts:232` already defines
+`working/` as a project's live-PDF directory, so `capture/working/`
+would put one word with two meanings inside one project tree — the
+fifth appearance of the two-things-one-name shape tonight, and the
+first we got to refuse in advance. `derived/` is the honest name: everything in it is reconstructible
+from originals + recipe, so the deletion rule is self-evident —
+`derived/` can be wiped and rebuilt, `originals/` never can.
+`workingCopy` and `thumb` are door names, not paths: plain basenames
+served by `foundry-file://capture/<token>/<name>` out of
+`capture/derived/`, the ONLY directory the capture token reaches,
+with the book host's name rule kept character for character (no `/`,
+no backslash, no `..`). The property that decided it: with one
+directory and flat names **the originals are unaddressable through
+the scheme by construction rather than by refusal** — no string a
+renderer can compose reaches out of `derived/`. The bank is
+somebody's only copy of an afternoon in an archive; it is guarded by
+arithmetic, not by a check that has to stay right forever.
 
 ## Work packages
 
