@@ -87,7 +87,17 @@ import { UiService } from '../../core/ui.service';
 
         <div class="actions">
           <button class="primary" (click)="documents.openViaDialog()">Open a document…</button>
-          <button class="ghost" (click)="ui.openCaptureNew()">Photograph a book…</button>
+          <!--
+            BEHIND THE HOSTED GUARD, like the library below it. Capture makes a
+            project of its own, and a hosted window is one the host owns and
+            catalogues -- so the door that births a Foundry project has no
+            meaning there, and offering it would put a project in a library that
+            is not keeping it. Owen ruled capture Foundry-only; the recents
+            section was already guarded and this button was not.
+          -->
+          @if (!hosted()) {
+            <button class="ghost" (click)="ui.openCaptureNew()">Photograph a book…</button>
+          }
           <button class="ghost" (click)="ui.openOcr()">OCR…</button>
           <button class="ghost" (click)="settings()">Settings</button>
         </div>
