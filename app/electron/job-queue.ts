@@ -148,7 +148,8 @@ import { ensureServer, isLocalVllmEndpoint, noteQueueBusy, noteQueueIdle } from 
 import { REWRITE_LABELS } from '../shared/ledger';
 import { fold } from '../shared/original';
 import type {
-  ConversionKind, EnvInstallRequest, ExportLanding, FoundryJobRow, Job, JobRequest, TranslateRequest,
+  ConversionKind, EnvInstallRequest, ExportLanding, FoundryJobRow, Job, JobKind, JobRequest,
+  TranslateRequest,
 } from '../shared/types';
 
 /**
@@ -437,7 +438,10 @@ export function shelfJobs(): Job[] {
   if (hostQueue() === null) return listJobs();
   const rows: Job[] = [];
   for (const held of hostRowsByProject.values()) rows.push(...held.map(copyOf));
-  return [...rows, ...jobs.filter((job) => job.kind === 'env-install').map(copyOf)];
+  // Every row of ours that never routed, not just the installs: a mint is
+  // minutes long and drawing nothing for it while hosted would leave a person
+  // watching an app that looks idle while it works.
+  return [...rows, ...jobs.filter((job) => NEVER_ROUTED[job.kind]).map(copyOf)];
 }
 
 /**
@@ -470,8 +474,52 @@ export function shelfJobs(): Job[] {
  * An id belonging to no row of ours answers false and routes, which is the
  * ordinary case and the whole of the host's queue.
  */
-function ourEnvInstall(id: string): boolean {
-  return jobs.some((job) => job.id === id && job.kind === 'env-install');
+/**
+ * Which kinds of row NEVER went out through the host, and are therefore ours
+ * to draw and ours to stop.
+ *
+ * ── A TABLE, BECAUSE THE LAST SPELLING OF THIS WAS A LITERAL AND IT AGED ────
+ *
+ * This test used to be `kind === 'env-install'`, written when an install was
+ * the only work this process did on its own. A MINT is the second: it is
+ * rasterized by the renderer under somebody’s hands, it never routes, and the
+ * host has never heard of its id. Three sites asked the old question and all
+ * three were wrong for a mint — two would have forwarded our id into a list
+ * that does not contain it (the work carries on, the button looks broken), and
+ * `shelfJobs` would have drawn no row at all for a minutes-long operation while
+ * hosted, leaving no progress and nothing to press.
+ *
+ * As a `Record<JobKind, …>` the compiler names every kind the day one is added,
+ * which is the same reason the ledger’s per-action tables are tables. A literal
+ * could not, and did not.
+ *
+ * THE QUESTION IS "DID IT ROUTE", NOT "IS IT IN OUR LIST" — the distinction the
+ * old docblock drew and it still holds: our list also holds rows `runJob` mints
+ * for work the HOST scheduled, and a gesture on one of those belongs to the
+ * host. A gesture must go back through the same door the work went out of.
+ */
+const NEVER_ROUTED: Readonly<Record<JobKind, boolean>> = {
+  // Engine work. It routes: the host chose when it ran.
+  epub: false,
+  txt: false,
+  pdf: false,
+  read: false,
+  translate: false,
+  // A precondition of the engine running rather than GPU work (16e).
+  'env-install': true,
+  // Renderer-driven and interactive. It never entered the host’s queue and
+  // never took the serial slot, so nothing over there can stop it or draw it.
+  mint: true,
+};
+
+/**
+ * Is this id one of OUR rows — one that never routed?
+ *
+ * An id belonging to no row of ours answers false and routes, which is the
+ * ordinary case and the whole of the host’s queue.
+ */
+function neverRouted(id: string): boolean {
+  return jobs.some((job) => job.id === id && NEVER_ROUTED[job.kind]);
 }
 
 /**
@@ -899,13 +947,13 @@ export function start(): number {
  * host pushed; there is no row of ours by that name, and searching for one would
  * be this app answering a question about somebody else's list. WITH ONE
  * EXCEPTION AS OF 17c, and it is an exception to the premise rather than to the
- * rule: a hosted shelf now also draws our env installs, so an id off that shelf
- * can be one of ours after all. `ourEnvInstall` is the whole of the test and
- * carries the argument.
+ * rule: a hosted shelf also draws the rows that never routed -- our env
+ * installs, and now our mints -- so an id off that shelf can be one of ours
+ * after all. `neverRouted` is the whole of the test and carries the argument.
  */
 export function remove(id: string): void {
   const host = hostQueue();
-  if (host !== null && !ourEnvInstall(id)) {
+  if (host !== null && !neverRouted(id)) {
     forwardToHost('remove', host.remove === undefined ? undefined : () => { host.remove?.(id); });
     return;
   }
@@ -999,9 +1047,9 @@ export function enqueueEnvInstall(request: EnvInstallRequest, reason?: string): 
  */
 export function cancel(id: string): void {
   const host = hostQueue();
-  // An install is ours however this window is hosted, and its ✕ is reachable in
-  // the hosted shelf now that 17c draws the row — see `ourEnvInstall`.
-  if (host !== null && !ourEnvInstall(id)) {
+  // A row that never routed is ours however this window is hosted, and its ✕ is
+  // reachable in the hosted shelf now that it draws the row — see `neverRouted`.
+  if (host !== null && !neverRouted(id)) {
     forwardToHost('cancel', host.cancel === undefined ? undefined : () => { host.cancel?.(id); });
     return;
   }

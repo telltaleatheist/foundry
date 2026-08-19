@@ -2287,6 +2287,31 @@ export function currentStandard(ledger: ProjectLedger): Partial<Record<StepActio
  * learns the new boundary and the other does not, and the two disagree about
  * where one reading's story ends while both look correct.
  */
+/**
+ * Is the position an ARRIVAL — a row the project began at, rather than
+ * something made out of an earlier row?
+ *
+ * ── ONE TABLE, TWO VOCABULARIES, AND DELIBERATELY NOT A SECOND TABLE ────────
+ *
+ * `BOUNDS_THE_WALK` below answers this in the walker s words: a walk up a chain
+ * stops at a row that was not made from anything. `stages.ts` asks the same
+ * question in the reader s words — is there a book at this position, or is this
+ * where the project came in? — and a step bounds the walk exactly when it is an
+ * arrival. Same fact, so it reads the same table; a second table with the same
+ * two `true`s in it would be a second answer waiting to disagree the day a
+ * third arrival kind appears.
+ *
+ * ── NULL IS NOT AN ARRIVAL, WHICH KEEPS AN EXISTING PROMISE ─────────────────
+ *
+ * `stages.ts` documents that a step this window has not read yet answers TRUE to
+ * "is there a book here", deliberately, so that a project does not have every
+ * act greyed for the first moment it is on screen. Answering `false` here is
+ * what preserves that: the caller negates this, and null must not become "you
+ * are standing on an arrival".
+ */
+export function standsOnAnArrival(step: LedgerStep | null): boolean {
+  return step !== null && BOUNDS_THE_WALK[step.action];
+}
 const BOUNDS_THE_WALK: Readonly<Record<StepAction, boolean>> = {
   import: true,
   /*
