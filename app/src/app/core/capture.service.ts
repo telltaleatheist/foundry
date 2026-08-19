@@ -72,10 +72,24 @@ export class CaptureService {
    * before anybody subscribed would push into nothing, and there is no second
    * chance at a progress event.
    *
-   * SET BEFORE THE INVOKE AND CLEARED IN A FINALLY. Main's first push does not
-   * arrive until the first photograph is in hand, which on this shoot is over a
-   * second — so waiting for it would leave the window frozen with nothing on
-   * screen, which is the exact complaint the card exists to answer.
+   * THE CARD LIVES FOR THE INVOKE, NOT FOR THE PUSHES: set before the call and
+   * cleared in a finally, so its lifetime is exactly the work it describes.
+   *
+   * IT IS NOT COUPLED TO THE CHANNEL, and that is the whole reason. If a push
+   * never arrives — main throws before the loop, the listener misses its
+   * registration, the broadcast goes to a window that has been replaced — a card
+   * that waited for one would wait forever, and the person is back to a frozen
+   * window with nothing on it, which is the exact complaint it exists to answer.
+   * Shown on the invoke it cannot fail to appear, whatever the other end does;
+   * cleared in the finally it cannot outlive the work. The pushes only decorate
+   * a card that was already going to be there.
+   *
+   * (An earlier version of this paragraph justified the same decision by saying
+   * the first push does not arrive until a photograph is decoded, "over a second
+   * on this shoot". P1 measured it at 110 ms — the emit is BEFORE the work, not
+   * after it, which is the same decision that makes the payload name the
+   * photograph in hand. A correct choice defended by a false claim is the shape
+   * this project keeps refusing, so the claim is gone rather than softened.)
    */
   private readonly run = signal<CaptureIntakeProgress | null>(null);
   readonly intakeProgress = this.run.asReadonly();
