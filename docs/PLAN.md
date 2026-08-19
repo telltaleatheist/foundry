@@ -29,8 +29,10 @@ same commit that lands it.
 ## 1. The rules of engagement (unchanged all week)
 
 - **Agents never commit.** The lead verifies and commits; the lead pushes.
-- **Five gates before any report, every unit**: `bun test` (396 pass at
-  `da96196`); root `bunx tsc --noEmit`; from `app/`:
+- **Five gates before any report, every unit**: `bun test` (the gate is
+  ZERO FAIL, not a pinned count — a stale "396 pass" sat here while the
+  suite measured 384, and a number nobody re-measures is not a gate);
+  root `bunx tsc --noEmit`; from `app/`:
   `bunx tsc -p tsconfig.electron.json --noEmit`,
   `bunx tsc -p tsconfig.app.json --noEmit`, `bunx ng build` (the
   550.51 kB against a 500 kB budget WARNING is pre-existing; an ERROR is

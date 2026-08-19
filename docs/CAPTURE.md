@@ -160,7 +160,10 @@ photos is kilobytes of JSON):
     {
       "id": "9f2c…",
       "file": "originals/9f2c….jpg",
+      "width": 3024,
+      "height": 4032,
       "takenAt": "2026-08-17T14:03:22Z",
+      "takenAtSource": "exif-offset",
       "split": { "x": 0.51 },
       "pages": [
         { "id": "9f2c…:0", "quad": [[0.034,0.029],[0.487,0.040],[0.483,0.958],[0.028,0.947]], "struck": false },
@@ -176,6 +179,12 @@ photos is kilobytes of JSON):
 Conventions, pinned:
 
 - `id` is the sha of the original bytes. `pages[].id` is `<photoId>:<n>`.
+- `width`/`height` are the DECODED working-copy dimensions, stored so
+  the 2% aspect rule is answerable without decoding anything — and
+  because EXIF's dimensions are the other grid and must never be the
+  ones stored. `takenAtSource` (`exif-offset` | `exif-local` | `mtime`)
+  is the item-3 provenance record. `split` is `{x} | null` — null for
+  an unsplit photo; the sample shows the split case.
 - **Every coordinate in the recipe is a NORMALIZED FRACTION (0..1) of
   the WORKING COPY's grid** — quads and `split.x` (fraction of width)
   alike. One unit for the whole file. Ruled 2026-08-19 after P1
@@ -287,17 +296,24 @@ mirror. P3 audits that seam.
 
 ## The IPC surface — the contract, pinned
 
-Handles (all `capture:` prefixed; P3 regenerates `docs/IPC-CHANNELS.md`):
+Handles (all `capture:` prefixed; P3 regenerates `docs/IPC-CHANNELS.md`).
+Two spellings were corrected from Merge 1 rather than ruled in advance,
+both accepted: **`projectDir`, not `projectId`** — this codebase
+addresses a project by its directory and has no id concept, and a
+second name for an existing thing is the defect shape this feature
+keeps finding; and **`void`, not `{ok}`** — an `{ok: true}` that can
+never be false is a field with no reader, and a rejected promise
+already carries the failure:
 
 | Channel | Direction | Signature |
 | --- | --- | --- |
-| `capture:intake` | invoke | `{projectId, paths: string[]}` → `{recipe, token}` — copy, hash, EXIF-read, decode + working copy + thumb, append photos, inherit prior photo's settings; token because intake is the other moment a project first has pixels to show |
-| `capture:recipe-load` | invoke | `{projectId}` → `{recipe, token}` — the token mints the door's allow-list entry for this project (the `book:load` pattern) |
-| `capture:recipe-save` | invoke | `{projectId, recipe}` → `{ok}` — whole document; renderer debounces |
-| `capture:mint-begin` | invoke | `{projectId}` → `{mintId, pages: [{pageId, workingCopy, quadPx, sourceWidth, sourceHeight, outWidth, outHeight}]}` — **main computes the final list; the renderer renders exactly that list.** `quadPx` is WORKING-COPY PIXELS, denormalized ONCE by main (the recipe stays fractions; the unit is in the name so no reader has to remember which side of the bridge they are on). `workingCopy` is the door NAME for `foundry-file://capture/<token>/<name>`, never a filesystem path. `sourceWidth`/`sourceHeight` let the renderer assert its decoded bitmap matches what main measured rather than trusting it |
-| `capture:mint-page` | invoke | `{mintId, index, jpeg: ArrayBuffer}` → `{ok}` |
+| `capture:intake` | invoke | `{projectDir, paths: string[]}` → `{recipe, token}` — copy, hash, EXIF-read, decode + working copy + thumb, append photos, inherit prior photo's settings; token because intake is the other moment a project first has pixels to show |
+| `capture:recipe-load` | invoke | `{projectDir}` → `{recipe, token}` — the token mints the door's allow-list entry for this project (the `book:load` pattern) |
+| `capture:recipe-save` | invoke | `{projectDir, recipe}` → `void` — whole document; renderer debounces |
+| `capture:mint-begin` | invoke | `{projectDir}` → `{mintId, pages: [{pageId, workingCopy, quadPx, sourceWidth, sourceHeight, outWidth, outHeight}]}` — **main computes the final list; the renderer renders exactly that list.** `quadPx` is WORKING-COPY PIXELS, denormalized ONCE by main (the recipe stays fractions; the unit is in the name so no reader has to remember which side of the bridge they are on). `workingCopy` is the door NAME for `foundry-file://capture/<token>/<name>`, never a filesystem path. `sourceWidth`/`sourceHeight` let the renderer assert its decoded bitmap matches what main measured rather than trusting it |
+| `capture:mint-page` | invoke | `{mintId, index, jpeg: ArrayBuffer}` → `void` |
 | `capture:mint-commit` | invoke | `{mintId}` → `{step}` — writes the PDF, appends the minted step |
-| `capture:mint-abort` | invoke | `{mintId}` → `{ok}` |
+| `capture:mint-abort` | invoke | `{mintId}` → `void` |
 
 **The door, answered (checkpoint 2 — both packages located it
 independently):** the `foundry-file:` scheme in `app/electron/mount.ts`
@@ -403,4 +419,7 @@ The five, as always, run by the lead before any commit: `bun test` (384),
 root `bunx tsc --noEmit`, from `app/`: `tsc -p tsconfig.electron.json`,
 `tsc -p tsconfig.app.json`, `ng build` — never `app/tsconfig.json` — plus
 the raw-control-byte scan. Agents never commit; the lead verifies, commits,
-and pushes.
+and pushes. **`bunx`, never `npx`**: at this repo's root, `npx tsc`
+fetches a joke package that prints "This is not the tsc command you are
+looking for" and EXITS 0 — the vacuous gate in its purest form,
+measured the hard way during Merge 1.
