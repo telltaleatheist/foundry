@@ -163,7 +163,21 @@ import { Rectifier } from './rectify';
           <button type="button" (click)="applySplitToAll()" [disabled]="quads().length < 2">
             Apply split to all
           </button>
-          <button type="button" (click)="applyToAll.emit({ kind: 'quad' })">Apply crop to all</button>
+          <!--
+            OWEN'S "GLOBAL". He asked to "set the global position of the rect"
+            and then change it per page, which is what this act plus a later
+            drag already were: this stamps the crop onto every photograph of the
+            same shape, and dragging one afterwards overrides that one. The word
+            on the button is his rather than the codebase's, because a person
+            looking for a global should find one.
+
+            It is a NAME rather than a schema layer -- the recipe still has one
+            kind of quad, and a page that is dragged afterwards does not keep
+            following later globals. That deferral is in the ledger by name.
+          -->
+          <button class="wide" type="button" (click)="applyToAll.emit({ kind: 'quad' })">
+            Set this crop for all pages
+          </button>
         </div>
       </div>
 
@@ -249,6 +263,9 @@ import { Rectifier } from './rectify';
     .handle.held { background: var(--accent, #4c9aff); }
 
     .gestures { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+    /* The global act reads as the act it is rather than as a fourth small
+       control: it changes every page, and the three beside it change one. */
+    .gestures .wide { flex-basis: 100%; }
     .gestures button {
       padding: 4px 10px;
       border: 1px solid var(--border-default);

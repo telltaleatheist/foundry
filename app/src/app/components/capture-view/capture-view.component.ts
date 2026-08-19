@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  HostListener,
   computed,
   effect,
   inject,
@@ -74,8 +75,26 @@ import { CaptureGridComponent } from '../capture-grid/capture-grid.component';
       } @else if (opened(); as photo) {
         <header class="bar">
           <button class="quiet" type="button" (click)="open.set(null)">← All photographs</button>
-          <span class="which">{{ photo.label }}</span>
           <span class="grow"></span>
+          <!--
+            PREV/NEXT WALKS PHOTOGRAPHS, NOT PAGES, and the readout says both
+            numbers so neither is a lie. See the walk computed for why.
+          -->
+          <button
+            class="quiet"
+            type="button"
+            [disabled]="walkIndex() <= 0"
+            title="Previous photograph (left arrow)"
+            (click)="step(-1)"
+          >‹</button>
+          <span class="which">{{ photo.label }}</span>
+          <button
+            class="quiet"
+            type="button"
+            [disabled]="walkIndex() >= walk().length - 1"
+            title="Next photograph (right arrow)"
+            (click)="step(1)"
+          >›</button>
         </header>
         <app-capture-page-editor
           [source]="captures.url(photo.workingCopy)"
@@ -199,6 +218,54 @@ export class CaptureViewComponent {
   /** The photograph on the editor, by photo id, or null for the whole table. */
   protected readonly open = signal<string | null>(null);
 
+  /**
+   * THE PHOTOGRAPHS IN THE ARRANGEMENT'S OWN SEQUENCE, for prev/next.
+   *
+   * ── It walks PHOTOGRAPHS and the readout says PAGES ─────────────────────────
+   *
+   * Owen asked to "go from one page to the next", and the honest mapping is not
+   * one to one: the editor edits a PHOTOGRAPH, and after a split one photograph
+   * carries two pages. Walking the order page by page would show the same
+   * picture twice in a row and call it two different numbers, which is worse
+   * than either count on its own.
+   *
+   * So the step is a photograph and the label carries both facts -- "Photograph
+   * 5 of 27, pages 9-10 of 54". The page numbers are what he will count in the
+   * finished book; the photograph number is what is on the screen in front of
+   * him. Neither number has to be inferred from the other.
+   *
+   * ── In the ORDER, not in `photos` ──────────────────────────────────────────
+   *
+   * The order is the arrangement, and the arrangement is what the grid draws and
+   * the mint walks. Stepping through `recipe.photos` would be intake sequence,
+   * which after any drag is a different book. First appearance decides a
+   * photograph's place, so a split whose halves have been dragged apart still
+   * has one position rather than two.
+   *
+   * ── STRUCK PAGES ARE INCLUDED, DELIBERATELY ────────────────────────────────
+   *
+   * A photograph whose pages are all struck stays in the walk. Skipping it would
+   * make it unreachable from the editor -- which is exactly where somebody would
+   * go to check whether they struck the right one, or to look at it before
+   * putting it back. It is the grid that shows a strike; the editor should not
+   * be the surface that hides it.
+   */
+  protected readonly walk = computed(() => {
+    const recipe = this.captures.recipe();
+    if (recipe === null) return [];
+    const seen: string[] = [];
+    for (const pageId of recipe.order) {
+      const photo = recipe.photos.find((one) => one.pages.some((page) => page.id === pageId));
+      if (photo !== undefined && !seen.includes(photo.id)) seen.push(photo.id);
+    }
+    return seen;
+  });
+
+  protected readonly walkIndex = computed(() => {
+    const id = this.open();
+    return id === null ? -1 : this.walk().indexOf(id);
+  });
+
   constructor() {
     effect(() => {
       const directory = this.tab().path;
@@ -223,10 +290,23 @@ export class CaptureViewComponent {
     if (id === null || recipe === null) return null;
     const photo = recipe.photos.find((one) => one.id === id);
     if (photo === undefined) return null;
-    const at = recipe.photos.indexOf(photo);
+    const at = this.walk().indexOf(photo.id);
+    // Where this photograph's pages fall in the finished book. Struck pages are
+    // left out of the count because they are left out of the book, so these are
+    // the numbers that will be printed on it.
+    const kept = recipe.order.filter((id) => {
+      const owner = recipe.photos.find((one) => one.pages.some((page) => page.id === id));
+      return owner?.pages.find((page) => page.id === id)?.struck === false;
+    });
+    const mine = photo.pages.filter((page) => !page.struck).map((page) => kept.indexOf(page.id) + 1);
+    const pages = mine.length === 0
+      ? 'struck'
+      : mine.length === 1
+        ? `page ${mine[0]} of ${kept.length}`
+        : `pages ${mine[0]}-${mine[mine.length - 1]} of ${kept.length}`;
     return {
       id: photo.id,
-      label: `Photograph ${at + 1} of ${recipe.photos.length}`,
+      label: `Photograph ${at + 1} of ${this.walk().length} · ${pages}`,
       workingCopy: photo.workingCopy,
       dimensions: { width: photo.width, height: photo.height },
       quads: photo.pages.map((page) => page.quad) as readonly FractionQuad[],
@@ -246,6 +326,42 @@ export class CaptureViewComponent {
     }
     return count;
   });
+
+  /**
+   * One photograph along the arrangement, clamped at both ends.
+   *
+   * Clamped rather than wrapping: fifty-four crops is a long sitting, and an
+   * arrow that silently returns to the first photograph after the last would
+   * make somebody redo work they had already done without noticing they had
+   * gone round.
+   */
+  protected step(by: number): void {
+    const order = this.walk();
+    const at = this.walkIndex();
+    if (at < 0) return;
+    const next = order[Math.min(order.length - 1, Math.max(0, at + by))];
+    if (next !== undefined) this.open.set(next);
+  }
+
+  /**
+   * ARROW KEYS, because he is about to do this fifty-four times.
+   *
+   * Ignored while a field or a dialog has the focus: the left arrow inside the
+   * new-project name box has to move the caret, and a shortcut that eats a
+   * keystroke somebody was typing is worse than no shortcut.
+   */
+  @HostListener('window:keydown', ['$event'])
+  protected onKey(event: KeyboardEvent): void {
+    if (this.open() === null) return;
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    const target = event.target;
+    if (target instanceof HTMLElement) {
+      const tag = target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return;
+    }
+    event.preventDefault();
+    this.step(event.key === 'ArrowLeft' ? -1 : 1);
+  }
 
   /** A card was clicked: the editor opens on the PHOTOGRAPH that page is on. */
   protected openPage(pageId: string): void {
