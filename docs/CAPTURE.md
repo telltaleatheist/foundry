@@ -165,7 +165,15 @@ Conventions, pinned:
 
 ## Where the work runs — and why
 
-**The renderer does the raster work.** Decode via `createImageBitmap`,
+**Intake (main) decodes HEIC once, into a JPEG working copy beside the
+original** — Chromium cannot decode HEIC, so `createImageBitmap` never
+sees one. The working copy is pixel-identical in dimensions, so recipe
+quads in original-image coordinates apply to both without translation.
+The original bytes stay the bank; the working copy is derivable and
+disposable.
+
+**The renderer does the raster work.** Decode via `createImageBitmap`
+(of the working copy),
 projective rectification in WebGL, JPEG encode via `canvas.toBlob` at
 quality ~0.9. All three are native-speed browser primitives; the editor
 needs the identical transform for its live preview anyway, so the mint and
@@ -210,8 +218,10 @@ second mechanism.
 ## Work packages
 
 **P1 — intake and mint (electron side).** `app/electron/capture.ts` (new):
-originals copy-in with hashing, EXIF `DateTimeOriginal` (in-house APP1
-parser for JPEG; HEIC rides the checkpoint below), recipe read/write, the
+originals copy-in with hashing, the HEIC decode to working copies, EXIF
+`DateTimeOriginal` (the `Exif` payload sits in the HEIC meta box and a
+bounded scan finds it — measured on the real files; a proper box walk
+is the implementer's call), recipe read/write, the
 mint session (`mint-begin`/`page`/`commit`/`abort`), PDF assembly with
 pdf-lib, the minted step appended to the ledger, job-queue row with
 progress and cancel. Registers the `capture:` handles in `ipc.ts`.
@@ -234,10 +244,14 @@ edits this document first and says so on the channel.
 
 ## Checkpoints before P1/P2 start
 
-1. **One real photo from the shoot.** HEIC or JPEG? EXIF present? If HEIC:
-   wasm libheif at intake (pure wasm, vendoring-safe, no native build). If
-   JPEG: intake stores as-is and the HEIC path is a clear refusal until
-   built. Do not build the decoder before seeing the file.
+1. **SETTLED 2026-08-19, measured against the real shoot** (27 files,
+   `E:/index images july`, the first acceptance case): **all 27 are HEIC**
+   (`ftypheic`), ~1.5 MiB each, EXIF capture times present and sequential
+   (`2026:08:18 17:55:01`, `:08` — seconds apart, the sort's exact case).
+   So HEIC decode is v1 scope: **wasm libheif at intake** (pure wasm,
+   vendoring-safe, no native build) — one new dependency, recorded here
+   because dependencies are contract. The folder name carries spaces;
+   let that stay a test, not a surprise.
 2. **The image-serving door** for originals (P1 finds, names it here).
 3. **The `stages.ts` audit list** (P3 walks every predicate, writes the
    verdict here).
