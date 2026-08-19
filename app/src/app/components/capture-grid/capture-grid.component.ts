@@ -73,8 +73,13 @@ const PAGE_MIME = 'application/x-foundry-capture-page';
   template: `
     <div class="column">
     <header>
-      <span class="count">{{ cards().length }} pages</span>
-      <button type="button" (click)="reverse.emit()" [disabled]="arranged()">
+      <span class="count">{{ cards().length }} {{ cards().length === 1 ? 'page' : 'pages' }}</span>
+      <!--
+        Disabled on an empty table as well as an arranged one. Reversing nothing
+        is a control that does nothing, which this component has already decided
+        once (the note below) reads as a broken app rather than as a no-op.
+      -->
+      <button type="button" (click)="reverse.emit()" [disabled]="arranged() || cards().length === 0">
         {{ descending() ? 'Oldest first' : 'Newest first' }}
       </button>
       @if (arranged()) {
