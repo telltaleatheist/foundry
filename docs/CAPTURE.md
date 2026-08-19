@@ -95,7 +95,20 @@ catches the docblock at ledger.ts:414 (the only step whose parent is
 null — already stale since captureStep). The REST of the audit
 (canRunHostActFrom against an unminted capture, Wave 15's Narrate
 gating, Wave 16's queue seam) is UNRUN and stays in the Merge 5 pool;
-nothing here vouches for it. Wave 15's Narrate gating and Wave 16's queue seam are the two
+nothing here vouches for it. **The COMPLEMENT audit is also run and
+clean (P2, seq 52): twenty-one sites read `parent === null` as this-is-
+the-import; the four structurally load-bearing ones (parseLedger root,
+appendStep, deleteSubtree, originOf) all go the right way**, and
+deleteSubtree supplies the strongest reason neither audit started with:
+it REFUSES TO DELETE A ROOT, so `import` + `parent: null` would have
+made minted pages UNDISCARDABLE and the discard sentence unreachable
+text. One visible change, owned by P2 and ruled more-accurate-not-less:
+a reading hung off a MINTED pdf shows the mint step's label on its
+lineage line rather than the project title. One wording item recorded
+so it is not re-found: parseLedger's refusal (a project begins with the
+file that was imported) and appendStep's (every step after the import)
+are both stale of a capture project — reachable only through a
+programming error, not worth a merge, known. Wave 15's Narrate gating and Wave 16's queue seam are the two
 places most likely to notice; neither may regress. Until a PDF is minted,
 nothing downstream is offered — no read, no narrate, no export. P1
 measured the structural half already: `reading.needed` keys off
@@ -512,6 +525,20 @@ edits this document first and says so on the channel.
    lives in the working-copy section above. Scope honestly stated:
    two files probed, dimensions only — colour, chroma and alpha are
    Merge 3 acceptance concerns.
+5. **The acceptance harness EXISTS and is itself tested (P2, seq 52)**:
+   nine checks (C0—C8) over recipe, derived files and PDF — from
+   outputSizeFor sha-pinned drift detection through order/pages cross-
+   agreement to C8, which diffs each minted page against its own source
+   AND two decoy neighbours and passes only on a clear-margin win
+   (measured: correct pages win at 0.11—0.20, a swapped pair loses at
+   5.5, line at 0.6). A fixture generator injects twelve specific
+   defects; the self-test proves each is caught BY THE CHECK THAT
+   CLAIMS IT, and that a correct project passes clean. Scratch tooling,
+   not a committed test (the no-unasked-tests rule); it takes a project
+   directory and a PDF and nothing else, so it runs unchanged against
+   the real 27 the day the mint lands. Limits stated: drawn axis-
+   aligned fixtures, no HEIC through it, PDF assembled by a stand-in
+   — where the stand-in and the mint disagree, the mint is right.
 
 ## Deferred out loud
 
