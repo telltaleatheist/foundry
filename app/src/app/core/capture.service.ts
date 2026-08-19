@@ -8,9 +8,9 @@ import type {
   CaptureRecipe,
 } from '@shared/types';
 
-import { sameShape } from '@shared/capture';
+import { halvesOf, joinedQuad, sameShape, splitFromFraction, WHOLE_FRAME } from '@shared/capture';
 
-import { joined, rotate, splitAt } from '../components/capture-editor/geometry';
+import { rotate } from '../components/capture-editor/geometry';
 import type { CaptureCard } from '../components/capture-grid/capture-grid.component';
 import { api } from './foundry';
 import { NoticeService } from './notice.service';
@@ -408,16 +408,22 @@ export class CaptureService {
          * from it: after the first drag `pages[0]` is the left half, and
          * re-splitting that would halve the page again on every adjustment.
          */
-        const whole = joined(photo.pages.map((page) => page.quad));
-        const [left, right] = splitAt(whole, at);
+        const whole = joinedQuad(photo.pages.map((page) => page.quad), photo.split);
+        const split = splitFromFraction(whole, at);
+        const halves = halvesOf(whole, split);
+        // Unreachable for a segment built from a fraction — both ends are put
+        // on opposite edges by construction — and returning the photograph
+        // untouched is the only answer that cannot destroy a page.
+        if (halves === null) return photo;
+        const [first, second] = halves;
         return {
           ...photo,
-          split: { x: at },
+          split,
           pages: [
             // Strikes survive a re-drag: which half is a page is a decision
             // about the book, and moving the gutter is not taking it back.
-            { id: `${photo.id}:0`, quad: left, struck: photo.pages[0]?.struck ?? false },
-            { id: `${photo.id}:1`, quad: right, struck: photo.pages[1]?.struck ?? false },
+            { id: `${photo.id}:0`, quad: first, struck: photo.pages[0]?.struck ?? false },
+            { id: `${photo.id}:1`, quad: second, struck: photo.pages[1]?.struck ?? false },
           ],
         };
       });
@@ -517,13 +523,20 @@ export class CaptureService {
               return photo;
             }
             applied += 1;
-            const [left, right] = splitAt(photo.pages[0]?.quad ?? WHOLE, gesture.at);
+            // `pages[0]` and not the joined sheet, because this arm has just
+            // refused every photograph that is already split: the one page is
+            // the whole page.
+            const sheet = photo.pages[0]?.quad ?? WHOLE_FRAME;
+            const split = splitFromFraction(sheet, gesture.at);
+            const halves = halvesOf(sheet, split);
+            if (halves === null) return photo;
+            const [first, second] = halves;
             return {
               ...photo,
-              split: { x: gesture.at },
+              split,
               pages: [
-                { id: `${photo.id}:0`, quad: left, struck: photo.pages[0]?.struck ?? false },
-                { id: `${photo.id}:1`, quad: right, struck: false },
+                { id: `${photo.id}:0`, quad: first, struck: photo.pages[0]?.struck ?? false },
+                { id: `${photo.id}:1`, quad: second, struck: false },
               ],
             };
           }

@@ -10,7 +10,7 @@ import {
   signal,
 } from '@angular/core';
 
-import { mintedPageIds } from '@shared/capture';
+import { cutOf, joinedQuad, mintedPageIds } from '@shared/capture';
 import type { CaptureQuad } from '@shared/types';
 
 import { CaptureMintService } from '../../core/capture-mint.service';
@@ -328,7 +328,16 @@ export class CaptureViewComponent {
       workingCopy: photo.workingCopy,
       dimensions: { width: photo.width, height: photo.height },
       quads: photo.pages.map((page) => page.quad) as readonly FractionQuad[],
-      split: photo.split?.x ?? null,
+      /*
+       * THE EDITOR STILL TAKES A FRACTION, so the segment is measured back
+       * into one here: how far along its edge the first end sits. For every
+       * split this app can currently make — all of them cut from the top edge
+       * to the bottom — that is the number that used to be stored, to the
+       * digit. The staged editor takes the segment itself and this seam goes.
+       */
+      split: photo.split === null
+        ? null
+        : cutOf(joinedQuad(photo.pages.map((page) => page.quad), photo.split), photo.split)?.a.at ?? null,
     };
   });
 
