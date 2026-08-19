@@ -202,9 +202,17 @@ Conventions, pinned:
 - `split` is kept for the editor's line handle (re-dragging re-derives the
   two quads); the quads are authoritative for the mint.
 - `order` lists every page id, struck included; the mint filters strikes.
-- Output page size = the quad's opposite-edge maxima; MediaBox at a nominal
-  300 dpi. The read renders at 200 dpi under a 2 MP budget downstream, so
-  nominal is fine.
+- **Output page size has ONE implementation**: `outputSizeFor(quadPx)`
+  in `app/shared/` (P1 ground, added in Merge 1; the editor's preview
+  and main's `mint-begin` both import it). The formula is pinned here
+  because the two-bodies version already existed for a morning:
+  `width = max(hypot(TL,TR), hypot(BL,BR))`,
+  `height = max(hypot(TL,BL), hypot(TR,BR))`, Euclidean on WORKING-COPY
+  PIXELS, then `Math.round`, then clamped to a minimum of 1. Rounding is
+  part of the contract: round-vs-floor is a one-pixel disagreement per
+  page that no typecheck catches. MediaBox at a nominal 300 dpi; the
+  read renders at 200 dpi under a 2 MP budget downstream, so nominal is
+  fine.
 
 ## Where the work runs — and why
 
