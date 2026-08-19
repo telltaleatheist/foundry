@@ -1010,8 +1010,20 @@ Built (P2 seq 136, ruled in by foundry-pc-2):
   every right-hand page fell to the sweep at the end -- four
   photographs split in one act gave A:0 B:0 C:0 D:0 A:1 B:1 C:1 D:1,
   a whole book of versos then a whole book of rectos, visible in the
-  minted PDF and nowhere before it. It survived because nothing had
-  ever split a real shoot. Fixed on the branch by the NARROWER rule:
+  minted PDF and nowhere before it. The everyday case is quieter
+  (P1, confirmed against the shipped body): split ONE spread of
+  twenty-five and its recto lands after all twenty-five -- one page
+  adrift in an otherwise perfect book, the first gesture anyone
+  would actually make. It survived because nothing had ever split a
+  real shoot. Main is otherwise CLEAN of the class (P1 checked: the
+  three other order writers -- intake append, removal filter,
+  mintBegin walk -- none infers a new page). And the validator
+  passes the bug AND SHOULD: it guarantees the SET (every page
+  listed once), never the SEQUENCE -- the arrangement is the
+  person's, and the only rule strong enough to catch this would
+  refuse the deliberate drag-apart the fix preserves. The order is
+  the one part of the recipe no validator can defend; only cases
+  against the real function body reach it. Fixed on the branch by the NARROWER rule:
   a page the arrangement already names keeps its own slot; only a
   page it has never heard of is folded in beside its sibling --
   narrower because somebody who dragged the halves of a spread apart
@@ -1039,14 +1051,22 @@ Built (P2 seq 136, ruled in by foundry-pc-2):
   EXIST, carrying the count ("including the 3 set by hand") -- a
   permanently present tick box about a condition that usually does
   not hold is a control people learn to stop reading.
-- OPEN REGRESSION, SAID OUT LOUD AND ASSIGNED (P2, next): the old
-  split clamped the gutter 2% off either end; seatSplit deliberately
-  has no floor yet, so A SLIVER PAGE IS CURRENTLY DRAGGABLE (it
-  mints, and the preview shows it -- visible, not silent). The floor
-  must express "leave a page on each side" for a cut that LEANS,
-  which a one-end-at-a-time clamp cannot; P2 builds it properly
-  rather than approximating. Wanted before Owen's hands land on the
-  modal.
+- THE SLIVER FLOOR, RULED AND ASSIGNED (P1 the chord, P2 the
+  gesture): the honest measure is not the endpoint, it is THE AREA
+  OF EACH HALF -- measured through the shipped chord, a half's area
+  is EXACTLY AFFINE in the dragged seat, so "neither half below X%
+  of the sheet" is a closed-form solve inside seatSplit, no search,
+  no tolerance, the lean already in the arithmetic. The same
+  measurement shows why the old 2%-off-the-end clamp was the wrong
+  rule all along: at a corner, a leaning cut's smaller half is still
+  14.7% of the sheet -- the corner is not the sliver and the sliver
+  is not at the corner (the {x} disease again: a rule only right for
+  cuts parallel to the sides). FLOOR = 5% OF THE SHEET PER HALF, a
+  named constant beside the chord -- a product default, Owen moves
+  it by asking; the smallest real half anyone splits (an asymmetric
+  spread) sits far above it, and 5% of a sheet is a caption, not a
+  page. seatSplit clamps, so the surface still cannot express a
+  state anything downstream refuses.
 - NO HAND HAS TOUCHED ANY OF IT: four gates, nine order cases, and
   the chord numbers underneath -- and the modal has never been
   opened by a person. First act when the gate lifts: open the modal
