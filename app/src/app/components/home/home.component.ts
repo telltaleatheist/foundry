@@ -123,7 +123,7 @@ import { UiService } from '../../core/ui.service';
                 <button
                   class="row"
                   [title]="rowTitle(project)"
-                  [disabled]="project.problem === null && projects.originalOf(project) === null"
+                  [disabled]="deadRow(project)"
                   (click)="openProject(project)"
                 >
                   <span class="kind">{{ glyph(project) }}</span>
@@ -145,7 +145,15 @@ import { UiService } from '../../core/ui.service';
                       and a click that did nothing would be indistinguishable
                       from a dead app.
                     -->
-                    @if (projects.originalOf(project) === null) {
+                    @if (project.capture && projects.originalOf(project) === null) {
+                      <!--
+                        A capture project between New Project and its first mint
+                        holds no documents at all, and that is its healthy state
+                        for as long as somebody is photographing a book.
+                      -->
+                      <span class="tag" title="Photographs waiting to be minted into pages">photographs</span>
+                    }
+                    @if (!project.capture && projects.originalOf(project) === null) {
                       <span class="tag gone" title="Every document this project listed is missing from the disk">nothing to open</span>
                     }
                   }
@@ -416,9 +424,43 @@ export class HomeComponent {
    * and a catalogue that will not parse never gets here — `originalOf` returns
    * null for both, and the row says which it is.
    */
+  /**
+   * A row nobody can open, which a capture project is NOT.
+   *
+   * The old test was "the catalogue parses and there is no original", which was
+   * exactly right until a project could exist with no documents on purpose.
+   * Owen closed Foundry, reopened it, and found the project he had spent the
+   * evening photographing greyed out and tagged "nothing to open" -- both false,
+   * and the second one insulting: everything was there.
+   *
+   * `project.capture` is asked rather than inferred from the empty document
+   * list, because an empty list is ALSO what a project whose files have gone
+   * missing looks like, and that is the case the tag was written for. This is
+   * the field I asked for at seq 54 and then did not wire when it landed.
+   */
+  protected deadRow(project: ProjectSummary): boolean {
+    if (project.problem !== null) return false;
+    if (project.capture) return false;
+    return this.projects.originalOf(project) === null;
+  }
+
   protected openProject(project: ProjectSummary): void {
     const original = this.projects.originalOf(project);
-    if (original === null) return;
+    /*
+     * A CAPTURE PROJECT WITH NOTHING MINTED YET OPENS ITS LIGHT TABLE. There is
+     * no document to stand on, and the surface the person was working on is the
+     * table -- so the row goes back to where they left off rather than refusing.
+     *
+     * Once it HAS been minted it has an original like any other project and
+     * opens through the ordinary door, which lands on its position: the ledger
+     * decides whether that is the book or the photographs, and this row does not
+     * need a second opinion about it.
+     */
+    if (original === null) {
+      if (!project.capture) return;
+      this.documents.show(this.documents.captureTabIn(project.dir));
+      return;
+    }
     /*
      * THE PROJECT DOOR AND NOT THE FILE DOOR: the row is a book, and opening a
      * book means landing where its position stands — the proof sheet, for any
@@ -439,6 +481,10 @@ export class HomeComponent {
   protected glyph(project: ProjectSummary): string {
     if (project.problem !== null) return '⚠';
     const original = this.projects.originalOf(project);
+    // Photographs before they are pages. A capture project has no original to
+    // take a glyph from, and the empty-project glyph beside it means the
+    // opposite thing -- that everything is gone.
+    if (project.capture && original === null) return '▣';
     if (original === null) return '⌸';
     return original.kind === 'epub' ? '▤' : '▦';
   }
@@ -447,7 +493,13 @@ export class HomeComponent {
   protected rowTitle(project: ProjectSummary): string {
     if (project.problem !== null) return project.problem;
     const original = this.projects.originalOf(project);
-    if (original === null) return `${project.dir}\nNothing in this project is still on the disk.`;
+    // The same lie the row told, in the tooltip. A capture project with no
+    // original has everything it is supposed to have.
+    if (original === null) {
+      return project.capture
+        ? `Open the light table\n${project.dir}`
+        : `${project.dir}\nNothing in this project is still on the disk.`;
+    }
     return `Open ${original.label}\n${project.dir}`;
   }
 
