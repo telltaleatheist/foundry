@@ -1260,6 +1260,107 @@ hosted work; standalone Foundry still wants it, as its own later wave,
 because building a store here now is building one we are about to stop
 using for the hosted case.
 
+### Wave 17 — three defects from Owen's live run (2026-08-19, via the switchboard) — LANDED (this commit)
+
+All three surfaced while Owen used the hosted window for real, and all
+three were diagnosed jointly on the channel. Fences are disjoint.
+
+- **17a — TWO REFLOWS CAN RUN AT ONCE, AND THEY DELETE EACH OTHER'S
+  FIGURES.** `writeBookFile` has two unserialised callers for one target
+  path: `job-queue.ts` (`remakeBookFile`, when a read lands) and
+  `book.ts` (`ensureReadingBook`, when a book is opened, guarded only by
+  a check-then-act `exists`). Owen hit it: the queue's reflow was cutting
+  crops into `readings/<key>.images/` when the window asked for the book,
+  the second engine cleared that directory mid-write
+  (`book-run.ts:361`), and Windows raised EBUSY on a file the first
+  process still held. **The lock was ours, not SMB's** — which is why a
+  retry ladder alone would have hidden a data race rather than fixed it.
+  Confirmed from the log tags in Owen's paste: `[job]` announced the
+  reflow, `[book]` raised the error. No figures were lost that time (16
+  referenced, 16 present); with different timing they would have been,
+  silently. THE FIX IS SERIALISATION AT THE CHOKEPOINT: one in-flight
+  promise per folded target path inside `writeBookFile` itself, so a
+  second caller awaits the first's result instead of spawning a rival
+  engine. Retry on EBUSY/EPERM/EACCES stays as DEFENCE IN DEPTH for a
+  genuine external lock, labelled as such. And the refusal stops lying:
+  a failure while a book file exists must not say the book could not be
+  made.
+  DEFERRED OUT LOUD: per-file deletion with freshness by name. It was
+  designed on the channel when SMB timing was believed to be the cause;
+  with the race removed the retry covers what is left, and it is not
+  worth the complexity until something proves otherwise.
+- **17b — struck PICTURES show no X.** The strike mark is two diagonal
+  gradients as `background-image` on `.body`, which paints BEHIND
+  content. Prose works because glyphs cover a few percent of the box; an
+  opaque plate covers all of it. The other two halves of the treatment
+  land (the plate dims, the caption strikes), so the block changes state
+  while the one mark that says *struck* is hidden. Fix it for Pictures
+  without disturbing prose, where the background approach is right and
+  deliberate.
+- **17c — hosted, an env-install row is invisible in the shelf.**
+  BookForge asked for the union (their words: *"an install is real work
+  with real progress and the shelf is the window's answer to what is
+  this machine doing"*). It cannot double-count: env installs never
+  route, so the two lists are disjoint by construction.
+- **17d — what the build settled**, since each unit forced a choice.
+  - **The gate covers `writeEpubBook` too, and that is the fix rather than an
+    extension of it.** `ensureReadingBook`'s check-then-act guards BOTH its
+    branches, so two windows opening one imported-EPUB project race exactly as
+    two reflows did; `viewExportedBook` has the same shape over a temp cache.
+    Leaving the sibling ungated would have left the fixed hazard reachable
+    through the same door. The key is the OUT PATH — the contended resource —
+    so both commands share one map, and a project is never both a bank and a
+    container.
+  - **The timeout stays INSIDE the gated run.** A caller waiting on somebody
+    else's engine is not being timed out at two minutes into its own wait; it
+    rides a run that has its own two minutes.
+  - **A refusal with a book on the disk OPENS THAT BOOK** rather than trading
+    one wrong sentence for another. There is no channel from `ensureReadingBook`
+    for an "ok, but" — so the news goes to the terminal beside the engine's own
+    words, which is exactly `remakeBookFile`'s posture for the same event on the
+    other side of the wall. It is safe because the loader hashes the receipt and
+    refuses any book whose `bankSha` has moved, by name, a few lines later: a
+    stale file gets that accurate refusal, a current one gets drawn.
+    DEFERRED OUT LOUD: the EPUB-explode branch of the same function keeps its
+    old sentence. It has the identical shape and would want the identical three
+    lines; it is not the branch Owen hit and it is a copy change with no
+    correctness driver in this wave, so it is named here rather than folded in.
+  - **The X on a plate is a pseudo-element over the figure, and prose did not
+    move.** `figure` is the Picture case's own element and appears nowhere else
+    in the template, so the selector is the condition — no class through the
+    switch, no `:has()` to find one. Three things were carried across by name:
+    the `background-size` pair (the overlay exists always and is 0%×0% unstruck,
+    or the mark pops instead of growing), the blend (`.body` is already an
+    isolation group twice over — `content-visibility: auto` implies paint
+    containment and a struck body is at `opacity: .45` — so the multiply lands
+    on the plate and the composite then fades over the paper), and the
+    reduced-motion list, which covers selectors by name and now names this one.
+    The body's own paint is turned OFF under a figure, or a narrow plate would
+    carry two marks at two sizes and an uncut plate would carry both in full.
+    The mark is stated once as `--strike-x` so the two carriers cannot drift.
+    NAMED COST: multiply darkens and cannot lighten, so across a near-black
+    region of a plate the X approaches invisibility; the alternative reads as a
+    sticker on every ordinary plate to buy back the rare one, and the dim and
+    the struck caption carry the state there. THE DARK THEME IS NOT A FACTOR:
+    the sheet's palette is fixed light and the only themed token is `--bench`,
+    the ground behind the paper, which no mark ever blends against.
+  - **Drawing a row made its ✕ reachable, so `cancel` and `remove` stopped
+    routing an install.** `remove`'s docblock asserted that every id off a
+    hosted shelf came from the host; 17c makes that false. The test is the KIND
+    and not "is it in our list", because our list also holds the rows `runJob`
+    mints for work the host scheduled and those cancels are the host's. This is
+    `cancelEnvInstalls`' existing rule reaching the two gestures a person can
+    now press. Without it 17c would have traded an invisible row for a dead
+    button.
+  - **Nothing was verified by eye.** 17b is reasoned from the emitted CSS (all
+    four rules and the `:has()` shim confirmed in the build output) and from the
+    palette being fixed light; the hand-test is where it gets looked at.
+
+NOT IN THIS WAVE, recorded so it is not lost: a reading never fires
+`onJobSettled` (pre-existing; nothing on BookForge's side subscribes, but
+it hangs rather than fails, so it wants its own wave), and Owen's
+emphasis/Table ruling is Wave 18.
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the

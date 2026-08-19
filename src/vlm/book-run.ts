@@ -306,6 +306,72 @@ export async function buildBookFile(opts: BookRunOptions): Promise<BookRunReport
 }
 
 /**
+ * The crops directory, emptied — with a short ladder for the case where
+ * something outside this program is holding a file in it.
+ *
+ * ── DEFENCE IN DEPTH. THIS IS NOT THE FIX FOR ANYTHING ──────────────────────
+ *
+ * Read this before you conclude that a retry was the answer to the EBUSY a user
+ * hit on 2026-08-19, because it was not, and mistaking it for one is how the
+ * real defect gets reintroduced. That EBUSY came from TWO COPIES OF THIS RUN
+ * over one book: the app spawned a second `vlm-book` while the first was still
+ * writing crops here, the second reached this rm, and Windows refused to unlink
+ * a file the first process had open. The lock was the app's own. It was fixed
+ * where it belonged — one writer per book file, in the app's `writeBookFile`
+ * (app/electron/engine.ts) — and a retry alone would have made it WORSE rather
+ * than better: the second run would simply have won the directory a few hundred
+ * milliseconds later and deleted crops the first run had finished, leaving a
+ * book that names plates which are not on the disk and no error anywhere.
+ *
+ * ── So what this IS for ─────────────────────────────────────────────────────
+ *
+ * A holder that is genuinely not us, which is a real and ordinary thing on the
+ * machines this runs on: an antivirus scanner reading a PNG it just saw
+ * appear, a shell preview handler that opened a thumbnail because the folder is
+ * in view, a network share that has not yet released a handle. Every one of
+ * those lets go within a second or so, and every one of them would otherwise
+ * fail a reflow outright over a directory whose whole content is regenerable.
+ * That is what the ladder buys and it is all it buys.
+ *
+ * ALREADY GONE IS SUCCESS — the ordinary first run, where there is nothing here
+ * to clear. `force` says so to `rmSync` and the `ENOENT` arm says so again for
+ * anything that vanishes underneath the recursive walk.
+ *
+ * AND THE LAST FAILURE IS STILL A FAILURE, in this run's own words rather than
+ * as a raw errno out of the middle of a stage. Going on would cut fresh crops
+ * into a directory still holding the ones this run was supposed to replace,
+ * which is exactly the stale-figure-under-a-new-name hazard the rm exists to
+ * prevent.
+ */
+async function clearStaleCrops(cropsDir: string, log: (line: string) => void): Promise<void> {
+  /* Four waits, a second and a half in total. Long enough for a scanner to
+     finish with one file; short enough that a directory somebody has a real and
+     lasting lock on is reported rather than waited on. */
+  const backoff = [50, 150, 400, 900];
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      fs.rmSync(cropsDir, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') return;
+      const held = code === 'EBUSY' || code === 'EPERM' || code === 'EACCES';
+      const wait = backoff[attempt];
+      if (!held || wait === undefined) {
+        throw new BookRunError(
+          `${cropsDir} could not be emptied before the figures were cut `
+          + `(${code ?? (err as Error).message}). Something is holding a file in it. The figures in `
+          + 'this book would otherwise be a mixture of this run and the last one, so the run stops '
+          + 'here rather than writing a book whose plates cannot be accounted for.',
+        );
+      }
+      log(`vlm-book: ${cropsDir} is held by something else (${code}); waiting ${wait}ms to try again`);
+      await new Promise((wake) => { setTimeout(wake, wait); });
+    }
+  }
+}
+
+/**
  * The figures, cut out of the archived original once — §6 of the contract.
  *
  * ── WHY THE CROPS MOVED HERE, OUT OF THE EPUB WRITER ────────────────────────
@@ -334,7 +400,9 @@ export async function buildBookFile(opts: BookRunOptions): Promise<BookRunReport
  * book file, and a regeneration after the join rule improved must not leave the
  * crop of a figure that is now named something else sitting beside the one that
  * is. Deleting it is safe for the same reason writing it is: nothing in it was
- * anybody's labour.
+ * anybody's labour. `clearStaleCrops` is that delete and carries the one thing
+ * worth knowing about it — a retry that is defence against an outside holder and
+ * is emphatically NOT the fix for two runs racing each other.
  */
 async function cutFigures(
   rows: readonly BookRow[],
@@ -358,7 +426,7 @@ async function cutFigures(
   const pdfPath = path.resolve(opts.pdfPath);
   if (!fs.existsSync(pdfPath)) throw new BookRunError(`no such PDF: ${pdfPath}`);
   const cropsDir = imagesDir(readingsPath);
-  fs.rmSync(cropsDir, { recursive: true, force: true });
+  await clearStaleCrops(cropsDir, opts.log);
   ensureDir(cropsDir);
   if (pictures.length === 0) {
     opts.log(`vlm-book: no Picture block in this book, so ${cropsDir} is empty`);
