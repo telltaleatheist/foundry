@@ -186,7 +186,6 @@ photos is kilobytes of JSON):
     }
   ],
   "order": ["9f2c…:0", "9f2c…:1"],
-  "descending": false
 }
 ```
 
@@ -223,7 +222,15 @@ Conventions, pinned:
   the surface names what it skipped and why. A skipped photo keeps its
   own quads. On the acceptance shoot exactly one card skips, which is
   correct: a landscape frame in a portrait shoot is a different
-  photograph, not one the same crop happens to fit.
+  photograph, not one the same crop happens to fit. Two more skips,
+  same family (P2, seq 43), both REFUSALS rather than guesses,
+  enforced in the service because only it can see the other photos:
+  a SPLIT copies only onto UNSPLIT photos, and a CROP copies only
+  between photos with the SAME PAGE COUNT -- two quads onto an
+  unsplit photo would have to invent a split to hold the second, and
+  one quad onto a split photo would leave its right-hand page
+  half-updated; neither is what was asked for. Every skip, all three
+  kinds, NAMES the photographs it skipped in the notice bar.
 - **Quad corner order is [top-left, top-right, bottom-right, bottom-left]
   OF THE OUTPUT PAGE.** The corner assignment IS the orientation: the
   rotate gesture permutes the assignment, and no separate rotation field
@@ -232,6 +239,16 @@ Conventions, pinned:
 - `split` is kept for the editor's line handle (re-dragging re-derives the
   two quads); the quads are authoritative for the mint.
 - `order` lists every page id, struck included; the mint filters strikes.
+- **`order` is the ONLY stored truth about arrangement -- `descending`
+  is GONE from the recipe** (ruled from P2 seq 43, following its own
+  reasoning to the end: the service derives the toggle state by
+  comparing the current order against the takenAt sort in either
+  direction, so a stored flag would be a boolean that can disagree
+  with the array next to it -- the sixth appearance of the
+  two-things-one-name shape, refused in advance like the fifth.
+  Accepted imprecision, by design: drag a card away and back and the
+  toggle returns. Create and intake write NO `descending` field; the
+  empty recipe is `{version, photos: [], order: []}`.
 - **Output page size has ONE implementation**: `outputSizeFor(quadPx)`
   in `app/shared/` (P1 ground, added in Merge 1; the editor's preview
   and main's `mint-begin` both import it). The formula is pinned here

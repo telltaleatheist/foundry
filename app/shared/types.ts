@@ -2942,8 +2942,6 @@ export interface CaptureRecipe {
   photos: CapturePhoto[];
   /** Every page id in reading order, STRUCK INCLUDED — the mint filters them. */
   order: string[];
-  /** Which way the capture-time sort ran before anybody dragged a card. */
-  descending: boolean;
 }
 
 /**
