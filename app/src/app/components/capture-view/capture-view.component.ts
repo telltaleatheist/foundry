@@ -9,6 +9,7 @@ import {
   signal,
 } from '@angular/core';
 
+import { mintedPageIds } from '@shared/capture';
 import type { CaptureQuad } from '@shared/types';
 
 import { CaptureMintService } from '../../core/capture-mint.service';
@@ -291,13 +292,15 @@ export class CaptureViewComponent {
     const photo = recipe.photos.find((one) => one.id === id);
     if (photo === undefined) return null;
     const at = this.walk().indexOf(photo.id);
-    // Where this photograph's pages fall in the finished book. Struck pages are
-    // left out of the count because they are left out of the book, so these are
-    // the numbers that will be printed on it.
-    const kept = recipe.order.filter((id) => {
-      const owner = recipe.photos.find((one) => one.pages.some((page) => page.id === id));
-      return owner?.pages.find((page) => page.id === id)?.struck === false;
-    });
+    // Where this photograph's pages fall in the finished book, asked of the
+    // ONE function that decides what the book is. This used to walk the order
+    // and skip the struck here -- one of THREE bodies of that rule, the other
+    // two being the footer thirty lines below and mintBegin across the bridge.
+    // All three agreed, because all three were written from the same sentence,
+    // which is exactly what outputSizeFor and sameShape did before they were
+    // lifted. Caught by P1 before any of them drifted, which is the first time
+    // in this feature that shape has been found early rather than late.
+    const kept = mintedPageIds(recipe);
     const mine = photo.pages.filter((page) => !page.struck).map((page) => kept.indexOf(page.id) + 1);
     const pages = mine.length === 0
       ? 'struck'
@@ -314,17 +317,18 @@ export class CaptureViewComponent {
     };
   });
 
-  /** How many pages a mint would write — strikes left out, as the mint does. */
+  /**
+   * How many pages a mint would write.
+   *
+   * NOT "as the mint does" any more -- it is the mint's own function. The
+   * footer promises this number, the readout above promises a position within
+   * it, and mintBegin decides what actually gets printed; a person who crops for
+   * an hour, reads "of 54" and then counts the PDF is owed all three being the
+   * same arithmetic rather than the same intention.
+   */
   protected readonly mintable = computed(() => {
     const recipe = this.captures.recipe();
-    if (recipe === null) return 0;
-    let count = 0;
-    for (const id of recipe.order) {
-      const photo = recipe.photos.find((one) => one.pages.some((page) => page.id === id));
-      const page = photo?.pages.find((one) => one.id === id);
-      if (page !== undefined && !page.struck) count += 1;
-    }
-    return count;
+    return recipe === null ? 0 : mintedPageIds(recipe).length;
   });
 
   /**
