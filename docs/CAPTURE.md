@@ -830,6 +830,21 @@ page, we're in a new stage where we can change it per-page."
    `{x}`; splitAt generalizes from a vertical lerp to the chord.
    Migration: an old `{x}` reads as the vertical segment it always
    meant.
+6. FINALIZE (Owen, same evening): the modal ends in a SUBMIT that
+   permanently applies the configuration -- the full flow is GLOBAL ->
+   OUTLIERS -> FINALIZE, for the rect and the splitter alike. His
+   model: PDFElement writes the files, and thereafter you work with
+   the pages as configured; keep the old ones so stepping back is
+   possible. Shape to plan-back (not yet settled beyond intent):
+   finalize rasterizes each page through the SHIPPED rectify -- the
+   mint's own path, ONE implementation as always -- into a
+   finalized/ set the light table then shows; the bank and the recipe
+   REMAIN, so step-back is deleting finalized/ and returning to the
+   live recipe (reconstructible, not archived copies -- the derived/
+   rule extended, not broken). What finalize means for the MINT
+   (assemble from finalized/ vs re-rasterize) and for RE-EDITING after
+   finalize needs both agents' plan-backs before anything is cut.
+
 5. The staged flow REPLACES the apply-to-all buttons on the light
    table (two ways to say everywhere would be the drift disease as
    UI). The Turned/Split/Crop set acknowledgements and the corner mark
@@ -860,9 +875,35 @@ Clarified by P1's plan-back (seq 125), all five accepted:
   first applied at design time: `halvesOf(quad, split) ->
   [CaptureQuad, CaptureQuad] | null` (null = segment does not resolve
   to opposite edges; validator refuses, editor re-seats) and
-  `joinedQuad(quads)`. Main needs it for the {x} migration; the
-  renderer for the handles; two bodies of the chord would be found in
-  a minted PDF.
+  the chord family, final signatures (P2 seq 127, converged): the
+  wrong joined() for a horizontal cut is NOT a detectable bow tie
+  — measured, it is a CONVEX quad of EXACTLY HALF the sheet's area at
+  every cut position, so no self-intersection or area guard can catch
+  it; the function must KNOW, not check. And joined() has a WRITE
+  path (setSplit derives and stores the halves), so the bug class is
+  wrong-half-of-the-sheet-in-the-PDF, not a misplaced handle.
+  - `halvesOf(quad, split) -> [CaptureQuad, CaptureQuad] | null` —
+    top-left-corner half first; null = endpoints not on opposite
+    edges.
+  - `joinedQuad(quads, split)` — the split is read for ORIENTATION
+    ONLY (which pair of opposite edges: a stale segment's position
+    goes stale, its orientation does not — dragging a crop corner
+    slides endpoints along their edges, never across to another),
+    never for position. The re-seat rule keeps its one stated
+    exception with a reason.
+  - `splitFromFraction(quad, x)` — the vertical segment {x} always
+    meant, ONE body: main's migration and the Split button's default
+    both call it.
+  - `seatSplit(quad, split, which, to)` — THE ONLY way a segment is
+    ever constructed from a pointer; incapable of returning what
+    halvesOf nulls, so null genuinely means a hand-edited file, never
+    "the handle got there by dragging" — the draws-fine-refuses-to-save
+    class, refused by construction.
+  The words left/right die in the same commit (splitAt's tuple, the
+  CapturePage docblock) — a stale comment asserting the wrong thing is
+  how the last geometry bug survived two readings.
+  Main needs the chord for the {x} migration; the renderer for the
+  handles; two bodies would be found in a minted PDF.
 - Migration of `{x}` happens ON READ, every open, not one-shot — an old
   recipe stays readable forever and the next save writes the new form.
 - Mint chord expectation ("needs nothing — quads were never
