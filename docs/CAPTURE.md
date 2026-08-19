@@ -165,17 +165,28 @@ Conventions, pinned:
 
 ## Where the work runs — and why
 
-**Intake (main) decodes HEIC once, into a JPEG working copy beside the
+**Intake (main) decodes HEIC once, into a PNG working copy beside the
 original** — Chromium cannot decode HEIC, so `createImageBitmap` never
-sees one. The working copy is pixel-identical in dimensions, so recipe
-quads in original-image coordinates apply to both without translation.
-The original bytes stay the bank; the working copy is derivable and
-disposable.
+sees one. **PNG, not JPEG — ruled by Owen 2026-08-19**: the shoot is
+small, poor-quality print, HEIC is already one lossy generation, and a
+JPEG working copy would bake in a second before any page reached the
+mint. PNG is lossless; the only cost is disk on a file that is
+derivable and disposable. The copy is pixel-identical in dimensions,
+so recipe quads in original-image coordinates apply to both without
+translation. The original bytes stay the bank. **Resolution is never
+reduced anywhere in this chain** — the mint output size is the quad
+edge maxima, and only the read stage downsamples, per read, under its
+own pixel budget, baked into nothing.
 
 **The renderer does the raster work.** Decode via `createImageBitmap`
 (of the working copy),
 projective rectification in WebGL, JPEG encode via `canvas.toBlob` at
-quality ~0.9. All three are native-speed browser primitives; the editor
+quality 0.92 for the PDF pages — JPEG at the PDF because a lossless
+PDF of a full shoot runs to gigabytes; 0.92 at full resolution is the
+one lossy step after the camera, and it is taken at the LAST moment,
+from a lossless source. A lossless-PDF option is in the deferral list
+if the archive ever wants it. All three are native-speed browser
+primitives; the editor
 needs the identical transform for its live preview anyway, so the mint and
 the preview are one shader, not two implementations. Zero new dependencies.
 
@@ -262,6 +273,8 @@ edits this document first and says so on the channel.
 - **AI sharpen** — Owen: later, after this lands.
 - CV auto-detection of gutters/edges — superseded by apply-to-all for v1.
 - Carrying banked readings across a re-mint when page pixels are unchanged.
+- A lossless-PDF mint option (PNG/FLATE pages) for archival use — the
+  working copies already preserve everything it would need.
 - Fine (non-quarter) rotation as a separate gesture — the quad already
   absorbs small tilt; a dedicated dial can come with de-skew.
 
