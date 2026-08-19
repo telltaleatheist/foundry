@@ -418,6 +418,10 @@ edits this document first and says so on the channel.
   IHDR/IDAT — the buffer format is fully under our control) and asks
   for `pngjs` BY NAME if that does not come out clean, rather than
   quietly hand-rolling something fragile.
+- An exhaustiveness helper on defaulting switch arms over StepAction
+  (read-back section 4): the two Translated-stamp defects compiled green
+  because default: hides a widened union; a never-check would make the
+  compiler name them. Out of scope tonight, worth its own small pass.
 - Fine (non-quarter) rotation as a separate gesture — the quad already
   absorbs small tilt; a dedicated dial can come with de-skew.
 
