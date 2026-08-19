@@ -534,7 +534,18 @@ export class CapturePageEditorComponent {
      */
     if (distanceToEdge(at, line.a.point, line.b.point) <= radius) {
       this.holdingSplit.set('line');
-      this.slidFrom = { at, split };
+      /*
+       * THE ORIGIN IS THE SEATED SEGMENT, NOT THE STORED ONE.
+       *
+       * The stored endpoints are gesture state and go stale against a crop
+       * dragged after the split -- that is the whole reason the line is drawn
+       * from cutOf rather than from the file. Sliding FROM the stale points
+       * would measure the offset from somewhere the gutter is not, so the cut
+       * would jump the instant the pointer moved and then track correctly from
+       * the wrong place. The seated points are where the line actually is,
+       * which is where a slide has to start.
+       */
+      this.slidFrom = { at, split: { a: line.a.point, b: line.b.point } };
       this.frame().nativeElement.setPointerCapture(event.pointerId);
     }
   }

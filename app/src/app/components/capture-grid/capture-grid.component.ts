@@ -514,6 +514,7 @@ export class CaptureGridComponent {
    */
   @HostListener('window:keydown', ['$event'])
   protected onKey(event: KeyboardEvent): void {
+    if (!this.active()) return;
     if (event.key !== 'Delete' && event.key !== 'Enter') return;
     if (this.chosen().length === 0) return;
     const target = event.target;
@@ -558,6 +559,20 @@ export class CaptureGridComponent {
   readonly descending = input.required<boolean>();
   /** True once the person has dragged, after which the sort no longer applies. */
   readonly arranged = input.required<boolean>();
+  /**
+   * Whether this table is the surface the keyboard is talking to.
+   *
+   * FALSE WHILE THE EDITOR IS OPEN OVER IT. Delete and Enter are answered on
+   * the WINDOW, so they kept arriving here while the modal had the screen:
+   * Delete would have opened a removal confirm for the swept selection behind
+   * a picture somebody was cropping, and Enter would have re-opened the
+   * photograph already in front of them.
+   *
+   * An input rather than a look at the DOM, because "is a modal open" is the
+   * parent's fact -- this component has never heard of the editor and should
+   * not start now to answer a keystroke.
+   */
+  readonly active = input<boolean>(true);
 
   /** The whole list of ids, rearranged — never a single move. */
   readonly reorder = output<readonly string[]>();

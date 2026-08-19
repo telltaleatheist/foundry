@@ -2,7 +2,6 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
-  HostListener,
   computed,
   effect,
   inject,
@@ -74,6 +73,7 @@ const ACKNOWLEDGED_FOR_MS = 1600;
         you open rather than somewhere you go.
       -->
       <app-capture-grid
+          [active]="open() === null"
           [cards]="captures.cards()"
           [descending]="captures.descending()"
           [arranged]="captures.arranged()"
@@ -372,25 +372,20 @@ export class CaptureViewComponent {
     if (next !== undefined) this.open.set(next);
   }
 
-  /**
-   * ARROW KEYS, because he is about to do this fifty-four times.
+  /*
+   * THE ARROWS USED TO BE ANSWERED HERE TOO, AND THAT MEANT TWICE.
    *
-   * Ignored while a field or a dialog has the focus: the left arrow inside the
-   * new-project name box has to move the caret, and a shortcut that eats a
-   * keystroke somebody was typing is worse than no shortcut.
+   * This component kept a window:keydown for ArrowLeft/ArrowRight, guarded on
+   * "something is open" -- which is exactly when the modal is mounted, and the
+   * modal answers the same two keys on the same window. Both listeners fire for
+   * one press and both call step(), so every arrow moved TWO photographs and
+   * the walk skipped every other picture on the way through the shoot.
+   *
+   * Window listeners do not nest, so this was not fixable by stopping
+   * propagation in the modal: they are siblings on one target, not a chain.
+   * The fix is ownership -- the surface the keys belong to is the one they are
+   * about, and that is the modal.
    */
-  @HostListener('window:keydown', ['$event'])
-  protected onKey(event: KeyboardEvent): void {
-    if (this.open() === null) return;
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-    const target = event.target;
-    if (target instanceof HTMLElement) {
-      const tag = target.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return;
-    }
-    event.preventDefault();
-    this.step(event.key === 'ArrowLeft' ? -1 : 1);
-  }
 
   /**
    * Ask before removing, then remove.
