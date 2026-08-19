@@ -489,11 +489,18 @@ audit measured (P1, seq 65, correcting this doc's earlier claim): a mint
 row is drawn on FOUNDRY'S shelf, hosted or not, and its cancel works
 locally. The mirror is ONE-WAY — FoundryHostQueue has no outbound row
 channel, so nothing can tell a host about a row it did not schedule.**
-Whether a person hosted inside BookForge looks at Foundry's shelf or
-BookForge's own is not answerable from this repo; it goes to the
-BookForge channel with the vendoring notice, and if the answer is
-BookForge's shelf, that is a new outbound channel — real work, not
-wording. The audit itself (five positions, nine predicates, minted vs
+**ANSWERED AND SETTLED (bookforge-pc-2, bookforge-sync seq 100,
+derived from their side): hosted, a person is looking at FOUNDRY'S
+pane** — the hosted window renders Foundry's bundle alone, and both of
+BookForge's queue surfaces live in their MAIN window (the titlebar chip
+is explicitly gated off for single-purpose windows). A row we draw is
+a row they see; NOTHING IS NEEDED, no outbound row channel, no mount
+contract change. Their stated caveat, which does not change the
+answer: their Queue tab is where long work is watched, but a mint runs
+under the person's own hands in the window their hands are in.
+BookForge also verified from the vendored source that our shelfJobs
+COMPOSES host rows with local rows rather than replacing — their
+setHostQueueRows push cannot erase a running mint. The audit itself (five positions, nine predicates, minted vs
 imported control): ZERO differences between the minted and imported
 PDF on all nine — the sentence the feature rests on, measured. Two
 defects found and fixed at e296188: hasBookAt/hostActPositionFrom said
