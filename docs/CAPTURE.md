@@ -113,7 +113,15 @@ the verdict lands in the Wave 16 seam audit.
 drop zone along the side. Files can keep landing there for the life of the
 project.
 
-**The grid IS the main viewer** for a capture project with no minted PDF:
+**The grid is what a CAPTURE STEP shows — whether or not a PDF has been
+minted.** (Reworded from "a capture project with no minted PDF" after the
+read-back traced the ledger: a capture row names no document and no proof
+sheet by design, so the first phrasing would have left a post-mint capture
+row showing NOTHING, with no door back to the corners — contradicting this
+doc's own promise that the recipe stays re-editable after a read. Standing
+on the capture step always shows the light table; standing on the minted
+step shows the PDF.) For a project not yet minted, that makes the grid the
+main viewer:
 one card per page (initially one per photo), sorted by capture time — EXIF
 `DateTimeOriginal`, falling back to file mtime — with an ascending/
 descending toggle. Cards drag to reorder; once the user has dragged, the

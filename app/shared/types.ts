@@ -2869,9 +2869,17 @@ export type CaptureQuad = readonly [CapturePoint, CapturePoint, CapturePoint, Ca
  *
  * The recipe is fractions end to end. Pixels exist in exactly two places: the
  * list `capture:mint-begin` hands the renderer, and the rectify shader's own
- * input. Giving them a type of their own means a function that wants one and
- * is handed the other is a compile error rather than a page rendered at four
- * thousandths of its size.
+ * input.
+ *
+ * THE NAME IS DISCIPLINE, NOT ENFORCEMENT. This is an alias, so TypeScript
+ * cannot tell the two apart, and a fractions quad handed to something that
+ * wants pixels COMPILES SILENTLY — measured on the read-back (channel seq
+ * 30), which caught this comment promising a compile error it cannot give.
+ * A real brand would stop the recipe being plain JSON literals, a worse
+ * trade. So the rule is the one geometry.ts already states: every crossing
+ * between the units goes through an explicit conversion, and a reader who
+ * sees a bare assignment between these two names should treat it as a bug
+ * until shown otherwise — the compiler will not raise it.
  */
 export type PixelQuad = CaptureQuad;
 
