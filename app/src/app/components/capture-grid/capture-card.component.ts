@@ -46,7 +46,9 @@ import type { CaptureQuad } from '@shared/types';
       class="page"
       [class.struck]="struck()"
       [class.chosen]="chosen()"
-      (click)="open.emit()"
+      (click)="choose.emit($event)"
+      (dblclick)="open.emit()"
+      (keydown.enter)="activate($event)"
     >
       <!--
         \`loading="lazy"\` because a shoot is dozens of these and the grid scrolls:
@@ -196,6 +198,37 @@ export class CaptureCardComponent {
   /** The quad's FIRST corner — the minted page's top-left. See the docblock. */
   protected readonly corner = computed(() => this.quad()[0]);
 
+  /**
+   * A CLICK NOW CHOOSES, AND A DOUBLE-CLICK OPENS.
+   *
+   * Wave 21: "single click SELECTS (marquee, reorder, delete); DOUBLE-CLICK or
+   * Enter with one selected OPENS THE EDITOR". A single click used to open, so
+   * on a shoot of fifty-two cards the only way to select one was to sweep a
+   * band across it and stop -- selecting one card meant drawing a rectangle.
+   *
+   * The event goes with it because the MODIFIERS are the grid's business:
+   * plain click replaces the selection, ctrl or meta toggles one card, shift
+   * takes the run. The card knows it was clicked; it does not know what else is
+   * chosen, and it should not have to.
+   */
+  readonly choose = output<MouseEvent>();
   readonly open = output<void>();
   readonly strike = output<void>();
+
+  /**
+   * Enter opens THIS card, rather than falling through to the grid.
+   *
+   * The default action of Enter on a button is a synthetic click, which under
+   * the new rule means CHOOSE -- so without preventDefault the key that is
+   * supposed to open would select instead. And the grid also listens for Enter
+   * on the window, for the case where the sweep left focus on the table rather
+   * than on a card; stopping propagation is what keeps those two from both
+   * answering the same keystroke with two different ideas of which card is
+   * meant, which is the focused-versus-chosen mismatch in miniature.
+   */
+  protected activate(event: KeyboardEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.open.emit();
+  }
 }
