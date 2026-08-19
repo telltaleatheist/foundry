@@ -267,7 +267,12 @@ after it is the per-page override it always was. The recipe keeps ONE
 kind of quad; no stored global layer, no merge semantics, no
 re-flowing when global changes later — that heavier model (a
 persistent global quad that non-overridden pages keep following) is
-DEFERRED OUT LOUD below unless Owen asks for it by name.
+DEFERRED OUT LOUD below unless Owen asks for it by name. And the
+yardstick, in the owner's words when offered the layered model (his
+call, delegated back): this feature is just designed to make it so i
+can crop backgrounds out quickly and easily. Per-page quads stay
+because the MINT needs concrete coordinates per page -- storage, not
+ceremony; everything above that floor answers to quick-and-easy.
 
 **The gestures**, each on a single page with an "apply to all" affordance:
 
