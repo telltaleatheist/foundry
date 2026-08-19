@@ -148,6 +148,51 @@ import { UiService } from '../../core/ui.service';
       padding: 12px 20px 16px;
       border-top: 1px solid var(--border-subtle);
     }
+
+    /*
+     * THE BUTTON RULES ARE COPIED, NOT INHERITED, and that is not laziness.
+     *
+     * Angular component styles are SCOPED. This card carried confirm-dialog's
+     * class names -- ghost and primary -- and none of its rules, because they
+     * never leave the component that declares them. So the buttons rendered
+     * NATIVE WHITE, which is what Owen saw: a modal in the house style with two
+     * browser-default buttons at the bottom of it.
+     *
+     * Copied from confirm-dialog character for character rather than
+     * approximated, because two dialogs that ALMOST match is worse than one
+     * that does not: a difference of two pixels reads as a rendering bug rather
+     * than as a decision.
+     *
+     * Every one of the app's dialogs carries its own copy of these rules --
+     * confirm, export, host-op, metadata, ocr, simplify, translate. That is the
+     * existing house pattern and this file joins it rather than inventing a
+     * shared sheet on its own authority; lifting all eight into one place is a
+     * house-wide change and somebody else's call.
+     */
+    .ghost, .primary {
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 32px; padding: 0 16px;
+      border-radius: var(--radius-md);
+      font-size: 13px; font-weight: 500; line-height: 1;
+      cursor: pointer;
+    }
+    .ghost {
+      background: var(--bg-input);
+      border: 1px solid var(--border-default);
+      color: var(--text-primary);
+    }
+    .ghost:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+    .primary {
+      border: none;
+      background: var(--accent-strong); color: var(--text-inverse);
+    }
+    .primary:hover { background: var(--accent); }
+    .primary:active { transform: scale(0.98); }
+    /* Both buttons go quiet while the project is being made -- the card is not
+       dismissable then, and a button that still looks pressable is a lie. */
+    .ghost:disabled, .primary:disabled { opacity: 0.55; cursor: default; }
+    .primary:disabled:hover { background: var(--accent-strong); }
+    .ghost:disabled:hover { background: var(--bg-input); border-color: var(--border-default); }
   `],
 })
 export class CaptureNewDialogComponent {

@@ -73,7 +73,7 @@ import { CaptureGridComponent } from '../capture-grid/capture-grid.component';
         />
       } @else if (opened(); as photo) {
         <header class="bar">
-          <button type="button" (click)="open.set(null)">← All photographs</button>
+          <button class="quiet" type="button" (click)="open.set(null)">← All photographs</button>
           <span class="which">{{ photo.label }}</span>
           <span class="grow"></span>
         </header>
@@ -92,17 +92,17 @@ import { CaptureGridComponent } from '../capture-grid/capture-grid.component';
           a hand-edited file today. Said rather than drawn as an empty editor.
         -->
         <p class="gone">That photograph is no longer in this project.</p>
-        <button type="button" (click)="open.set(null)">Back to the table</button>
+        <button class="quiet" type="button" (click)="open.set(null)">Back to the table</button>
       }
     </div>
 
     <footer class="mint">
       @if (mint.progress(); as running) {
         <span class="progress">Minting page {{ running.done }} of {{ running.total }}…</span>
-        <button type="button" (click)="mint.cancel()">Stop</button>
+        <button class="quiet" type="button" (click)="mint.cancel()">Stop</button>
       } @else {
         <span class="count">{{ mintable() }} pages</span>
-        <button type="button" [disabled]="mintable() === 0" (click)="startMint()">
+        <button class="act" type="button" [disabled]="mintable() === 0" (click)="startMint()">
           Mint the pages
         </button>
       }
@@ -147,6 +147,47 @@ import { CaptureGridComponent } from '../capture-grid/capture-grid.component';
     }
 
     .count, .progress { font-size: 12px; opacity: 0.8; }
+
+    /*
+     * THESE BUTTONS HAD NO RULES AT ALL and rendered native white.
+     *
+     * Angular component styles are SCOPED, so a button here inherits nothing
+     * from the grid, the editor or any dialog -- and unlike those three, this
+     * file had never declared any. Owen found the same defect in the new-project
+     * modal, which carried confirm-dialog's CLASS NAMES and none of its rules;
+     * this file did not even have the class names. Four buttons, and one of them
+     * is MINT THE PAGES, which is the act the whole feature exists to perform.
+     *
+     * The quiet ones match the grid header and the editor gestures, which are
+     * the controls a person meets on either side of this bar. The act matches
+     * the dialogs' primary, because it is the same kind of thing: the button
+     * worth pressing.
+     */
+    .quiet {
+      padding: 3px 9px;
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md, 6px);
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .quiet:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+    .act {
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 32px; padding: 0 16px;
+      border: none;
+      border-radius: var(--radius-md);
+      background: var(--accent-strong); color: var(--text-inverse);
+      font-size: 13px; font-weight: 500; line-height: 1;
+      cursor: pointer;
+    }
+    .act:hover:not(:disabled) { background: var(--accent); }
+    .act:active:not(:disabled) { transform: scale(0.98); }
+    /* Nothing to mint yet is the normal state of a new project, so the button
+       has to look patient rather than broken. */
+    .act:disabled { opacity: 0.45; cursor: default; }
   `,
 })
 export class CaptureViewComponent {
