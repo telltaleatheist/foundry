@@ -138,6 +138,13 @@ function isRewriteMode(said: string): said is RewriteMode {
  */
 export const RETENTION_OF: Readonly<Record<StepAction, LedgerStep['retention']>> = {
   import: 'irreplaceable',
+  /*
+   * AN ARRIVAL, ON `import`'s CLAUSE OF THE RULE RATHER THAN A NEW ONE. What a
+   * capture step holds is an afternoon in an archive with a book that does not
+   * leave the building, plus hand-placed quads over every page of it. No run
+   * remakes either at any price.
+   */
+  capture: 'irreplaceable',
   read: 'expensive',
   curate: 'irreplaceable',
   translate: 'expensive',
@@ -184,6 +191,13 @@ export const RETENTION_OF: Readonly<Record<StepAction, LedgerStep['retention']>>
  */
 export const PARAMS_OF: Readonly<Record<StepAction, readonly (keyof LedgerParams)[]>> = {
   import: [],
+  /*
+   * NOTHING, for `import`'s reason: an arrival was not ASKED for, it happened.
+   * How many photos there were and how many pages they became is a fact about
+   * the recipe on disk, which is the payload — a params bag repeating it would
+   * be two copies of one number with no rule about which wins.
+   */
+  capture: [],
   read: ['skipPages', 'language', 'generation', 'pages', 'completedAt'],
   curate: ['generation', 'amendments'],
   translate: ['language', 'bank', 'from', 'rewrite'],
@@ -246,6 +260,12 @@ export const PARAMS_OF: Readonly<Record<StepAction, readonly (keyof LedgerParams
  */
 export const RETAINED_BESIDE_YOU: Readonly<Record<StepAction, boolean>> = {
   import: false,
+  /*
+   * THE POINTER STANDS ON IT, like an import. A capture IS the position a
+   * project occupies until something is minted from it: there is no other row
+   * to be standing on, and nothing beside it to be retained.
+   */
+  capture: false,
   read: false,
   curate: true,
   translate: false,
@@ -365,6 +385,9 @@ export const RETAINED_BESIDE_YOU: Readonly<Record<StepAction, boolean>> = {
  */
 const MINTED_BY_THE_RUN: Readonly<Record<StepAction, readonly (keyof LedgerParams)[]>> = {
   import: [],
+  // No run mints anything for an arrival, and `PARAMS_OF.capture` is empty in
+  // any case. Here so the table stays exhaustive.
+  capture: [],
   read: ['generation', 'pages', 'completedAt'],
   curate: [],
   translate: ['bank', 'from'],
@@ -433,6 +456,18 @@ export function labelFor(action: StepAction, params?: LedgerParams): string {
   switch (action) {
     case 'import':
       return 'Imported';
+    /*
+     * AN ARRIVAL SAYS WHAT ARRIVED, and a capture arrived as pictures. It takes
+     * no count the way a read does because `PARAMS_OF.capture` is empty on
+     * purpose: how many photographs there are is a fact about the recipe, which
+     * is this step's payload, and a label is not a record.
+     *
+     * IT NEEDS A CASE AT ALL because the `default` below is the translate
+     * branch: without this line every capture row in every ledger would be
+     * stamped "Translated", and no typecheck would ever say so.
+     */
+    case 'capture':
+      return 'Photographs';
     case 'read':
       return params?.pages === undefined || params.pages <= 0 ? 'Read' : `Read (${params.pages} pages)`;
     case 'curate':
@@ -2136,6 +2171,12 @@ export function currentStandard(ledger: ProjectLedger): Partial<Record<StepActio
  */
 const BOUNDS_THE_WALK: Readonly<Record<StepAction, boolean>> = {
   import: true,
+  /*
+   * A BOUNDARY, exactly as an import is: it is the bottom of its chain. A walk
+   * up looking for a bank or a curation that reached a capture row has reached
+   * the beginning of the project, and must stop there rather than fall off it.
+   */
+  capture: true,
   read: true,
   curate: false,
   translate: false,
@@ -2348,6 +2389,9 @@ export function curationInEffect(
  */
 const DISPLAYS_ITSELF: Readonly<Record<StepAction, boolean>> = {
   import: false,
+  // A capture froze nobody's corrections — there is no book yet for corrections
+  // to be about. `import`'s answer, for `import`'s reason.
+  capture: false,
   read: false,
   curate: true,
   translate: false,
@@ -2773,6 +2817,19 @@ export function mergedMetadata(
  */
 export const A_BOOK_OF_ITS_OWN: Readonly<Record<StepAction, boolean>> = {
   import: true,
+  /*
+   * FALSE, AND IT IS THE ONE ENTRY IN THESE TABLES ANSWERING A QUESTION THIS
+   * ACTION DOES NOT FIT. The table asks: is this row a book of its own, or
+   * another state of the project's one flowing book? A capture is neither — it
+   * is what exists BEFORE there is a book. `true` would send
+   * `documentAtPosition` off to resolve a directory of photographs as a
+   * document; `false` sends it to ask the project what it holds, and until a
+   * mint lands the honest answer is nothing.
+   *
+   * P3's audit walks this against a real capture project and writes the verdict
+   * into docs/CAPTURE.md, rather than leaving it resting on this comment.
+   */
+  capture: false,
   read: false,
   curate: false,
   translate: true,

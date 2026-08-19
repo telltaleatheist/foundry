@@ -260,6 +260,15 @@ const api: FoundryApi = {
     setKeepWarm: (minutes) => ipcRenderer.invoke('vllm:set-keep-warm', minutes),
   },
 
+  capture: {
+    intake: (projectDir, paths) => ipcRenderer.invoke('capture:intake', projectDir, paths),
+    recipeLoad: (projectDir) => ipcRenderer.invoke('capture:recipe-load', projectDir),
+    recipeSave: (projectDir, recipe) => ipcRenderer.invoke('capture:recipe-save', projectDir, recipe),
+    mintBegin: (projectDir) => ipcRenderer.invoke('capture:mint-begin', projectDir),
+    mintPage: (mintId, index, jpeg) => ipcRenderer.invoke('capture:mint-page', mintId, index, jpeg),
+    mintCommit: (mintId) => ipcRenderer.invoke('capture:mint-commit', mintId),
+    mintAbort: (mintId) => ipcRenderer.invoke('capture:mint-abort', mintId),
+  },
   onDocumentOpened: (listener) => subscribe<string>('document:opened', listener),
   onDocumentRelocated: (listener) =>
     subscribe<{ from: string; to: string }>('document:relocated', listener),

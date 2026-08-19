@@ -3381,6 +3381,16 @@ function titleForStep(step: LedgerStep): string {
     case 'import':
       return 'The original';
     /*
+     * A NOUN, on the same precedent as "The original" and "The book": what a
+     * person wants off this card is the artifact, not the act. Standing here is
+     * standing on the photographs — there is no document in this project until a
+     * mint makes one.
+     *
+     * AND WITHOUT IT THE `default` BELOW CALLS THIS CARD "Translated".
+     */
+    case 'capture':
+      return 'The photographs';
+    /*
      * THE READING IS THE BOOK, which is the ruling this title has always kept:
      * *"we shouldnt call the working files 'epub' until we export"* — the thing
      * a reading makes is the Book, and standing on this card is what opens it.

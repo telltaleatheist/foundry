@@ -15,6 +15,9 @@ import type { ReReadPrompt } from './reread';
 import type {
   AppQuestion,
   BackendSettingsPatch,
+  CaptureMintBegun,
+  CaptureOpened,
+  CaptureRecipe,
   CloseAnswer,
   CloseWarning,
   ConversionKind,
@@ -34,6 +37,7 @@ import type {
   MetadataOutcome,
   MetadataWriteOutcome,
   PdfMetadataFields,
+  LedgerStep,
   ProjectLedger,
   ProjectSummary,
   QuestionAnswer,
@@ -1030,6 +1034,50 @@ export interface FoundryApi {
     setKeepWarm(minutes: number): Promise<number>;
   };
 
+  /**
+   * ── THE CAPTURE STAGE, WHICH IS UPSTREAM OF EVERYTHING ELSE HERE ─────────
+   *
+   * A project can now arrive as PHOTOGRAPHS (docs/CAPTURE.md): originals copied
+   * in and never touched again, a recipe of splits and quads over them, and a
+   * mint that assembles an image-only PDF. FROM THE MINTED PDF ONWARD NOTHING
+   * IN THIS INTERFACE CHANGES — the read, the book, narrate and export never
+   * learn the stage exists.
+   *
+   * `projectDir` AND NOT `projectId`. docs/CAPTURE.md writes the table rows as
+   * `{projectId, …}`; there is no such thing in this codebase, where a project
+   * is addressed by its directory and every neighbouring door above takes
+   * exactly that. Spelling it the doc's way would put a second name on a thing
+   * that already has one.
+   *
+   * PIXELS CROSS THIS BRIDGE IN ONE DIRECTION ONLY. Working copies and
+   * thumbnails are never IPC bytes: they reach the page through the
+   * `foundry-file:` door as an img element, allow-listed by the token these
+   * calls hand back. What crosses here is the finished page JPEG, renderer to
+   * main, one page at a time, so no whole book is ever resident in one heap.
+   */
+  capture: {
+    /**
+     * Copy the named files in, hash them, decode, read their capture times, and
+     * append them to the recipe. Late arrivals inherit the settings of the photo
+     * before them — except where the aspect rule refuses the copy.
+     */
+    intake(projectDir: string, paths: string[]): Promise<CaptureOpened>;
+    /** The recipe, and the door token that makes its pictures loadable. */
+    recipeLoad(projectDir: string): Promise<CaptureOpened>;
+    /** The whole document, every time. The renderer debounces; this does not. */
+    recipeSave(projectDir: string, recipe: CaptureRecipe): Promise<void>;
+    /**
+     * Open a mint. MAIN COMPUTES THE FINAL LIST — strikes filtered, order
+     * applied, sizes decided — and the renderer rasterizes exactly that list.
+     */
+    mintBegin(projectDir: string): Promise<CaptureMintBegun>;
+    /** One rectified page, in the order `mintBegin` listed them. */
+    mintPage(mintId: string, index: number, jpeg: ArrayBuffer): Promise<void>;
+    /** Write the PDF, append the step, set the archive. Answers with the step. */
+    mintCommit(mintId: string): Promise<LedgerStep>;
+    /** Give up. Nothing is left behind and no step is appended. */
+    mintAbort(mintId: string): Promise<void>;
+  };
   onDocumentOpened(listener: (absolutePath: string) => void): () => void;
   /**
    * A document this app opened has MOVED to the copy it actually works on.

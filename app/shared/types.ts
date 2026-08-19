@@ -30,7 +30,7 @@
  * long.
  */
 /**
- * The five things the queue can be holding.
+ * The things the queue can be holding.
  *
  * `read` IS THE ONE THAT COSTS ANYTHING, and separating it out is the change the
  * whole front door turned on. A conversion used to be one act: read three
@@ -45,8 +45,17 @@
  * queue holds both because both spawn the engine; everything else about them
  * differs, starting with the fact that one waits for a person to press Start and
  * the other must never.
+ *
+ * `mint` IS THE SECOND MEMBER THAT SPAWNS NOTHING, after `env-install`, and the
+ * sentence above about the engine is the reason it needs saying here. A mint is
+ * the capture stage assembling a PDF out of photographs (docs/CAPTURE.md): the
+ * pixels are rectified in the RENDERER, one page at a time, so the row exists to
+ * be seen and cancelled rather than to be run. It must never occupy the queue's
+ * serial engine slot — an interactive mint sitting in it would hold a reading
+ * behind it for minutes — and `env-install` is the precedent for a row the pump
+ * hands to something other than `executeJob`.
  */
-export type JobKind = ConversionKind | 'read' | 'env-install' | 'translate';
+export type JobKind = ConversionKind | 'read' | 'env-install' | 'translate' | 'mint';
 
 /**
  * What the OCR panel can ask for. An env install is never enqueued this way.
@@ -2423,7 +2432,27 @@ export type DocumentMetadata =
  * Apply and watching every change vanish off the paper. See `RETAINED_BESIDE_YOU`
  * in shared/ledger.ts, where that is said once.
  */
-export type StepAction = 'import' | 'read' | 'curate' | 'translate' | 'metadata' | 'edit';
+/*
+ * `capture` IS AN ARRIVAL, and the only one besides `import` — the row a project
+ * begins with when it began as PHOTOGRAPHS rather than as a document
+ * (docs/CAPTURE.md). Its payload is the capture directory: the originals, which
+ * are the bank of that stage, plus the recipe that says how they become pages.
+ *
+ * IRREPLACEABLE, on `import`'s clause of the retention rule rather than on a new
+ * one. The originals are somebody's afternoon in an archive with a book that does
+ * not leave the building; nothing regenerates them at any price, and the recipe
+ * beside them is hand-made decisions about where the pages are.
+ *
+ * IT IS NOT A BOOK OF ITS OWN AND IT IS NOT A STATE OF ONE EITHER, which is the
+ * one place this action does not fit the questions the tables in shared/ledger.ts
+ * ask. It is what exists BEFORE there is a book: until a mint appends a step
+ * carrying a PDF, the project has no document at all, and every predicate that
+ * asks "is there a book here" must go on answering no. The entries are written
+ * with that reading and each says so; P3's audit walks them one at a time against
+ * a real capture project and writes the verdict into docs/CAPTURE.md.
+ */
+export type StepAction =
+  'import' | 'capture' | 'read' | 'curate' | 'translate' | 'metadata' | 'edit';
 
 /**
  * What was ASKED FOR, and what the run recorded about the answer.
@@ -2788,4 +2817,170 @@ export interface StepDeletion {
    * from numbers would arrive at "and 3 other items" within a month.
    */
   belongings: string | null;
+}
+
+/**
+ * ── THE CAPTURE STAGE'S RECIPE ───────────────────────────────────────────────
+ *
+ * docs/CAPTURE.md is the plan of record and this is its schema in TypeScript.
+ * A project that arrived as PHOTOGRAPHS keeps its originals untouched and
+ * content-addressed, and everything a person does to them lives here: the split
+ * line, the four-corner quads, the strikes and the order. Nothing edits an
+ * original, so every page in a minted PDF is derivable from originals + recipe.
+ *
+ * ── PLAIN CURRENT STATE, NOT AN OPS JOURNAL, and the divergence is deliberate ─
+ *
+ * The derived book replays ops because strikes must survive a regenerated bank.
+ * Here nothing upstream ever regenerates — the originals are immutable bytes —
+ * so there is nothing to replay onto and a journal would be machinery with no
+ * customer. Same non-destructive guarantee, simpler mechanism. The renderer
+ * reads and writes the whole document; it is kilobytes for hundreds of photos.
+ *
+ * ── ONE UNIT FOR THE WHOLE FILE ──────────────────────────────────────────────
+ *
+ * EVERY COORDINATE HERE IS A FRACTION OF THE WORKING COPY, 0..1 — quads and
+ * `split.x` alike. It is written as one rule because the alternative was two:
+ * the schema once pinned quads in absolute pixels while `split.x` was already a
+ * fraction, and the first real shoot proved why that could not stand. Twenty-six
+ * of its twenty-seven photos are 4032x3024 and one is 5712x4284, so an absolute
+ * quad copied onto the odd one landed outside the image.
+ *
+ * NORMALIZING DOES NOT MAKE COPYING SAFE, AND NOTHING ABOUT THE UNIT COULD.
+ * After the decoder's upright rotation those same twenty-six photos are PORTRAIT
+ * and the odd one stays LANDSCAPE, and a normalized quad copied across that
+ * boundary is a silent STRETCH — in bounds, plausible, wrong, and invisible all
+ * the way into the PDF. The precondition is SAME SHAPE, which is why apply-to-all
+ * and late-drop inheritance skip any photo whose aspect differs by more than 2%
+ * and say which ones they skipped. See docs/CAPTURE.md, "The recipe, exactly".
+ */
+export type CapturePoint = readonly [x: number, y: number];
+
+/**
+ * Four corners, and THE ORDER IS THE ORIENTATION: top-left, top-right,
+ * bottom-right, bottom-left OF THE OUTPUT PAGE. The rotate gesture permutes the
+ * assignment and there is no separate rotation field to disagree with it — one
+ * value, one meaning.
+ */
+export type CaptureQuad = readonly [CapturePoint, CapturePoint, CapturePoint, CapturePoint];
+
+/**
+ * THE SAME FOUR CORNERS IN WORKING-COPY PIXELS, and a separate name because
+ * the unit is the whole difference.
+ *
+ * The recipe is fractions end to end. Pixels exist in exactly two places: the
+ * list `capture:mint-begin` hands the renderer, and the rectify shader's own
+ * input. Giving them a type of their own means a function that wants one and
+ * is handed the other is a compile error rather than a page rendered at four
+ * thousandths of its size.
+ */
+export type PixelQuad = CaptureQuad;
+
+/** One page of the book: a quad on some photo, struck or not. */
+export interface CapturePage {
+  /** `<photoId>:<n>`. */
+  id: string;
+  quad: CaptureQuad;
+  /**
+   * A retake, a blur, a shot of the desk. Struck pages stay on the grid the way
+   * struck rows stay on the workbench, and the mint leaves them out.
+   */
+  struck: boolean;
+}
+
+/** Where a photo's capture time came from, because a guess must say it is one. */
+export type CaptureTimeSource =
+  /** EXIF `DateTimeOriginal` with `OffsetTimeOriginal` beside it: a real instant. */
+  | 'exif-offset'
+  /** EXIF wall time with no offset tag, read in THIS machine's zone. A guess. */
+  | 'exif-local'
+  /** No EXIF time at all. The file's mtime, which is when it was copied at best. */
+  | 'mtime';
+
+/** One photographed spread — or one page, once somebody has split it. */
+export interface CapturePhoto {
+  /** The sha of the ORIGINAL bytes. The identity of everything derived from it. */
+  id: string;
+  /** Relative to the capture directory: `originals/<sha>.<ext>`, extension kept. */
+  file: string;
+  /**
+   * The DECODED working copy's dimensions — never EXIF's.
+   *
+   * EXIF describes the STORED grid and the decoder returns the UPRIGHT one, and
+   * on the acceptance shoot they disagree: EXIF says 4032x3024 for a file
+   * libheif hands back as 3024x4032. Both are correct about different grids,
+   * which is exactly the shape of defect this project keeps paying for, so the
+   * recipe records the one the editor draws on and the mint samples from and
+   * never mentions the other. It is stored rather than re-derived because the
+   * aspect test above must be answerable without decoding anything.
+   */
+  width: number;
+  height: number;
+  /** ISO-8601 UTC instant. See `takenAtSource` for how much to believe it. */
+  takenAt: string;
+  takenAtSource: CaptureTimeSource;
+  /**
+   * The editor's split-line handle, kept so re-dragging can re-derive the two
+   * quads. THE QUADS ARE AUTHORITATIVE for the mint; this is the gesture's own
+   * state. `x` is a fraction of the working copy's width, like everything else.
+   */
+  split: { x: number } | null;
+  /** One before a split, two after. Left then right, in the original's slot. */
+  pages: CapturePage[];
+}
+
+/** `capture/recipe.json`, read and written whole. */
+export interface CaptureRecipe {
+  version: 1;
+  photos: CapturePhoto[];
+  /** Every page id in reading order, STRUCK INCLUDED — the mint filters them. */
+  order: string[];
+  /** Which way the capture-time sort ran before anybody dragged a card. */
+  descending: boolean;
+}
+
+/**
+ * What a load or an intake answers with.
+ *
+ * THE TOKEN IS WHY THIS IS NOT JUST THE RECIPE. Working copies and thumbnails
+ * reach the renderer only through the `foundry-file:` door, and that door is an
+ * ALLOW-LIST rather than a path check: `foundry-file://capture/<token>/<name>`
+ * answers only for a token main minted for this project. A renderer talked into
+ * asking for something else gets a 403 rather than meeting a cleverer path test
+ * that has to stay right forever. Same decision `book:load` already makes.
+ */
+export interface CaptureOpened {
+  recipe: CaptureRecipe;
+  token: string;
+}
+
+/**
+ * One page for the renderer to rasterize, as `capture:mint-begin` lists them.
+ *
+ * MAIN COMPUTES THE LIST AND THE RENDERER RENDERS EXACTLY THAT LIST — strikes
+ * filtered, order applied, sizes decided, once, on the side that owns the recipe.
+ *
+ * AND THE QUAD HERE IS IN PIXELS WHILE THE RECIPE'S IS A FRACTION, which is the
+ * one place those two units meet, so the field name carries the difference
+ * rather than a reader's memory. Main has to denormalize anyway to work out the
+ * output size, and doing it once here means the multiply never happens twice on
+ * two sides of the bridge against two ideas of how big the working copy is.
+ */
+export interface CaptureMintPage {
+  pageId: string;
+  /** The working copy's `<name>`, for use with the token on the door. */
+  workingCopy: string;
+  /** Corners in WORKING-COPY PIXELS, already multiplied out. */
+  quadPx: PixelQuad;
+  /** What main measured the working copy to be, for the renderer to assert. */
+  sourceWidth: number;
+  sourceHeight: number;
+  /** The rectified page's size — the quad's opposite-edge maxima. */
+  outWidth: number;
+  outHeight: number;
+}
+
+/** The mint session `capture:mint-begin` opens. */
+export interface CaptureMintBegun {
+  mintId: string;
+  pages: CaptureMintPage[];
 }

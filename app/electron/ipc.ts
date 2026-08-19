@@ -90,6 +90,7 @@ import type {
   AppQuestion,
   Asked,
   BackendSettingsPatch,
+  CaptureRecipe,
   CloseAnswer,
   CloseWarning,
   ConversionKind,
@@ -1580,6 +1581,40 @@ export function registerIpc(): void {
       + 'then delete the step.');
   };
 
+  /*
+   * ── THE CAPTURE STAGE, REGISTERED AND NOT YET ANSWERING ───────────────────
+   *
+   * Merge 1 is the CONTRACT and nothing else: these seven exist so the renderer
+   * can be written and typechecked against real declarations while main is
+   * still being filled in (docs/CAPTURE.md, work packages). They refuse by name
+   * rather than by silence, because a door that resolves undefined is a bug
+   * report about the renderer and a door that throws is a true sentence about
+   * the app.
+   *
+   * REGISTERED HERE AND NOT BEHIND A FLAG. A channel that appears later is a
+   * channel `docs/IPC-CHANNELS.md` cannot enumerate and the audit cannot see;
+   * the seven names are the contract, and the contract is what ships first.
+   */
+  const captureNotYet = (channel: string): never => {
+    throw new Error(
+      `${channel} is registered but not implemented yet — the capture stage lands `
+      + 'in later merges (docs/CAPTURE.md).',
+    );
+  };
+  ipcMain.handle('capture:intake', (_event, _projectDir: string, _paths: string[]) =>
+    captureNotYet('capture:intake'));
+  ipcMain.handle('capture:recipe-load', (_event, _projectDir: string) =>
+    captureNotYet('capture:recipe-load'));
+  ipcMain.handle('capture:recipe-save', (_event, _projectDir: string, _recipe: CaptureRecipe) =>
+    captureNotYet('capture:recipe-save'));
+  ipcMain.handle('capture:mint-begin', (_event, _projectDir: string) =>
+    captureNotYet('capture:mint-begin'));
+  ipcMain.handle('capture:mint-page', (_event, _mintId: string, _index: number, _jpeg: ArrayBuffer) =>
+    captureNotYet('capture:mint-page'));
+  ipcMain.handle('capture:mint-commit', (_event, _mintId: string) =>
+    captureNotYet('capture:mint-commit'));
+  ipcMain.handle('capture:mint-abort', (_event, _mintId: string) =>
+    captureNotYet('capture:mint-abort'));
   ipcMain.handle('ledger:read', (_event, projectDir: string) => readStepLedger(projectDir));
   ipcMain.handle('ledger:go', (_event, projectDir: string, stepId: string) =>
     goToStep(projectDir, stepId));
