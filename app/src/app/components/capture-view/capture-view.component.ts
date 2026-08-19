@@ -65,6 +65,16 @@ const ACKNOWLEDGED_FOR_MS = 1600;
   imports: [CaptureGridComponent, CaptureEditorModalComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
+    <!--
+      THE OPEN PHOTOGRAPH LEAVING THE RECIPE USED TO STRAND THIS SCREEN.
+      There was an @else here drawing "That photograph is no longer in this
+      project" as a bare paragraph between the table and the mint footer --
+      with no way to dismiss it, because the open id stayed set and the modal that
+      owns Escape was the thing that had gone. And the table below it was DEAF,
+      since it stops answering the keyboard while something is open over it.
+      Closing is the whole of the right answer; the table reappearing says the
+      photograph is gone better than a sentence about it would.
+    -->
     <div class="table">
       <!--
         THE TABLE IS ALWAYS DRAWN NOW. The editor used to REPLACE it, so leaving
@@ -107,13 +117,6 @@ const ACKNOWLEDGED_FOR_MS = 1600;
           (step)="step($event)"
           (close)="open.set(null)"
         />
-      } @else {
-        <!--
-          The open photograph left the recipe under us — only reachable through
-          a hand-edited file today. The modal closes rather than drawing an
-          empty room around a picture that is not there.
-        -->
-        <p class="gone">That photograph is no longer in this project.</p>
       }
     }
 
@@ -156,8 +159,6 @@ const ACKNOWLEDGED_FOR_MS = 1600;
     .grow { flex: 1; }
 
     .which { font-size: 12px; opacity: 0.8; }
-
-    .gone { padding: 16px; opacity: 0.8; }
 
     .mint {
       display: flex;
@@ -276,6 +277,15 @@ export class CaptureViewComponent {
   constructor() {
     inject(DestroyRef).onDestroy(() => {
       if (this.applauseTimer !== null) clearTimeout(this.applauseTimer);
+    });
+    /*
+     * If the open photograph leaves the recipe, close. It is only reachable
+     * through a hand-edited file today, and it is written as a rule rather than
+     * a screen because the failure it prevents is a stuck one: nothing else on
+     * this surface can clear `open` once the modal is not there to be closed.
+     */
+    effect(() => {
+      if (this.open() !== null && this.opened() === null) this.open.set(null);
     });
     effect(() => {
       const directory = this.tab().path;
