@@ -679,10 +679,20 @@ edits this document first and says so on the channel.
    frames, strike IMG_0238, then crop (undone as yet: each half still
    carries a strip of desk and a sliver of the facing page). What
    remains is PERSON-SIZED, not measurable: nobody has pressed the
-   button in a running window, and the foundry-file capture host has
-   never served a byte to a real renderer — the first thing a live
-   session exercises and the first thing that will break if anything
-   is going to.
+   button in a running window, and CaptureService has never run inside
+   the app.
+8. **THE DOOR SERVES BYTES (P1, seq 68): the SHIPPED mount.ts handler
+   and the SHIPPED CSP (mountFoundry with no host, no window shown), a
+   hidden BrowserWindow loading an <img> exactly as the grid does.**
+   Thumbnail 480x640 and working copy 3024x4032 LOADED — the working
+   copy decoded by CHROMIUM and matching the recipe, so two
+   independent readers of the hand-written encoder's bytes now agree,
+   and one of them is the engine the app draws with. Refused, each
+   measured: unknown token, ../ traversal, %2F-encoded separator (the
+   split-then-decode-then-check ordering P2 verified by reading at seq
+   46, now verified by running), fetch() on the scheme (the CSP doing
+   what the plan said with no CSP edit ever written) — and THE
+   ORIGINAL HEIC: the bank has no door, measured rather than argued.
 
 ## Deferred out loud
 
