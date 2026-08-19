@@ -830,6 +830,29 @@ page, we're in a new stage where we can change it per-page."
    `{x}`; splitAt generalizes from a vertical lerp to the chord.
    Migration: an old `{x}` reads as the vertical segment it always
    meant.
+5b. P2's plan-back (seq 128), all five ruled in: the STAGE IS DERIVED,
+   never stored -- the modal opens in stage 1 only on a virgin project
+   (all whole-frame, unsplit, nothing byHand); anything else opens
+   stage 2, so reopening to fix page 31 can never land on the button
+   that stamps everything. The two applies are ONE BODY that ALWAYS
+   skips byHand and names the skips -- stage 1 is just the call where
+   the byHand set is empty, which makes a wrong stage derivation fail
+   SAFE (skips and says so) instead of destructive. Within one stamp,
+   SPLIT GOES FIRST, then the rect onto the halves (rect-first would
+   skip every unsplit photo on page-count grounds with a reasonable-
+   sounding refusal list). The stamp CARRIES THE TURN for free (the
+   corner order IS the orientation), subsuming stage-1 turn-all; the
+   STANDALONE TURN-ALL IS KEPT IN STAGE 2 (ruled) -- it is the one act
+   that changes every page without overwriting hand-set crops, and a
+   rect stamp cannot express it. The already-split skip RETIRES in
+   favour of byHand (split-ness was a proxy for hand-adjusted from
+   before the word existed; keeping it would make the first global
+   split permanently un-re-splittable). And byHand has one consistent
+   lifecycle: per-page Apply SETS it, every global stamp CLEARS it on
+   the pages it touches -- otherwise the feature works exactly once
+   per project, and a mark left standing after an explicit re-stamp
+   is a lie that costs the next global too.
+
 6. FINALIZE (Owen, same evening): the modal ends in a SUBMIT that
    permanently applies the configuration -- the full flow is GLOBAL ->
    OUTLIERS -> FINALIZE, for the rect and the splitter alike. His
