@@ -254,6 +254,21 @@ flight because it makes a folder) — Owen's ruling, and the house
 convention: five dialogs existed and the inline field was the
 deviation.
 
+**The editor walks the book (Owen, live, 2026-08-19): prev/next page
+buttons inside the page editor with a position readout ("page 7 of
+54"), so refining fifty-four crops is one sitting, not fifty-four
+round-trips through the grid.** And the crop workflow is named in his
+terms — GLOBAL then PER-PAGE: "set the global position of the rect,
+then change the shape on the page level; global + page 1 + page 2 +
+page 3". Ruled as SURFACE, not schema: "global" is the existing
+apply-to-all machinery given its honest name (a Set for all pages act
+in the editor, aspect-skip rules unchanged), and a page-level drag
+after it is the per-page override it always was. The recipe keeps ONE
+kind of quad; no stored global layer, no merge semantics, no
+re-flowing when global changes later — that heavier model (a
+persistent global quad that non-overridden pages keep following) is
+DEFERRED OUT LOUD below unless Owen asks for it by name.
+
 **The gestures**, each on a single page with an "apply to all" affordance:
 
 - **Rotate** — quarter turns. Apply-to-all stamps the turn on every page.
@@ -812,6 +827,10 @@ edits this document first and says so on the channel.
   (read-back section 4): the two Translated-stamp defects compiled green
   because default: hides a widened union; a never-check would make the
   compiler name them. Out of scope tonight, worth its own small pass.
+- A PERSISTENT global-quad layer (pages without their own override
+  keep following later changes to the global): a real schema change
+  with merge semantics; the v1 surface (apply-to-all named "global" +
+  per-page overrides) covers the workflow without it.
 - Whether Mint is ALSO an act orderable from the action rail: the mint
   button lives on the light table's own footer (you press it looking at
   the pages it will make); the rail question is about the rail's
