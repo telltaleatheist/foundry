@@ -197,7 +197,7 @@ family most likely to grow doors.
 
 ---
 
-### Eight names added on 2026-08-19 — the capture stage
+### Eight names added on 2026-08-19 — the capture stage (a ninth, the intake-progress push, followed the same day; see the pushes section)
 
 One new family, `capture:`, all eight registered in `app/electron/ipc.ts`
 like every other door. Four answer today (create, intake, recipe-load,
@@ -296,6 +296,13 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `workspace:plan-translation` | Plan a translation of an open document. |
 | `wsl:facts` | The distros on this machine. |
 | `wsl:tooling` | What one of them actually has installed. |
+
+### One push added on 2026-08-19 — intake progress
+
+`capture:intake-progress`, the family's ninth name and its first push,
+shaped verbatim on `env:install-progress`: broadcast from main during
+the `capture:intake` invoke, one push per path asked for plus a closing
+push, payload `{projectDir, done, total, file}`.
 
 ## Pushes main makes at the renderer
 

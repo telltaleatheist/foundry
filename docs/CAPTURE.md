@@ -167,6 +167,17 @@ the central gesture of the feature DID NOTHING, because every one of
 those measures the PIPELINE and a gesture needs HANDS. The image was
 the only thing that could have told anybody: LOOK AT THE PAGES.
 
+**Hosted, capture has no door (Owen via bookforge-sync seq 105: "The
+foundry page where the user would add a new book should not be
+available on Bookforge — Bookforge is the project manager, foundry is
+the workhorse").** The dock pins Home as permanent chrome, so a hosted
+bare window is always one click from the hero — and "Photograph a
+book..." sits OUTSIDE the hero's hosted() guard today. Ruled: the
+button moves behind `!hosted()`, one line, P2. BookForge's own half
+(passing the book's file as opts.document so the bare window lands on
+the import rather than on Home) is theirs and is answered on their
+channel; the two together make Owen's principle true.
+
 Until ProjectSummary.capture is used by P2, Home draws a fresh capture
 project disabled and mislabelled — known, temporary, blocks a row and
 not the feature.
@@ -823,7 +834,24 @@ edits this document first and says so on the channel.
   deferred out loud. The one-progress-shape aspiration yields to the
   owner's ask: the mint keeps its queue row, intake gets a modal, and
   the difference is honest — a mint is background work you leave, an
-  intake is a drop you are standing in front of.
+  intake is a drop you are standing in front of. LANDED both halves
+  (f6b7138 + f990b33): payload decisions REMOVE arithmetic from the
+  modal (`file` names the photo IN HAND so done sits one behind it;
+  `total` counts every path asked for so the bar cannot run backwards
+  on a stray file; a closing push so the card never hangs at n-1).
+  Freeze measured before/after by heartbeat: event-loop turns 13→47,
+  median lateness 31→0 ms; the ~1.4 s wasm decode per photo REMAINS
+  (one hitch per photograph, live window between), utility process
+  still the real fix, still deferred. Modal decisions, endorsed: shown
+  ON THE INVOKE, not the first push — P1 measured the first push at
+  ~110 ms so the original latency reason fell, and the stronger one
+  replaced it (seq 96): the card must not be COUPLED to the channel;
+  a push that never comes must not mean a card that never shows.
+  Cleared in a finally, not on the closing push (done===total arrives
+  while the recipe writes; vanishing then uncovers an empty table for
+  a beat). NOT in UiService's one-question list (a modal is a
+  QUESTION, this is a REPORT — only() closing it would be precisely
+  wrong).
 - JPEG/PNG intake: v1 refuses them by name. Before adding, MEASURE
   who applies EXIF Orientation on Electron’s decode path, the same
   question libheif already answered for HEIC (a wrong answer turns
