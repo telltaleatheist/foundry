@@ -795,6 +795,51 @@ edits this document first and says so on the channel.
    TO MEASURE, and never quote a probe's hardcoded summary line as a
    finding. What remains for hands: the real drag with real HEICs.
 
+## Wave 21 — the staged editor (Owen, 2026-08-19 evening; BUILD ON
+BRANCHES, MERGE ONLY ON HIS WORD — he is mid-crop on the current model)
+
+Owen rejected the linked-global model in favour of STAGES, and his
+version is better because it deletes the hardest part: no page follows
+anything, every page simply HAS its setting, and the workflow comes
+from sequencing rather than linkage. His words: "we hit apply, it
+shows up that way on every page... and now when we flip through every
+page, we're in a new stage where we can change it per-page."
+
+1. GRID INTERACTION CHANGES: single click SELECTS (marquee, reorder,
+   delete); DOUBLE-CLICK or Enter with one selected OPENS THE EDITOR,
+   which becomes a MODAL (PDFElement register: page, rect, prev/next).
+2. STAGE 1, GLOBAL: the modal edits one rect (and one split). APPLY
+   stamps every same-shaped page (aspect-skip family unchanged, skips
+   named) — even if nothing was changed first; pressing Apply IS what
+   advances the stage.
+3. STAGE 2, PER-PAGE: flipping now edits the page in front of you.
+   Two buttons: APPLY (this page — marks it SET BY HAND) and APPLY TO
+   ALL (re-stamp, which SKIPS hand-set pages BY DEFAULT and names them
+   in the existing notice voice: "Left alone: pages 3, 7 — you set
+   those by hand", with an explicit include-them override). The
+   hand-set mark is the ONE schema addition: `pages[].byHand:
+   boolean` (optional, default false), stored so a re-stamp NEXT
+   SESSION still cannot silently destroy outlier work. Validator and
+   mint ignore it.
+4. THE SPLIT LINE GENERALIZES: `split` becomes a SEGMENT — two
+   endpoints, each a draggable handle RIDING AN EDGE of the quad
+   (opposite edges), so vertical, horizontal, and angled gutters are
+   one gesture. The edge-riding constraint is load-bearing: both
+   halves stay four-cornered quads the mint can print. Schema:
+   `split: {a: [x,y], b: [x,y]}` in working-copy fractions, replacing
+   `{x}`; splitAt generalizes from a vertical lerp to the chord.
+   Migration: an old `{x}` reads as the vertical segment it always
+   meant.
+5. The staged flow REPLACES the apply-to-all buttons on the light
+   table (two ways to say everywhere would be the drift disease as
+   UI). The Turned/Split/Crop set acknowledgements and the corner mark
+   carry over into the modal.
+
+Package split: P1 — schema (byHand, split segment), validator, mint
+chord sampling, migration of {x}; P2 — the modal, stages, buttons,
+edge-riding handles, grid double-click/Enter/selection rework.
+Frontend-design skill pointer applies to the modal treatment.
+
 ## Deferred out loud
 
 - **Automatic de-skew** — Owen: later, after this lands.
