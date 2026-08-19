@@ -78,7 +78,34 @@ predicate in that file (`canRunHostActFrom`, `hostActPositionFrom`,
 against the capture arrival, and the audit result is written back into this
 document. Wave 15's Narrate gating and Wave 16's queue seam are the two
 places most likely to notice; neither may regress. Until a PDF is minted,
-nothing downstream is offered — no read, no narrate, no export.
+nothing downstream is offered — no read, no narrate, no export. P1
+measured the structural half already: `reading.needed` keys off
+`manifest.archive?.kind === 'pdf'`, so an archiveless capture project
+offers nothing downstream with no new gating written — and the audit
+still walks every predicate rather than resting on that one line.
+
+Three rulings recorded from P1's plan-back (items 3, 5, 6):
+
+- **The mint sets the manifest archive as well as appending the step.**
+  A step alone leaves `reading.needed` false forever and the minted
+  book unreadable. Both writes at the same commit point.
+- **A capture project is keyed at creation from a random 8-hex id** —
+  it must exist empty, before any content exists to hash, so
+  `contentKey` for captures is a creation id rather than a content
+  hash, and its doc comment says so. The key never changes on re-mint:
+  the project is its identity, not its current PDF.
+- **`takenAt` stays a UTC instant.** Intake applies
+  `OffsetTimeOriginal` when present (all 27 shoot files carry it);
+  wall time with no offset is interpreted in the machine's zone and
+  the photo record says so; no EXIF time at all falls back to file
+  mtime, recorded, never silent.
+
+**The mint job row** is a new `JobKind` member whose row shows in the
+shelf with progress and cancel but NEVER occupies the queue's serial
+engine slot — an interactive renderer-driven mint must not block a
+read behind it for minutes. `enqueueEnvInstall` is the precedent; the
+mechanism is P1's to pick after reading `executeJob`'s dispatch, and
+the verdict lands in the Wave 16 seam audit.
 
 ## The surface — one grid, three gestures
 
@@ -136,8 +163,8 @@ photos is kilobytes of JSON):
       "takenAt": "2026-08-17T14:03:22Z",
       "split": { "x": 0.51 },
       "pages": [
-        { "id": "9f2c…:0", "quad": [[102,88],[1963,120],[1948,2905],[85,2871]], "struck": false },
-        { "id": "9f2c…:1", "quad": [[2010,118],[3891,96],[3905,2899],[2022,2911]], "struck": false }
+        { "id": "9f2c…:0", "quad": [[0.034,0.029],[0.487,0.040],[0.483,0.958],[0.028,0.947]], "struck": false },
+        { "id": "9f2c…:1", "quad": [[0.499,0.039],[0.965,0.032],[0.969,0.956],[0.501,0.960]], "struck": false }
       ]
     }
   ],
@@ -149,8 +176,24 @@ photos is kilobytes of JSON):
 Conventions, pinned:
 
 - `id` is the sha of the original bytes. `pages[].id` is `<photoId>:<n>`.
-- **Quad points are in ORIGINAL-image pixel coordinates** — the bank's own
-  grid, never a rotated or scaled copy's.
+- **Every coordinate in the recipe is a NORMALIZED FRACTION (0..1) of
+  the WORKING COPY's grid** — quads and `split.x` (fraction of width)
+  alike. One unit for the whole file. Ruled 2026-08-19 after P1
+  measured the shoot (26 photos 4032x3024, IMG_0238 5712x4284): an
+  absolute-pixel quad copied onto the odd one out lands outside the
+  image and fails as black edges. Corner handles clamp to [0,1]; the
+  mint multiplies by the working copy's dimensions at rasterize time.
+- **Normalizing does NOT make copying safe, and the rule that does is
+  pinned here** (P2's interaction finding): after orientation baking,
+  26 shoot photos are PORTRAIT and IMG_0238 stays LANDSCAPE, and a
+  normalized quad copied across that boundary is a silent STRETCH —
+  in-bounds, plausible, wrong, and invisible all the way into the PDF.
+  So **apply-to-all and late-drop inheritance SKIP any photo whose
+  baked aspect ratio differs from the source's by more than 2%**, and
+  the surface names what it skipped and why. A skipped photo keeps its
+  own quads. On the acceptance shoot exactly one card skips, which is
+  correct: a landscape frame in a portrait shoot is a different
+  photograph, not one the same crop happens to fit.
 - **Quad corner order is [top-left, top-right, bottom-right, bottom-left]
   OF THE OUTPUT PAGE.** The corner assignment IS the orientation: the
   rotate gesture permutes the assignment, and no separate rotation field
@@ -171,9 +214,29 @@ sees one. **PNG, not JPEG — ruled by Owen 2026-08-19**: the shoot is
 small, poor-quality print, HEIC is already one lossy generation, and a
 JPEG working copy would bake in a second before any page reached the
 mint. PNG is lossless; the only cost is disk on a file that is
-derivable and disposable. The copy is pixel-identical in dimensions,
-so recipe quads in original-image coordinates apply to both without
-translation. The original bytes stay the bank. **Resolution is never
+derivable and disposable.
+
+**The working copy is UPRIGHT: intake bakes orientation into the PNG.**
+Ruled from both plan-backs — all 27 shoot files carry EXIF Orientation
+6 or 3, none is 1, and NOT baking would mean spelling one rotation four
+ways in P2 (shader, corner hit-testing, split line, drag maths). Recipe
+coordinates are the WORKING COPY's grid — the grid the editor draws on
+and the mint samples from. One grid, one meaning, no orientation field
+to disagree with the quad. Stated consequence: working-copy dimensions
+TRANSPOSE the original's for orientations 6 and 8; nothing downstream
+cares, because nothing downstream addresses the original's grid. The
+original bytes stay the bank, untouched.
+
+**Intake also emits a display thumbnail beside each working copy**
+(`capture/thumbs/<sha>.jpg`, 640 px long edge, JPEG ~0.85 — display
+only, never in any quality chain). Ruled after both packages converged
+on it: intake already holds the decoded RGBA, so a thumbnail costs one
+downscale and one encode, and it spares the grid pulling ~540 MiB of
+full-res PNG through the door and decoding it on EVERY project open.
+The grid reads thumbs; the editor reads the full PNG for the ONE open
+photo; the mint reads full PNGs one page at a time.
+
+**Resolution is never
 reduced anywhere in this chain** — the mint output size is the quad
 edge maxima, and only the read stage downsamples, per read, under its
 own pixel budget, baked into nothing.
@@ -221,10 +284,18 @@ Handles (all `capture:` prefixed; P3 regenerates `docs/IPC-CHANNELS.md`):
 | `capture:mint-commit` | invoke | `{mintId}` → `{step}` — writes the PDF, appends the minted step |
 | `capture:mint-abort` | invoke | `{mintId}` → `{ok}` |
 
-Originals reach the renderer for display through the app's existing
-image-serving door (the workbench already shows page images and figure
-crops); P1 names that door here when it wires it, rather than minting a
-second mechanism.
+**The door, answered (checkpoint 2 — both packages located it
+independently):** the `foundry-file:` scheme in `app/electron/mount.ts`
+(registered ~:210, handled ~:268) serves one host today, `book`, behind
+a token allow-list; everything else 404s by design. P1 adds a SECOND
+host — `foundry-file://capture/<token>/<name>` — allow-listed the same
+way, token minted by a successful `capture:recipe-load`. **Pixels reach
+the renderer ONLY through that door** (P2's D3, road a): an `img`
+element on the scheme, then `createImageBitmap(img)` — allowed by the
+existing CSP (`img-src … foundry-file:`) with no CSP edit, while
+`fetch()` on the scheme stays refused by `connect-src`. Working copies
+and thumbnails NEVER move as IPC bytes for display; only mint page
+JPEGs cross the bridge, one at a time, renderer to main.
 
 ## Work packages
 
@@ -235,7 +306,18 @@ bounded scan finds it — measured on the real files; a proper box walk
 is the implementer's call), recipe read/write, the
 mint session (`mint-begin`/`page`/`commit`/`abort`), PDF assembly with
 pdf-lib, the minted step appended to the ledger, job-queue row with
-progress and cancel. Registers the `capture:` handles in `ipc.ts`.
+progress and cancel. Registers the `capture:` handles in `ipc.ts`, the
+seven methods on `FoundryApi` in `app/shared/api.ts`, and the
+`preload.ts` wiring — **api.ts and preload.ts are P1 ground** (P2
+consumes, never edits).
+
+**P1's Merge 1 is CONTRACT-ONLY** (P2's D1, adopted by P1): types.ts
+recipe shapes + the `mint` JobKind member + the capture step shape,
+api.ts declarations, preload wiring, ipc.ts handlers registered and
+throwing not-implemented. The lead merges it to main early so P2
+builds against real types while P1 fills the bodies. Doc custody
+stays with the lead: P1 sends exact wording here for rulings rather
+than editing this file.
 
 **P2 — the light table (renderer).** New standalone components: the capture
 grid (cards, drag-reorder, sort/reverse, drop zone, strike), the page
@@ -263,9 +345,20 @@ edits this document first and says so on the channel.
    vendoring-safe, no native build) — one new dependency, recorded here
    because dependencies are contract. The folder name carries spaces;
    let that stay a test, not a surprise.
-2. **The image-serving door** for originals (P1 finds, names it here).
-3. **The `stages.ts` audit list** (P3 walks every predicate, writes the
-   verdict here).
+2. **The image-serving door — ANSWERED**, see "The door, answered" in
+   the IPC section: second `foundry-file:` host, token allow-list, no
+   CSP edit.
+3. **The `stages.ts` audit list** (P1 walks every predicate, writes the
+   verdict here via the lead).
+4. **The HEIC double-rotation measurement, BEFORE any rotation code is
+   written** (P2's hazard): HEIC records rotation twice — the
+   container's `irot`/`imir` boxes and the EXIF Orientation tag — and
+   libheif may apply `irot` during decode. P1's FIRST decode prints the
+   decoded dimensions of one Orientation-6 file: 4032x3024 back means
+   apply EXIF rotation yourself; 3024x4032 back means it is already
+   upright and applying EXIF on top would turn 26 of 27 photos 90°
+   wrong, uniformly enough to look deliberate. Verdict to the channel
+   and this doc before Merge 3.
 
 ## Deferred out loud
 
@@ -275,6 +368,17 @@ edits this document first and says so on the channel.
 - Carrying banked readings across a re-mint when page pixels are unchanged.
 - A lossless-PDF mint option (PNG/FLATE pages) for archival use — the
   working copies already preserve everything it would need.
+- **The engine reading rectified images directly** (an image-manifest
+  document kind; PDF demoted to just another export). Considered with
+  Owen 2026-08-19; deferred: the read's per-run pixel budget makes the
+  VLM's input pixels effectively identical either way, and the recipe
+  + PNG working copies preserve everything a later pivot would need.
+  The lever that actually helps small print is the READ budget, which
+  is per-run and adjustable today.
+- A PNG-encode dependency: P1 writes the encoder in-house (zlib +
+  IHDR/IDAT — the buffer format is fully under our control) and asks
+  for `pngjs` BY NAME if that does not come out clean, rather than
+  quietly hand-rolling something fragile.
 - Fine (non-quarter) rotation as a separate gesture — the quad already
   absorbs small tilt; a dedicated dial can come with de-skew.
 
