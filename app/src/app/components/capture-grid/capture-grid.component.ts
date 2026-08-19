@@ -123,7 +123,16 @@ const PAGE_MIME = 'application/x-foundry-capture-page';
           />
         </div>
       } @empty {
-        <p class="empty">No photographs yet. Drop them on the strip to the right.</p>
+        <!--
+          IT DOES NOT SAY WHERE TO AIM ANY MORE. It used to read "Drop them on the
+          strip to the right", which was the instruction the window handler made
+          unnecessary -- and this is the FIRST SENTENCE a person reads after
+          making a project, which is exactly where Owen was standing when the
+          drop failed. Telling him to aim at a strip he no longer has to find
+          would have taught the wrong gesture at the one moment he was looking
+          for the right one.
+        -->
+        <p class="empty">No photographs yet — drop them anywhere in this window.</p>
       }
     </div>
     </div>
