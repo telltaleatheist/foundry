@@ -161,6 +161,11 @@ behind — not even copied originals), the sentence names the decoder
 and says nothing is wrong with the photographs, no require stack
 reaches the person. The gate ledger's summary line is P1's: THE
 GATES PROVE THE CODE COMPILES, AND ONLY RUNNING IT PROVES IT RUNS.
+Sixth (P2, seq 63), past the boundary of running: four green gates,
+twelve injected defects caught, eight acceptance checks passing — and
+the central gesture of the feature DID NOTHING, because every one of
+those measures the PIPELINE and a gesture needs HANDS. The image was
+the only thing that could have told anybody: LOOK AT THE PAGES.
 
 Until ProjectSummary.capture is used by P2, Home draws a fresh capture
 project disabled and mislabelled — known, temporary, blocks a row and
@@ -608,6 +613,29 @@ edits this document first and says so on the channel.
    the real 27 the day the mint lands. Limits stated: drawn axis-
    aligned fixtures, no HEIC through it, PDF assembled by a stand-in
    — where the stand-in and the mint disagree, the mint is right.
+6. **THE WHOLE LOOP IS MEASURED (P2, seq 63): 27 real photographs
+   through create/intake/edit/mint with the SHIPPED rectify shader,
+   all eight checks green.** Page identity proven, not fingerprinted:
+   own-source diff 0.75—1.07 of 255 (JPEG quantisation and nothing
+   else), nearest decoy 24—78, ratios 0.01—0.04 against the 0.6 line.
+   Every embedded image exactly outputSizeFor's size; every page its
+   image x 0.24 = 72/300, the 300 dpi read back from the other side.
+   The seq 19 colour/chroma/alpha residue is ANSWERED. Disk, so
+   reconstructible is worth acting on: 44 MB of originals became
+   336 MB of derived/ and a 67 MB PDF. THEN THE PAGES WERE LOOKED AT
+   — the first eyes on a minted page all night — and: the shoot is
+   SIDEWAYS SPREADS (the real book is a quarter turn + a split on all
+   27 = 54 pages; the un-edited 27-page state is not a defect, it is
+   what the gestures are FOR, and apply-to-all is the difference
+   between ~4 gestures and 54); IMG_0238 is a framed set of
+   handwritten letters, not a page — the aspect-skip sentence (a
+   different photograph, not one the same crop happens to fit) was
+   LITERALLY true, and a strike is that card's honest state; and three
+   split-gesture defects (fixed f3b9aba: the split never built its
+   second page on the photo it was performed on; the handle drawn on
+   quads[0] jumped on every drag; the drag read the photograph's X
+   while the line lay along the quad — invisible while everything is
+   upright, wrong the moment a spread is turned).
 
 ## Deferred out loud
 
