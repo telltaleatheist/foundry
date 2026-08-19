@@ -787,12 +787,23 @@ edits this document first and says so on the channel.
   trying it on the one file every page of the finished book is
   sampled from. Electron IS used for the thumbnail, handed the
   encoded PNG so there is no channel order to get wrong.
-- An intake progress channel: **27 photographs take 55.2 s (2.0 s
-  each, measured on this machine at Merge 2)** and `capture:intake`
-  is a plain invoke, so the renderer holds a spinner for a minute
-  with nothing to show. Deferred rather than invented mid-merge;
-  when it comes, decide whether the mint’s job-row shape belongs to
-  intake too, so progress has ONE shape in this feature, not two.
+- ~~An intake progress channel~~ **UN-DEFERRED BY OWEN, live (2026-08-19):
+  he dropped the 27 and the app FROZE for a minute — no progress, the
+  window unmovable — because the decode runs in MAIN and blocks its
+  event loop.** Ruled: a NINTH channel, `capture:intake-progress`, a
+  PUSH following the `env:install-progress` precedent exactly
+  (broadcast in main during the intake invoke, subscribed in preload);
+  payload `{projectDir, done, total, file}` per photograph. P1 emits it
+  AND yields between files so the window stays alive between decodes;
+  the ~2 s wasm decode of each photo still blocks in main, and the
+  REAL unblocking (decode in a utilityProcess) is deferred out loud.
+  P2 draws the PROGRESS MODAL Owen asked for — his words: it should
+  pop up a progress modal — showing done/total and the current file.
+  No cancel in v1 (an aborted intake mid-append is its own design),
+  deferred out loud. The one-progress-shape aspiration yields to the
+  owner's ask: the mint keeps its queue row, intake gets a modal, and
+  the difference is honest — a mint is background work you leave, an
+  intake is a drop you are standing in front of.
 - JPEG/PNG intake: v1 refuses them by name. Before adding, MEASURE
   who applies EXIF Orientation on Electron’s decode path, the same
   question libheif already answered for HEIC (a wrong answer turns
