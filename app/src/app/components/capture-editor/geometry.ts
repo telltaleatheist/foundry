@@ -163,40 +163,18 @@ function lerp(from: FractionPoint, to: FractionPoint, at: number): FractionPoint
  * reporting 4032x3024 and 4030x3022 is one shape;
  * far tighter than the gap the real shoot contains (0.75 against 1.3333).
  */
-const ASPECT_TOLERANCE = 0.02;
 
-/**
- * MAY A QUAD BE COPIED FROM A PHOTO OF THESE DIMENSIONS ONTO ONE OF THOSE —
- * the gate on "apply to all" and on a late drop inheriting its predecessor.
+/*
+ * THE SAME-SHAPE PREDICATE USED TO BE HERE and is not any more.
  *
- * ── The rule that this exists to stop being invisible ───────────────────────
- *
- * Settled on the feature channel, 2026-08-19, measured rather than reasoned. The
- * first acceptance shoot decodes to two shapes: twenty-six pages at 3024x4032
- * (portrait) and IMG_0238 at 5712x4284 (landscape), because the container
- * rotation libheif applies turns most of the shoot on its side and leaves one
- * photograph where it was.
- *
- * Fractions make a copy between two photos of the SAME shape exact at any size.
- * Between two shapes they do something worse than fail: the quad is stretched
- * into a different figure that still lies neatly inside the frame, so the page
- * mints full-bleed, plausible, and geometrically wrong — where the same mistake
- * in absolute pixels would have hung the corners off the edge where the rectify
- * reports them (`Rectified.withinSource`). The unit was never the safety
- * property. Same shape is.
- *
- * So a copy across shapes is REFUSED rather than approximated, and the surface
- * says which photographs it skipped. On the real shoot that is one card of
- * twenty-seven keeping its own corners — the correct outcome, because a
- * landscape frame in a portrait shoot is a different photograph, not a
- * photograph the same crop happens to fit.
+ * It moved to `shared/capture.ts` beside `outputSizeFor`, imported by both
+ * sides of the bridge, because `electron/capture.ts` had grown its own
+ * `mayInherit` saying the same thing in a different arrangement of the same
+ * algebra. Raised on the read-back of Merge 2 (channel seq 46) and ruled at 47:
+ * the second application of the ruling that moved `outputSizeFor`, and the
+ * first time we caught the duplication BEFORE the two copies disagreed rather
+ * than after. The tolerance lives there too, so this file no longer spells 0.02.
  */
-export function sameShape(source: Dimensions, target: Dimensions): boolean {
-  if (source.height === 0 || target.height === 0) return false;
-  const sourceAspect = source.width / source.height;
-  const targetAspect = target.width / target.height;
-  return Math.abs(sourceAspect - targetAspect) <= ASPECT_TOLERANCE * sourceAspect;
-}
 
 /*
  * THE OUTPUT-SIZE RULE USED TO BE COPIED HERE and is not any more.

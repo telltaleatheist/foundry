@@ -7,7 +7,9 @@ import type {
   CaptureRecipe,
 } from '@shared/types';
 
-import { rotate, sameShape, splitAt } from '../components/capture-editor/geometry';
+import { sameShape } from '@shared/capture';
+
+import { rotate, splitAt } from '../components/capture-editor/geometry';
 import type { CaptureCard } from '../components/capture-grid/capture-grid.component';
 import { api } from './foundry';
 import { NoticeService } from './notice.service';
@@ -307,7 +309,7 @@ export class CaptureService {
    * shape is exact at any resolution. Between two SHAPES it is a stretch that
    * lands inside the frame and looks plausible — the acceptance shoot has
    * twenty-six portrait photographs and one landscape, so this is the shoot we
-   * have rather than a hypothetical. `geometry.sameShape` is the 2% test, and
+   * have rather than a hypothetical. `sameShape` (shared/capture.ts) is the 2% test, and
    * the skipped photographs are NAMED rather than silently left out: a copy that
    * quietly did not happen to one card in twenty-seven is worse than one that
    * did the wrong thing loudly.
