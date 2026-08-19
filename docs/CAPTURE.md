@@ -864,9 +864,43 @@ page, we're in a new stage where we can change it per-page."
    finalized/ set the light table then shows; the bank and the recipe
    REMAIN, so step-back is deleting finalized/ and returning to the
    live recipe (reconstructible, not archived copies -- the derived/
-   rule extended, not broken). What finalize means for the MINT
-   (assemble from finalized/ vs re-rasterize) and for RE-EDITING after
-   finalize needs both agents' plan-backs before anything is cut.
+   rule extended, not broken). PLAN-BACKS ARE IN (P2 seq 131; P1's
+   mint measurement seq 132) and they overturn the shape, not the
+   intent -- ESCALATED TO OWEN, nothing cut until he rules:
+   - Step-back is ALREADY FREE here. "Keep the old ones" is a
+     PDFElement requirement because PDFElement writes over things;
+     Foundry's originals are immutable content-addressed bytes and
+     every page is derivable from originals + recipe. finalized/
+     cannot buy safety -- only a view or speed.
+   - The RESOLUTION TRAP: the mint must never assemble from
+     finalized/. If those files are less than full output resolution,
+     pressing Finalize silently DEGRADES the minted PDF -- a commit
+     button that makes the deliverable worse, invisible until someone
+     zooms. And P1 measured the mint needs no change at all (each
+     page is the maxima of its own opposing edges; a leaning cut
+     resamples nothing downward) -- one implementation, untouched.
+   - The BILL, measured on his live project: full-resolution
+     finalized/ adds ~229 MB to a 459 MB project (25 pages, mean
+     9.1 MB rectified) -- half again, for pixels derivable from bytes
+     beside them. And it is a FOURTH place a page can live, keyed by
+     nothing: re-edit after finalize and the table draws the old page
+     while the recipe holds the new one -- the recurring defect with
+     a new folder name.
+   - PROPOSED SHAPE (what "work with the pages as configured" costs
+     when it is a VIEW): finalize is a MODE, one persisted bit. The
+     light table stops drawing photographs-with-outlines and draws
+     PAGES -- rectified, cropped, turned, a spread as two cards, no
+     corner mark -- through the same Rectifier the editor preview
+     runs, over the 640px thumbnails (fractions apply at any
+     resolution; the unit decision pays for this). Derived on every
+     draw, so it cannot go stale and re-editing needs no answer.
+     Step-back is a button, not a deletion. If full-res assembly ever
+     hurts, the speed fix is a CACHE keyed by (photo sha, quad,
+     output size), filled by the mint's own path -- byte-identical by
+     construction, wantable independently, later.
+   - OWEN'S CALL: his words were files on disk; the agents' case is
+     the mode. If he wants files after reading the bill, files get
+     built -- knowingly, at full resolution only.
 
 5. The staged flow REPLACES the apply-to-all buttons on the light
    table (two ways to say everywhere would be the drift disease as
@@ -917,11 +951,21 @@ Clarified by P1's plan-back (seq 125), all five accepted:
   - `splitFromFraction(quad, x)` — the vertical segment {x} always
     meant, ONE body: main's migration and the Split button's default
     both call it.
-  - `seatSplit(quad, split, which, to)` — THE ONLY way a segment is
-    ever constructed from a pointer; incapable of returning what
-    halvesOf nulls, so null genuinely means a hand-edited file, never
-    "the handle got there by dragging" — the draws-fine-refuses-to-save
-    class, refused by construction.
+  - `seatSplit(quad, split, which, to) -> CaptureSplit` — THE ONLY
+    way a segment is ever constructed from a pointer; incapable of
+    returning what halvesOf nulls, so null genuinely means a
+    hand-edited file, never "the handle got there by dragging" — the
+    draws-fine-refuses-to-save class, refused by construction. The
+    dragged end projects onto the edge OPPOSITE its partner, the
+    partner re-seats on the way past. It does NOT stop an end at a
+    corner (sliver half) — that is a gesture question, P2's.
+  - `cutOf(quad, split) -> SplitCut | null` — the RESOLVER (re-seat +
+    refusal), named so seatSplit keeps sole claim on "seat":
+    SplitCut carries a and b each with {edge, at, point} plus
+    halves: side-by-side | stacked, so handles draw at .point
+    without re-deriving edges.
+  - `WHOLE_FRAME` — the one whole-frame quad constant (was WHOLE in
+    capture.service.ts, now imported).
   The words left/right die in the same commit (splitAt's tuple, the
   CapturePage docblock) — a stale comment asserting the wrong thing is
   how the last geometry bug survived two readings.
@@ -930,8 +974,32 @@ Clarified by P1's plan-back (seq 125), all five accepted:
 - Migration of `{x}` happens ON READ, every open, not one-shot — an old
   recipe stays readable forever and the next save writes the new form.
 - Mint chord expectation ("needs nothing — quads were never
-  axis-aligned") is stated as a HYPOTHESIS to be measured through
-  mintBegin, not assumed.
+  axis-aligned") MEASURED TRUE (P1 seq 132, through mintBegin
+  arithmetic on a leaning cut): each page is the maxima of its own
+  opposing edges, so the lean keeps the longer edge and nothing is
+  resampled downward. NO MINT CHANGE.
+
+The byHand MIGRATION (P2 measured seq 130, P1 built seq 132, ruled
+in): Owen's live recipe already holds Wave 21 executed by hand --
+24 pages on one global quad, IMG_0212 hand-dragged -- and byHand
+defaults false, so unmigrated, the first Apply-to-all in the new
+editor destroys that outlier. The mark is DERIVED ON READ, beside
+the {x} migration: the most-common quad among same-shaped
+photographs is the global; every page not EXACTLY equal to it gets
+byHand: true. Exact float equality, no tolerance (the stamp COPIES
+quads, it never computes them); compared PER PAGE SLOT (comparing
+across slots would mark every right half of a split shoot); a group
+with no single most-common quad is left entirely alone (a tie is
+absence of a stamp, not evidence of a hand); and it runs ONLY WHILE
+THE FILE HAS NOT SPOKEN -- if any page carries the field, every mark
+is a statement and nothing is derived, because a page hand-set BACK
+to the global crop is a stored fact a geometry-only inference would
+silently clear on the next open (and per seq 129, applies set and
+clear the mark; an inference running after them would be a third
+writer). Where the rule degrades it degrades SAFE: over-marking
+costs a named skip and one click of the override; under-marking
+costs an evening of cropping. Measured on his recipe read-only:
+exactly one page comes back marked, and it is IMG_0212.
 
 Package split: P1 — schema (byHand, split segment), validator, mint
 chord measurement, migration of {x}, the shared chord; P2 — the modal,
@@ -941,6 +1009,13 @@ Frontend-design skill pointer applies to the modal treatment.
 
 ## Deferred out loud
 
+- **Validator page-level refusals name pages by sha** ("page
+  aaaa...:0 says it was set by hand in something that is not a yes
+  or a no") — the sentence a person sees when a recipe refuses to
+  open. Predates Wave 21; pages carry no name. Fix shape when taken:
+  name the photograph (CapturePhoto.name, the Wave-20 field) plus
+  the half, sha prefix only as fallback. Noticed by P1 seq 132;
+  deferred by foundry-pc-2.
 - **Automatic de-skew** — Owen: later, after this lands.
 - **AI sharpen** — Owen: later, after this lands.
 - CV auto-detection of gutters/edges — superseded by apply-to-all for v1.
