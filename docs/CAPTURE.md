@@ -1129,6 +1129,32 @@ Built (P2 seq 136, ruled in by foundry-pc-2):
   at the floor the returned point is deliberately NOT under the
   pointer -- everything must draw from the returned segment, never
   the raw pointer, or the line and the handle separate.
+  BUILT (P1 seq 148, accepted): a BISECTION, not a closed form, and
+  the why is recorded -- the pair case is QUADRATIC (two vertices
+  move, the shoelace gains a product term), and worse, seating
+  CLAMPS at the ends of an edge, so the area is PIECEWISE quadratic
+  and a closed form is four cases guarding one answer, each a place
+  to be wrong on a quad nobody tests. The bisection rests on a
+  MEASURED ordering (one half grows monotonically through the whole
+  slide, five quads, so the positions where the floor holds form
+  one stretch) and tests ONE predicate asking both questions -- is
+  this a cut at all, is the smaller half above the floor -- so the
+  slide stops where the first constraint binds; sixty halvings is
+  exact past the last bit of a coordinate. TWO SHAPES LIE about the
+  quadratic: the unit square AND the thin band (parallel sides also
+  cancel the product term), so an affine model verifies perfectly
+  on both obvious test shapes and leaves 1.764% where the floor
+  says 2% on a hard skew -- wrong in kind, caught before it was
+  written because P2 sent the measurement ahead of the build. The
+  unclamped slide produced a REFUSED segment on four of five quads:
+  the common case, not the edge one. And two rules the measurement
+  forced: A ZERO-DISTANCE SLIDE IS AN EXACT NO-OP (re-seating
+  projects, and projection moves a point one bit -- nothing on a
+  page, everything to a recipe called on every pointermove: a still
+  hand must not rewrite coordinates and mark the project changed),
+  and A FILE-BORN SLIVER CANNOT BE SLID DEEPER BUT CAN BE SLID
+  BACK OUT TO A PAGE (measured 0.1% -> 46.8%) -- the floor guards
+  against MAKING a sliver, not against a person rescuing one.
 - NO HAND HAS TOUCHED ANY OF IT: four gates, nine order cases, and
   the chord numbers underneath -- and the modal has never been
   opened by a person. First act when the gate lifts: open the modal
