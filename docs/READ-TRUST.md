@@ -1102,6 +1102,64 @@ distinguished the pages that bought nothing from the pages that ARE the
 book** — Owen watched twelve scroll past and only noticed because of the
 character count.
 
+### 12h. THE VEHICLE: Flashpoint pages 1–11, ten minutes, two different caps
+
+Every book holding a runaway, priced from its own recorded seconds:
+
+| book | pages | refusals | one arm | band | saving |
+|---|---|---|---|---|---|
+| **Flashpoint** *(FOUNDRY library)* | 180 | 2 | 43 m | 5,004 | 2.3 m |
+| Michelle Remembers | 360 | 12 | 119 m | 5,092 | 13.6 m |
+| *(six others)* | 261–969 | 1–2 | 91–407 m | 8,192 | 0.0 m |
+
+**Michelle two-armed is 224 minutes — nearly four hours to verify a feature
+worth eighteen.** But the cheap tier is far cheaper than *the smallest
+book*, because of WHERE Flashpoint's runaways sit: **pages 6 and 11.**
+
+```
+p1 603  p2 86  p3 337  p4 390  p5 350
+p6 8192  RUNAWAY 213s
+p7 134  p8 1219  p9 431  p10 239
+p11 8192  RUNAWAY 213s
+```
+
+**Reading only pages 1–11 holds both runaways, both exact signals, and a
+real band** — and it runs in the Foundry library rather than BookForge, so
+it happens in the app Owen opens. `--skip-pages 12-180` expresses it today.
+
+**AND IT EXERCISES TWO DIFFERENT CAPS, WHICH IS A FAR STRONGER SIGNATURE
+THAN ONE.** Pre-registered from the bank:
+
+| | |
+|---|---|
+| page 6 should stop at | **2,412** — the band is still near the floor; pages 1–5 are front matter, longest 603 |
+| page 11 should stop at | **4,876** — page 8 landed at 1,219 in between and raised it |
+| the final band | 4,876 |
+| the refusal list | pages 6 and 11, unchanged |
+
+> An **inert** feature prints 8,192 twice. A feature that computes a band
+> but never sends it prints one number twice, or two numbers with 8,192 in
+> the tokens. **Only a working one prints 2,412 then 4,876 and has the
+> banked counts agree with both** — §12b's exact pair, doubled, on an
+> eleven-page read.
+
+### 12i. The three tiers, with prices
+
+| | cost | answers |
+|---|---|---|
+| **Flashpoint 1–11, ONE arm** | **~10 min** | *did the narrowed number reach the server* — completely, and no control is needed because the signals are exact rather than comparative |
+| Flashpoint whole, two arms | ~84 min | *does it cost a page* — its dense pages are past page 11 |
+| Michelle, two arms | ~224 min | the tightest band and twelve runaways; worth it only if the cheaper tiers surprise us |
+
+**The cheap tier is worth running first regardless, because it is ten
+minutes and the only thing it can report is that the feature does nothing.**
+
+**Its caveat, said plainly (P1):** pages 1–11 are front matter, so the band
+it builds is not the band the whole book builds (4,876 against 5,004 —
+close by luck, not design), and it **cannot show a real dense page being
+refused**, because Flashpoint's dense pages are not in the range. It answers
+*is the number reaching the server*, not *does the number cost anything*.
+
 ### 11a. The ledger entries this wave bought
 
 **Eleventh** — a model of a declarative system checks the computation and
