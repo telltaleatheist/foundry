@@ -1881,8 +1881,48 @@ export async function deleteStep(dir: string, stepId: string): Promise<LedgerVie
     const planned = await planStepSweep(resolved, destroyed, banks, manifest, deletion.removed);
     manifest.ledger = deletion.ledger;
     manifest.documents = chainsWithout(manifest.documents, destroyed);
+    /*
+     * ── THE ARCHIVE GOES WITH ITS FILE, AND THE LIVE COPY GOES WITH BOTH ───
+     *
+     * `recordMint` sets `manifest.archive` and the minted step inside one
+     * `withManifest` precisely so "a project can never hold one without the
+     * other" — and until now the delete broke that promise from the far side,
+     * taking the step and the file and leaving the archive naming both.
+     *
+     * WHAT THAT COST IS NOT A STALE FIELD. `listProjects` falls back to the
+     * archive when a project lists no documents — a rescue for a project whose
+     * file is real but unlisted — so emptying `documents` is exactly what
+     * switches the fallback on. It rebuilt an origin row out of the dead
+     * archive, Home went on showing a PDF, and a capture project could never
+     * get its light table back however much was discarded.
+     *
+     * REACHABLE ONLY SINCE WAVE 20, which is why it sat here unfound: in an
+     * imported project the origin step IS the root, and `deleteSubtree` refuses
+     * the root by name, so nothing could ever destroy the archived file. A
+     * capture project is the first whose root is something else — the
+     * photographs — which made the archive deletable for the first time.
+     *
+     * The live copy in `working/` goes too. It was made FROM the payload that
+     * has just been destroyed, so leaving it is leaving a book in the folder
+     * that no step names and nothing can explain — `planSweep` takes rotated
+     * predecessors and unpacked trees, not this, because until now no delete
+     * could reach a file a working row was made from.
+     */
+    const razed = new Set(destroyed);
+    if (manifest.archive !== null && razed.has(`${ARCHIVE}/${manifest.archive.file}`)) {
+      manifest.archive = null;
+    }
+    const orphanedCopies = manifest.working.files.filter((row) => razed.has(row.from));
+    manifest.working.files = manifest.working.files.filter((row) => !razed.has(row.from));
     await writeManifest(resolved, manifest);
-    return { ledger: deletion.ledger, orphans: destroyed, sweeps: planned };
+    return {
+      ledger: deletion.ledger,
+      orphans: destroyed,
+      sweeps: [...planned, ...orphanedCopies.map((row) => ({
+        ...emptySweep(),
+        files: [path.join(resolved, WORKING, row.file)],
+      }))],
+    };
   });
   for (const payload of orphans) {
     try {
