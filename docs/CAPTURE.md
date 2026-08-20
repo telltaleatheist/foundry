@@ -1370,7 +1370,18 @@ verification):
   minted BY mintedStep so the step cannot be created without the
   fact -- an answer, not a question). Delivered as
   CaptureOpened.mintedFrom: string | null (a field on an existing
-  answer -- NO NEW IPC, same as all of Wave 21). Open-time
+  answer -- NO NEW IPC, same as all of Wave 21). AMENDED (P2 seq
+  175, RULED): mintedFrom is the arrangement of THE STEP
+  manifest.archive NAMES, never "the newest mint". The two read
+  the same in every ordinary case and differ after ONE DELETE --
+  the dd0393c repair nulls manifest.archive when a delete
+  destroys its payload (projects.ts:1913) while an OLDER mint
+  step survives with its own file and arrangement; "newest"
+  would then return the older arrangement and the footer would
+  name a shelf that is EMPTY. Ruling (d) does not cover it: (d)
+  is absent-means-silence, this is PRESENT AND WRONG. Resolved
+  the archive way, archive-null yields mintedFrom null, which IS
+  (d)'s silence. Open-time
   delivery is not stale: the stored side moves only at
   mintCommit, which the table itself drives; everything else that
   moves is the LIVE side, recomputed by the renderer from the
@@ -1406,6 +1417,59 @@ verification):
   coincidence. P2's window: mintedFrom and prepared are the two
   shapes the rail consumes; they are contract unless P2's
   plan-back names a concrete conflict BEFORE P1 builds them.
+  (P2's plan-back, seq 175, named exactly one -- the mintedFrom
+  amendment above -- and converged independently on the ticks'
+  shape down to the field name.)
+- THE CURRENT BOOK RESOLVES ONCE (P2 seq 175, RULED): "which
+  step is the book on the shelf" is answered by main, from
+  manifest.archive, in ONE resolution that crosses the bridge
+  once -- consumed by BOTH mintedFrom and the seq-165 row marker
+  (which mint row the archive currently names). The renderer
+  cannot resolve it itself (ProjectSummary carries no archive
+  field, measured) and its cheap substitute -- newest step by
+  appliedAt -- is the same wrong answer reached from the other
+  side. Two surfaces, two derivations, one defect: the
+  two-things-one-name class, pre-empted this time. P1 picks the
+  carrier (a flag on the step row it already builds, or a field
+  on ProjectSummary) and names it in the completion report.
+- THE TURN COUNT IS WITHDRAWN BY ITS OWN PROPOSER (P2 seq 175,
+  kept for the record so nobody re-proposes it): a count of
+  turns PERFORMED is genuinely derivable (a turn is a cyclic
+  permutation of quad corners -- rotate() is [q3,q0,q1,q2]; drags
+  never move which corner is corner 0; halvesOf preserves the
+  roles), AND IT STILL LIES, because a count needs a denominator
+  and a denominator asserts a target. On Owen's own shoot the
+  correct final state is 25 turned and TWO NOT (the framed
+  letters are landscape, the advertisement is portrait); "25 of
+  27 turned" reads as two left to do and would spend the rest of
+  the project telling him to break two pages that are right. Not
+  just "no rule can know they are upright" -- no rule can know
+  how many SHOULD be turned. A progress count without a true
+  denominator is a lie with a number in it. The status is the
+  tick and nothing else.
+- THE EDITOR STAYS LARGE (P2 seq 175, RULED): Owen's centering
+  ask named the READING-PHOTOGRAPHS modal (margin 64px auto 0,
+  hugging the top -- that one gets centered). The editor is
+  already centered on both axes at calc(100vw/vh - 56px), and its
+  docblock argument stands: a workbench, not a question, and a
+  corner placed on a small picture is a corner placed badly. The
+  sample's 760px editor was the mock's scale, not a
+  specification. DEFERRED OUT LOUD to Owen: if he meant the
+  editor itself should shrink, that overrules the docblock and
+  P2 will do it -- at the cost of corner precision on every page.
+- THE BUTTON'S WORDS (P2 seq 175, endorsed): "Mint the pages"
+  then "Mint again", the page count on the rail line ABOVE the
+  button, not inside it -- the count moves as pages are struck,
+  and a button whose own name reflows under the pointer is hard
+  to aim at.
+- THE GATE'S MIGRATION CONSEQUENCE, decided rather than
+  discovered (P2 seq 175): ticks are absent in every existing
+  recipe, so this wave's first act on Owen's finished book is to
+  lock its Mint button behind three ticks he has never seen.
+  RULED RIGHT: the gate exists because he minted before turning,
+  the ticks are three clicks, and a gate that exempts existing
+  projects would exempt exactly the project the gate was built
+  for. Surfaced to Owen in the lead's session notes.
 
 ## Deferred out loud
 
