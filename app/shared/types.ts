@@ -2612,6 +2612,35 @@ export interface LedgerParams {
    */
   fields?: string[];
   /**
+   * `import` (a MINT) — the arrangement these pages were printed from.
+   *
+   * `arrangementOf` (shared/capture.ts) fingerprints the mint input as
+   * `mintBegin` builds it, and this is where that string is kept so the question
+   * can still be asked afterwards. What it is FOR is one sentence on the light
+   * table: the recipe goes on being edited after a mint, and the footer says —
+   * quietly, and only while it is true — that the book on the shelf was minted
+   * from an earlier arrangement. The live side is recomputed from the recipe;
+   * this is the side that has to be remembered, because nothing else in the
+   * project records what the recipe LOOKED LIKE at that instant.
+   *
+   * ON THE STEP RATHER THAN THE MANIFEST, because it is per-mint and
+   * `manifest.archive` is single-valued: an arrangement kept there would be lost
+   * the moment there was a second mint, and standing on an older mint could
+   * never say anything honest about what THAT one was made from.
+   *
+   * IT IS THE ARRANGEMENT AS THE MINT BEGAN, not as it committed — the string is
+   * taken from the same read of the recipe that produced the page list the
+   * renderer rasterized, so it describes the book that was actually printed even
+   * if somebody edited the recipe while it printed.
+   *
+   * ABSENT ON EVERY MINT MADE BEFORE THIS EXISTED, and absent MEANS SILENCE
+   * rather than agreement or disagreement: a project that never recorded one is
+   * a project where nothing can honestly be claimed either way, and the surface
+   * says nothing until the next mint records one. Absent on ordinary imports
+   * too, which have no arrangement to record — their file came from outside.
+   */
+  arrangement?: string;
+  /**
    * `translate` — the translation bank this run wrote, project-relative.
    *
    * WHAT IT IS FOR: a translation's payload is the EPUB, and the bank beside it is
@@ -3128,6 +3157,51 @@ export interface CaptureRecipe {
   photos: CapturePhoto[];
   /** Every page id in reading order, STRUCK INCLUDED — the mint filters them. */
   order: string[];
+  /**
+   * THE PERSON SAYING THEY HAVE DONE IT — the prepare rail's ticks, and the only
+   * thing on that rail nothing can derive.
+   *
+   * THE TICK AND THE STATUS BESIDE IT ARE TWO DIFFERENT SENTENCES. The status is
+   * derived and says what the file holds ("25 cropped — 3 by hand"); the tick is
+   * a person saying they are done with that verb, and THE DERIVATION NEVER
+   * CLEARS ONE. A shoot with no spreads in it must be tickable on "split
+   * spreads" without lying, and no rule can know the pages are turned right —
+   * the portrait advertisement in Owen's shoot is the same shape as the volume,
+   * so a derived turned-done would lie exactly where being wrong costs most.
+   *
+   * WHY IT IS ON THE RECIPE RATHER THAN THE PHOTOGRAPH: the person is answering
+   * about the book. "Have you turned the pages" is one question with one answer,
+   * not twenty-seven answers that would then need a rule for what the twenty-
+   * seven of them mean together.
+   *
+   * OPTIONAL, AND SO IS EVERY MEMBER, for `byHand`'s reason: absent means false,
+   * every recipe ever written is already valid, and no migration has to invent an
+   * answer on behalf of somebody who has not been asked yet. Which is also what
+   * makes the mint gate honest on Owen's finished book — it asks him three
+   * questions he has never been asked, rather than assuming he would have said
+   * yes.
+   *
+   * CARRIED, REFUSED IF WRONGLY TYPED, CONSULTED BY NOTHING IN MAIN. `mintBegin`
+   * does not read it and neither does the mint: the gate is the rail's, because
+   * a person who wants to mint from the keyboard has not lied to anybody.
+   */
+  prepared?: CapturePrepared;
+}
+
+/**
+ * The three verbs of the prepare rail, each true only if a person said so.
+ *
+ * Deliberately NOT a `Record<string, boolean>`: the three verbs are the three
+ * the rail draws, and a fourth arriving as data rather than as a decision is how
+ * a surface acquires a row nobody designed.
+ */
+export interface CapturePrepared {
+  /** "Turn pages" — ticked, never derived. See `CaptureRecipe.prepared`. */
+  turned?: boolean;
+  /** "Place the crop" — ticked beside a status derived from the quads. */
+  cropped?: boolean;
+  /** "Split spreads" — ticked beside a count of the photographs with a split. */
+  split?: boolean;
 }
 
 /**
@@ -3143,6 +3217,26 @@ export interface CaptureRecipe {
 export interface CaptureOpened {
   recipe: CaptureRecipe;
   token: string;
+  /**
+   * WHAT THE BOOK ON THE SHELF WAS MINTED FROM, or null for silence.
+   *
+   * `arrangementOf` applied to the recipe of the mint the shelf's book descends
+   * from (`currentArrangement`, electron/projects.ts). The light table compares
+   * it against `arrangementOf(recipe)` computed live from the recipe it is
+   * holding, and says — quietly, and only while the two differ — that the book
+   * on the shelf was minted from an earlier arrangement.
+   *
+   * ONE STRING AND NOT A BOOLEAN, so that the comparison happens on the side
+   * that knows what the person is currently looking at. The live side moves on
+   * every edit; this side moves at exactly one moment, `mintCommit`, which the
+   * table itself drives and hears the answer from — which is why delivering it
+   * at open time is not stale.
+   *
+   * NULL MEANS SILENCE rather than agreement: no book, a book minted before the
+   * field existed, or a book this app did not mint. Nothing can be honestly
+   * claimed either way for any of the three.
+   */
+  mintedFrom: string | null;
 }
 
 /**
