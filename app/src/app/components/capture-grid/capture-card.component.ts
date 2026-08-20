@@ -131,9 +131,56 @@ import type { CaptureQuad } from '@shared/types';
     }
     .page.chosen:hover { background: var(--accent-soft); }
 
-    /* The picture and its overlay share one box, so the SVG's fraction space
-       is the thumbnail's own. */
-    .shot { position: relative; display: block; overflow: hidden; }
+    /*
+     * The picture and its overlay share one box, so the SVG's fraction space
+     * is the thumbnail's own.
+     *
+     * ── width:100% IS THE WHOLE CARD, AND IT IS NOT A TIDY-UP ────────────
+     *
+     * Owen dropped twenty-seven photographs and got twenty-seven cards that
+     * were nothing but their labels. Every upstream explanation was measured
+     * and killed: the recipe carried 3024x4032 on all twenty-seven, the door
+     * served, the JPEG decoded (naturalWidth 480), and aspect-ratio
+     * computed to a VALID ratio rather than NaN. The box collapsed anyway --
+     * and it collapsed to ZERO IN BOTH AXES, which is the fact that names the
+     * cause. A ratio box that had merely lost its height would still have been
+     * as wide as the card.
+     *
+     * This is a flex item in a column, so its width was coming from stretch
+     * and its height from the ratio. But it has NO IN-FLOW CHILDREN -- the .spun span
+     * is absolute -- so its content-based main size is zero, and a flex item
+     * that resolves a cross size from its own aspect ratio does not then take
+     * the stretch. Zero times the ratio is zero, and nothing underneath it
+     * disagreed.
+     *
+     * THE WHOLE MECHANISM IS ONE PAIR OF NUMBERS, measured in the running app
+     * with the defect put back underneath the fix:
+     *
+     *   getComputedStyle(.shot).width    0px  broken     295.333px  fixed
+     *   getComputedStyle(.shot).aspectRatio   "1.33333 / 1" IN BOTH
+     *
+     * The ratio was never wrong. The USED WIDTH was zero, and a ratio times
+     * zero is zero in both axes -- which is why every hypothesis that went
+     * looking for a bad number found only good ones.
+     *
+     * So the width is STATED instead of inherited from an alignment. The card
+     * is the containing block and the picture is as wide as the card, which is
+     * what the design says out loud anyway; the ratio then resolves the height
+     * from a width that is definite before it is asked for.
+     *
+     * WHY NO min-height FLOOR HERE: a floor was drafted for this bug and
+     * would have been the wrong repair. A zero-WIDE box with a floor under its
+     * height is still a box with no picture in it -- it would have turned a
+     * card that is honestly broken into a card that looks deliberately empty.
+     * The floor was for a missing NUMBER; this was a missing CONSTRAINT.
+     *
+     * AND WHY NO TEST GUARDS THIS: three separate harnesses reproduced this
+     * component's markup and CSS with these exact numbers and all three drew
+     * the card correctly, because each put the grid in normal flow where the
+     * width is definite for a different reason. The defect lives in the
+     * resolution, not the computation, and only the assembled app has it.
+     */
+    .shot { position: relative; display: block; width: 100%; overflow: hidden; }
     /*
      * Sized so that AFTER the rotation it fills the slot: a quarter turn swaps
      * the visual box, so the element is laid out at the photograph's own aspect
