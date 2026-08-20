@@ -1871,7 +1871,32 @@ MEASURED (P1 seq 197, 14 checks on a copy of the live project):
   tell apart; the answer is not a button whose behaviour is
   conditional on invisible state. "Copy the crop, keep the
   turn" is a sentence a person can hold in their head, true on
-  every photograph.
+  every photograph. THE TRIO IS LANDED AND MERGED (c042fdf,
+  three commits in the ruled order, four gates on EACH, 29
+  assertions; merged with full gates on the merged result): the
+  book-state turn-all (outOfTurnWith reads the quads; the
+  per-visit counter and its reset effect are DELETED,
+  tombstoned; unavailable says "The others already match"
+  rather than grey silence; THE COUNT AND THE ACT ARE THE SAME
+  NUMBER, asserted -- a button saying 24 that turns 23 is the
+  label lying about the act); the stamp wired to turnedLike with
+  its docblock rewritten in the same commit; rotate a re-export
+  of turnQuad. At no commit on the branch can a book fail to be
+  turned in bulk -- the order was checkable, not promised. The
+  relabelling property is ASSERTED both ways: a hand-placed crop
+  keeps all four corners through a bulk turn while its
+  orientation moves (sorted corners identical, quad not), and a
+  stamped target keeps its turn, receives the region corner for
+  corner, AND differs from before (without which the check
+  passes on a no-op). SILENT DEFECT FIXED ON THE WAY, reachable
+  on main before tonight: the source arm cleared byHand for
+  EVERY gesture -- a bulk turn was quietly handing the source's
+  hand-set crop back to the next global. Only the stamp clears
+  it now, asserted both ways. STILL UNWITNESSED, same sentence
+  as every report this wave: the count on the button, the
+  disabled sentence, and a stamp visibly leaving orientation
+  alone are one glance for a person and no assertion can be
+  that glance.
 
 ## Deferred out loud
 
