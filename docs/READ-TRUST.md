@@ -1077,6 +1077,31 @@ that matters most:**
 passes every other check — and it needs no second run, because the refusal
 sentence and the banked token count are absolute rather than comparative.
 
+**AND THE CHEAP TIER NEEDED FIVE LINES TO ACTUALLY BE CHEAP (P2).** Both
+numbers were already visible and neither was beside the other: the banked
+token count prints on the page own line, the cap that fired lives in the
+refusal reason printed in the END-of-run summary. **Half on screen and half
+in the closing summary is the WORST of the two arrangements, because it
+looks readable** — a check that is absent gets built, and a check that is
+present-but-scattered gets *intended*, and then the run ends and nobody has
+the numbers side by side. So the refused page now names both in one clause:
+
+| | |
+|---|---|
+| honoured | `page 113 — CUT OFF at 5,092 tokens, the cap this book set, 178.3s` |
+| **ignored** | `page 113 — CUT OFF at 8,192 tokens against a 5,092 cap, 178.3s` |
+
+**The failure has to read as a disagreement to somebody who has never heard
+of this feature** — two numbers that should be equal, visibly not — and that
+property outranks brevity if the two ever conflict.
+
+**It also fixes a quieter defect that predates this wave:** a refused page
+and a good page logged IDENTICALLY, so twelve runaways were twelve
+ordinary-looking lines that happened to say 8,192. **Nothing on screen
+distinguished the pages that bought nothing from the pages that ARE the
+book** — Owen watched twelve scroll past and only noticed because of the
+character count.
+
 ### 11a. The ledger entries this wave bought
 
 **Eleventh** — a model of a declarative system checks the computation and
