@@ -16,7 +16,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { BAND_FLOOR, BAND_MARGIN, capFor } from '../../src/vlm/band.js';
+import { BAND_FLOOR, BAND_MARGIN, capFor, RETRY_RISE, worthRetrying } from '../../src/vlm/band.js';
 
 const MODEL_CAP = 8192;
 
@@ -160,4 +160,41 @@ test('THE INDEX: fifty-one dense pages in a row cost nothing, because a run ramp
     tokens: 1200 + index * 60,
   }))];
   assert.deepEqual(walk(pages).lostPages, [], 'a gradual climb never outruns its own band');
+});
+
+test('A TRUE RUNAWAY IS NEVER RE-READ: refused at the final band, so the rise is nothing', () => {
+  // The band did not move after it was refused, so its refusal was a fair one.
+  assert.equal(worthRetrying(5092, 5092), false);
+  assert.equal(worthRetrying(8192, 8192), false);
+});
+
+test('A BAND THAT CREEPS RETRIES NOTHING — the case that made the first rule net negative', () => {
+  // Michelle Remembers: its twelve runaways were sent under these caps and its
+  // band ended at 5,092. Every one of them is BELOW the final band, and the
+  // first version of this rule retried all eight of the ones that were —
+  // spending 65,536 tokens to save 44,640 and leaving the book worse than
+  // untouched. None of them is a factor below it, so none of them retries.
+  const sentCaps = [3348, 3348, 3348, 3636, 4904, 4904, 4904, 4904, 5092, 5092, 5092, 5092];
+  const finalBand = 5092;
+  for (const cap of sentCaps) {
+    assert.ok(cap <= finalBand, 'these are the caps that a below-the-band test would catch');
+    assert.equal(worthRetrying(cap, finalBand), false, `${cap} was retried against a band of ${finalBand}`);
+  }
+});
+
+test('A STEP IS RETRIED: a page judged before the book showed what it was', () => {
+  // A cohort of plates dispatched while the band was still set by prose: sent
+  // at the floor, and the band ends four times the first plate that landed.
+  assert.equal(worthRetrying(2000, 8192), true);
+  // The boundary is exact and stated: twice is enough, a hair under is not.
+  assert.equal(worthRetrying(2000, 2000 * RETRY_RISE), true);
+  assert.equal(worthRetrying(2000, 2000 * RETRY_RISE - 1), false);
+});
+
+test('the retry test is about the cap and not about a count', () => {
+  // Ten refusals at the same cap all answer the same way: nothing here counts
+  // how many have happened, because that says nothing about whether any one of
+  // them carried information.
+  const answers = new Set(Array.from({ length: 10 }, () => worthRetrying(2000, 6000)));
+  assert.deepEqual([...answers], [true]);
 });

@@ -85,10 +85,21 @@
 /**
  * How many times the longest accepted page a later page may be.
  *
- * See the file docblock: 3.35x is the worst real step measured, and this is
- * COUPLED TO `DEFAULT_VLM_CONCURRENCY` — raising that knob invalidates this
- * number, because the band a page is sent under is staler the more requests are
- * in flight.
+ * See the file docblock for why it is 4: 3.35x is the worst real step measured.
+ *
+ * ── THE THREE NUMBERS IN THIS FILE ARE ONE TUNING FAMILY ───────────────────
+ *
+ * `BAND_MARGIN`, `BAND_FLOOR` and `RETRY_RISE` are the knobs somebody will
+ * reach for when this behaves wrong, and ALL THREE ARE COUPLED TO
+ * `DEFAULT_VLM_CONCURRENCY` (endpoint.ts): the band a page is sent under is
+ * staler the more requests are in flight, which moves how much margin is
+ * needed, how far the floor has to hold a book up before evidence arrives, and
+ * how large a rise counts as a step rather than a creep.
+ *
+ * RAISING THAT KNOB INVALIDATES ALL THREE OF THESE AND THEY MUST BE REVISITED
+ * IN THE SAME COMMIT. They live together so that this warning guards all of
+ * them; split across files it would only ever have guarded whichever one it
+ * happened to sit beside.
  */
 export const BAND_MARGIN = 4;
 
@@ -135,4 +146,58 @@ export function capFor(longestAccepted: number, modelCap: number): number {
   if (!Number.isFinite(longestAccepted) || longestAccepted <= 0) return modelCap;
   const asked = Math.max(BAND_FLOOR, Math.floor(longestAccepted * BAND_MARGIN));
   return Math.min(modelCap, asked);
+}
+
+/**
+ * How much higher the band must have ended for a refusal to be worth a second
+ * read — see `worthRetrying`. One of the three coupled numbers; the warning
+ * beside `BAND_MARGIN` covers this one too.
+ */
+export const RETRY_RISE = 2;
+
+/**
+ * Whether a page refused under `sentCap` deserves a second read at the model's
+ * own cap, given the band the run ENDED with.
+ *
+ * ── What a stale refusal is ────────────────────────────────────────────────
+ *
+ * A page sent under a low band and refused may have been judged by a number
+ * that is no longer the run's opinion: the book got denser afterwards, or a
+ * cohort of dense pages was already in flight while the band was still set by
+ * prose. That refusal carries no information about whether the page was a
+ * runaway, so it is worth asking again.
+ *
+ * ── Why "below the final band" is not the test, which cost a real design ───
+ *
+ * The rule was first written as "retry any page whose sent cap was below the
+ * final band". It is wrong, and the measurement is brutal: A BAND CREEPS
+ * UPWARD THROUGH ANY BOOK as its prose varies, so that test catches nearly
+ * every refusal that happened before the book's densest ordinary page. Over the
+ * measured library it fired 15 times, spending 122,880 tokens to save 66,344 —
+ * the whole feature 20.7 minutes SLOWER than doing nothing. On Michelle
+ * Remembers alone, whose band creeps from 3,348 to 5,092 without ever stepping,
+ * eight of its twelve refusals sat below the final band and the book came out
+ * 20,896 tokens worse than leaving it alone.
+ *
+ * The test has to tell a band that CREPT from a band that STEPPED, because only
+ * a step means a refusal was misjudged. Requiring the rise to be a FACTOR does
+ * exactly that: at 2x it fires twice in the whole library and keeps 18.3 of the
+ * 24.3 minutes the band saves.
+ *
+ * ── It never re-reads a true runaway ───────────────────────────────────────
+ *
+ * A genuine runaway is refused AT the band the run ended with, so the final
+ * band is not a multiple above its sent cap and it fails this test. Which is
+ * why the question is about the CAP AND NOT A COUNT: how many retries have
+ * already happened says nothing about whether THIS refusal carried information.
+ *
+ * ── And what it does not decide ────────────────────────────────────────────
+ *
+ * This answers only "is that rise substantial". WHICH pages are retried, when,
+ * and what becomes of the answer — the second pass, the deletion from the
+ * unreadable set, the write into the answers — is `read.ts`'s, and neither file
+ * restates the other.
+ */
+export function worthRetrying(sentCap: number, finalBand: number): boolean {
+  return finalBand >= sentCap * RETRY_RISE;
 }
