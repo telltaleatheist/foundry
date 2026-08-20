@@ -390,7 +390,6 @@ import type { ApplyToAll } from '../../core/capture.service';
        already uses for a statement about an act rather than an act of its own. */
 
     .walk button, .shut {
-      flex: 1;
       padding: 5px 9px;
       border: 1px solid var(--border-default);
       border-radius: var(--radius-md, 6px);
@@ -399,6 +398,7 @@ import type { ApplyToAll } from '../../core/capture.service';
       font: inherit; font-size: 12px;
       cursor: pointer;
     }
+    .walk button { flex: 1; }
     .walk button:hover:not(:disabled), .shut:hover {
       background: var(--bg-hover); color: var(--text-primary);
     }
@@ -408,7 +408,7 @@ import type { ApplyToAll } from '../../core/capture.service';
        the window rather than to the work. */
     .shut {
       position: absolute; top: 10px; right: 14px; z-index: 2;
-      flex: none; border-color: transparent; padding: 2px 8px;
+      border-color: transparent; padding: 2px 8px;
     }
 
     .act {
