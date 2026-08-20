@@ -2058,8 +2058,11 @@ const SCROLL_SETTLE_MS = 400;
     /* The tray's measure without the tray's stickiness: the head stands
        OUTSIDE the scroller now (the template's own comment carries the
        ruling), a row of the host's column above the pair, so \`position\`
-       goes back to static and the paper below cannot pass under it. */
-    .head { position: static; flex: 0 0 auto; padding: 0.75rem 0; }
+       goes back to static and the paper below cannot pass under it.
+       \`.tray.head\`, not \`.head\`: the un-sticking must win by SPECIFICITY,
+       not by being typed after \`.tray\` -- source order is not a place to
+       keep an intention. */
+    .tray.head { position: static; flex: 0 0 auto; padding: 0.75rem 0; }
 
     /* Two acts made one control: the seam between them is a shared hairline
        (the second pulled back a pixel onto the first's border) and only the
