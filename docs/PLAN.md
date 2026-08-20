@@ -1593,7 +1593,7 @@ this lands; re-mint reading reuse and CV auto-detect are recorded in the
 doc's deferral list.
 
 ### Wave 22 — the reader runs away on a bleed-through page (Owen, live,
-### 2026-08-20) — OPEN, design in `docs/READ-TRUST.md`
+### 2026-08-20) — v1 ON MAIN (53be1d7), design in `docs/READ-TRUST.md`
 
 A blank verso photographed with writing showing through from the other
 side is the lowest-signal page the reader ever meets, and dots does not

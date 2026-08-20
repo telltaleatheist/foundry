@@ -800,6 +800,62 @@ side-effect does not extend to retried pages.** At most two pages on this
 library — not enough to move the pair into v1, and enough that the
 deferral has to say so out loud.
 
+---
+
+## 11. v1 IS ON MAIN (2026-08-20)
+
+| | |
+|---|---|
+| `e17a09e` | `capFor`, the corrected docblock — P1 |
+| `3691343` | `worthRetrying` + `RETRY_RISE`, three constants under one warning — P1 |
+| `53be1d7` | the send, the retry pass, the wording, the flag — P2 |
+
+Six gates on every merge; **414 tests, up from 384** when this began.
+`--vlm-fixed-cap` restores today's behaviour exactly.
+
+**Three decisions P2 took inside the brief, all kept:**
+
+- **the policy got NAMES** — `bandAfter`, `pagesToReread`, `capToSend` are
+  exported not because the loop needed decomposing but because *a test of
+  an inline decision is a test that re-implements it*, which is the exact
+  lesson this wave paid for twice;
+- **the banked-replay refusal names the READING's tokens**, not
+  `model.maxTokens` — a page banked by an older run was cut by whatever cap
+  *that* run used, and the model number was never right to print there;
+- **a page this pass did not send is never retried.** No recorded cap means
+  it came from the bank or from a run predating this: *this pass did not
+  judge it and may not overturn it.* Neither agent named that case; it fell
+  out of the Map lookup and was asserted rather than left implicit.
+
+**WHAT NO TEST HERE COVERS, and it is the whole of what remains:** every
+assertion is about what this code does with an answer, and none is about
+what an answer *is*. There is no fake server and no real one. **The first
+time the adaptive cap meets dots.ocr will be the first time.** The thing
+to watch is the log: a book should announce it is reading pages at a
+number below 8,192 — and then say nothing more about it.
+
+### 11a. The ledger entries this wave bought
+
+**Eleventh** — a model of a declarative system checks the computation and
+not the resolution *(from the cascade defect, §Wave 21c)*.
+
+**Twelfth — A TEST MUST ASSERT THAT ITS CASE IS STILL ITS CASE.** A test
+whose setup silently stops matching the situation it was written for does
+not fail; it passes, faster, and reports that a rule holds over a
+population that is no longer there. **Both agents shipped this shape once
+within an hour**, in different files — P2's *"Michelle retries nothing"*
+encoded the design's description, and the lead's contract sentence *was*
+that description. The fix is one line: **assert the PREMISE before the
+CONCLUSION.** Companion to the sixth (a probe sharing the code's
+assumption) and the eighth (a repair measured only on its motivating
+case); the cheapest of the three to prevent.
+
+**And P1's general form, which outlives its own ruling:** *a warning only
+guards what it sits beside.* An ownership boundary says who edits a file;
+a numeric boundary says what breaks together. When they disagree, the
+numbers win — which is why `BAND_MARGIN`, `BAND_FLOOR` and `RETRY_RISE`
+share one file and one concurrency warning.
+
 **And this is why Tier 1 is kept rather than treated as redundant.** The
 retry's one hole is a runaway that comes back `stop` under the model cap —
 which would be accepted, and would raise the band. That has never been
