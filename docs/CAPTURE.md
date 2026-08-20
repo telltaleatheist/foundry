@@ -1407,9 +1407,23 @@ verification):
   field main ignores is erased in one round trip; P2 cannot
   persist a tick without P1. No new IPC (capture:recipe-save
   already takes the whole recipe). Rail statuses need NOTHING
-  else: crop is derivable per page (quad not WHOLE_FRAME, byHand
-  distinguishing hand from stamp), split per photo (split not
-  null), and turned is THE TICK AND NOTHING ELSE (already ruled:
+  else: crop is derivable -- but PER SHEET, NOT PER PAGE, and UP
+  TO A TURN (P2 seq 176, found on starting): isWholeFrame counted
+  per page false-positives on a SPLIT photograph (halvesOf gives
+  neither half the whole frame, so an uncropped split counts as
+  cropped) and on a TURNED one (a turn permutes the corners, so
+  an untouched frame turned three quarters no longer equals
+  WHOLE_FRAME index-by-index -- and Owen turns 25 spreads before
+  he crops anything, so the rail would say "25 cropped" the
+  moment he finished turning). The test: reconstruct the sheet
+  with joinedQuad(quads, split), then ask whether SOME CYCLIC
+  ROTATION of it equals WHOLE_FRAME exactly -- still exact, no
+  tolerance, because intake wrote those numbers and rotate only
+  reorders them. stage() KEEPS plain isWholeFrame on purpose: a
+  turn IS something a person did, so a turned project is not
+  virgin -- same helper, two different questions; do not "fix"
+  one into the other. Split status: per photo, split not null.
+  And turned is THE TICK AND NOTHING ELSE (already ruled:
   the portrait ad is the volume's shape -- a derived turned-done
   lies exactly where wrongness costs most). And the two halves
   check each other: because divergence reads the projection,
