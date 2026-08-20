@@ -144,6 +144,17 @@ import type { CaptureQuad } from '@shared/types';
       position: absolute; top: 50%; left: 50%;
       transform-origin: center;
     }
+    /*
+     * THE SIZING LIVES HERE AND NOWHERE ELSE, which is a cascade fact and not a
+     * preference. the .page img rule below is the same specificity and comes LATER, so
+     * a width or a height set there would win over this one -- and its
+     * its height:auto did, which would have left the picture at its natural
+     * aspect inside a box laid out for the rotated one. The image would not have
+     * filled the slot and the crop would not have sat on the photograph.
+     *
+     * That defect was invisible to twenty assertions about the transform,
+     * because a model of CSS has no cascade in it.
+     */
     .spun img { width: 100%; height: 100%; }
     .crop {
       position: absolute;
@@ -163,10 +174,10 @@ import type { CaptureQuad } from '@shared/types';
        staying bright over a dimmed picture. */
     .page.struck .crop { opacity: 0.35; }
 
+    /* Every card image is inside .spun now, which sizes it -- see the note
+       there for why the sizing must not also be written here. */
     .page img {
       display: block;
-      width: 100%;
-      height: auto;
       background: var(--bg-sunken);
     }
 
