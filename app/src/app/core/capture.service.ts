@@ -975,21 +975,47 @@ export class CaptureService {
              * are all already in those quads, because the corner order IS the
              * orientation and the halves ARE the split.
              *
-             * Which is also why there is no separate turn to carry here. A quad
-             * turned three quarters is a quad in that order, and copying it
-             * copies the turn -- the reason stage 1 needs no turn-all beside
-             * this button, and stage 2 still does.
+             * BUT THE TURN IS THE ONE THING IT DOES NOT COPY, and this
+             * paragraph used to say the opposite.
+             *
+             * It said that copying a quad copies the turn -- true, because the
+             * corner order IS the orientation -- and drew the conclusion that
+             * stage 1 therefore needed no bulk-turn control. Owen ruled the
+             * other way: "copy the crop, keep the turn". A photograph you
+             * turned upright stays upright when you hand its corners back to
+             * the global, because the way round a page sits is a fact about
+             * THAT photograph and the crop is a fact about the shoot.
+             *
+             * So the crop arrives in the TARGET'S OWN ORIENTATION.
+             * `turnedLike` moves no corner -- it is a relabelling of which
+             * corner prints top-left -- so the region every page gets is the
+             * source's region exactly, to the last decimal, with no arithmetic
+             * in it to be wrong by a pixel.
+             *
+             * AND THE CONCLUSION DIED WITH THE PREMISE. Stage 1 now needs the
+             * bulk turn as much as stage 2 does, because this button no longer
+             * carries one; that control landed in the commit before this one,
+             * deliberately in that order, so that the capability existed on
+             * purpose before this stopped supplying it by accident.
              *
              * STRIKES BELONG TO THE PHOTOGRAPH, NOT TO THE CONFIGURATION, so
              * they stay where they are. A page struck because it was a blurred
              * retake is still a blurred retake after somebody adjusts the crop.
              */
+            /*
+             * THE WAY THIS PHOTOGRAPH ALREADY SITS, read before its pages are
+             * replaced. Any of its pages would answer the same -- both halves
+             * of a spread carry the sheet's turn -- and a target that somehow
+             * had none keeps the source's orientation rather than inventing an
+             * answer.
+             */
+            const facing = photo.pages[0]?.quad;
             return {
               ...photo,
               split: source.split,
               pages: source.pages.map((page, index) => ({
                 id: `${photo.id}:${index}`,
-                quad: page.quad,
+                quad: facing === undefined ? page.quad : turnedLike(page.quad, facing),
                 struck: photo.pages[index]?.struck ?? false,
                 // THE GLOBAL CLEARS THE MARK, ruled at channel seq 129. Left
                 // standing, the first stamp would mark every page hand-set and
