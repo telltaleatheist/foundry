@@ -117,6 +117,7 @@ import type {
   RewriteMode,
   StepCasualty,
   StepDeletion,
+  StepLedgerView,
   StepRow,
 } from '../shared/types';
 import { WHY_HANDMADE, WHY_IMPORTED, WHY_MINTED, WHY_MODEL_PASS } from '../shared/types';
@@ -1432,33 +1433,7 @@ async function destroyPayload(dir: string, payload: string): Promise<void> {
  * list from before its own gesture or painted twice. What a caller gets back now
  * is the whole answer to what it just did.
  */
-export interface LedgerView {
-  ledger: ProjectLedger;
-  /**
-   * `chronological`'s rows, composed HERE rather than in the renderer.
-   *
-   * The ordering and the quiet "from Read" annotation are the two things the flat
-   * list gets wrong if anybody re-derives them, and the renderer re-deriving them
-   * would be a second implementation of the one concession this design makes to
-   * the tree. Main holds the ledger; main says what the list looks like.
-   */
-  rows: StepRow[];
-  /**
-   * THE STEP THE BOOK ON THE SHELF CAME FROM, or null when nothing is on it.
-   *
-   * `currentBookStep`'s answer, carried here so that the two surfaces that need
-   * it read ONE resolution: the row marker that tells two identical "The pages
-   * you minted" rows apart after a re-mint, and the light table's divergence
-   * sentence, which reads this step's `params.arrangement`. Deriving it twice is
-   * how the two would come to disagree about which book a person is looking at.
-   *
-   * REQUIRED RATHER THAN OPTIONAL, deliberately: every call that answers with a
-   * view answers after doing something, and a delete is exactly the gesture that
-   * MOVES this. An optional field would have been set on the read path and
-   * quietly missing from the mutation that changed it.
-   */
-  current: string | null;
-}
+export type LedgerView = StepLedgerView;
 
 /**
  * One project's history, as the library needs it.
