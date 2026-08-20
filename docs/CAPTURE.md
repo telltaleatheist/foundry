@@ -1417,7 +1417,30 @@ verification):
   nothing, which is a genuinely empty shelf and (d)'s silence.
   The repair below makes the archive AGREE with this resolution;
   the resolution never reads the archive, so there is one
-  derivation whichever way the archive heals. Open-time
+  derivation whichever way the archive heals. THE TIP DECIDES
+  THE BOOK, THE WALK DECIDES THE ARRANGEMENT (P2 seq 182,
+  RULED): a NON-MINT step reaches the pdf chain tip by
+  construction -- ConversionKind pdf maps to role searchable,
+  which writes generated/<stem>.pdf, and recordStep routes it BY
+  EXTENSION onto the same chain the mint uses (shared/
+  documents.ts:17, projects.ts:871/4170/4009, job-queue.ts:2572).
+  Making a captured book searchable is plausibly the NORMAL end
+  state of a finished capture project, and a tip-only read would
+  silence the divergence sentence exactly on the projects
+  carried furthest -- a surface that gets quieter as a project
+  gets more finished. So: the current book is the chain tip;
+  mintedFrom is the params.arrangement of the NEAREST STEP AT OR
+  BELOW the tip that carries one (presence of the field, no
+  kind-sniffing); null only when no step in the chain carries an
+  arrangement -- an empty shelf, or a book with no capture
+  provenance, both correctly silent. "Minted from an earlier
+  arrangement" stays true across a conversion: the shelf's book
+  DESCENDS from that mint. LANDING BAR ADDITION (P2 read the
+  code, nobody has RUN it): P1 runs one searchable conversion on
+  the scratch capture copy and watches the tip move above the
+  mint, the walk find the mint below, and the descent premise
+  hold (the conversion's input WAS that mint's pdf) -- run, not
+  read, per the eighth ledger entry's own lesson. Open-time
   delivery is not stale: the stored side moves only at
   mintCommit, which the table itself drives; everything else that
   moves is the LIVE side, recomputed by the renderer from the
