@@ -468,8 +468,9 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
             longestAccepted = bandAfter(longestAccepted, page);
           }
           opts.log(
-            `${label}: page ${page.number} (${done}/${wanted.length}) — ${page.text.length} chars, `
-            + `${page.tokens} tokens, ${page.seconds.toFixed(1)}s`,
+            `${label}: page ${page.number} (${done}/${wanted.length}) — `
+            + `${howItWent(page, sentCap.get(page.number) ?? model.maxTokens)}, `
+            + `${page.seconds.toFixed(1)}s`,
           );
         },
       });
@@ -603,6 +604,42 @@ export function pagesToReread(
     if (sent !== undefined && worthRetrying(sent, finalBand)) worth.push(number);
   }
   return worth.sort((a, b) => a - b);
+}
+
+/**
+ * What this page did, said on the page's own line as it happens.
+ *
+ * ── This line is the only check that catches an INERT adaptive cap ──────────
+ *
+ * Everything else about this feature is comparative: whether the refusal list
+ * grew, whether a retry fired, whether the clock moved. AN ADAPTIVE CAP THAT
+ * NEVER REACHED THE SERVER PASSES ALL OF THEM — identical lists, zero retries,
+ * and the only thing missing is the saving nobody was watching for.
+ *
+ * The two numbers that settle it are both here: WHERE THE MODEL STOPPED, which
+ * is what the server did, and WHAT IT WAS ASKED TO STOP AT, which is what we
+ * sent. Equal means the cap was honoured. Different means it was ignored, and
+ * the line says both numbers in one clause so the disagreement needs no
+ * arithmetic and nothing correlated against a summary printed twenty minutes
+ * later.
+ *
+ * ── And a refusal used to log exactly like a page ───────────────────────────
+ *
+ * Twelve runaways in one book were twelve ordinary-looking lines that happened
+ * to say 8,192, so the pages that bought nothing were indistinguishable on
+ * screen from the pages that ARE the book. They say CUT OFF now.
+ */
+export function howItWent(
+  page: { tokens: number; finishReason: string | null; text: string },
+  cap: number,
+): string {
+  if (page.finishReason !== 'length') {
+    return `${page.text.length} chars, ${page.tokens} tokens`;
+  }
+  const against = page.tokens === cap
+    ? `${page.tokens} tokens, the cap this book set`
+    : `${page.tokens} tokens against a ${cap} cap`;
+  return `CUT OFF at ${against}, ${page.text.length} chars`;
 }
 
 /**
