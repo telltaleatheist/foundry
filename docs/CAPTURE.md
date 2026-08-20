@@ -1023,7 +1023,15 @@ hand-cropped every page and never used a global. Every count ties
 at one, the tie rule (still correct -- a tie IS absence of a
 stamp) leaves the file alone, NOTHING gets marked, and the first
 Apply to all overwrites all twenty-five with no Left alone at
-all. The wider rule, exhaustive because there are only two ways a
+all. LANDED (P1 9748d72) with four MIXTURES beyond the three
+populations (three populations that all agree is a rule verified
+on the cases that cannot go wrong): 20 untouched + 5 dragged marks
+the 5; 15 stamped + 10 untouched marks NEITHER (the rule is about
+hands, not difference); a 12/12 tie marks all 24 (over-marking, as
+agreed); and the load-bearing one -- 25 SPLIT SPREADS all stamped
+mark ZERO, because slots are compared apart, the only case of the
+six where a wrong implementation passes the other five. Owen's
+file through the shipped reader: 25 of 25 protected. The wider rule, exhaustive because there are only two ways a
 quad leaves the whole frame:
   equal to WHOLE_FRAME                      untouched   not byHand
   equal to the majority, where one exists   stamped     not byHand
@@ -1101,7 +1109,13 @@ Built (P2 seq 136, ruled in by foundry-pc-2):
   only the pages it copies onto -- the source's crop has just
   BECOME the global, so it is no longer an outlier. No
   stage-awareness in the service, one added line in the arm that
-  already clears.
+  already clears. LANDED (P2 db9cdca): a drag marks EVERY page of
+  the photograph -- a spread is two pages of one picture, and half
+  a protection reads as none. Stamping FROM a protected page
+  un-protects it: becoming the global is what makes a page
+  ordinary again, the case that proves the rule is not a special
+  case. Self-heal driven through the shipped writeRecipe/
+  readRecipe: the mark survives write, read, and a second open.
 - THE INCLUDE-HAND-SET OVERRIDE IS DRAWN ONLY WHEN HAND-SET PAGES
   EXIST, carrying the count ("including the 3 set by hand") -- a
   permanently present tick box about a condition that usually does
@@ -1199,11 +1213,12 @@ Built (P2 seq 136, ruled in by foundry-pc-2):
   and A FILE-BORN SLIVER CANNOT BE SLID DEEPER BUT CAN BE SLID
   BACK OUT TO A PAGE (measured 0.1% -> 46.8%) -- the floor guards
   against MAKING a sliver, not against a person rescuing one.
-- WAVE 21 IS COMPLETE ON BRANCHES AND HOLDING (P1 e6267c9, P2
-  10ec907 on top of it; the lead ran a TRIAL MERGE onto main and
-  all gates passed -- 384/0, three typechecks, ng build 674.39 kB,
-  control scan clean over the ten files -- so the lift is one move
-  on Owen's word). P2's final pass closed four more cross-surface
+- WAVE 21 IS COMPLETE ON BRANCHES AND HOLDING -- FINAL TIPS after
+  the defect-clause pair: P1 dd0393c, P2 db9cdca, both re-frozen.
+  The lead re-ran the TRIAL MERGE of both onto main: clean merges,
+  384/0, three typechecks, ng build, control scan clean over the
+  eleven files -- the lift is two merges on Owen's word. (Earlier
+  trial at 10ec907/e6267c9 was also green.) P2's final pass closed four more cross-surface
   defects the contract walk cannot reach, because they are not
   lines of the contract: the notice repeated its reason per name
   instead of per group; the corner mark never reached the modal;
@@ -1271,8 +1286,20 @@ verification):
   the newest mint, older mints stay reachable by standing on their
   step, and "Mint again" REPLACES WHAT HOME SHOWS -- the footer
   sentence is the only place that says so. Second-mint-while-
-  first-listed to be MEASURED before the lift (same read-only
-  method, P1).
+  first-listed MEASURED (P1 seq 164, 14 checks, all held): a
+  sibling under the capture root with its own file (index (2).pdf),
+  one root still, archive naming the newest, working copy remade
+  byte-for-byte, recipe byte-identical after both mints, and the
+  first mint still openable by standing on its step. THE MINT ROWS'
+  LABEL (found in that measurement -- two rows both reading "The
+  pages you minted"): the STORED label stays, it says what the act
+  did and that is permanently true; the surface derives WHICH ROW
+  THE ARCHIVE CURRENTLY NAMES at render (a stored "current" would
+  go stale on the next mint -- the recurring class, in a string).
+  BOUND TO WAVE 21b BESIDE THE MINT AGAIN BUTTON, not the deferred
+  list: the rows are only reachable through a button that does not
+  exist yet, and a Mint again producing two indistinguishable rows
+  would ship the bug and its fix in separate waves.
 - THE DISCARD WORKAROUND IS DEAD -- DO NOT OFFER IT (P1 seq 161,
   run against a byte-copy of Owen's project): discarding the
   minted step destroys archive/index.pdf and STILL does not reopen
@@ -1293,7 +1320,13 @@ verification):
   promise from the delete side, the same edit whichever door Wave
   21b builds. Until the door exists, the discard dialog's middle
   clause ("so you can mint again") is a false sentence; it becomes
-  true when the viewer-menu door lands.
+  true when the viewer-menu door lands. LANDED (dd0393c): HOME
+  OPENS THE LIGHT TABLE flips false to TRUE on the scratch rerun;
+  reading.needed stops advertising pages that no longer exist (a
+  second symptom of the stale archive, found by the fix); and the
+  other direction held -- deleting a translation leaves an imported
+  book's archive and live copy alone, and deleting the origin is
+  still refused by name with nothing changed on disk.
 - THE PREP RAIL (workflow being sampled with Owen -- prep rail on
   the table, mint off the modals, centered modals; not cut until
   he approves the arrangement): the tick is THE PERSON SPEAKING
@@ -1440,7 +1473,10 @@ TESTING THE FUNCTION BEFORE BELIEVING IT: the docblock and the code
 disagreed, and the docblock was the true one. Rule: a probe must
 hold at least one fact the code under test does not derive (here,
 the human-known right order), or it measures agreement, not
-correctness. Seventh (P2, seq 141), worse than a stale docblock and
+correctness. Companion shape (P1 seq 164, P2 seq 165): a filter
+that matches nothing reports nothing -- an empty list reads exactly
+like "nothing was drawn", a passing check that measured nothing.
+Seventh (P2, seq 141), worse than a stale docblock and
 asked to be recorded as worse: A CONTRACT LINE THAT NO CODE
 SATISFIES. Point 2's exact sentence -- pressing Apply IS what
 advances the stage -- was ruled, plan-backed, unambiguous, and not
