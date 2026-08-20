@@ -1241,6 +1241,15 @@ Frontend-design skill pointer applies to the modal treatment.
 
 ## Wave 21b -- the way back after a mint (Owen, live, 2026-08-20)
 
+BUILD AUTHORIZED (Owen, 2026-08-20, ~01:20): he approved the sampled
+arrangement -- "lets compact and then build that". The sample is
+committed at docs/design/capture-workflow-sample.html (three screens:
+light table with the Prepare-this-book rail, centered editor modal,
+centered reading-photographs modal). WAVE 21 IS LIFTED: main at
+9a7e660 (both branches merged, all gates green on main, no new IPC
+surface -- IPC-CHANNELS.md stays current). First act of acceptance
+when Owen opens it: the modal, and one split spread.
+
 Owen minted and found there is no way back: "i minted but didnt
 have an opportunity to rotate the pages... the rect changes can be
 permanent after i hit apply, but the other changes should still be

@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Foundry — capture workflow sample</title>
+<style>
+  :root {
+    --bg-sunken: #0e0d0c;
+    --bg-base: #181715;
+    --bg-elevated: #211f1c;
+    --bg-input: #2a2824;
+    --bg-hover: rgba(255,255,255,0.05);
+    --bg-overlay: rgba(14,13,12,0.72);
+    --border-subtle: #2a2824;
+    --border-default: #403c36;
+    --border-strong: #565149;
+    --text-primary: #faf9f7;
+    --text-secondary: #928b7f;
+    --text-tertiary: #706a60;
+    --text-inverse: #181715;
+    --accent: #22d3ee;
+    --accent-hover: #67e8f9;
+    --accent-strong: #06b6d4;
+    --accent-soft: rgba(6,182,212,0.2);
+    --accent-faint: rgba(6,182,212,0.12);
+    --ok: #4ade80;
+    --ok-soft: rgba(74,222,128,0.12);
+    --warn: #fbbf24;
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius: 8px;
+    --radius-lg: 12px;
+    --font-display: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-body: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+    --paper: linear-gradient(160deg, #d8cdb8 0%, #cfc2a9 45%, #b8ab90 100%);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg-sunken); color: var(--text-primary);
+    font: 13px/1.5 var(--font-body); }
+  h1,h2,h3 { font-family: var(--font-display); font-weight: 600; letter-spacing: -0.025em; margin: 0; }
+
+  /* ---------- sample chrome (not part of the app) ---------- */
+  .sample-bar { display:flex; align-items:center; gap:16px; padding:14px 20px;
+    border-bottom:1px solid var(--border-subtle); position:sticky; top:0; background:var(--bg-sunken); z-index:50;}
+  .sample-bar h1 { font-size:15px; }
+  .sample-bar .hint { color: var(--text-tertiary); font-size:12px; }
+  .tabs { display:flex; gap:6px; margin-left:auto; }
+  .tabs button { background: var(--bg-input); color: var(--text-secondary);
+    border:1px solid var(--border-default); border-radius: var(--radius-md);
+    padding:6px 14px; cursor:pointer; font:inherit; }
+  .tabs button.on { background: var(--accent-soft); color: var(--accent);
+    border-color: var(--accent-strong); }
+  .screen { display:none; }
+  .screen.on { display:block; }
+  .note { max-width: 880px; margin: 14px auto 40px; padding: 0 20px;
+    color: var(--text-secondary); font-size: 12.5px; }
+  .note b { color: var(--text-primary); font-weight:600; }
+
+  /* ---------- the mock window ---------- */
+  .window { max-width: 1180px; margin: 24px auto 0; background: var(--bg-base);
+    border:1px solid var(--border-default); border-radius: var(--radius-lg);
+    overflow:hidden; box-shadow: 0 24px 60px rgba(0,0,0,0.5); position:relative; }
+  .titlebar { display:flex; align-items:center; gap:10px; padding:10px 16px;
+    border-bottom:1px solid var(--border-subtle); background: var(--bg-base); }
+  .titlebar .back { color: var(--text-secondary); background:none; border:none; font:inherit; cursor:pointer; }
+  .titlebar h2 { font-size:14px; }
+  .titlebar .meta { color: var(--text-tertiary); font-size:12px; }
+
+  .table-layout { display:flex; min-height: 620px; }
+  .grid-pane { flex:1; padding:18px; overflow:auto; background: var(--bg-base); }
+  .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap:14px; }
+
+  .card { position:relative; border:1px solid var(--border-subtle); border-radius: var(--radius);
+    background: var(--bg-elevated); padding:8px 8px 6px; cursor:pointer; }
+  .card:hover { border-color: var(--border-strong); }
+  .card.selected { border-color: var(--accent-strong); box-shadow: 0 0 0 1px var(--accent-strong); }
+  .photo { position:relative; height:150px; border-radius: var(--radius-sm);
+    background: #14211f; overflow:hidden; }
+  .sheet { position:absolute; inset:12% 9%; background: var(--paper);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.55); }
+  .sheet.tilt { transform: rotate(-2.5deg); }
+  .sheet .lines { position:absolute; inset:14% 12%; opacity:.55;
+    background: repeating-linear-gradient(#5a5142 0 1px, transparent 1px 9px); }
+  .quad { position:absolute; inset:16% 13%; border:1.5px solid var(--accent);
+    box-shadow: 0 0 0 1px rgba(6,182,212,0.25); }
+  .quad.skew { transform: perspective(300px) rotateY(4deg) rotate(-2deg); }
+  .gutter { position:absolute; top:14%; bottom:15%; left:49%; width:0;
+    border-left:1.5px dashed var(--accent-hover); }
+  .cardname { display:flex; align-items:center; gap:6px; margin-top:6px;
+    color: var(--text-tertiary); font-size:11px; font-family: var(--font-mono); }
+  .chip { margin-left:auto; font-family: var(--font-body); font-size:10px;
+    padding:1px 7px; border-radius: 99px; }
+  .chip.hand { background: var(--accent-faint); color: var(--accent); }
+  .chip.split { background: var(--ok-soft); color: var(--ok); }
+  .card.struck .photo { opacity:.35; }
+  .card.struck .cardname { text-decoration: line-through; }
+
+  /* ---------- the prep rail (the signature) ---------- */
+  .rail { width: 292px; border-left:1px solid var(--border-subtle);
+    background: var(--bg-elevated); display:flex; flex-direction:column; }
+  .rail-head { padding:18px 18px 6px; }
+  .rail-head h3 { font-size:13px; }
+  .rail-head p { margin:4px 0 0; color: var(--text-tertiary); font-size:11.5px; }
+  .tasks { padding: 10px 12px; display:flex; flex-direction:column; gap:8px; }
+  .task { display:flex; align-items:center; gap:12px; width:100%; text-align:left;
+    background: var(--bg-input); border:1px solid var(--border-default);
+    border-radius: var(--radius); padding:12px 14px; cursor:pointer; font:inherit; color:inherit; }
+  .task:hover { border-color: var(--border-strong); background: #322f2a; }
+  .task .glyph { width:30px; height:30px; flex:none; display:grid; place-items:center;
+    border-radius: var(--radius-md); background: var(--bg-base);
+    border:1px solid var(--border-subtle); color: var(--text-secondary); font-size:15px; }
+  .task .words { flex:1; min-width:0; }
+  .task .verb { font-weight:600; font-size:12.5px; }
+  .task .state { color: var(--text-tertiary); font-size:11px; margin-top:1px; }
+  .task .done-mark { flex:none; width:20px; height:20px; border-radius:99px;
+    border:1.5px solid var(--border-strong); display:grid; place-items:center;
+    color:transparent; font-size:12px; }
+  .task.done .done-mark { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+  .task.done .glyph { color: var(--ok); }
+  .task.touched .done-mark { border-color: var(--accent-strong); }
+  .task.touched .glyph { color: var(--accent); }
+
+  .rail-foot { margin-top:auto; padding:16px 18px 18px; border-top:1px solid var(--border-subtle); }
+  .rail-foot .why { color: var(--text-tertiary); font-size:11.5px; margin:0 0 10px; }
+  .mint { width:100%; padding:11px 0; border-radius: var(--radius);
+    font:inherit; font-weight:600; cursor:pointer;
+    background: var(--bg-input); color: var(--text-tertiary);
+    border:1px solid var(--border-default); }
+  .mint.ready { background: var(--accent); color: var(--text-inverse); border-color: var(--accent); }
+
+  /* ---------- modal screens ---------- */
+  .backdrop { position:absolute; inset:0; background: var(--bg-overlay);
+    display:grid; place-items:center; z-index:10; }
+  .modal { background: var(--bg-elevated); border:1px solid var(--border-default);
+    border-radius: var(--radius-lg); box-shadow: 0 30px 80px rgba(0,0,0,0.6);
+    overflow:hidden; }
+
+  .editor { width: 760px; max-width: 92%; }
+  .editor-head { display:flex; align-items:center; gap:12px; padding:12px 16px;
+    border-bottom:1px solid var(--border-subtle); }
+  .editor-head .name { font-family: var(--font-mono); font-size:12px; }
+  .editor-head .pos { color: var(--text-tertiary); font-size:12px; }
+  .tools { display:flex; gap:4px; margin-left:auto; background: var(--bg-base);
+    border:1px solid var(--border-subtle); border-radius: var(--radius-md); padding:3px; }
+  .tools button { border:none; background:none; color: var(--text-secondary);
+    font:inherit; font-size:12px; padding:4px 12px; border-radius: 4px; cursor:pointer; }
+  .tools button.on { background: var(--accent-soft); color: var(--accent); }
+  .editor-head .close { background:none; border:none; color: var(--text-tertiary);
+    font-size:16px; cursor:pointer; margin-left:6px; }
+
+  .stagepic { position:relative; height:360px; background:#101413; margin:16px;
+    border-radius: var(--radius-sm); overflow:hidden; }
+  .stagepic .sheet { inset:7% 14%; }
+  .stagepic .quad { inset:10% 17%; border-width:2px; }
+  .stagepic .knob { position:absolute; width:14px; height:14px; border-radius:99px;
+    background: var(--accent); border:2px solid var(--bg-base); }
+  .stagepic .gutter2 { position:absolute; top:9%; bottom:10%; left:50.5%;
+    border-left:2px dashed var(--accent-hover); transform: rotate(1.2deg); }
+  .stagepic .gknob { position:absolute; width:12px; height:12px; border-radius:99px;
+    background: var(--bg-base); border:2px solid var(--accent-hover); }
+
+  .editor-foot { display:flex; align-items:center; gap:10px; padding:12px 16px 16px; }
+  .pager { display:flex; gap:6px; }
+  .pager button { width:34px; height:30px; background: var(--bg-input);
+    border:1px solid var(--border-default); border-radius: var(--radius-md);
+    color: var(--text-secondary); cursor:pointer; font:inherit; }
+  .foot-note { color: var(--text-tertiary); font-size:11.5px; }
+  .stage-actions { margin-left:auto; display:flex; gap:8px; }
+  .btn { font:inherit; padding:8px 16px; border-radius: var(--radius-md); cursor:pointer; }
+  .btn.quiet { background: var(--bg-input); color: var(--text-primary);
+    border:1px solid var(--border-default); }
+  .btn.primary { background: var(--accent); color: var(--text-inverse);
+    border:1px solid var(--accent); font-weight:600; }
+
+  .progress-modal { width: 380px; padding: 22px 24px 20px; }
+  .progress-modal h3 { font-size:13.5px; }
+  .progress-modal .file { color: var(--text-tertiary); font-family: var(--font-mono);
+    font-size:11.5px; margin-top:2px; }
+  .bar { height:6px; background: var(--bg-input); border-radius:99px; margin:16px 0 8px; overflow:hidden; }
+  .bar i { display:block; height:100%; width:40%; background: var(--accent-strong); border-radius:99px; }
+  .count { display:flex; justify-content:space-between; color: var(--text-secondary); font-size:12px; }
+
+  .dim { filter: brightness(0.55) saturate(0.8); pointer-events:none; }
+</style>
+</head>
+<body>
+
+<div class="sample-bar">
+  <h1>Foundry — capture workflow sample</h1>
+  <span class="hint">a mock to rearrange, not code — say what moves</span>
+  <div class="tabs">
+    <button class="on" data-s="s1">Light table</button>
+    <button data-s="s2">Editor</button>
+    <button data-s="s3">Importing</button>
+  </div>
+</div>
+
+<!-- ============ SCREEN 1: light table + prep rail ============ -->
+<section class="screen on" id="s1">
+  <div class="window">
+    <div class="titlebar">
+      <button class="back">←</button>
+      <h2>The Index</h2>
+      <span class="meta">25 photographs · 27 pages</span>
+    </div>
+    <div class="table-layout">
+      <div class="grid-pane">
+        <div class="grid" id="grid"></div>
+      </div>
+      <aside class="rail">
+        <div class="rail-head">
+          <h3>Prepare this book</h3>
+          <p>Any order. Tick a step when the book looks right.</p>
+        </div>
+        <div class="tasks">
+          <button class="task done">
+            <span class="glyph">↻</span>
+            <span class="words">
+              <span class="verb">Turn pages</span><br>
+              <span class="state">24 turned upright</span>
+            </span>
+            <span class="done-mark">✓</span>
+          </button>
+          <button class="task touched">
+            <span class="glyph">⌗</span>
+            <span class="words">
+              <span class="verb">Place the crop</span><br>
+              <span class="state">global set · IMG_0212 by hand</span>
+            </span>
+            <span class="done-mark">✓</span>
+          </button>
+          <button class="task">
+            <span class="glyph">∥</span>
+            <span class="words">
+              <span class="verb">Split spreads</span><br>
+              <span class="state">nothing split yet</span>
+            </span>
+            <span class="done-mark">✓</span>
+          </button>
+        </div>
+        <div class="rail-foot">
+          <p class="why">Mint unlocks when every step is ticked.</p>
+          <button class="mint">Mint PDF — 27 pages</button>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <p class="note"><b>What this shows.</b> The grid keeps single-click select / double-click open. The right rail is the
+    set of choices you asked for: three verbs, done in any order, each opening the same editor on that tool.
+    Each step carries its live status (read from the recipe) and a tick <b>you</b> set — the app never guesses
+    you're finished. Mint leaves the modals entirely and lives at the bottom of the rail, dark until all three
+    ticks are in, then cyan. Struck photographs (like the ad, shown crossed out) stay visible but leave the count.</p>
+</section>
+
+<!-- ============ SCREEN 2: editor modal, centered ============ -->
+<section class="screen" id="s2">
+  <div class="window">
+    <div class="dim">
+      <div class="titlebar">
+        <button class="back">←</button>
+        <h2>The Index</h2>
+        <span class="meta">25 photographs · 27 pages</span>
+      </div>
+      <div class="table-layout" style="min-height:620px">
+        <div class="grid-pane"><div class="grid" id="grid2"></div></div>
+      </div>
+    </div>
+    <div class="backdrop">
+      <div class="modal editor">
+        <div class="editor-head">
+          <span class="name">IMG_0212.HEIC</span>
+          <span class="pos">page 12 of 27</span>
+          <div class="tools">
+            <button>Turn</button>
+            <button class="on">Crop</button>
+            <button>Split</button>
+          </div>
+          <button class="close">✕</button>
+        </div>
+        <div class="stagepic">
+          <div class="sheet"><div class="lines"></div></div>
+          <div class="quad skew"></div>
+          <div class="knob" style="top:8%; left:15.5%"></div>
+          <div class="knob" style="top:9%; right:15%"></div>
+          <div class="knob" style="bottom:9%; right:16.5%"></div>
+          <div class="knob" style="bottom:8%; left:14%"></div>
+          <div class="gutter2"></div>
+          <div class="gknob" style="top:7.5%; left:49.6%"></div>
+          <div class="gknob" style="bottom:8.5%; left:50.6%"></div>
+        </div>
+        <div class="editor-foot">
+          <div class="pager"><button>←</button><button>→</button></div>
+          <span class="foot-note">changes save as you drag</span>
+          <div class="stage-actions">
+            <button class="btn quiet">Apply — set by hand</button>
+            <button class="btn primary">Apply to all 24</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="note"><b>What this shows.</b> The modal sits centered (both axes), with the light table dimmed behind it.
+    One modal serves all three tasks — Turn / Crop / Split are tools across the top, so opening “Split spreads”
+    from the rail is this same room with Split selected. The two stage buttons stay exactly as built tonight.
+    There is <b>no Mint here</b> and no Submit — the modal edits, the rail mints. On rotation: the crop is stored
+    on the picture itself, so turning a page carries the corners with it — where you placed them is where they
+    stay, relative to the book. That's already how the model works; nothing to add.</p>
+</section>
+
+<!-- ============ SCREEN 3: importing, centered ============ -->
+<section class="screen" id="s3">
+  <div class="window">
+    <div class="dim">
+      <div class="titlebar">
+        <button class="back">←</button>
+        <h2>The Index</h2>
+        <span class="meta">10 photographs so far</span>
+      </div>
+      <div class="table-layout" style="min-height:620px">
+        <div class="grid-pane"><div class="grid" id="grid3"></div></div>
+      </div>
+    </div>
+    <div class="backdrop">
+      <div class="modal progress-modal">
+        <h3>Reading photographs</h3>
+        <div class="file">IMG_0244.HEIC</div>
+        <div class="bar"><i></i></div>
+        <div class="count"><span>10 of 25</span><span>40%</span></div>
+      </div>
+    </div>
+  </div>
+  <p class="note"><b>What this shows.</b> The reading modal centered on the window instead of hugging the top —
+    same content as today: the file in hand, the count, the bar. Cards appear in the dimmed grid behind it
+    as each photograph lands, so the bar and the table agree in front of your eyes.</p>
+</section>
+
+<script>
+  // tab switcher
+  document.querySelectorAll('.tabs button').forEach(function(b){
+    b.addEventListener('click', function(){
+      document.querySelectorAll('.tabs button').forEach(function(x){ x.classList.remove('on'); });
+      document.querySelectorAll('.screen').forEach(function(x){ x.classList.remove('on'); });
+      b.classList.add('on');
+      document.getElementById(b.dataset.s).classList.add('on');
+    });
+  });
+
+  // fill grids with mock cards
+  function card(i, opts){
+    var c = document.createElement('div');
+    c.className = 'card' + (opts.sel ? ' selected' : '') + (opts.struck ? ' struck' : '');
+    var tilt = (i % 3 === 0) ? ' tilt' : '';
+    var skew = (i % 4 === 1) ? ' skew' : '';
+    c.innerHTML =
+      '<div class="photo"><div class="sheet'+tilt+'"><div class="lines"></div></div>' +
+      '<div class="quad'+skew+'"></div>' + (opts.split ? '<div class="gutter"></div>' : '') + '</div>' +
+      '<div class="cardname">IMG_0'+(205+i)+'.HEIC' +
+      (opts.hand ? '<span class="chip hand">by hand</span>' : '') +
+      (opts.split ? '<span class="chip split">2 pages</span>' : '') + '</div>';
+    return c;
+  }
+  function fill(id, n, dim){
+    var g = document.getElementById(id);
+    if (!g) return;
+    for (var i = 0; i < n; i++){
+      g.appendChild(card(i, {
+        hand:  !dim && i === 7,
+        split: !dim && (i === 2 || i === 3),
+        struck:!dim && i === 10,
+        sel:   !dim && i === 7
+      }));
+    }
+  }
+  fill('grid', 12, false);
+  fill('grid2', 12, true);
+  fill('grid3', 10, true);
+</script>
+</body>
+</html>
