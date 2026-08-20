@@ -388,6 +388,139 @@ wording, not machinery.
 book's true band, so the running maximum can be **seeded from the bank**
 and the cold start disappears entirely for every book Owen reads twice.
 
+### 7c-bis. WHY 4× — and the mental model was wrong (P1, measured)
+
+46 books with 40+ accepted pages, each book's densest page against **the
+running maximum as it actually stood when that page arrived** — the only
+number a band could have been built from.
+
+| | |
+|---|---|
+| worst step in the library | **5.04×** |
+| books stepping over 2× | 5 of 46 |
+| over 3× | 3 |
+| over 4× | **1** |
+
+**The 5.04× is benign, and the floor is why.** It is a *copyright page* —
+1,038 tokens of Penguin small print after three nearly empty leaves — and
+1,038 is far under any floor worth having, so a 2,000 floor absorbs it
+**without the margin being consulted at all.** The biggest ratio in the
+library is not a threat: the argument for the floor, stated as a
+measurement rather than a precaution.
+
+**The step that matters is 3.35×, and it is not an index.** Book
+`vlm-695a29e2f28a2045`, median 741, p90 922, running max 2,294 when the
+page arrived — **7,677 tokens, 43% through, and it opens *"Der Stürmer —
+Deutsches Wochenblatt zum Kampfe um die Wahrheit"***. A full-page newspaper
+facsimile reproduced inside the book, every column of it text the model
+reads, at **8.3× its own book's p90**. A 3× margin gives 6,882 and refuses
+it; 4× gives 9,176, clamps to 8,192, and keeps it. The second-worst is the
+same shape at 34% depth.
+
+**So 4 is the first whole number clearing 3.35, with 0.65 of headroom over
+the worst case in 18,202 pages.**
+
+**AND THE MENTAL MODEL NEEDS CORRECTING, because a rule aimed at the wrong
+thing would have missed both pages that matter.** "The index is at the
+back" is true of most books here — the depth column is full of 96%, 97%,
+99% — **but the two steps that actually break a 3× band are at 43% and
+34%.** The hazard is not the back of a book. It is **A PAGE OF A DIFFERENT
+KIND** — a facsimile, a table, an index, a page of small print — and those
+sit anywhere. That is a *stronger* reason for a running maximum than "books
+get denser as they go."
+
+### 7c-ter. THE BAND LAGS BY TWELVE PAGES (P2) — and it decides the retry
+
+`DEFAULT_VLM_CONCURRENCY` is **12**, over a shared queue
+(`endpoint.ts:88-101`), and `max_tokens` is captured per send. The band can
+only be fed by *results*. **So up to eleven pages are already in flight
+under a band none of them has yet raised** — and the simulation walked
+pages in order with a band that was fully current at every one.
+
+At a gradual slope this costs nothing and the margin absorbs it. **At a
+step change it is exactly wrong**, on precisely the population the design
+exists for: the first dense page comes back `length`, and the eleven behind
+it were already sent under the old cap.
+
+**P2's repair replaces the lead's invariant, and is strictly better —
+staleness, not counting:**
+
+> **Retry any page refused under a cap LOWER than the band that is current
+> when its refusal lands.**
+
+A page sent at 3,000 that comes back `length` while the band now says 6,000
+was judged by a number that is no longer the run's opinion, and **its
+refusal carries no information.** A page sent at 6,000 and refused under a
+band still at 6,000 was judged fairly and is a runaway. It stays bounded —
+the band only rises when a page is *accepted*, so a runaway can never
+trigger it — and it costs one stored number per refusal, the cap that page
+was actually sent with, which shape A already provides at the send.
+
+**It also dissolves the lead's cost objection of §7c:** Michelle Remembers
+has no step, so its band never rises, so **none of its twelve runaways is
+ever retried.** The arithmetic that killed the once-per-book rule does not
+touch this one.
+
+**But staleness alone does not cover the LEADING EDGE.** The first page of
+a step change is refused while the band is still low and therefore *not*
+stale, so nothing retries it and it is lost — the cohort behind it is only
+rescued if that first page was accepted. A complete retry is therefore
+**both**: one leading-edge retry per book, plus staleness for the cohort.
+
+---
+
+## 8. RULED: what v1 is, and what is designed but NOT built
+
+**v1 is the cap and nothing else:**
+
+- **running maximum over accepted pages only, × 4, floor 2,000, clamped to
+  the model's 8,192** — measured at zero real pages lost across 18,202;
+- **shape A**: `maxTokens: number | ((page) => number)`, evaluated inside
+  `readOnePage` at the moment that page is sent. `read.ts` owns the band
+  where `onPage` already lands and the refusal sites already are; the
+  bridge learns nothing about books, indexes or margins. **Shape B is off
+  the table permanently** — a phase boundary *freezes* the band, which is
+  the 401-lost-pages failure under a different name;
+- **the refusal names WHICH CAP FIRED** — "refused at 5,092 tokens, four
+  times the longest page in this book" — so any loss is visible and a
+  re-read recovers it.
+
+**THE RETRY IS DESIGNED AND NOT BUILT.** P1 argues correctly that it is
+what makes zero-loss true *by construction* rather than true because the
+sample topped out at 3.35×, and that its price on the measured population
+is exactly nothing. Against that stands **the same argument the lead used
+three hours ago to refuse P2's cascade allow-list, and consistency costs
+something here**: a zero-entry allow-list was machinery for a problem the
+repo did not have, and a retry that fires zero times on 18,202 pages is the
+same object. The cheap 90% of "by construction" is the refusal message: it
+does not prevent a loss, but it makes a loss **impossible to suffer
+silently**, and silent is the only kind that matters.
+
+Both halves — leading-edge and staleness — are recorded above in full, so
+the day a real page is lost this is a build and not a design.
+
+**AND THE GATE ON ALL OF IT, before a line is written:** §7c-ter means the
+zero was measured under a band that is *more current than the real run's*.
+**The simulation must be re-run with the twelve-page lag modelled.** If
+zero survives, v1 ships as above. If it does not, the retry stops being
+insurance and becomes required, and it lands with the cap.
+
+P2 right-sized its own concurrency finding once P1's correction landed:
+the eleven-lost case needs a step that is **contiguous as well as large**,
+and the two that matter are single leaves — a facsimile and one mid-book
+page — with ordinary prose either side. A single odd page has no cohort
+behind it. Its conclusion, that the case never fires at 4×, is probably
+right and **is not yet established**, because the evidence offered for it
+is the no-lag simulation — *the very run the gate exists to replace.*
+That is the ledger's own shape (a check that shares the assumption it is
+testing), and it is worth naming even when the conclusion is likely true:
+**a stale band is a LOWER band**, so a book climbing through the region
+between the 2,000 floor and the 8,192 clamp can be refused under a cap
+twelve pages out of date while never coming near its current one. The
+floor protects the opening pages and the clamp protects the dense books;
+neither protects the climb between them. That is what the re-run measures,
+and nothing about the two retry shapes is decided until it reports.
+
 **And this is why Tier 1 is kept rather than treated as redundant.** The
 retry's one hole is a runaway that comes back `stop` under the model cap —
 which would be accepted, and would raise the band. That has never been
