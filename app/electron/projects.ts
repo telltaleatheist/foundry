@@ -1442,6 +1442,21 @@ export interface LedgerView {
    * the tree. Main holds the ledger; main says what the list looks like.
    */
   rows: StepRow[];
+  /**
+   * THE STEP THE BOOK ON THE SHELF CAME FROM, or null when nothing is on it.
+   *
+   * `currentBookStep`'s answer, carried here so that the two surfaces that need
+   * it read ONE resolution: the row marker that tells two identical "The pages
+   * you minted" rows apart after a re-mint, and the light table's divergence
+   * sentence, which reads this step's `params.arrangement`. Deriving it twice is
+   * how the two would come to disagree about which book a person is looking at.
+   *
+   * REQUIRED RATHER THAN OPTIONAL, deliberately: every call that answers with a
+   * view answers after doing something, and a delete is exactly the gesture that
+   * MOVES this. An optional field would have been set on the read path and
+   * quietly missing from the mutation that changed it.
+   */
+  current: string | null;
 }
 
 /**
@@ -1461,12 +1476,109 @@ export interface LedgerView {
  * stops asking. A manifest that EXISTS but will not parse still throws — that is
  * a book somebody needs to fix a file for, and silence would bury it.
  */
+/**
+ * WHICH STEP THE BOOK ON THE SHELF CAME FROM — one resolution, two surfaces.
+ *
+ * ── What "the book on the shelf" turned out to mean, measured ───────────────
+ *
+ * Three candidates were proposed and two were wrong, each in a way no typecheck
+ * could see:
+ *
+ *   the newest mint step   wrong after a delete of a NEWER mint: it is right
+ *                          here by luck, and it is a second derivation of a
+ *                          question the catalogue already answers
+ *   `manifest.archive`     wrong TWICE. A delete that destroys the file it names
+ *                          nulls it while an older mint and its file survive and
+ *                          Home goes on listing them (documents 1, missing
+ *                          false, the file really there) — so the sentence would
+ *                          go silent over a real difference. And after a
+ *                          searchable conversion the archive still names the
+ *                          MINT while the shelf shows the converted book
+ *   the pdf CHAIN          right, and it is what the catalogue means by this
+ *                          book's history: `documents[kind=pdf].steps`, oldest
+ *                          first
+ *
+ * Home opens `working/<stem>.pdf` — the LIVE copy — in every state where one
+ * exists, and falls back to the origin when it does not. The live copy is made
+ * from the chain's tip (measured: a searchable conversion moves the working
+ * row's `from` onto `generated/<stem>.pdf`), so the tip is the handle on the
+ * book a person is actually looking at.
+ *
+ * ── Why it WALKS DOWN rather than reading the tip alone ─────────────────────
+ *
+ * A conversion appends to this same chain and lands above the mint — measured,
+ * not read: `recordGenerated` puts `generated/<stem>.pdf` at the tip with kind
+ * `convert`, and no ledger step names it. Reading the tip alone would therefore
+ * answer "nothing" for a project that has been carried FURTHEST, and the
+ * sentence would work for a book somebody stopped after minting and stop
+ * working for one they finished.
+ *
+ * So the tip decides WHICH BOOK, and the nearest step at or below it carrying an
+ * arrangement decides WHAT IT WAS MADE FROM. A searchable PDF made from mint B
+ * really was minted from B's arrangement, and saying so stays true.
+ *
+ * NO KIND-SNIFFING ANYWHERE IN HERE (ruled): it does not ask whether a step is a
+ * mint, a conversion or an import — it asks which chain entry a ledger step
+ * names, and steps that carry an arrangement are mints because only a mint
+ * records one. A test on `action` or on a label would be a second spelling of
+ * "is this a mint", free to drift from `mintedStep` the day another action
+ * starts recording one.
+ *
+ * Null when the chain holds nothing a ledger step names, which is a genuinely
+ * empty shelf and an imported book alike — silence, as ruled, because nothing
+ * can be honestly claimed either way.
+ */
+function currentBookStep(manifest: ProjectManifest, ledger: ProjectLedger): LedgerStep | null {
+  const chain = manifest.documents.find((row) => row.kind === 'pdf')?.steps ?? [];
+  for (let index = chain.length - 1; index >= 0; index -= 1) {
+    const named = chain[index]!.file;
+    const step = ledger.steps.find((row) => row.payload === named);
+    if (step !== undefined) return step;
+  }
+  return null;
+}
+
+/**
+ * The view, composed where the manifest is still in hand.
+ *
+ * Every `LedgerView` in this file goes through here, because `current` cannot be
+ * derived from the ledger alone — it needs the catalogue's chain — and a second
+ * composition site would be a view that forgot to answer the question.
+ */
+function viewOf(manifest: ProjectManifest, ledger: ProjectLedger = ledgerOf(manifest)): LedgerView {
+  return {
+    ledger,
+    rows: chronological(ledger),
+    current: currentBookStep(manifest, ledger)?.id ?? null,
+  };
+}
+
+/**
+ * WHAT THE BOOK ON THE SHELF WAS MINTED FROM, for the light table's footer.
+ *
+ * The other half of `currentBookStep`, exported as its own door so that the
+ * sentence and the row marker are one resolution rather than two — the light
+ * table has no ledger view to read `current` off, and a second walk composed in
+ * `capture.ts` would be the two-things-one-name defect arriving in the feature
+ * built to stop it.
+ *
+ * NULL IS SILENCE, and it means three different true things: no book on the
+ * shelf, a book that predates the field, or a book this app did not mint. None
+ * of them can honestly claim the recipe has or has not moved on, and the footer
+ * says nothing for all three.
+ */
+export async function currentArrangement(dir: string): Promise<string | null> {
+  const resolved = deletableProjectDir(dir);
+  if (!await exists(path.join(resolved, MANIFEST))) return null;
+  const manifest = await readManifest(resolved);
+  return currentBookStep(manifest, ledgerOf(manifest))?.params?.arrangement ?? null;
+}
+
 export async function readStepLedger(dir: string): Promise<LedgerView | null> {
   const proven = deletableProjectDir(dir);
   if (!await exists(path.join(proven, MANIFEST))) return null;
   const manifest = await readManifest(proven);
-  const ledger = ledgerOf(manifest);
-  return { ledger, rows: chronological(ledger) };
+  return viewOf(manifest);
 }
 
 /**
@@ -1484,12 +1596,14 @@ export async function readStepLedger(dir: string): Promise<LedgerView | null> {
  */
 export async function goToStep(dir: string, stepId: string): Promise<LedgerView> {
   const resolved = deletableProjectDir(dir);
-  const ledger = await withManifest(resolved, async (manifest) => {
+  // Composed INSIDE, where the manifest is still in hand: `current` reads the
+  // catalogue's chain and the ledger alone cannot answer it.
+  const view = await withManifest(resolved, async (manifest) => {
     const standing = stepOf(ledgerOf(manifest), stepId);
     const next: ProjectLedger = { ...ledgerOf(manifest), position: standing.id };
     manifest.ledger = next;
     await writeManifest(resolved, manifest);
-    return next;
+    return viewOf(manifest, next);
   });
   // The tabs of this project repaint from the position, and Home's rows are
   // derived from what the ledger calls current. Both hear about it the one way
@@ -1498,7 +1612,7 @@ export async function goToStep(dir: string, stepId: string): Promise<LedgerView>
   // The rows are the same rows — a pointer move changes no step and no order —
   // and they are composed again anyway, because a caller that had to know which
   // of these answers is worth redrawing would be a caller deriving the list.
-  return { ledger, rows: chronological(ledger) };
+  return view;
 }
 
 /**
@@ -1874,7 +1988,7 @@ export async function deletableStep(dir: string, stepId: string): Promise<StepSu
  */
 export async function deleteStep(dir: string, stepId: string): Promise<LedgerView> {
   const resolved = deletableProjectDir(dir);
-  const { ledger, orphans, sweeps } = await withManifest(resolved, async (manifest) => {
+  const { view, orphans, sweeps } = await withManifest(resolved, async (manifest) => {
     const deletion = deleteSubtree(ledgerOf(manifest), stepId);
     const banks = new Set(orphanedBanks(deletion, manifest.key));
     const destroyed = destroyedBy(deletion, manifest.key);
@@ -1916,7 +2030,10 @@ export async function deleteStep(dir: string, stepId: string): Promise<LedgerVie
     manifest.working.files = manifest.working.files.filter((row) => !razed.has(row.from));
     await writeManifest(resolved, manifest);
     return {
-      ledger: deletion.ledger,
+      // Composed here for `viewOf`'s reason, and this is the call that most
+      // needs it: a delete is the one gesture that can MOVE the current book,
+      // by destroying the file the catalogue's chain tip named.
+      view: viewOf(manifest, deletion.ledger),
       orphans: destroyed,
       sweeps: [...planned, ...orphanedCopies.map((row) => ({
         ...emptySweep(),
@@ -1952,7 +2069,7 @@ export async function deleteStep(dir: string, stepId: string): Promise<LedgerVie
     }
   }
   announceProjects();
-  return { ledger, rows: chronological(ledger) };
+  return view;
 }
 
 /**
@@ -2018,7 +2135,20 @@ export async function deleteStep(dir: string, stepId: string): Promise<LedgerVie
  */
 const MINTED_LABEL = 'The pages you minted';
 
-export async function recordMint(dir: string, pdf: Buffer, pages: number): Promise<LedgerStep> {
+/**
+ * `arrangement` IS PASSED IN RATHER THAN READ HERE, and the reason is not module
+ * layout. It is `arrangementOf` applied to the recipe THE MINT WAS BEGUN FROM —
+ * the same read that produced the page list the renderer rasterized — so the
+ * string describes the book that was actually printed even if somebody edited
+ * the recipe in the minutes it took to print. Reading the file again at this end
+ * would record what the recipe says NOW, which is the one thing it must not be.
+ */
+export async function recordMint(
+  dir: string,
+  pdf: Buffer,
+  pages: number,
+  arrangement: string,
+): Promise<LedgerStep> {
   const resolved = deletableProjectDir(dir);
   const step = await withManifest(resolved, async (manifest) => {
     const ledger = ledgerOf(manifest);
@@ -2068,7 +2198,7 @@ export async function recordMint(dir: string, pdf: Buffer, pages: number): Promi
       why: WHY_MINTED,
     });
 
-    const minted = mintedStep(randomUUID(), capture.id, archived, Date.now(), MINTED_LABEL);
+    const minted = mintedStep(randomUUID(), capture.id, archived, Date.now(), arrangement, MINTED_LABEL);
     manifest.ledger = appendStep(ledger, minted);
     await writeManifest(resolved, manifest);
     return minted;
@@ -2082,7 +2212,7 @@ export async function recordCuration(
   params: LedgerParams,
 ): Promise<LedgerView> {
   const resolved = deletableProjectDir(dir);
-  const ledger = await withManifest(resolved, async (manifest) => {
+  const view = await withManifest(resolved, async (manifest) => {
     const landing = await landStep(manifest, {
       action: 'curate',
       parent: null,
@@ -2098,10 +2228,10 @@ export async function recordCuration(
       );
     }
     await writeManifest(resolved, manifest);
-    return landing.ledger;
+    return viewOf(manifest, landing.ledger);
   });
   announceProjects();
-  return { ledger, rows: chronological(ledger) };
+  return view;
 }
 
 /**
@@ -2136,7 +2266,7 @@ export async function recordMetadata(
   params: LedgerParams,
 ): Promise<LedgerView> {
   const resolved = deletableProjectDir(dir);
-  const ledger = await withManifest(resolved, async (manifest) => {
+  const view = await withManifest(resolved, async (manifest) => {
     const landing = await landStep(manifest, {
       action: 'metadata',
       parent: null,
@@ -2152,10 +2282,10 @@ export async function recordMetadata(
       );
     }
     await writeManifest(resolved, manifest);
-    return landing.ledger;
+    return viewOf(manifest, landing.ledger);
   });
   announceProjects();
-  return { ledger, rows: chronological(ledger) };
+  return view;
 }
 
 /**
@@ -2194,7 +2324,7 @@ export async function recordBookEdit(
   stepId: string,
 ): Promise<LedgerView> {
   const resolved = deletableProjectDir(dir);
-  const ledger = await withManifest(resolved, async (manifest) => {
+  const view = await withManifest(resolved, async (manifest) => {
     const landing = await landStep(manifest, {
       action: 'edit',
       parent: null,
@@ -2211,10 +2341,10 @@ export async function recordBookEdit(
       );
     }
     await writeManifest(resolved, manifest);
-    return landing.ledger;
+    return viewOf(manifest, landing.ledger);
   });
   announceProjects();
-  return { ledger, rows: chronological(ledger) };
+  return view;
 }
 
 /**
@@ -2237,7 +2367,7 @@ export async function recordBookEditAmend(
   count: number,
 ): Promise<LedgerView> {
   const resolved = deletableProjectDir(dir);
-  const ledger = await withManifest(resolved, async (manifest) => {
+  const view = await withManifest(resolved, async (manifest) => {
     const held = ledgerOf(manifest);
     const standing = positionOf(held);
     if (standing === null || standing.action !== 'edit') {
@@ -2260,10 +2390,10 @@ export async function recordBookEditAmend(
     const row = manifest.ledger?.steps.find((step) => step.id === standing.id);
     if (row !== undefined) row.params = { ...row.params, ops: count };
     await writeManifest(resolved, manifest);
-    return ledgerOf(manifest);
+    return viewOf(manifest);
   });
   announceProjects();
-  return { ledger, rows: chronological(ledger) };
+  return view;
 }
 
 /**
@@ -2921,7 +3051,7 @@ export async function standForDocument(dir: string, absolutePath: string): Promi
   const ledger = ledgerOf(manifest);
   const wanted = await stepStandingFor(resolved, manifest, absolutePath);
   if (wanted === null || wanted === positionOf(ledger)?.id) {
-    return { ledger, rows: chronological(ledger) };
+    return viewOf(manifest, ledger);
   }
   return goToStep(resolved, wanted);
 }

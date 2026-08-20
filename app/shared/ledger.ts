@@ -198,7 +198,17 @@ export const RETENTION_OF: Readonly<Record<StepAction, LedgerStep['retention']>>
  * declare, by name). It is a field this app reads and never writes.
  */
 export const PARAMS_OF: Readonly<Record<StepAction, readonly (keyof LedgerParams)[]>> = {
-  import: [],
+  /*
+   * `arrangement` IS THE ONE THING AN ARRIVAL CAN BE ASKED ABOUT AFTERWARDS, and
+   * it is here for mints rather than for imports in general — an import with a
+   * parent is a mint (see `mintedStep`), and a mint is the one arrival this app
+   * MAKES rather than receives. What it was made from is a fact about the recipe
+   * at that instant, which nothing else can recover once the recipe moves on;
+   * every other import's file came from outside and has no arrangement to record.
+   * Absent is the ordinary state and always legal — every mint before Wave 21b,
+   * and every import that is not a mint.
+   */
+  import: ['arrangement'],
   /*
    * NOTHING, for `import`'s reason: an arrival was not ASKED for, it happened.
    * How many photos there were and how many pages they became is a fact about
@@ -392,7 +402,18 @@ export const RETAINED_BESIDE_YOU: Readonly<Record<StepAction, boolean>> = {
  * second English row beside the one they asked to redo.
  */
 const MINTED_BY_THE_RUN: Readonly<Record<StepAction, readonly (keyof LedgerParams)[]>> = {
-  import: [],
+  /*
+   * `arrangement` IS AN ANSWER AND NOT A QUESTION — it is read off the recipe as
+   * the mint begins, not typed by anybody — so it belongs on this side of the
+   * split for the same reason `generation` and `pages` do. Nothing depends on it
+   * today: `reRunTarget` never returns an irreplaceable step and every mint is
+   * one, so two mints are two rows however this table reads. It is written down
+   * anyway, because the day that changes the alternative is a second mint of the
+   * same photographs REPLACING the first for having been made from a recipe that
+   * had moved on — the mint's own docblock argues at length that an append is
+   * the only honest answer there.
+   */
+  import: ['arrangement'],
   // No run mints anything for an arrival, and `PARAMS_OF.capture` is empty in
   // any case. Here so the table stays exhaustive.
   capture: [],
@@ -521,15 +542,34 @@ export function captureStep(
  * THIS document. A re-mint appends a NEW step, and the readings hanging off the
  * old one do not follow it. Discarding this destroys the thing every reading of
  * it was about. The discard wording is what had to change, not the field.
+ *
+ * ── THE ARRANGEMENT IS REQUIRED, WHICH IS THE POINT OF PUTTING IT HERE ──────
+ *
+ * `params.arrangement` is what the light table compares the live recipe against
+ * to know whether the book on the shelf is behind it, and it can only ever be
+ * recorded AT the mint — once the recipe moves on, nothing can recover what it
+ * looked like. So it is an argument rather than something a caller remembers to
+ * set afterwards: a mint step that exists without it is a mint nothing can ever
+ * say anything true about, and the type is where that is cheapest to prevent.
  */
 export function mintedStep(
   id: string,
   parent: string,
   payload: string,
   createdAt: number,
+  arrangement: string,
   label = 'The pages you minted',
 ): LedgerStep {
-  return { id, parent, action: 'import', payload, retention: RETENTION_OF.import, createdAt, label };
+  return {
+    id,
+    parent,
+    action: 'import',
+    payload,
+    params: { arrangement },
+    retention: RETENTION_OF.import,
+    createdAt,
+    label,
+  };
 }
 
 /**
@@ -890,7 +930,7 @@ function readStep(entry: unknown, index: number): LedgerStep {
  * a forgotten clause here means a page range checked as if it were a page count
  * and refused for being a string. Everything not in here is a whole number.
  */
-const WORDS = ['bank', 'from', 'generation', 'language', 'skipPages'] as const;
+const WORDS = ['arrangement', 'bank', 'from', 'generation', 'language', 'skipPages'] as const;
 
 function isWord(key: keyof LedgerParams): key is typeof WORDS[number] {
   return (WORDS as readonly string[]).includes(key);
