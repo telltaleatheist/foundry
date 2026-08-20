@@ -312,24 +312,81 @@ observation that justified raising the cap to 8,192 is the observation that
 breaks a 3× band, and it would break it at the back of the book, after
 hundreds of pages of quiet prose have set the maximum low.
 
-### 7c. The fix: retry once per BOOK, never once per page
+### 7b-bis. SIMULATED over all 18,202 pages in page order (P1, 2026-08-20)
 
-P2 rejected a retry-at-the-full-cap, correctly, **for the per-page shape**:
-a true runaway would then cost its adaptive cap *plus* 8,192, which is
-worse than today. Retrying **once per book** is a different object:
+The design was walked over the whole library in page order, so the cap only
+ever sees what the run knew at the time.
 
-- the **first** page in a book to hit the adaptive cap is retried once at
-  the model's cap;
-- comes back `stop` → it was a **real dense page**. Accept it; the running
-  maximum rises to cover it, and no further retry is ever needed, because
-  the band now clears that whole population (the index);
-- comes back `length` → **this book has runaways.** Refuse it, and retry
-  nothing further in this book.
+**Hazard 7b is confirmed and it is not marginal: 26 OF 42 BOOKS have a
+whole-book maximum more than 1.5× their first 30 pages**, and the densest
+page sits where it was predicted — 100%, 99%, 98%, 99% of the way through.
+"The first N pages" would have refused the back of half the library.
 
-**Page-loss cost becomes zero by construction**, at a bounded one-time
-price of a single extra partial read per book. For Michelle Remembers: one
-page pays double, eleven pay 47%. For a reference book with a dense index:
-one extra partial read, and the index is never lost.
+**And the naive running maximum is catastrophic. THE FLOOR IS THE WHOLE
+DESIGN:**
+
+| shape | real pages lost | tokens saved | ≈ time |
+|---|---|---|---|
+| running max ×2, no floor | **2,215** | 136,632 | 50 min |
+| running max ×3, no floor | **401** | 96,630 | 35 min |
+| running max ×3, floor 2,000 | 2 | 91,390 | 33 min |
+| **running max ×4, floor 2,000** | **0** | 66,344 | **~24 min** |
+
+Without a floor the band is set by whatever the first page happened to be —
+*a title page of 54 tokens caps page 2 at 162* — and it loses 401 real
+pages even at 3×.
+
+**RULED: ×4, floor 2,000, clamped to the model's 8,192.** The neighbouring
+value is not a taste question: ×3 buys nine more minutes and costs exactly
+the two densest pages in the library (7,677 against a cap of 6,882; 4,909
+against 4,515), both ~90% through their books, both the index-at-the-back —
+*exactly the pages a reference book is bought for.* Nine minutes is not
+what those cost. Owen's sentence is the whole test, and ×4 meets it
+absolutely: **not one page of 18,180.**
+
+On Michelle Remembers alone: **loses nothing**, and its twelve runaways
+stop at 3,348 / 3,636 / 4,904 / 5,092 instead of 8,192 every time — between
+41% and 62% of the way in. That is the answer to *"any way we can cap
+that"* inside his own book at zero cost to the rest of it.
+
+**Two honesties about these numbers, P1's own:** the time column converts
+tokens at the median runaway's 180 s per 8,192 and generation is not
+perfectly linear, so read "~24 minutes" as about twenty-five, not as a
+measurement; and the saving is an upper bound on wasted work rather than a
+promise about wall clock.
+
+### 7c. ~~The fix: retry once per BOOK~~ — WITHDRAWN by the simulation
+
+The lead proposed a once-per-book retry at the model cap — the first
+adaptive-cap refusal retried once, `stop` meaning a real dense page whose
+acceptance raises the band, `length` meaning this book has runaways and
+nothing further is retried. It was the right fix **for a 3× margin, where
+401 real pages were at risk.** At ×4 with a floor it is withdrawn, and the
+arithmetic that kills it is worth keeping:
+
+**A retry that fires on a runaway runs all the way to the model cap and
+still fails**, so it costs a full 8,192 on top of the adaptive attempt. For
+Michelle Remembers that is 8,192 tokens, cutting the saving from 44,640 to
+36,448. **And for a book holding exactly one runaway — which is most of the
+books that hold any — the retry is strictly worse than doing nothing:**
+3,348 + 8,192 = 11,540 against today's 8,192.
+
+So it buys insurance against a hazard the simulation measures at **zero**,
+and pays for it out of the only thing this whole design exists to save. The
+lead's proposal, killed by the measurement of the thing it was meant to
+protect. Recorded rather than deleted, because at a tighter margin it
+becomes correct again.
+
+**What replaces it costs nothing: the refusal must say WHICH CAP FIRED.**
+"Refused at 4,904 tokens — four times the longest page in this book" is a
+sentence a person can act on, and it makes the one residual risk (a future
+book whose real page steps more than 4×, against a worst-ever-observed
+3.4×) **visible and recoverable by a re-read** rather than silent. That is
+wording, not machinery.
+
+**Worth scoping with the rest:** on a re-read the bank already holds the
+book's true band, so the running maximum can be **seeded from the bank**
+and the cold start disappears entirely for every book Owen reads twice.
 
 **And this is why Tier 1 is kept rather than treated as redundant.** The
 retry's one hole is a runaway that comes back `stop` under the model cap —
