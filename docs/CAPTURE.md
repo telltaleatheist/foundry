@@ -1677,6 +1677,21 @@ contract for the next pass. His words, near-verbatim:
    silently discard a turn, that is the split-gesture lesson again
    on a different verb, and it outranks every layout item above.
 
+5. SPLIT SPREADS LOOKED NO DIFFERENT FROM PLACE THE CROP: "i
+   clicked split spreads and it looked no different from place
+   crop. it was supposed ot be a single line with two knobs that i
+   drag to the right position. what happened." The rail's whole
+   claim is that a row opens the editor ON ITS TOOL; the split tool
+   showing a crop-shaped screen is either the tool not engaging or
+   the gutter line drawing only once a split exists, with the
+   button that creates one lost in the perimeter (finding 1 again,
+   compounding). This is the exact case both agents named
+   unwitnessed at seq 189/190 -- first contact answered it, and the
+   answer was no. MEASURE WHICH: does the rail row pass the tool?
+   does the editor select it? does the line render on a photograph
+   with no split yet? Then make the split tool LOOK like what it
+   is: a line with two knobs, present the moment the tool opens.
+
 Sequence ruled by the lead: P1 measures the rotate path first and
 reports what actually happens to a turn under each exit (Apply,
 Next, Back, close, tool switch). P2 plans the consolidated control
