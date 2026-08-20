@@ -1751,12 +1751,25 @@ MEASURED (P1 seq 197, 14 checks on a copy of the live project):
   exists only in stage 2 and sits disabled until the current
   photograph has been turned -- two rules no surface states. The
   label rework covers all three labels together.
-- POPULATION NOTE, nobody asked: intake writes Owen's camera's
-  photographs ALREADY TURNED -- [[1,0],[1,1],[0,1],[0,0]] is
-  WHOLE_FRAME rotated three quarters, all 25 alike (so they read
-  as stamped, nothing mis-marked). Every whole-frame comparison on
-  his machine meets the TURNED population -- the crop-status false
-  positive P2 caught is the resident case there, not the corner.
+- ATTRIBUTION CORRECTED (P2 seq 199, from the intake source):
+  intake writes the LITERAL WHOLE_FRAME constant
+  (electron/capture.ts:1124) -- nothing on that path can produce a
+  rotated frame, and the inherit branch only copies a crop some
+  earlier photograph already had. THE TURN IN OWEN'S FILE IS HIS
+  OWN, PERSISTED: all 25 sharing one three-quarter orientation is
+  the fingerprint of turn-one-by-hand-then-apply-to-all having
+  WORKED COMPLETELY (applyToAll leaves the source untouched, so
+  identical-everywhere means the flow ran end to end). Finding 4's
+  verdict is therefore not a hypothesis: the gesture worked and
+  showed nothing where he looked, and the r=0.04 dot is the whole
+  explanation. AND THE EXACT TESTS STAND AS WRITTEN -- the
+  population the earlier note warned about DOES NOT EXIST. stage()
+  stays exact (a virgin project really does hold the literal
+  constant; his reads stage 2 because he worked on it -- the
+  derivation doing its job); prepare()'s crop stays up-to-a-turn
+  (a turned-but-uncropped photograph is not cropped). Two tests,
+  two questions, both right; the only thing that puts a rotated
+  frame in a recipe is somebody rotating it.
 
 ## Deferred out loud
 
