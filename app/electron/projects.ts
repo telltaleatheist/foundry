@@ -2179,11 +2179,15 @@ export async function deleteStep(dir: string, stepId: string): Promise<LedgerVie
  * document before it. This builds the step directly regardless, so the
  * guarantee does not rest on a helper’s exclusion list staying as it is.
  *
- * WORKING/ STILL HOLDS ONE PDF, which is the app’s rule and not this one’s. So
- * a re-mint replaces the live copy, and standing on an EARLIER mint resolves to
- * no document — its archive copy is still on disk and its readings are still in
- * the ledger, but the row will not open. Recorded rather than fixed: giving
- * `working/` more than one tenant is a change to a rule five other things obey.
+ * WORKING/ STILL HOLDS ONE PDF, which is the app’s rule and not this one’s, so a
+ * re-mint replaces the live copy. THE EARLIER MINT’S ROW STILL OPENS ANYWAY, and
+ * this paragraph used to say it did not — measured with both mints present:
+ * standing on the newer one resolves to `working/index.pdf` and standing on the
+ * older one resolves to `archive/index.pdf`, which is on disk and is that mint’s
+ * own book. `documentOfStep` answers with the step’s payload when no working row
+ * was made from it, so losing the live copy costs the row nothing but the layer
+ * it opens from. Wave 21b rules on that behaviour — older mints stay reachable by
+ * standing on their step — so the comment was the half that was wrong.
  */
 /**
  * What a minted PDF is called, in the app's voice.
