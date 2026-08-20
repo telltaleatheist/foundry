@@ -158,7 +158,7 @@ function markComplete(readingsPath: string, pages: number, outPath: string | nul
 function phaseOptions(readingsPath: string, watched: Watched) {
   return {
     label: 'vlm-convert' as const,
-    pdfPath: path.join(path.dirname(readingsPath), 'book.pdf'),
+    source: { kind: 'pdf' as const, path: path.join(path.dirname(readingsPath), 'book.pdf') },
     model: DOTS,
     rendersDir: path.join(path.dirname(readingsPath), 'renders'),
     keepRenders: false,

@@ -38,8 +38,10 @@ import * as path from 'node:path';
 import {
   MLX_MAX_PIXELS,
   readPagesWithVlm,
+  pagesInDirectory,
   type VlmPage,
   type VlmRunResult,
+  type VlmSource,
   type VlmUnreadablePage,
 } from './bridge.js';
 import { capFor, worthRetrying } from './band.js';
@@ -149,7 +151,8 @@ export interface ReadPhaseOptions {
    * about the second name is one more prefix and not a second parser.
    */
   label: 'vlm-convert' | 'vlm-read';
-  pdfPath: string;
+  /** A document to rasterise, or the pages themselves. See `VlmSource`. */
+  source: VlmSource;
   model: VlmModelDef;
   /** Where the page images go. Owned by the caller, which also removes it. */
   rendersDir: string;
@@ -313,7 +316,7 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
   const replaying = bank?.action === 'reuse';
 
   const run = await bridge.readPages({
-    pdfPath: opts.pdfPath,
+    source: opts.source,
     model,
     dpi: VLM_DPI,
     ...(opts.python ? { python: opts.python } : {}),
@@ -692,7 +695,20 @@ function cutOff(cap: number, longestAccepted: number): string {
 // ═════════════════════════════════════════════════════════════════════════════
 
 export interface VlmReadOptions {
-  pdfPath: string;
+  /** The document to read. Exactly one of this and `pagesDir`. */
+  pdfPath?: string;
+  /**
+   * A directory of page images to read INSTEAD of a document — the photographs
+   * a capture project made, which are already the pages.
+   *
+   * `vlm-read` is the command this belongs to and it is the only one that has
+   * it, because a bank is the whole product here: this command touches the PDF
+   * for one purpose, to hand it to the read. `vlm-convert` writes FORMATS, and
+   * for that it also cuts figures, reads a text layer and hashes the file for
+   * an identifier — six dependencies that are about a document and not about a
+   * page. Formats over a captured book are rendered from the bank afterwards.
+   */
+  pagesDir?: string;
   /** WHERE THE READING GOES. Required: it is the whole product of this command. */
   readingsPath: string;
   modelId: string;
@@ -777,23 +793,63 @@ export interface VlmReadReport {
  * ordering the work; that rule is not weakened here, and the help for both
  * commands says so.
  */
+/**
+ * The one source this run reads, or a refusal naming what was wrong with the ask.
+ *
+ * BOTH IS AS WRONG AS NEITHER, and both are refused here rather than resolved by
+ * a precedence rule. A precedence rule would let a script that passes both quietly
+ * read the one the author did not mean, and there is no reading of "--pdf and
+ * --pages" that is obviously right.
+ */
+function sourceFor(opts: VlmReadOptions): VlmSource {
+  if ((opts.pdfPath === undefined) === (opts.pagesDir === undefined)) {
+    throw new Error(
+      'a reading is of exactly one thing: pass --pdf for a document, or --pages for a '
+      + 'directory of page images.',
+    );
+  }
+  if (opts.pdfPath !== undefined) {
+    const pdfPath = path.resolve(opts.pdfPath);
+    if (!fs.existsSync(pdfPath)) {
+      throw new Error(`no such PDF: ${pdfPath}. A reading is of a book, and this one is not there.`);
+    }
+    return { kind: 'pdf', path: pdfPath };
+  }
+  const dir = path.resolve(opts.pagesDir!);
+  if (!fs.existsSync(dir)) {
+    throw new Error(`no such directory: ${dir}. A reading is of a book, and its pages are not there.`);
+  }
+  const paths = pagesInDirectory(dir);
+  if (paths.length === 0) {
+    throw new Error(`${dir} holds no page images, so there is nothing to read.`);
+  }
+  return { kind: 'pages', paths };
+}
+
 export async function vlmRead(opts: VlmReadOptions): Promise<VlmReadReport> {
   const started = Date.now();
   const model = requireVlmModel(opts.modelId);
-  const pdfPath = path.resolve(opts.pdfPath);
+  const source = sourceFor(opts);
   const readingsPath = path.resolve(opts.readingsPath);
   const viaEndpoint = opts.endpoint !== undefined;
   const maxPixels = pixelBudget(model, viaEndpoint);
 
-  if (!fs.existsSync(pdfPath)) {
-    throw new Error(`no such PDF: ${pdfPath}. A reading is of a book, and this one is not there.`);
-  }
+
 
   const skipPages = [...new Set(opts.skipPages ?? [])].sort((a, b) => a - b);
 
+  /*
+   * SAY WHICH KIND OF PAGE THIS RUN IS READING, because "rendered at 200 dpi"
+   * is a false sentence about a photograph. A dpi is how finely to draw
+   * something with no pixels of its own; a page image arrives with its pixels
+   * already chosen and the only thing that still bounds it is the budget.
+   */
   opts.log(
-    `vlm-read: ${model.id} (${viaEndpoint ? opts.endpoint : model.repo}), pages rendered at `
-    + `${VLM_DPI} dpi${maxPixels !== undefined ? `, ${maxPixels.toLocaleString('en-US')} pixel budget` : ''}`,
+    `vlm-read: ${model.id} (${viaEndpoint ? opts.endpoint : model.repo}), `
+    + (source.kind === 'pdf'
+      ? `pages rendered at ${VLM_DPI} dpi`
+      : `${source.paths.length} page image(s) read as they are, no rasteriser`)
+    + `${maxPixels !== undefined ? `, ${maxPixels.toLocaleString('en-US')} pixel budget` : ''}`,
   );
   opts.log(
     `vlm-read: the product of this run is the reading in ${readingsPath}. No book is written here — `
@@ -808,7 +864,7 @@ export async function vlmRead(opts: VlmReadOptions): Promise<VlmReadReport> {
   try {
     const phase = await readPagesIntoBank({
       label: 'vlm-read',
-      pdfPath,
+      source,
       model,
       rendersDir,
       keepRenders,
