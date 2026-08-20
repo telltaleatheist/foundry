@@ -106,6 +106,7 @@ import type {
   ProjectFinal,
   ProjectGenerated,
   ProjectGeneratedRole,
+  ProjectArchive,
   ProjectLedger,
   ProjectManifest,
   ProjectReading,
@@ -1986,6 +1987,43 @@ export async function deletableStep(dir: string, stepId: string): Promise<StepSu
  * doors ask it, the describe and the delete, so the card is never drawn for
  * something the click would refuse.
  */
+/**
+ * The archive record a project should hold once the file it named is destroyed.
+ *
+ * THE CATALOGUE DECIDES, not the ledger and not a guess: the newest entry on
+ * this kind's chain that still lives under `archive/` and is still on disk. That
+ * is the same chain `currentBookStep` walks, so the archive and the shelf cannot
+ * disagree about which book this project has.
+ *
+ * `contentKey` IS RE-TAKEN FROM THE BYTES rather than carried over, because it
+ * is the one field that describes the FILE rather than the project — carrying
+ * the dead mint's key onto a surviving one would be a record that reads as
+ * healthy and identifies the wrong document. `originPath` is carried, because it
+ * says where this project's content came from and that has not changed: every
+ * mint of a capture project names the same recipe.
+ */
+async function archiveAfterLoss(
+  resolved: string,
+  manifest: ProjectManifest,
+  dying: ProjectArchive,
+): Promise<ProjectArchive | null> {
+  const chain = manifest.documents.find((row) => row.kind === dying.kind)?.steps ?? [];
+  for (let index = chain.length - 1; index >= 0; index -= 1) {
+    const parts = chain[index]!.file.split('/');
+    if (parts.length !== 2 || parts[0] !== ARCHIVE) continue;
+    const file = parts[1]!;
+    const onDisk = path.join(resolved, ARCHIVE, file);
+    if (!await exists(onDisk)) continue;
+    return {
+      file,
+      kind: dying.kind,
+      contentKey: createHash('sha256').update(await fsp.readFile(onDisk)).digest('hex').slice(0, 8),
+      originPath: dying.originPath,
+    };
+  }
+  return null;
+}
+
 export async function deleteStep(dir: string, stepId: string): Promise<LedgerView> {
   const resolved = deletableProjectDir(dir);
   const { view, orphans, sweeps } = await withManifest(resolved, async (manifest) => {
@@ -2024,7 +2062,29 @@ export async function deleteStep(dir: string, stepId: string): Promise<LedgerVie
      */
     const razed = new Set(destroyed);
     if (manifest.archive !== null && razed.has(`${ARCHIVE}/${manifest.archive.file}`)) {
-      manifest.archive = null;
+      /*
+       * ── RE-POINTED RATHER THAN NULLED, WHICH IS THE OTHER HALF OF THE FIX ──
+       *
+       * Nulling it repaired the one-mint case and broke the two-mint one. After
+       * mint, Mint again, delete-the-newest, the OLDER mint's step and file both
+       * survive and the catalogue goes on listing it: Home shows a book, marks
+       * it present, and opens it. Measured. So a null archive left this manifest
+       * holding a listed, openable PDF with nothing naming it — `recordMint`'s
+       * promise ("a project can never hold one without the other") broken again,
+       * by the line written to restore it.
+       *
+       * The visible cost was on the row: `reading.needed` keys off
+       * `archive?.kind === 'pdf'`, so the project stopped advertising that a
+       * real unread book needed reading. Right when the file is gone, wrong when
+       * a survivor is still there — one line, and which case it met decided
+       * whether it was a fix.
+       *
+       * So the archive follows the catalogue: the newest surviving `archive/`
+       * entry on the same chain, freshly keyed off the bytes that are actually
+       * there, and null only when nothing is left — which is a genuinely empty
+       * shelf and is what the one-mint discard still gets.
+       */
+      manifest.archive = await archiveAfterLoss(resolved, manifest, manifest.archive);
     }
     const orphanedCopies = manifest.working.files.filter((row) => razed.has(row.from));
     manifest.working.files = manifest.working.files.filter((row) => !razed.has(row.from));
