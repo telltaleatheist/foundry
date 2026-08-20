@@ -1335,7 +1335,92 @@ verification):
   second symptom of the stale archive, found by the fix); and the
   other direction held -- deleting a translation leaves an imported
   book's archive and live copy alone, and deleting the origin is
-  still refused by name with nothing changed on disk.
+  still refused by name with nothing changed on disk. AND THE
+  REPAIR HAS A TWO-MINT DEFECT OF ITS OWN (P1 seq 180, its own
+  author, measured): deleting the NEWEST of two mints nulls
+  manifest.archive while the older mint's book is still listed
+  and openable -- recordMint's promise broken from the other
+  side by the very line that restored it, and reading.needed
+  (keyed off archive?.kind) reads FALSE while a real unread book
+  sits in the catalogue. dd0393c was measured with ONE mint and
+  never with two. THE SECOND REPAIR IS RULED IN (defect clause,
+  P1, own commit): when the destroyed payload is the one
+  manifest.archive names, RE-POINT the archive at the
+  catalogue's surviving pdf chain tip; null it only when the
+  chain holds nothing. Landing requires the two-mint walk re-run
+  (archive re-pointed, invariant both directions, reading.needed
+  TRUE again over the unread survivor) AND answers to the two
+  things seq 180 says it did not check: whether the swept
+  working copy (working empty after the delete) breaks a later
+  operation on the surviving book, and whether any non-mint
+  writer can sit at the pdf chain tip (if one can, the tip
+  resolves to a step with no arrangement, which reads as
+  silence -- probably right, but proved, not assumed).
+- P2's HALF IS LANDED (a887c6a on capture/fp3-rail, accepted seq
+  185): the rail with its three verbs, exact crop/split statuses
+  (sheet, up to a turn), the ticks with the gate, the mint at the
+  rail's foot with the count on the line above, the way back in
+  the nav group, the centered reading modal, the editor's tools
+  across the top -- everything not waiting on P1's mintedFrom and
+  current-step carrier, which are one accessor each. Twenty-four
+  assertions against the shipped service bodies, including:
+  turning three quarters crops nothing, splitting down the
+  middle crops nothing, both together crop nothing, and EDITING
+  AFTER TICKING CLEARS NO TICK while the counts move underneath.
+  The false-positive cases carry vacuity guards, and one guard
+  convicted its own test (applyToAll returns the source
+  UNTOUCHED -- the editor already turned it; the test was wrong,
+  not the service): third time this wave the catch was the guard
+  against vacuity, not the check itself.
+- TOOLS SELECT, NEVER MODE (P2 seq 184, RULED): the editor's
+  Turn/Crop/Split tools select what the footer offers and
+  nothing else -- corners and gutter stay draggable in every
+  tool. Hiding handles behind a mode would turn the photograph
+  into a picture; direct manipulation is how this editor is
+  used. The sample's tool tabs were navigation, not modes.
+  DEFERRED OUT LOUD to Owen: if he meant modes, it is a small
+  change and a bad default, and he should say so.
+- THE DOOR'S LABEL STAYS "Edit the photographs" VERBATIM (P2 seq
+  184, ruled): it is the longest label in a column that ellipses,
+  but it names both the act and the place, and a menu is read,
+  not measured. If the panel ever narrows enough to truncate it
+  in practice, the fallback is "Photographs" -- decided now so
+  the shortening, if it comes, is a lookup and not a debate.
+- P1's HALF IS LANDED AND MERGED (32c81ff on workflow/foundry-pc,
+  merged to main at d0be66e, full gates on the merged result,
+  zero new ipcMain.handle): arrangementOf beside mintedPageIds
+  with mintBegin consuming the shared mintPlan; params.arrangement
+  minted BY mintedStep (required argument -- a mint step cannot
+  exist without the fact), PARAMS_OF.import + MINTED_BY_THE_RUN +
+  WORDS each gaining their one deliberate line; CaptureOpened.
+  mintedFrom on all three answer paths (create and intake had
+  declared narrower shapes and would have delivered undefined
+  rather than null); currentBookStep walking the pdf chain from
+  the tip to the nearest arrangement-carrying step, NEVER reading
+  manifest.archive, no kind-sniffing; THE CARRIER: LedgerView.
+  current (step id, REQUIRED, so tsc enumerated all eight view
+  sites) for the row marker + currentArrangement(dir) for the
+  sentence, both calling currentBookStep -- one resolution, two
+  surfaces, zero second derivations. 24 checks on the feature and
+  27 on the repair, four populations, both landing-bar uncheckeds
+  ANSWERED BY RUNNING: the swept working copy costs the survivor
+  nothing it needs (standing on it opens the archive copy,
+  missing:false, and a later mint restores working/), and the
+  searchable conversion was RUN -- the tip moves, the walk goes
+  past it to the mint. One citation inverted in P2's read,
+  recorded: recordGenerated DOES promote a conversion to the live
+  pdf (moves the working row's `from`), contra the comment at
+  job-queue.ts:2582 -- changes neither ruling, the chain was the
+  right handle either way. recordMint's docblock claimed an
+  earlier mint's row will not open; MEASURED FALSE (the older row
+  opens the archive copy via documentOfStep's payload fallback)
+  and corrected in its own commit -- the doc ruled reachability,
+  the comment was the half that was wrong, and stale comments are
+  the kind somebody eventually fixes the CODE to match. DEFERRED
+  OUT LOUD (P1 named it): whether anything other than OPENING
+  needs the live copy of a book whose working row was swept -- a
+  rotation, a metadata edit, an export. Opening and re-minting
+  both measured; the rest was not exercised.
 - THE PREP RAIL (workflow being sampled with Owen -- prep rail on
   the table, mint off the modals, centered modals; not cut until
   he approves the arrangement): the tick is THE PERSON SPEAKING
@@ -1349,6 +1434,191 @@ verification):
   tonight is the argument for gating mint behind the ticks: he
   minted before turning because the surface offered the last act
   first.
+- THE DIVERGENCE SOURCE (P1 plan-back seq 172, RULED): the footer
+  sentence compares a hash of THE MINT INPUT, never of the recipe
+  file. `arrangementOf(recipe): string` lives in app/shared/
+  capture.ts beside mintedPageIds: it builds the same projection
+  mintBegin builds (ordered unstruck pages -- id, workingCopy,
+  quad, source dims, out dims), canonicalises it, hashes it; and
+  mintBegin CALLS IT instead of keeping its own walk, so the
+  projection and the mint cannot drift -- if they disagree the
+  mint is wrong, not the hash. WHY NOT A FILE HASH: the recipe
+  holds fields the mint never reads (byHand, photo names, and
+  this wave's prepare ticks) -- a file hash would answer a person
+  who just ticked "Turn pages" with "minted from an earlier
+  arrangement", a false sentence produced by the feature built
+  beside it. WHY NOT THE MANIFEST: manifest.archive is
+  single-valued and each mint overwrites it; the fact is per-mint
+  so it belongs to the STEP. Stored as params.arrangement on the
+  mint step (LedgerParams gains arrangement?: string; the
+  ALLOWED_PARAMS allow-list gains it in ONE deliberate line;
+  minted BY mintedStep so the step cannot be created without the
+  fact -- an answer, not a question). Delivered as
+  CaptureOpened.mintedFrom: string | null (a field on an existing
+  answer -- NO NEW IPC, same as all of Wave 21). AMENDED (P2 seq
+  175, RULED): mintedFrom is the arrangement of THE STEP
+  manifest.archive NAMES, never "the newest mint". The two read
+  the same in every ordinary case and differ after ONE DELETE --
+  the dd0393c repair nulls manifest.archive when a delete
+  destroys its payload (projects.ts:1913) while an OLDER mint
+  step survives with its own file and arrangement; "newest"
+  would then return the older arrangement and the footer would
+  name a shelf that is EMPTY. Ruling (d) does not cover it: (d)
+  is absent-means-silence, this is PRESENT AND WRONG. AMENDED
+  AGAIN (P1 seq 180, MEASURED on a copy of Owen's project --
+  mint, Mint again, delete the newest): archive-null is NOT an
+  empty shelf. After that delete the catalogue still lists the
+  older book (documents 1, missing false, documentAtStep
+  resolves to a file that exists) while manifest.archive is
+  null -- so the archive-named resolution would go SILENT
+  exactly where it was invented to speak, hiding a real
+  divergence; and "newest mint" gives the right answer there
+  only by luck. THE RULED SOURCE IS NEITHER: the current book is
+  THE LEDGER STEP WHOSE PAYLOAD THE CATALOGUE'S PDF CHAIN TIP
+  NAMES (manifest.documents[kind=pdf].steps, last entry) --
+  because "the book on the shelf" MEANS the book Home opens,
+  and the chain tip is what Home opens. mintedFrom is that
+  step's params.arrangement, null only when the chain holds
+  nothing, which is a genuinely empty shelf and (d)'s silence.
+  The repair below makes the archive AGREE with this resolution;
+  the resolution never reads the archive, so there is one
+  derivation whichever way the archive heals. THE TIP DECIDES
+  THE BOOK, THE WALK DECIDES THE ARRANGEMENT (P2 seq 182,
+  RULED): a NON-MINT step reaches the pdf chain tip by
+  construction -- ConversionKind pdf maps to role searchable,
+  which writes generated/<stem>.pdf, and recordStep routes it BY
+  EXTENSION onto the same chain the mint uses (shared/
+  documents.ts:17, projects.ts:871/4170/4009, job-queue.ts:2572).
+  Making a captured book searchable is plausibly the NORMAL end
+  state of a finished capture project, and a tip-only read would
+  silence the divergence sentence exactly on the projects
+  carried furthest -- a surface that gets quieter as a project
+  gets more finished. So: the current book is the chain tip;
+  mintedFrom is the params.arrangement of the NEAREST STEP AT OR
+  BELOW the tip that carries one (presence of the field, no
+  kind-sniffing); null only when no step in the chain carries an
+  arrangement -- an empty shelf, or a book with no capture
+  provenance, both correctly silent. "Minted from an earlier
+  arrangement" stays true across a conversion: the shelf's book
+  DESCENDS from that mint. LANDING BAR ADDITION (P2 read the
+  code, nobody has RUN it): P1 runs one searchable conversion on
+  the scratch capture copy and watches the tip move above the
+  mint, the walk find the mint below, and the descent premise
+  hold (the conversion's input WAS that mint's pdf) -- run, not
+  read, per the eighth ledger entry's own lesson. Open-time
+  delivery is not stale: the stored side moves only at
+  mintCommit, which the table itself drives; everything else that
+  moves is the LIVE side, recomputed by the renderer from the
+  recipe it already holds -- two callers, one body. ABSENT MEANS
+  SILENCE (ruled): Owen's own mint predates the field; we do not
+  know the two disagree, and either claim would be the same false
+  sentence from another direction. Silence is what the surface
+  does today and it self-heals on his first Mint again. SCOPE, a
+  limit and not an oversight: it answers "a different
+  ARRANGEMENT", not "identical bytes" -- MINT_DPI and JPEG
+  quality sit outside the projection (ruled OUT of the hash: the
+  approved sentence says "an earlier arrangement", and a
+  constants bump lighting every book's footer would be the false
+  sentence again, wholesale).
+- THE TICKS' SHAPE (P1 seq 172, RULED): CaptureRecipe.prepared?:
+  { turned?: boolean; cropped?: boolean; split?: boolean } --
+  RECIPE-LEVEL, because the person is answering about the book,
+  not a photograph. Carried, refused if wrongly typed, consulted
+  by nothing in main -- byHand's exact three-line validator
+  contract. The ticks are P1's even though the rail is P2's: a
+  validator fact, not a land grab -- validRecipe rebuilds every
+  field on read and writeRecipe validates on the way out, so a
+  field main ignores is erased in one round trip; P2 cannot
+  persist a tick without P1. No new IPC (capture:recipe-save
+  already takes the whole recipe). Rail statuses need NOTHING
+  else: crop is derivable -- but PER SHEET, NOT PER PAGE, and UP
+  TO A TURN (P2 seq 176, found on starting): isWholeFrame counted
+  per page false-positives on a SPLIT photograph (halvesOf gives
+  neither half the whole frame, so an uncropped split counts as
+  cropped) and on a TURNED one (a turn permutes the corners, so
+  an untouched frame turned three quarters no longer equals
+  WHOLE_FRAME index-by-index -- and Owen turns 25 spreads before
+  he crops anything, so the rail would say "25 cropped" the
+  moment he finished turning). The test: reconstruct the sheet
+  with joinedQuad(quads, split), then ask whether SOME CYCLIC
+  ROTATION of it equals WHOLE_FRAME exactly -- still exact, no
+  tolerance, because intake wrote those numbers and rotate only
+  reorders them. stage() KEEPS plain isWholeFrame on purpose: a
+  turn IS something a person did, so a turned project is not
+  virgin -- same helper, two different questions; do not "fix"
+  one into the other. Split status: per photo, split not null.
+  And turned is THE TICK AND NOTHING ELSE (already ruled:
+  the portrait ad is the volume's shape -- a derived turned-done
+  lies exactly where wrongness costs most). And the two halves
+  check each other: because divergence reads the projection,
+  ticking a box CANNOT light the sentence -- by construction, not
+  coincidence. P2's window: mintedFrom and prepared are the two
+  shapes the rail consumes; they are contract unless P2's
+  plan-back names a concrete conflict BEFORE P1 builds them.
+  (P2's plan-back, seq 175, named exactly one -- the mintedFrom
+  amendment above -- and converged independently on the ticks'
+  shape down to the field name.)
+- THE CURRENT BOOK RESOLVES ONCE (P2 seq 175, RULED): "which
+  step is the book on the shelf" is answered by main, from
+  manifest.archive, in ONE resolution that crosses the bridge
+  once -- consumed by BOTH mintedFrom and the seq-165 row marker
+  (which mint row the archive currently names). The renderer
+  cannot resolve it itself (ProjectSummary carries no archive
+  field, measured) and its cheap substitute -- newest step by
+  appliedAt -- is the same wrong answer reached from the other
+  side. Two surfaces, two derivations, one defect: the
+  two-things-one-name class, pre-empted this time. P1 picks the
+  carrier (a flag on the step row it already builds, or a field
+  on ProjectSummary) and names it in the completion report.
+- THE TURN COUNT IS WITHDRAWN BY ITS OWN PROPOSER (P2 seq 175,
+  kept for the record so nobody re-proposes it): a count of
+  turns PERFORMED is genuinely derivable (a turn is a cyclic
+  permutation of quad corners -- rotate() is [q3,q0,q1,q2]; drags
+  never move which corner is corner 0; halvesOf preserves the
+  roles), AND IT STILL LIES, because a count needs a denominator
+  and a denominator asserts a target. On Owen's own shoot the
+  correct final state is 25 turned and TWO NOT (the framed
+  letters are landscape, the advertisement is portrait); "25 of
+  27 turned" reads as two left to do and would spend the rest of
+  the project telling him to break two pages that are right. Not
+  just "no rule can know they are upright" -- no rule can know
+  how many SHOULD be turned. A progress count without a true
+  denominator is a lie with a number in it. The status is the
+  tick and nothing else.
+- THE EDITOR STAYS LARGE (P2 seq 175, RULED): Owen's centering
+  ask named the READING-PHOTOGRAPHS modal (margin 64px auto 0,
+  hugging the top -- that one gets centered). The editor is
+  already centered on both axes at calc(100vw/vh - 56px), and its
+  docblock argument stands: a workbench, not a question, and a
+  corner placed on a small picture is a corner placed badly. The
+  sample's 760px editor was the mock's scale, not a
+  specification. DEFERRED OUT LOUD to Owen: if he meant the
+  editor itself should shrink, that overrules the docblock and
+  P2 will do it -- at the cost of corner precision on every page.
+- THE BUTTON'S WORDS (P2 seq 175, endorsed): "Mint the pages"
+  then "Mint again", the page count on the rail line ABOVE the
+  button, not inside it -- the count moves as pages are struck,
+  and a button whose own name reflows under the pointer is hard
+  to aim at.
+- THE GATE'S MIGRATION CONSEQUENCE, decided rather than
+  discovered (P2 seq 175): ticks are absent in every existing
+  recipe, so this wave's first act on Owen's finished book is to
+  lock its Mint button behind three ticks he has never seen.
+  RULED RIGHT: the gate exists because he minted before turning,
+  the ticks are three clicks, and a gate that exempts existing
+  projects would exempt exactly the project the gate was built
+  for. Surfaced to Owen in the lead's session notes. SOFTENED IN
+  FACT (P1 seq 179): the fixture is gone -- Owen DELETED
+  index-8700efdc (the book that minted before it was turned) and
+  his capture project is now index-4f7706dc: 25 photographs, one
+  capture step, archive null, NEVER MINTED, no prepared. So his
+  first contact with this wave is the rail and the tick gate
+  before his FIRST mint -- the case the gate was designed for --
+  not a lock on an existing shelf. Absent-means-silence stays
+  correct but may never fire for him (his first mint records an
+  arrangement); the divergence sentence has nothing to say until
+  he mints twice or mints then edits. Nobody plans an acceptance
+  step around SEEING the silence.
 
 ## Deferred out loud
 
@@ -1485,7 +1755,27 @@ the human-known right order), or it measures agreement, not
 correctness. Companion shape (P1 seq 164, P2 seq 165): a filter
 that matches nothing reports nothing -- an empty list reads exactly
 like "nothing was drawn", a passing check that measured nothing.
-Seventh (P2, seq 141), worse than a stale docblock and
+Ninth (P2, seq 186): A FALLBACK MAKES A MISSING TOKEN INVISIBLE.
+The rail referenced var(--ok-soft, rgba(...)) and --ok-soft did
+not exist in the palette -- the reference resolved to nothing, the
+fallback quietly became the only value, and the screen looked
+right. Not a build error, not a runtime error, invisible to all
+four gates; the next component to reference the name by its own
+reasoning inherits a token that resolves to nothing and may have
+no fallback at all. Same shape as the empty list reading like
+nothing was drawn: the defensive thing that makes a surface look
+fine is also the thing that stops anybody noticing the fact
+underneath it is absent. The check that finds it: every var()
+referenced against every custom property defined (22 referenced,
+21 defined, on the day it was run).
+Eighth (P1, seq 180, its own commit): A REPAIR MEASURED ONLY ON
+THE CASE THAT MOTIVATED IT -- dd0393c fixed the one-mint delete
+and was never run with two mints, where it breaks the same
+invariant from the other side. The population a fix was written
+for is exactly the one it cannot fail on; the case next door
+(one more of the thing, one fewer, zero) is where a
+right-in-one-case line goes wrong, and it costs one more run of
+the same harness. Seventh (P2, seq 141), worse than a stale docblock and
 asked to be recorded as worse: A CONTRACT LINE THAT NO CODE
 SATISFIES. Point 2's exact sentence -- pressing Apply IS what
 advances the stage -- was ruled, plan-backed, unambiguous, and not
