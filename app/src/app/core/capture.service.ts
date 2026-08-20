@@ -179,6 +179,60 @@ export class CaptureService {
      * would be ceremony that reads like a leak somebody forgot to close.
      */
     api?.capture.onIntakeProgress((progress) => this.run.set(progress));
+
+    /*
+     * THE WINDOW GOING AWAY IS AN EXIT LIKE ANY OTHER, and it is the one exit
+     * that cannot wait 400ms.
+     *
+     * BEST EFFORT, AND SAID PLAINLY RATHER THAN IMPLIED: `beforeunload` cannot
+     * await anything, so this starts the write immediately instead of leaving it
+     * on a timer. That turns "up to 400ms of unwritten work, guaranteed lost"
+     * into "a write already in flight", which is a large improvement and not a
+     * guarantee. The guarantee would have to be main refusing to close while a
+     * recipe write is outstanding, which is a bigger change than this defect
+     * earns and belongs to whoever asks for it.
+     */
+    if (typeof window !== 'undefined') {
+      window.addEventListener('beforeunload', () => void this.flush());
+    }
+  }
+
+  /**
+   * WRITE THE RECIPE NOW, AND WAIT FOR IT.
+   *
+   * ── The defect this exists for ──────────────────────────────────────────────
+   *
+   * The save is debounced 400ms, and `mintBegin` READS THE RECIPE FROM DISK.
+   * So a gesture made less than 400ms before Mint is pressed is not in the
+   * minted PDF -- and, because the mint records its arrangement from the same
+   * disk read, it is not in the recorded arrangement either. The two agree with
+   * each other, so the divergence sentence stays QUIET about a book that is
+   * missing the last thing somebody did. A silent wrong page in a finished book
+   * is the most expensive shape this feature has.
+   *
+   * ── Why callers do not each remember to call it ────────────────────────────
+   *
+   * The mint press awaits it, and `open` calls it before replacing what is in
+   * memory with what is on disk -- which covers every read-over path there is,
+   * including switching to another project and back, rather than the one path
+   * somebody thought of. A rule enforced at the door beats the same rule
+   * restated at each caller.
+   *
+   * Nothing pending is the ordinary case and costs one comparison: the timer is
+   * null whenever the last write has already gone.
+   */
+  async flush(): Promise<void> {
+    if (this.saveTimer === null) return;
+    clearTimeout(this.saveTimer);
+    this.saveTimer = null;
+    const dir = this.directory();
+    const recipe = this.current();
+    if (api === null || dir === null || recipe === null) return;
+    try {
+      await api.capture.recipeSave(dir, recipe);
+    } catch (err) {
+      this.complain(err);
+    }
   }
 
   /** A door URL for a name intake wrote. Never a path this service composed. */
@@ -212,6 +266,16 @@ export class CaptureService {
   /** Open the recipe of a capture project already on disk. */
   async open(projectDir: string): Promise<void> {
     if (api === null) return;
+    /*
+     * THE PREVIOUS PROJECT'S LAST GESTURE, BEFORE THIS ONE OVERWRITES IT.
+     *
+     * This method replaces the recipe in memory with the one on disk, so
+     * anything still sitting on the save timer would be gone -- and the light
+     * table calls it whenever the tab changes project, which is an ordinary
+     * thing to do half a second after moving a corner. It flushes the OLD
+     * directory because `this.directory()` has not moved yet.
+     */
+    await this.flush();
     try {
       const opened = await api.capture.recipeLoad(projectDir);
       this.directory.set(projectDir);
