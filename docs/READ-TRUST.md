@@ -621,7 +621,9 @@ goes stale, not about when a page is worth waiting for.** Not folded in.
    the send inside `readOnePage`; `read.ts` owns the band and records the
    cap each page was sent with. Shape B stays off the table;
 3. **the retry** — a second `fromEndpoint` pass for every page whose sent
-   cap was below the final band, at the model cap;
+   cap was below the final band **BY A FACTOR OF 2 OR MORE**, at the model
+   cap. **The bare "below the final band" test is NET NEGATIVE — see §10,
+   and it was authorized for ninety seconds before P1 priced it;**
 4. **the refusal names which cap fired** — *"refused at 5,092 tokens, four
    times the longest page in this book"*;
 5. **a flag that disables the adaptive cap**, restoring today's behaviour
@@ -637,6 +639,74 @@ case it protects against — a runaway returning `stop` and being *accepted*
 rather than commoner. Both agents rated it higher than this; the
 disagreement is recorded rather than resolved, and the measurement is kept
 intact so adding it costs nothing but the decision.
+
+---
+
+## 10. THE RETRY RULE WAS NET NEGATIVE, AND THE WRONG PREMISE WAS THE LEAD'S
+
+P1 priced §9's rule before a line of it was written. **It spends 122,880
+tokens to save 66,344 — the feature would have shipped 20.7 minutes SLOWER
+than doing nothing.**
+
+| rule | retries | saved | retry cost | net | ≈ min |
+|---|---|---|---|---|---|
+| no retry at all | 0 | 66,344 | 0 | +66,344 | **+24.3** |
+| staleness, ANY rise *(as authorized)* | 15 | 66,344 | 122,880 | −56,536 | **−20.7** |
+| staleness, final ≥ 1.5× cap | 5 | 66,344 | 40,960 | +25,384 | +9.3 |
+| **staleness, final ≥ 2× cap** | 2 | 66,344 | 16,384 | +49,960 | **+18.3** |
+| once per book *(the lead's first shape)* | 8 | 66,344 | 65,536 | +808 | +0.3 |
+
+**And the premise that made it look safe was wrong, and it was the lead's
+sentence.** §8c's table says Michelle Remembers' *"band never rises (no
+step), so nothing retries"*. Its step is 1.04× — **small, and not zero.**
+The caps its twelve runaways were actually sent under: 3348, 3348, 3348,
+3636, 4904, 4904, 4904, 4904, 5092, 5092, 5092, 5092. The final band is
+5092, so **eight of the twelve sit below it** and would retry at 8,192
+apiece — 65,536 spent to save 44,640. **His worst book would have come out
+20,896 tokens worse than doing nothing.** P2 proposed the invariant; the
+lead restated an untested claim about it as a fact in the contract; P1
+walked the actual caps. That is the ledger's own shape and it belongs to
+the lead.
+
+**The mechanism is ordinary, which is why it was missed: a band CREEPS
+upward through any book as its prose varies.** "Below the final band"
+therefore catches every refusal that happened before the book's densest
+ordinary page — in a 360-page book, most of them. **The test cannot tell a
+band that crept from a band that stepped, and only a step means a refusal
+was misjudged.**
+
+### 10a. RULED: the factor is 2×, and it is coupled to concurrency
+
+Requiring the rise to be *substantial* rather than merely present fixes it
+with one comparison; nothing else about the shape moves.
+
+**2× is ruled**, keeping 18.3 of the 24.3 minutes and firing twice in the
+whole library. P1 declined to recommend between 2× and 1.5× and was right
+to — the trade is real: the Der Stürmer page, *in the lag-24 scenario where
+it is lost*, sits at a staleness ratio of 1.67, so 1.5× rescues it and 2×
+does not. **It is ruled at 2× because that scenario is not the shipped
+one:** at the real concurrency of twelve, zero pages are lost with no
+retry at all (§8a). The retry's job is the *cohort* case — a contiguous run
+of a different kind of page — and a cohort's second page carries the full
+step ratio (3.35× for a Der Stürmer run), so 2× fires on exactly the book
+this insures against.
+
+**THE COUPLING MUST BE WRITTEN DOWN because it is invisible otherwise:
+the safe factor is a function of CONCURRENCY.** At 12 the lag costs
+nothing; at 24 it costs two pages at a ratio of 1.67. **If
+`DEFAULT_VLM_CONCURRENCY` is ever raised, this factor must be revisited in
+the same commit** — a knob in one file silently moving the correctness of
+a rule in another is precisely the two-things-one-name class.
+
+### 10b. One honesty about the pricing, P1's own
+
+Every retry above is priced at the **full model cap**, which is exact for
+this library — all 22 refusals are true runaways, so a retry really would
+run to the cap and buy nothing. **It is pessimistic for a library holding
+genuinely misjudged pages:** there a retry pays only the page's real
+length and *recovers a page*, which is not a cost at all. So the table
+understates every retry rule in exactly the case the retry exists for —
+and that case does not occur here.
 
 **And this is why Tier 1 is kept rather than treated as redundant.** The
 retry's one hole is a runaway that comes back `stop` under the model cap —
