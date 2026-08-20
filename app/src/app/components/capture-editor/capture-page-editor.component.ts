@@ -543,9 +543,30 @@ export class CapturePageEditorComponent {
      * handles ungrabbable, which is the same class of defect as the corner
      * handles that hung over the listening element.
      */
+    /*
+     * THE LINE THAT IS DRAWN IS THE LINE THAT CAN BE GRABBED, and asking
+     * `cut()` rather than `split()` is the whole of that sentence.
+     *
+     * Owen: *"i couldnt grab the knobs to move the split - it didnt do
+     * anything when i click/dragged the knob"*. The knobs were there. The
+     * template draws them from `cut()`, which is `split() ?? proposal()`, so a
+     * SEEDED PROPOSAL puts two handles and a gutter on the picture -- and this
+     * method used to refuse the press unless `split()` was non-null, which on a
+     * proposal it is not, by definition. So the gesture died at its first line
+     * and the person got a picture of a control.
+     *
+     * `drag` below already knew better: it resolves `split() ?? proposal()` and
+     * picks its destination from which one answered. THE TWO HALVES OF ONE
+     * GESTURE DISAGREED -- the half that MOVES the cut understood proposals and
+     * the half that STARTS the move did not -- and a gesture is only as wired as
+     * its first half.
+     *
+     * The tell was in the code and not in the behaviour: the `split` this
+     * replaces was read once, used for nothing, and existed only to refuse. A
+     * local whose sole effect is a guard is a guard nobody meant to write.
+     */
     const line = this.cut();
-    const split = this.split();
-    if (line === null || split === null) return;
+    if (line === null) return;
 
     for (const which of ['a', 'b'] as const) {
       const point = line[which].point;
