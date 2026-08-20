@@ -2111,7 +2111,21 @@ any gate; it is how CSS works. Same family as the eighth entry
 (measured only on the motivating case) on a different axis: the
 right function of the wrong inputs. The check that finds this
 class: read the file in declaration order, or observe the browser
--- a model has no cascade in it.
+-- a model has no cascade in it. THE HABIT, RULED IN (P1 seq 224,
+P2 builds it -- its file, its scanner siblings): a STATIC CASCADE
+CHECK in node, the third scanner beside the byte scan and the
+literal scan -- parse the component's styles and assert that for
+every property a guarded rule sets, NO LATER RULE of equal or
+greater specificity sets it again. Still a model, but of THE
+RESOLUTION -- the question that was never asked -- and it would
+have caught this defect in the same second with no window and no
+risk. P1's own accounting of the fix's evidence stands with it:
+2554369 was found by reading declaration order by eye, the method
+that had already missed it once on the same file -- correct in
+every particular and still the same KIND of evidence that produced
+the defect. The browser-observed bar from seq 222 is MET BY
+OWEN'S WALK OR THE PHOTOGRAPH, whichever comes first; the scanner
+closes the class either way.
 Tenth (P2 seq 189, mechanism corrected by P1 seq 190): A NARROWER
 TYPE DOES NOT FAIL ON A WIDER VALUE -- IT JUST CANNOT NAME THE
 REST. LedgerView.current crossed the bridge fine (preload returns
