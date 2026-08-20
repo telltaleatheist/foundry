@@ -708,6 +708,51 @@ length and *recovers a page*, which is not a cost at all. So the table
 understates every retry rule in exactly the case the retry exists for —
 and that case does not occur here.
 
+### 10c. THE LESSON, and it is bigger than either half of the mistake
+
+P2 took its own half rather than letting the lead carry it: **"Michelle
+retries nothing" was already in P2's draft assertion list**, derived from
+P2's own description of P2's own rule. So the lead wrote an unverified
+claim into the contract, and the harness that was supposed to prove the
+code **would have been green**, because it encoded the same claim.
+
+> **AN ASSERTION DERIVED FROM THE DESIGNER'S DESCRIPTION OF THE DESIGN
+> PROVES THE DESCRIPTION, NOT THE CODE.** It is the sixth ledger entry's
+> shape moved one step earlier: not a probe sharing the code's assumption,
+> but an expectation sharing the *prose's*. Neither agent reasoning harder
+> would have caught it — what caught it was P1 walking the actual caps.
+
+**So the assertion discipline for this build is explicit:** every expected
+number is hand-written or read off the measured walk. **None is computed
+by the rule under test, and none is derived from anybody's description of
+the design.**
+
+### 10d. Declined, with the reason, so it is not rediscovered
+
+P2 drafted and withdrew an optimisation: **send the retry at the FINAL
+BAND rather than the model cap**, on the argument that the question a
+retry asks is "does this fit under the band the run ended with". It is
+purer and it is **weaker insurance**, which is the retry's entire job:
+
+> a book whose final band does *not* clamp — max accepted 1,500, band
+> 6,000 — and a misjudged page whose true length is 7,000. Retried at the
+> final band it is **refused again and lost**; retried at the model cap it
+> is **recovered**.
+
+It also saves nothing now: at 2× the rule fires twice, and both are step
+cases whose band clamps to 8,192 anyway, so the two sends are identical.
+**Worth pricing again only if the factor is ever loosened**, because the
+number of retries is what would make the saving matter.
+
+### 10e. The coupling goes in the KNOB's file, which is better than the ruling
+
+The lead ruled that the concurrency coupling be *written down*. P2's
+amendment is strictly better and is adopted: **a doc is not where somebody
+raising a constant is looking.** The sentence goes in the docblock beside
+`DEFAULT_VLM_CONCURRENCY` in `endpoint.ts` as well — naming the factor and
+the file it lives in. Two places, one of which is where the change would
+actually be made.
+
 **And this is why Tier 1 is kept rather than treated as redundant.** The
 retry's one hole is a runaway that comes back `stop` under the model cap —
 which would be accepted, and would raise the band. That has never been
