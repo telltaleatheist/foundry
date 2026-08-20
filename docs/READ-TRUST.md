@@ -834,6 +834,52 @@ time the adaptive cap meets dots.ocr will be the first time.** The thing
 to watch is the log: a book should announce it is reading pages at a
 number below 8,192 — and then say nothing more about it.
 
+### 11b. HALF that gap is now closed: the SHIPPED code over the real library
+
+P1 walked all 55 banks — **18,202 real pages** — through v1's own exported
+`bandAfter` / `capToSend` / `pagesToReread`, in a throwaway detached
+worktree, writing nothing to the library.
+
+| | |
+|---|---|
+| accepted pages the band would have refused | **0** |
+| tokens not spent on runaways | 66,344 *(~24.3 min)* |
+| pages the retry would read again | **2** |
+| cost of those retries | 16,384 *(~6.0 min)* |
+| **net** | **+49,960 tokens — ~18.3 minutes** |
+
+**And they are P1's simulation's numbers TO THE TOKEN.** A walk written
+out of the design predicted +49,960; an implementation written
+independently from the same ruling produces the same saving, the same two
+retries, the same net. Not close — identical.
+
+**WHAT THAT PROVES AND WHAT IT CANNOT, which is the point of recording
+it:** two bodies written from one design, never compared until now,
+agreeing exactly over 18,202 pages **rules out an implementation slip in
+either.** It **does not rule out a design error in both** — a mistake in
+the ruling is a mistake both would make, and this walk cannot see it.
+Nor can any bank answer the question that remains, because **every bank
+here was made under the old cap**: what a real dots.ocr does when the
+number handed to it is 5,092 rather than 8,192.
+
+**Two things the run showed that no earlier measurement had:**
+
+- **the second retry is in the FOUNDRY library, not BookForge** —
+  *Flashpoint*, page 6, sent at 2,412 against a final band of 5,004. Every
+  other measurement in this wave came from BookForge runs; this is the
+  first evidence the feature does anything at all in a project Owen opens
+  in the app;
+- **both retry cases are true runaways**, so both buy nothing and pay the
+  full cap — which is exactly why the net is 18.3 and not 24.3. That is
+  the design working as ruled, not a flaw: **those six minutes are the
+  entire insurance premium** against a book none of these 43 is.
+
+**The verification pattern is worth keeping by name:** *two
+implementations written independently from one specification, compared
+only after both exist, agreeing exactly over a large real population.* It
+is the strongest evidence available that the spec was READ correctly by
+both — and it is silent, by construction, on whether the spec was RIGHT.
+
 ### 11a. The ledger entries this wave bought
 
 **Eleventh** — a model of a declarative system checks the computation and
