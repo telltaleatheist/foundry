@@ -153,6 +153,16 @@ import type { CaptureQuad } from '@shared/types';
      * the stretch. Zero times the ratio is zero, and nothing underneath it
      * disagreed.
      *
+     * THE WHOLE MECHANISM IS ONE PAIR OF NUMBERS, measured in the running app
+     * with the defect put back underneath the fix:
+     *
+     *   getComputedStyle(.shot).width    0px  broken     295.333px  fixed
+     *   getComputedStyle(.shot).aspectRatio   "1.33333 / 1" IN BOTH
+     *
+     * The ratio was never wrong. The USED WIDTH was zero, and a ratio times
+     * zero is zero in both axes -- which is why every hypothesis that went
+     * looking for a bad number found only good ones.
+     *
      * So the width is STATED instead of inherited from an alignment. The card
      * is the containing block and the picture is as wide as the card, which is
      * what the design says out loud anyway; the ratio then resolves the height
