@@ -521,6 +521,55 @@ floor protects the opening pages and the clamp protects the dense books;
 neither protects the climb between them. That is what the re-run measures,
 and nothing about the two retry shapes is decided until it reports.
 
+### 8a. THE GATE PASSED (P1, simulated pessimistically) — v1 IS GO
+
+Same walk, but a page's band built ONLY from pages that had landed by
+then, assuming a full cohort every time — the worst case, not the likely
+one.
+
+| in flight | accepted pages refused |
+|---|---|
+| 0 | 0 |
+| 6 | 0 |
+| **12 — the real one** | **0** |
+| 24 — twice it | 2 |
+
+**At the actual concurrency the lag costs nothing across 18,202 pages**,
+and it takes twice the real cohort before the Der Stürmer page falls over.
+
+**And the mechanism is measured, not lucky: LONG MEANS GRADUAL, LARGE
+MEANS LONE.** Consecutive pages over twice their book's p90, across 43
+books: **39 runs of one page, 4 of two, 3 of three — and two long runs of
+19 and 51.** Both long runs are reference-book indexes, and their steps
+are **1.08× and 1.11×**: an index *ramps*, each page raising the band for
+the next, so a 51-page dense run costs nothing at all. The two big steps
+are lone leaves — `…111:347 112:352 **113:7677** 114:456 115:742` — a
+facsimile between two ordinary pages of prose, with no cohort behind it.
+The eleven-lost scenario needs contiguous AND large, and those two
+properties are anti-correlated **for a reason about how books are made**.
+
+P1's own caveat, kept: anti-correlated is not mutually exclusive. A book of
+twenty consecutive facsimile plates would be exactly the bad case; none of
+these 43 are, and neither agent claims more than that.
+
+### 8b. The lever, which corrects the lead's own §8
+
+§8 justified shipping without the retry by calling a loss "visible and
+recoverable by a re-read". **The first half is true and the second was
+not:** a re-read runs the same algorithm over the same book and rebuilds
+the same band, so it refuses the same page again. There was no lever.
+
+So v1 gains one: **a flag that disables the adaptive cap**, restoring
+today's behaviour exactly. A book that ever suffers is then re-read once
+with the flag and loses nothing — which makes "recoverable" a fact rather
+than a hope, at the cost of one boolean instead of a retry path through
+both refusal sites. The retry stays designed-and-not-built (§8), and the
+honest distinction from the cascade allow-list is recorded: an empty
+allow-list is a hole somebody must dig, while a retry arms itself — so it
+is deferred on COST and uncosted-path grounds, not on the machinery-for-no-
+problem argument, which does not fit it as neatly as the lead first
+claimed.
+
 **And this is why Tier 1 is kept rather than treated as redundant.** The
 retry's one hole is a runaway that comes back `stop` under the model cap —
 which would be accepted, and would raise the band. That has never been
