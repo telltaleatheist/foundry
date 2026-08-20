@@ -1592,6 +1592,37 @@ DEFERRED OUT LOUD, per Owen: automatic de-skew and AI sharpen come after
 this lands; re-mint reading reuse and CV auto-detect are recorded in the
 doc's deferral list.
 
+### Wave 22 — the reader runs away on a bleed-through page (Owen, live,
+### 2026-08-20) — OPEN, design in `docs/READ-TRUST.md`
+
+A blank verso photographed with writing showing through from the other
+side is the lowest-signal page the reader ever meets, and dots does not
+stop: 25,000 characters of invention on one page. Owen's constraint is
+absolute and shapes every instrument -- "its doing a fine job with
+everything else so i dont want to cripple its other work."
+
+- RULED ALREADY: the blank-page PRE-filter is CLOSED. Bleed-through and a
+  faint real page are the SAME PIXELS (differing by mirroring and
+  position, not intensity), so any threshold that excludes one excludes
+  chapter openers, colophons and every lighter-exposed scan -- and it
+  fails in the direction that DELETES a page. The instrument is a
+  degeneration POST-filter, whose cost to a healthy page is zero by
+  construction rather than by calibration.
+- THE CAP IS NOT THE LEVER: 8192 is high on purpose (a dense index ran
+  past 4096); lowering it is the one fix the constraint forbids.
+- WAITING ON ONE MEASUREMENT, from the bank Owen already has: did the
+  runaway hit the cap and get REFUSED (book clean, minutes wasted) or
+  stop under it and get ACCEPTED (nonsense in the book)? And is the
+  nonsense an n-gram cycling or varied invention -- that decides whether
+  the post-filter is repetition detection or length-in-context.
+- OWEN'S TO RULE: what a caught page BECOMES -- a silent blank page, or a
+  refusal he is told about.
+- DEFERRED OUT LOUD, found on the way and not created by this: the ink
+  facility is DEAD (removed `f192c50`) but its two ends survive -- the
+  `grayscale` flag still writes PGMs nothing reads, and `src/scan/pgm.ts`
+  has zero callers. They should go together, in their own commit, when
+  somebody is in that file for a reason of their own.
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the
