@@ -365,6 +365,118 @@ export function outputSizeFor(quad: PixelQuad): OutputSize {
  */
 export const WHOLE_FRAME: CaptureQuad = [[0, 0], [1, 0], [1, 1], [0, 1]];
 
+/**
+ * HOW FAR A QUAD HAS BEEN TURNED, in quarters: 0, 1, 2 or 3.
+ *
+ * ITS OWN TYPE RATHER THAN `QuadEdge`, which is the same four numbers and a
+ * different fact. An edge is a side of the page; this is a count of turns. They
+ * would compile interchangeably forever and mean opposite things at the one call
+ * site where somebody mixed them up -- the two-things-sharing-a-name defect this
+ * file has already paid for twice.
+ */
+export type QuadTurns = 0 | 1 | 2 | 3;
+
+/**
+ * A quarter turn, and the whole of what a turn IS.
+ *
+ * THE CROP IS THE POINTS AND THE TURN IS THE ORDER. Turning moves no corner: it
+ * relabels which one becomes the printed page's top-left, and the rectifier does
+ * the rest. That is why there is no orientation field anywhere in the recipe and
+ * why there does not need to be — the tuple order already says it.
+ *
+ * The renderer has spelled this since the editor was built (`geometry.ts`'s
+ * `rotate`, four identical lines). It is HERE now because the stamp has to turn
+ * a quad it is copying, and Owen ruled that copying a crop must not carry the
+ * source's orientation with it — so the rule needs a home both the surface and
+ * anything downstream can name. `outputSizeFor` and the split geometry moved for
+ * this exact reason and their docblocks argue it at length.
+ *
+ * Negative and over-four turns are taken as read (⟲ is `turnQuad(quad, -1)`),
+ * which is why the modulo is written twice: JavaScript's `%` keeps the sign.
+ */
+export function turnQuad(quad: CaptureQuad, turns: number): CaptureQuad {
+  const steps = ((Math.trunc(turns) % 4) + 4) % 4;
+  let turned = quad;
+  for (let step = 0; step < steps; step += 1) {
+    turned = [turned[3], turned[0], turned[1], turned[2]];
+  }
+  return turned;
+}
+
+/**
+ * HOW MANY QUARTER TURNS THIS QUAD IS FROM UPRIGHT — 0, 1, 2 or 3.
+ *
+ * ── The question it answers, and the one it does not ────────────────────────
+ *
+ * "Upright" here means as the CAMERA held it, not as the book reads. Nothing in
+ * a recipe knows which way up a page is meant to be — that is the whole reason
+ * "Turn pages" is a tick a person sets rather than a rule anything derives. What
+ * this measures is only how far the corner labels have been rotated away from
+ * the photograph's own top-left, which is a fact about the file and is exactly
+ * what a stamp needs in order to leave a turn alone.
+ *
+ * ── Why the topmost-then-leftmost corner, rather than the nearest one ───────
+ *
+ * The corner that reads as the photograph's top-left is the one with the
+ * smallest `y`, and the smallest `x` among equals. That is a LEXICOGRAPHIC
+ * order on the same two numbers the quad already holds: total, exact, and free
+ * of any comparison of magnitudes.
+ *
+ * The obvious alternative — the corner nearest the origin — needs a distance,
+ * and distances tie. A crop symmetric about the diagonal (a diamond, and any
+ * square centred on the frame) has two corners the same distance from (0, 0)
+ * and no honest way to choose between them, so the answer would depend on a
+ * tie-break nobody could predict from looking at the picture. Lexicographic
+ * order ties only when two corners are the SAME POINT, which is a degenerate
+ * quad rather than a shape somebody drew.
+ *
+ * ── What it cannot do, said plainly ────────────────────────────────────────
+ *
+ * A crop tilted more than 45° makes "which corner is the top-left" genuinely
+ * ambiguous, and this will answer confidently anyway. That is not a case the
+ * editor can produce — a de-skew is a few degrees and a turn is exactly a
+ * quarter — but a hand-edited recipe could, and the honest note is that the
+ * answer there is a convention rather than a fact.
+ */
+export function turnsOf(quad: CaptureQuad): QuadTurns {
+  let best: QuadTurns = 0;
+  for (const index of [1, 2, 3] as const) {
+    const [x, y] = quad[index];
+    const [bestX, bestY] = quad[best];
+    if (y < bestY || (y === bestY && x < bestX)) best = index;
+  }
+  return best;
+}
+
+/**
+ * A quad in somebody else's orientation — the stamp's whole job, in one line.
+ *
+ * ── Owen's ruling, which this is ───────────────────────────────────────────
+ *
+ * "Apply to all" copies a crop onto every photograph, and it used to copy the
+ * SOURCE'S CORNER ORDER with it, because the order is the orientation and the
+ * stamp wrote the source's pages wholesale. So stamping a crop onto pages
+ * somebody had turned by hand — the portrait advertisement, the two landscape
+ * letters — put them back the way the source was facing, and the turn was gone
+ * with no sentence anywhere about it. Ruled (Wave 21c): COPY THE CROP, KEEP THE
+ * TURN.
+ *
+ * ── It moves no corner, which is why it is safe ────────────────────────────
+ *
+ * The returned quad holds THE SAME FOUR POINTS as `quad`, in a different order.
+ * The crop region on the photograph is untouched to the last decimal; only the
+ * label saying which corner becomes the top-left is carried over from `like`.
+ * There is no arithmetic here to be wrong by a pixel, because there is no
+ * arithmetic: a crop copied and a turn kept is a relabelling.
+ *
+ * A source and a target already facing the same way get the quad back
+ * unchanged, which makes the ordinary case — twenty-five photographs a person
+ * turned together — free and exact.
+ */
+export function turnedLike(quad: CaptureQuad, like: CaptureQuad): CaptureQuad {
+  return turnQuad(quad, turnsOf(like) - turnsOf(quad));
+}
+
 /** Which edge of a quad, in tuple order: 0 top, 1 right, 2 bottom, 3 left. */
 export type QuadEdge = 0 | 1 | 2 | 3;
 
