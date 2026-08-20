@@ -1923,6 +1923,36 @@ drawn the way round the page will print (word "turned" kept until
 Owen says it is clutter), the override modal with the
 turning-is-never-overwritten sentence.
 
+LANDED AND MERGED (0a30c94, four commits, four gates each, five
+harnesses green -- rail 24, divergence 14, turn 18, stamp 11, card
+geometry 20 -- merged with full gates on the merged result, byte
+scan clean, zero new IPC). Contract-walked tab by tab against the
+passed sample; every label verbatim; checkbox deleted; turn-all
+moved into the Turn tool's act. Three carried lessons: (1) THE CARD
+DRAW IS ONE ELEMENT -- img and SVG rotate together, no second
+transform to fall out of step; P1's free assertion holds at all
+four turns for both aspects, MODELLED not rendered, restating the
+rule rather than importing the component's computed (which would
+agree by construction). (2) THE SPLIT PROPOSAL IS A SECOND INPUT,
+NOT A SPLIT -- an untaken line is never in the recipe; one line on
+screen, two possible sources, a real split always winning; the
+proposal gets the same floor and edge-riding rule as a real gutter,
+so a line that draws cannot fail to cut. (3) A WAVE 21 DEFECT
+NEARLY REINTRODUCED: rewriting the acts orphaned stampEverything,
+which also sets the advanced flag -- the one press that reaches
+stage 2 would have left a virgin project in stage 1; caught by
+reading what was orphaned, and NO GATE WOULD HAVE. Plus one the
+traces caught: a rail-trace expectation predated the trio's
+byHand fix (a bulk turn no longer clears the source mark, so the
+count is two, not one) -- the code was right, the expectation
+stale, corrected with the reason in place; the argument for
+asserting COUNTS, not booleans, which stay green through change.
+STILL UNWITNESSED, more than usual: the most visual commit set of
+the wave, every check arithmetic. If transform-origin or the
+percentage basis behaves differently in the browser than in the
+model, all twenty card checks still pass. OWEN'S WALK IS THE GATE:
+the column, each tool, the seeded line, a grid of turned cards.
+
 ## Deferred out loud
 
 - **Validator page-level refusals name pages by sha** ("page
