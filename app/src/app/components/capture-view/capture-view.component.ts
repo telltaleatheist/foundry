@@ -19,6 +19,8 @@ import type { Tab } from '../../core/documents.service';
 import { CaptureEditorModalComponent } from '../capture-editor/capture-editor-modal.component';
 import type { FractionQuad } from '../capture-editor/geometry';
 import { CaptureGridComponent } from '../capture-grid/capture-grid.component';
+import { CaptureRailComponent, type PrepareVerb } from '../capture-rail/capture-rail.component';
+import { ProjectsService } from '../../core/projects.service';
 
 /**
  * THE LIGHT TABLE — a capture project's whole surface, and the viewer's third
@@ -62,7 +64,7 @@ const ACKNOWLEDGED_FOR_MS = 1600;
 
 @Component({
   selector: 'app-capture-view',
-  imports: [CaptureGridComponent, CaptureEditorModalComponent],
+  imports: [CaptureGridComponent, CaptureEditorModalComponent, CaptureRailComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <!--
@@ -96,6 +98,29 @@ const ACKNOWLEDGED_FOR_MS = 1600;
       />
     </div>
 
+    <!--
+      THE RAIL, AND WHY THE MINT MOVED INTO IT.
+
+      Mint used to sit in a footer under the table, which is where Owen found it
+      before he had turned a single page: the surface offered the LAST ACT
+      FIRST, and the three things you do before it were inside a modal you had
+      to know to open. The rail puts the three verbs in front of the act and the
+      act at the foot of them, and the gate is what makes that an order rather
+      than a suggestion.
+    -->
+    <app-capture-rail
+      [counts]="captures.prepare()"
+      [prepared]="prepared()"
+      [mintable]="mintable()"
+      [ready]="captures.readyToMint()"
+      [minted]="minted()"
+      [progress]="mint.progress()"
+      (open)="openTool($event)"
+      (tick)="captures.tick($event)"
+      (mint)="startMint()"
+      (stop)="mint.cancel()"
+    />
+
     @if (open() !== null) {
       @if (opened(); as photo) {
         <app-capture-editor-modal
@@ -105,6 +130,7 @@ const ACKNOWLEDGED_FOR_MS = 1600;
           [quads]="photo.quads"
           [split]="photo.split"
           [stage]="captures.stage()"
+          [tool]="tool()"
           [hasPrevious]="walkIndex() > 0"
           [hasNext]="walkIndex() < walk().length - 1"
           [handSet]="handSet()"
@@ -120,107 +146,69 @@ const ACKNOWLEDGED_FOR_MS = 1600;
       }
     }
 
-    <footer class="mint">
-      @if (mint.progress(); as running) {
-        <span class="progress">Minting page {{ running.done }} of {{ running.total }}…</span>
-        <button class="quiet" type="button" (click)="mint.cancel()">Stop</button>
-      } @else {
-        <span class="count">{{ mintable() }} pages</span>
-        <button class="act" type="button" [disabled]="mintable() === 0" (click)="startMint()">
-          Mint the pages
-        </button>
-      }
-    </footer>
   `,
   styles: `
+    /*
+     * A ROW SINCE WAVE 21b, AND IT USED TO BE A COLUMN. The column existed to
+     * stack the mint footer under the table; the mint is at the foot of the
+     * rail now, so what is left is two things side by side and no wrapper is
+     * needed to say so.
+     */
     :host {
       display: flex;
-      flex-direction: column;
+      flex-direction: row;
+      align-items: stretch;
       height: 100%;
       min-height: 0;
     }
 
+    /* The rail sizes itself; the table takes what is left, which is why the
+       photographs get wider on a wider window and the rail does not. */
     .table {
       flex: 1;
+      min-width: 0;
       min-height: 0;
       display: flex;
       flex-direction: column;
       overflow: auto;
     }
 
-    .bar {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 10px;
-      border-bottom: 1px solid var(--edge, #2a2a2a);
-    }
-
-    .grow { flex: 1; }
-
-    .which { font-size: 12px; opacity: 0.8; }
-
-    .mint {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 8px 10px;
-      border-top: 1px solid var(--edge, #2a2a2a);
-    }
-
-    .count, .progress { font-size: 12px; opacity: 0.8; }
-
     /*
-     * THESE BUTTONS HAD NO RULES AT ALL and rendered native white.
+     * THE FOOTER'S RULES ARE GONE WITH THE FOOTER (Wave 21b) -- .bar, .grow,
+     * .which, .mint, .count, .progress, .quiet and .act all styled a strip
+     * under the table that the prepare rail replaced. They are not moved here
+     * in spirit; the rail declares its own, because of the lesson the deleted
+     * block existed to record:
      *
-     * Angular component styles are SCOPED, so a button here inherits nothing
-     * from the grid, the editor or any dialog -- and unlike those three, this
-     * file had never declared any. Owen found the same defect in the new-project
-     * modal, which carried confirm-dialog's CLASS NAMES and none of its rules;
-     * this file did not even have the class names. Four buttons, and one of them
-     * is MINT THE PAGES, which is the act the whole feature exists to perform.
-     *
-     * The quiet ones match the grid header and the editor gestures, which are
-     * the controls a person meets on either side of this bar. The act matches
-     * the dialogs' primary, because it is the same kind of thing: the button
-     * worth pressing.
+     * ANGULAR COMPONENT STYLES ARE SCOPED, so a button in a new component
+     * inherits nothing from the grid, the editor or any dialog. This file once
+     * shipped four buttons with no rules at all -- one of them MINT THE PAGES --
+     * rendering native white, the same defect Owen found in the new-project
+     * modal, which had carried confirm-dialog's class names and none of its
+     * rules. Any component that grows a button grows the rules for it in the
+     * same file, and capture-rail.component.ts does.
      */
-    .quiet {
-      padding: 3px 9px;
-      border: 1px solid var(--border-default);
-      border-radius: var(--radius-md, 6px);
-      background: transparent;
-      color: var(--text-secondary);
-      font-size: 12px;
-      cursor: pointer;
-    }
-    .quiet:hover { background: var(--bg-hover); color: var(--text-primary); }
-
-    .act {
-      display: inline-flex; align-items: center; justify-content: center;
-      height: 32px; padding: 0 16px;
-      border: none;
-      border-radius: var(--radius-md);
-      background: var(--accent-strong); color: var(--text-inverse);
-      font-size: 13px; font-weight: 500; line-height: 1;
-      cursor: pointer;
-    }
-    .act:hover:not(:disabled) { background: var(--accent); }
-    .act:active:not(:disabled) { transform: scale(0.98); }
-    /* Nothing to mint yet is the normal state of a new project, so the button
-       has to look patient rather than broken. */
-    .act:disabled { opacity: 0.45; cursor: default; }
   `,
 })
 export class CaptureViewComponent {
   protected readonly captures = inject(CaptureService);
   protected readonly mint = inject(CaptureMintService);
   private readonly confirm = inject(ConfirmService);
+  private readonly projects = inject(ProjectsService);
 
   readonly tab = input.required<Tab>();
 
   /** The photograph on the editor, by photo id, or null for the whole table. */
   protected readonly open = signal<string | null>(null);
+
+  /**
+   * WHICH TOOL THE EDITOR OPENS ON, set by the rail's row and then the
+   * person's. It lives here rather than in the modal because the modal is
+   * created and destroyed by the open flag, and a tool that reset every time
+   * somebody closed the editor would make "Split spreads" a one-press setting
+   * they had to re-press after every glance at the table.
+   */
+  protected readonly tool = signal<PrepareVerb>('cropped');
 
   /** Which apply-to-all just landed, for the button that was pressed. */
   protected readonly justApplied = signal<ApplyToAll['kind'] | null>(null);
@@ -361,6 +349,27 @@ export class CaptureViewComponent {
     return recipe.photos.filter((photo) => photo.pages.some((page) => page.byHand === true)).length;
   });
 
+  /** The ticks, or an empty answer while nothing is loaded. */
+  protected readonly prepared = computed(() => this.captures.recipe()?.prepared ?? {});
+
+  /**
+   * WHETHER THIS PROJECT HAS A BOOK YET, which changes one word on the mint
+   * button and nothing else.
+   *
+   * Asked of the CATALOGUE rather than of the recipe, because the recipe cannot
+   * know: a mint writes a PDF and a ledger step and leaves the recipe
+   * byte-identical, which is the property that lets a person keep editing after
+   * one. The document list is where a minted book becomes visible.
+   *
+   * NOT the same question as the divergence sentence, which asks whether the
+   * book on the shelf was made from THIS arrangement -- that one is main's
+   * single resolution and lands with it.
+   */
+  protected readonly minted = computed<boolean>(() => {
+    const project = this.projects.projectFor(this.tab().path);
+    return project !== null && project.documents.length > 0;
+  });
+
   protected readonly mintable = computed(() => {
     const recipe = this.captures.recipe();
     return recipe === null ? 0 : mintedPageIds(recipe).length;
@@ -436,6 +445,22 @@ export class CaptureViewComponent {
   }
 
   /** A card was clicked: the editor opens on the PHOTOGRAPH that page is on. */
+  /**
+   * A rail row: pick up that tool, and open the editor where the work is.
+   *
+   * IT DOES NOT MOVE SOMEBODY WHO IS ALREADY IN THE ROOM. If the editor is open
+   * the tool changes under them and the photograph does not, because pressing
+   * "Split spreads" while looking at photograph 12 means "split THIS", not "go
+   * back to the beginning". Otherwise it opens on the first photograph in the
+   * arrangement, which is where a pass through the book starts.
+   */
+  protected openTool(verb: PrepareVerb): void {
+    this.tool.set(verb);
+    if (this.open() !== null) return;
+    const first = this.walk()[0];
+    if (first !== undefined) this.open.set(first);
+  }
+
   protected openPage(pageId: string): void {
     const recipe = this.captures.recipe();
     if (recipe === null) return;
