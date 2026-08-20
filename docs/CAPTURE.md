@@ -1335,7 +1335,27 @@ verification):
   second symptom of the stale archive, found by the fix); and the
   other direction held -- deleting a translation leaves an imported
   book's archive and live copy alone, and deleting the origin is
-  still refused by name with nothing changed on disk.
+  still refused by name with nothing changed on disk. AND THE
+  REPAIR HAS A TWO-MINT DEFECT OF ITS OWN (P1 seq 180, its own
+  author, measured): deleting the NEWEST of two mints nulls
+  manifest.archive while the older mint's book is still listed
+  and openable -- recordMint's promise broken from the other
+  side by the very line that restored it, and reading.needed
+  (keyed off archive?.kind) reads FALSE while a real unread book
+  sits in the catalogue. dd0393c was measured with ONE mint and
+  never with two. THE SECOND REPAIR IS RULED IN (defect clause,
+  P1, own commit): when the destroyed payload is the one
+  manifest.archive names, RE-POINT the archive at the
+  catalogue's surviving pdf chain tip; null it only when the
+  chain holds nothing. Landing requires the two-mint walk re-run
+  (archive re-pointed, invariant both directions, reading.needed
+  TRUE again over the unread survivor) AND answers to the two
+  things seq 180 says it did not check: whether the swept
+  working copy (working empty after the delete) breaks a later
+  operation on the surviving book, and whether any non-mint
+  writer can sit at the pdf chain tip (if one can, the tip
+  resolves to a step with no arrangement, which reads as
+  silence -- probably right, but proved, not assumed).
 - THE PREP RAIL (workflow being sampled with Owen -- prep rail on
   the table, mint off the modals, centered modals; not cut until
   he approves the arrangement): the tick is THE PERSON SPEAKING
@@ -1379,9 +1399,25 @@ verification):
   step survives with its own file and arrangement; "newest"
   would then return the older arrangement and the footer would
   name a shelf that is EMPTY. Ruling (d) does not cover it: (d)
-  is absent-means-silence, this is PRESENT AND WRONG. Resolved
-  the archive way, archive-null yields mintedFrom null, which IS
-  (d)'s silence. Open-time
+  is absent-means-silence, this is PRESENT AND WRONG. AMENDED
+  AGAIN (P1 seq 180, MEASURED on a copy of Owen's project --
+  mint, Mint again, delete the newest): archive-null is NOT an
+  empty shelf. After that delete the catalogue still lists the
+  older book (documents 1, missing false, documentAtStep
+  resolves to a file that exists) while manifest.archive is
+  null -- so the archive-named resolution would go SILENT
+  exactly where it was invented to speak, hiding a real
+  divergence; and "newest mint" gives the right answer there
+  only by luck. THE RULED SOURCE IS NEITHER: the current book is
+  THE LEDGER STEP WHOSE PAYLOAD THE CATALOGUE'S PDF CHAIN TIP
+  NAMES (manifest.documents[kind=pdf].steps, last entry) --
+  because "the book on the shelf" MEANS the book Home opens,
+  and the chain tip is what Home opens. mintedFrom is that
+  step's params.arrangement, null only when the chain holds
+  nothing, which is a genuinely empty shelf and (d)'s silence.
+  The repair below makes the archive AGREE with this resolution;
+  the resolution never reads the archive, so there is one
+  derivation whichever way the archive heals. Open-time
   delivery is not stale: the stored side moves only at
   mintCommit, which the table itself drives; everything else that
   moves is the LIVE side, recomputed by the renderer from the
@@ -1631,7 +1667,14 @@ the human-known right order), or it measures agreement, not
 correctness. Companion shape (P1 seq 164, P2 seq 165): a filter
 that matches nothing reports nothing -- an empty list reads exactly
 like "nothing was drawn", a passing check that measured nothing.
-Seventh (P2, seq 141), worse than a stale docblock and
+Eighth (P1, seq 180, its own commit): A REPAIR MEASURED ONLY ON
+THE CASE THAT MOTIVATED IT -- dd0393c fixed the one-mint delete
+and was never run with two mints, where it breaks the same
+invariant from the other side. The population a fix was written
+for is exactly the one it cannot fail on; the case next door
+(one more of the thing, one fewer, zero) is where a
+right-in-one-case line goes wrong, and it costs one more run of
+the same harness. Seventh (P2, seq 141), worse than a stale docblock and
 asked to be recorded as worse: A CONTRACT LINE THAT NO CODE
 SATISFIES. Point 2's exact sentence -- pressing Apply IS what
 advances the stage -- was ruled, plan-backed, unambiguous, and not
