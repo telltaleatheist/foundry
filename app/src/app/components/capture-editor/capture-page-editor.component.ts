@@ -134,7 +134,19 @@ import { Rectifier } from './rectify';
           #picture
           [style.aspect-ratio]="aspectRatio()"
         >
-          <img #photo [src]="source()" [alt]="'The photograph being edited'" draggable="false" />
+          <!--
+            (load) IS NOT BELT AND BRACES. The previews are painted by an effect
+            that reads signals, and A PICTURE FINISHING ITS DECODE IS NOT A
+            SIGNAL -- so without this the only thing that can ever repaint them
+            is the next gesture. See repaint() below for what that cost Owen.
+          -->
+          <img
+            #photo
+            [src]="source()"
+            [alt]="'The photograph being edited'"
+            draggable="false"
+            (load)="repaint()"
+          />
 
           <!--
             The handles are an SVG in the picture's own fraction space
@@ -514,6 +526,46 @@ export class CapturePageEditorComponent {
     });
   }
 
+  /**
+   * THE PICTURE HAS DECODED, SO THE PREVIEWS CAN BE PAINTED AT LAST.
+   *
+   * ── The defect this exists for (Owen, 2026-08-20) ──────────────────────────
+   *
+   * *"turning the book worked on the first one but didnt work on the next one.
+   * the thumbnail turned but the main image didnt."*
+   *
+   * Stepping to the next photograph swaps this img's `src`, and a working copy
+   * is a twelve-megabyte PNG that takes real time to decode -- longer on a
+   * machine whose memory is already spoken for. The effect that paints the
+   * previews runs immediately on the change, finds `naturalWidth === 0`, and
+   * returns. THE CANVASES ARE NOT CLEARED, so what stays on screen is the
+   * PREVIOUS photograph's pages, drawn correctly, which is why nothing looks
+   * broken -- it looks like a turn that did not happen.
+   *
+   * And nothing scheduled a second attempt. The effect re-runs when a signal it
+   * read changes, and a decode completing is not one, so the repair had to come
+   * from the person: another gesture, on a picture they had already decided was
+   * ignoring them.
+   *
+   * ── Why the docblock on `draw` said this was fine, and was wrong ───────────
+   *
+   * It reasoned: *"the effect will run again when the quads next move, and the
+   * load itself is what puts the photograph on screen"*. Both halves are true of
+   * the IMG, which repaints itself on load like any picture. Neither is true of
+   * the CANVASES beside it, which are painted by hand and repaint only when
+   * something paints them. One sentence covering two things that heal
+   * differently.
+   *
+   * A TURN IS THE GESTURE THAT EXPOSES IT because a turn moves no corner -- it
+   * permutes which corner is first -- so the outline over the picture is
+   * identical before and after and the previews are the only place the change
+   * can be seen. Every other gesture in this editor moves something the SVG
+   * draws live.
+   */
+  protected repaint(): void {
+    this.draw(this.previews(), this.quads(), this.dimensions());
+  }
+
   protected outlineOf(quad: FractionQuad): string {
     return quad.map(([x, y]) => `${x},${y}`).join(' ');
   }
@@ -695,10 +747,13 @@ export class CapturePageEditorComponent {
    *
    * The image element is reused as the texture source rather than decoding the
    * working copy a second time: it is already in the page, already decoded, and
-   * `Rectifier` takes an `HTMLImageElement` for exactly this reason. A picture
-   * that has not finished loading has no dimensions yet and is skipped — the
-   * effect will run again when the quads next move, and the load itself is what
-   * puts the photograph on screen.
+   * `Rectifier` takes an `HTMLImageElement` for exactly this reason.
+   *
+   * A PICTURE THAT HAS NOT FINISHED DECODING HAS NO DIMENSIONS AND IS SKIPPED,
+   * and the img's own `(load)` is what brings it back -- see `repaint`. This
+   * paragraph used to say the next quad move would do it, which was a sentence
+   * about the IMG (which heals itself on load) applied to the CANVASES (which do
+   * not), and it cost Owen a photograph that appeared to refuse to turn.
    */
   private draw(
     previews: readonly { index: number; width: number; height: number }[],
