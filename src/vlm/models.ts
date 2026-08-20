@@ -164,8 +164,20 @@ export const VLM_MODELS: readonly VlmModelDef[] = [
     // A dense index page — two columns of surnames and page numbers, no prose —
     // ran past 4096 and came back truncated. The cap is not a budget, it is a
     // stop for a model that has started repeating itself, so it is set where a
-    // real page cannot reach it. Measured on this machine, no page of any book
-    // read today went past 1,700 tokens.
+    // real page cannot reach it.
+    //
+    // "NO PAGE WENT PAST 1,700 TOKENS" WAS TRUE OF THE LIBRARY THAT SENTENCE WAS
+    // WRITTEN AGAINST AND IS NOT A PROPERTY OF THE FORMAT. Measured since, over
+    // 18,202 pages in 55 banks: the longest ACCEPTED page is 7,677 tokens, which
+    // is 93.7% of this cap — a full-page newspaper facsimile reproduced inside a
+    // book, every column of it text the model is right to read. Four more books
+    // hold accepted pages over 4,900. So the headroom this number was chosen for
+    // is nearly gone, and LOWERING IT WOULD TRADE A REAL DENSE PAGE FOR A FAKE
+    // ONE — which is the one repair that was refused outright.
+    //
+    // What stops a runaway earlier is not a smaller constant here but a ceiling
+    // derived from the book being read: see `band.ts`, which asks this number
+    // and clamps to it, so the densest books stay on it and never notice.
     maxTokens: 8192,
     maxPixels: 11289600,
     endpointModel: 'rednote-hilab/dots.ocr',
