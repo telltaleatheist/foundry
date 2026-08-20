@@ -880,6 +880,107 @@ only after both exist, agreeing exactly over a large real population.* It
 is the strongest evidence available that the spec was READ correctly by
 both — and it is silent, by construction, on whether the spec was RIGHT.
 
+---
+
+## 12. THE FALSIFIER, PRE-REGISTERED (before any run)
+
+The residual question — *what does dots.ocr do when handed 5,092 instead
+of 8,192* — needs no new instrument. **It needs one book read twice**: once
+with `--vlm-fixed-cap` (today exactly), once without (v1), **comparing the
+REFUSAL LISTS.** Identical lists mean the cap cost nothing and the only
+difference is the clock; **a longer second list names what the feature
+cost, page by page, with no inference.** The flag built for another reason
+is what makes the experiment possible.
+
+**Michelle Remembers is the book** — twelve runaways, the tightest band in
+the library, the most to lose if the margin is wrong.
+
+### 12a. What that book should say — written down BEFORE the run
+
+*A prediction made before the run is worth more than a comparison made
+after it.* From the bank, not from the design:
+
+| | |
+|---|---|
+| the refusal lists | **IDENTICAL** — the same twelve pages, both runs. Any thirteenth entry is the feature's cost, named |
+| retries | **ZERO** — the band creeps 3,348 → 5,092 and never steps. **One retry means the creep/step reading is wrong; five means the margin is** |
+| where the runaways stop | 3,348 ×3 / 3,636 / 4,904 ×4 / 5,092 ×4 — against 8,192 twelve times today |
+| the log | a cap below 8,192, once, then nothing further about it |
+| the clock | **~16 minutes shorter** over the book |
+
+### 12b. THE NUMBER THE COMPARISON CANNOT SEE
+
+**Seconds per refused page.** Today a Michelle runaway takes ~180 s. If
+v1's refusals return in roughly 90–110, the cap fired where the arithmetic
+says. **If they still take 180 s, the number is not reaching the server** —
+the `maxTokens` function is being evaluated somewhere that does not matter,
+and the refusal lists would match *for the wrong reason.*
+
+> **Identical lists are the SUCCESS criterion and also exactly what a
+> completely inert feature produces.** That is the one way this experiment
+> can pass while the feature does nothing.
+
+**But the clock is a proxy, and two EXACT signals are already being
+recorded that split it without a stopwatch or a threshold (P2):**
+
+**DID WE SEND IT? — the refusal sentence.** Item 4 answers this by
+accident: the sentence names `sentCap`, which is written *inside* the same
+function `endpoint.ts` calls to build `max_tokens`. One call, one value, no
+second path. **A refusal naming 5,092 is proof the narrowed number was on
+the request; a refusal naming 8,192 on a book whose band is 5,092 means the
+function was never consulted.**
+
+**WAS IT HONOURED? — the banked token count.** Every page is banked with
+its tokens in the same `onPage` that refuses it, and for a refused page
+that number is not an estimate of anything: **it is where the server
+stopped.**
+
+| | |
+|---|---|
+| banked tokens **== its sent cap** | the server honoured it — the feature works |
+| banked tokens **== 8,192** while the sentence says 5,092 | **we sent it and the server ignored us** — vLLM, the model card, or the endpoint clamping somewhere outside our control |
+
+That second row is the failure the clock was reaching for, caught exactly —
+and it is the only check that survives a slow machine, a busy GPU, or a run
+somebody walked away from.
+
+### 12b-bis. The whole instrument, cheapest first
+
+| check | proves |
+|---|---|
+| the refusal sentence names a number below 8,192 | **we sent it** |
+| the banked tokens equal that number | **it was honoured** |
+| the refusal lists are identical | it cost no page |
+| zero retries | the creep/step reading holds |
+| the clock is ~16 minutes shorter | the whole point |
+
+**The first two are yes-or-no and come from data the run writes anyway.**
+The pre-registered numbers of §12a are what make the last three mean
+anything.
+
+### 12c. The stopping rule, stated before the evidence
+
+**Several retries in one book means the DESIGN is wrong rather than the
+run unlucky.** Measured expectation is zero or one — the walk over 55
+banks found two in the entire library. A run that retries five times is a
+book whose kind of page the 4× does not cover, and **the retry would be
+doing the job the margin should have done.** A feature that quietly starts
+leaning on its own safety net is the failure nobody notices, so the number
+is named here in advance.
+
+### 12d. Open: whether it is one read or two
+
+`--vlm-fixed-cap` sends 8,192 on every page, **which is what the existing
+Michelle bank was made under** — so the control may already be on disk and
+Owen may need one fresh read rather than two. **The premise is being
+checked rather than assumed**, which is the shape this wave has been burned
+by twice: does the bank record enough to prove comparability (model,
+endpoint, `maxPixels`, render geometry), and is the read deterministic at
+all? `temperature 0.0` is greedy decoding and deterministic *in principle*,
+but batched inference reorders floating-point reductions, and *in
+principle* is the phrase that has cost this wave twice. If either answer is
+no, the two-read version stands.
+
 ### 11a. The ledger entries this wave bought
 
 **Eleventh** — a model of a declarative system checks the computation and
