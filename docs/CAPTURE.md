@@ -1769,7 +1769,39 @@ MEASURED (P1 seq 197, 14 checks on a copy of the live project):
   derivation doing its job); prepare()'s crop stays up-to-a-turn
   (a turned-but-uncropped photograph is not cropped). Two tests,
   two questions, both right; the only thing that puts a rotated
-  frame in a recipe is somebody rotating it.
+  frame in a recipe is somebody rotating it. SETTLED OUTRIGHT by
+  P1's tally of the live recipe (seq 202, read-only): 25
+  photographs, 25 pages, ZERO at the unturned whole frame, ALL 25
+  turned three quarters, zero crops, zero splits, one byHand mark,
+  and prepared:{turned:true} -- he even ticked the rail. The
+  gesture he reported as not sticking is the one gesture in the
+  project that visibly completed and persisted, twenty-five times
+  over. (The single byHand mark reads like a turn-and-turn-back --
+  what somebody does when checking whether a turn sticks. A
+  reading, not a finding.) Also noted for the label rework:
+  hand-turn marks byHand, turn-all does not -- the two turns
+  differ in a way no surface states.
+- OVERRIDE RE-ORIENTS -- the modal's question does something it
+  does not mention (P1 seq 202, read from the stamp's own
+  docblock): a stamp copies CORNER ORDER, and corner order IS the
+  orientation -- so answering yes to "Override 3 pages you set by
+  hand?" hands those pages the source's TURN as well as its crop.
+  Today byHand SKIPS them, so this cannot happen; the checkbox
+  ruling as worded removes that protection and asks a question
+  whose answer re-orients pages it only calls "set by hand".
+  Costless on today's project (all 25 share one orientation);
+  bites on exactly the shoot Owen described wanting -- the
+  portrait ad and landscape letters whose whole point is being
+  turned differently from the volume. OWEN'S CALL, pending: (a)
+  say it in the modal; (b) COPY THE CROP, KEEP THE TURN -- the
+  stamp rotates the copied quad into the target's own orientation
+  (rotate(sourceQuad, targetTurns - sourceTurns), buildable from
+  the corner-nearest-origin derivation); (c) as ruled,
+  deliberately. P1 leans b with a's wording; b also matches
+  Owen's founding sentence for this feature ("the rect positions
+  should follow exactly where i placed them on the picture, but
+  rotate with the book") -- crops belong to the picture, turns to
+  the page.
 
 ## Deferred out loud
 
