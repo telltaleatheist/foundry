@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Foundry — the editor's controls, in one place</title>
+<style>
+  :root {
+    --bg-sunken: #0e0d0c;
+    --bg-base: #181715;
+    --bg-elevated: #211f1c;
+    --bg-input: #2a2824;
+    --bg-hover: rgba(255,255,255,0.05);
+    --bg-overlay: rgba(14,13,12,0.72);
+    --border-subtle: #2a2824;
+    --border-default: #403c36;
+    --border-strong: #565149;
+    --text-primary: #faf9f7;
+    --text-secondary: #928b7f;
+    --text-tertiary: #706a60;
+    --text-inverse: #181715;
+    --accent: #22d3ee;
+    --accent-strong: #06b6d4;
+    --accent-soft: rgba(6,182,212,0.2);
+    --accent-faint: rgba(6,182,212,0.12);
+    --ok: #4ade80;
+    --ok-soft: rgba(74,222,128,0.12);
+    --warn: #fbbf24;
+    --warn-soft: rgba(251,191,36,0.12);
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius: 8px;
+    --radius-lg: 12px;
+    --font-display: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-body: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+    --paper: linear-gradient(160deg, #d8cdb8 0%, #cfc2a9 45%, #b8ab90 100%);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg-sunken); color: var(--text-primary);
+    font: 13px/1.5 var(--font-body); }
+  h1,h2,h3,h4 { font-family: var(--font-display); font-weight: 600; letter-spacing: -0.025em; margin: 0; }
+
+  /* ---------- sample chrome (not part of the app) ---------- */
+  .sample-bar { display:flex; align-items:center; gap:16px; padding:14px 20px;
+    border-bottom:1px solid var(--border-subtle); position:sticky; top:0;
+    background:var(--bg-sunken); z-index:50; flex-wrap:wrap; }
+  .sample-bar h1 { font-size:15px; }
+  .sample-bar .hint { color: var(--text-tertiary); font-size:12px; }
+  .tabs { display:flex; gap:6px; margin-left:auto; }
+  .tabs button { background: var(--bg-input); color: var(--text-secondary);
+    border:1px solid var(--border-default); border-radius: var(--radius-md);
+    padding:6px 14px; cursor:pointer; font:inherit; }
+  .tabs button.on { background: var(--accent-soft); color: var(--accent);
+    border-color: var(--accent-strong); }
+  .screen { display:none; }
+  .screen.on { display:block; }
+
+  .note { max-width: 940px; margin: 18px auto 40px; padding: 0 20px;
+    color: var(--text-secondary); font-size: 12.5px; }
+  .note b { color: var(--text-primary); font-weight:600; }
+  .note h3 { font-size:13px; margin: 22px 0 8px; color: var(--text-primary); }
+  .note p { margin: 0 0 10px; }
+
+  table.moved { width:100%; border-collapse:collapse; margin: 6px 0 14px; font-size:12px; }
+  table.moved th { text-align:left; color: var(--text-tertiary); font-weight:600;
+    padding:6px 10px 6px 0; border-bottom:1px solid var(--border-subtle); }
+  table.moved td { padding:6px 10px 6px 0; border-bottom:1px solid var(--border-subtle);
+    vertical-align:top; color: var(--text-secondary); }
+  table.moved td.was { font-family: var(--font-mono); font-size:11.5px; color: var(--text-tertiary); }
+  table.moved td.now { color: var(--text-primary); }
+
+  .ask { border:1px solid var(--warn); background: var(--warn-soft);
+    border-radius: var(--radius); padding:14px 16px; margin: 16px 0; }
+  .ask h4 { font-size:12.5px; color: var(--warn); margin-bottom:6px; }
+  .ask p { margin:0 0 8px; color: var(--text-secondary); font-size:12.5px; }
+  .ask p:last-child { margin-bottom:0; }
+
+  /* ---------- the mock window ---------- */
+  .window { max-width: 1180px; margin: 24px auto 0; background: var(--bg-base);
+    border:1px solid var(--border-default); border-radius: var(--radius-lg);
+    overflow:hidden; box-shadow: 0 24px 60px rgba(0,0,0,0.5); position:relative; }
+  .titlebar { display:flex; align-items:center; gap:10px; padding:10px 16px;
+    border-bottom:1px solid var(--border-subtle); background: var(--bg-base); }
+  .titlebar .back { color: var(--text-secondary); background:none; border:none; font:inherit; cursor:pointer; }
+  .titlebar h2 { font-size:14px; }
+  .titlebar .meta { color: var(--text-tertiary); font-size:12px; }
+  .table-layout { display:flex; min-height: 560px; }
+  .grid-pane { flex:1; padding:18px; overflow:hidden; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap:12px; }
+  .card { border:1px solid var(--border-subtle); border-radius: var(--radius);
+    background: var(--bg-elevated); padding:8px 8px 6px; }
+  .photo { position:relative; height:120px; border-radius: var(--radius-sm);
+    background: #14211f; overflow:hidden; }
+  .sheet { position:absolute; inset:12% 9%; background: var(--paper);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.55); }
+  .sheet .lines { position:absolute; inset:14% 12%; opacity:.55;
+    background: repeating-linear-gradient(#5a5142 0 1px, transparent 1px 9px); }
+  .cardname { margin-top:6px; color: var(--text-tertiary); font-size:11px; font-family: var(--font-mono); }
+  .dim { filter: brightness(0.5) saturate(0.75); pointer-events:none; }
+
+  /* ---------- the editor, with ONE cluster ---------- */
+  .backdrop { position:absolute; inset:0; background: var(--bg-overlay);
+    display:grid; place-items:center; z-index:10; }
+  .editor { width: calc(100% - 56px); height: 504px; display:flex;
+    background: var(--bg-elevated); border:1px solid var(--border-default);
+    border-radius: var(--radius-lg); box-shadow: 0 30px 80px rgba(0,0,0,0.6); overflow:hidden; }
+
+  .stagepic { flex:1; min-width:0; position:relative; background:#101413; margin:14px;
+    border-radius: var(--radius-sm); overflow:hidden; }
+  .stagepic .sheet { inset:7% 16%; }
+  .stagepic .quad { position:absolute; inset:10% 19%; border:2px solid var(--accent);
+    box-shadow: 0 0 0 1px rgba(6,182,212,0.25); transform: perspective(300px) rotateY(3deg) rotate(-1.5deg); }
+  .stagepic .knob { position:absolute; width:14px; height:14px; border-radius:99px;
+    background: var(--accent); border:2px solid var(--bg-base); }
+  .stagepic .gutter { position:absolute; top:9%; bottom:10%; left:50.5%;
+    border-left:2px dashed var(--accent); transform: rotate(1deg); }
+  /* THE SEEDED LINE: present the moment the Split tool opens, on a photograph
+     nobody has split yet. Dashed because it is a proposal until you cut. */
+  .stagepic .proposed { position:absolute; top:8%; bottom:9%; left:50%;
+    border-left:2px dashed var(--accent); }
+  .stagepic .gknob { position:absolute; width:14px; height:14px; border-radius:99px;
+    background: var(--bg-base); border:2px solid var(--accent); }
+
+  /* THE CLUSTER */
+  .cluster { width: 268px; flex:none; border-left:1px solid var(--border-subtle);
+    background: var(--bg-base); display:flex; flex-direction:column; overflow:hidden; }
+
+  .who { padding:14px 16px 12px; border-bottom:1px solid var(--border-subtle); }
+  .who .name { font-family: var(--font-mono); font-size:12px; }
+  .who .pos { color: var(--text-tertiary); font-size:11.5px; margin-top:2px; }
+  .walk { display:flex; gap:6px; margin-top:10px; }
+  .walk button { flex:1; padding:6px 0; background: var(--bg-input);
+    border:1px solid var(--border-default); border-radius: var(--radius-md);
+    color: var(--text-primary); font:inherit; font-size:12px; cursor:pointer; }
+  .walk button:hover { background: var(--bg-hover); }
+
+  .toolrow { padding:12px 16px 0; }
+  .toolrow .cap { color: var(--text-tertiary); font-size:11px; text-transform:uppercase;
+    letter-spacing:0.06em; margin-bottom:6px; }
+  .tools { display:flex; gap:4px; padding:3px; background: var(--bg-sunken);
+    border:1px solid var(--border-subtle); border-radius: var(--radius-md); }
+  .tools button { flex:1; border:none; background:none; color: var(--text-secondary);
+    font:inherit; font-size:12px; padding:5px 0; border-radius:4px; cursor:pointer; }
+  .tools button.on { background: var(--accent-soft); color: var(--accent); }
+
+  .does { padding:14px 16px 0; display:flex; flex-direction:column; gap:8px; }
+  .does .says { color: var(--text-tertiary); font-size:11.5px; line-height:1.4; margin:0; }
+  .turnpair { display:flex; gap:8px; }
+  .turnpair button { flex:1; padding:9px 0; background: var(--bg-input);
+    border:1px solid var(--border-default); border-radius: var(--radius-md);
+    color: var(--text-primary); font-size:16px; line-height:1; cursor:pointer; }
+  .turnpair button:hover { background: var(--bg-hover); }
+
+  .btn { width:100%; padding:9px 12px; border-radius: var(--radius-md);
+    font:inherit; font-size:12px; cursor:pointer; text-align:left; }
+  .btn.quiet { background: var(--bg-input); color: var(--text-primary);
+    border:1px solid var(--border-default); }
+  .btn.quiet:hover { background: var(--bg-hover); }
+  .btn.primary { background: var(--accent); color: var(--text-inverse);
+    border:1px solid var(--accent); font-weight:600; }
+  .btn.kept { background: var(--ok-soft); color: var(--ok); border:1px solid var(--ok); }
+
+  .acts { margin-top:auto; padding:14px 16px 16px; border-top:1px solid var(--border-subtle);
+    display:flex; flex-direction:column; gap:8px; }
+  .acts .cap { color: var(--text-tertiary); font-size:11px; text-transform:uppercase;
+    letter-spacing:0.06em; }
+  .shut { position:absolute; top:10px; right:14px; background:none; border:none;
+    color: var(--text-tertiary); font-size:16px; cursor:pointer; z-index:5; }
+
+  .tagline { display:inline-block; margin-top:6px; padding:1px 7px; border-radius:99px;
+    background: var(--accent-faint); color: var(--accent); font-size:10px; }
+</style>
+</head>
+<body>
+
+<div class="sample-bar">
+  <h1>The editor's controls, in one place</h1>
+  <span class="hint">a mock to rearrange, not code — say what moves</span>
+  <div class="tabs">
+    <button class="on" data-s="s1">First pass</button>
+    <button data-s="s2">Fixing one page</button>
+    <button data-s="s3">Splitting spreads</button>
+  </div>
+</div>
+
+<!-- ============ SCREEN 1: the first pass ============ -->
+<section class="screen on" id="s1">
+  <div class="window">
+    <div class="dim">
+      <div class="titlebar">
+        <button class="back">←</button>
+        <h2>The Index</h2>
+        <span class="meta">25 photographs · 25 pages</span>
+      </div>
+      <div class="table-layout">
+        <div class="grid-pane"><div class="grid" id="g1"></div></div>
+      </div>
+    </div>
+
+    <div class="backdrop">
+      <div class="editor">
+        <button class="shut">✕</button>
+
+        <div class="stagepic">
+          <div class="sheet"><div class="lines"></div></div>
+          <div class="quad"></div>
+          <div class="knob" style="top:8%;  left:17.5%"></div>
+          <div class="knob" style="top:9%;  right:17%"></div>
+          <div class="knob" style="bottom:9%; right:18.5%"></div>
+          <div class="knob" style="bottom:8%; left:16%"></div>
+        </div>
+
+        <aside class="cluster">
+          <div class="who">
+            <div class="name">IMG_0212.HEIC</div>
+            <div class="pos">Photograph 1 of 25</div>
+            <div class="walk">
+              <button disabled style="opacity:.4">← Back</button>
+              <button>Next →</button>
+            </div>
+          </div>
+
+          <div class="toolrow">
+            <div class="cap">What you are doing</div>
+            <div class="tools">
+              <button>Turn</button>
+              <button class="on">Crop</button>
+              <button>Split</button>
+            </div>
+          </div>
+
+          <div class="does">
+            <p class="says">Drag the four corners onto the page.</p>
+          </div>
+
+          <div class="acts">
+            <div class="cap">When this one looks right</div>
+            <button class="btn primary">Use this crop on all 25 photographs</button>
+            <p class="says" style="margin:0">They were all shot the same way, so setting
+              one sets them all. You can fix the odd ones afterwards.</p>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <p><b>Everything is in one column, in the order you use it.</b> Who you are looking at and how to
+      move, then what you are doing, then what that tool does, then the act. Nothing on the far side
+      of the window from anything else.</p>
+    <p>The photograph keeps the rest of the room. The column is 268px; the picture takes everything left.</p>
+  </div>
+</section>
+
+<!-- ============ SCREEN 2: fixing one page ============ -->
+<section class="screen" id="s2">
+  <div class="window">
+    <div class="dim">
+      <div class="titlebar">
+        <button class="back">←</button>
+        <h2>The Index</h2>
+        <span class="meta">25 photographs · 27 pages</span>
+      </div>
+      <div class="table-layout">
+        <div class="grid-pane"><div class="grid" id="g2"></div></div>
+      </div>
+    </div>
+
+    <div class="backdrop">
+      <div class="editor">
+        <button class="shut">✕</button>
+
+        <div class="stagepic">
+          <div class="sheet"><div class="lines"></div></div>
+          <div class="quad"></div>
+          <div class="knob" style="top:8%;  left:17.5%"></div>
+          <div class="knob" style="top:9%;  right:17%"></div>
+          <div class="knob" style="bottom:9%; right:18.5%"></div>
+          <div class="knob" style="bottom:8%; left:16%"></div>
+          <div class="gutter"></div>
+        </div>
+
+        <aside class="cluster">
+          <div class="who">
+            <div class="name">IMG_0231.HEIC</div>
+            <div class="pos">Photograph 12 of 25 · pages 13–14 of 27</div>
+            <div class="walk">
+              <button>← Back</button>
+              <button>Next →</button>
+            </div>
+          </div>
+
+          <div class="toolrow">
+            <div class="cap">What you are doing</div>
+            <div class="tools">
+              <button class="on">Turn</button>
+              <button>Crop</button>
+              <button>Split</button>
+            </div>
+          </div>
+
+          <div class="does">
+            <div class="turnpair">
+              <button title="Turn this photograph anticlockwise">⟲</button>
+              <button title="Turn this photograph clockwise">⟳</button>
+            </div>
+            <p class="says">Turns this photograph only.</p>
+            <button class="btn quiet">Turn the other 24 the same way</button>
+          </div>
+
+          <div class="acts">
+            <div class="cap">When this one looks right</div>
+            <button class="btn quiet">Use this crop on all 25 photographs</button>
+            <button class="btn kept">Leave this one alone ✓</button>
+            <p class="says" style="margin:0">You set this page yourself, so it keeps what you gave
+              it.<span class="tagline">press again to hand it back</span></p>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <h3>The four things you said, and what each one became</h3>
+    <table class="moved">
+      <tr><th style="width:34%">You said</th><th>What this does about it</th></tr>
+      <tr>
+        <td>“The buttons are all on the other side of the app from each other.”</td>
+        <td class="now">One column on the right of the picture. The rotate buttons, the tools,
+          Back/Next and the acts are all in it, in the order you meet them. Nothing left in the
+          header, nothing left in a footer.</td>
+      </tr>
+      <tr>
+        <td>“I don’t even know what some of them do.”</td>
+        <td class="now">Every button now names <em>this book</em> and the number it will touch —
+          “Turn the other 24 the same way”, “Use this crop on all 25 photographs”. The count is in
+          the label because the count is the thing that makes them different.</td>
+      </tr>
+      <tr>
+        <td>“The checkbox should not exist — that should be assumed.”</td>
+        <td class="now">Gone. <b>Which way “assumed” points is your call</b> — see the box below;
+          this mock deliberately does not choose.</td>
+        </tr>
+      <tr>
+        <td>“I rotated one but it didn’t stick apparently?”</td>
+        <td class="now">Not a layout question, so this mock does not answer it. It is being
+          measured separately, and nothing here is designed around a guess about it.</td>
+      </tr>
+    </table>
+
+    <h3>Every label, old and new</h3>
+    <table class="moved">
+      <tr><th style="width:40%">Was</th><th>Now</th></tr>
+      <tr><td class="was">Apply to every page</td><td class="now">Use this crop on all 25 photographs</td></tr>
+      <tr><td class="was">Apply to all</td><td class="now">Use this crop on all 25 photographs</td></tr>
+      <tr><td class="was">Turn all by the same amount</td><td class="now">Turn the other 24 the same way</td></tr>
+      <tr><td class="was">Apply <span style="opacity:.6">(the per-page one)</span></td><td class="now">Leave this one alone</td></tr>
+      <tr><td class="was">Set by hand ✓</td><td class="now">Leave this one alone ✓</td></tr>
+      <tr><td class="was">Split</td><td class="now">Cut this spread into two pages</td></tr>
+      <tr><td class="was">‹ &nbsp; ›</td><td class="now">← Back &nbsp; Next →</td></tr>
+      <tr><td class="was">including the 1 set by hand <span style="opacity:.6">(checkbox)</span></td><td class="now">— removed —</td></tr>
+    </table>
+    <p>The two that read alike before now differ by the word that matters: one says
+      <b>turn</b> and names <b>the other 24</b>; the other says <b>crop</b> and names
+      <b>all 25</b>. Neither needs anybody to explain it.</p>
+
+    <div class="ask">
+      <h4>One thing only you can decide</h4>
+      <p>The checkbox is gone. What has to replace it is what “apply to all” does to a page
+        <em>you already fixed by hand</em>, and there are two honest answers:</p>
+      <p><b>A — leave your work alone.</b> Applying to all skips the pages you set yourself and says
+        so afterwards (“left alone: IMG_0212”). Nothing you did by hand is ever overwritten by a
+        press. To redo one, you open it and fix it.</p>
+      <p><b>B — the newest press wins.</b> Applying to all changes every page, including ones you
+        set. Simpler to explain, and it means a global you get right the second time really does
+        reach everything.</p>
+      <p>Today’s behaviour is A with the checkbox as an escape hatch. Say which one “assumed”
+        means and it gets built with no checkbox either way.</p>
+    </div>
+
+    <h3>What this mock does not change</h3>
+    <p>The picture and its corner handles are exactly as built — dragging corners, the gutter and
+      its two ends all still work the way they do now. The two stages are untouched: the first pass
+      offers one act, and after that you get the per-page one as well. Mint is still on the light
+      table’s rail and not in here.</p>
+  </div>
+</section>
+
+<!-- ============ SCREEN 3: splitting spreads ============ -->
+<section class="screen" id="s3">
+  <div class="window">
+    <div class="dim">
+      <div class="titlebar">
+        <button class="back">←</button>
+        <h2>The Index</h2>
+        <span class="meta">25 photographs · 25 pages</span>
+      </div>
+      <div class="table-layout">
+        <div class="grid-pane"><div class="grid" id="g3"></div></div>
+      </div>
+    </div>
+
+    <div class="backdrop">
+      <div class="editor">
+        <button class="shut">✕</button>
+
+        <div class="stagepic">
+          <div class="sheet"><div class="lines"></div></div>
+          <div class="quad"></div>
+          <div class="knob" style="top:8%;  left:17.5%"></div>
+          <div class="knob" style="top:9%;  right:17%"></div>
+          <div class="knob" style="bottom:9%; right:18.5%"></div>
+          <div class="knob" style="bottom:8%; left:16%"></div>
+          <!-- THE POINT OF THIS SCREEN: the line and its two knobs are here the
+               moment the tool opens, on a photograph nobody has split yet. -->
+          <div class="proposed"></div>
+          <div class="gknob" style="top:8.2%;  left:calc(50% - 7px)"></div>
+          <div class="gknob" style="bottom:8.6%; left:calc(50% - 7px)"></div>
+        </div>
+
+        <aside class="cluster">
+          <div class="who">
+            <div class="name">IMG_0231.HEIC</div>
+            <div class="pos">Photograph 12 of 25</div>
+            <div class="walk">
+              <button>← Back</button>
+              <button>Next →</button>
+            </div>
+          </div>
+
+          <div class="toolrow">
+            <div class="cap">What you are doing</div>
+            <div class="tools">
+              <button>Turn</button>
+              <button>Crop</button>
+              <button class="on">Split</button>
+            </div>
+          </div>
+
+          <div class="does">
+            <p class="says">Drag either end of the line onto the gutter, then cut.</p>
+            <button class="btn quiet">Cut this spread into two pages</button>
+          </div>
+
+          <div class="acts">
+            <div class="cap">When this one looks right</div>
+            <button class="btn primary">Cut all 25 here — 50 pages</button>
+            <p class="says" style="margin:0">Every photograph was shot the same way, so one gutter
+              places them all.</p>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <h3>“I clicked split spreads and it looked no different from place crop.”</h3>
+    <p>It didn’t look different because <b>there was nothing to look at</b>. The line and its two
+      knobs are drawn only once a photograph already has a split, and a photograph you have never
+      split has none — so choosing the tool changed which buttons were on screen and left the
+      picture exactly as it was. The one control that would have made a line was a small button
+      among four others.</p>
+    <p><b>The line comes first now.</b> Choosing Split puts it down the middle of the sheet, upright,
+      with a knob at each end, before you spend a single gesture. That is the tool looking like what
+      it is. You drag the ends onto the gutter and then cut — the picture shows the proposal, the
+      button performs it.</p>
+
+    <div class="ask">
+      <h4>A second thing worth your opinion</h4>
+      <p>This mock treats the line as a <b>proposal</b>: it appears, you place it, and the
+        photograph becomes two pages when you press <em>Cut</em>.</p>
+      <p>The alternative is that choosing Split <b>cuts immediately</b> down the middle and dragging
+        the line just moves the gutter afterwards. That is one press fewer and it means the tool
+        does what its name says the instant you pick it — but it changes the page count of the book
+        the moment you click a tool to have a look, and there is no un-cut today.</p>
+      <p>The mock takes the cautious one. Say the word and it becomes the other.</p>
+    </div>
+
+    <p><b>What is not being guessed at:</b> whether the rail row actually hands this tool to the
+      editor at all is being measured separately, not designed around. If it turns out the row never
+      arrived, this screen is still what it should look like when it does.</p>
+  </div>
+</section>
+
+<script>
+  document.querySelectorAll('.tabs button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('.tabs button').forEach(function (x) { x.classList.remove('on'); });
+      document.querySelectorAll('.screen').forEach(function (x) { x.classList.remove('on'); });
+      b.classList.add('on');
+      document.getElementById(b.dataset.s).classList.add('on');
+    });
+  });
+  function fill(id, n) {
+    var g = document.getElementById(id);
+    if (!g) return;
+    for (var i = 0; i < n; i++) {
+      var c = document.createElement('div');
+      c.className = 'card';
+      c.innerHTML = '<div class="photo"><div class="sheet"><div class="lines"></div></div></div>'
+        + '<div class="cardname">IMG_0' + (205 + i) + '.HEIC</div>';
+      g.appendChild(c);
+    }
+  }
+  fill('g1', 10);
+  fill('g2', 10);
+  fill('g3', 10);
+</script>
+</body>
+</html>
