@@ -753,6 +753,53 @@ raising a constant is looking.** The sentence goes in the docblock beside
 the file it lives in. Two places, one of which is where the change would
 actually be made.
 
+### 10f. The band is a PURE FUNCTION, and the invariant is not in it
+
+The lead's dispatch said "band object"; P1's plan-back overruled it and
+the correction is adopted. **`capFor(longestAccepted, modelCap)` in
+`src/vlm/band.ts`** — no state, no lifecycle, no instance.
+
+> A stateful band has to be created somewhere and threaded to the send,
+> and **the day something creates a second one the two disagree silently.**
+> A pure function of a number `read.ts` already holds cannot be
+> instantiated twice — and it is the only shape that can be asserted
+> *exhaustively*, because it has no history.
+
+The lead named a shape where a requirement was wanted. Recorded as such.
+
+**THE SEED IS THE MODEL CAP, not the floor.** Measured identical on this
+library — the largest first-accepted page across 46 books is 1,386 against
+a 2,000 floor — and strictly safer for a book that opens dense, at no
+cost. The general form of the rule, worth keeping past this decision:
+**tighten only once there is evidence; never guess downward.**
+
+**AND THE INVARIANT DOES NOT LIVE IN THE ARITHMETIC.** "Only accepted
+pages raise the band" is a property of `read.ts`'s loop; a pure function
+takes a number and cannot know where it came from. So it gets its own
+assertion at the call site — **feed the walk a runaway and assert THE BAND
+DOES NOT MOVE** — which is precisely the check that fails if the maximum
+is ever fed from `onPage` without the accepted test. A refused page must
+never raise the thing meant to catch it.
+
+### 10g. The pair's deferral has an exception, and it is recorded WITH it
+
+The lead asked whether a lower cap makes an *accepted* runaway more
+likely, since that is the case the deferred repetition-and-runs pair
+guards. **P1's answer is monotone and settles it: a lower cap can only
+turn a `stop` into a `length`, never the reverse**, so the population the
+pair guards *shrinks* as the cap falls. The deferral stands on better
+ground than the lead had for it.
+
+**But the retry is the exception, and a deferral whose reasoning has a
+hole is how something gets forgotten. A RETRIED PAGE RUNS AT THE MODEL
+CAP** — so a page refused at 5,092 and retried at 8,192 can come back
+`stop` at 6,000 and be accepted. That is today's exposure restored, for
+exactly the pages that retry. It is not *worse* than today (that path
+exists today for every page); it means **the lower cap's protective
+side-effect does not extend to retried pages.** At most two pages on this
+library — not enough to move the pair into v1, and enough that the
+deferral has to say so out loud.
+
 **And this is why Tier 1 is kept rather than treated as redundant.** The
 retry's one hole is a runaway that comes back `stop` under the model cap —
 which would be accepted, and would raise the band. That has never been
