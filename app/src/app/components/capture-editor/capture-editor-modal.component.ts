@@ -153,21 +153,33 @@ import type { ApplyToAll } from '../../core/capture.service';
                  failed to draw. -->
             <span class="says">Drag the corners onto the page.</span>
           }
-          @if (using() === 'turned' && showing() === 2) {
+          @if (using() === 'turned') {
             <!--
-              KEPT IN STAGE 2 ONLY, ruled at channel seq 129: it is the single
-              act that changes every page WITHOUT overwriting hand-set crops,
-              because a turn permutes each page's own corners rather than
-              replacing them. In stage 1 the stamp carries the turn for free --
-              the corner order IS the orientation -- so a second button there
-              would be two ways to say the same thing.
+              THE ONLY WAY TO TURN A BOOK IN BULK, and it is present in every
+              stage now.
+
+              It used to be kept out of stage 1 on the argument that the stamp
+              carried the turn there for free -- the corner order IS the
+              orientation, so copying a quad copied the turn. That was true and
+              it stopped being true: a stamp now copies the crop and KEEPS each
+              photograph's own turn (Owen's ruling), so nothing else in the app
+              changes orientation in bulk. A control that was redundant is now
+              the only one there is.
+
+              And it no longer counts presses. It names how many photographs
+              would actually move and is unavailable only when the answer is
+              none -- saying so, rather than going grey and leaving somebody to
+              work out which of three rules is holding it.
             -->
             <button
               type="button"
-              [class.applied]="justApplied() === 'rotate'"
-              [disabled]="turnsApplied() === 0"
-              (click)="applyToAll.emit({ kind: 'rotate', turns: turnsApplied() })"
-            >{{ justApplied() === 'rotate' ? 'Turned ✓' : 'Turn all by the same amount' }}</button>
+              [class.applied]="justApplied() === 'turn'"
+              [disabled]="outOfTurn() === 0"
+              [title]="outOfTurn() === 0
+                ? 'Every other photograph already sits this way round'
+                : 'Turn the rest of the book to match the one you are looking at'"
+              (click)="applyToAll.emit({ kind: 'turn' })"
+            >{{ turnAllSays() }}</button>
           }
         </div>
 
@@ -409,6 +421,29 @@ export class CaptureEditorModalComponent {
   readonly tool = input<PrepareVerb>('cropped');
 
   /**
+   * HOW MANY OTHER PHOTOGRAPHS WOULD ACTUALLY TURN -- the service's count, not
+   * this component's.
+   *
+   * It is on the button because the number is the difference between this
+   * control and the crop stamp beside it. "Turn all by the same amount" and
+   * "Apply to all" were two labels a person could not tell apart; "Turn the
+   * other 24 to match this one" and "Use this crop on all 25 photographs"
+   * differ by their verb AND by their count, and the count is the half that was
+   * on neither button.
+   */
+  readonly outOfTurn = input<number>(0);
+
+  /** What the bulk-turn button says, which is always what it would do. */
+  protected readonly turnAllSays = computed<string>(() => {
+    if (this.justApplied() === 'turn') return 'Turned ✓';
+    const others = this.outOfTurn();
+    if (others === 0) return 'The others already match';
+    return others === 1
+      ? 'Turn the other one to match this'
+      : `Turn the other ${others} to match this one`;
+  });
+
+  /**
    * The tool actually in front of you, which starts as the one the rail asked
    * for and then belongs to the person.
    *
@@ -437,15 +472,19 @@ export class CaptureEditorModalComponent {
   readonly step = output<number>();
   readonly close = output<void>();
 
-  /**
-   * Quarter turns applied to this photograph since the modal opened.
+  /*
+   * A PER-VISIT TURN COUNTER USED TO LIVE HERE and is gone with the button that
+   * read it. "Turn all BY the same amount" needed an amount, so the amount was
+   * remembered from the moment the modal opened -- and that made the control
+   * dead on arrival at every photograph, because the count reset whenever the
+   * picture changed. Stepping to the next page and back forgot turns that the
+   * page itself had kept.
    *
-   * Lifted here from the editor with the button that reads it. It is REMEMBERED
-   * rather than inferred because "turn all BY the same amount" needs the amount,
-   * and recovering it by comparing two quads would be arithmetic on floats
-   * standing in for a fact we already had.
+   * The replacement asks the BOOK instead: how many photographs sit at a
+   * different turn from this one (CaptureService.outOfTurnWith). A question
+   * about state answers the same way ten seconds later; a question about a
+   * visit does not.
    */
-  protected readonly turnsApplied = signal(0);
 
   /**
    * Whether the next stamp takes the hand-set pages too.
@@ -503,21 +542,6 @@ export class CaptureEditorModalComponent {
 
   constructor() {
     /*
-     * A TURN BELONGS TO THE PHOTOGRAPH IT WAS MADE ON, so the count goes back to
-     * zero when the picture under it changes.
-     *
-     * An effect and not a computed: this is a write, and a computed that wrote
-     * would be a rule that only fired when somebody happened to read it -- which
-     * on this screen is when the turn-all button asks whether to be disabled.
-     * The bug that buys is a turn-all on photograph 12 quietly carrying the
-     * three quarters somebody turned photograph 11 by.
-     */
-    effect(() => {
-      void this.source();
-      this.turnsApplied.set(0);
-    });
-
-    /*
      * THE RAIL ASKING AGAIN RE-SEATS THE TOOL, and pressing a tool in here does
      * not. Both halves matter: opening "Split spreads" has to land on Split even
      * if the last thing somebody did in this modal was crop, and switching to
@@ -532,7 +556,6 @@ export class CaptureEditorModalComponent {
   }
 
   protected turn(turns: number): void {
-    this.turnsApplied.update((sofar) => sofar + turns);
     this.quadsChange.emit(this.quads().map((quad) => rotate(quad, turns)));
   }
 
