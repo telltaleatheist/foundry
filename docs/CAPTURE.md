@@ -1356,6 +1356,36 @@ verification):
   writer can sit at the pdf chain tip (if one can, the tip
   resolves to a step with no arrangement, which reads as
   silence -- probably right, but proved, not assumed).
+- P2's HALF IS LANDED (a887c6a on capture/fp3-rail, accepted seq
+  185): the rail with its three verbs, exact crop/split statuses
+  (sheet, up to a turn), the ticks with the gate, the mint at the
+  rail's foot with the count on the line above, the way back in
+  the nav group, the centered reading modal, the editor's tools
+  across the top -- everything not waiting on P1's mintedFrom and
+  current-step carrier, which are one accessor each. Twenty-four
+  assertions against the shipped service bodies, including:
+  turning three quarters crops nothing, splitting down the
+  middle crops nothing, both together crop nothing, and EDITING
+  AFTER TICKING CLEARS NO TICK while the counts move underneath.
+  The false-positive cases carry vacuity guards, and one guard
+  convicted its own test (applyToAll returns the source
+  UNTOUCHED -- the editor already turned it; the test was wrong,
+  not the service): third time this wave the catch was the guard
+  against vacuity, not the check itself.
+- TOOLS SELECT, NEVER MODE (P2 seq 184, RULED): the editor's
+  Turn/Crop/Split tools select what the footer offers and
+  nothing else -- corners and gutter stay draggable in every
+  tool. Hiding handles behind a mode would turn the photograph
+  into a picture; direct manipulation is how this editor is
+  used. The sample's tool tabs were navigation, not modes.
+  DEFERRED OUT LOUD to Owen: if he meant modes, it is a small
+  change and a bad default, and he should say so.
+- THE DOOR'S LABEL STAYS "Edit the photographs" VERBATIM (P2 seq
+  184, ruled): it is the longest label in a column that ellipses,
+  but it names both the act and the place, and a menu is read,
+  not measured. If the panel ever narrows enough to truncate it
+  in practice, the fallback is "Photographs" -- decided now so
+  the shortening, if it comes, is a lookup and not a debate.
 - THE PREP RAIL (workflow being sampled with Owen -- prep rail on
   the table, mint off the modals, centered modals; not cut until
   he approves the arrangement): the tick is THE PERSON SPEAKING
