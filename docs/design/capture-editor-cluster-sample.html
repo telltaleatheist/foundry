@@ -129,6 +129,43 @@
   .stagepic .gknob { position:absolute; width:14px; height:14px; border-radius:99px;
     background: var(--bg-base); border:2px solid var(--accent); }
 
+  /* the confirm, which is the checkbox's replacement */
+  .confirm { width: 430px; max-width: 92%; background: var(--bg-elevated);
+    border:1px solid var(--border-default); border-radius: var(--radius-lg);
+    box-shadow: 0 30px 80px rgba(0,0,0,0.6); padding: 20px 22px 18px; }
+  .confirm h3 { font-size:14px; margin-bottom:8px; }
+  .confirm p { color: var(--text-secondary); font-size:12.5px; margin:0 0 10px; }
+  .confirm .names { font-family: var(--font-mono); font-size:11.5px; color: var(--text-tertiary); }
+  .confirm .row { display:flex; gap:8px; margin-top:16px; }
+  .confirm .row button { flex:1; padding:9px 0; border-radius: var(--radius-md);
+    font:inherit; font-size:12.5px; cursor:pointer; }
+  .confirm .row .go { background: var(--accent); color: var(--text-inverse);
+    border:1px solid var(--accent); font-weight:600; }
+  .confirm .row .keep { background: var(--bg-input); color: var(--text-primary);
+    border:1px solid var(--border-default); }
+
+  /* the two tables, side by side, for the card-orientation proposal */
+  .compare { display:flex; gap:18px; flex-wrap:wrap; margin: 10px 0 4px; }
+  .compare > div { flex:1; min-width: 300px; }
+  .compare h4 { font-size:12px; color: var(--text-tertiary); margin-bottom:8px;
+    text-transform:uppercase; letter-spacing:0.06em; }
+  .minigrid { display:grid; grid-template-columns: repeat(3, 1fr); gap:10px;
+    background: var(--bg-base); border:1px solid var(--border-subtle);
+    border-radius: var(--radius); padding:12px; }
+  .mini { border:1px solid var(--border-subtle); border-radius: var(--radius-sm);
+    background: var(--bg-elevated); padding:6px 6px 4px; }
+  .mini .pane { position:relative; height:84px; background:#14211f;
+    border-radius:3px; overflow:hidden; display:grid; place-items:center; }
+  /* today: the photo as shot, with a dot at the first corner */
+  .mini .land { width:70%; height:52%; background: var(--paper); box-shadow:0 1px 4px rgba(0,0,0,.5); }
+  .mini .port { width:52%; height:76%; background: var(--paper); box-shadow:0 1px 4px rgba(0,0,0,.5); }
+  .mini .dot { position:absolute; width:5px; height:5px; border-radius:99px;
+    background: var(--accent); top:16%; left:16%; }
+  .mini .cap { margin-top:4px; font-family: var(--font-mono); font-size:9.5px;
+    color: var(--text-tertiary); display:flex; align-items:center; gap:4px; }
+  .mini .turned { margin-left:auto; font-family: var(--font-body); font-size:9px;
+    padding:0 5px; border-radius:99px; background: var(--accent-faint); color: var(--accent); }
+
   /* THE CLUSTER */
   .cluster { width: 268px; flex:none; border-left:1px solid var(--border-subtle);
     background: var(--bg-base); display:flex; flex-direction:column; overflow:hidden; }
@@ -188,6 +225,8 @@
     <button class="on" data-s="s1">First pass</button>
     <button data-s="s2">Fixing one page</button>
     <button data-s="s3">Splitting spreads</button>
+    <button data-s="s4">Overriding your own work</button>
+    <button data-s="s5">The table after a turn</button>
   </div>
 </div>
 
@@ -372,6 +411,19 @@
       <b>turn</b> and names <b>the other 24</b>; the other says <b>crop</b> and names
       <b>all 25</b>. Neither needs anybody to explain it.</p>
 
+    <h3>And the third one, which you could not find because it was often not there</h3>
+    <p><b>“Turn all by the same amount” does not exist on a fresh shoot at all</b>, and once it
+      does appear it stays greyed out until you have turned the photograph in front of you. Worse,
+      it goes dead again the moment you step to the next page and back — it counts the turns you
+      made <em>in this visit</em>, so walking away forgets them even though the page stays turned.
+      There is no way to learn any of that from the surface, which is most of why it read as a
+      button that did nothing.</p>
+    <p><b>Proposed:</b> it is always in the Turn tool, and it asks a question about the book
+      rather than about your visit — <em>“Turn the other 24 to match this one”</em>. It compares
+      this photograph’s orientation with theirs, so it means the same thing whether you turned it
+      ten seconds ago or last Tuesday, and it is only unavailable when the other 24 already match
+      (with the button saying so rather than going grey in silence).</p>
+
     <div class="settled">
       <h4>Settled — the checkbox, and what replaced it</h4>
       <p>Your words: <em>“apply to the ones i did by hand, give me a modal that asks if i want to
@@ -485,6 +537,85 @@
   </div>
 </section>
 
+<!-- ============ SCREEN 4: the override confirm ============ -->
+<section class="screen" id="s4">
+  <div class="window">
+    <div class="dim">
+      <div class="titlebar">
+        <button class="back">←</button>
+        <h2>The Index</h2>
+        <span class="meta">25 photographs · 27 pages</span>
+      </div>
+      <div class="table-layout">
+        <div class="grid-pane"><div class="grid" id="g4"></div></div>
+      </div>
+    </div>
+    <div class="backdrop">
+      <div class="confirm">
+        <h3>Override the 3 pages you set yourself?</h3>
+        <p>You placed these three by hand:</p>
+        <p class="names">IMG_0212.HEIC · IMG_0227.HEIC · IMG_0238.HEIC</p>
+        <p>Using this crop on all 25 replaces <b>what you gave them</b> — the corners
+          <em>and</em> the way round they sit, because a crop carries its orientation with it.</p>
+        <div class="row">
+          <button class="keep">Leave those 3 alone</button>
+          <button class="go">Override all 25</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <h3>This only ever appears when there is something of yours to lose</h3>
+    <p>No pages set by hand, no question — you press <b>Use this crop on all 25</b> and it happens.
+      The checkbox asked every single time about a situation that usually does not exist; this asks
+      once, at the only moment it is a real question, and names which three.</p>
+    <p><b>The second sentence is not decoration.</b> Applying a crop copies the orientation too, so
+      answering yes turns those three the way this one sits. That is the thing a person would not
+      guess, and it is the thing they would notice an hour later.</p>
+    <div class="ask">
+      <h4>One small thing to confirm</h4>
+      <p>Two buttons, two outcomes — but what should the <b>✕</b> or <b>Escape</b> do? The mock
+        treats it as “do nothing at all”, on the usual rule that closing a question cancels it. The
+        alternative is that closing means <em>Leave those 3 alone</em>, since that is the gentler of
+        the two answers. Say which and it is one line.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SCREEN 5: the card announces a turn ============ -->
+<section class="screen" id="s5">
+  <div class="note" style="margin-top:24px">
+    <h3>“I rotated one but it didn’t stick apparently?”</h3>
+    <p><b>It stuck.</b> All 25 of your pages are turned a quarter, right now, in the file — the
+      measurement went and counted them. The turn reached the recipe, the file, and the printed
+      page box of the PDF.</p>
+    <p>What it never reached was <b>your eyes</b>. The table drew the photograph exactly as the
+      camera took it and marked the turn with a dot four hundredths of a card wide. So a book you
+      had turned upright still looked sideways on the table you were standing on.</p>
+
+    <div class="compare">
+      <div>
+        <h4>Today</h4>
+        <div class="minigrid" id="m1"></div>
+        <p style="margin-top:8px">Every card the shape the camera gave it. The only difference
+          between turned and untouched is the small dot moving from one corner to another.</p>
+      </div>
+      <div>
+        <h4>Proposed</h4>
+        <div class="minigrid" id="m2"></div>
+        <p style="margin-top:8px">The card draws the page <b>the way round it will be printed</b>.
+          A turned spread stands up. You can see the whole book is upright from across the room,
+          which is the question you were actually asking.</p>
+      </div>
+    </div>
+
+    <p>The word <em>turned</em> on the card is the smaller half of it; the shape is what carries.
+      Both are in the mock so you can say if the word is worth keeping or is clutter once the card
+      itself is honest.</p>
+  </div>
+</section>
+
 <script>
   document.querySelectorAll('.tabs button').forEach(function (b) {
     b.addEventListener('click', function () {
@@ -508,6 +639,26 @@
   fill('g1', 10);
   fill('g2', 10);
   fill('g3', 10);
+  fill('g4', 10);
+
+  // The card-orientation comparison: the same six photographs, drawn the way the
+  // table draws them today and the way this proposes.
+  function mini(id, upright) {
+    var g = document.getElementById(id);
+    if (!g) return;
+    for (var i = 0; i < 6; i++) {
+      var turned = i !== 4;             // five of six have been turned
+      var c = document.createElement('div');
+      c.className = 'mini';
+      var shape = upright && turned ? 'port' : (turned ? 'land' : 'port');
+      c.innerHTML = '<div class="pane"><div class="' + shape + '"></div>'
+        + (upright ? '' : '<div class="dot"></div>') + '</div>'
+        + '<div class="cap">IMG_0' + (212 + i) + (upright && turned ? '<span class="turned">turned</span>' : '') + '</div>';
+      g.appendChild(c);
+    }
+  }
+  mini('m1', false);
+  mini('m2', true);
 </script>
 </body>
 </html>
