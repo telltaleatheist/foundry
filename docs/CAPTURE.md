@@ -1082,6 +1082,26 @@ Built (P2 seq 136, ruled in by foundry-pc-2):
   this setting was chosen FOR THIS PAGE. It TOGGLES byHand (a mark
   set by mistake must not need a global-with-override to escape);
   the label states the state: Apply, then Set by hand.
+  REVISED (P2 seq 159, ruled in as a defect in the frozen branch):
+  THE DRAG ITSELF MARKS. setQuads wrote the quad and nothing else,
+  so adjust page 12, flip on without pressing Apply, and the next
+  Apply to all overwrote it silently, named in no skip list -- the
+  exact loss point 3 exists to prevent, on the live path. And it
+  could not self-heal: the first stamp makes the file speak, the
+  derivation switches off for the life of the project, and every
+  hand-drag after that was unprotected forever -- the live path
+  permanently WEAKER than the migration path, in the direction
+  that costs work. The fix is the migration's own rule applied
+  live (THE EDITOR MUST NOT DISAGREE WITH THE MIGRATION ABOUT
+  WHAT A HAND IS -- one rule, two paths): a drag sets byHand, the
+  label appears the moment somebody drags, and the button's
+  honest job becomes UN-marking -- handing the page back to the
+  globals. The stage-1 wrinkle resolves in the clearing rule
+  already ruled: THE STAMP CLEARS byHand ON THE SOURCE TOO, not
+  only the pages it copies onto -- the source's crop has just
+  BECOME the global, so it is no longer an outlier. No
+  stage-awareness in the service, one added line in the arm that
+  already clears.
 - THE INCLUDE-HAND-SET OVERRIDE IS DRAWN ONLY WHEN HAND-SET PAGES
   EXIST, carrying the count ("including the 3 set by hand") -- a
   permanently present tick box about a condition that usually does
