@@ -1421,6 +1421,37 @@ verification):
   needs the live copy of a book whose working row was swept -- a
   rotation, a metadata edit, an export. Opening and re-minting
   both measured; the rest was not exercised.
+- WAVE 21b IS WHOLE ON MAIN: P2's final piece (404d5d6 on
+  capture/fp3-rail, main merged in) merged with full gates on the
+  merged result -- 384/0, three typechecks, ng build 685.21 kB,
+  byte scan clean over thirteen files, zero new ipcMain.handle.
+  The divergence sentence sits at the rail's foot (after a mint
+  it re-asks for the one string rather than re-opening -- the
+  same bytes today, and not the same the day somebody adjusts a
+  corner mid-mint); the marker reads "on the shelf", A WORD AND
+  NOT A DOT (a dot needs a legend, and it appears beside rows
+  whose names are identical -- the one place a reader is actively
+  asking which is which), named onTheShelf and NOT current,
+  because `current` one field over means where the PERSON stands
+  and the two come apart exactly when it matters. Fourteen
+  assertions on the sentence including the two that justify the
+  fingerprint (ticking lights nothing, hand-marks light nothing,
+  both with vacuity guards) and the symmetric one: it GOES OUT
+  when the arrangement is put back. The nine inline spellings of
+  the ledger view are ONE NAME now (StepLedgerView, current
+  required), and electron's LedgerView is an ALIAS of it (P1's
+  call, lead landed it in the merge): the tenth spelling was the
+  one that COMPOSES the value, free to disagree the day the shape
+  grows. UNWITNESSED, stated by both agents and standing as
+  OWEN'S FIRST-CONTACT WALK: press each rail row and see it land
+  on its tool; tick beside a row without one gesture swallowing
+  the other; watch the mint button light on the third tick; the
+  rail at a narrow window; "on the shelf" needs two mints and
+  the sentence needs a mint-then-edit -- both wait on the button
+  this wave built. Fifty-odd assertions all measure the
+  PIPELINE; the rail is a gesture surface, and the Wave 21
+  lesson was a split gesture that did nothing while every gate
+  was green.
 - THE PREP RAIL (workflow being sampled with Owen -- prep rail on
   the table, mint off the modals, centered modals; not cut until
   he approves the arrangement): the tick is THE PERSON SPEAKING
@@ -1755,6 +1786,19 @@ the human-known right order), or it measures agreement, not
 correctness. Companion shape (P1 seq 164, P2 seq 165): a filter
 that matches nothing reports nothing -- an empty list reads exactly
 like "nothing was drawn", a passing check that measured nothing.
+Tenth (P2 seq 189, mechanism corrected by P1 seq 190): A NARROWER
+TYPE DOES NOT FAIL ON A WIDER VALUE -- IT JUST CANNOT NAME THE
+REST. LedgerView.current crossed the bridge fine (preload returns
+the invoke straight through; structured clone carries every own
+property) but the IPC surface spelled the view inline NINE times
+without the field, so READING it was a compile error and the
+value sat unreachable on the object. Harmless for exactly as long
+as the shape had two fields. The correction matters for the next
+reader: "vanishes at the bridge" would send somebody hunting a
+lossy copy that does not exist and maybe adding a defensive
+re-copy nothing needs -- the type was hiding a value that was
+already there. Fix: one named type where nine spellings were, and
+the composer aliased to it so the tenth cannot drift either.
 Ninth (P2, seq 186): A FALLBACK MAKES A MISSING TOKEN INVISIBLE.
 The rail referenced var(--ok-soft, rgba(...)) and --ok-soft did
 not exist in the palette -- the reference resolved to nothing, the
