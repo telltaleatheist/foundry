@@ -3128,6 +3128,51 @@ export interface CaptureRecipe {
   photos: CapturePhoto[];
   /** Every page id in reading order, STRUCK INCLUDED — the mint filters them. */
   order: string[];
+  /**
+   * THE PERSON SAYING THEY HAVE DONE IT — the prepare rail's ticks, and the only
+   * thing on that rail nothing can derive.
+   *
+   * THE TICK AND THE STATUS BESIDE IT ARE TWO DIFFERENT SENTENCES. The status is
+   * derived and says what the file holds ("25 cropped — 3 by hand"); the tick is
+   * a person saying they are done with that verb, and THE DERIVATION NEVER
+   * CLEARS ONE. A shoot with no spreads in it must be tickable on "split
+   * spreads" without lying, and no rule can know the pages are turned right —
+   * the portrait advertisement in Owen's shoot is the same shape as the volume,
+   * so a derived turned-done would lie exactly where being wrong costs most.
+   *
+   * WHY IT IS ON THE RECIPE RATHER THAN THE PHOTOGRAPH: the person is answering
+   * about the book. "Have you turned the pages" is one question with one answer,
+   * not twenty-seven answers that would then need a rule for what the twenty-
+   * seven of them mean together.
+   *
+   * OPTIONAL, AND SO IS EVERY MEMBER, for `byHand`'s reason: absent means false,
+   * every recipe ever written is already valid, and no migration has to invent an
+   * answer on behalf of somebody who has not been asked yet. Which is also what
+   * makes the mint gate honest on Owen's finished book — it asks him three
+   * questions he has never been asked, rather than assuming he would have said
+   * yes.
+   *
+   * CARRIED, REFUSED IF WRONGLY TYPED, CONSULTED BY NOTHING IN MAIN. `mintBegin`
+   * does not read it and neither does the mint: the gate is the rail's, because
+   * a person who wants to mint from the keyboard has not lied to anybody.
+   */
+  prepared?: CapturePrepared;
+}
+
+/**
+ * The three verbs of the prepare rail, each true only if a person said so.
+ *
+ * Deliberately NOT a `Record<string, boolean>`: the three verbs are the three
+ * the rail draws, and a fourth arriving as data rather than as a decision is how
+ * a surface acquires a row nobody designed.
+ */
+export interface CapturePrepared {
+  /** "Turn pages" — ticked, never derived. See `CaptureRecipe.prepared`. */
+  turned?: boolean;
+  /** "Place the crop" — ticked beside a status derived from the quads. */
+  cropped?: boolean;
+  /** "Split spreads" — ticked beside a count of the photographs with a split. */
+  split?: boolean;
 }
 
 /**

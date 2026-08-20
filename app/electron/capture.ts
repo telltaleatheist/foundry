@@ -69,6 +69,7 @@ import type {
   CapturePage,
   CapturePhoto,
   CapturePoint,
+  CapturePrepared,
   CaptureQuad,
   CaptureRecipe,
   CaptureSplit,
@@ -630,7 +631,51 @@ function validRecipe(value: unknown, file: string): CaptureRecipe {
       + (unknown.length > 0 ? ` (naming ${unknown.length} that do not exist)` : ''));
   }
 
-  return { version: 1, photos: handsRead(checked), order: order as string[] };
+  /*
+   * ── THE TICKS: CARRIED, REFUSED IF WRONGLY TYPED, CONSULTED BY NOTHING ────
+   *
+   * `byHand`'s contract one level up, and for `byHand`'s exact reason: this
+   * function rebuilds the recipe field by field and `writeRecipe` validates on
+   * the way out too, so a field main "ignores" is erased on the next save and
+   * would not survive one round trip. Nothing in main reads these — not the
+   * mint, which is deliberate: the gate belongs to the rail, and a person who
+   * mints from the keyboard has not lied to anybody.
+   *
+   * ABSENT IS LEGAL AT BOTH LEVELS. No `prepared` at all is every recipe ever
+   * written; a `prepared` naming one verb is somebody who has ticked one box,
+   * which is the ordinary state for most of the time this field exists. Present
+   * and not a boolean is a writer that thinks it recorded an answer and did not,
+   * and that is worth refusing rather than reading as a no.
+   *
+   * THE UNTICKED VERBS ARE DROPPED RATHER THAN WRITTEN FALSE, so the file says
+   * what somebody answered and stays silent about what they have not been asked.
+   */
+  const prepared = row['prepared'];
+  let ticks: CapturePrepared | undefined;
+  if (prepared !== undefined && prepared !== null) {
+    if (typeof prepared !== 'object' || Array.isArray(prepared)) {
+      fail(file, 'it records what has been prepared in something that is not a set of answers');
+    }
+    const answers = prepared as Record<string, unknown>;
+    const verbs = ['turned', 'cropped', 'split'] as const;
+    for (const verb of verbs) {
+      const answer = answers[verb];
+      if (answer !== undefined && typeof answer !== 'boolean') {
+        fail(file, `it says the pages were ${verb} in something that is not a yes or a no`);
+      }
+    }
+    const kept = verbs.filter((verb) => answers[verb] === true);
+    if (kept.length > 0) {
+      ticks = Object.fromEntries(kept.map((verb) => [verb, true])) as CapturePrepared;
+    }
+  }
+
+  return {
+    version: 1,
+    photos: handsRead(checked),
+    order: order as string[],
+    ...(ticks === undefined ? {} : { prepared: ticks }),
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
