@@ -134,7 +134,17 @@ import { Rectifier } from './rectify';
           #picture
           [style.aspect-ratio]="aspectRatio()"
         >
-          <img #photo [src]="source()" [alt]="'The photograph being edited'" draggable="false" />
+          <!--
+            (load) IS THE OTHER HALF OF THE REDRAW, and see repaint() for why an
+            effect alone could not be.
+          -->
+          <img
+            #photo
+            [src]="source()"
+            [alt]="'The photograph being edited'"
+            (load)="repaint()"
+            draggable="false"
+          />
 
           <!--
             The handles are an SVG in the picture's own fraction space
@@ -514,6 +524,18 @@ export class CapturePageEditorComponent {
     });
   }
 
+  /**
+   * The photograph finished decoding — draw the previews that are ITS previews.
+   *
+   * Called from (load), which fires on the first picture and on every change of
+   * `source()` after it. Cheap to call spuriously: `draw` is a handful of
+   * canvas blits and only runs at all once the element holds the picture the
+   * previews are supposed to be of.
+   */
+  protected repaint(): void {
+    this.draw(this.previews(), this.quads(), this.dimensions());
+  }
+
   protected outlineOf(quad: FractionQuad): string {
     return quad.map(([x, y]) => `${x},${y}`).join(' ');
   }
@@ -695,10 +717,42 @@ export class CapturePageEditorComponent {
    *
    * The image element is reused as the texture source rather than decoding the
    * working copy a second time: it is already in the page, already decoded, and
-   * `Rectifier` takes an `HTMLImageElement` for exactly this reason. A picture
-   * that has not finished loading has no dimensions yet and is skipped — the
-   * effect will run again when the quads next move, and the load itself is what
-   * puts the photograph on screen.
+   * `Rectifier` takes an `HTMLImageElement` for exactly this reason.
+   *
+   * ── THE SENTENCE THAT USED TO BE HERE WAS FALSE, AND IT COST A DEFECT ─────
+   *
+   * It read: "A picture that has not finished loading has no dimensions yet and
+   * is skipped — the effect will run again when the quads next move, and the
+   * load itself is what puts the photograph on screen." Owen: *"turning the
+   * book worked on the first one but didnt work on the next one. the thumbnail
+   * turned but the main image didnt"*.
+   *
+   * Both clauses were wrong, and measuring the element rather than reasoning
+   * about it is what showed it. Across a change of `src`, one <img> reports
+   * THREE states, not two:
+   *
+   *   synchronously after src is set   naturalWidth 480   complete FALSE
+   *                                    — still the PREVIOUS photograph's number
+   *   by the next task                 naturalWidth 0     complete false
+   *   after the load event             naturalWidth 480   complete true
+   *
+   * The effect draws in a MICROTASK, which lands in the first row. So this
+   * method was never skipped at all: it rectified the photograph that was still
+   * in the element into the previews of the page that had just replaced it, and
+   * the person saw the picture they had just stepped away from.
+   *
+   * `naturalWidth` is not a question about the src that was just assigned. It
+   * is a question about the picture currently in the element, and for one whole
+   * microtask checkpoint those are two different pictures.
+   *
+   * ── SO THE REDRAW HAS TWO HALVES AND BOTH ARE REQUIRED ─────────────────
+   *
+   * `complete` is the half that REFUSES the stale draw — it goes false the
+   * instant the src is assigned, which is the only signal in the first row that
+   * tells the truth. `(load)` on the element is the half that SUPPLIES the
+   * missing one, because a load is an EVENT and an effect cannot depend on it;
+   * modelling it as state is the mistake the per-visit turn counter already
+   * made once in this cluster.
    */
   private draw(
     previews: readonly { index: number; width: number; height: number }[],
@@ -706,7 +760,10 @@ export class CapturePageEditorComponent {
     dimensions: Dimensions,
   ): void {
     const image = this.photo().nativeElement;
-    if (image.naturalWidth === 0) return;
+    // BOTH, and the order is not the interesting part -- see the docblock. The
+    // complete check is the one that refuses a STALE picture; the naturalWidth
+    // check is the one that refuses a BROKEN one.
+    if (!image.complete || image.naturalWidth === 0) return;
 
     this.rectifier ??= new Rectifier();
     const canvases = this.previewCanvases();
