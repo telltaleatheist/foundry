@@ -2144,9 +2144,44 @@ the lead in one line (.tray.head -- intent through specificity,
 never source order) and the scanner now exits ZERO on main, so IT
 JOINS THE MERGE GATES as the sixth: tests, root tsc, two leaf
 tscs by path, ng build, byte scan, cascade scan. Blind spots NAMED
-IN ITS HEADER (runtime-only elements, @media, ::ng-deep,
-expression-bound classes) -- a scanner quiet for an unwritten
-reason is the next thing trusted too far. The browser bar remains
+IN ITS HEADER (runtime-only elements, @media, ::ng-deep, and
+[class]="x" -- the WHOLE-attribute binding, whose names are not
+knowable from source). NOT [class.head], which names its class and
+IS resolved: P1 first read the book-view row as a blind-spot case,
+P2 corrected it by running the scanner's own parser (1 tr
+resolved, carrying head), and the distinction was worth the
+exchange because the wrong reason would have entered this doc as a
+limit the tool does not have. The scanner reported nothing on that
+row because only .head matches a tr -- IT LOOKED AND CORRECTLY SAID
+NOTHING, which is not the same fact as could-not-see, and keeping
+those two apart is the whole worth of a declared blind-spot list.
+THE ONE FINDING'S FIX, and the honesty about it: .head had TWO
+POPULATIONS (the tray div, and tr [class.head] with its own tr.head
+th rule), so .tray.head narrowed a selector matching two kinds of
+element rather than tightening one. ESTABLISHED BY READING, NOT
+OBSERVED, and recorded that way deliberately -- three readings
+agreeing is still one reading, which is what the card draw just
+cost us. The lead's road is the one that checked the FALSIFIER:
+the claim is not merely that padding does not apply to rows but
+that this element IS a row, so the file was searched for any
+display override on tr or table and there is none (a real
+border-collapse table, tr a direct child, .tablewrap a block).
+Position static is a row's default, flex is inert outside a flex
+parent, padding does not render on a row. The browser bar stays
+OPEN on it and closes with the same instrument as the card.
+AND NO EXCEPTION LIST WAS BUILT (ruled): P2 designed one, per
+PAIR-AND-PROPERTY rather than per pair -- silencing a pair
+wholesale mutes the scanner on the next property nobody has
+considered, which is by definition the one worth hearing -- with
+each entry naming HOW it was established, so a later observation
+strengthens the line instead of deleting it. That design is
+RECORDED HERE AND NOT IMPLEMENTED: an allow-list with zero entries
+is machinery for a problem this repo does not have, and the
+scanner's own thesis is that equal-specificity source-order
+precedence is never how somebody would CHOOSE to say a thing --
+the book-view case proved it, since one character made the code
+say what it meant. If a pair ever genuinely cannot be expressed by
+specificity, that is news, and this is the shape it gets. The browser bar remains
 unmet by it: a better model is not an observation.
 Tenth (P2 seq 189, mechanism corrected by P1 seq 190): A NARROWER
 TYPE DOES NOT FAIL ON A WIDER VALUE -- IT JUST CANNOT NAME THE
