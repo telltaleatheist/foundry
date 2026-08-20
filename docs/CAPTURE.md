@@ -1349,6 +1349,63 @@ verification):
   tonight is the argument for gating mint behind the ticks: he
   minted before turning because the surface offered the last act
   first.
+- THE DIVERGENCE SOURCE (P1 plan-back seq 172, RULED): the footer
+  sentence compares a hash of THE MINT INPUT, never of the recipe
+  file. `arrangementOf(recipe): string` lives in app/shared/
+  capture.ts beside mintedPageIds: it builds the same projection
+  mintBegin builds (ordered unstruck pages -- id, workingCopy,
+  quad, source dims, out dims), canonicalises it, hashes it; and
+  mintBegin CALLS IT instead of keeping its own walk, so the
+  projection and the mint cannot drift -- if they disagree the
+  mint is wrong, not the hash. WHY NOT A FILE HASH: the recipe
+  holds fields the mint never reads (byHand, photo names, and
+  this wave's prepare ticks) -- a file hash would answer a person
+  who just ticked "Turn pages" with "minted from an earlier
+  arrangement", a false sentence produced by the feature built
+  beside it. WHY NOT THE MANIFEST: manifest.archive is
+  single-valued and each mint overwrites it; the fact is per-mint
+  so it belongs to the STEP. Stored as params.arrangement on the
+  mint step (LedgerParams gains arrangement?: string; the
+  ALLOWED_PARAMS allow-list gains it in ONE deliberate line;
+  minted BY mintedStep so the step cannot be created without the
+  fact -- an answer, not a question). Delivered as
+  CaptureOpened.mintedFrom: string | null (a field on an existing
+  answer -- NO NEW IPC, same as all of Wave 21). Open-time
+  delivery is not stale: the stored side moves only at
+  mintCommit, which the table itself drives; everything else that
+  moves is the LIVE side, recomputed by the renderer from the
+  recipe it already holds -- two callers, one body. ABSENT MEANS
+  SILENCE (ruled): Owen's own mint predates the field; we do not
+  know the two disagree, and either claim would be the same false
+  sentence from another direction. Silence is what the surface
+  does today and it self-heals on his first Mint again. SCOPE, a
+  limit and not an oversight: it answers "a different
+  ARRANGEMENT", not "identical bytes" -- MINT_DPI and JPEG
+  quality sit outside the projection (ruled OUT of the hash: the
+  approved sentence says "an earlier arrangement", and a
+  constants bump lighting every book's footer would be the false
+  sentence again, wholesale).
+- THE TICKS' SHAPE (P1 seq 172, RULED): CaptureRecipe.prepared?:
+  { turned?: boolean; cropped?: boolean; split?: boolean } --
+  RECIPE-LEVEL, because the person is answering about the book,
+  not a photograph. Carried, refused if wrongly typed, consulted
+  by nothing in main -- byHand's exact three-line validator
+  contract. The ticks are P1's even though the rail is P2's: a
+  validator fact, not a land grab -- validRecipe rebuilds every
+  field on read and writeRecipe validates on the way out, so a
+  field main ignores is erased in one round trip; P2 cannot
+  persist a tick without P1. No new IPC (capture:recipe-save
+  already takes the whole recipe). Rail statuses need NOTHING
+  else: crop is derivable per page (quad not WHOLE_FRAME, byHand
+  distinguishing hand from stamp), split per photo (split not
+  null), and turned is THE TICK AND NOTHING ELSE (already ruled:
+  the portrait ad is the volume's shape -- a derived turned-done
+  lies exactly where wrongness costs most). And the two halves
+  check each other: because divergence reads the projection,
+  ticking a box CANNOT light the sentence -- by construction, not
+  coincidence. P2's window: mintedFrom and prepared are the two
+  shapes the rail consumes; they are contract unless P2's
+  plan-back names a concrete conflict BEFORE P1 builds them.
 
 ## Deferred out loud
 
