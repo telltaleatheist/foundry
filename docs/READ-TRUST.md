@@ -570,6 +570,74 @@ is deferred on COST and uncosted-path grounds, not on the machinery-for-no-
 problem argument, which does not fit it as neatly as the lead first
 claimed.
 
+### 8c. THE RETRY IS IN v1 AFTER ALL — it was being costed as the wrong thing
+
+P2 costed the retry path and it is **~20 lines with no bridge change**,
+because **the retry does not need to be in flight at all.** Both the lead
+and P2 had been discussing it as something that happens *when a refusal
+lands*, which forces a door into the bridge's internal queue. It is not:
+`refuse()` only writes into a plain Map, and the moment `fromEndpoint`
+returns, `read.ts` holds everything needed. **The retry is a SECOND
+`fromEndpoint` call**, after the first finishes, carrying just the pages
+worth retrying, at `model.maxTokens`.
+
+**And after the pass the staleness test collapses to one comparison:**
+
+> **retry every page whose SENT cap was below the FINAL band** — the
+> largest the run ever held.
+
+Shape A already computes that number at the send, so recording it is one
+`Map.set`. The invariant then falls out without being argued for:
+
+| | |
+|---|---|
+| **Michelle Remembers** | band never rises, so every runaway was refused **at** the final band, not below it — **nothing retries**; its twelve pages stop at 47% and stay refused |
+| **a lone facsimile behind a lagging band** | refused under a band that later rose → retried once at the model cap, and **kept** |
+| **twenty plates in a row** (the case the run-length data says does not exist here) | all twenty were sent under a stale band, so **all twenty retry** — one extra pass instead of twenty lost pages |
+
+That last row is why this shape beats once-per-book, **which would have
+kept exactly one of those twenty.** And a true runaway is never re-read,
+because it was refused at the band the run ended with and fails the test:
+**the test is about the CAP, not the COUNT** — the number of previous
+retries tells you nothing about whether *this* refusal carried
+information.
+
+So the lead's §8 deferral is **withdrawn**: it rested on an uncosted path,
+the path was costed, and it is small. v1 is the cap **and** the retry.
+
+**Left alone and named (P2):** the other refusal site is the banked-replay
+path — pages refused in a *previous* run and read back out of the bank,
+judged under whatever cap that run used. Whether a new run should re-read
+them is a real question and a different one: **it is about when a bank
+goes stale, not about when a page is worth waiting for.** Not folded in.
+
+---
+
+## 9. v1, BUILD AUTHORIZED (lead, 2026-08-20)
+
+1. **the band** — running maximum over accepted pages only, **× 4, floor
+   2,000, clamped to the model's cap**;
+2. **shape A** — `maxTokens: number | ((page) => number)`, evaluated at
+   the send inside `readOnePage`; `read.ts` owns the band and records the
+   cap each page was sent with. Shape B stays off the table;
+3. **the retry** — a second `fromEndpoint` pass for every page whose sent
+   cap was below the final band, at the model cap;
+4. **the refusal names which cap fired** — *"refused at 5,092 tokens, four
+   times the longest page in this book"*;
+5. **a flag that disables the adaptive cap**, restoring today's behaviour
+   exactly;
+6. **the stale docblock in `models.ts` is corrected** in the same commit
+   that touches it — 1,700 is false, 7,677 is measured.
+
+**DEFERRED OUT LOUD — the repetition-and-runs pair (Tier 1).** Measured at
+14 of 22 caught with zero false positives across 18,202 pages, so it is a
+build and not a design whenever it is wanted. It is not in v1 because the
+case it protects against — a runaway returning `stop` and being *accepted*
+— **has never happened in 18,202 pages**, and a lower cap makes it rarer
+rather than commoner. Both agents rated it higher than this; the
+disagreement is recorded rather than resolved, and the measurement is kept
+intact so adding it costs nothing but the decision.
+
 **And this is why Tier 1 is kept rather than treated as redundant.** The
 retry's one hole is a runaway that comes back `stop` under the model cap —
 which would be accepted, and would raise the band. That has never been
