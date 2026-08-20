@@ -1386,6 +1386,41 @@ verification):
   not measured. If the panel ever narrows enough to truncate it
   in practice, the fallback is "Photographs" -- decided now so
   the shortening, if it comes, is a lookup and not a debate.
+- P1's HALF IS LANDED AND MERGED (32c81ff on workflow/foundry-pc,
+  merged to main at d0be66e, full gates on the merged result,
+  zero new ipcMain.handle): arrangementOf beside mintedPageIds
+  with mintBegin consuming the shared mintPlan; params.arrangement
+  minted BY mintedStep (required argument -- a mint step cannot
+  exist without the fact), PARAMS_OF.import + MINTED_BY_THE_RUN +
+  WORDS each gaining their one deliberate line; CaptureOpened.
+  mintedFrom on all three answer paths (create and intake had
+  declared narrower shapes and would have delivered undefined
+  rather than null); currentBookStep walking the pdf chain from
+  the tip to the nearest arrangement-carrying step, NEVER reading
+  manifest.archive, no kind-sniffing; THE CARRIER: LedgerView.
+  current (step id, REQUIRED, so tsc enumerated all eight view
+  sites) for the row marker + currentArrangement(dir) for the
+  sentence, both calling currentBookStep -- one resolution, two
+  surfaces, zero second derivations. 24 checks on the feature and
+  27 on the repair, four populations, both landing-bar uncheckeds
+  ANSWERED BY RUNNING: the swept working copy costs the survivor
+  nothing it needs (standing on it opens the archive copy,
+  missing:false, and a later mint restores working/), and the
+  searchable conversion was RUN -- the tip moves, the walk goes
+  past it to the mint. One citation inverted in P2's read,
+  recorded: recordGenerated DOES promote a conversion to the live
+  pdf (moves the working row's `from`), contra the comment at
+  job-queue.ts:2582 -- changes neither ruling, the chain was the
+  right handle either way. recordMint's docblock claimed an
+  earlier mint's row will not open; MEASURED FALSE (the older row
+  opens the archive copy via documentOfStep's payload fallback)
+  and corrected in its own commit -- the doc ruled reachability,
+  the comment was the half that was wrong, and stale comments are
+  the kind somebody eventually fixes the CODE to match. DEFERRED
+  OUT LOUD (P1 named it): whether anything other than OPENING
+  needs the live copy of a book whose working row was swept -- a
+  rotation, a metadata edit, an export. Opening and re-minting
+  both measured; the rest was not exercised.
 - THE PREP RAIL (workflow being sampled with Owen -- prep rail on
   the table, mint off the modals, centered modals; not cut until
   he approves the arrangement): the tick is THE PERSON SPEAKING
@@ -1720,6 +1755,19 @@ the human-known right order), or it measures agreement, not
 correctness. Companion shape (P1 seq 164, P2 seq 165): a filter
 that matches nothing reports nothing -- an empty list reads exactly
 like "nothing was drawn", a passing check that measured nothing.
+Ninth (P2, seq 186): A FALLBACK MAKES A MISSING TOKEN INVISIBLE.
+The rail referenced var(--ok-soft, rgba(...)) and --ok-soft did
+not exist in the palette -- the reference resolved to nothing, the
+fallback quietly became the only value, and the screen looked
+right. Not a build error, not a runtime error, invisible to all
+four gates; the next component to reference the name by its own
+reasoning inherits a token that resolves to nothing and may have
+no fallback at all. Same shape as the empty list reading like
+nothing was drawn: the defensive thing that makes a surface look
+fine is also the thing that stops anybody noticing the fact
+underneath it is absent. The check that finds it: every var()
+referenced against every custom property defined (22 referenced,
+21 defined, on the day it was run).
 Eighth (P1, seq 180, its own commit): A REPAIR MEASURED ONLY ON
 THE CASE THAT MOTIVATED IT -- dd0393c fixed the one-mint delete
 and was never run with two mints, where it breaks the same
