@@ -77,12 +77,56 @@ export interface VlmEndpointOptions {
   model: string;
   /** The model card's prompt, verbatim. Never built here. */
   prompt: string;
-  maxTokens: number;
+  /**
+   * The token cap for a page — a NUMBER, or a question asked at the send.
+   *
+   * ── Why a function may be passed ────────────────────────────────────────────
+   *
+   * A cap is a property of the RUN and not of the model. dots.ocr's 8,192 is set
+   * where no real page can reach it, which is correct and is also why a runaway
+   * costs 8.3x an ordinary page before anything refuses it: measured, 22 pages
+   * across a library of 18,202 spent 64 minutes of GPU and produced nothing.
+   *
+   * The caller can narrow that per page from what the book has actually shown it
+   * -- see capFor in band.ts and the walk in read.ts -- but it can only do so if
+   * the number is read WHEN THE PAGE IS SENT. The pages array is built before
+   * dispatch, so a number on it would be fixed before the first answer landed.
+   *
+   * THIS FILE STAYS IGNORANT OF WHY. It does not know what a band is, or a book;
+   * it asks the caller for a number and puts it on the request. A bridge that
+   * understood the rule would be a second place the rule lived.
+   */
+  maxTokens: number | ((page: EndpointRequest) => number);
   concurrency: number;
   pages: readonly EndpointRequest[];
   onPage: (page: EndpointPageResult) => void;
 }
 
+/** The cap for this page, whether the caller fixed one or answers per page. */
+function capOf(cap: VlmEndpointOptions['maxTokens'], page: EndpointRequest): number {
+  return typeof cap === 'function' ? cap(page) : cap;
+}
+
+/**
+ * Pages in flight at once, and THE ADAPTIVE CAP'S SAFETY DEPENDS ON THIS NUMBER.
+ *
+ * ── The coupling, written here because this is where the change would be made ─
+ *
+ * `read.ts` narrows each page's token cap from the longest page the book has
+ * accepted SO FAR, and "so far" means "so far as answers have landed". With N
+ * pages in flight, a page is sent under a band that is up to N pages out of
+ * date, so the margin in `band.ts` has to absorb that staleness.
+ *
+ * IT WAS MEASURED AT THIS VALUE. Walked over 18,202 pages: at twelve in flight
+ * the lag costs ZERO accepted pages, and at twenty-four it costs two. The 4x
+ * margin and the 2x retry factor were both chosen against a lag of twelve.
+ *
+ * SO IF THIS NUMBER IS RAISED, THOSE TWO MUST BE REVISITED IN THE SAME COMMIT --
+ * see `band.ts` and `models.ts`. A knob in one file silently deciding the
+ * correctness of a rule in another is the defect this project has paid for more
+ * than once; it is written in both places because a reader arrives at one or the
+ * other, never at a document.
+ */
 export const DEFAULT_VLM_CONCURRENCY = 12;
 
 export async function readPagesFromEndpoint(opts: VlmEndpointOptions): Promise<void> {
@@ -117,7 +161,7 @@ async function readOnePage(
       body: JSON.stringify({
         model: opts.model,
         temperature: 0,
-        max_tokens: opts.maxTokens,
+        max_tokens: capOf(opts.maxTokens, page),
         messages: [{
           role: 'user',
           content: [
