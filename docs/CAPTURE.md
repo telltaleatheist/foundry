@@ -1892,7 +1892,13 @@ MEASURED (P1 seq 197, 14 checks on a copy of the live project):
   on main before tonight: the source arm cleared byHand for
   EVERY gesture -- a bulk turn was quietly handing the source's
   hand-set crop back to the next global. Only the stamp clears
-  it now, asserted both ways. STILL UNWITNESSED, same sentence
+  it now, asserted both ways (and the handsRead interaction is
+  CHECKED, not assumed -- P1 seq 216: a bulk turn can now leave a
+  file with no marks at all, switching the inference back on, and
+  it answers correctly by two roads: a uniformly turned book reads
+  as stamped and marks nothing, a page turned apart from the rest
+  IS marked, and in practice the match-this-one flow always marks
+  the source first anyway). STILL UNWITNESSED, same sentence
   as every report this wave: the count on the button, the
   disabled sentence, and a stamp visibly leaving orientation
   alone are one glance for a person and no assertion can be
