@@ -1011,6 +1011,72 @@ COUNT are the *only* evidence that the narrowed number reached the server
 and was honoured — because the list comparison alone cannot see an inert
 feature.
 
+### 12e. ANSWERED: it is TWO reads, and the read is not deterministic
+
+**THE BANK CANNOT BE THE CONTROL.** Every field in all 360 of Michelle's
+records: `page`, `text`, `tokens`, `finishReason`, `seconds`. **No model,
+no `maxPixels`, no render size** — and the current writer records all
+three, so their absence proves the bank *predates that writer* rather than
+evidencing that the settings matched. `completedAt 2026-08-10`,
+`foundryVersion 0.9.0`. **`maxPixels` in particular decides what the model
+SAW, and a control that cannot prove the pages were the same images is not
+a control.** Two arms, same build, same sitting.
+
+**AND THE READ IS NOT DETERMINISTIC — measured, not reasoned.** Two books
+in the library have been read more than once:
+
+| | pages differing | token delta |
+|---|---|---|
+| the 17-page Kershaw article, **five runs** | 8 of 17 | max 5, mean 0.35 |
+| the second book, two runs | **46 of 83** | **max 66**, mean 1.37 |
+
+Same page, same settings, same machine, a slightly different answer each
+time: a request for greedy sampling meeting a server that batches
+continuously. So a re-read would not reproduce that bank *even if the
+settings were identical* — which is the second, independent reason the
+fixed-cap arm has to be run rather than recovered.
+
+### 12f. Why the drift cannot threaten the comparison — with the number
+
+| | |
+|---|---|
+| worst measured run-to-run drift | **66 tokens** |
+| Michelle: longest real page 1,273 vs a runaway at 8,192 | 6,919 apart |
+| **tightest headroom the 4× margin leaves on ANY real page in the library** | **515 tokens** *(the 4,909 page against a band of 6,020)* |
+
+**The drift is eight times smaller than the tightest margin any real page
+has.** Non-determinism cannot flip a page across this band; it would have
+to be an order of magnitude larger than anything measured. And Michelle's
+pre-registered zero retries does not depend on tokens being identical at
+all — it depends on her band *creeping rather than stepping*, and a
+66-token wobble moves her final band by at most 264, which does not bring
+any of her twelve sent caps near a factor of two below 5,092.
+
+**Said rather than implied (P1):** neither repeated book contained a single
+refusal, so there is **no direct evidence that refusal lists are stable
+across re-reads** — only the argument that no drift of this size turns a
+page stopping at 1,273 into one running to the cap.
+
+**P1 withdrew its own seconds-per-page proxy** in favour of §12b's two
+exact signals, and this measurement is the argument for it: **seconds vary
+run to run for the same reason the tokens do.**
+
+### 12g. The cost, and the tier that is nearly free
+
+Two arms over a 360-page book is **hours** of GPU, which is a real price
+for a feature whose measured benefit is ~18 minutes across the whole
+library. But **the questions separate, and the cheap half answers the one
+that matters most:**
+
+| tier | cost | answers |
+|---|---|---|
+| **one read of the smallest book holding a runaway** | minutes | *did the narrowed number reach the server and get honoured* — §12b's two exact signals, which need no control arm at all |
+| two arms on Michelle Remembers | hours | *did it cost a page* — the refusal-list comparison and the retry count |
+
+**The first tier is the one that can fail silently** — an inert feature
+passes every other check — and it needs no second run, because the refusal
+sentence and the banked token count are absolute rather than comparative.
+
 ### 11a. The ledger entries this wave bought
 
 **Eleventh** — a model of a declarative system checks the computation and
