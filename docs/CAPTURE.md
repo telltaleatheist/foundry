@@ -2125,7 +2125,29 @@ that had already missed it once on the same file -- correct in
 every particular and still the same KIND of evidence that produced
 the defect. The browser-observed bar from seq 222 is MET BY
 OWEN'S WALK OR THE PHOTOGRAPH, whichever comes first; the scanner
-closes the class either way.
+closes the class either way. BUILT AND ADOPTED AS A GATE (P2
+1c22a9f, merged; tools/cascade-check.js, no arguments, repo root):
+FAILS on the card at 0a30c94 with two findings and PASSES on the
+fix -- run against the two real commits, not a fixture, because a
+scanner that cannot demonstrate it sees its class is asserting its
+own correctness. Two instructive wrongs in the building: the
+rightmost-compound version had 24 FALSE POSITIVES (it compared
+rules that never style one element), so it RESOLVES AGAINST THE
+TEMPLATE -- each component's element tree, per element, which rules
+actually match: modelling the resolution, which is the entry it
+serves; and even then fifteen findings were mostly MODIFIERS
+(.icon then .icon.wide is somebody saying what they mean), so it
+reports only EQUAL specificity -- the accident shape where the
+winner is whichever was typed second. The one finding it left
+(book-view's .head un-sticking .tray by source order) was fixed by
+the lead in one line (.tray.head -- intent through specificity,
+never source order) and the scanner now exits ZERO on main, so IT
+JOINS THE MERGE GATES as the sixth: tests, root tsc, two leaf
+tscs by path, ng build, byte scan, cascade scan. Blind spots NAMED
+IN ITS HEADER (runtime-only elements, @media, ::ng-deep,
+expression-bound classes) -- a scanner quiet for an unwritten
+reason is the next thing trusted too far. The browser bar remains
+unmet by it: a better model is not an observation.
 Tenth (P2 seq 189, mechanism corrected by P1 seq 190): A NARROWER
 TYPE DOES NOT FAIL ON A WIDER VALUE -- IT JUST CANNOT NAME THE
 REST. LedgerView.current crossed the bridge fine (preload returns
