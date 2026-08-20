@@ -69,8 +69,10 @@ import type { ApplyToAll } from '../../core/capture.service';
           [dimensions]="dimensions()"
           [quads]="quads()"
           [split]="split()"
+          [proposal]="proposal()"
           (quadsChange)="quadsChange.emit($event)"
           (splitChange)="splitChange.emit($event)"
+          (proposalChange)="proposal.set($event)"
         />
       </div>
 
@@ -547,6 +549,18 @@ export class CaptureEditorModalComponent {
    */
   protected readonly using = signal<PrepareVerb>('cropped');
 
+  /**
+   * THE CUT THE SPLIT TOOL IS OFFERING, before anybody has taken it.
+   *
+   * Held here rather than in the recipe because Owen ruled the tool PROPOSES:
+   * choosing Split must not change the page count of the book, and there is no
+   * un-cut to undo it with. It lives in the modal rather than the page editor
+   * because the modal owns the tool that summons it and the button that takes
+   * it -- the editor draws it and moves it, which is all the editor does with
+   * anything.
+   */
+  protected readonly proposal = signal<CaptureSplit | null>(null);
+
   readonly hasPrevious = input.required<boolean>();
   readonly hasNext = input.required<boolean>();
   /** How many photographs in this project somebody has set by hand. */
@@ -645,6 +659,31 @@ export class CaptureEditorModalComponent {
     effect(() => {
       this.using.set(this.tool());
     });
+
+    /*
+     * THE LINE IS THERE BEFORE THE FIRST GESTURE, which is the whole of finding
+     * 5. Down the middle, upright, with a knob at each end, the moment the
+     * Split tool opens on a photograph nobody has cut.
+     *
+     * `splitFromFraction` is the same body main's migration reads an old {x}
+     * with, so "the line down the middle" has one answer in this app rather
+     * than one here and one there.
+     *
+     * IT IS PUT AWAY AGAIN whenever it cannot mean anything -- another tool,
+     * another photograph, or a photograph that has actually been cut. A stale
+     * proposal surviving a step to the next page would offer a cut somebody
+     * placed on a different picture.
+     */
+    effect(() => {
+      const quads = this.quads();
+      if (this.using() !== 'split' || this.split() !== null || quads.length !== 1) {
+        this.proposal.set(null);
+        return;
+      }
+      const sheet = quads[0];
+      if (sheet === undefined) return;
+      this.proposal.set(splitFromFraction(sheet as CaptureQuad, 0.5));
+    });
   }
 
   protected turn(turns: number): void {
@@ -672,7 +711,14 @@ export class CaptureEditorModalComponent {
      * a fraction always meant" has one answer rather than one here and one
      * there.
      */
-    const split = splitFromFraction(sheet, 0.5);
+    /*
+     * WHERE THE LINE ACTUALLY IS, not down the middle again. The tool put it
+     * there and the person may have dragged it onto the gutter since; cutting
+     * at 0.5 regardless would throw away the placing this button exists to
+     * confirm. The fallback is the middle for the case where there is somehow
+     * no proposal to read.
+     */
+    const split = this.proposal() ?? splitFromFraction(sheet, 0.5);
     const halves = halvesOf(sheet, split);
     // Unreachable for a segment built from a fraction -- both ends are put on
     // opposite edges by construction -- and doing nothing is the only answer
