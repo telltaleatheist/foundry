@@ -76,6 +76,13 @@
   .ask p { margin:0 0 8px; color: var(--text-secondary); font-size:12.5px; }
   .ask p:last-child { margin-bottom:0; }
 
+  .settled { border:1px solid var(--ok); background: var(--ok-soft);
+    border-radius: var(--radius); padding:14px 16px; margin: 16px 0; }
+  .settled h4 { font-size:12.5px; color: var(--ok); margin-bottom:6px; }
+  .settled p { margin:0 0 8px; color: var(--text-secondary); font-size:12.5px; }
+  .settled p:last-child { margin-bottom:0; }
+  .settled em { color: var(--text-primary); font-style:normal; }
+
   /* ---------- the mock window ---------- */
   .window { max-width: 1180px; margin: 24px auto 0; background: var(--bg-base);
     border:1px solid var(--border-default); border-radius: var(--radius-lg);
@@ -365,18 +372,13 @@
       <b>turn</b> and names <b>the other 24</b>; the other says <b>crop</b> and names
       <b>all 25</b>. Neither needs anybody to explain it.</p>
 
-    <div class="ask">
-      <h4>One thing only you can decide</h4>
-      <p>The checkbox is gone. What has to replace it is what “apply to all” does to a page
-        <em>you already fixed by hand</em>, and there are two honest answers:</p>
-      <p><b>A — leave your work alone.</b> Applying to all skips the pages you set yourself and says
-        so afterwards (“left alone: IMG_0212”). Nothing you did by hand is ever overwritten by a
-        press. To redo one, you open it and fix it.</p>
-      <p><b>B — the newest press wins.</b> Applying to all changes every page, including ones you
-        set. Simpler to explain, and it means a global you get right the second time really does
-        reach everything.</p>
-      <p>Today’s behaviour is A with the checkbox as an escape hatch. Say which one “assumed”
-        means and it gets built with no checkbox either way.</p>
+    <div class="settled">
+      <h4>Settled — the checkbox, and what replaced it</h4>
+      <p>Your words: <em>“apply to the ones i did by hand, give me a modal that asks if i want to
+        override hand-picked settings or something.”</em></p>
+      <p>So <b>Apply to all means all</b>, and the question moves to the one moment it is a real
+        question: when there is actually something of yours to overwrite. No hand-placed pages, no
+        modal — see the <b>Overriding your own work</b> tab.</p>
     </div>
 
     <h3>What this mock does not change</h3>
