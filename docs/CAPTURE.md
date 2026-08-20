@@ -1710,6 +1710,54 @@ capture-workflow-sample.html for Owen to rearrange before code
 moves. The checkbox dies either way; which default replaces it is
 Owen's call, deferred out loud until he says.
 
+MEASURED (P1 seq 197, 14 checks on a copy of the live project):
+
+- FINDING 4 VERDICT: NOTHING IN MAIN DISCARDS A TURN. A turn is in
+  the recipe on the press (P2's read, confirmed), survives the
+  validator (which does NOT normalise corner order), lands in the
+  file, changes the minted page's shape (4032x3024 -> 3024x4032),
+  and moves the arrangement. What Owen almost certainly saw: ON THE
+  GRID CARD, A TURN MOVES A DOT OF RADIUS 0.04 AND THE OUTLINE IS
+  IDENTICAL -- the same four points in a new order. The editor's
+  Rectifier panel shows the turn truly; the table shows a full
+  stop. The card's own docblock records this exact class once
+  before ("looked identical to one nobody had touched"), and the
+  dot was the answer -- the answer was too small. SAMPLE SCOPE:
+  the card must make orientation legible (P2 proposes how; Owen
+  arranges).
+- THE MINT-FLUSH DEFECT, RULED IN (defect clause): save() is a
+  400ms debounce and NOTHING flushes it -- no DestroyRef, no
+  onDestroy, no beforeunload, and the timer is only re-armed.
+  mintBegin READS THE RECIPE FROM DISK, so a gesture made under
+  400ms before Mint is pressed is in neither the PDF nor the
+  recorded arrangement -- the two AGREE with each other and the
+  footer stays quiet about a book missing the last thing somebody
+  did. Also the read-over path: switching tabs re-opens from disk
+  over an unsaved gesture. THE FIX: capture.service gains flush()
+  -- write-now, awaited by the mint press BEFORE mintBegin, by tab
+  teardown, and by window close. P2's file; P1 verifies the mint
+  side (a gesture at T-0ms is in the PDF). Lands with Wave 21c,
+  not behind the sample -- data loss does not wait on layout.
+- FINDING 5 ROOT CAUSE: THE PAGE EDITOR IS NEVER TOLD WHICH TOOL
+  IS SELECTED -- its inputs are source, dimensions, quads, split.
+  It draws the same picture for all three tools; the gutter line
+  is null until a split exists; the only visible difference is a
+  small "Split" button in the footer's corner. Owen's sentence
+  was not an impression, it was the state. THE SEED IS THE FIX
+  (ruled): opening the Split tool on an unsplit photograph SEEDS a
+  split down the middle, ready to drag -- the tool looks like what
+  it is from the first frame. P2's surface, rides with the sample.
+- FINDING 2 GREW A THIRD CASE: "Turn all by the same amount"
+  exists only in stage 2 and sits disabled until the current
+  photograph has been turned -- two rules no surface states. The
+  label rework covers all three labels together.
+- POPULATION NOTE, nobody asked: intake writes Owen's camera's
+  photographs ALREADY TURNED -- [[1,0],[1,1],[0,1],[0,0]] is
+  WHOLE_FRAME rotated three quarters, all 25 alike (so they read
+  as stamped, nothing mis-marked). Every whole-frame comparison on
+  his machine meets the TURNED population -- the crop-status false
+  positive P2 caught is the resident case there, not the corner.
+
 ## Deferred out loud
 
 - **Validator page-level refusals name pages by sha** ("page
