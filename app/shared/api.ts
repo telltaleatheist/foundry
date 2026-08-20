@@ -53,6 +53,7 @@ import type {
   SetupRequest,
   SetupResult,
   StepDeletion,
+  StepLedgerView,
   StepRow,
   TranslateRequest,
   TranslationPlan,
@@ -432,7 +433,7 @@ export interface FoundryApi {
      * listed on Home with the reason on its row, and this is the same refusal
      * reaching the same strip.
      */
-    read(projectDir: string): Promise<{ ledger: ProjectLedger; rows: StepRow[] } | null>;
+    read(projectDir: string): Promise<StepLedgerView | null>;
     /**
      * Stand on a different step. Answers with the ledger and rows as they now
      * stand — the same rows, since a pointer move changes no step and no order.
@@ -447,7 +448,7 @@ export interface FoundryApi {
      * different ledgers, and standing somewhere plausible instead would show
      * somebody a book they did not ask for.
      */
-    go(projectDir: string, stepId: string): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
+    go(projectDir: string, stepId: string): Promise<StepLedgerView>;
     /**
      * Stand on whichever step this document belongs to. Answers exactly as `go`
      * does, and answers with the ledger UNCHANGED when the document belongs to no
@@ -480,7 +481,7 @@ export interface FoundryApi {
      * not parse, like everything else here. A path belonging to no step is an
      * ordinary answer, not a refusal.
      */
-    standFor(projectDir: string, filePath: string): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
+    standFor(projectDir: string, filePath: string): Promise<StepLedgerView>;
     /**
      * WHICH DOCUMENT BELONGS ON SCREEN AT THIS PROJECT'S POSITION — absolute, or
      * null when the position names no document of its own.
@@ -560,7 +561,7 @@ export interface FoundryApi {
      * It really deletes. Nothing is rotated aside and there is no copy anywhere
      * else; a payload that survives is one another step still names.
      */
-    delete(projectDir: string, stepId: string): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
+    delete(projectDir: string, stepId: string): Promise<StepLedgerView>;
   };
 
   /**
@@ -644,14 +645,14 @@ export interface FoundryApi {
      * thing is a refusal they can act on, not a sheet quietly redrawn as though
      * nothing had been pressed.
      */
-    apply(projectDir: string, ops: readonly BookOp[]): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
+    apply(projectDir: string, ops: readonly BookOp[]): Promise<StepLedgerView>;
     /**
      * Rewrite the tip edit step's own file to this list — the consolidating
      * Apply. Refuses (rejects) when the position is no longer an amendable tip;
      * the pane shows the sentence and the person presses Apply again, which
      * lands a step of its own. See amendBookOps, electron/book.ts.
      */
-    amend(projectDir: string, ops: readonly BookOp[]): Promise<{ ledger: ProjectLedger; rows: StepRow[] }>;
+    amend(projectDir: string, ops: readonly BookOp[]): Promise<StepLedgerView>;
     /**
      * A finished export in this library's tray, exploded and answered in
      * book:load's own shape, read-only — ops empty, tip null, no translation

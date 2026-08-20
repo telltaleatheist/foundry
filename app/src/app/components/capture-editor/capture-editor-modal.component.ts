@@ -14,6 +14,7 @@ import type { CaptureQuad, CaptureSplit } from '@shared/types';
 
 import { CapturePageEditorComponent } from './capture-page-editor.component';
 import { type Dimensions, type FractionQuad, rotate } from './geometry';
+import type { PrepareVerb } from '../capture-rail/capture-rail.component';
 import type { ApplyToAll } from '../../core/capture.service';
 
 /**
@@ -77,6 +78,47 @@ import type { ApplyToAll } from '../../core/capture.service';
           (click)="step.emit(1)"
         >›</button>
         <span class="grow"></span>
+
+        <!--
+          THE TOOLS, WHICH ARE THE RAIL'S THREE VERBS SPELLED SHORTER.
+
+          They select what the FOOTER offers, and nothing else. The corners and
+          the gutter stay draggable in every tool, which is deliberate: direct
+          manipulation is how this editor is used, and a tool that hid the
+          handles would make the picture a picture. What the tools do is decide
+          which gestures are in front of you -- turning, or cutting -- so that
+          "Split spreads" from the rail lands on the button that splits rather
+          than on a footer where it is one of five.
+
+          ONE VOCABULARY WITH THE RAIL, not a second one that has to be mapped:
+          these are the keys of CapturePrepared. A tool called Crop and a verb
+          called cropped that had to be translated between would be two names
+          for one thing, which is the shape this feature has paid for.
+        -->
+        <div class="tools" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            [attr.aria-selected]="using() === 'turned'"
+            [class.on]="using() === 'turned'"
+            (click)="using.set('turned')"
+          >Turn</button>
+          <button
+            type="button"
+            role="tab"
+            [attr.aria-selected]="using() === 'cropped'"
+            [class.on]="using() === 'cropped'"
+            (click)="using.set('cropped')"
+          >Crop</button>
+          <button
+            type="button"
+            role="tab"
+            [attr.aria-selected]="using() === 'split'"
+            [class.on]="using() === 'split'"
+            (click)="using.set('split')"
+          >Split</button>
+        </div>
+
         <button class="shut" type="button" title="Back to the table (Escape)" (click)="close.emit()">✕</button>
       </header>
 
@@ -98,12 +140,20 @@ import type { ApplyToAll } from '../../core/capture.service';
           doing, then what you are finishing with.
         -->
         <div class="gestures">
-          <button type="button" title="Turn this page anticlockwise" (click)="turn(-1)">⟲</button>
-          <button type="button" title="Turn this page clockwise" (click)="turn(1)">⟳</button>
-          @if (quads().length === 1) {
+          @if (using() === 'turned') {
+            <button type="button" title="Turn this page anticlockwise" (click)="turn(-1)">⟲</button>
+            <button type="button" title="Turn this page clockwise" (click)="turn(1)">⟳</button>
+          }
+          @if (using() === 'split' && quads().length === 1) {
             <button type="button" (click)="splitInTwo()">Split</button>
           }
-          @if (showing() === 2) {
+          @if (using() === 'cropped') {
+            <!-- The crop's gesture is the corners themselves, which are always
+                 live. Saying so beats an empty row that reads as a control that
+                 failed to draw. -->
+            <span class="says">Drag the corners onto the page.</span>
+          }
+          @if (using() === 'turned' && showing() === 2) {
             <!--
               KEPT IN STAGE 2 ONLY, ruled at channel seq 129: it is the single
               act that changes every page WITHOUT overwriting hand-set crops,
@@ -256,6 +306,28 @@ import type { ApplyToAll } from '../../core/capture.service';
        control, not an announcement about the room. */
     .says { font-size: 11px; color: var(--text-tertiary); }
 
+    /* A segmented control, which is what three exclusive tools are. It sits in
+       the head rather than the footer because it says WHAT YOU ARE DOING, and
+       the footer is what you are finishing with -- the same split the gestures
+       and the acts already make down there. */
+    .tools {
+      display: flex; gap: 4px;
+      padding: 3px;
+      background: var(--bg-sunken);
+      border: 1px solid var(--border-subtle, #2a2824);
+      border-radius: var(--radius-md, 6px);
+    }
+    .tools button {
+      border: none; background: none;
+      color: var(--text-secondary);
+      font: inherit; font-size: 12px;
+      padding: 4px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .tools button:hover { color: var(--text-primary); }
+    .tools button.on { background: var(--accent-soft); color: var(--accent); }
+
     /* Beside the button it changes, in the tick-box voice confirm-dialog
        already uses for a statement about an act rather than an act of its own. */
     .override {
@@ -324,6 +396,29 @@ export class CaptureEditorModalComponent {
    * per-page work, reopened onto the button that stamps over all of it.
    */
   readonly stage = input.required<1 | 2>();
+
+  /**
+   * WHICH TOOL THIS OPENED ON — the rail's verb, arriving as an input.
+   *
+   * The rail's three rows each open this same room, and the row is the only
+   * thing that knows which one was pressed. It is an input rather than a
+   * parameter because the modal outlives the press: walking to the next
+   * photograph keeps the tool, which is what somebody splitting twenty-five
+   * spreads wants and what re-deriving it per photograph would take away.
+   */
+  readonly tool = input<PrepareVerb>('cropped');
+
+  /**
+   * The tool actually in front of you, which starts as the one the rail asked
+   * for and then belongs to the person.
+   *
+   * AN EFFECT AND NOT A COMPUTED, for the reason the stage flag next door
+   * carries: a computed cannot be written to, and this must be, or pressing
+   * Crop inside the editor would be undone on the next change detection by the
+   * input that opened it. The effect re-seats it when the RAIL asks again --
+   * opening "Split spreads" after working in Crop lands on Split.
+   */
+  protected readonly using = signal<PrepareVerb>('cropped');
 
   readonly hasPrevious = input.required<boolean>();
   readonly hasNext = input.required<boolean>();
@@ -420,6 +515,19 @@ export class CaptureEditorModalComponent {
     effect(() => {
       void this.source();
       this.turnsApplied.set(0);
+    });
+
+    /*
+     * THE RAIL ASKING AGAIN RE-SEATS THE TOOL, and pressing a tool in here does
+     * not. Both halves matter: opening "Split spreads" has to land on Split even
+     * if the last thing somebody did in this modal was crop, and switching to
+     * Crop inside the modal has to survive walking to the next photograph.
+     *
+     * Reading only `tool` is what keeps those apart -- the effect re-runs when
+     * the RAIL's answer changes, not when `using` does.
+     */
+    effect(() => {
+      this.using.set(this.tool());
     });
   }
 

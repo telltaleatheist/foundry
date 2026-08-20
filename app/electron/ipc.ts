@@ -113,6 +113,7 @@ import type {
   JobRequest,
   MetadataPatch,
   MetadataWriteOutcome,
+  StepLedgerView,
   ProjectDocument,
   ProjectFacsimile,
   ProjectFinal,
@@ -1404,7 +1405,7 @@ export function registerIpc(): void {
     inside: string,
     kind: MetadataPatch['kind'],
     patch: Record<string, string | undefined>,
-  ): Promise<{ ledger: ProjectLedger; rows: StepRow[] } | undefined> => {
+  ): Promise<StepLedgerView | undefined> => {
     const fields: Record<string, string> = {};
     for (const [field, value] of Object.entries(patch)) {
       if (typeof value !== 'string' || value.trim().length === 0) continue;

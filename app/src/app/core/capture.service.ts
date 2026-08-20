@@ -4,12 +4,13 @@ import type {
   CaptureIntaken,
   CaptureIntakeProgress,
   CapturePhoto,
+  CapturePrepared,
   CaptureQuad,
   CaptureRecipe,
   CaptureSplit,
 } from '@shared/types';
 
-import { halvesOf, joinedQuad, sameShape, WHOLE_FRAME } from '@shared/capture';
+import { arrangementOf, halvesOf, joinedQuad, sameShape, WHOLE_FRAME } from '@shared/capture';
 
 import { rotate } from '../components/capture-editor/geometry';
 import type { CaptureCard } from '../components/capture-grid/capture-grid.component';
@@ -215,6 +216,7 @@ export class CaptureService {
       const opened = await api.capture.recipeLoad(projectDir);
       this.directory.set(projectDir);
       this.door.set(opened.token);
+      this.mintedFrom.set(opened.mintedFrom);
       this.current.set(opened.recipe);
     } catch (err) {
       this.complain(err);
@@ -408,6 +410,164 @@ export class CaptureService {
       && photo.pages.length === 1
       && photo.pages.every((page) => page.byHand !== true && isWholeFrame(page.quad)));
     return untouched ? 1 : 2;
+  });
+
+  /**
+   * WHAT THE PREPARE RAIL SAYS ABOUT THE BOOK — facts, counted, never judged.
+   *
+   * The rail's three rows each carry a live status beside a tick. The tick is
+   * the PERSON speaking and these numbers are the derivation, and the two are
+   * kept apart on purpose: THE DERIVATION NEVER CLEARS A TICK. Nothing here
+   * decides whether a step is finished, because two of the three cannot be
+   * known and the third would still be answering a question nobody asked.
+   *
+   * ── There is no "turned" count here, and that is a ruling ──────────────────
+   *
+   * A turn is a CYCLIC PERMUTATION of a quad's corners (geometry.ts rotate);
+   * no orientation is stored anywhere, so "upright" is not merely unrecorded,
+   * it is unstatable. A count of turns PERFORMED is derivable -- only rotate
+   * moves which corner is corner 0, and halvesOf preserves the roles -- and it
+   * was proposed and WITHDRAWN, because a count needs a denominator and a
+   * denominator asserts a target. On this shoot the correct final state is
+   * twenty-five sideways spreads turned and at least two photographs NOT
+   * turned: the framed letters are landscape and the magazine advertisement is
+   * portrait, and neither wants a turn. "25 of 27 turned" would read as two
+   * left to do, and the rail would spend the project quietly asking him to
+   * break two pages that are already right. A progress count without a true
+   * denominator is a lie with a number in it.
+   */
+  readonly prepare = computed<PrepareCounts>(() => {
+    const recipe = this.current();
+    if (recipe === null) return { photos: 0, cropped: 0, byHand: 0, split: 0, pagesFromSplits: 0 };
+    let cropped = 0;
+    let byHand = 0;
+    let split = 0;
+    let pagesFromSplits = 0;
+    for (const photo of recipe.photos) {
+      /*
+       * THE SHEET, NOT THE PAGES. Two false positives live in the obvious
+       * version of this test, and Owen walks straight into both:
+       *
+       * A SPLIT photograph has no half that is the whole frame -- halvesOf cuts
+       * it in two -- so a spread split down the middle and never cropped would
+       * count as cropped. joinedQuad reassembles the sheet the halves came
+       * from, which is the thing the question is actually about.
+       *
+       * A TURNED photograph fails an exact whole-frame test as well, because a
+       * turn permutes the corners. He turns twenty-five sideways spreads before
+       * he places a single corner, so the rail would have told him "25 cropped"
+       * the moment he finished turning.
+       */
+      const sheet = joinedQuad(photo.pages.map((page) => page.quad), photo.split);
+      if (!isWholeFrameTurned(sheet)) cropped += 1;
+      if (photo.pages.some((page) => page.byHand === true)) byHand += 1;
+      if (photo.split !== null) {
+        split += 1;
+        pagesFromSplits += photo.pages.length;
+      }
+    }
+    return { photos: recipe.photos.length, cropped, byHand, split, pagesFromSplits };
+  });
+
+  /**
+   * WHAT THE BOOK ON THE SHELF WAS MINTED FROM — main's answer, not ours.
+   *
+   * A fingerprint of the arrangement the current book was made from, or null.
+   * Main resolves WHICH book that is by walking the catalogue's pdf chain from
+   * the tip down to the nearest step that recorded one, and this is simply
+   * carried: the renderer computes the LIVE side and never the stored one, so
+   * there is one answer to "which book is a person looking at" rather than two
+   * that can disagree.
+   */
+  private readonly mintedFrom = signal<string | null>(null);
+
+  /**
+   * THE BOOK ON THE SHELF WAS MINTED FROM AN EARLIER ARRANGEMENT.
+   *
+   * False whenever there is nothing to say: no recipe, and -- ruled -- no
+   * stored arrangement at all. Absent means SILENCE, which covers three true
+   * cases at once (no book, a mint from before the field existed, a book this
+   * app did not mint), and either claim in that state would be a false sentence
+   * from one direction or the other.
+   *
+   * THE LIVE SIDE IS COMPUTED FROM THE SAME BODY MAIN MINTS WITH.
+   * `arrangementOf` lives in shared/ and `mintBegin` calls the same page plan,
+   * so the fingerprint cannot drift from the thing it describes: if the two ever
+   * disagree the mint is wrong, not this sentence.
+   *
+   * AND IT IS A HASH OF THE MINT INPUT, NOT OF THE RECIPE FILE, which is what
+   * keeps this surface honest about the feature it sits inside. The ticks and
+   * the hand-set marks live in the recipe and the mint never reads them -- so a
+   * file hash would light this sentence the moment somebody ticked "Turn
+   * pages", answering a person who had just said "yes, I turned them" with
+   * "the book on the shelf is out of date".
+   */
+  readonly diverged = computed<boolean>(() => {
+    const recipe = this.current();
+    const minted = this.mintedFrom();
+    if (recipe === null || minted === null) return false;
+    return arrangementOf(recipe) !== minted;
+  });
+
+  /**
+   * After a mint: the shelf moved, so re-read what it was minted from.
+   *
+   * ONLY THAT. It would be one line shorter to re-open the project, and that
+   * would replace the recipe this window is holding with the one on disk --
+   * which is the same bytes today and would not be the day somebody adjusts a
+   * corner while the mint is still running. The sentence is worth a round trip;
+   * it is not worth reaching into the work.
+   *
+   * A failure leaves the old answer standing rather than clearing it: a stale
+   * true sentence is better than a false silence, and the next open corrects it.
+   */
+  async refreshMintedFrom(): Promise<void> {
+    const directory = this.directory();
+    if (api === null || directory === null) return;
+    try {
+      this.mintedFrom.set((await api.capture.recipeLoad(directory)).mintedFrom);
+    } catch {
+      // Deliberately quiet: nothing a person did failed, and the mint that just
+      // landed has already spoken for itself.
+    }
+  }
+
+  /** Whether the person has ticked one of the rail's three verbs. */
+  ticked(verb: keyof CapturePrepared): boolean {
+    return this.current()?.prepared?.[verb] === true;
+  }
+
+  /**
+   * The person saying they have looked, or taking it back.
+   *
+   * IT WRITES A BOOLEAN AND LEAVES THE TIDYING TO MAIN. The validator drops
+   * unticked verbs rather than storing false, and removes the key entirely once
+   * none are set, so the file says what was answered and stays silent about the
+   * rest. Repeating that rule here would be a second implementation of it, free
+   * to drift the day a fourth verb exists; both readings answer through
+   * `=== true`, so an in-memory false and an absent field are the same answer
+   * to every caller.
+   */
+  tick(verb: keyof CapturePrepared): void {
+    this.change((recipe) => ({
+      ...recipe,
+      prepared: { ...recipe.prepared, [verb]: recipe.prepared?.[verb] !== true },
+    }));
+  }
+
+  /**
+   * THE MINT GATE: every verb ticked, and not one of them derived.
+   *
+   * Tonight is the argument for it -- he minted before turning because the
+   * surface offered the last act first. It applies to projects that already
+   * exist, which was decided rather than discovered: a gate that exempted
+   * existing projects would exempt exactly the project it was built for.
+   */
+  readonly readyToMint = computed<boolean>(() => {
+    const prepared = this.current()?.prepared;
+    return prepared?.turned === true
+      && prepared.cropped === true
+      && prepared.split === true;
   });
 
   /**
@@ -811,6 +971,20 @@ export interface ApplyOutcome {
   skipped: number;
 }
 
+/** What the prepare rail counts. Facts about the recipe, said in numbers. */
+export interface PrepareCounts {
+  /** Photographs on the table, struck included -- the rail counts pictures. */
+  photos: number;
+  /** Photographs whose SHEET has been moved off the whole frame. */
+  cropped: number;
+  /** Photographs carrying a hand-set page, which the stamp will not overwrite. */
+  byHand: number;
+  /** Photographs cut into pages. */
+  split: number;
+  /** The pages those cuts produced, which is what makes the count worth saying. */
+  pagesFromSplits: number;
+}
+
 export type ApplyToAll =
   /**
    * Quarter turns, so every photo gets the TURN rather than this photo's
@@ -843,6 +1017,25 @@ const WHOLE: CaptureQuad = [[0, 0], [1, 0], [1, 1], [0, 1]];
  * A tolerance here would be inventing a question about numbers that were
  * copied rather than computed, and its answer would drift with the tolerance.
  */
+/**
+   * Whether a quad is the whole photograph UP TO A TURN.
+   *
+   * Still exact, for `isWholeFrame`'s own reason: intake WROTE those numbers and
+   * a turn only reorders them, so nothing here is a computation that landed
+   * near a value and no tolerance is being invented.
+   *
+   * NOT A REPLACEMENT FOR `isWholeFrame`, which `stage` is right to use as it
+   * stands: a turn IS something a person did, so a turned project is not virgin
+   * and should open where they left off. Same shape, two different questions --
+   * written down so the next reader does not fix one into the other.
+   */
+function isWholeFrameTurned(quad: CaptureQuad): boolean {
+  for (let turns = 0; turns < 4; turns += 1) {
+    if (isWholeFrame(rotate(quad, turns) as CaptureQuad)) return true;
+  }
+  return false;
+}
+
 function isWholeFrame(quad: CaptureQuad): boolean {
   return quad.every((corner, index) =>
     corner[0] === WHOLE_FRAME[index]![0] && corner[1] === WHOLE_FRAME[index]![1]);

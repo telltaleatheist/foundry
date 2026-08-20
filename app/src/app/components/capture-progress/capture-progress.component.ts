@@ -77,7 +77,24 @@ import { CaptureService } from '../../core/capture.service';
     }
   `,
   styles: [`
-    :host { position: fixed; inset: 0; z-index: 1250; display: block; pointer-events: none; }
+    /*
+     * CENTERED ON THE WINDOW, both axes (Owen, Wave 21b). It used to hang 64px
+     * from the top, which is where a toast lives rather than where a modal does
+     * -- and this one holds the window for a minute while twenty-seven
+     * photographs are decoded, so it is the most-looked-at surface in the
+     * feature and it sat off-centre under the eye the whole time.
+     *
+     * A grid rather than a flex column because the SCRIM is a sibling: it is
+     * absolutely positioned, so it leaves the flow entirely and place-items
+     * has exactly one child to centre. Nothing here needs to know the card's
+     * height, which is the property that made margin-64px-auto-0 wrong in
+     * the first place -- a fixed offset is a guess about a size.
+     */
+    :host {
+      position: fixed; inset: 0; z-index: 1250;
+      display: grid; place-items: center;
+      pointer-events: none;
+    }
 
     .scrim {
       position: absolute; inset: 0;
@@ -90,7 +107,6 @@ import { CaptureService } from '../../core/capture.service';
       position: relative;
       pointer-events: auto;
       width: min(420px, calc(100vw - 48px));
-      margin: 64px auto 0;
       display: flex; flex-direction: column;
       background: var(--bg-elevated);
       border: 1px solid var(--border-default);

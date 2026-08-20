@@ -2321,7 +2321,7 @@ export type MetadataWriteOutcome =
   | {
     ok: true;
     metadata: DocumentMetadata;
-    landed?: { ledger: ProjectLedger; rows: StepRow[] };
+    landed?: StepLedgerView;
   }
   | { ok: false; reason: string };
 
@@ -2818,6 +2818,35 @@ export interface ProjectLedger {
  * that was worked straight through draws as a plain list with no annotations at
  * all, and the one book where somebody branched shows exactly where.
  */
+/**
+ * ONE PROJECT'S HISTORY AS IT CROSSES THE BRIDGE — the ledger, the rows main
+ * composed for it, and which step the book on the shelf came from.
+ *
+ * ── Why this is a name and was seven literals ───────────────────────────────
+ *
+ * Six doors in `api.ts` and `MetadataWriteOutcome.landed` each spelled
+ * `{ ledger, rows }` out in full. That was harmless while the shape had two
+ * fields and main's own `LedgerView` had the same two -- and it stopped being
+ * harmless the moment main grew a third: every one of those seven declarations
+ * went on describing a two-field object, so `current` crossed the wire on every
+ * call and was INVISIBLE to the renderer, which could not read a field its own
+ * types said was not there.
+ *
+ * Seven spellings of one shape do not disagree until somebody changes the
+ * shape, which is exactly when they all do at once.
+ *
+ * `current` IS REQUIRED, following main's ruling for the same field: every call
+ * that answers with a view answers after DOING something, and a delete is
+ * precisely the gesture that moves it. Optional would have meant "set on the
+ * read path and quietly missing from the mutation that changed it".
+ */
+export interface StepLedgerView {
+  ledger: ProjectLedger;
+  rows: StepRow[];
+  /** The step the book on the shelf was minted from, or null for no book. */
+  current: string | null;
+}
+
 export interface StepRow {
   step: LedgerStep;
   /** The parent's label, when the chain jumps. Null when it does not. */

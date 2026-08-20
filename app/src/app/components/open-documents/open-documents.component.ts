@@ -540,6 +540,20 @@ import { ActionMenuComponent } from '../action-menu/action-menu.component';
               </div>
               <!-- WHEN, or what the host says about it: the same slot, because
                    both answer "where is this up to". -->
+              <!--
+                WHICH ROW IS THE BOOK YOU HAVE NOW.
+
+                Two mints produce two rows that both read "The pages you
+                minted", and that label is RIGHT -- it says what the act did and
+                stays true forever, which is the property a stored label should
+                have. What it cannot say is which one Home opens, because that
+                stops being true the moment the next mint lands. So the label
+                stays and the standing among siblings is derived here, at render,
+                from main's answer.
+              -->
+              @if (row.onTheShelf) {
+                <span class="shelf" title="This is the book this project opens">on the shelf</span>
+              }
               @if (row.state !== null) {
                 <span class="state">{{ row.state }}</span>
               }
@@ -1061,6 +1075,20 @@ import { ActionMenuComponent } from '../action-menu/action-menu.component';
       anything. It is NOT the same statement the ring below makes — see the
       class docblock on standing against selected.
     */
+    /* Quiet, and a word rather than a dot: a dot would need a legend, and this
+       appears beside rows whose own names are identical -- the one place in this
+       list where a reader is actively asking which is which. */
+    .shelf {
+      flex: 0 0 auto;
+      align-self: center;
+      padding: 1px 7px;
+      border-radius: 99px;
+      background: var(--ok-soft);
+      color: var(--ok);
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
     .card.standing { background: var(--accent-faint); }
     .card.standing .name { color: var(--accent); }
 
@@ -1484,6 +1512,10 @@ export class OpenDocumentsComponent {
       const history = this.ledger.historyFor(project.dir);
       const problem = this.ledger.problemFor(project.dir);
       const standing = this.ledger.standingIn(project.dir)?.id ?? null;
+      // Which step the book on the shelf was minted from -- main's one
+      // resolution, read and never re-derived. Null for every project that has
+      // no book, which is every project that is not a capture project today.
+      const shelf = history?.current ?? null;
 
       /*
        * WHETHER THERE IS A BOOK IN THIS PROJECT AT ALL, asked once per book and
@@ -1998,6 +2030,7 @@ export class OpenDocumentsComponent {
             step,
             produces: hasBook && (arrivedAsBook || step.action !== 'import') ? 'book' : null,
             current: step.id === standing,
+            onTheShelf: step.id === shelf,
             stale: step.stale === true,
             expanded: under.length + jobs.length === 0 ? null : shown,
           });
@@ -3045,6 +3078,18 @@ interface Row {
   produces: NodeOutput | null;
   /** True on the one card the book is standing on. */
   current: boolean;
+  /**
+   * True on the one step the BOOK ON THE SHELF was made from.
+   *
+   * NOT `current`, which is one card away in this same interface and means
+   * something else entirely: `current` is where the PERSON is standing, this is
+   * which mint Home opens. They are usually the same row and they come apart
+   * exactly when it matters -- after a second mint, or after deleting one --
+   * which is the whole reason this exists. Two things sharing a name is the
+   * defect this feature has paid for four times; two things with different
+   * names, next to each other, is the cheap version of not paying again.
+   */
+  onTheShelf: boolean;
   /** True for a step made from something that has been replaced since. */
   stale: boolean;
   /** True for a node that has not happened yet: dashed line, hollow dot. */
@@ -3111,6 +3156,7 @@ const blank = {
   depth: 0,
   dir: null,
   current: false,
+  onTheShelf: false,
   stale: false,
   planned: false,
   expanded: null,
