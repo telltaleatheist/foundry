@@ -981,6 +981,36 @@ but batched inference reorders floating-point reductions, and *in
 principle* is the phrase that has cost this wave twice. If either answer is
 no, the two-read version stands.
 
+**The determinism half is answered, and the answer is a distinction (P2,
+from the file that builds the request).** `endpoint.ts` sends the whole of
+what varies per page: model, `temperature: 0`, `max_tokens`. No seed, no
+`top_p`, no penalties. **So the client ASKS for a deterministic decode and
+sends nothing that could drift — and cannot promise the server delivers
+it.** vLLM batches continuously and batched kernels are not associative in
+floating point, so two reads of one page can differ by a token even at
+temperature 0 depending on what else shared the batch. Not measured here,
+not claimed to happen: only that *temperature 0 is a request and not a
+guarantee, and the bank cannot tell you which you got.*
+
+**Why it does not threaten this comparison:** the experiment compares
+REFUSAL LISTS, not text. Whether a page runs away is a **gross** behaviour,
+not a token-level one — a page that wandered to 8,192 is not plausibly
+going to stop at 900 because a batch was composed differently. Where it
+*would* matter is the retry count, since a page near the boundary could
+fall either side; **Michelle's nearest miss is 1.52× against a factor of
+2**, which is not near, so the pre-registered zero is safe from it.
+
+**And the settings half is the half that can be checked at all.** "The bank
+is a valid control" is a claim about the server as much as about the
+request; the model/endpoint/`maxPixels` half is answerable from what the
+bank records, and **nobody can answer the batching half from a bank.**
+
+**If the one-run economy holds it doubles the value of §12b's two exact
+signals:** with no second arm, the refusal SENTENCE and the BANKED TOKEN
+COUNT are the *only* evidence that the narrowed number reached the server
+and was honoured — because the list comparison alone cannot see an inert
+feature.
+
 ### 11a. The ledger entries this wave bought
 
 **Eleventh** — a model of a declarative system checks the computation and
