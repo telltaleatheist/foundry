@@ -135,6 +135,8 @@ const ACKNOWLEDGED_FOR_MS = 1600;
           [tool]="tool()"
           [hasPrevious]="walkIndex() > 0"
           [hasNext]="walkIndex() < walk().length - 1"
+          [name]="photo.name"
+          [reach]="reach()"
           [handSet]="handSet()"
           [outOfTurn]="outOfTurn()"
           [handSetHere]="photo.handSet"
@@ -321,6 +323,7 @@ export class CaptureViewComponent {
     return {
       id: photo.id,
       label: `Photograph ${at + 1} of ${this.walk().length} · ${pages}`,
+      name: photo.name ?? null,
       workingCopy: photo.workingCopy,
       dimensions: { width: photo.width, height: photo.height },
       quads: photo.pages.map((page) => page.quad) as readonly FractionQuad[],
@@ -382,6 +385,12 @@ export class CaptureViewComponent {
   protected readonly outOfTurn = computed<number>(() => {
     const id = this.open();
     return id === null ? 0 : this.captures.outOfTurnWith(id);
+  });
+
+  /** How many photographs the crop and split acts would reach, for the open one. */
+  protected readonly reach = computed<number>(() => {
+    const id = this.open();
+    return id === null ? 0 : this.captures.stampReach(id);
   });
 
   protected readonly mintable = computed(() => {

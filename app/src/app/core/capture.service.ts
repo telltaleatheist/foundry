@@ -623,6 +623,25 @@ export class CaptureService {
       && photo.pages.some((page) => turnsOf(page.quad) !== facing)).length;
   }
 
+  /**
+   * HOW MANY PHOTOGRAPHS WOULD END UP WITH THIS CONFIGURATION -- the number the
+   * crop and split acts carry.
+   *
+   * The source counts, because it already has it: "use this crop on all 25"
+   * describes the state the press leaves the book in, and the source is one of
+   * the twenty-five. What is NOT counted is a photograph of another shape,
+   * which the stamp refuses and names -- the trio's rule, that a count on a
+   * button is what the button does and not what the book contains.
+   */
+  stampReach(photoId: string): number {
+    const recipe = this.current();
+    if (recipe === null) return 0;
+    const source = recipe.photos.find((photo) => photo.id === photoId);
+    if (source === undefined) return 0;
+    return recipe.photos.filter((photo) =>
+      photo.id === source.id || sameShape(source, photo)).length;
+  }
+
   /** Whether the person has ticked one of the rail's three verbs. */
   ticked(verb: keyof CapturePrepared): boolean {
     return this.current()?.prepared?.[verb] === true;

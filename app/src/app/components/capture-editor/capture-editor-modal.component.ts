@@ -61,68 +61,9 @@ import type { ApplyToAll } from '../../core/capture.service';
     <div class="scrim" (click)="close.emit()"></div>
 
     <div class="card" role="dialog" aria-modal="true">
-      <header class="head">
-        <button
-          class="walk"
-          type="button"
-          [disabled]="!hasPrevious()"
-          title="Previous photograph (left arrow)"
-          (click)="step.emit(-1)"
-        >‹</button>
-        <span class="which">{{ label() }}</span>
-        <button
-          class="walk"
-          type="button"
-          [disabled]="!hasNext()"
-          title="Next photograph (right arrow)"
-          (click)="step.emit(1)"
-        >›</button>
-        <span class="grow"></span>
+      <button class="shut" type="button" title="Back to the table (Escape)" (click)="close.emit()">✕</button>
 
-        <!--
-          THE TOOLS, WHICH ARE THE RAIL'S THREE VERBS SPELLED SHORTER.
-
-          They select what the FOOTER offers, and nothing else. The corners and
-          the gutter stay draggable in every tool, which is deliberate: direct
-          manipulation is how this editor is used, and a tool that hid the
-          handles would make the picture a picture. What the tools do is decide
-          which gestures are in front of you -- turning, or cutting -- so that
-          "Split spreads" from the rail lands on the button that splits rather
-          than on a footer where it is one of five.
-
-          ONE VOCABULARY WITH THE RAIL, not a second one that has to be mapped:
-          these are the keys of CapturePrepared. A tool called Crop and a verb
-          called cropped that had to be translated between would be two names
-          for one thing, which is the shape this feature has paid for.
-        -->
-        <div class="tools" role="tablist">
-          <button
-            type="button"
-            role="tab"
-            [attr.aria-selected]="using() === 'turned'"
-            [class.on]="using() === 'turned'"
-            (click)="using.set('turned')"
-          >Turn</button>
-          <button
-            type="button"
-            role="tab"
-            [attr.aria-selected]="using() === 'cropped'"
-            [class.on]="using() === 'cropped'"
-            (click)="using.set('cropped')"
-          >Crop</button>
-          <button
-            type="button"
-            role="tab"
-            [attr.aria-selected]="using() === 'split'"
-            [class.on]="using() === 'split'"
-            (click)="using.set('split')"
-          >Split</button>
-        </div>
-
-        <button class="shut" type="button" title="Back to the table (Escape)" (click)="close.emit()">✕</button>
-      </header>
-
-      <div class="body">
+      <div class="stage">
         <app-capture-page-editor
           [source]="source()"
           [dimensions]="dimensions()"
@@ -133,45 +74,111 @@ import type { ApplyToAll } from '../../core/capture.service';
         />
       </div>
 
-      <footer class="foot">
-        <!--
-          THE GESTURES ARE ON THE LEFT AND THE ACTS ARE ON THE RIGHT, which is
-          the arrangement every dialog in this app already uses: what you are
-          doing, then what you are finishing with.
-        -->
-        <div class="gestures">
-          @if (using() === 'turned') {
-            <button type="button" title="Turn this page anticlockwise" (click)="turn(-1)">⟲</button>
-            <button type="button" title="Turn this page clockwise" (click)="turn(1)">⟳</button>
-          }
-          @if (using() === 'split' && quads().length === 1) {
-            <button type="button" (click)="splitInTwo()">Split</button>
-          }
-          @if (using() === 'cropped') {
-            <!-- The crop's gesture is the corners themselves, which are always
-                 live. Saying so beats an empty row that reads as a control that
-                 failed to draw. -->
-            <span class="says">Drag the corners onto the page.</span>
-          }
-          @if (using() === 'turned') {
-            <!--
-              THE ONLY WAY TO TURN A BOOK IN BULK, and it is present in every
-              stage now.
+      <!--
+        ONE COLUMN, IN THE ORDER THE WORK HAPPENS, and it replaces a perimeter.
 
-              It used to be kept out of stage 1 on the argument that the stamp
-              carried the turn there for free -- the corner order IS the
-              orientation, so copying a quad copied the turn. That was true and
-              it stopped being true: a stamp now copies the crop and KEEPS each
-              photograph's own turn (Owen's ruling), so nothing else in the app
-              changes orientation in bulk. A control that was redundant is now
-              the only one there is.
+        Owen: "the buttons are all on the other side of the app from each other."
+        They were: walking in the header, the tools in the header, the gestures
+        in the footer's left corner and the acts in its right. Four groups on
+        three edges of a window whose middle is a photograph.
 
-              And it no longer counts presses. It names how many photographs
-              would actually move and is unavailable only when the answer is
-              none -- saying so, rather than going grey and leaving somebody to
-              work out which of three rules is holding it.
-            -->
+        Now: who you are looking at and how to move, then what you are doing,
+        then what that tool does to THIS photograph, then what it does to the
+        BOOK. Nothing is left on any edge.
+      -->
+      <aside class="cluster">
+        <div class="who">
+          @if (name(); as called) {
+            <div class="name">{{ called }}</div>
+          }
+          <div class="pos">{{ label() }}</div>
+          <div class="walk">
             <button
+              type="button"
+              [disabled]="!hasPrevious()"
+              title="Previous photograph (left arrow)"
+              (click)="step.emit(-1)"
+            >← Back</button>
+            <button
+              type="button"
+              [disabled]="!hasNext()"
+              title="Next photograph (right arrow)"
+              (click)="step.emit(1)"
+            >Next →</button>
+          </div>
+        </div>
+
+        <div class="toolrow">
+          <div class="cap">What you are doing</div>
+          <!--
+            ONE VOCABULARY WITH THE RAIL, not a second one that has to be
+            mapped: these are the keys of CapturePrepared. A tool called Crop
+            and a verb called cropped with a translation between them would be
+            two names for one thing.
+          -->
+          <div class="tools" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              [attr.aria-selected]="using() === 'turned'"
+              [class.on]="using() === 'turned'"
+              (click)="using.set('turned')"
+            >Turn</button>
+            <button
+              type="button"
+              role="tab"
+              [attr.aria-selected]="using() === 'cropped'"
+              [class.on]="using() === 'cropped'"
+              (click)="using.set('cropped')"
+            >Crop</button>
+            <button
+              type="button"
+              role="tab"
+              [attr.aria-selected]="using() === 'split'"
+              [class.on]="using() === 'split'"
+              (click)="using.set('split')"
+            >Split</button>
+          </div>
+        </div>
+
+        <!-- WHAT THIS TOOL DOES TO THE PHOTOGRAPH IN FRONT OF YOU. The corners
+             and the gutter stay draggable in every tool -- direct manipulation
+             is how this editor is used, and a tool that hid the handles would
+             turn the photograph into a picture. -->
+        <div class="does">
+          @if (using() === 'turned') {
+            <div class="turnpair">
+              <button type="button" title="Turn this photograph anticlockwise" (click)="turn(-1)">⟲</button>
+              <button type="button" title="Turn this photograph clockwise" (click)="turn(1)">⟳</button>
+            </div>
+            <p class="says">Turns this photograph only.</p>
+          } @else if (using() === 'cropped') {
+            <p class="says">Drag the four corners onto the page.</p>
+          } @else {
+            <p class="says">Drag either end of the line onto the gutter, then cut.</p>
+            @if (quads().length === 1) {
+              <button class="btn quiet" type="button" (click)="splitInTwo()">
+                Cut this spread into two pages
+              </button>
+            }
+          }
+        </div>
+
+        <div class="acts">
+          <div class="cap">When this one looks right</div>
+
+          <!--
+            EACH TOOL OWNS ITS OWN ACT, and the act is always about the whole
+            book. Turn's act turns, Crop's act crops, Split's act cuts.
+
+            This is the design pass's structural change and it answers the
+            second finding directly: two buttons a person could not tell apart
+            are never on screen together any more, because only one of them
+            belongs to the tool in hand.
+          -->
+          @if (using() === 'turned') {
+            <button
+              class="btn primary"
               type="button"
               [class.applied]="justApplied() === 'turn'"
               [disabled]="outOfTurn() === 0"
@@ -180,73 +187,54 @@ import type { ApplyToAll } from '../../core/capture.service';
                 : 'Turn the rest of the book to match the one you are looking at'"
               (click)="applyToAll.emit({ kind: 'turn' })"
             >{{ turnAllSays() }}</button>
+          } @else {
+            <button
+              class="btn primary"
+              type="button"
+              [class.applied]="justApplied() === 'stamp'"
+              [title]="using() === 'split'
+                ? 'Cut every photograph of this shape where this one is cut'
+                : 'Give every photograph of this shape the crop you have placed here'"
+              (click)="applyToAll.emit({ kind: 'stamp', includeHandSet: includeHandSet() })"
+            >{{ stampSays() }}</button>
+          }
+
+          @if (showing() === 1) {
+            <p class="says">
+              They were all shot the same way, so setting one sets them all. You can fix
+              the odd ones afterwards.
+            </p>
+          } @else {
+            <!--
+              PER-PAGE, AND IT MOVES NO CORNER. The corners were saved as they
+              were dragged, so what is left for this button is the part that was
+              never expressible before: this setting was chosen FOR THIS PAGE,
+              and the next global must not quietly take it away. It toggles, so
+              a mark set by mistake is not permanent.
+            -->
+            <button
+              class="btn kept"
+              type="button"
+              [class.on]="handSetHere()"
+              [title]="handSetHere()
+                ? 'Let apply-to-all change this photograph again'
+                : 'Leave this photograph alone when you apply to all'"
+              (click)="keep.emit()"
+            >{{ handSetHere() ? 'Leave this one alone ✓' : 'Leave this one alone' }}</button>
+
+            @if (handSetHere()) {
+              <p class="says">You set this page yourself, so it keeps what you gave it.</p>
+            }
+
+            @if (handSet() > 0) {
+              <label class="override" [title]="'Apply to the pages you set by hand as well'">
+                <input type="checkbox" [checked]="includeHandSet()" (change)="toggleOverride($event)" />
+                <span>including the {{ handSet() }} set by hand</span>
+              </label>
+            }
           }
         </div>
-
-        <span class="grow"></span>
-
-        @if (showing() === 1) {
-          <!--
-            ONE BUTTON, AND IT IS THE WHOLE OF STAGE 1. The sentence beside it
-            says what it will do, because this is the press that changes every
-            photograph in the project and the person has only ever seen one.
-          -->
-          <span class="says">Sets this crop on every photograph of the same shape.</span>
-          <button
-            class="act"
-            type="button"
-            [class.applied]="justApplied() === 'stamp'"
-            (click)="stampEverything()"
-          >{{ justApplied() === 'stamp' ? 'Applied ✓' : 'Apply to every page' }}</button>
-        } @else {
-          @if (handSet() > 0) {
-            <!--
-              THE OVERRIDE, AND IT ONLY APPEARS WHEN IT COULD MATTER.
-
-              A stamp leaves hand-set pages alone and names them, which is what
-              somebody wants nine times in ten. The tenth is when the global
-              they are correcting is the one that was wrong to begin with, and
-              then the skip is the thing in the way.
-
-              Drawn only while there ARE hand-set pages, and carrying the count,
-              because a permanently-present tick box about a condition that
-              usually does not hold is a control people learn to stop reading.
-            -->
-            <label class="override" [title]="'Apply to the pages you set by hand as well'">
-              <input type="checkbox" [checked]="includeHandSet()" (change)="toggleOverride($event)" />
-              <span>including the {{ handSet() }} set by hand</span>
-            </label>
-          }
-          <button
-            class="ghost"
-            type="button"
-            [class.applied]="justApplied() === 'stamp'"
-            (click)="applyToAll.emit({ kind: 'stamp', includeHandSet: includeHandSet() })"
-          >{{ justApplied() === 'stamp' ? 'Applied ✓' : 'Apply to all' }}</button>
-          <!--
-            PER-PAGE APPLY, WHICH MOVES NO CORNER.
-
-            The corners were saved as they were dragged -- that is what stops a
-            person losing an adjustment by flipping to the next photograph -- so
-            what is left for this button is the part that was never expressible
-            before: this setting was chosen FOR THIS PAGE, and the next global
-            must not quietly take it away.
-
-            It toggles, and the label says which state it is in rather than
-            congratulating itself. Pressing it again hands the page back to the
-            globals, which is the only way to undo a mark somebody set by
-            mistake and would otherwise be permanent.
-          -->
-          <button
-            class="act"
-            type="button"
-            [title]="handSetHere()
-              ? 'Let apply-to-all change this photograph again'
-              : 'Leave this photograph alone when you apply to all'"
-            (click)="keep.emit()"
-          >{{ handSetHere() ? 'Set by hand ✓' : 'Apply' }}</button>
-        }
-      </footer>
+      </aside>
     </div>
   `,
   styles: [`
@@ -285,7 +273,7 @@ import type { ApplyToAll } from '../../core/capture.service';
       width: calc(100vw - 56px);
       height: calc(100vh - 56px);
       margin: 28px auto;
-      display: flex; flex-direction: column;
+      display: flex; flex-direction: row;
       background: var(--bg-elevated);
       border: 1px solid var(--border-default);
       border-radius: var(--radius-lg);
@@ -303,25 +291,86 @@ import type { ApplyToAll } from '../../core/capture.service';
     .which { font-size: 12px; color: var(--text-secondary); }
     .grow { flex: 1; }
 
-    /* The body is the only thing that may grow, so the picture takes the room
-       and the two bars stay where the hands expect them. */
-    .body { flex: 1; min-height: 0; display: flex; }
-    .body app-capture-page-editor { flex: 1; min-width: 0; }
+/* THE CARD IS A ROW NOW: the photograph, then the column of controls. It was
+       a column of three bands -- header, picture, footer -- which is what put the
+       controls on three different edges. */
+    .stage { flex: 1; min-width: 0; display: flex; }
+    .stage app-capture-page-editor { flex: 1; min-width: 0; }
 
-    .foot {
-      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-      padding: 10px 12px;
-      border-top: 1px solid var(--border-subtle);
+    .cluster {
+      width: 268px; flex: none;
+      border-left: 1px solid var(--border-subtle);
+      background: var(--bg-base);
+      display: flex; flex-direction: column;
+      overflow: auto;
     }
-    .gestures { display: flex; gap: 6px; }
+
+    .who { padding: 14px 16px 12px; border-bottom: 1px solid var(--border-subtle); }
+    .who .name { font-family: var(--font-mono); font-size: 12px; }
+    .who .pos { color: var(--text-tertiary); font-size: 11.5px; margin-top: 2px; }
+    .walk { display: flex; gap: 6px; margin-top: 10px; }
+
+    .toolrow { padding: 12px 16px 0; }
+    .cap {
+      color: var(--text-tertiary); font-size: 11px;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      margin-bottom: 6px;
+    }
+
+    .does { padding: 14px 16px 0; display: flex; flex-direction: column; gap: 8px; }
+    .turnpair { display: flex; gap: 8px; }
+    .turnpair button {
+      flex: 1; padding: 9px 0;
+      background: var(--bg-input);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md, 6px);
+      color: var(--text-primary);
+      font-size: 16px; line-height: 1;
+      cursor: pointer;
+    }
+    .turnpair button:hover { background: var(--bg-hover); }
+
+    /* THE ACTS SIT AT THE FOOT OF THE COLUMN, which is where the rail puts Mint
+       for the same reason: the thing you finish with is the thing at the bottom. */
+    .acts {
+      margin-top: auto;
+      padding: 14px 16px 16px;
+      border-top: 1px solid var(--border-subtle);
+      display: flex; flex-direction: column; gap: 8px;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 9px 12px;
+      border-radius: var(--radius-md, 6px);
+      font: inherit; font-size: 12px;
+      text-align: left;
+      cursor: pointer;
+    }
+    .btn.quiet {
+      background: var(--bg-input); color: var(--text-primary);
+      border: 1px solid var(--border-default);
+    }
+    .btn.quiet:hover { background: var(--bg-hover); }
+    .btn.primary {
+      background: var(--accent); color: var(--text-inverse);
+      border: 1px solid var(--accent); font-weight: 600;
+    }
+    .btn.primary:disabled { opacity: 0.45; cursor: default; }
+    .btn.kept {
+      background: var(--bg-input); color: var(--text-primary);
+      border: 1px solid var(--border-default);
+    }
+    .btn.kept.on {
+      background: var(--ok-soft); color: var(--ok); border-color: var(--ok);
+    }
     /* Said quietly and next to the button it describes: it is a caption on one
        control, not an announcement about the room. */
     .says { font-size: 11px; color: var(--text-tertiary); }
 
-    /* A segmented control, which is what three exclusive tools are. It sits in
-       the head rather than the footer because it says WHAT YOU ARE DOING, and
-       the footer is what you are finishing with -- the same split the gestures
-       and the acts already make down there. */
+    /* A segmented control, which is what three exclusive tools are. It sits
+       above what it changes, because the column reads top to bottom in the order
+       the work happens. */
     .tools {
       display: flex; gap: 4px;
       padding: 3px;
@@ -330,6 +379,7 @@ import type { ApplyToAll } from '../../core/capture.service';
       border-radius: var(--radius-md, 6px);
     }
     .tools button {
+      flex: 1;
       border: none; background: none;
       color: var(--text-secondary);
       font: inherit; font-size: 12px;
@@ -349,20 +399,27 @@ import type { ApplyToAll } from '../../core/capture.service';
     }
     .override input { accent-color: var(--accent-strong); cursor: pointer; }
 
-    .walk, .shut, .gestures button, .ghost {
-      padding: 3px 9px;
+    .walk button, .shut {
+      flex: 1;
+      padding: 5px 9px;
       border: 1px solid var(--border-default);
       border-radius: var(--radius-md, 6px);
       background: transparent;
       color: var(--text-secondary);
-      font-size: 12px;
+      font: inherit; font-size: 12px;
       cursor: pointer;
     }
-    .walk:hover:not(:disabled), .shut:hover, .gestures button:hover:not(:disabled), .ghost:hover {
+    .walk button:hover:not(:disabled), .shut:hover {
       background: var(--bg-hover); color: var(--text-primary);
     }
-    .walk:disabled, .gestures button:disabled { opacity: 0.4; cursor: default; }
-    .shut { border-color: transparent; }
+    .walk button:disabled { opacity: 0.4; cursor: default; }
+
+    /* The one control still floating over the picture, because it belongs to
+       the window rather than to the work. */
+    .shut {
+      position: absolute; top: 10px; right: 14px; z-index: 2;
+      flex: none; border-color: transparent; padding: 2px 8px;
+    }
 
     .act {
       display: inline-flex; align-items: center; justify-content: center;
@@ -432,6 +489,41 @@ export class CaptureEditorModalComponent {
    * on neither button.
    */
   readonly outOfTurn = input<number>(0);
+
+  /**
+   * What the person called this photograph, or NULL when nothing does.
+   *
+   * `CapturePhoto.name` is optional by design: a project intaken before the
+   * field existed has photographs with no name and always will, and the type's
+   * own docblock rules that "the position in the grid is the honest stand-in,
+   * never the sha".
+   *
+   * Here that stand-in is ALREADY ON SCREEN -- the line below this one says
+   * "Photograph 12 of 25". So a nameless photograph drops the name line rather
+   * than repeating the position twice, which is what filling it with the
+   * fallback would do.
+   */
+  readonly name = input<string | null>(null);
+
+  /**
+   * How many photographs the crop and split acts would reach, counting this
+   * one. Same rule as the turn count beside it: the number on a button is what
+   * the button does, not what the book contains, so a photograph of another
+   * shape is left out because the stamp refuses and names it.
+   */
+  readonly reach = input<number>(0);
+
+  /** What the crop and split acts say -- the same act, named for the tool. */
+  protected readonly stampSays = computed<string>(() => {
+    if (this.justApplied() === 'stamp') return 'Applied ✓';
+    const reach = this.reach();
+    if (this.using() === 'split') {
+      return `Cut all ${reach} here — ${reach * this.quads().length} pages`;
+    }
+    return reach === 1
+      ? 'Use this crop on this photograph'
+      : `Use this crop on all ${reach} photographs`;
+  });
 
   /** What the bulk-turn button says, which is always what it would do. */
   protected readonly turnAllSays = computed<string>(() => {
