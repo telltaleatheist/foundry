@@ -1904,6 +1904,25 @@ MEASURED (P1 seq 197, 14 checks on a copy of the live project):
   alone are one glance for a person and no assertion can be
   that glance.
 
+## Wave 21c -- the layout build (Owen approved, 2026-08-20)
+
+Owen, on the design-passed sample: "pc3 says what remains is the
+layout. does that remain? if we still have work to do, lets finish
+it." BUILD APPROVED AS PASSED -- no rearrangements requested. The
+two amber defaults STAND AS MOCKED, decided by the lead under that
+general go and said here rather than assumed: choosing Split
+PROPOSES the seeded line (place it, then Cut -- looking at a tool
+never changes the page count, and there is no un-cut today); the
+override modal's X/Escape CANCELS ENTIRELY (closing a question
+cancels it -- the usual rule). The contract for the build is the
+passed sample, committed at docs/design/
+capture-editor-cluster-sample-passed.html: one column right of the
+picture in use-order, each tool owning its own act, the labels
+verbatim from the sample's table, the seeded split line, cards
+drawn the way round the page will print (word "turned" kept until
+Owen says it is clutter), the override modal with the
+turning-is-never-overwritten sentence.
+
 ## Deferred out loud
 
 - **Validator page-level refusals name pages by sha** ("page
