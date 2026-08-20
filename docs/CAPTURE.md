@@ -2238,3 +2238,72 @@ and pushes. **`bunx`, never `npx`**: at this repo's root, `npx tsc`
 fetches a joke package that prints "This is not the tsc command you are
 looking for" and EXITS 0 — the vacuous gate in its purest form,
 measured the hard way during Merge 1.
+
+---
+
+## The mint's output is PAGES, and the PDF is an export
+
+**Owen's ruling, 2026-08-20, verbatim:** *"i agree that this doesnt need to be a
+pdf. if the user explicitly wants to export it as one, they can. but the
+ultimate goal here is to generate a bank with the vlm"*
+
+### What the PDF was actually doing
+
+Nothing. `mintCommit` reads the staged `<index>.jpg` files, calls
+`pdf.embedJpg` on each, and adds one page per image at the image's own size —
+so every page of a minted PDF is exactly one photograph, whole, with no other
+content. The container carries no text, no geometry and no decision.
+
+And then the read path takes that container apart again. `vlm_page.py` opens
+the PDF in PyMuPDF and rasterises each page, which **decodes the embedded JPEG
+and re-encodes it at a different scale**. So the chain today is:
+
+```
+photograph -> crop/turn -> JPEG -> embed in PDF -> PyMuPDF raster -> model
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                            a decode and a re-encode that change the
+                            pixels and buy nothing
+```
+
+The ruling removes the underlined part. The photographs the light table
+produced ARE the pages, and they are what the model should read.
+
+### What this makes true that was not true before
+
+- **The bank's pages and the person's photographs are the same objects.** A
+  block's provenance is a file on disk that Owen can look at, not a page of a
+  container that was synthesised to be taken apart. This is what makes the
+  hover-the-block-see-the-page pane free for a captured book: no raster, no
+  pdf.js, no second copy of anything — the working copy is already served
+  through `foundry-file://capture/<token>/<name>`.
+- **A generation of loss goes away**, along with the CPU that produced it.
+- **A PDF becomes a thing somebody ASKS for.** It is an export of a finished
+  book, on the same footing as the other export formats, rather than a
+  mandatory waypoint every capture project has to pass through.
+
+### What it costs, and where
+
+Named here so the size is known rather than discovered:
+
+1. `vlm_page.py` — a page source that is an IMAGE FILE rather than a PDF page.
+   The rest of the helper already works in "a page is an image plus the size it
+   was rendered at", so this is a second way in, not a second pipeline. The
+   pixel budget applies unchanged.
+2. `src/vlm/bridge.ts` — `pdfPath` becomes a source that is either a PDF or an
+   ordered list of page images. Three call sites carry it.
+3. `src/vlm/read.ts` — passes the source through. `renderPath` and the banked
+   render size are unaffected; a page read from an image has the same shape of
+   answer as a page read from a raster.
+4. `app/electron/capture.ts` — `mintCommit` records the staged pages as the
+   step payload instead of assembling a container out of them.
+5. **The step chain, which is the part with a trap in it.** `currentBookStep`
+   walks the PDF chain down to the nearest arrangement-carrying step (Wave
+   21b). A pages step has to be a first-class member of that walk, or a
+   captured book silently loses its way back after a mint.
+6. Export — "mint" and "make me a PDF" separate into two acts.
+
+### The rule this leaves behind
+
+**A CONTAINER THAT IS TAKEN APART BY THE NEXT STEP WAS NEVER A FORMAT, IT WAS A
+HABIT.** The PDF was here because a reader takes PDFs, and it survived the
+arrival of a reader that takes pictures.
