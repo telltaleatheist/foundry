@@ -1799,6 +1799,12 @@ lossy copy that does not exist and maybe adding a defensive
 re-copy nothing needs -- the type was hiding a value that was
 already there. Fix: one named type where nine spellings were, and
 the composer aliased to it so the tenth cannot drift either.
+Completed by P2 (seq 191): the one place the value genuinely WAS
+discarded was the renderer's own field-by-field rebuild
+(ledger.service composing { ledger, rows } by hand) -- the
+validator-deletes-what-it-cannot-name shape one layer up. THE
+VALUE SURVIVES EVERY HOP THAT PASSES THE OBJECT THROUGH, AND DIES
+AT THE FIRST ONE THAT REBUILDS IT.
 Ninth (P2, seq 186): A FALLBACK MAKES A MISSING TOKEN INVISIBLE.
 The rail referenced var(--ok-soft, rgba(...)) and --ok-soft did
 not exist in the palette -- the reference resolved to nothing, the
