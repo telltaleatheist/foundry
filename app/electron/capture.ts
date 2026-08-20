@@ -333,20 +333,31 @@ function validQuad(value: unknown, file: string, where: string): CaptureQuad {
 /**
  * Work out which pages were set by hand, for a recipe that never said.
  *
- * ── IT IS NOT A GUESS. NOTHING BUT A HAND COULD HAVE MADE A QUAD DIFFER ───
+ * ── IT IS NOT A GUESS. NOTHING BUT A HAND COULD HAVE MOVED A CORNER ───────
  *
- * A crop stamped over the shoot copies `source.pages[index].quad` across
- * verbatim, so every page it touched holds the IDENTICAL floats. The only way
- * a page stops matching that stamp is somebody dragging its corners. So the
- * pages whose quad differs from the one most of them share are exactly the
- * pages a person worked on, and the mark can be recovered from the geometry
- * that survives.
+ * A page arrives at the WHOLE FRAME and nothing but a person changes that. A
+ * crop stamped over the shoot copies `source.pages[index].quad` across
+ * verbatim, so every page a stamp touched holds the IDENTICAL floats. That
+ * leaves exactly three states a quad can be in, and only one of them is hands:
  *
- * MEASURED BEFORE IT WAS WRITTEN, on the only project that has photographs in
- * it: 25 pages, two distinct quads, 24 at one crop and IMG_0212 alone at
- * another. That is the staged flow already carried out by hand — a global
- * stamp and one outlier — with nothing on disk to protect the outlier from
- * the first APPLY TO ALL of the editor that finally understands it.
+ *   the whole frame                    nobody has touched this page
+ *   the crop most of its shape share   a stamp put it there
+ *   anything else                      A HAND DRAGGED IT
+ *
+ * ── THE FIRST VERSION ASKED THE SECOND QUESTION ONLY, AND MISSED A SHOOT ──
+ *
+ * It marked a page whose quad DIFFERED FROM THE MAJORITY, which quietly
+ * assumes there is a stamp to differ from. Measured on the project Owen
+ * actually has: 25 photographs, 25 DISTINCT QUADS, no two alike — he cropped
+ * every page by hand, one at a time, and the largest disagreement between two
+ * of them is a tenth of the frame. With no majority anywhere, nothing was
+ * marked, and the first APPLY TO ALL of the editor that finally understands
+ * hand-work would have erased all twenty-five without naming one of them.
+ *
+ * The whole frame is what the majority question was reaching for and could not
+ * see: an untouched page has a KNOWN quad, so a page can be told from a stamp
+ * even when there is no stamp in the project at all. The majority test stays
+ * beside it, because a stamped crop is not the whole frame either.
  *
  * ── ONLY WHEN THE FILE HAS NOT SPOKEN, WHICH KEEPS IT A MIGRATION ────────
  *
@@ -425,14 +436,18 @@ function handsRead(photos: CapturePhoto[]): CapturePhoto[] {
     for (const photo of group) stamped.set(photo, majority);
   }
 
+  const untouched = JSON.stringify(WHOLE_FRAME);
   return photos.map((photo) => {
-    const majority = stamped.get(photo);
-    if (majority === undefined || majority.size === 0) return photo;
+    const majority = stamped.get(photo) ?? new Map<number, string>();
     return {
       ...photo,
       pages: photo.pages.map((page, slot) => {
-        const stamp = majority.get(slot);
-        if (stamp === undefined || stamp === JSON.stringify(page.quad)) return page;
+        const quad = JSON.stringify(page.quad);
+        // Nobody has touched this page, whether or not anything else here has
+        // been stamped — which is the whole reason this question comes first.
+        if (quad === untouched) return page;
+        // A stamp put it here, and a stamp is not a hand.
+        if (quad === majority.get(slot)) return page;
         return { ...page, byHand: true };
       }),
     };
