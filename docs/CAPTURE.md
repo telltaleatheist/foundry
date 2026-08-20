@@ -1483,7 +1483,18 @@ verification):
   RULED RIGHT: the gate exists because he minted before turning,
   the ticks are three clicks, and a gate that exempts existing
   projects would exempt exactly the project the gate was built
-  for. Surfaced to Owen in the lead's session notes.
+  for. Surfaced to Owen in the lead's session notes. SOFTENED IN
+  FACT (P1 seq 179): the fixture is gone -- Owen DELETED
+  index-8700efdc (the book that minted before it was turned) and
+  his capture project is now index-4f7706dc: 25 photographs, one
+  capture step, archive null, NEVER MINTED, no prepared. So his
+  first contact with this wave is the rail and the tick gate
+  before his FIRST mint -- the case the gate was designed for --
+  not a lock on an existing shelf. Absent-means-silence stays
+  correct but may never fire for him (his first mint records an
+  arrangement); the divergence sentence has nothing to say until
+  he mints twice or mints then edits. Nobody plans an acceptance
+  step around SEEING the silence.
 
 ## Deferred out loud
 
