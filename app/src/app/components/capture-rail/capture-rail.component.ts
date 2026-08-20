@@ -99,6 +99,21 @@ interface Task {
       </div>
 
       <footer class="foot">
+        <!--
+          THE DIVERGENCE SENTENCE, said once, about the difference, and only
+          while there is one.
+
+          Every count on this surface acquired a second referent the moment a
+          mint existed -- what a mint WOULD produce, and what the book on the
+          shelf actually holds -- which is the two-things-one-name defect
+          arriving through a feature rather than through a variable. The rail
+          goes on speaking about the recipe, which is the truth and the thing
+          being edited, and this one line carries the difference.
+        -->
+        @if (diverged()) {
+          <p class="moved">The book on the shelf was minted from an earlier arrangement.</p>
+        }
+
         @if (progress(); as running) {
           <p class="why">Minting page {{ running.done }} of {{ running.total }}…</p>
           <button class="stop" type="button" (click)="stop.emit()">Stop</button>
@@ -220,6 +235,16 @@ interface Task {
     }
     .why { margin: 0 0 10px; color: var(--text-tertiary); font-size: 11.5px; }
 
+    /* Quieter than the gate's own line and warmer than the body text: it is not
+       a warning -- nothing is wrong, and the older book is still openable from
+       its step -- it is the one fact this surface cannot show you. */
+    .moved {
+      margin: 0 0 10px;
+      color: var(--warn);
+      font-size: 11.5px;
+      line-height: 1.35;
+    }
+
     .mint, .stop {
       width: 100%;
       padding: 11px 0;
@@ -250,6 +275,8 @@ export class CaptureRailComponent {
   /** True once this project has a minted book, which changes one word. */
   readonly minted = input(false);
   readonly progress = input<{ done: number; total: number } | null>(null);
+  /** The shelf's book was made from an older arrangement than the one on screen. */
+  readonly diverged = input(false);
 
   readonly open = output<PrepareVerb>();
   readonly tick = output<PrepareVerb>();

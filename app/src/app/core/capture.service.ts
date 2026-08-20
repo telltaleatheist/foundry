@@ -10,7 +10,7 @@ import type {
   CaptureSplit,
 } from '@shared/types';
 
-import { halvesOf, joinedQuad, sameShape, WHOLE_FRAME } from '@shared/capture';
+import { arrangementOf, halvesOf, joinedQuad, sameShape, WHOLE_FRAME } from '@shared/capture';
 
 import { rotate } from '../components/capture-editor/geometry';
 import type { CaptureCard } from '../components/capture-grid/capture-grid.component';
@@ -216,6 +216,7 @@ export class CaptureService {
       const opened = await api.capture.recipeLoad(projectDir);
       this.directory.set(projectDir);
       this.door.set(opened.token);
+      this.mintedFrom.set(opened.mintedFrom);
       this.current.set(opened.recipe);
     } catch (err) {
       this.complain(err);
@@ -467,6 +468,69 @@ export class CaptureService {
     }
     return { photos: recipe.photos.length, cropped, byHand, split, pagesFromSplits };
   });
+
+  /**
+   * WHAT THE BOOK ON THE SHELF WAS MINTED FROM — main's answer, not ours.
+   *
+   * A fingerprint of the arrangement the current book was made from, or null.
+   * Main resolves WHICH book that is by walking the catalogue's pdf chain from
+   * the tip down to the nearest step that recorded one, and this is simply
+   * carried: the renderer computes the LIVE side and never the stored one, so
+   * there is one answer to "which book is a person looking at" rather than two
+   * that can disagree.
+   */
+  private readonly mintedFrom = signal<string | null>(null);
+
+  /**
+   * THE BOOK ON THE SHELF WAS MINTED FROM AN EARLIER ARRANGEMENT.
+   *
+   * False whenever there is nothing to say: no recipe, and -- ruled -- no
+   * stored arrangement at all. Absent means SILENCE, which covers three true
+   * cases at once (no book, a mint from before the field existed, a book this
+   * app did not mint), and either claim in that state would be a false sentence
+   * from one direction or the other.
+   *
+   * THE LIVE SIDE IS COMPUTED FROM THE SAME BODY MAIN MINTS WITH.
+   * `arrangementOf` lives in shared/ and `mintBegin` calls the same page plan,
+   * so the fingerprint cannot drift from the thing it describes: if the two ever
+   * disagree the mint is wrong, not this sentence.
+   *
+   * AND IT IS A HASH OF THE MINT INPUT, NOT OF THE RECIPE FILE, which is what
+   * keeps this surface honest about the feature it sits inside. The ticks and
+   * the hand-set marks live in the recipe and the mint never reads them -- so a
+   * file hash would light this sentence the moment somebody ticked "Turn
+   * pages", answering a person who had just said "yes, I turned them" with
+   * "the book on the shelf is out of date".
+   */
+  readonly diverged = computed<boolean>(() => {
+    const recipe = this.current();
+    const minted = this.mintedFrom();
+    if (recipe === null || minted === null) return false;
+    return arrangementOf(recipe) !== minted;
+  });
+
+  /**
+   * After a mint: the shelf moved, so re-read what it was minted from.
+   *
+   * ONLY THAT. It would be one line shorter to re-open the project, and that
+   * would replace the recipe this window is holding with the one on disk --
+   * which is the same bytes today and would not be the day somebody adjusts a
+   * corner while the mint is still running. The sentence is worth a round trip;
+   * it is not worth reaching into the work.
+   *
+   * A failure leaves the old answer standing rather than clearing it: a stale
+   * true sentence is better than a false silence, and the next open corrects it.
+   */
+  async refreshMintedFrom(): Promise<void> {
+    const directory = this.directory();
+    if (api === null || directory === null) return;
+    try {
+      this.mintedFrom.set((await api.capture.recipeLoad(directory)).mintedFrom);
+    } catch {
+      // Deliberately quiet: nothing a person did failed, and the mint that just
+      // landed has already spoken for itself.
+    }
+  }
 
   /** Whether the person has ticked one of the rail's three verbs. */
   ticked(verb: keyof CapturePrepared): boolean {

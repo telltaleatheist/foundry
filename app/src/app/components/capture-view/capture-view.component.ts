@@ -20,6 +20,7 @@ import { CaptureEditorModalComponent } from '../capture-editor/capture-editor-mo
 import type { FractionQuad } from '../capture-editor/geometry';
 import { CaptureGridComponent } from '../capture-grid/capture-grid.component';
 import { CaptureRailComponent, type PrepareVerb } from '../capture-rail/capture-rail.component';
+import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';
 
 /**
@@ -115,9 +116,10 @@ const ACKNOWLEDGED_FOR_MS = 1600;
       [ready]="captures.readyToMint()"
       [minted]="minted()"
       [progress]="mint.progress()"
+      [diverged]="captures.diverged()"
       (open)="openTool($event)"
       (tick)="captures.tick($event)"
-      (mint)="startMint()"
+      (mint)="void startMint()"
       (stop)="mint.cancel()"
     />
 
@@ -195,6 +197,7 @@ export class CaptureViewComponent {
   protected readonly mint = inject(CaptureMintService);
   private readonly confirm = inject(ConfirmService);
   private readonly projects = inject(ProjectsService);
+  private readonly ledger = inject(LedgerService);
 
   readonly tab = input.required<Tab>();
 
@@ -508,7 +511,22 @@ export class CaptureViewComponent {
     }, ACKNOWLEDGED_FOR_MS);
   }
 
-  protected startMint(): void {
-    void this.mint.mint(this.tab().path);
+  /**
+   * Mint, and then let both surfaces that name the current book catch up.
+   *
+   * THE SHELF MOVES HERE AND NOWHERE ELSE, so this is the one place that has to
+   * ask again. The rail's sentence reads the recipe's arrangement against the
+   * one the shelf's book was minted from, and the step list marks WHICH ROW is
+   * that book -- both of them main's single resolution, and both of them stale
+   * the instant a mint lands until somebody asks.
+   *
+   * Only on success. A cancelled or failed mint moved no shelf, and re-reading
+   * after one would be two round trips to learn that nothing changed.
+   */
+  protected async startMint(): Promise<void> {
+    const step = await this.mint.mint(this.tab().path);
+    if (step === null) return;
+    await this.captures.refreshMintedFrom();
+    await this.ledger.refresh(this.tab().path);
   }
 }
