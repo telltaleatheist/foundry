@@ -124,6 +124,10 @@ export class CaptureService {
         // The card draws it, so a turn and a crop are visible on the table
         // rather than only inside the editor.
         quad: found.page.quad,
+        // The pixels the quad is a fraction OF -- what the card needs to know
+        // which way round the page it draws will come out.
+        width: found.photo.width,
+        height: found.photo.height,
       });
     }
     return cards;
