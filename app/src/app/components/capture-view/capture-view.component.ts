@@ -136,6 +136,7 @@ const ACKNOWLEDGED_FOR_MS = 1600;
           [hasPrevious]="walkIndex() > 0"
           [hasNext]="walkIndex() < walk().length - 1"
           [handSet]="handSet()"
+          [outOfTurn]="outOfTurn()"
           [handSetHere]="photo.handSet"
           [justApplied]="justApplied()"
           (quadsChange)="setQuads(photo.id, $event)"
@@ -371,6 +372,16 @@ export class CaptureViewComponent {
   protected readonly minted = computed<boolean>(() => {
     const project = this.projects.projectFor(this.tab().path);
     return project !== null && project.documents.length > 0;
+  });
+
+  /**
+   * How many photographs the bulk-turn button would move, for the photograph
+   * open right now. Asked of the service, which owns every rule about what a
+   * gesture reaches.
+   */
+  protected readonly outOfTurn = computed<number>(() => {
+    const id = this.open();
+    return id === null ? 0 : this.captures.outOfTurnWith(id);
   });
 
   protected readonly mintable = computed(() => {

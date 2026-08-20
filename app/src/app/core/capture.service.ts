@@ -10,7 +10,9 @@ import type {
   CaptureSplit,
 } from '@shared/types';
 
-import { arrangementOf, halvesOf, joinedQuad, sameShape, WHOLE_FRAME } from '@shared/capture';
+import {
+  arrangementOf, halvesOf, joinedQuad, sameShape, turnedLike, turnsOf, WHOLE_FRAME,
+} from '@shared/capture';
 
 import { rotate } from '../components/capture-editor/geometry';
 import type { CaptureCard } from '../components/capture-grid/capture-grid.component';
@@ -596,6 +598,31 @@ export class CaptureService {
     }
   }
 
+  /**
+   * HOW MANY PHOTOGRAPHS A BULK TURN WOULD ACTUALLY TURN.
+   *
+   * The button carries this number, so it has to count what the gesture DOES
+   * rather than what the book contains: same shape (the others are named and
+   * skipped, exactly as a stamp names them) and sitting at a different turn.
+   * A button reading "turn the other 24" that turns twenty-three is the label
+   * lying about the act, which is the complaint this whole wave came from.
+   *
+   * Zero is the ordinary end state -- once the book is uniform the control has
+   * nothing to do, and the surface says so rather than going grey in silence.
+   */
+  outOfTurnWith(photoId: string): number {
+    const recipe = this.current();
+    if (recipe === null) return 0;
+    const source = recipe.photos.find((photo) => photo.id === photoId);
+    const like = source?.pages[0]?.quad;
+    if (source === undefined || like === undefined) return 0;
+    const facing = turnsOf(like);
+    return recipe.photos.filter((photo) =>
+      photo.id !== source.id
+      && sameShape(source, photo)
+      && photo.pages.some((page) => turnsOf(page.quad) !== facing)).length;
+  }
+
   /** Whether the person has ticked one of the rail's three verbs. */
   ticked(verb: keyof CapturePrepared): boolean {
     return this.current()?.prepared?.[verb] === true;
@@ -812,6 +839,13 @@ export class CaptureService {
       const source = recipe.photos.find((photo) => photo.id === from);
       if (source === undefined) return recipe;
       /*
+       * THE ORIENTATION EVERY OTHER PHOTOGRAPH IS BEING ASKED TO MATCH, read
+       * once from the source's FIRST page. Any page of it would answer the same
+       * -- a split photograph's halves both carry the sheet's turn -- and one
+       * read is one answer rather than one per target.
+       */
+      const like = source.pages[0]?.quad ?? null;
+      /*
        * NAMED BY POSITION, NEVER BY FILE.
        *
        * This sentence used to print `photo.file`, which is
@@ -847,6 +881,17 @@ export class CaptureService {
       const photos = recipe.photos.map((photo) => {
         if (photo.id === source.id) {
           /*
+           * ONLY THE STAMP CLEARS THE MARK, and the narrowing is a fix rather
+           * than a tidy. This arm used to clear it for EVERY gesture, so
+           * pressing the bulk-turn button silently handed the source's hand-set
+           * crop back to the next global -- a protection lost to a press that
+           * had nothing to do with cropping, and lost invisibly.
+           *
+           * A turn copies no crop, so the source's crop has not become anything
+           * and its mark still means what it meant.
+           */
+          if (gesture.kind !== 'stamp') return photo;
+          /*
            * THE SOURCE'S CROP HAS JUST BECOME THE GLOBAL, so it is no longer an
            * outlier and its mark has to go with the rest.
            *
@@ -867,12 +912,39 @@ export class CaptureService {
           return photo;
         }
         switch (gesture.kind) {
-          case 'rotate':
+          case 'turn': {
+            /*
+             * MAKE THIS ONE MATCH THAT ONE -- a question about the book, and
+             * never about how many times somebody pressed a button just now.
+             *
+             * The gesture it replaced applied a RELATIVE number of quarters
+             * counted during the current visit to the editor, which had two
+             * consequences and neither was intended: the control was dead on
+             * arrival at every photograph (the counter resets when the picture
+             * changes), so it could not be used at all without first turning
+             * something; and stepping to the next page and back forgot the
+             * turns you had already made while the page stayed turned.
+             *
+             * Reading the ORIENTATIONS instead answers the same way ten seconds
+             * later or next Tuesday, which is the property `arrangementOf` has
+             * for the same reason: a question about state is stable, a question
+             * about a visit is not.
+             *
+             * A PAGE AT A TIME, because a split photograph's halves each carry
+             * the sheet's own turn -- measured rather than assumed, P1's
+             * twenty-seven checks -- so every page of a spread lands in the same
+             * orientation with no special case for the split.
+             *
+             * It moves no corner. `turnedLike` is a relabelling, so every crop
+             * on every photograph survives this to the last decimal.
+             */
+            if (like === null) return photo;
             applied += 1;
             return {
               ...photo,
-              pages: photo.pages.map((page) => ({ ...page, quad: rotate(page.quad, gesture.turns) })),
+              pages: photo.pages.map((page) => ({ ...page, quad: turnedLike(page.quad, like) })),
             };
+          }
           case 'stamp': {
             /*
              * THE HAND-SET SKIP, WHICH IS THE ONLY GUARD LEFT ON THIS ARM.
@@ -903,21 +975,47 @@ export class CaptureService {
              * are all already in those quads, because the corner order IS the
              * orientation and the halves ARE the split.
              *
-             * Which is also why there is no separate turn to carry here. A quad
-             * turned three quarters is a quad in that order, and copying it
-             * copies the turn -- the reason stage 1 needs no turn-all beside
-             * this button, and stage 2 still does.
+             * BUT THE TURN IS THE ONE THING IT DOES NOT COPY, and this
+             * paragraph used to say the opposite.
+             *
+             * It said that copying a quad copies the turn -- true, because the
+             * corner order IS the orientation -- and drew the conclusion that
+             * stage 1 therefore needed no bulk-turn control. Owen ruled the
+             * other way: "copy the crop, keep the turn". A photograph you
+             * turned upright stays upright when you hand its corners back to
+             * the global, because the way round a page sits is a fact about
+             * THAT photograph and the crop is a fact about the shoot.
+             *
+             * So the crop arrives in the TARGET'S OWN ORIENTATION.
+             * `turnedLike` moves no corner -- it is a relabelling of which
+             * corner prints top-left -- so the region every page gets is the
+             * source's region exactly, to the last decimal, with no arithmetic
+             * in it to be wrong by a pixel.
+             *
+             * AND THE CONCLUSION DIED WITH THE PREMISE. Stage 1 now needs the
+             * bulk turn as much as stage 2 does, because this button no longer
+             * carries one; that control landed in the commit before this one,
+             * deliberately in that order, so that the capability existed on
+             * purpose before this stopped supplying it by accident.
              *
              * STRIKES BELONG TO THE PHOTOGRAPH, NOT TO THE CONFIGURATION, so
              * they stay where they are. A page struck because it was a blurred
              * retake is still a blurred retake after somebody adjusts the crop.
              */
+            /*
+             * THE WAY THIS PHOTOGRAPH ALREADY SITS, read before its pages are
+             * replaced. Any of its pages would answer the same -- both halves
+             * of a spread carry the sheet's turn -- and a target that somehow
+             * had none keeps the source's orientation rather than inventing an
+             * answer.
+             */
+            const facing = photo.pages[0]?.quad;
             return {
               ...photo,
               split: source.split,
               pages: source.pages.map((page, index) => ({
                 id: `${photo.id}:${index}`,
-                quad: page.quad,
+                quad: facing === undefined ? page.quad : turnedLike(page.quad, facing),
                 struck: photo.pages[index]?.struck ?? false,
                 // THE GLOBAL CLEARS THE MARK, ruled at channel seq 129. Left
                 // standing, the first stamp would mark every page hand-set and
@@ -946,7 +1044,7 @@ export class CaptureService {
        * out what was applied. They pressed a button that said what it would do;
        * the sentence should say it happened.
        */
-      const did = gesture.kind === 'rotate' ? 'Turned' : 'Applied to';
+      const did = gesture.kind === 'turn' ? 'Turned' : 'Applied to';
       const count = applied === 1 ? '1 photograph' : `${applied} photographs`;
       this.notices.notice.set(
         skipped.length === 0
@@ -1056,7 +1154,7 @@ export type ApplyToAll =
    * that changes every page without overwriting hand-set crops, because a turn
    * permutes each page's own corners rather than replacing them.
    */
-  | { kind: 'rotate'; turns: number }
+  | { kind: 'turn' }
   /**
    * THE WHOLE CONFIGURATION OF ONE PHOTOGRAPH, COPIED ONTO THE REST.
    *

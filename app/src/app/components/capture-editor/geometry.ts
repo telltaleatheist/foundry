@@ -87,24 +87,26 @@ export function toFractions(quad: PixelQuad, of: Dimensions): FractionQuad {
 /**
  * The same page, turned a quarter of the way round, `turns` times clockwise.
  *
- * ── It is a permutation, and that is the whole implementation ───────────────
+ * ── ONE BODY, AND THE SHORT NAME THE RENDERER READS BETTER WITH ─────────────
  *
- * Turn the page clockwise and the corner that WAS at the bottom-left is the one
- * now at the top-left; each corner moves one place along the tuple. So a turn is
- * a rotation of the array by one, and four turns are the identity — exactly, with
- * no accumulated floating-point drift, which an angle-based rotation about a
- * centre could not promise.
+ * This was four lines of its own until main needed the same permutation to put
+ * a stamped crop into its target's orientation, at which point there were two
+ * copies of the sentence "a turn is a rotation of the tuple by one" -- and two
+ * copies of a rule are two answers as soon as one of them is edited. The body
+ * lives in `shared/capture.ts` beside the split geometry, for the reason that
+ * file already gives at length: main and the renderer both need it.
  *
- * Negative turns are anticlockwise. The modulo is written to survive them.
+ * The alias stays because `rotate(quad, 1)` is what this file's callers read
+ * as, and renaming forty call sites to prove a point about provenance is a
+ * worse trade than one line of re-export.
+ *
+ * WHAT IT IS, unchanged and still worth knowing here: turn the page clockwise
+ * and the corner that WAS at the bottom-left is the one now at the top-left;
+ * each corner moves one place along the tuple. So a turn is a rotation of the
+ * array by one, four turns are the identity EXACTLY with no floating-point
+ * drift, and negative turns are anticlockwise.
  */
-export function rotate(quad: FractionQuad, turns: number): FractionQuad {
-  const steps = ((Math.trunc(turns) % 4) + 4) % 4;
-  let turned = quad;
-  for (let step = 0; step < steps; step += 1) {
-    turned = [turned[3], turned[0], turned[1], turned[2]];
-  }
-  return turned;
-}
+export { turnQuad as rotate } from '@shared/capture';
 
 /*
  * THE WHOLE FRAME AND THE SPLIT GEOMETRY USED TO BE HERE and are not any more.
