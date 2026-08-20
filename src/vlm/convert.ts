@@ -460,7 +460,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
      */
     const phase = await readPagesIntoBank({
       label: 'vlm-convert',
-      pdfPath,
+      source: { kind: 'pdf', path: pdfPath },
       model,
       rendersDir,
       keepRenders,

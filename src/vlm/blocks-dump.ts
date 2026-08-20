@@ -303,7 +303,9 @@ async function renderSizes(
   if (!fs.existsSync(pdfPath)) throw new VlmBlocksError(`no such PDF: ${pdfPath}`);
   const model = requireVlmModel(opts.modelId);
   const run = await readPagesWithVlm({
-    pdfPath,
+    // A dump measures a DOCUMENT's pages, so this route rasterises and always
+    // did; the pages-as-pictures source belongs to the capture flow.
+    source: { kind: 'pdf', path: pdfPath },
     model,
     dpi: VLM_DPI,
     renderOnly: true,

@@ -240,6 +240,103 @@ def write_png(pixmap, path):
          'again; the readings are banked, so nothing is read twice.' % (path, last))
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Where a page comes from
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""A READ TAKES PAGES. A PDF IS ONE WAY TO HAVE SOME, NOT THE ONLY WAY.
+
+Owen's ruling, 2026-08-20: "this doesnt need to be a pdf... the ultimate goal
+here is to generate a bank with the vlm". The capture flow used to mint a PDF
+whose every page was one photograph embedded whole, at the photograph's own
+size, carrying no text and no geometry -- and then this file opened that
+container and rasterised it again, which decoded and re-encoded the same JPEG
+at a different scale. The container was taken apart by the very next step.
+
+So there are two sources and they answer the same four questions. Everything
+downstream of `render` -- the PNG writer, the grayscale twin, the pixel budget,
+the prompt, the page event -- cannot tell which one it is holding, which is the
+point: this is a SECOND WAY IN, not a second pipeline.
+"""
+
+
+class PdfPages(object):
+    """Pages rasterised out of a PDF, at a dpi."""
+
+    def __init__(self, fitz, path):
+        self.fitz = fitz
+        self.name = path
+        self.doc = fitz.open(path)
+
+    @property
+    def count(self):
+        return self.doc.page_count
+
+    def credits(self):
+        meta = self.doc.metadata or {}
+        return (meta.get('title') or '').strip(), (meta.get('author') or '').strip()
+
+    def frame(self):
+        first = self.doc[0].rect
+        return first.width, first.height
+
+    def render(self, index, dpi):
+        return self.doc[index].get_pixmap(dpi=dpi)
+
+
+class ImagePages(object):
+    """Pages that are ALREADY pictures -- the photographs a capture project made.
+
+    `dpi` is accepted and ignored, and that is the whole difference between the
+    two sources. A dpi is a question about how finely to draw something that has
+    no pixels of its own; a photograph arrives with its pixels already chosen,
+    and re-rendering it at a dpi would be inventing a second opinion about a
+    measurement somebody already took. THE PIXEL BUDGET STILL APPLIES -- it is
+    enforced on the processor (`cap_pixels`), the same for both sources, so a
+    12-megapixel photograph is admitted to the model at exactly the size a
+    rasterised page would have been.
+
+    Colour is normalised because a page must reach the model as something it can
+    read: an alpha channel is dropped (a scan has no transparency to honour, and
+    the model has no way to interpret one) and anything that is not already grey
+    or RGB -- a CMYK TIFF out of a scanner -- is converted rather than refused.
+    """
+
+    def __init__(self, fitz, paths):
+        self.fitz = fitz
+        self.paths = list(paths)
+        self.name = '%d page image(s)' % len(self.paths)
+        missing = [p for p in self.paths if not os.path.exists(p)]
+        if missing:
+            fail('no such page image: %s' % missing[0])
+
+    @property
+    def count(self):
+        return len(self.paths)
+
+    def credits(self):
+        # A photograph carries no title and no author, and this file has never
+        # invented either -- the TypeScript side falls back to the filename,
+        # which is a FACT about the file rather than a guess about the book.
+        return '', ''
+
+    def frame(self):
+        pixmap = self.render(0, 0)
+        # Reported as points because that is the field's name and the shape of
+        # the page is what it is for. A photograph's pixels ARE its frame; there
+        # is no second unit here to convert to, and nothing downstream reads
+        # these two numbers today.
+        return float(pixmap.width), float(pixmap.height)
+
+    def render(self, index, dpi):
+        pixmap = self.fitz.Pixmap(self.paths[index])
+        if pixmap.alpha:
+            pixmap = self.fitz.Pixmap(pixmap, 0)
+        if pixmap.colorspace is None or pixmap.colorspace.n not in (1, 3):
+            pixmap = self.fitz.Pixmap(self.fitz.csRGB, pixmap)
+        return pixmap
+
+
 def run_crop(config):
     """Cut boxes out of pages, straight from the PDF at the pinned dpi.
 
@@ -335,7 +432,12 @@ def main():
     if mode not in ('read', 'render'):
         fail('mode "%s" is not one of read, render, crop, textlayer' % mode)
 
-    pdf_path = config['pdf']
+    # Exactly one source, and the refusal is here because it is the first place
+    # that could possibly be wrong about it.
+    pdf_path = config.get('pdf')
+    page_files = config.get('pages')
+    if (pdf_path is None) == (page_files is None):
+        fail('a read is given exactly one source: "pdf" or "pages"')
     repo = config['repo']
     prompt = config['prompt']
     dpi = config['dpi']
@@ -361,36 +463,36 @@ def main():
             fail('mlx-vlm is not installed in %s (%s). Install it with `pip install mlx-vlm`.'
                  % (sys.executable, err))
 
-    doc = fitz.open(pdf_path)
-    if doc.page_count == 0:
-        fail('%s has no pages' % pdf_path)
+    source = PdfPages(fitz, pdf_path) if pdf_path is not None else ImagePages(fitz, page_files)
+    if source.count == 0:
+        fail('%s has no pages' % source.name)
 
     # How many pages the document has is known HERE and nowhere earlier, so the
     # two refusals that need that number are made here — before a page is
     # rasterised and before a model is loaded. The syntax of the list was
     # already refused on the TypeScript side (src/vlm/pages.ts); neither
     # refusal exists twice.
-    beyond = sorted(p for p in exclude_pages if p > doc.page_count)
+    beyond = sorted(p for p in exclude_pages if p > source.count)
     if beyond:
         fail('--skip-pages names %s of a %d-page document'
-             % (', '.join('page %d' % p for p in beyond), doc.page_count))
-    if len(exclude_pages) >= doc.page_count:
+             % (', '.join('page %d' % p for p in beyond), source.count))
+    if len(exclude_pages) >= source.count:
         fail('--skip-pages names every page of the %d-page document, so there would be no book '
-             'left to write' % doc.page_count)
+             'left to write' % source.count)
 
-    meta = doc.metadata or {}
-    first = doc[0].rect
+    title, author = source.credits()
+    width_pt, height_pt = source.frame()
     emit({
         'event': 'document',
-        'pages': doc.page_count,
+        'pages': source.count,
         # Straight from the PDF, empty when the PDF does not say. Nothing here
         # invents a title or an author; the TypeScript side falls back to the
         # filename, which is a FACT about the file rather than a guess about the
         # book.
-        'title': (meta.get('title') or '').strip(),
-        'author': (meta.get('author') or '').strip(),
-        'widthPt': first.width,
-        'heightPt': first.height,
+        'title': title,
+        'author': author,
+        'widthPt': width_pt,
+        'heightPt': height_pt,
     })
 
     # Is there a page left that this run will actually pay a model for? An
@@ -398,7 +500,7 @@ def main():
     # a run with neither loads nothing at all.
     reads_something = any(
         number not in exclude_pages and number not in skip_pages
-        for number in range(1, doc.page_count + 1)
+        for number in range(1, source.count + 1)
     )
 
     model = processor = cfg = None
@@ -420,18 +522,18 @@ def main():
 
     render_total = 0.0
     inference_total = 0.0
-    for index in range(doc.page_count):
+    for index in range(source.count):
         number = index + 1
         if number in exclude_pages:
             # Not rasterised, not read, not emitted. A page somebody deleted has
             # to cost nothing, which is why this is a `continue` and not a flag
             # on the page event: the bridge counts the pages it was told to
             # expect (see bridge.ts), so a silent omission is still caught.
-            sys.stderr.write('  page %d/%d: skipped\n' % (number, doc.page_count))
+            sys.stderr.write('  page %d/%d: skipped\n' % (number, source.count))
             continue
 
         render_start = time.time()
-        pixmap = doc[index].get_pixmap(dpi=dpi)
+        pixmap = source.render(index, dpi)
         image_path = os.path.join(scratch, 'page-%04d.png' % number)
         # Through the same writer as the crops: a kept renders directory is
         # overwritten on every re-read, which is the exact exposure.
@@ -481,10 +583,10 @@ def main():
             'text': text,
         })
         if skipped:
-            sys.stderr.write('  page %d/%d: rendered\n' % (number, doc.page_count))
+            sys.stderr.write('  page %d/%d: rendered\n' % (number, source.count))
         else:
             sys.stderr.write('  page %d/%d: %d chars in %.1fs\n'
-                             % (number, doc.page_count, len(text), infer_seconds))
+                             % (number, source.count, len(text), infer_seconds))
 
     emit({
         'event': 'done',

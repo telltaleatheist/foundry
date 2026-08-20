@@ -1027,7 +1027,10 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
 async function runVlmRead(args: ParsedArgs): Promise<void> {
   // Both paths are read first, so a half-typed command is answered by what is
   // missing from it rather than by a fact about this machine's backends.
-  const pdfPath = requireString(args, 'pdf', 'the PDF to read');
+  // Exactly one source, and the refusal lives in `vlmRead` so that every caller
+  // meets it -- this only carries what was typed.
+  const pdfPath = optionalString(args, 'pdf');
+  const pagesDir = optionalString(args, 'pages');
   const readingsPath = requireString(
     args,
     'readings',
@@ -1077,7 +1080,8 @@ async function runVlmRead(args: ParsedArgs): Promise<void> {
   }
 
   const report = await vlmRead({
-    pdfPath,
+    ...(pdfPath !== undefined ? { pdfPath } : {}),
+    ...(pagesDir !== undefined ? { pagesDir } : {}),
     readingsPath,
     modelId: optionalString(args, 'vlm-model') ?? DEFAULT_VLM_MODEL_ID,
     ...(python !== undefined ? { python } : {}),

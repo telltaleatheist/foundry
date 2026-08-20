@@ -124,8 +124,63 @@ export interface VlmRunResult {
   peakRssBytes: number | null;
 }
 
+/**
+ * WHERE A READ'S PAGES COME FROM.
+ *
+ * Owen's ruling, 2026-08-20: a capture project's product is its PAGES, and a
+ * PDF is something somebody exports on purpose. The mint used to wrap each
+ * photograph in a PDF page at the photograph's own size, and this bridge then
+ * asked the helper to rasterise that wrapper back into an image -- a decode and
+ * a re-encode of the same JPEG, to arrive where it started.
+ *
+ * Both kinds answer the same questions and produce the same page events, so
+ * nothing downstream of the helper's page source knows which one it read. See
+ * docs/CAPTURE.md, "The mint's output is PAGES".
+ */
+export type VlmSource =
+  /** A document to rasterise, at `dpi`. */
+  | { readonly kind: 'pdf'; readonly path: string }
+  /**
+   * Pages that are already pictures, IN READING ORDER. The order is the
+   * caller's and is never re-derived here: page N of the book is `paths[N - 1]`,
+   * which is the one-based-against-zero-based seam and the only place it exists.
+   */
+  | { readonly kind: 'pages'; readonly paths: readonly string[] };
+
+/**
+ * The pages in a directory, IN READING ORDER.
+ *
+ * Sorted NUMERICALLY on the first run of digits in the name, so `page-2` sorts
+ * before `page-10` — the trap a plain name sort walks into, and the reason the
+ * writer's zero-padding is a courtesy rather than a contract this depends on.
+ * Names with no digits fall back to name order, together, after the numbered
+ * ones: an unnumbered file in a pages directory is not a page anybody planned,
+ * and putting it last is quieter than guessing where it belongs.
+ */
+export function pagesInDirectory(dir: string): string[] {
+  const named = fs.readdirSync(dir)
+    .filter((name) => PAGE_IMAGE.test(name))
+    .map((name) => ({ name, at: /\d+/.exec(name) }));
+  named.sort((a, b) => {
+    if (a.at !== null && b.at !== null && a.at[0] !== b.at[0]) {
+      return Number(a.at[0]) - Number(b.at[0]);
+    }
+    if ((a.at === null) !== (b.at === null)) return a.at === null ? 1 : -1;
+    return a.name.localeCompare(b.name);
+  });
+  return named.map((one) => path.join(dir, one.name));
+}
+
+/** What this build can hand a model as a page. Matches the helper's loader. */
+const PAGE_IMAGE = /\.(jpe?g|png|tiff?|bmp|webp)$/i;
+
+/** What a source is called when something has to say so in a sentence. */
+export function sourceName(source: VlmSource): string {
+  return source.kind === 'pdf' ? source.path : `${source.paths.length} page image(s)`;
+}
+
 export interface VlmRunOptions {
-  pdfPath: string;
+  source: VlmSource;
   model: VlmModelDef;
   dpi: number;
   /** Explicit interpreter, from `--python`. Tried first and never skipped. */
@@ -278,15 +333,31 @@ function resolvePython(explicit?: string): string {
 
 /** Read every page of the PDF with the model, in one interpreter. */
 export async function readPagesWithVlm(opts: VlmRunOptions): Promise<VlmRunResult> {
-  if (!fs.existsSync(opts.pdfPath)) {
-    throw new VlmBridgeError(`no such PDF: ${opts.pdfPath}`);
+  const source = opts.source;
+  if (source.kind === 'pdf') {
+    if (!fs.existsSync(source.path)) {
+      throw new VlmBridgeError(`no such PDF: ${source.path}`);
+    }
+  } else {
+    if (source.paths.length === 0) {
+      throw new VlmBridgeError('a read of page images was given no pages');
+    }
+    // Named one at a time rather than counted: a run that dies on page 300 of a
+    // capture project should say WHICH photograph went missing, because that is
+    // the file the person has to go and find.
+    const gone = source.paths.find((one) => !fs.existsSync(one));
+    if (gone !== undefined) {
+      throw new VlmBridgeError(`no such page image: ${gone}`);
+    }
   }
   const python = resolvePython(opts.python);
   const script = scriptPath();
 
   const config = JSON.stringify({
     mode: opts.renderOnly ? 'render' : 'read',
-    pdf: path.resolve(opts.pdfPath),
+    ...(source.kind === 'pdf'
+      ? { pdf: path.resolve(source.path) }
+      : { pages: source.paths.map((one) => path.resolve(one)) }),
     repo: opts.model.repo,
     // Verbatim, and it travels as a JSON string on stdin rather than as an
     // argv word: no shell, no quoting, no truncation in a process listing.
