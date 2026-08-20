@@ -124,6 +124,10 @@ export class CaptureService {
         // The card draws it, so a turn and a crop are visible on the table
         // rather than only inside the editor.
         quad: found.page.quad,
+        // The pixels the quad is a fraction OF -- what the card needs to know
+        // which way round the page it draws will come out.
+        width: found.photo.width,
+        height: found.photo.height,
       });
     }
     return cards;
@@ -621,6 +625,44 @@ export class CaptureService {
       photo.id !== source.id
       && sameShape(source, photo)
       && photo.pages.some((page) => turnsOf(page.quad) !== facing)).length;
+  }
+
+  /**
+   * HOW MANY PHOTOGRAPHS WOULD END UP WITH THIS CONFIGURATION -- the number the
+   * crop and split acts carry.
+   *
+   * The source counts, because it already has it: "use this crop on all 25"
+   * describes the state the press leaves the book in, and the source is one of
+   * the twenty-five. What is NOT counted is a photograph of another shape,
+   * which the stamp refuses and names -- the trio's rule, that a count on a
+   * button is what the button does and not what the book contains.
+   */
+  stampReach(photoId: string): number {
+    const recipe = this.current();
+    if (recipe === null) return 0;
+    const source = recipe.photos.find((photo) => photo.id === photoId);
+    if (source === undefined) return 0;
+    return recipe.photos.filter((photo) =>
+      photo.id === source.id || sameShape(source, photo)).length;
+  }
+
+  /**
+   * WHAT THE PAGES SOMEBODY SET BY HAND ARE CALLED -- for the sentence that
+   * asks before overwriting them.
+   *
+   * Named rather than counted, because "override 3 pages" and "override
+   * IMG_0212, IMG_0227 and IMG_0238" are different questions: the second one a
+   * person can check against what they remember doing. The same fallback the
+   * skip notice uses, so the two sentences about the same pages cannot call
+   * them different things.
+   */
+  handSetNames(): readonly string[] {
+    const recipe = this.current();
+    if (recipe === null) return [];
+    const at = new Map(recipe.photos.map((photo, index) => [photo.id, index + 1]));
+    return recipe.photos
+      .filter((photo) => photo.pages.some((page) => page.byHand === true))
+      .map((photo) => photo.name ?? `Photograph ${at.get(photo.id) ?? '?'}`);
   }
 
   /** Whether the person has ticked one of the rail's three verbs. */
@@ -1168,7 +1210,7 @@ export type ApplyToAll =
    * what somebody wants when the global they are correcting is the one that was
    * wrong in the first place.
    */
-  | { kind: 'stamp'; includeHandSet: boolean };
+  | { kind: 'stamp'; includeHandSet?: boolean };
 
 const WHOLE: CaptureQuad = [[0, 0], [1, 0], [1, 1], [0, 1]];
 

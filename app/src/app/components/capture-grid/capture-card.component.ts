@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 
+import { turnsOf } from '@shared/capture';
 import type { CaptureQuad } from '@shared/types';
 
 /**
@@ -56,17 +57,41 @@ import type { CaptureQuad } from '@shared/types';
         than all at once on open. They are 640 px JPEGs served through the
         capture door, so each is a small read (docs/CAPTURE.md, thumbnails).
       -->
-      <span class="shot">
-        <img [src]="thumb()" [alt]="label()" loading="lazy" draggable="false" />
-        <svg class="crop" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true">
-          <polygon [attr.points]="outline()" />
-          <!--
-            The corner that becomes the minted page's top-left. Without it a
-            quarter turn is invisible: the four corners are the same four
-            points, and only which one is FIRST has changed.
-          -->
-          <circle [attr.cx]="corner()[0]" [attr.cy]="corner()[1]" r="0.04" />
-        </svg>
+      <!--
+        THE CARD DRAWS THE PHOTOGRAPH THE WAY ROUND IT WILL PRINT.
+
+        Owen turned twenty-five spreads upright, went back to the table, and the
+        table looked exactly as it had -- so he reported that the turn had not
+        stuck. It had: every one of them is turned in the file. The only sign
+        the grid gave was the dot below, four hundredths of a card wide, and
+        that dot had been added the LAST time he reported this same class.
+
+        THE PICTURE AND ITS OUTLINE TURN AS ONE ELEMENT, which is not a
+        convenience. The crop is drawn in the thumbnail's own fraction space, so
+        anything that turns one without the other puts a sideways crop over a
+        correctly turned photograph -- worse than no indicator, because it reads
+        as a bug in the crop rather than as an absence.
+      -->
+      <span class="shot" [style.aspect-ratio]="turned().box">
+        <span
+          class="spun"
+          [style.width]="turned().width"
+          [style.height]="turned().height"
+          [style.transform]="turned().spin"
+        >
+          <img [src]="thumb()" [alt]="label()" loading="lazy" draggable="false" />
+          <svg class="crop" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true">
+            <polygon [attr.points]="outline()" />
+            <!--
+              The corner that becomes the minted page's top-left. KEPT even now
+              that the card turns, because it is what makes the turn checkable:
+              after the draw this dot sits at the card's top-left on every card,
+              which is what it MEANS. Anywhere else and the two halves have
+              disagreed.
+            -->
+            <circle [attr.cx]="corner()[0]" [attr.cy]="corner()[1]" r="0.04" />
+          </svg>
+        </span>
       </span>
       <span class="label">{{ label() }}</span>
     </button>
@@ -108,7 +133,18 @@ import type { CaptureQuad } from '@shared/types';
 
     /* The picture and its overlay share one box, so the SVG's fraction space
        is the thumbnail's own. */
-    .shot { position: relative; display: block; }
+    .shot { position: relative; display: block; overflow: hidden; }
+    /*
+     * Sized so that AFTER the rotation it fills the slot: a quarter turn swaps
+     * the visual box, so the element is laid out at the photograph's own aspect
+     * and the slot is laid out at the printed one. Centred on the slot, because
+     * a rotation about a corner would swing the picture out of it.
+     */
+    .spun {
+      position: absolute; top: 50%; left: 50%;
+      transform-origin: center;
+    }
+    .spun img { width: 100%; height: 100%; }
     .crop {
       position: absolute;
       inset: 0;
@@ -191,6 +227,33 @@ export class CaptureCardComponent {
 
   /** The page this card will mint, in the thumbnail's own fraction space. */
   readonly quad = input.required<CaptureQuad>();
+  /** The photograph's own pixels — see CaptureCard, which explains why. */
+  readonly width = input.required<number>();
+  readonly height = input.required<number>();
+
+  /**
+   * HOW TO DRAW THIS CARD SO IT SITS THE WAY THE PAGE WILL PRINT.
+   *
+   * `turnsOf` is the shared body the stamp and the bulk turn both read, so the
+   * table cannot disagree with the mint about which way round a page is.
+   *
+   * The slot takes the PRINTED aspect -- swapped on a quarter or three-quarter
+   * turn -- and the element inside is laid out at the photograph's own aspect,
+   * so that rotating it lands exactly on the slot. Percentages rather than
+   * pixels: the grid sizes its columns and this has to follow whatever it
+   * decides.
+   */
+  protected readonly turned = computed(() => {
+    const turns = turnsOf(this.quad());
+    const sideways = turns % 2 === 1;
+    const box = sideways ? this.height() / this.width() : this.width() / this.height();
+    return {
+      box: `${box}`,
+      width: sideways ? `${100 / box}%` : '100%',
+      height: sideways ? `${100 * box}%` : '100%',
+      spin: `translate(-50%, -50%) rotate(${turns * 90}deg)`,
+    };
+  });
 
   protected readonly outline = computed(() =>
     this.quad().map(([x, y]) => `${x},${y}`).join(' '),

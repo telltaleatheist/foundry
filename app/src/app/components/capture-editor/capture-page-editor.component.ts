@@ -153,6 +153,7 @@ import { Rectifier } from './rectify';
             @if (cut(); as line) {
               <line
                 class="split"
+                [class.proposed]="proposing()"
                 vector-effect="non-scaling-stroke"
                 [attr.x1]="line.a.point[0]" [attr.y1]="line.a.point[1]"
                 [attr.x2]="line.b.point[0]" [attr.y2]="line.b.point[1]"
@@ -282,6 +283,11 @@ import { Rectifier } from './rectify';
     .handles { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
     .outline { fill: none; stroke: var(--accent, #4c9aff); stroke-width: 2; }
     .split { stroke: var(--warn, #d08770); stroke-width: 2; stroke-dasharray: 6 4; }
+    /* A PROPOSAL WEARS THE HANDLES' COLOUR, because that is what it is: a thing
+       you are placing, not a cut this book has made. Same weight, so it is
+       exactly as visible -- being unmissable the moment the tool opens is the
+       whole reason it exists. */
+    .split.proposed { stroke: var(--accent, #4c9aff); }
 
     .handle {
       position: absolute;
@@ -355,8 +361,27 @@ export class CapturePageEditorComponent {
    */
   readonly split = input<CaptureSplit | null>(null);
 
+  /**
+   * A CUT THAT HAS NOT HAPPENED YET -- the line the Split tool shows you before
+   * you have split anything.
+   *
+   * Owen: "i clicked split spreads and it looked no different from place crop.
+   * it was supposed to be a single line with two knobs that i drag to the right
+   * position." It was not: the gutter draws from `split`, a photograph nobody
+   * has split has none, and so the tool changed which buttons were on screen
+   * and left the picture identical to Crop.
+   *
+   * So the line comes first. It is a PROPOSAL and not a cut -- Owen's ruling --
+   * which is why it is a second input rather than a split written into the
+   * recipe the moment somebody clicks a tool to have a look: choosing a tool
+   * must not change the page count of the book, and there is no un-cut.
+   */
+  readonly proposal = input<CaptureSplit | null>(null);
+
   readonly quadsChange = output<readonly FractionQuad[]>();
   readonly splitChange = output<CaptureSplit>();
+  /** The proposed line moved. Nothing is cut and nothing is saved. */
+  readonly proposalChange = output<CaptureSplit>();
 
   /**
    * The listening surface. Capture is set here rather than on the picture
@@ -430,10 +455,20 @@ export class CapturePageEditorComponent {
    * cannot produce -- so it means a hand-edited file rather than anything a
    * person did here.
    */
+  /**
+   * THE LINE ON SCREEN, whether it has been cut yet or not.
+   *
+   * A real split wins over a proposal, always: once a photograph has been cut
+   * the gutter is a fact about it, and a stale proposal underneath must not be
+   * able to draw over the thing it became.
+   */
   protected readonly cut = computed(() => {
-    const split = this.split();
+    const split = this.split() ?? this.proposal();
     return split === null ? null : cutOf(this.sheet(), split);
   });
+
+  /** Whether what is drawn is a proposal rather than a cut this book has made. */
+  protected readonly proposing = computed(() => this.split() === null && this.proposal() !== null);
 
   /** The size each page will mint at, and whether its corners are on the photo. */
   protected readonly previews = computed(() =>
@@ -557,9 +592,12 @@ export class CapturePageEditorComponent {
     const at = this.fractionOf(event);
 
     if (gutter !== null) {
-      const split = this.split();
+      const split = this.split() ?? this.proposal();
       if (split === null) return;
       const sheet = this.sheet();
+      // A proposal is moved, not saved: the same geometry, a different
+      // destination, decided once here rather than at each emit below.
+      const moved = this.split() === null ? this.proposalChange : this.splitChange;
 
       if (gutter === 'line') {
         /*
@@ -590,13 +628,13 @@ export class CapturePageEditorComponent {
          */
         const from = this.slidFrom;
         if (from === null) return;
-        this.splitChange.emit(
+        moved.emit(
           slideSplit(sheet, from.split, [at[0] - from.at[0], at[1] - from.at[1]]),
         );
         return;
       }
 
-      this.splitChange.emit(seatSplit(sheet, split, gutter, [at[0], at[1]]));
+      moved.emit(seatSplit(sheet, split, gutter, [at[0], at[1]]));
       return;
     }
 

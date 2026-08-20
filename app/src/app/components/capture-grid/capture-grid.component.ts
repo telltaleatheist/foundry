@@ -34,6 +34,19 @@ export interface CaptureCard {
   readonly struck: boolean;
   /** The page this card will mint, for the crop drawn over its thumbnail. */
   quad: CaptureQuad;
+  /**
+   * THE PHOTOGRAPH'S PIXELS, and the card cannot do without them.
+   *
+   * A quad is FRACTIONS of the working copy, so a half-width crop reads
+   * 0.5 x 1.0 on every photograph in the project -- and the page it prints is
+   * 2016 x 3024 on one shot and something else entirely on another. The shape a
+   * card must draw itself at is not recoverable from the quad alone.
+   *
+   * They are on the card rather than looked up because the grid holds cards and
+   * not a recipe, which is the line this file's docblock already draws.
+   */
+  readonly width: number;
+  readonly height: number;
 }
 
 /**
@@ -189,6 +202,8 @@ const SWEEP_STARTS_AT = 5;
             [label]="card.label"
             [struck]="card.struck"
             [quad]="card.quad"
+            [width]="card.width"
+            [height]="card.height"
             (choose)="chooseCard($event, card.id)"
             (open)="open.emit(card.id)"
             (strike)="strike.emit(card.id)"
