@@ -2,7 +2,6 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
-  HostListener,
   computed,
   effect,
   inject,
@@ -11,13 +10,13 @@ import {
 } from '@angular/core';
 
 import { mintedPageIds } from '@shared/capture';
-import type { CaptureQuad } from '@shared/types';
+import type { CaptureQuad, CaptureSplit } from '@shared/types';
 
 import { CaptureMintService } from '../../core/capture-mint.service';
 import { ConfirmService } from '../../core/confirm.service';
 import { type ApplyToAll, CaptureService } from '../../core/capture.service';
 import type { Tab } from '../../core/documents.service';
-import { CapturePageEditorComponent } from '../capture-editor/capture-page-editor.component';
+import { CaptureEditorModalComponent } from '../capture-editor/capture-editor-modal.component';
 import type { FractionQuad } from '../capture-editor/geometry';
 import { CaptureGridComponent } from '../capture-grid/capture-grid.component';
 
@@ -63,12 +62,28 @@ const ACKNOWLEDGED_FOR_MS = 1600;
 
 @Component({
   selector: 'app-capture-view',
-  imports: [CaptureGridComponent, CapturePageEditorComponent],
+  imports: [CaptureGridComponent, CaptureEditorModalComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
+    <!--
+      THE OPEN PHOTOGRAPH LEAVING THE RECIPE USED TO STRAND THIS SCREEN.
+      There was an @else here drawing "That photograph is no longer in this
+      project" as a bare paragraph between the table and the mint footer --
+      with no way to dismiss it, because the open id stayed set and the modal that
+      owns Escape was the thing that had gone. And the table below it was DEAF,
+      since it stops answering the keyboard while something is open over it.
+      Closing is the whole of the right answer; the table reappearing says the
+      photograph is gone better than a sentence about it would.
+    -->
     <div class="table">
-      @if (open() === null) {
-        <app-capture-grid
+      <!--
+        THE TABLE IS ALWAYS DRAWN NOW. The editor used to REPLACE it, so leaving
+        meant a button called "All photographs" and coming back meant finding
+        your card again. It is a modal since Wave 21, and a modal is something
+        you open rather than somewhere you go.
+      -->
+      <app-capture-grid
+          [active]="open() === null"
           [cards]="captures.cards()"
           [descending]="captures.descending()"
           [arranged]="captures.arranged()"
@@ -77,51 +92,33 @@ const ACKNOWLEDGED_FOR_MS = 1600;
           (strike)="captures.toggleStrike($event)"
           (reverse)="captures.reverse()"
           (dropped)="captures.intake(tab().path, $event)"
-          (remove)="void confirmRemoval($event)"
-        />
-      } @else if (opened(); as photo) {
-        <header class="bar">
-          <button class="quiet" type="button" (click)="open.set(null)">← All photographs</button>
-          <span class="grow"></span>
-          <!--
-            PREV/NEXT WALKS PHOTOGRAPHS, NOT PAGES, and the readout says both
-            numbers so neither is a lie. See the walk computed for why.
-          -->
-          <button
-            class="quiet"
-            type="button"
-            [disabled]="walkIndex() <= 0"
-            title="Previous photograph (left arrow)"
-            (click)="step(-1)"
-          >‹</button>
-          <span class="which">{{ photo.label }}</span>
-          <button
-            class="quiet"
-            type="button"
-            [disabled]="walkIndex() >= walk().length - 1"
-            title="Next photograph (right arrow)"
-            (click)="step(1)"
-          >›</button>
-        </header>
-        <app-capture-page-editor
+        (remove)="void confirmRemoval($event)"
+      />
+    </div>
+
+    @if (open() !== null) {
+      @if (opened(); as photo) {
+        <app-capture-editor-modal
+          [label]="photo.label"
           [source]="captures.url(photo.workingCopy)"
           [dimensions]="photo.dimensions"
           [quads]="photo.quads"
-          [splitFraction]="photo.split"
+          [split]="photo.split"
+          [stage]="captures.stage()"
+          [hasPrevious]="walkIndex() > 0"
+          [hasNext]="walkIndex() < walk().length - 1"
+          [handSet]="handSet()"
+          [handSetHere]="photo.handSet"
+          [justApplied]="justApplied()"
           (quadsChange)="setQuads(photo.id, $event)"
           (splitChange)="captures.setSplit(photo.id, $event)"
-          [justApplied]="justApplied()"
           (applyToAll)="applyToAll(photo.id, $event)"
+          (keep)="captures.keep(photo.id)"
+          (step)="step($event)"
+          (close)="open.set(null)"
         />
-      } @else {
-        <!--
-          The open photograph left the recipe under us — only reachable through
-          a hand-edited file today. Said rather than drawn as an empty editor.
-        -->
-        <p class="gone">That photograph is no longer in this project.</p>
-        <button class="quiet" type="button" (click)="open.set(null)">Back to the table</button>
       }
-    </div>
+    }
 
     <footer class="mint">
       @if (mint.progress(); as running) {
@@ -162,8 +159,6 @@ const ACKNOWLEDGED_FOR_MS = 1600;
     .grow { flex: 1; }
 
     .which { font-size: 12px; opacity: 0.8; }
-
-    .gone { padding: 16px; opacity: 0.8; }
 
     .mint {
       display: flex;
@@ -283,6 +278,15 @@ export class CaptureViewComponent {
     inject(DestroyRef).onDestroy(() => {
       if (this.applauseTimer !== null) clearTimeout(this.applauseTimer);
     });
+    /*
+     * If the open photograph leaves the recipe, close. It is only reachable
+     * through a hand-edited file today, and it is written as a rule rather than
+     * a screen because the failure it prevents is a stuck one: nothing else on
+     * this surface can clear `open` once the modal is not there to be closed.
+     */
+    effect(() => {
+      if (this.open() !== null && this.opened() === null) this.open.set(null);
+    });
     effect(() => {
       const directory = this.tab().path;
       // Back to the table whenever the project changes: an id from one recipe
@@ -328,7 +332,10 @@ export class CaptureViewComponent {
       workingCopy: photo.workingCopy,
       dimensions: { width: photo.width, height: photo.height },
       quads: photo.pages.map((page) => page.quad) as readonly FractionQuad[],
-      split: photo.split?.x ?? null,
+      // The segment itself. The interim seam that measured it back into a
+      // fraction for the old editor is gone with the editor that needed one.
+      split: photo.split,
+      handSet: photo.pages.some((page) => page.byHand === true),
     };
   });
 
@@ -341,6 +348,19 @@ export class CaptureViewComponent {
    * an hour, reads "of 54" and then counts the PDF is owed all three being the
    * same arithmetic rather than the same intention.
    */
+  /**
+   * How many PHOTOGRAPHS somebody has set by hand — what the override offers to
+   * override, and the reason it is only drawn when there is one.
+   *
+   * Photographs and not pages, like every other count this surface shows a
+   * person: a split spread whose crop was adjusted is one thing they did.
+   */
+  protected readonly handSet = computed(() => {
+    const recipe = this.captures.recipe();
+    if (recipe === null) return 0;
+    return recipe.photos.filter((photo) => photo.pages.some((page) => page.byHand === true)).length;
+  });
+
   protected readonly mintable = computed(() => {
     const recipe = this.captures.recipe();
     return recipe === null ? 0 : mintedPageIds(recipe).length;
@@ -362,25 +382,20 @@ export class CaptureViewComponent {
     if (next !== undefined) this.open.set(next);
   }
 
-  /**
-   * ARROW KEYS, because he is about to do this fifty-four times.
+  /*
+   * THE ARROWS USED TO BE ANSWERED HERE TOO, AND THAT MEANT TWICE.
    *
-   * Ignored while a field or a dialog has the focus: the left arrow inside the
-   * new-project name box has to move the caret, and a shortcut that eats a
-   * keystroke somebody was typing is worse than no shortcut.
+   * This component kept a window:keydown for ArrowLeft/ArrowRight, guarded on
+   * "something is open" -- which is exactly when the modal is mounted, and the
+   * modal answers the same two keys on the same window. Both listeners fire for
+   * one press and both call step(), so every arrow moved TWO photographs and
+   * the walk skipped every other picture on the way through the shoot.
+   *
+   * Window listeners do not nest, so this was not fixable by stopping
+   * propagation in the modal: they are siblings on one target, not a chain.
+   * The fix is ownership -- the surface the keys belong to is the one they are
+   * about, and that is the modal.
    */
-  @HostListener('window:keydown', ['$event'])
-  protected onKey(event: KeyboardEvent): void {
-    if (this.open() === null) return;
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-    const target = event.target;
-    if (target instanceof HTMLElement) {
-      const tag = target.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return;
-    }
-    event.preventDefault();
-    this.step(event.key === 'ArrowLeft' ? -1 : 1);
-  }
 
   /**
    * Ask before removing, then remove.
@@ -435,6 +450,11 @@ export class CaptureViewComponent {
 
   protected setQuads(photoId: string, quads: readonly FractionQuad[]): void {
     this.captures.setQuads(photoId, quads as readonly CaptureQuad[]);
+  }
+
+  /** Kept so the template has one name for it whatever the segment type is. */
+  protected setSplit(photoId: string, split: CaptureSplit): void {
+    this.captures.setSplit(photoId, split);
   }
 
   /**

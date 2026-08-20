@@ -2940,6 +2940,47 @@ export type CaptureQuad = readonly [CapturePoint, CapturePoint, CapturePoint, Ca
  */
 export type PixelQuad = CaptureQuad;
 
+/**
+ * THE GUTTER, AS TWO ENDPOINTS RIDING OPPOSITE EDGES OF THE PAGE THEY CUT.
+ *
+ * ── Why a segment, when one number said it for a whole wave ────────────────
+ *
+ * This was `{ x }`: one fraction along the quad, which can only ever draw a
+ * cut PARALLEL TO THE SIDES. A book laid open under a phone is never quite
+ * square to it, so the gutter leans a degree or two — and a straight cut
+ * through a leaning gutter takes a sliver of the facing page onto both
+ * leaves, at the binding, where the words are tightest. Two endpoints, each
+ * dragged along an edge, draw the lean as ONE gesture. A spread photographed
+ * on its side is the same gesture on the other pair of edges.
+ *
+ * ── OPPOSITE EDGES IS THE CONSTRAINT EVERYTHING ELSE RESTS ON ─────────────
+ *
+ * A segment between opposite edges cuts a quadrilateral into two
+ * quadrilaterals. A segment between ADJACENT edges cuts a corner off: a
+ * triangle and a pentagon, and the mint can print neither — it rectifies FOUR
+ * corners onto a rectangle and has no other shape. So the constraint is what
+ * keeps "both halves are printable pages" true, and `halvesOf` REFUSES a
+ * segment that does not resolve to an opposite pair rather than approximating
+ * one.
+ *
+ * ── Fractions of the working copy, WHICH `{x}` DELIBERATELY WAS NOT ───────
+ *
+ * `x` was measured ALONG THE QUAD, so the gutter stayed on the gutter while
+ * somebody dragged the crop in around it. These are points on the PHOTOGRAPH,
+ * like every other coordinate in this file — so a corner dragged after a split
+ * leaves the endpoints exactly where they were, no longer on any edge.
+ *
+ * That is tolerable for one reason, and it is worth naming rather than
+ * discovering: THE QUADS ARE AUTHORITATIVE and this is only the handle’s own
+ * memory of where it was let go. `halvesOf` re-seats each endpoint on the edge
+ * nearest it before cutting, so a segment left behind by a re-crop is
+ * corrected rather than trusted.
+ */
+export interface CaptureSplit {
+  a: CapturePoint;
+  b: CapturePoint;
+}
+
 /** One page of the book: a quad on some photo, struck or not. */
 export interface CapturePage {
   /** `<photoId>:<n>`. */
@@ -2950,6 +2991,35 @@ export interface CapturePage {
    * struck rows stay on the workbench, and the mint leaves them out.
    */
   struck: boolean;
+  /**
+   * THIS PAGE WAS SET BY HAND, so a later apply-to-all leaves it alone.
+   *
+   * The staged editor stamps one crop over every same-shaped page, and then a
+   * person flips through fixing the ones the stamp got wrong. Those fixes are
+   * the most expensive work in this stage — one page at a time, by eye — and
+   * the next press of APPLY TO ALL would erase every one of them. So a fix
+   * records that it WAS a fix: the re-stamp skips the pages carrying this mark,
+   * names them in the notice voice, and an explicit override is the only way to
+   * overwrite them.
+   *
+   * ── ON DISK, WHICH IS THE WHOLE POINT ────────────────────────────────────
+   *
+   * A flag held in the editor would protect the outliers until the modal
+   * closed. Stored, the protection outlives the session: a project reopened
+   * next week still knows which pages a person set themselves, and the
+   * re-stamp somebody runs then still cannot silently destroy that work.
+   *
+   * ── OPTIONAL, AND NOTHING IN MAIN CONSULTS IT ────────────────────────────
+   *
+   * Absent means false — which is every page of every recipe written before
+   * Wave 21, and no migration is needed to say so. The mint does not read it
+   * and no rule here keys on it. The validator does two things with it and
+   * only two: it CARRIES it, and it refuses a non-boolean. Carrying is not
+   * optional politeness — the validator rebuilds every page field by field, so
+   * a field it did not name would be silently DELETED on the next read, and
+   * the mark would not survive one save.
+   */
+  byHand?: boolean;
 }
 
 /** Where a photo's capture time came from, because a guess must say it is one. */
@@ -3029,10 +3099,26 @@ export interface CapturePhoto {
   /**
    * The editor's split-line handle, kept so re-dragging can re-derive the two
    * quads. THE QUADS ARE AUTHORITATIVE for the mint; this is the gesture's own
-   * state. `x` is a fraction of the working copy's width, like everything else.
+   * state — two endpoints riding opposite edges of the page, in working-copy
+   * fractions like everything else here. See `CaptureSplit` for why it is a
+   * segment and what re-seats it when the crop moves under it.
+   *
+   * A recipe written before Wave 21 holds `{ x }`, and reading one turns it
+   * into the vertical segment it always meant — the fraction's two points on
+   * the top and bottom edges of the page it was cutting.
    */
-  split: { x: number } | null;
-  /** One before a split, two after. Left then right, in the original's slot. */
+  split: CaptureSplit | null;
+  /**
+   * One before a split, two after, in the original's slot.
+   *
+   * THE HALF HOLDING THE PAGE'S TOP-LEFT CORNER COMES FIRST. That is the same
+   * answer as "left then right" for every vertical cut, and the right answer
+   * for a spread photographed on its side, where the cut runs across and the
+   * halves are above and below. It needs no orientation field to consult
+   * because the corner order IS the orientation: turn the photograph and the
+   * top-left corner moves with it, so the halves re-order themselves into
+   * reading order for free.
+   */
   pages: CapturePage[];
 }
 

@@ -68,19 +68,25 @@ import type {
   CaptureMintPage,
   CapturePage,
   CapturePhoto,
+  CapturePoint,
   CaptureQuad,
   CaptureRecipe,
+  CaptureSplit,
   CaptureTimeSource,
   LedgerStep,
   PixelQuad,
 } from '../shared/types';
 import {
   CAPTURE_RECIPE_PAYLOAD,
+  cutOf,
   emptyRecipe,
+  joinedQuad,
   mintedPageIds,
   outputSizeFor,
   recipeBytes,
   sameShape,
+  splitFromFraction,
+  WHOLE_FRAME,
 } from '../shared/capture';
 import { beginMint, cancelHere, mintCancelled, noteMintPage, settleMint } from './job-queue';
 import { readManifest, recordMint } from './projects';
@@ -286,6 +292,21 @@ function fail(file: string, what: string): never {
   throw new CaptureError(`${file} is not a recipe this app can read: ${what}.`);
 }
 
+function validPoint(value: unknown, file: string, where: string): CapturePoint {
+  if (!Array.isArray(value) || value.length !== 2) fail(file, `${where} is not a pair`);
+  const [x, y] = value as unknown[];
+  if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) {
+    fail(file, `${where} is not two finite numbers`);
+  }
+  // The same bounds `validQuad` gives its corners, for the same reason: the
+  // unit is a fraction of the working copy, and outside [0,1] is off the
+  // photograph.
+  if (x < 0 || x > 1 || y < 0 || y > 1) {
+    fail(file, `${where} is outside the photograph (${x}, ${y}) — coordinates are fractions`);
+  }
+  return [x, y];
+}
+
 function validQuad(value: unknown, file: string, where: string): CaptureQuad {
   if (!Array.isArray(value) || value.length !== 4) fail(file, `${where} is not four corners`);
   const corners = value.map((corner, index) => {
@@ -307,6 +328,115 @@ function validQuad(value: unknown, file: string, where: string): CaptureQuad {
     return [x, y] as const;
   });
   return corners as unknown as CaptureQuad;
+}
+
+/**
+ * Work out which pages were set by hand, for a recipe that never said.
+ *
+ * ── IT IS NOT A GUESS. NOTHING BUT A HAND COULD HAVE MADE A QUAD DIFFER ───
+ *
+ * A crop stamped over the shoot copies `source.pages[index].quad` across
+ * verbatim, so every page it touched holds the IDENTICAL floats. The only way
+ * a page stops matching that stamp is somebody dragging its corners. So the
+ * pages whose quad differs from the one most of them share are exactly the
+ * pages a person worked on, and the mark can be recovered from the geometry
+ * that survives.
+ *
+ * MEASURED BEFORE IT WAS WRITTEN, on the only project that has photographs in
+ * it: 25 pages, two distinct quads, 24 at one crop and IMG_0212 alone at
+ * another. That is the staged flow already carried out by hand — a global
+ * stamp and one outlier — with nothing on disk to protect the outlier from
+ * the first APPLY TO ALL of the editor that finally understands it.
+ *
+ * ── ONLY WHEN THE FILE HAS NOT SPOKEN, WHICH KEEPS IT A MIGRATION ────────
+ *
+ * The moment ANY page in the recipe carries the field, the file is one the
+ * staged editor has written and every mark in it is a statement rather than
+ * an absence. Deriving past that would let an inference overwrite a fact:
+ * somebody who hand-sets a page back to exactly the global crop has still set
+ * it by hand, and a rule reading only the geometry would quietly unmark it on
+ * the next read. So this runs on the way in, like the `{x}` migration beside
+ * it, and stops running the first time the file answers for itself.
+ *
+ * ── EXACT EQUALITY, PER PAGE SLOT, WITHIN ONE SHAPE ──────────────────────
+ *
+ * Exact, because these floats were copied rather than computed and a
+ * tolerance would be inventing a question nobody asked. Per page SLOT,
+ * because a stamp copies slot to slot — comparing the halves of split
+ * spreads against each other would find the left halves in the majority and
+ * mark every right half as hand-set. Within one shape, for the reason
+ * apply-to-all skips: a landscape frame’s crop differing from a portrait
+ * one’s says nothing about anybody’s hands.
+ *
+ * ── AND WHERE IT IS UNSURE IT OVER-MARKS ─────────────────────────────────
+ *
+ * A group with no single most-common quad is left alone entirely; a group
+ * with several roughly equal crops marks everything outside the largest of
+ * them, including pages a stamp did put there. THE TWO ERRORS ARE NOT
+ * COMPARABLE: over-marking costs a named skip in a notice and one press of
+ * the include-them override, and under-marking costs the evening of cropping
+ * that the mark exists to protect.
+ */
+function handsRead(photos: CapturePhoto[]): CapturePhoto[] {
+  const spoken = photos.some((photo) => photo.pages.some((page) => page.byHand !== undefined));
+  if (spoken) return photos;
+
+  // Photographs of one shape, since a crop only travels between those.
+  const groups: CapturePhoto[][] = [];
+  for (const photo of photos) {
+    const group = groups.find((held) => {
+      const first = held[0];
+      return first !== undefined && sameShape(first, photo);
+    });
+    if (group === undefined) groups.push([photo]);
+    else group.push(photo);
+  }
+
+  const stamped = new Map<CapturePhoto, Map<number, string>>();
+  for (const group of groups) {
+    const slots = new Map<number, Map<string, number>>();
+    for (const photo of group) {
+      photo.pages.forEach((page, slot) => {
+        const counts = slots.get(slot) ?? new Map<string, number>();
+        const key = JSON.stringify(page.quad);
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+        slots.set(slot, counts);
+      });
+    }
+    const majority = new Map<number, string>();
+    for (const [slot, counts] of slots) {
+      let best: string | null = null;
+      let bestCount = 1;
+      let tied = false;
+      for (const [key, count] of counts) {
+        if (count > bestCount) {
+          best = key;
+          bestCount = count;
+          tied = false;
+        } else if (count === bestCount && best !== null) {
+          tied = true;
+        }
+      }
+      // No crop shared by more than one page, or two sharing the lead: there
+      // is no stamp to have differed from, so nothing here was set by hand
+      // in any sense this can see.
+      if (best !== null && !tied) majority.set(slot, best);
+    }
+    for (const photo of group) stamped.set(photo, majority);
+  }
+
+  return photos.map((photo) => {
+    const majority = stamped.get(photo);
+    if (majority === undefined || majority.size === 0) return photo;
+    return {
+      ...photo,
+      pages: photo.pages.map((page, slot) => {
+        const stamp = majority.get(slot);
+        if (stamp === undefined || stamp === JSON.stringify(page.quad)) return page;
+        return { ...page, byHand: true };
+      }),
+    };
+  });
 }
 
 function validRecipe(value: unknown, file: string): CaptureRecipe {
@@ -341,15 +471,6 @@ function validRecipe(value: unknown, file: string): CaptureRecipe {
     if (source !== 'exif-offset' && source !== 'exif-local' && source !== 'mtime') {
       fail(file, `photograph ${index} says its time came from ${String(source)}`);
     }
-    const split = photo['split'];
-    let splitAt: { x: number } | null = null;
-    if (split !== null && split !== undefined) {
-      const x = (split as Record<string, unknown>)['x'];
-      if (typeof x !== 'number' || !Number.isFinite(x) || x < 0 || x > 1) {
-        fail(file, `photograph ${index} has a split at ${String(x)}, which is not a fraction of its width`);
-      }
-      splitAt = { x };
-    }
     const pages = photo['pages'];
     if (!Array.isArray(pages)) fail(file, `photograph ${index} names no pages`);
     const checkedPages: CapturePage[] = pages.map((page, pageIndex) => {
@@ -358,10 +479,29 @@ function validRecipe(value: unknown, file: string): CaptureRecipe {
       const pageId = held['id'];
       if (typeof pageId !== 'string' || pageId.length === 0) fail(file, `page ${pageIndex} of photograph ${index} has no id`);
       if (typeof held['struck'] !== 'boolean') fail(file, `page ${pageId} does not say whether it is struck`);
+      /*
+       * CARRIED, NEVER CONSULTED — and carrying is the whole job.
+       *
+       * Nothing in main reads `byHand`: not the mint, not a rule in this file.
+       * But this function REBUILDS every page field by field, so a field it
+       * did not name would be dropped here — and since `writeRecipe` validates
+       * on the way out too, the mark would not survive one save. The thing it
+       * exists to protect is an evening of per-page crops, so it is written
+       * down here rather than assumed to flow through.
+       *
+       * Absent is legal and means false (every recipe before Wave 21). Present
+       * and not a boolean is a writer that thinks it marked a page and did
+       * not, which is worth refusing for the same reason an empty name is.
+       */
+      const byHand = held['byHand'];
+      if (byHand !== undefined && typeof byHand !== 'boolean') {
+        fail(file, `page ${pageId} says it was set by hand in something that is not a yes or a no`);
+      }
       return {
         id: pageId,
         quad: validQuad(held['quad'], file, `page ${pageId}`),
         struck: held['struck'] as boolean,
+        ...(typeof byHand === 'boolean' ? { byHand } : {}),
       };
     });
     /*
@@ -377,7 +517,51 @@ function validRecipe(value: unknown, file: string): CaptureRecipe {
     if (checkedPages.length < 1 || checkedPages.length > 2) {
       fail(file, `photograph ${index} has ${checkedPages.length} pages, and a photograph is one page or two`);
     }
-    if (splitAt !== null && checkedPages.length !== 2) {
+
+    /*
+     * ── THE SPLIT IS READ AGAINST THE PAGES, WHICH IS WHY IT IS READ HERE ───
+     *
+     * It was parsed before them for as long as it was one number. A segment
+     * is two points ON THE EDGES OF THE PAGE IT CUTS, so it cannot be checked
+     * — or migrated — without the sheet those pages make.
+     *
+     * MIGRATION HAPPENS ON EVERY READ, not in a pass somebody remembers to
+     * run. A recipe holding `{ x }` is the normal case on this machine right
+     * now, and a one-shot migration is a migration that can be missed: read
+     * it as the vertical segment it always meant, and the next save writes
+     * the segment. The fraction was measured ALONG THE QUAD, so it is turned
+     * into points against the sheet rather than against the photograph.
+     */
+    const held = photo['split'];
+    let split: CaptureSplit | null = null;
+    if (held !== null && held !== undefined) {
+      if (typeof held !== 'object' || Array.isArray(held)) fail(file, `photograph ${index} has a split that is not a line`);
+      const asked = held as Record<string, unknown>;
+      const sheet = joinedQuad(checkedPages.map((page) => page.quad), null);
+      if (asked['a'] === undefined && asked['b'] === undefined) {
+        const x = asked['x'];
+        if (typeof x !== 'number' || !Number.isFinite(x) || x < 0 || x > 1) {
+          fail(file, `photograph ${index} has a split at ${String(x)}, which is not a fraction of its width`);
+        }
+        split = splitFromFraction(sheet, x);
+      } else {
+        split = {
+          a: validPoint(asked['a'], file, `photograph ${index}'s split starts where it`),
+          b: validPoint(asked['b'], file, `photograph ${index}'s split ends where it`),
+        };
+      }
+      /*
+       * OPPOSITE EDGES OR NOTHING. A segment between neighbouring edges takes
+       * a corner off — a triangle and a pentagon — and the mint prints four
+       * corners or nothing at all. No drag can produce it (`seatSplit` builds
+       * every dragged segment opposite by construction), so reaching this
+       * means a hand-edited file, which is exactly what the refusal says.
+       */
+      if (cutOf(sheet, split) === null) {
+        fail(file, `photograph ${index} has a split running between neighbouring edges, which cuts a corner off the page rather than cutting it in two`);
+      }
+    }
+    if (split !== null && checkedPages.length !== 2) {
       fail(file, `photograph ${index} is split but holds ${checkedPages.length} page(s)`);
     }
     /*
@@ -401,7 +585,7 @@ function validRecipe(value: unknown, file: string): CaptureRecipe {
       height: count('height'),
       takenAt: text('takenAt'),
       takenAtSource: source as CaptureTimeSource,
-      split: splitAt,
+      split,
       pages: checkedPages,
     };
   });
@@ -431,7 +615,7 @@ function validRecipe(value: unknown, file: string): CaptureRecipe {
       + (unknown.length > 0 ? ` (naming ${unknown.length} that do not exist)` : ''));
   }
 
-  return { version: 1, photos: checked, order: order as string[] };
+  return { version: 1, photos: handsRead(checked), order: order as string[] };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -837,19 +1021,17 @@ function takenAtFrom(times: ExifTimes, modifiedAt: Date): TakenAt {
 // Intake
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * The whole photograph, as a single page, before anybody has cropped anything.
- *
- * The corner order is [top-left, top-right, bottom-right, bottom-left] OF THE
- * OUTPUT PAGE, which for an uncropped photograph is the photograph's own
- * corners. There is no rotation field to disagree with it: the assignment IS the
- * orientation.
+/*
+ * THE WHOLE FRAME MOVED TO `shared/capture.ts`, where the editor can import it
+ * too. It was spelled here and again in the editor as `wholeFrame()`, which is
+ * the shape this feature keeps paying for — and the chord needed a third
+ * spelling for "no pages at all", which is one more than anybody should have to
+ * keep in agreement.
  */
-const WHOLE_FRAME: CaptureQuad = [[0, 0], [1, 0], [1, 1], [0, 1]];
 
 function pagesFor(photoId: string, from: CapturePhoto | null, decoded: DecodedImage): {
   pages: CapturePage[];
-  split: { x: number } | null;
+  split: CaptureSplit | null;
   inherited: boolean;
 } {
   if (from !== null && sameShape(from, decoded) && from.pages.length > 0) {
@@ -861,6 +1043,12 @@ function pagesFor(photoId: string, from: CapturePhoto | null, decoded: DecodedIm
         // one thing a late arrival does not inherit: nobody has looked at this
         // photograph yet, and starting it struck would hide it in the grid.
         struck: false,
+        // NOR THE HAND-SET MARK, for a sharper version of the same reason. It
+        // says a person set THIS page themselves; a photograph that arrived
+        // late and took its crop from a neighbour has been set by nobody. An
+        // inherited mark would make the next global stamp skip the one
+        // photograph on the table that has never been looked at, and name it
+        // as work somebody would lose — which is the opposite of true.
       })),
       split: from.split,
       inherited: true,

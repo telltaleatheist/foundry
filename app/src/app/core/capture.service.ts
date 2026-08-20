@@ -6,11 +6,12 @@ import type {
   CapturePhoto,
   CaptureQuad,
   CaptureRecipe,
+  CaptureSplit,
 } from '@shared/types';
 
-import { sameShape } from '@shared/capture';
+import { halvesOf, joinedQuad, sameShape, WHOLE_FRAME } from '@shared/capture';
 
-import { joined, rotate, splitAt } from '../components/capture-editor/geometry';
+import { rotate } from '../components/capture-editor/geometry';
 import type { CaptureCard } from '../components/capture-grid/capture-grid.component';
 import { api } from './foundry';
 import { NoticeService } from './notice.service';
@@ -373,7 +374,104 @@ export class CaptureService {
     }));
   }
 
-  /** The editor moved corners on one photograph. */
+  /**
+   * WHICH STAGE THE MODAL OPENS IN — DERIVED, NEVER STORED.
+   *
+   * Wave 21 gives the editor two stages: one crop for the whole shoot, then
+   * per-page corrections. The dangerous reading of that design is a stage kept
+   * as state, because the state has to start somewhere and the somewhere is
+   * stage 1 -- so an evening of per-page work, closed and reopened to fix page
+   * 31, would put a person in front of the one button that stamps over all of
+   * it. And pressing that button is how you REACH per-page mode, so it is not
+   * even a button they could avoid.
+   *
+   * A virgin project is the one thing stage 1 is for, and it is visible in the
+   * recipe: nothing split, one page each, every quad still the whole frame, no
+   * page claiming a hand. Anything else is a project somebody has started, and
+   * a project somebody has started opens where they left off.
+   *
+   * IT IS ALSO NOT THE ONLY GUARD, WHICH IS THE POINT. The stamp always skips
+   * hand-set pages and names them, so a derivation that got this wrong would
+   * refuse and explain rather than destroy. Ruled at channel seq 129 on exactly
+   * that argument: the cheap rule is allowed to be the outer one because the
+   * expensive rule is underneath it.
+   *
+   * EXACT EQUALITY against the whole frame, no tolerance: intake writes that
+   * constant, so an untouched quad is those literal numbers rather than a
+   * computation that landed near them.
+   */
+  readonly stage = computed<1 | 2>(() => {
+    const recipe = this.current();
+    if (recipe === null) return 1;
+    const untouched = recipe.photos.every((photo) =>
+      photo.split === null
+      && photo.pages.length === 1
+      && photo.pages.every((page) => page.byHand !== true && isWholeFrame(page.quad)));
+    return untouched ? 1 : 2;
+  });
+
+  /**
+   * STAGE 2'S PER-PAGE APPLY: this photograph was set by hand and stays that way.
+   *
+   * It changes no corner. The corners were already saved -- a drag writes
+   * through to the recipe as it happens, which is what stops a person losing an
+   * adjustment by flipping to the next photograph -- so what is left for this
+   * button to do is the part that was never expressible before: say that the
+   * setting on this page was CHOSEN FOR THIS PAGE, and that the next global
+   * must not quietly take it away.
+   *
+   * On the photograph, not on one page: a spread is two pages of one picture,
+   * and somebody who adjusts the crop has adjusted the picture. Marking only
+   * the half whose corner they happened to drag would leave the other half
+   * exposed to the next stamp, which is half a protection and reads as none.
+   */
+  keep(photoId: string): void {
+    this.change((recipe) => ({
+      ...recipe,
+      photos: recipe.photos.map((photo) => {
+        if (photo.id !== photoId) return photo;
+        // A TOGGLE, because a mark set by mistake would otherwise be permanent
+        // and the only escape from it would be a global with the override on --
+        // which changes every other page to fix one.
+        const marked = photo.pages.some((page) => page.byHand === true);
+        return { ...photo, pages: photo.pages.map((page) => ({ ...page, byHand: !marked })) };
+      }),
+    }));
+  }
+
+  /**
+   * The editor moved corners on one photograph — WHICH IS WHAT A HAND IS.
+   *
+   * ── The mark used to wait for a button, and that lost work ──────────────────
+   *
+   * Only the per-page Apply set `byHand`, so somebody who adjusted page 12's
+   * corners and flipped onward without pressing anything had an unprotected
+   * crop: the next apply-to-all overwrote it silently and named it in no skip
+   * list. That is the one loss the mark exists to prevent, happening on the live
+   * path instead of the migration path.
+   *
+   * And it could not heal. The derivation that infers the mark for old recipes
+   * runs only WHILE THE FILE HAS NOT SPOKEN, and the stamp writes `byHand:
+   * false` on every page it touches — so the first apply anybody ever pressed
+   * switched the inference off for the life of the project, and every drag
+   * after that was unprotected for good. The live path was permanently weaker
+   * than the migration path, in the direction that costs an evening.
+   *
+   * ── One rule, two paths ────────────────────────────────────────────────────
+   *
+   * The migration reads "a quad that is neither the whole frame nor the stamp
+   * was dragged". This is the same sentence, written at the moment the drag
+   * happens rather than inferred from its result afterwards, and the two must
+   * not disagree about what a hand is — two rules for one fact is the shape
+   * this feature has paid for repeatedly.
+   *
+   * ── THE PHOTOGRAPH, NOT THE PAGE ───────────────────────────────────────────
+   *
+   * A spread is two pages of one picture, and the stamp copies a whole
+   * configuration rather than a single quad — so marking only the half whose
+   * corner was dragged would leave the other half to be replaced by the next
+   * stamp. Half a protection reads as none.
+   */
   setQuads(photoId: string, quads: readonly CaptureQuad[]): void {
     this.change((recipe) => ({
       ...recipe,
@@ -385,14 +483,15 @@ export class CaptureService {
               pages: photo.pages.map((page, index) => ({
                 ...page,
                 quad: quads[index] ?? page.quad,
+                byHand: true,
               })),
             },
       ),
     }));
   }
 
-  /** The editor dragged the split handle. */
-  setSplit(photoId: string, at: number): void {
+  /** The editor dragged one end of the gutter, or slid the whole cut. */
+  setSplit(photoId: string, split: CaptureSplit): void {
     this.change((recipe) => {
       const photos = recipe.photos.map((photo) => {
         if (photo.id !== photoId) return photo;
@@ -408,16 +507,31 @@ export class CaptureService {
          * from it: after the first drag `pages[0]` is the left half, and
          * re-splitting that would halve the page again on every adjustment.
          */
-        const whole = joined(photo.pages.map((page) => page.quad));
-        const [left, right] = splitAt(whole, at);
+        const whole = joinedQuad(photo.pages.map((page) => page.quad), photo.split);
+        const halves = halvesOf(whole, split);
+        /*
+         * Unreachable for anything the editor can produce -- `seatSplit` is the
+         * only way a segment is built from a pointer and it cannot return one
+         * that lands on adjacent edges -- and returning the photograph
+         * untouched is the only answer that cannot destroy a page.
+         *
+         * That refusal-by-construction is the whole reason the seating lives in
+         * shared/ rather than in the component: a gutter that DRAWS FINE AND
+         * REFUSES TO SAVE is this feature's own precedent, from the session
+         * where a corner dragged off the frame passed every surface and then
+         * stopped the recipe saving for an hour while the light table went on
+         * looking alive.
+         */
+        if (halves === null) return photo;
+        const [first, second] = halves;
         return {
           ...photo,
-          split: { x: at },
+          split,
           pages: [
             // Strikes survive a re-drag: which half is a page is a decision
             // about the book, and moving the gutter is not taking it back.
-            { id: `${photo.id}:0`, quad: left, struck: photo.pages[0]?.struck ?? false },
-            { id: `${photo.id}:1`, quad: right, struck: photo.pages[1]?.struck ?? false },
+            { id: `${photo.id}:0`, quad: first, struck: photo.pages[0]?.struck ?? false },
+            { id: `${photo.id}:1`, quad: second, struck: photo.pages[1]?.struck ?? false },
           ],
         };
       });
@@ -458,7 +572,17 @@ export class CaptureService {
      * that lit up on the click rather than on the act would say "Applied" over
      * a notice bar reporting that everything was skipped.
      */
-    const skipped: string[] = [];
+    /*
+     * KEPT AS A REASON PER PHOTOGRAPH so the sentence can GROUP them.
+     *
+     * It used to be a list of finished strings, which forced the reason to be
+     * repeated once per name: "Left alone: IMG_0212 (you set that one by hand),
+     * IMG_0215 (you set that one by hand), IMG_0220 (you set that one by hand)."
+     * docs/CAPTURE.md asks for the other shape -- "Left alone: pages 3, 7 --
+     * you set those by hand" -- which says the reason once and is the voice the
+     * rest of this surface already speaks in.
+     */
+    const skipped: { name: string; why: 'byHand' | 'shape' }[] = [];
     let applied = 0;
     this.change((recipe) => {
       const source = recipe.photos.find((photo) => photo.id === from);
@@ -497,9 +621,25 @@ export class CaptureService {
         photo.name ?? `Photograph ${position.get(photo.id) ?? '?'}`;
 
       const photos = recipe.photos.map((photo) => {
-        if (photo.id === source.id) return photo;
+        if (photo.id === source.id) {
+          /*
+           * THE SOURCE'S CROP HAS JUST BECOME THE GLOBAL, so it is no longer an
+           * outlier and its mark has to go with the rest.
+           *
+           * Without this, setting the global would permanently exclude the
+           * photograph it was set ON from every later global -- the drag that
+           * placed it marks it (see setQuads), the stamp skips the source, and
+           * the mark would stand forever. The person would have made one page
+           * un-stampable by using it to stamp everything else.
+           *
+           * It needs no idea of which stage it is in, which was the point of
+           * putting it here: whatever the source was before, being the source
+           * is what it is now.
+           */
+          return { ...photo, pages: photo.pages.map((page) => ({ ...page, byHand: false })) };
+        }
         if (!sameShape(source, photo)) {
-          skipped.push(`${name(photo)} (a different shape)`);
+          skipped.push({ name: name(photo), why: 'shape' });
           return photo;
         }
         switch (gesture.kind) {
@@ -509,35 +649,59 @@ export class CaptureService {
               ...photo,
               pages: photo.pages.map((page) => ({ ...page, quad: rotate(page.quad, gesture.turns) })),
             };
-          case 'split': {
-            if (photo.split !== null) {
-              // It had a sentence in the docblock and none on screen. A skip
-              // nobody is told about is the same silence as a skip with no rule.
-              skipped.push(`${name(photo)} (already split)`);
+          case 'stamp': {
+            /*
+             * THE HAND-SET SKIP, WHICH IS THE ONLY GUARD LEFT ON THIS ARM.
+             *
+             * Two older skips retired into it. "Already split" was standing in
+             * for hand-adjusted from before there was a word for it, and
+             * keeping it would have made the first global split permanently
+             * un-re-splittable -- a gutter placed slightly wrong on the first
+             * pass could never be placed again except by hand, twenty-seven
+             * times over. And the page-count refusal existed because a quad
+             * copy alone could not invent a split; this arm copies the split
+             * too, so a one-page photograph can now receive a two-page
+             * configuration and the count follows rather than blocking.
+             */
+            if (photo.pages.some((page) => page.byHand === true) && !gesture.includeHandSet) {
+              skipped.push({ name: name(photo), why: 'byHand' });
               return photo;
             }
             applied += 1;
-            const [left, right] = splitAt(photo.pages[0]?.quad ?? WHOLE, gesture.at);
+            /*
+             * IT COPIES THE WHOLE CONFIGURATION, NOT THREE GESTURES IN ORDER.
+             *
+             * The plan-back worried about ordering -- split before rect, or
+             * every unsplit photograph is refused on page-count grounds with a
+             * reasonable-sounding list of refusals. That ordering problem does
+             * not exist once the stamp copies the SOURCE'S PAGES rather than
+             * replaying what was done to them: the split, the crop and the turn
+             * are all already in those quads, because the corner order IS the
+             * orientation and the halves ARE the split.
+             *
+             * Which is also why there is no separate turn to carry here. A quad
+             * turned three quarters is a quad in that order, and copying it
+             * copies the turn -- the reason stage 1 needs no turn-all beside
+             * this button, and stage 2 still does.
+             *
+             * STRIKES BELONG TO THE PHOTOGRAPH, NOT TO THE CONFIGURATION, so
+             * they stay where they are. A page struck because it was a blurred
+             * retake is still a blurred retake after somebody adjusts the crop.
+             */
             return {
               ...photo,
-              split: { x: gesture.at },
-              pages: [
-                { id: `${photo.id}:0`, quad: left, struck: photo.pages[0]?.struck ?? false },
-                { id: `${photo.id}:1`, quad: right, struck: false },
-              ],
-            };
-          }
-          case 'quad': {
-            if (photo.pages.length !== source.pages.length) {
-              skipped.push(`${name(photo)} (${photo.pages.length} pages, not ${source.pages.length})`);
-              return photo;
-            }
-            applied += 1;
-            return {
-              ...photo,
-              pages: photo.pages.map((page, index) => ({
-                ...page,
-                quad: source.pages[index]?.quad ?? page.quad,
+              split: source.split,
+              pages: source.pages.map((page, index) => ({
+                id: `${photo.id}:${index}`,
+                quad: page.quad,
+                struck: photo.pages[index]?.struck ?? false,
+                // THE GLOBAL CLEARS THE MARK, ruled at channel seq 129. Left
+                // standing, the first stamp would mark every page hand-set and
+                // the second would skip every one -- a feature that works
+                // exactly once per project. And after an explicit include-them
+                // override the page is no longer hand-set; it is globally set,
+                // and a mark saying otherwise would cost the next global too.
+                byHand: false,
               })),
             };
           }
@@ -558,19 +722,22 @@ export class CaptureService {
        * out what was applied. They pressed a button that said what it would do;
        * the sentence should say it happened.
        */
-      const did = gesture.kind === 'rotate'
-        ? 'Turned'
-        : gesture.kind === 'split' ? 'Split' : 'Set the crop on';
+      const did = gesture.kind === 'rotate' ? 'Turned' : 'Applied to';
       const count = applied === 1 ? '1 photograph' : `${applied} photographs`;
       this.notices.notice.set(
         skipped.length === 0
           ? `${did} ${count}.`
-          : `${did} ${count}. Left alone: ${skipped.join(', ')}.`,
+          : `${did} ${count}. Left alone: ${leftAlone(skipped)}.`,
       );
-      // A split changes which pages exist, so the order has to grow with it.
-      return gesture.kind === 'split'
-        ? { ...recipe, photos, order: orderFor(photos, recipe.order) }
-        : { ...recipe, photos };
+      /*
+       * ALWAYS REBUILT, because a stamp can now change how many pages a
+       * photograph has IN EITHER DIRECTION -- it copies the source's page list,
+       * so an unsplit photograph gains a page and a split one can lose the one
+       * it had. This used to be rebuilt only for the split gesture, which was
+       * true for exactly as long as splitting was the only way to change the
+       * count.
+       */
+      return { ...recipe, photos, order: orderFor(photos, recipe.order) };
     });
     return { applied, skipped: skipped.length };
   }
@@ -645,44 +812,131 @@ export interface ApplyOutcome {
 }
 
 export type ApplyToAll =
-  /** Quarter turns, so every photo gets the TURN rather than this photo's corners. */
+  /**
+   * Quarter turns, so every photo gets the TURN rather than this photo's
+   * corners. Kept for STAGE 2 ONLY (ruled, channel seq 129): it is the one act
+   * that changes every page without overwriting hand-set crops, because a turn
+   * permutes each page's own corners rather than replacing them.
+   */
   | { kind: 'rotate'; turns: number }
-  /** The split line, as a fraction of width. Only unsplit photos are touched. */
-  | { kind: 'split'; at: number }
-  /** The corners themselves, page for page. */
-  | { kind: 'quad' };
+  /**
+   * THE WHOLE CONFIGURATION OF ONE PHOTOGRAPH, COPIED ONTO THE REST.
+   *
+   * This one arm is what used to be `quad` and `split` and, on a virgin
+   * project, `rotate` as well -- three gestures replaying three separate
+   * decisions onto every photograph, each with its own skip rule, each free to
+   * disagree with the others about which photographs it had touched.
+   *
+   * `includeHandSet` is the explicit override behind the skip. Off, a stamp
+   * leaves hand-set pages alone and names them; on, it takes them too, which is
+   * what somebody wants when the global they are correcting is the one that was
+   * wrong in the first place.
+   */
+  | { kind: 'stamp'; includeHandSet: boolean };
 
 const WHOLE: CaptureQuad = [[0, 0], [1, 0], [1, 1], [0, 1]];
+
+/**
+ * Whether a quad is still the whole photograph, corner for corner.
+ *
+ * Exact, because the value being compared against is the one intake WROTE.
+ * A tolerance here would be inventing a question about numbers that were
+ * copied rather than computed, and its answer would drift with the tolerance.
+ */
+function isWholeFrame(quad: CaptureQuad): boolean {
+  return quad.every((corner, index) =>
+    corner[0] === WHOLE_FRAME[index]![0] && corner[1] === WHOLE_FRAME[index]![1]);
+}
+
+/**
+ * The photographs a stamp would not touch, said once per reason.
+ *
+ * Grouped rather than listed, because the reason belongs to the GROUP and
+ * repeating it per name is how a sentence stops being read: three hand-set
+ * photographs produced the same eight words three times over. The order is the
+ * order the reasons were first met, so the sentence follows the arrangement
+ * rather than an alphabet nobody chose.
+ */
+function leftAlone(skipped: readonly { name: string; why: 'byHand' | 'shape' }[]): string {
+  const groups: { why: 'byHand' | 'shape'; names: string[] }[] = [];
+  for (const one of skipped) {
+    const group = groups.find((each) => each.why === one.why);
+    if (group === undefined) groups.push({ why: one.why, names: [one.name] });
+    else group.names.push(one.name);
+  }
+  return groups
+    .map(({ why, names }) => {
+      const many = names.length !== 1;
+      const because = why === 'byHand'
+        ? `you set ${many ? 'those' : 'that one'} by hand`
+        : `${many ? 'different shapes' : 'a different shape'}`;
+      return `${names.join(', ')} — ${because}`;
+    })
+    .join('; ');
+}
 
 /** Quiet before a write. Long enough that a drag is one save, short enough to be invisible. */
 const SAVE_AFTER_MS = 400;
 
 /**
- * The order with any newly-split pages folded in beside the page they came from.
+ * The order with any newly-cut pages folded in beside the page they came from.
  *
- * A split replaces one page with two, and the new right-hand page has to land
- * immediately after its left rather than at the end of the book. Ids not in the
- * photos any more are dropped, which is what removes the pre-split page id.
+ * ── IT USED TO PUT THEM ALL AT THE BACK OF THE BOOK ─────────────────────────
+ *
+ * The docblock promised this and the code did not do it, and the gap is one
+ * assumption: it recognised a new page by the OLD PAGE'S ID HAVING VANISHED.
+ * An unsplit photograph's only page is `<photoId>:0` and a split one's pages
+ * are `:0` and `:1`, so the old id never vanishes -- the cut ADDS `:1` and
+ * leaves `:0` exactly where it was. The "a split replaced it" branch below
+ * therefore never ran for a split, and every new right-hand page fell through
+ * to the sweep at the end.
+ *
+ * Measured on four photographs split in one act: A:0 B:0 C:0 D:0 became
+ * A:0 B:0 C:0 D:0 A:1 B:1 C:1 D:1 -- every left page, then every right page.
+ * A whole book of versos followed by a whole book of rectos, in the minted PDF
+ * and nowhere else, because the light table draws the same cards either way and
+ * the number in the footer is the same fifty-four.
+ *
+ * AND THE SINGLE GESTURE IS THE QUIETER ONE (P1, channel seq 138): split ONE
+ * spread on a shoot of twenty-five and A:0 B:0 becomes A:0 B:0 A:1 -- one page
+ * adrift at the back of an otherwise perfect book. That is the version somebody
+ * reaches for first, and the version that survives a reading of the grid.
+ *
+ * It has been live for as long as splitting has, and it survived because
+ * nothing had split a real shoot yet: Owen's recipe holds twenty-five
+ * photographs and no splits at all.
+ *
+ * ── THE RULE, AND WHY IT IS NOT SIMPLY "KEEP A PHOTOGRAPH'S PAGES TOGETHER" ─
+ *
+ * A page that the arrangement ALREADY NAMES keeps its own slot, and only a page
+ * the arrangement has never heard of is folded in beside its sibling. That
+ * distinction is the whole of it: somebody who has dragged the two halves of a
+ * spread apart on purpose has an order that says so, and a rule that gathered
+ * each photograph's pages together would quietly undo it on the next stamp.
  */
 function orderFor(photos: readonly CapturePhoto[], previous: readonly string[]): string[] {
-  const live = new Set(photos.flatMap((photo) => photo.pages.map((page) => page.id)));
+  const known = new Set(previous);
   const order: string[] = [];
   const placed = new Set<string>();
-  for (const id of previous) {
-    const photo = photos.find((one) => one.pages.some((page) => page.id === id));
-    if (photo === undefined) {
-      // The page this id named is gone — a split replaced it. Its photo's pages
-      // go in here, in their own order, so the spread keeps its slot.
-      const owner = photos.find((one) => id.startsWith(`${one.id}:`));
-      if (owner === undefined) continue;
-      for (const page of owner.pages) {
-        if (!placed.has(page.id)) { order.push(page.id); placed.add(page.id); }
-      }
-      continue;
-    }
+  const place = (id: string): void => {
     if (!placed.has(id)) { order.push(id); placed.add(id); }
+  };
+
+  for (const id of previous) {
+    const owner = photos.find((one) => one.pages.some((page) => page.id === id))
+      // The page itself is gone — a stamp can now take a photograph from two
+      // pages back down to one — so its photograph is found by the id it was
+      // built from, and its remaining pages take the slot.
+      ?? photos.find((one) => id.startsWith(`${one.id}:`));
+    if (owner === undefined) continue;
+
+    if (owner.pages.some((page) => page.id === id)) place(id);
+    for (const page of owner.pages) if (!known.has(page.id)) place(page.id);
   }
-  for (const id of live) if (!placed.has(id)) order.push(id);
+
+  // Whole photographs the arrangement has never seen — an intake since the last
+  // save — go on the end, which is where new photographs belong.
+  for (const photo of photos) for (const page of photo.pages) place(page.id);
   return order;
 }
 

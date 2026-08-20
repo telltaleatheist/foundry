@@ -17,18 +17,14 @@ import {
   type Dimensions,
   type FractionPoint,
   type FractionQuad,
-  alongQuad,
   cornerNear,
   distanceToEdge,
-  joined,
-  rotate,
-  splitAt,
   toPixels,
   withCorner,
 } from './geometry';
-import { outputSizeFor } from '@shared/capture';
+import { cutOf, joinedQuad, outputSizeFor, seatSplit, slideSplit } from '@shared/capture';
+import type { CaptureQuad, CaptureSplit } from '@shared/types';
 
-import type { ApplyToAll } from '../../core/capture.service';
 import { Rectifier } from './rectify';
 
 /**
@@ -71,6 +67,14 @@ import { Rectifier } from './rectify';
  * So the drag clamps, the way the split line always did, and `withinSource`
  * stops being a routine notice and becomes what it should have been: a
  * should-never-happen that says the shader was handed something impossible.
+ *
+ * ── THE GESTURE ROW MOVED UP, AND THAT IS THIS FILE GETTING ITS JOB BACK ────
+ *
+ * Turn, Split and the applies used to sit under the picture here. Wave 21 put
+ * them in the modal footer, which is where they belonged all along: an apply-to-
+ * all is an act on THE WHOLE SHOOT, and this component has never heard of a
+ * second photograph. What is left is exactly what the docblock above always
+ * claimed -- a picture, handles on it, and what the person did to them.
  *
  * ── Geometry lives next door, not here ──────────────────────────────────────
  *
@@ -146,12 +150,12 @@ import { Rectifier } from './rectify';
                 [attr.points]="outlineOf(quad)"
               />
             }
-            @if (splitLine(); as line) {
+            @if (cut(); as line) {
               <line
                 class="split"
                 vector-effect="non-scaling-stroke"
-                [attr.x1]="line.from[0]" [attr.y1]="line.from[1]"
-                [attr.x2]="line.to[0]" [attr.y2]="line.to[1]"
+                [attr.x1]="line.a.point[0]" [attr.y1]="line.a.point[1]"
+                [attr.x2]="line.b.point[0]" [attr.y2]="line.b.point[1]"
               />
             }
           </svg>
@@ -165,53 +169,40 @@ import { Rectifier } from './rectify';
           @for (handle of handles(); track handle.key) {
             <span
               class="handle"
+              [class.first]="handle.corner === 0"
               [class.held]="held()?.quad === handle.quad && held()?.corner === handle.corner"
               [style.left.%]="handle.at[0] * 100"
               [style.top.%]="handle.at[1] * 100"
             ></span>
           }
-        </div>
-        </div>
 
-        <div class="gestures">
-          <button type="button" (click)="turn(-1)" title="Turn this page anticlockwise">⟲</button>
-          <button type="button" (click)="turn(1)" title="Turn this page clockwise">⟳</button>
-          <button
-            type="button"
-            [class.applied]="justApplied() === 'rotate'"
-            (click)="applyTurnToAll()"
-            [disabled]="turnsApplied() === 0"
-          >{{ justApplied() === 'rotate' ? 'Turned ✓' : 'Turn all by the same amount' }}</button>
-          @if (quads().length === 1) {
-            <button type="button" (click)="split()">Split</button>
-          }
-          <button
-            type="button"
-            [class.applied]="justApplied() === 'split'"
-            (click)="applySplitToAll()"
-            [disabled]="quads().length < 2"
-          >
-            {{ justApplied() === 'split' ? 'Split ✓' : 'Apply split to all' }}
-          </button>
           <!--
-            OWEN'S "GLOBAL". He asked to "set the global position of the rect"
-            and then change it per page, which is what this act plus a later
-            drag already were: this stamps the crop onto every photograph of the
-            same shape, and dragging one afterwards overrides that one. The word
-            on the button is his rather than the codebase's, because a person
-            looking for a global should find one.
+            THE GUTTER'S TWO ENDS, EACH RIDING AN EDGE OF THE PAGE.
 
-            It is a NAME rather than a schema layer -- the recipe still has one
-            kind of quad, and a page that is dragged afterwards does not keep
-            following later globals. That deferral is in the ledger by name.
+            Drawn where the geometry resolves the end to, not at the stored endpoint:
+            the segment is gesture state and goes stale against a crop dragged
+            after it, so what is on screen is where the geometry says the end
+            actually sits. They are a different colour from the corners because
+            they do a different thing -- a corner moves the page, these move the
+            cut through it.
           -->
-          <button
-            class="wide"
-            type="button"
-            [class.applied]="justApplied() === 'quad'"
-            (click)="applyToAll.emit({ kind: 'quad' })"
-          >{{ justApplied() === 'quad' ? 'Crop set ✓' : 'Set this crop for all pages' }}</button>
+          @if (cut(); as line) {
+            <span
+              class="gutter"
+              [class.held]="holdingSplit() === 'a'"
+              [style.left.%]="line.a.point[0] * 100"
+              [style.top.%]="line.a.point[1] * 100"
+            ></span>
+            <span
+              class="gutter"
+              [class.held]="holdingSplit() === 'b'"
+              [style.left.%]="line.b.point[0] * 100"
+              [style.top.%]="line.b.point[1] * 100"
+            ></span>
+          }
         </div>
+        </div>
+
       </div>
 
       <div class="previews">
@@ -301,42 +292,44 @@ import { Rectifier } from './rectify';
       background: var(--bg-raised, #fff);
       pointer-events: none;
     }
-    .handle.held { background: var(--accent, #4c9aff); }
-
-    .gestures { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
-    /* The global act reads as the act it is rather than as a fourth small
-       control: it changes every page, and the three beside it change one. */
-    .gestures .wide { flex-basis: 100%; }
     /*
-     * THE ACKNOWLEDGEMENT, AND EACH BUTTON SAYS ITS OWN ACT BACK.
+     * THE CORNER MARK, CARRIED IN FROM THE CARD (Wave 21 point 5).
      *
-     * Owen asked for "applied or something". The something matters: an action
-     * should keep its name through the whole flow, so the button that says Turn
-     * reports Turned and the notice bar says "Turned 25 photographs". One shared
-     * word -- Applied -- would have made the person map it back to whichever of
-     * three buttons they pressed, which is work the interface can do for them.
+     * A quarter turn permutes the corner assignment WITHOUT MOVING ANY OF THEM,
+     * so the outline is identical before and after and four identical handles
+     * say nothing about which way the page comes out. The card already solved
+     * this with a filled dot on the corner that becomes the minted page's
+     * top-left; this is the same device in the same colour, so the mark means
+     * one thing in both places rather than two things that resemble each other.
      *
-     * Quiet on purpose -- the house has no precedent for a
-     * transient confirmed state, so this borrows the accent it uses for "the
-     * thing worth pressing" and does not animate. The notice bar still carries
-     * the count and the skips; this carries only the fact that it ran, where
-     * the eyes already are.
+     * It matters most on exactly this shoot: every spread of the 1876 volume
+     * lies sideways and wants THREE quarter turns, and without the mark the
+     * only way to see that a turn happened is to look away at the preview.
      */
-    .gestures button.applied {
-      background: var(--accent-strong);
-      border-color: var(--accent-strong);
-      color: var(--text-inverse);
+    .handle.first { background: var(--accent, #4c9aff); }
+
+    /*
+     * HELD IS A RING AND A LIFT, not a fill, now that a fill means something
+     * else. Filling on grab would have made every held corner look like the
+     * first one -- two things sharing a name, in a colour.
+     */
+    .handle.held {
+      transform: scale(1.15);
+      box-shadow: 0 0 0 3px var(--accent-faint);
     }
-    .gestures button {
-      padding: 4px 10px;
-      border: 1px solid var(--border-default);
-      border-radius: var(--radius-md, 6px);
-      background: transparent;
-      color: var(--text-secondary);
-      cursor: pointer;
+
+    /* The gutter's ends take the split line's own colour, so the line and the
+       thing that moves it read as one object rather than two controls. */
+    .gutter {
+      position: absolute;
+      width: 16px; height: 16px;
+      margin: -8px 0 0 -8px;
+      border: 2px solid var(--warn, #d08770);
+      border-radius: 50%;
+      background: var(--bg-raised, #fff);
+      pointer-events: none;
     }
-    .gestures button:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
-    .gestures button:disabled { opacity: 0.4; cursor: default; }
+    .gutter.held { background: var(--warn, #d08770); }
 
     .previews { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; flex: 0 0 220px; }
     .previews figure { margin: 0; }
@@ -352,25 +345,18 @@ export class CapturePageEditorComponent {
   readonly dimensions = input.required<Dimensions>();
   /** One quad per page of this photograph: one before a split, two after. */
   readonly quads = input.required<readonly FractionQuad[]>();
-  /** Where the split handle sits, as a fraction of width, or null for unsplit. */
-  readonly splitFraction = input<number | null>(null);
+  /**
+   * The gutter, as the two endpoints the person dragged, or null for unsplit.
+   *
+   * A SEGMENT AND NOT A FRACTION SINCE WAVE 21. One number can only cut
+   * parallel to the sides, and a book under a phone is never quite square to
+   * it, so a straight cut through a leaning gutter takes a sliver of the facing
+   * page onto both leaves.
+   */
+  readonly split = input<CaptureSplit | null>(null);
 
   readonly quadsChange = output<readonly FractionQuad[]>();
-  readonly splitChange = output<number>();
-  /**
-   * "Apply to all", which this component can ASK for and cannot DO: it is a
-   * copy onto other photographs, and only the service holds those — including
-   * the shape test that decides which of them are skipped.
-   */
-  readonly applyToAll = output<ApplyToAll>();
-
-  /**
-   * Which apply-to-all just landed, or null. The SURFACE owns the timing --
-   * this component does not know whether an act succeeded, and a button that
-   * congratulated itself on its own click would be exactly the lie Owen was
-   * complaining about.
-   */
-  readonly justApplied = input<ApplyToAll['kind'] | null>(null);
+  readonly splitChange = output<CaptureSplit>();
 
   /**
    * The listening surface. Capture is set here rather than on the picture
@@ -390,9 +376,16 @@ export class CapturePageEditorComponent {
 
   /** Which corner is under the pointer right now, or null between drags. */
   protected readonly held = signal<{ quad: number; corner: 0 | 1 | 2 | 3 } | null>(null);
-  /** Quarter turns applied to this photograph since it was opened. */
-  protected readonly turnsApplied = signal(0);
-  private draggingSplit = false;
+  /**
+   * Which end of the gutter is under the pointer, 'line' while the whole cut is
+   * being slid, or null.
+   *
+   * A signal rather than a field because the two handles draw their held state
+   * from it, and a plain boolean could not say WHICH end is being moved.
+   */
+  protected readonly holdingSplit = signal<'a' | 'b' | 'line' | null>(null);
+  /** Where the pointer was, and where the ends were, when a line drag started. */
+  private slidFrom: { at: FractionPoint; split: CaptureSplit } | null = null;
 
   protected readonly aspectRatio = computed(() => {
     const { width, height } = this.dimensions();
@@ -412,21 +405,34 @@ export class CapturePageEditorComponent {
   );
 
   /**
-   * The split handle, drawn across THE WHOLE PAGE — `joined`, not the first
-   * quad.
+   * THE ONE PAGE THE GUTTER CUTS, whether or not it has been cut yet.
    *
-   * An earlier revision split `quads()[0]` and a docblock here claimed that
-   * kept the line on the gutter. It did the opposite: after a split that quad
-   * is the LEFT HALF, so the line was drawn at `at` of the half rather than of
-   * the page — it jumped to a quarter the instant the split landed, and halved
-   * again with every drag. The comment asserting the behaviour is what made it
-   * survive a reading; it was found by looking at a minted page.
+   * After a split there is no single quad that is the sheet -- it is the two
+   * halves seen as the page they came from -- and asking one HALF where the
+   * gutter goes is the mistake that put the handle at a quarter of the page and
+   * halved it again on every drag. `joinedQuad` reads the segment for its
+   * DIRECTION only, which is what lets it reassemble a stacked pair correctly:
+   * the vertical-only reconstruction returns a convex quad of exactly half the
+   * sheet's area at every cut position, so nothing downstream could have
+   * noticed.
    */
-  protected readonly splitLine = computed(() => {
-    const at = this.splitFraction();
-    if (at === null) return null;
-    const [left] = splitAt(joined(this.quads()), at);
-    return { from: left[1], to: left[2] };
+  protected readonly sheet = computed(() =>
+    joinedQuad(this.quads() as readonly CaptureQuad[], this.split()));
+
+  /**
+   * The gutter resolved against that sheet: both ends put back on the edges
+   * they ride, and which pair of edges those are.
+   *
+   * RE-SEATED RATHER THAN TRUSTED. The stored segment is the gesture's own
+   * state and the quads are authoritative, so dragging a corner after a split
+   * leaves the endpoints floating off the crop they were drawn on. Null is a
+   * segment that does not resolve to opposite edges at all, which `seatSplit`
+   * cannot produce -- so it means a hand-edited file rather than anything a
+   * person did here.
+   */
+  protected readonly cut = computed(() => {
+    const split = this.split();
+    return split === null ? null : cutOf(this.sheet(), split);
   });
 
   /** The size each page will mint at, and whether its corners are on the photo. */
@@ -495,34 +501,107 @@ export class CapturePageEditorComponent {
     }
 
     /*
-     * HIT THE LINE THAT IS DRAWN, not the photograph's x. `|at[0] - split|`
-     * asked how far the pointer was from a vertical line at that fraction of
-     * the frame — true only while the quad is upright, and every photograph on
-     * the acceptance shoot is turned a quarter before anything else happens.
+     * THE ENDS FIRST, THEN THE LINE BETWEEN THEM.
+     *
+     * An end wins over the line it is on, because an end is ALWAYS on the line
+     * and the reverse is not true -- testing the line first would make the
+     * handles ungrabbable, which is the same class of defect as the corner
+     * handles that hung over the listening element.
      */
-    const line = this.splitLine();
-    if (line !== null && distanceToEdge(at, line.from, line.to) <= radius) {
-      this.draggingSplit = true;
+    const line = this.cut();
+    const split = this.split();
+    if (line === null || split === null) return;
+
+    for (const which of ['a', 'b'] as const) {
+      const point = line[which].point;
+      if (Math.hypot(at[0] - point[0], at[1] - point[1]) <= radius) {
+        this.holdingSplit.set(which);
+        this.frame().nativeElement.setPointerCapture(event.pointerId);
+        return;
+      }
+    }
+
+    /*
+     * SLIDING THE WHOLE CUT, which is the common gesture and would otherwise
+     * have been lost: a straight gutter on a square-on spread wants to move
+     * sideways, and making somebody drag two handles to do it once per
+     * photograph is fifty-four extra gestures on this shoot.
+     *
+     * Hit against THE LINE THAT IS DRAWN. The old test measured the pointer's
+     * distance from a vertical line at a fraction of the frame, which was true
+     * only while the quad was upright -- and every photograph of the 1876
+     * volume is turned a quarter before anything else happens to it.
+     */
+    if (distanceToEdge(at, line.a.point, line.b.point) <= radius) {
+      this.holdingSplit.set('line');
+      /*
+       * THE ORIGIN IS THE SEATED SEGMENT, NOT THE STORED ONE.
+       *
+       * The stored endpoints are gesture state and go stale against a crop
+       * dragged after the split -- that is the whole reason the line is drawn
+       * from cutOf rather than from the file. Sliding FROM the stale points
+       * would measure the offset from somewhere the gutter is not, so the cut
+       * would jump the instant the pointer moved and then track correctly from
+       * the wrong place. The seated points are where the line actually is,
+       * which is where a slide has to start.
+       */
+      this.slidFrom = { at, split: { a: line.a.point, b: line.b.point } };
       this.frame().nativeElement.setPointerCapture(event.pointerId);
     }
   }
 
   protected drag(event: PointerEvent): void {
     const holding = this.held();
-    if (holding === null && !this.draggingSplit) return;
+    const gutter = this.holdingSplit();
+    if (holding === null && gutter === null) return;
     const at = this.fractionOf(event);
 
-    if (this.draggingSplit) {
-      // Along the QUAD's own axis, and kept off both ends: a split at 0 is a
-      // page of no width, which outputSizeFor rescues into one pixel. A page a
-      // person can see is wrong beats a page they cannot, but a gutter they
-      // cannot drag off the edge in the first place beats both.
-      this.splitChange.emit(offEnds(alongQuad(joined(this.quads()), at)));
+    if (gutter !== null) {
+      const split = this.split();
+      if (split === null) return;
+      const sheet = this.sheet();
+
+      if (gutter === 'line') {
+        /*
+         * THE WHOLE CUT MOVES AS ONE ACT, THROUGH ONE FUNCTION.
+         *
+         * This used to carry each end by the offset and hand each to
+         * `seatSplit` in turn. Both calls were individually correct and the
+         * composition was not: each clamps the end it moves against THE
+         * PARTNER AS IT STANDS, and in the second call the partner is the end
+         * the first already moved -- so each believed a partner that was no
+         * longer where its floor had been computed for, and the pair walked
+         * past a limit neither call thought it was crossing.
+         *
+         * Measured through the shipped chord: the smaller half reached 0.28%
+         * of the sheet on a skewed quad, a seventh of the floor, and past a
+         * point both ends landed on corners of one edge and halvesOf refused
+         * the segment outright. So the gesture could produce a state the
+         * validator rejects -- the draws-fine-refuses-to-save class, which is
+         * exactly what putting the seating in shared/ was supposed to make
+         * impossible.
+         *
+         * `slideSplit` fixes the edges before anything moves and applies the
+         * floor and the edge-riding rule as ONE predicate to the pair, so the
+         * slide stops where the first of them binds. The lesson is the one
+         * this feature keeps paying for: an invariant enforced once is a rule,
+         * and an invariant enforced twice is two rules that agree until they
+         * do not.
+         */
+        const from = this.slidFrom;
+        if (from === null) return;
+        this.splitChange.emit(
+          slideSplit(sheet, from.split, [at[0] - from.at[0], at[1] - from.at[1]]),
+        );
+        return;
+      }
+
+      this.splitChange.emit(seatSplit(sheet, split, gutter, [at[0], at[1]]));
       return;
     }
 
     // Clamped HERE and nowhere else, because this is the only place a corner is
-    // invented: `rotate` permutes the tuple and `splitAt` lerps between corners
+    // invented: `rotate` permutes the tuple and `halvesOf` cuts between corners
     // that are already inside, so neither can carry a quad back out of range.
     const inside: FractionPoint = [clamp(at[0]), clamp(at[1])];
     const quads = this.quads();
@@ -533,73 +612,16 @@ export class CapturePageEditorComponent {
   }
 
   protected release(event: PointerEvent): void {
-    if (this.held() === null && !this.draggingSplit) return;
+    if (this.held() === null && this.holdingSplit() === null) return;
     this.held.set(null);
-    this.draggingSplit = false;
+    this.holdingSplit.set(null);
+    this.slidFrom = null;
     // Asked of the FRAME, which is what took the capture. Asking the picture
     // would be asking an element that never holds one, so the release below
     // would never run and the next press would arrive already captured.
     if (this.frame().nativeElement.hasPointerCapture(event.pointerId)) {
       this.frame().nativeElement.releasePointerCapture(event.pointerId);
     }
-  }
-
-  /**
-   * A quarter turn of every page on THIS photograph.
-   *
-   * The count is REMEMBERED because "apply to all" stamps THE TURN on every
-   * photograph rather than this photograph's corners: a turn is a permutation,
-   * and every other photo has corners of its own to permute. Without the count
-   * the service would have to infer a rotation by comparing two quads, which is
-   * arithmetic on floats standing in for a fact we already knew.
-   */
-  protected turn(turns: number): void {
-    this.turnsApplied.update((sofar) => sofar + turns);
-    this.quadsChange.emit(this.quads().map((quad) => rotate(quad, turns)));
-  }
-
-  /**
-   * Turn every photograph of the same shape BY the amount this one has turned.
-   *
-   * BY, NOT TO, and the button now says so. P1 noticed the difference while
-   * reading the service: this adds the accumulated turn to each photograph is
-   * CURRENT orientation rather than bringing them all to a common one, so a
-   * photograph somebody had already turned by hand ends up turned twice.
-   *
-   * Ruled as BY, deliberately. TO a common orientation would mean knowing each
-   * photograph is absolute orientation, and a quad only encodes orientation
-   * relative to its own frame -- derivable for a whole-frame quad, not for an
-   * arbitrary crop, so the well-defined version is the one that adds. On this
-   * shoot the distinction is invisible (nothing has been turned individually
-   * before the global) and the label is what stops it being a surprise the day
-   * it is not.
-   */
-  protected applyTurnToAll(): void {
-    this.applyToAll.emit({ kind: 'rotate', turns: this.turnsApplied() });
-  }
-
-  /**
-   * Stamp this split onto every UNSPLIT photograph — the service enforces that
-   * half of the rule, since only it can see the others.
-   */
-  protected applySplitToAll(): void {
-    this.applyToAll.emit({ kind: 'split', at: this.splitFraction() ?? 0.5 });
-  }
-
-  /**
-   * Cut this photograph into two pages at the split handle.
-   *
-   * The line defaults to the middle when nobody has dragged one, because a
-   * spread photographed straight on is split down the middle and asking the
-   * person to place a line before they may press the button would be ceremony.
-   */
-  protected split(): void {
-    const first = this.quads()[0];
-    if (first === undefined) return;
-    const at = this.splitFraction() ?? 0.5;
-    const [left, right] = splitAt(first, at);
-    this.splitChange.emit(at);
-    this.quadsChange.emit([left, right, ...this.quads().slice(1)]);
   }
 
   /** A pointer event's position as a fraction of the picture. */
@@ -657,9 +679,19 @@ function clamp(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
-/** A gutter has to leave a page on each side of it. */
-const SPLIT_MARGIN = 0.02;
-
-function offEnds(value: number): number {
-  return Math.min(1 - SPLIT_MARGIN, Math.max(SPLIT_MARGIN, value));
-}
+/*
+ * THE OFF-THE-ENDS CLAMP WENT WITH THE FRACTION, and the hazard it guarded is
+ * now somebody else's to name.
+ *
+ * It kept a gutter 2% from either end, so a split could never make a page of no
+ * width. `seatSplit` deliberately does not do that -- P1's words, and they are
+ * right: an end reaching a corner is a legal cut and a bad one, and a floor on
+ * it is a question about the gesture rather than about the geometry. Rewriting
+ * it here would have meant a clamp on one end at a time, which cannot express
+ * "leave a page on each side" for a cut that leans.
+ *
+ * So a sliver is currently draggable. Said out loud rather than left as a
+ * silent regression: the page it makes is visibly wrong in the preview beside
+ * the picture, which is the surface that would tell somebody, and the two
+ * halves both still mint.
+ */

@@ -60,6 +60,23 @@ const PAGE_MIME = 'application/x-foundry-capture-page';
  * quad is, and the rules about spreads and splits live where they can be shared
  * (`capture-editor/geometry.ts`, and the service above it).
  *
+ * ── A CLICK CHOOSES; OPENING TAKES TWO ─────────────────────────────────────
+ *
+ * Wave 21 point 1. Until tonight a single click OPENED the editor, so the only
+ * way to select one card was to draw a marquee band across it and stop -- and
+ * selection is now the gesture the table is FOR: it feeds reorder, delete, and
+ * which photograph the modal opens on. A gesture that common cannot cost a
+ * rubber band.
+ *
+ * So a click chooses, ctrl and meta toggle, shift takes the run, and OPENING is
+ * a double-click or Enter. The marquee is untouched and still starts anywhere
+ * on the table, because at fifty-two cards almost every pixel is a card.
+ *
+ * The one number that moves between the two worlds is what "one selected" means
+ * for Enter: PHOTOGRAPHS, not cards, through the same fold the menu and the
+ * confirm use. Both halves of a split spread are two cards on one picture, and
+ * the editor edits the picture.
+ *
  * ── THE ORDER STOPS BEING A SORT THE MOMENT SOMEBODY DRAGS ──────────────────
  *
  * docs/CAPTURE.md: cards arrive "sorted by capture time … Cards drag to
@@ -172,6 +189,7 @@ const SWEEP_STARTS_AT = 5;
             [label]="card.label"
             [struck]="card.struck"
             [quad]="card.quad"
+            (choose)="chooseCard($event, card.id)"
             (open)="open.emit(card.id)"
             (strike)="strike.emit(card.id)"
           />
@@ -343,6 +361,8 @@ export class CaptureGridComponent {
 
   private sweepFrom: { x: number; y: number } | null = null;
   private sweptFar = false;
+  /** The last card chosen WITHOUT shift — where a shift-extended run starts. */
+  private anchor: string | null = null;
 
   /**
    * A press on the table, which might become a sweep and might stay a click.
@@ -390,7 +410,11 @@ export class CaptureGridComponent {
     if (!swept) {
       // A press that never travelled: the card under it handles its own click,
       // and a selection the person did not draw should not survive the attempt.
-      if (!event.ctrlKey && !event.metaKey) this.chosen.set([]);
+      // The card's own click lands AFTER this, so clearing here and choosing
+      // there is one gesture in two steps rather than a fight. Shift joins ctrl
+      // and meta in being left alone: a range is computed from the anchor, and
+      // clearing first would be harmless but reads as a bug in the log.
+      if (!event.ctrlKey && !event.metaKey && !event.shiftKey) this.chosen.set([]);
       return;
     }
     this.chose.emit(this.chosen());
@@ -429,6 +453,51 @@ export class CaptureGridComponent {
     this.menu.set({ x: event.clientX, y: event.clientY });
   }
 
+  /**
+   * A CLICK ON A CARD, WHICH IS NOW A SELECTION RATHER THAN AN OPEN.
+   *
+   * Wave 21 point 1. The three modifiers are the ones every file list in every
+   * operating system has taught people, and they are here rather than in the
+   * card because only this component can see the other cards:
+   *
+   *   plain          this card alone
+   *   ctrl / meta    toggle this card, keep the rest
+   *   shift          the run from the anchor to here, in GRID order
+   *
+   * THE ANCHOR IS THE LAST CARD CHOSEN WITHOUT SHIFT, which is what makes a
+   * run extendable -- shift-clicking twice re-measures from the same start
+   * rather than growing from wherever the last shift ended, so somebody who
+   * overshoots by three cards corrects with one click instead of starting over.
+   */
+  protected chooseCard(event: MouseEvent, id: string): void {
+    const ids = this.cards().map((card) => card.id);
+
+    if (event.shiftKey && this.anchor !== null) {
+      const from = ids.indexOf(this.anchor);
+      const to = ids.indexOf(id);
+      if (from !== -1 && to !== -1) {
+        this.chosen.set(ids.slice(Math.min(from, to), Math.max(from, to) + 1));
+        this.chose.emit(this.chosen());
+        return;
+      }
+    }
+
+    this.anchor = id;
+    if (event.ctrlKey || event.metaKey) {
+      const already = this.chosen();
+      this.chosen.set(
+        already.includes(id)
+          ? already.filter((one) => one !== id)
+          // Kept in GRID order rather than in click order, so the run a shift
+          // extends and the list Delete names read the way the table does.
+          : ids.filter((one) => already.includes(one) || one === id),
+      );
+    } else {
+      this.chosen.set([id]);
+    }
+    this.chose.emit(this.chosen());
+  }
+
   protected removeChosen(): void {
     // PHOTOGRAPHS, matching the number the menu just showed. The parent asks
     // the question about exactly what this offered to do.
@@ -445,12 +514,41 @@ export class CaptureGridComponent {
    */
   @HostListener('window:keydown', ['$event'])
   protected onKey(event: KeyboardEvent): void {
-    if (event.key !== 'Delete' || this.chosen().length === 0) return;
+    if (!this.active()) return;
+    if (event.key !== 'Delete' && event.key !== 'Enter') return;
+    if (this.chosen().length === 0) return;
     const target = event.target;
     if (target instanceof HTMLElement) {
       const tag = target.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return;
     }
+
+    if (event.key === 'Enter') {
+      /*
+       * ENTER OPENS, AND IT COUNTS PHOTOGRAPHS RATHER THAN CARDS.
+       *
+       * Wave 21 says "Enter with one selected". One WHAT is the question a
+       * split shoot asks: both halves of a spread are two cards on one
+       * photograph, and the editor edits the photograph -- so a person who
+       * swept across a single spread has two cards chosen and exactly one
+       * thing to open. Counting cards would refuse them for having selected
+       * too much of one picture.
+       *
+       * Asked of the SAME fold the menu and the confirm already use. This is
+       * the third reader of chosenPhotos and still the only body of it.
+       *
+       * A card that has the focus answers Enter itself and stops the event, so
+       * this only runs when the focus is on the table -- after a sweep, which
+       * is exactly when there is a selection and no focused card.
+       */
+      if (this.chosenPhotos().length !== 1) return;
+      const first = this.chosen()[0];
+      if (first === undefined) return;
+      event.preventDefault();
+      this.open.emit(first);
+      return;
+    }
+
     event.preventDefault();
     this.removeChosen();
   }
@@ -461,6 +559,20 @@ export class CaptureGridComponent {
   readonly descending = input.required<boolean>();
   /** True once the person has dragged, after which the sort no longer applies. */
   readonly arranged = input.required<boolean>();
+  /**
+   * Whether this table is the surface the keyboard is talking to.
+   *
+   * FALSE WHILE THE EDITOR IS OPEN OVER IT. Delete and Enter are answered on
+   * the WINDOW, so they kept arriving here while the modal had the screen:
+   * Delete would have opened a removal confirm for the swept selection behind
+   * a picture somebody was cropping, and Enter would have re-opened the
+   * photograph already in front of them.
+   *
+   * An input rather than a look at the DOM, because "is a modal open" is the
+   * parent's fact -- this component has never heard of the editor and should
+   * not start now to answer a keystroke.
+   */
+  readonly active = input<boolean>(true);
 
   /** The whole list of ids, rearranged — never a single move. */
   readonly reorder = output<readonly string[]>();

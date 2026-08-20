@@ -24,7 +24,13 @@
  * noticed until they compared the two closely. The prose did not say which, and
  * a rule that does not say which is a rule with two readings.
  */
-import type { CaptureRecipe, PixelQuad } from './types';
+import type {
+  CapturePoint,
+  CaptureQuad,
+  CaptureRecipe,
+  CaptureSplit,
+  PixelQuad,
+} from './types';
 
 /**
  * The recipe's path inside a project, and the capture step's payload.
@@ -190,4 +196,486 @@ export function outputSizeFor(quad: PixelQuad): OutputSize {
     width: Math.max(1, Math.round(Math.max(span(topLeft, topRight), span(bottomLeft, bottomRight)))),
     height: Math.max(1, Math.round(Math.max(span(topLeft, bottomLeft), span(topRight, bottomRight)))),
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The chord — every rule about where a split cuts, in one place
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The whole photograph as a page, before anybody has dragged a corner.
+ *
+ * THE THIRD BODY OF THIS ONE WOULD HAVE BEEN WRITTEN HERE. Intake spells it
+ * (`WHOLE_FRAME` in electron/capture.ts), the editor spelled it
+ * (`wholeFrame()`, deleted with the rest of the renderer's split geometry),
+ * and `joinedQuad` below needs an answer for "no quads at all" — so it goes
+ * where the other shared rules went rather than becoming a third opinion about
+ * what an uncropped page is. The corner order is the tuple order everywhere:
+ * top-left, top-right, bottom-right, bottom-left OF THE OUTPUT PAGE.
+ */
+export const WHOLE_FRAME: CaptureQuad = [[0, 0], [1, 0], [1, 1], [0, 1]];
+
+/** Which edge of a quad, in tuple order: 0 top, 1 right, 2 bottom, 3 left. */
+export type QuadEdge = 0 | 1 | 2 | 3;
+
+/** One endpoint of a split, put back onto the page it cuts. */
+export interface SplitSeat {
+  readonly edge: QuadEdge;
+  /** How far along that edge, 0..1, from its first corner to its second. */
+  readonly at: number;
+  /** The endpoint moved onto the edge — where the handle should be drawn. */
+  readonly point: CapturePoint;
+}
+
+/**
+ * A split resolved against the page it cuts.
+ *
+ * `halves` says what the cut MAKES, not which way the line looks on a screen:
+ * a spread photographed on its side is turned before it is split, and
+ * 'stacked' means the two pages end up one above the other in the picture while
+ * still reading in order. The words describe the page, which is the thing that
+ * has an up.
+ */
+export interface SplitCut {
+  readonly a: SplitSeat;
+  readonly b: SplitSeat;
+  readonly halves: 'side-by-side' | 'stacked';
+}
+
+/** How far along a segment a point falls, and how far off it — both clamped. */
+function seatOn(from: CapturePoint, to: CapturePoint, point: CapturePoint): { at: number; away: number } {
+  const run = [to[0] - from[0], to[1] - from[1]] as const;
+  const span = run[0] * run[0] + run[1] * run[1];
+  const at = span === 0
+    ? 0
+    : Math.min(1, Math.max(0, ((point[0] - from[0]) * run[0] + (point[1] - from[1]) * run[1]) / span));
+  return { at, away: Math.hypot(point[0] - (from[0] + run[0] * at), point[1] - (from[1] + run[1] * at)) };
+}
+
+/** The two corners an edge runs between. A switch, so it is total. */
+const EDGES = [0, 1, 2, 3] as const;
+
+function cornersOf(edge: QuadEdge): readonly [0 | 1 | 2 | 3, 0 | 1 | 2 | 3] {
+  switch (edge) {
+    case 0: return [0, 1];
+    case 1: return [1, 2];
+    case 2: return [2, 3];
+    default: return [3, 0];
+  }
+}
+
+/** The point a given way along an edge, 0..1 from its first corner. */
+function pointAt(quad: CaptureQuad, edge: QuadEdge, at: number): CapturePoint {
+  const [from, to] = cornersOf(edge);
+  const [ax, ay] = quad[from];
+  const [bx, by] = quad[to];
+  return [ax + (bx - ax) * at, ay + (by - ay) * at];
+}
+
+function alongEdge(quad: CaptureQuad, edge: QuadEdge, point: CapturePoint): SplitSeat {
+  const [from, to] = cornersOf(edge);
+  const { at } = seatOn(quad[from], quad[to], point);
+  return { edge, at, point: pointAt(quad, edge, at) };
+}
+
+function nearestEdge(quad: CaptureQuad, point: CapturePoint): SplitSeat {
+  let best: SplitSeat = alongEdge(quad, 0, point);
+  let bestAway = Number.POSITIVE_INFINITY;
+  for (const edge of EDGES) {
+    const seat = alongEdge(quad, edge, point);
+    const away = Math.hypot(point[0] - seat.point[0], point[1] - seat.point[1]);
+    // Strictly nearer, so a point sitting exactly on a corner takes the earlier
+    // edge rather than depending on which way the loop happened to run.
+    if (away < bestAway) {
+      bestAway = away;
+      best = seat;
+    }
+  }
+  return best;
+}
+
+/**
+ * Put a split back on the page it cuts — RE-SEATED, NOT TRUSTED.
+ *
+ * ── Why the stored endpoints are not simply used ──────────────────────────
+ *
+ * A split is stored in working-copy fractions (see `CaptureSplit`), so it is a
+ * memory of where two handles were let go, not a promise about the page as it
+ * stands now. Drag a crop corner afterwards and the endpoints stay where they
+ * were, floating off the edges they were riding. Cutting from those points
+ * would produce halves that are not halves of anything: corners outside the
+ * crop, black wedges in a minted page.
+ *
+ * So each endpoint is moved onto the edge nearest it and the cut is taken from
+ * there. A split nobody has disturbed seats exactly where it already was, at a
+ * cost of eight projections; a stale one is corrected in the only direction
+ * that has a defensible answer.
+ *
+ * ── null means ADJACENT, and adjacent means there is nothing to return ─────
+ *
+ * Endpoints on opposite edges cut a quad into two quads. Endpoints on adjacent
+ * edges cut a CORNER off — a triangle and a pentagon — and the mint can print
+ * neither, since rectifying maps four corners onto a rectangle and has no other
+ * shape to offer. There is no nearest sensible cut to fall back to, so this
+ * refuses and the caller decides what that means: the validator refuses the
+ * recipe, the editor leaves the handle where a person can see it is wrong.
+ *
+ * NOTHING A DRAG PRODUCES CAN LAND HERE. `seatSplit` builds every segment the
+ * pointer makes and builds it opposite by construction, so null means a
+ * hand-edited file — the same thing a refusal from `validQuad` means, and not
+ * "the handle got there by dragging". That distinction is the difference between
+ * a refusal a person can act on and a gutter that draws fine and will not save.
+ */
+export function cutOf(quad: CaptureQuad, split: CaptureSplit): SplitCut | null {
+  const a = nearestEdge(quad, split.a);
+  const b = nearestEdge(quad, split.b);
+  if ((a.edge + 2) % 4 !== b.edge) return null;
+  return { a, b, halves: a.edge % 2 === 0 ? 'side-by-side' : 'stacked' };
+}
+
+/**
+ * The two pages a split cuts a page into, or null if it cuts no two pages.
+ *
+ * ── THE HALF HOLDING THE TOP-LEFT CORNER COMES FIRST ──────────────────────
+ *
+ * Which is "left then right" for every cut running from the top edge to the
+ * bottom one, and the right answer for a cut across a spread photographed on
+ * its side, where the halves are above and below rather than beside. It
+ * consults no orientation field because there is none to consult: the corner
+ * order IS the orientation, so turning the photograph carries the top-left
+ * corner with it and the halves re-order themselves into reading order.
+ *
+ * Both halves come back in the same corner order as every other quad, so
+ * either can be turned, cropped or minted without knowing it was ever half of
+ * anything.
+ */
+export function halvesOf(quad: CaptureQuad, split: CaptureSplit): readonly [CaptureQuad, CaptureQuad] | null {
+  const cut = cutOf(quad, split);
+  if (cut === null) return null;
+  const [topLeft, topRight, bottomRight, bottomLeft] = quad;
+  const { a, b } = cut;
+  if (cut.halves === 'side-by-side') {
+    const top = a.edge === 0 ? a.point : b.point;
+    const bottom = a.edge === 0 ? b.point : a.point;
+    return [
+      [topLeft, top, bottom, bottomLeft],
+      [top, topRight, bottomRight, bottom],
+    ];
+  }
+  const right = a.edge === 1 ? a.point : b.point;
+  const left = a.edge === 1 ? b.point : a.point;
+  return [
+    [topLeft, topRight, right, left],
+    [left, right, bottomRight, bottomLeft],
+  ];
+}
+
+/**
+ * Move one end of a split to where the pointer is — THE ONLY WAY A DRAG MAY
+ * BUILD A SEGMENT.
+ *
+ * ── It cannot produce a split `halvesOf` refuses, and that is the point ────
+ *
+ * The end being dragged is projected onto the edge OPPOSITE the one its partner
+ * rides, and the partner is re-seated on its own edge on the way past. Opposite
+ * by construction, so the invariant is enforced where the gesture happens
+ * rather than restated in the component that draws it. Two statements of one
+ * rule would agree until an endpoint reached a corner.
+ *
+ * THE FAILURE THIS FORECLOSES HAS ALREADY HAPPENED ONCE IN THIS FEATURE, in the
+ * shape a corner drag took before the editor clamped it: the surface let
+ * somebody express a state the validator refused, so the crop looked fine and
+ * the recipe stopped saving, and the light table went on looking alive for the
+ * rest of the session. A gutter that draws and will not save is the same bug
+ * with a different handle.
+ *
+ * ── AND IT LEAVES A PAGE ON EITHER SIDE ───────────────────────────────────
+ *
+ * The end is also held back from any position that would cut a page smaller
+ * than `SLIVER_FLOOR` of the sheet. THE CORNER IS NOT THE SLIVER, which is the
+ * part that makes this arithmetic rather than a clamp: on a leaning cut an end
+ * driven all the way onto a corner still leaves a tenth of the sheet beside it
+ * — a whole page — while both ends crowding the same side makes a strip with
+ * neither of them near a corner. So it is a question about the AREA that comes
+ * out, and the old rule about how near an end may get to a corner was only ever
+ * right for cuts parallel to the sides.
+ *
+ * Only the DRAG is held. A `{ x }` being migrated and a fraction from the Split
+ * button pass through `splitFromFraction` untouched: reading a file must return
+ * what the file says, and a stored sliver is a fact about somebody’s project
+ * rather than a gesture to intercept.
+ */
+/**
+ * The least of the sheet a page may be left with, as a share of its area.
+ *
+ * NOT A NEW LINE. The clamp that shipped before the segment held the gutter 2%
+ * off either end of the edge it ran along, and for a cut parallel to the sides
+ * — the only cut that existed — 2% ALONG THE EDGE IS 2% OF THE AREA. This is
+ * the same rule restated in the measure that survives a lean.
+ *
+ * IT IS A FLOOR AGAINST DEGENERACY, NOT AN OPINION ABOUT HOW A BOOK DIVIDES,
+ * which is the argument for keeping it low. There is no override on it, so a
+ * tasteful 5% would silently refuse a legitimate unequal cut — a narrow column,
+ * an inset, a foldout leaf — and a person would experience it as the handle
+ * sticking for no reason they can see. The judgement about whether a cut looks
+ * right already has a surface: the preview draws each half at the size it will
+ * mint, through the same shader, which is a better place for taste than a clamp.
+ */
+const SLIVER_FLOOR = 0.02;
+
+/** A quad’s area, by the shoelace, written out so nothing is indexed. */
+function areaOf(quad: CaptureQuad): number {
+  const [topLeft, topRight, bottomRight, bottomLeft] = quad;
+  const cross = (from: CapturePoint, to: CapturePoint): number => from[0] * to[1] - to[0] * from[1];
+  return Math.abs(
+    cross(topLeft, topRight) + cross(topRight, bottomRight)
+    + cross(bottomRight, bottomLeft) + cross(bottomLeft, topLeft),
+  ) / 2;
+}
+
+/**
+ * The nearest place along this edge that still leaves a page on either side.
+ *
+ * ── The solve is exact, because the area really is a straight line in `at` ──
+ *
+ * Moving one end of the cut moves EXACTLY ONE VERTEX of each half; the shoelace
+ * is linear in every vertex coordinate; and the seat is linear in `at`. So each
+ * half’s share of the sheet is AFFINE in `at` for every quad — not just for a
+ * photographed trapezoid — and the two ends of the line are enough to invert it.
+ * No search, no tolerance, and the lean is already inside the arithmetic because
+ * the other end is part of it.
+ *
+ * ── THE GRADIENT IS PER-QUAD AND MUST NEVER BE CARRIED ────────────────────
+ *
+ * The line is straight for every quad; how steeply it climbs depends on the
+ * quad’s shape and on where the fixed end sits — measured across five quads it
+ * runs from 0.41 to 0.51 per unit. So this evaluates BOTH ENDS FOR THE QUAD IN
+ * HAND every time. A constant lifted from one shoot would be right on that
+ * shoot and wrong on the next book by a fifth, which is exactly what `{x}` was:
+ * correct for the case it was measured on.
+ *
+ * ── Where no position works at all ────────────────────────────────────────
+ *
+ * If the other end is itself crowding a corner, no place for this one leaves
+ * two pages. Refusing to move would read as a dead handle, so it gives the
+ * evenest cut available instead — the position where the halves come nearest to
+ * equal — which is both the most helpful answer and the one a person can see is
+ * not what they asked for.
+ */
+function offTheEdgeOfNothing(quad: CaptureQuad, partner: CapturePoint, edge: QuadEdge, wanted: number): number {
+  const sheet = areaOf(quad);
+  if (sheet <= 0) return wanted;
+  const shareAt = (at: number): number => {
+    const halves = halvesOf(quad, { a: pointAt(quad, edge, at), b: partner });
+    return halves === null ? 0.5 : areaOf(halves[0]) / sheet;
+  };
+  const low = shareAt(0);
+  const slope = shareAt(1) - low;
+  // Moving this end does not change how the sheet divides, so there is nothing
+  // to solve and nothing this clamp could improve.
+  if (Math.abs(slope) < 1e-12) return wanted;
+  const seatFor = (share: number): number => (share - low) / slope;
+  const first = seatFor(SLIVER_FLOOR);
+  const second = seatFor(1 - SLIVER_FLOOR);
+  const from = Math.max(0, Math.min(first, second));
+  const to = Math.min(1, Math.max(first, second));
+  if (from > to) return Math.min(1, Math.max(0, seatFor(0.5)));
+  return Math.min(to, Math.max(from, wanted));
+}
+
+export function seatSplit(quad: CaptureQuad, split: CaptureSplit, which: 'a' | 'b', to: CapturePoint): CaptureSplit {
+  const partner = nearestEdge(quad, which === 'a' ? split.b : split.a);
+  const edge = ((partner.edge + 2) % 4) as QuadEdge;
+  const asked = alongEdge(quad, edge, to);
+  const moved = pointAt(quad, edge, offTheEdgeOfNothing(quad, partner.point, edge, asked.at));
+  return which === 'a'
+    ? { a: moved, b: partner.point }
+    : { a: partner.point, b: moved };
+}
+
+/**
+ * Slide the whole cut, keeping it a cut — the floor applied ONCE TO THE PAIR.
+ *
+ * ── Why this is not two `seatSplit` calls, which is how it was found ──────
+ *
+ * Carrying both ends by the pointer and handing each to `seatSplit` gives two
+ * calls that are each individually correct and together wrong. The second call
+ * clamps against a partner THE FIRST CALL ALREADY MOVED, so each believes a
+ * partner that is no longer where its floor was computed for, and the pair walks
+ * past a limit neither call thought it was crossing. Measured before this
+ * existed: a half of 0.28% of the sheet against a floor of 2%, and past a point
+ * a segment `halvesOf` refuses outright, because both ends had reached corners of
+ * the same edge and there was no opposite pair left to name.
+ *
+ * ── AND THE FLOOR WAS MODELLED ON THE GESTURE THAT CANNOT MAKE A SLIVER ────
+ *
+ * Moving ONE end while the other stays put barely can: the fixed end holds the
+ * cut open, which is why a one-end drag pushed to every extreme never brought a
+ * half within ten times the floor, and why the first hunt for a case that made
+ * the clamp bite could not find one until the other end was crowded by hand. THE
+ * SLIDE MOVES THE END THAT WAS DOING THE HOLDING. It is the gesture the floor is
+ * actually for, and it was written against the one that is nearly incapable of
+ * the failure — the same shape as `{ x }` once more: a rule measured on the case
+ * that cannot go wrong.
+ *
+ * ── The edges are decided ONCE, before anything moves ─────────────────────
+ *
+ * Each end keeps the edge it was already riding for the whole slide, rather than
+ * being re-seated onto whatever edge it drifts nearest. That is what makes the
+ * refusal unreachable rather than merely unlikely: opposite in, opposite out, so
+ * there is no position of the pointer that leaves `cutOf` with nothing to name.
+ *
+ * ── Backing off is a bisection, and it is exact because the sweep is ordered ─
+ *
+ * The one-end solve inverts a straight line. This cannot: seating CLAMPS at the
+ * ends of an edge, so with both ends moving the area is piecewise-quadratic in
+ * how far the slide has gone rather than affine, and a closed form would be four
+ * cases guarding one answer.
+ *
+ * What holds instead is an ordering: sliding in a fixed direction sweeps the cut
+ * across the sheet, so one half grows through the whole slide and the other
+ * shrinks, and the SMALLER half’s share rises to the even cut and falls away
+ * after it. A single hump means the places where the floor holds form ONE
+ * stretch, and the slide starts inside it — so the last position that holds can
+ * be halved into exactly, and sixty halvings put it beyond any pixel. The
+ * ordering is measured rather than asserted (see the acceptance).
+ */
+export function slideSplit(quad: CaptureQuad, split: CaptureSplit, by: CapturePoint): CaptureSplit {
+  const a = nearestEdge(quad, split.a);
+  const b = nearestEdge(quad, split.b);
+  // Not a cut this can slide — the caller is holding something hand-edited, and
+  // sliding it would be inventing an interpretation of it.
+  if ((a.edge + 2) % 4 !== b.edge) return split;
+  const sheet = areaOf(quad);
+  if (sheet <= 0) return split;
+  /*
+   * A POINTER THAT HAS NOT MOVED MUST LEAVE THE FILE ALONE. Re-seating is a
+   * projection, and projecting a point already on its edge returns it to within
+   * a bit rather than exactly (measured: 5.6e-17). That is nothing on a page and
+   * everything to a recipe, because this runs on every pointermove: a slide of
+   * no distance would rewrite two coordinates in the last place and mark the
+   * project changed, over and over, for a hand holding still.
+   */
+  if (by[0] === 0 && by[1] === 0) return split;
+
+  const carried = (share: number): CaptureSplit => ({
+    a: alongEdge(quad, a.edge, [split.a[0] + by[0] * share, split.a[1] + by[1] * share]).point,
+    b: alongEdge(quad, b.edge, [split.b[0] + by[0] * share, split.b[1] + by[1] * share]).point,
+  });
+  const holds = (candidate: CaptureSplit): boolean => {
+    const halves = halvesOf(quad, candidate);
+    if (halves === null) return false;
+    return Math.min(areaOf(halves[0]), areaOf(halves[1])) / sheet >= SLIVER_FLOOR;
+  };
+
+  const wanted = carried(1);
+  if (holds(wanted)) return wanted;
+  // The cut was already under the floor before anybody touched it — a sliver
+  // read from a file, which the floor guards nothing about. Sliding is not the
+  // gesture that should silently repair it.
+  if (!holds(split)) return split;
+  let held = 0;
+  let refused = 1;
+  for (let halving = 0; halving < 60; halving += 1) {
+    const between = (held + refused) / 2;
+    if (holds(carried(between))) held = between;
+    else refused = between;
+  }
+  return carried(held);
+}
+/**
+ * The segment an old `{ x }` split always meant: across the page at that
+ * fraction, from the top edge to the bottom one.
+ *
+ * ONE BODY FOR TWO CALLERS, WHICH IS WHY IT IS HERE rather than in either. The
+ * {x} migration needs it to read every recipe written before Wave 21, and the
+ * editor needs it for the Split button pressed with no gutter placed — which
+ * still has to produce the middle. Written twice, "the vertical segment {x}
+ * always meant" would have two bodies on the day it was defined.
+ *
+ * The fraction was measured ALONG THE QUAD, never across the photograph, so
+ * this reads it against the page it was cutting. That is also why a migration
+ * cannot be done by rewriting numbers in a file: it needs the quad in hand.
+ */
+export function splitFromFraction(quad: CaptureQuad, at: number): CaptureSplit {
+  const cut = Math.min(1, Math.max(0, at));
+  const [topLeft, topRight, bottomRight, bottomLeft] = quad;
+  const along = (from: CapturePoint, to: CapturePoint): CapturePoint => [
+    from[0] + (to[0] - from[0]) * cut,
+    from[1] + (to[1] - from[1]) * cut,
+  ];
+  return { a: along(topLeft, topRight), b: along(bottomLeft, bottomRight) };
+}
+
+/**
+ * The uncut sheet two halves were cut from — the one page a split is a split of.
+ *
+ * ── Why it takes the split, when it only ever reads the outer corners ──────
+ *
+ * Reassembling a SIDE-BY-SIDE pair means taking the first half’s left corners
+ * and the second’s right ones. Do that to a STACKED pair and the corners it
+ * reaches for are on the CUT edge instead of the outside, and what comes back
+ * is the sheet with two opposite corners replaced by the two cut points.
+ *
+ * That result is not a shape anything can detect. Measured on a realistic
+ * trapezoid: it is SIMPLE AND CONVEX — no self-intersection to test for — and
+ * its area is EXACTLY HALF the sheet’s at every cut position, 0.3536 against
+ * 0.7073 at a cut of 0.5 and the same number at 0.3, so an "the area changed"
+ * guard passes too. A plausible, printable page of the wrong half of the sheet:
+ * in bounds, wrong, and invisible all the way into the PDF, which is the exact
+ * class of defect the schema’s own docblock warns about for copied quads.
+ *
+ * So it cannot be a total function with a sanity check bolted on. It has to
+ * KNOW, and the split is the only thing that does.
+ *
+ * ── It reads the segment’s DIRECTION and never its position ───────────────
+ *
+ * Which is a narrower read than it looks, and the reason re-seating is not
+ * quietly abandoned here: A STALE SEGMENT’S POSITION GOES STALE, ITS DIRECTION
+ * DOES NOT. Dragging a crop corner slides the endpoints along the edges they
+ * ride; it does not move an endpoint from the top edge to the left one, and it
+ * does not turn the cut a quarter. So the segment is asked which of the first
+ * half’s two candidate cut edges it lies along — a binary, from a direction —
+ * and never asked where anything is.
+ *
+ * ── With no split at all, the halves are asked instead ────────────────────
+ *
+ * Two quads and no split line is legal: somebody cropped both halves by hand
+ * (the validator says so explicitly). There is no fact to read then, so the
+ * two readings are measured — halves of one cut share their cut edge — and the
+ * closer one wins. It is an inference, which is why it is the fallback and not
+ * the rule.
+ *
+ * THIS IS ON THE WRITE PATH. `setSplit` derives both half-quads from this and
+ * saves them, so a wrong answer here is not a handle in the wrong place: it is
+ * two wrong pages in recipe.json and in the PDF minted from it.
+ */
+export function joinedQuad(quads: readonly CaptureQuad[], split: CaptureSplit | null): CaptureQuad {
+  const first = quads[0];
+  if (first === undefined) return WHOLE_FRAME;
+  const second = quads[1];
+  if (second === undefined) return first;
+  const sideBySide: CaptureQuad = [first[0], second[1], second[2], first[3]];
+  const stacked: CaptureQuad = [first[0], first[1], second[2], second[3]];
+  if (split !== null) {
+    // The cut edge of the first half is its edge 1 when the halves are beside
+    // each other and its edge 2 when they are stacked; the segment lies along
+    // whichever one it is, however far the crop has been dragged since.
+    const along = alignment(split, first[1], first[2]);
+    const across = alignment(split, first[2], first[3]);
+    return along >= across ? sideBySide : stacked;
+  }
+  const apart = (from: CapturePoint, to: CapturePoint): number => Math.hypot(to[0] - from[0], to[1] - from[1]);
+  const asSideBySide = apart(first[1], second[0]) + apart(first[2], second[3]);
+  const asStacked = apart(first[3], second[0]) + apart(first[2], second[1]);
+  return asStacked < asSideBySide ? stacked : sideBySide;
+}
+
+/** How parallel a split is to an edge, 0..1 — 1 is along it, 0 is across it. */
+function alignment(split: CaptureSplit, from: CapturePoint, to: CapturePoint): number {
+  const cut = [split.b[0] - split.a[0], split.b[1] - split.a[1]] as const;
+  const edge = [to[0] - from[0], to[1] - from[1]] as const;
+  const spans = Math.hypot(cut[0], cut[1]) * Math.hypot(edge[0], edge[1]);
+  if (spans === 0) return 0;
+  return Math.abs(cut[0] * edge[0] + cut[1] * edge[1]) / spans;
 }
