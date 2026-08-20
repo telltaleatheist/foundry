@@ -1862,7 +1862,16 @@ MEASURED (P1 seq 197, 14 checks on a copy of the live project):
   docblock paragraph rewritten in the same commit; (3) rotate as
   a re-export of turnQuad. After (1), the capability the stamp
   carried by accident exists on purpose, and (2) is not a
-  removal.
+  removal. OPTION CLOSED ON THE RECORD (P1 seq 213, so nobody
+  re-opens it): keep-the-turn-only-where-someone-SET-one would
+  remove the sequencing hazard entirely -- and it makes one
+  button behave two ways on state that is not on screen, the
+  same stamp sometimes turning a page and sometimes not by a
+  mark nobody can see. Owen's complaint was labels he could not
+  tell apart; the answer is not a button whose behaviour is
+  conditional on invisible state. "Copy the crop, keep the
+  turn" is a sentence a person can hold in their head, true on
+  every photograph.
 
 ## Deferred out loud
 
