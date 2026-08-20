@@ -23,7 +23,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { bandAfter, capToSend, pagesToReread } from '../../src/vlm/read.js';
+import { bandAfter, capToSend, howItWent, pagesToReread } from '../../src/vlm/read.js';
 
 const MODEL_CAP = 8192;
 
@@ -149,4 +149,39 @@ test('THE COPYRIGHT PAGE: under the floor, the margin is never consulted', () =>
    */
   assert.equal(capToSend(false, 206, MODEL_CAP), 2000);
   assert.ok(capToSend(false, 206, MODEL_CAP) > 1038);
+});
+
+// ── the line that catches an inert feature ──────────────────────────────────
+
+test('A HONOURED CAP reads as the cap this book set', () => {
+  // Flashpoint page 6: the band said 2,412 and the model stopped there.
+  assert.equal(
+    howItWent({ tokens: 2412, finishReason: 'length', text: 'x'.repeat(9000) }, 2412),
+    'CUT OFF at 2412 tokens, the cap this book set, 9000 chars',
+  );
+});
+
+test('AN IGNORED CAP reads as two numbers disagreeing', () => {
+  // The failure every other check passes: we asked for 2,412 and the server
+  // ran to its own 8,192. Identical refusal lists, zero retries, nothing else
+  // to see — except this line.
+  assert.equal(
+    howItWent({ tokens: 8192, finishReason: 'length', text: 'x'.repeat(25000) }, 2412),
+    'CUT OFF at 8192 tokens against a 2412 cap, 25000 chars',
+  );
+});
+
+test('an ordinary page still logs the way it always did', () => {
+  assert.equal(
+    howItWent({ tokens: 741, finishReason: 'stop', text: 'x'.repeat(2100) }, 5092),
+    '2100 chars, 741 tokens',
+  );
+});
+
+test('a refused page no longer reads like a page that IS the book', () => {
+  // Twelve runaways used to be twelve ordinary lines that happened to say 8,192.
+  const runaway = howItWent({ tokens: 5092, finishReason: 'length', text: 'x'.repeat(20000) }, 5092);
+  const real = howItWent({ tokens: 1273, finishReason: 'stop', text: 'x'.repeat(4000) }, 5092);
+  assert.ok(runaway.startsWith('CUT OFF'));
+  assert.ok(!real.includes('CUT OFF'));
 });
