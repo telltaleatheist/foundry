@@ -1012,6 +1012,30 @@ costs a named skip and one click of the override; under-marking
 costs an evening of cropping. Measured on his recipe read-only:
 exactly one page comes back marked, and it is IMG_0212.
 
+REVISED (P2 seq 155, ruled in as a defect in the frozen branch):
+the signal is WHETHER THE QUAD HAS MOVED OFF THE WHOLE FRAME, not
+whether it differs from a majority. The majority rule silently
+assumed a global existed to differ from -- and Owen's real project
+that night (index-8700efdc, replacing the 8f48501b the numbers
+above were measured on, which is gone) had TWENTY-FIVE DISTINCT
+QUADS, no two alike, an 11%-of-frame spread at one corner: he
+hand-cropped every page and never used a global. Every count ties
+at one, the tie rule (still correct -- a tie IS absence of a
+stamp) leaves the file alone, NOTHING gets marked, and the first
+Apply to all overwrites all twenty-five with no Left alone at
+all. The wider rule, exhaustive because there are only two ways a
+quad leaves the whole frame:
+  equal to WHOLE_FRAME                      untouched   not byHand
+  equal to the majority, where one exists   stamped     not byHand
+  anything else                             dragged     byHand
+Checked against all three populations: a virgin project marks 0;
+8f48501b marks exactly IMG_0212 (same as the old rule); 8700efdc
+marks all 25 (the old rule marked 0). Strictly wider, agreeing
+with the old rule everywhere it fired; the same asymmetry decides
+the edge (over-marking costs a click, under-marking costs an
+evening -- twenty-five evenings, here). The file-has-spoken gate,
+per-slot comparison, and exact equality all stand unchanged.
+
 Built (P2 seq 136, ruled in by foundry-pc-2):
 
 - THE orderFor DEFECT, LIVE ON MAIN SINCE SPLITTING EXISTED: the
@@ -1179,6 +1203,54 @@ chord measurement, migration of {x}, the shared chord; P2 — the modal,
 stages, buttons, edge-riding handles, grid double-click/Enter/selection
 rework, building against P1's halvesOf signature.
 Frontend-design skill pointer applies to the modal treatment.
+
+## Wave 21b -- the way back after a mint (Owen, live, 2026-08-20)
+
+Owen minted and found there is no way back: "i minted but didnt
+have an opportunity to rotate the pages... the rect changes can be
+permanent after i hit apply, but the other changes should still be
+possible to set." Not data loss -- the bank and recipe survive a
+mint by design -- but a MISSING DOOR: Home opens the PDF once an
+original exists, and the still-editable recipe has no surface.
+A mint is a SNAPSHOT of the recipe, not its funeral.
+
+Ruled from P2's surface plan-back (seq 156), P1's step-model
+plan-back still open (re-mint semantics + the discard-tonight
+verification):
+
+- THE WAY BACK LIVES IN THE VIEWER'S ACTION MENU ("Edit the
+  photographs"), NOT on the Home row. The door belongs where the
+  person is standing when they want it -- looking at the PDF --
+  and Home stays a single door (a row offering two destinations
+  would be a fifth opinion about what a capture project is; P2's
+  07c46c9 ruling stands). Not a reversal of the deferred
+  action-menu Mint entry: Mint is an ACT, the light table is a
+  PLACE, and a menu naming somewhere you can go is a different
+  kind of entry from one that performs something.
+- THE TABLE AFTER A MINT shows what it always showed -- the live
+  recipe, the truth. The trap is that every count on the surface
+  now has TWO REFERENTS (what a mint would produce vs what the
+  book on the shelf holds), the two-things-one-name defect
+  arriving through the mint. The footer keeps speaking about THE
+  RECIPE and gains one quieter line ONLY while the two disagree:
+  "The book on the shelf was minted from an earlier arrangement."
+  Said once, about the difference, only while there is one.
+- THE MINT BUTTON SAYS "Mint again" once a PDF exists; what it
+  DOES is P1's re-mint semantics, and whatever they rule, the
+  button has to say it.
+- THE PREP RAIL (workflow being sampled with Owen -- prep rail on
+  the table, mint off the modals, centered modals; not cut until
+  he approves the arrangement): the tick is THE PERSON SPEAKING
+  and the live status beside it is the derivation -- THE
+  DERIVATION NEVER CLEARS A TICK (the file-has-spoken narrowing,
+  one level up). Ticks read as CHECKED, not done: a shoot with no
+  spreads must be tickable on "split spreads" without lying, and
+  no rule can know the pages are turned right (the portrait ad in
+  his shoot is the same shape as the volume -- a derived
+  turned-done would lie exactly where wrongness costs most). And
+  tonight is the argument for gating mint behind the ticks: he
+  minted before turning because the surface offered the last act
+  first.
 
 ## Deferred out loud
 
