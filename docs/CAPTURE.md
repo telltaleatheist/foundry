@@ -1651,6 +1651,40 @@ verification):
   he mints twice or mints then edits. Nobody plans an acceptance
   step around SEEING the silence.
 
+## Wave 21c -- Owen's first-contact walk (live, 2026-08-20)
+
+Owen walked the built editor and rail, and his findings are the
+contract for the next pass. His words, near-verbatim:
+
+1. THE BUTTONS ARE ALL ON THE OTHER SIDE OF THE APP FROM EACH
+   OTHER. The rotate buttons, Apply to all / set by hand, the
+   Turn/Crop/Split tools, and Next/Back are spread apart. THEY
+   SHOULD BE CENTRALIZED -- one cluster, not a perimeter.
+2. "I DONT EVEN KNOW WHAT SOME OF THEM DO." The difference
+   between "turn by the same amount" and "apply to all" is not
+   discoverable from the labels. A control whose label needs the
+   orchestrator to explain it has already failed, whatever it does.
+3. THE CHECKBOX ("including the 1 set by hand") SHOULD NOT EXIST:
+   "that should be assumed." The question it asks is one the
+   surface should answer itself. Default under decision (owner to
+   confirm which way "assumed" points).
+4. "I ROTATED ONE BUT IT DIDNT STICK APPARENTLY?" -- possibly a
+   REAL LOSS, not layout: a turn that a person performed did not
+   survive to where they next looked. ROOT-CAUSE BEFORE ANY
+   REDESIGN: measure the persistence path (was the quad written to
+   the recipe? is the turn modal-lived and lost on Next/Back or on
+   close without Apply? does the grid redraw?). If a gesture can
+   silently discard a turn, that is the split-gesture lesson again
+   on a different verb, and it outranks every layout item above.
+
+Sequence ruled by the lead: P1 measures the rotate path first and
+reports what actually happens to a turn under each exit (Apply,
+Next, Back, close, tool switch). P2 plans the consolidated control
+cluster and label rework as an UPDATED SAMPLE against docs/design/
+capture-workflow-sample.html for Owen to rearrange before code
+moves. The checkbox dies either way; which default replaces it is
+Owen's call, deferred out loud until he says.
+
 ## Deferred out loud
 
 - **Validator page-level refusals name pages by sha** ("page
