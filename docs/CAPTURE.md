@@ -1258,6 +1258,42 @@ verification):
 - THE MINT BUTTON SAYS "Mint again" once a PDF exists; what it
   DOES is P1's re-mint semantics, and whatever they rule, the
   button has to say it.
+- RE-MINT SEMANTICS (P1 seq 161, verified against shipped code,
+  ruled): THE STEP MODEL ALREADY ANSWERS IT. A second mint is a NEW
+  SIBLING under the capture root -- each mint writes its own file
+  (index.pdf, then index (2).pdf), the append cannot become a
+  replace (reRunTarget refuses irreplaceable candidates, which
+  every mint is), readings hang off the STEP so an old mint keeps
+  its own, and the recipe is never consumed. Owen's nuance is
+  ALREADY TRUE OF THE DATA; only the surface is missing.
+  manifest.archive stays SINGLE-VALUED (ruled: kept) -- each mint
+  overwrites it and working/<stem>.pdf, so "the current PDF" means
+  the newest mint, older mints stay reachable by standing on their
+  step, and "Mint again" REPLACES WHAT HOME SHOWS -- the footer
+  sentence is the only place that says so. Second-mint-while-
+  first-listed to be MEASURED before the lift (same read-only
+  method, P1).
+- THE DISCARD WORKAROUND IS DEAD -- DO NOT OFFER IT (P1 seq 161,
+  run against a byte-copy of Owen's project): discarding the
+  minted step destroys archive/index.pdf and STILL does not reopen
+  the light table. deleteStep writes ledger and documents and
+  NEVER CLEARS manifest.archive; the summary's rescue fallback
+  (documents empty + archive present -> synthesise an origin row)
+  then rebuilds a phantom "The scan you imported" from the stale
+  archive, served by the unswept working copy. He would lose the
+  mint and gain nothing. The invariant broken is the one
+  recordMint's own docblock promises ("a project can never hold
+  one without the other") -- kept by the mint, broken by the
+  delete, unreachable before Wave 20 because an imported project's
+  origin step IS the refused root; a capture project is the first
+  whose archive a delete can reach. THE SIX-LINE FIX IS RULED IN
+  under the defect clause (P1): when a step delete destroys the
+  payload manifest.archive names, clear manifest.archive and let
+  the sweep take the working copy -- restoring recordMint's
+  promise from the delete side, the same edit whichever door Wave
+  21b builds. Until the door exists, the discard dialog's middle
+  clause ("so you can mint again") is a false sentence; it becomes
+  true when the viewer-menu door lands.
 - THE PREP RAIL (workflow being sampled with Owen -- prep rail on
   the table, mint off the modals, centered modals; not cut until
   he approves the arrangement): the tick is THE PERSON SPEAKING
