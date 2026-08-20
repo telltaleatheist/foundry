@@ -1665,9 +1665,19 @@ contract for the next pass. His words, near-verbatim:
    discoverable from the labels. A control whose label needs the
    orchestrator to explain it has already failed, whatever it does.
 3. THE CHECKBOX ("including the 1 set by hand") SHOULD NOT EXIST:
-   "that should be assumed." The question it asks is one the
-   surface should answer itself. Default under decision (owner to
-   confirm which way "assumed" points).
+   "that should be assumed." RULED BY OWEN (live, 2026-08-20):
+   "apply to the ones i did by hand, give me a modal that asks if i
+   want to override hand-picked settings or something." So: the
+   checkbox dies; Apply to all MEANS ALL; and when hand-placed pages
+   exist, a CONFIRMATION MODAL asks before overriding them (naming
+   how many -- "Override 3 pages you set by hand?"), with decline
+   applying to the rest and leaving the hand-set alone. NO
+   hand-placed pages, NO modal -- the question only exists when its
+   subject does. It is a QUESTION, so it belongs in UiService's
+   one-question regime, unlike the intake progress card which is a
+   report. byHand protection itself is unchanged -- what changed is
+   who answers for it: a modal at the moment of conflict, not a
+   checkbox carried on every stamp.
 4. "I ROTATED ONE BUT IT DIDNT STICK APPARENTLY?" -- possibly a
    REAL LOSS, not layout: a turn that a person performed did not
    survive to where they next looked. ROOT-CAUSE BEFORE ANY
