@@ -1738,6 +1738,25 @@ MEASURED (P1 seq 197, 14 checks on a copy of the live project):
   teardown, and by window close. P2's file; P1 verifies the mint
   side (a gesture at T-0ms is in the PDF). Lands with Wave 21c,
   not behind the sample -- data loss does not wait on layout.
+  LANDED (P2 9ef74a5, MERGED to main): flush() writes now,
+  waits, and CANCELS THE PENDING TIMER (without which the timer
+  would land a second, staler write); awaited by the mint press
+  before mintBegin AND BY open() -- the door that reads the file
+  over memory, so every read-over path is covered at the door
+  rather than at each remembered caller; beforeunload STARTS the
+  write, best-effort, SAID in the docblock rather than implied
+  (the real close guarantee is main-side and wants its own think
+  about a quit held on a wedged promise -- deferred out loud).
+  Twelve renderer assertions against a RECORDING bridge + nine
+  main-side assertions through the REAL mint doors with the PDF
+  read back: written-first prints the turned page (box 725.76 x
+  967.68 pt, portrait) and records its arrangement; unwritten
+  prints the OLD page AND records the OLD arrangement -- the two
+  stale halves AGREE, so the divergence sentence could never
+  have caught this defect; stopping the stale read was the only
+  fix. Neither agent verified the whole claim alone,
+  deliberately -- the halves compose and neither probe shares
+  the other's assumption.
 - FINDING 5 ROOT CAUSE: THE PAGE EDITOR IS NEVER TOLD WHICH TOOL
   IS SELECTED -- its inputs are source, dimensions, quads, split.
   It draws the same picture for all three tools; the gutter line
@@ -1801,7 +1820,13 @@ MEASURED (P1 seq 197, 14 checks on a copy of the live project):
   Owen's founding sentence for this feature ("the rect positions
   should follow exactly where i placed them on the picture, but
   rotate with the book") -- crops belong to the picture, turns to
-  the page.
+  the page. RULED BY OWEN (live): COPY THE CROP, KEEP THE TURN --
+  the stamp rotates the copied quad into each target's own
+  orientation (rotate(sourceQuad, targetTurns - sourceTurns));
+  apply-to-all means all and never re-orients anybody. The modal
+  still confirms overriding hand-placed CROPS, and P2's wording
+  sentence stays (a person should know what arrives even now
+  that orientation does not). The geometry is P1's, in shared/.
 
 ## Deferred out loud
 
