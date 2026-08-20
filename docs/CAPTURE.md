@@ -1846,7 +1846,23 @@ MEASURED (P1 seq 197, 14 checks on a copy of the live project):
   geometry.ts rotate becomes a re-export of turnQuad, one body
   behind the short local name. Stage 1 NOW NEEDS the bulk turn
   control the sample already proposes -- the consequence lands
-  with the wave, not as a surprise.
+  with the wave, not as a surprise. SEQUENCING RULED (P2 seq 210,
+  its push-back accepted): the stamp's corner-copying IS today's
+  only bulk turn -- Owen's own 25-pages-uniform file is the
+  fingerprint of turn-one-then-stamp -- so wiring turnedLike
+  first would REMOVE bulk turning on the exact flow he used, the
+  day after he reported a turn problem. ORDER, one branch, three
+  commits, each gated: (1) "Turn the other N to match this
+  one" -- always present in the turn gesture, derived from
+  turnsOf (book state), never a per-visit counter, unavailable
+  only when the others already match AND SAYING SO; its
+  EXISTENCE is required by the override ruling and is no longer
+  merely a sample proposal -- only its position and label await
+  Owen's arrangement; (2) the stamp wired to turnedLike WITH the
+  docblock paragraph rewritten in the same commit; (3) rotate as
+  a re-export of turnQuad. After (1), the capability the stamp
+  carried by accident exists on purpose, and (2) is not a
+  removal.
 
 ## Deferred out loud
 
