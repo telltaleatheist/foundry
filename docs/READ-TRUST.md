@@ -1160,6 +1160,43 @@ close by luck, not design), and it **cannot show a real dense page being
 refused**, because Flashpoint's dense pages are not in the range. It answers
 *is the number reaching the server*, not *does the number cost anything*.
 
+### 12j. THE GLANCE IS BUILT (b1db57f) — and there are THREE states, not two
+
+```
+honoured   CUT OFF at 2412 tokens, the cap this book set, 9000 chars, 88.4s
+IGNORED    CUT OFF at 8192 tokens against a 2412 cap, 25000 chars, 178.3s
+a page     2100 chars, 741 tokens, 21.7s          (unchanged)
+```
+
+The lead asked for two states to be distinguishable — honoured and inert.
+**P2 built three, and the added one is what nobody would have noticed
+missing:** a server that took the number and did something else with it.
+Without the cap printed beside the count, **IGNORED is indistinguishable
+from INERT on screen** — same 8,192, same silence — and the two need
+completely different investigations. The difference is four words in a log
+line: this wave's own lesson about false sentences, applied to a diagnostic
+instead of to a surface.
+
+**The line is exported and asserted rather than inline**, for the reason
+this wave paid for twice: *the line IS the instrument, so it must be
+checkable by something other than reading it.* An inline template string is
+verified by looking at it, which is exactly how a test comes to encode a
+description instead of a behaviour.
+
+**And the vehicle and the line compose into more than either designed
+alone.** Flashpoint pages 1–11 answers THREE questions in ten minutes:
+
+| question | evidence |
+|---|---|
+| did we send it | 2,412 and 4,876 appear at all |
+| was it honoured | the banked counts equal them |
+| **does the band MOVE within a book** | two different caps, in that order, inside one book |
+
+**The third has never been observed — only computed.** Every walk in this
+wave replayed banks made under a single cap, so a band rising mid-book is
+the entire mechanism of the feature and no measurement has ever seen it
+happen. Ten minutes buys the first direct sight of it.
+
 ### 11a. The ledger entries this wave bought
 
 **Eleventh** — a model of a declarative system checks the computation and
