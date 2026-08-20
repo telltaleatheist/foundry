@@ -646,6 +646,25 @@ export class CaptureService {
       photo.id === source.id || sameShape(source, photo)).length;
   }
 
+  /**
+   * WHAT THE PAGES SOMEBODY SET BY HAND ARE CALLED -- for the sentence that
+   * asks before overwriting them.
+   *
+   * Named rather than counted, because "override 3 pages" and "override
+   * IMG_0212, IMG_0227 and IMG_0238" are different questions: the second one a
+   * person can check against what they remember doing. The same fallback the
+   * skip notice uses, so the two sentences about the same pages cannot call
+   * them different things.
+   */
+  handSetNames(): readonly string[] {
+    const recipe = this.current();
+    if (recipe === null) return [];
+    const at = new Map(recipe.photos.map((photo, index) => [photo.id, index + 1]));
+    return recipe.photos
+      .filter((photo) => photo.pages.some((page) => page.byHand === true))
+      .map((photo) => photo.name ?? `Photograph ${at.get(photo.id) ?? '?'}`);
+  }
+
   /** Whether the person has ticked one of the rail's three verbs. */
   ticked(verb: keyof CapturePrepared): boolean {
     return this.current()?.prepared?.[verb] === true;
@@ -1191,7 +1210,7 @@ export type ApplyToAll =
    * what somebody wants when the global they are correcting is the one that was
    * wrong in the first place.
    */
-  | { kind: 'stamp'; includeHandSet: boolean };
+  | { kind: 'stamp'; includeHandSet?: boolean };
 
 const WHOLE: CaptureQuad = [[0, 0], [1, 0], [1, 1], [0, 1]];
 

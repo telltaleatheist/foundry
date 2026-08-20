@@ -143,7 +143,7 @@ const ACKNOWLEDGED_FOR_MS = 1600;
           [justApplied]="justApplied()"
           (quadsChange)="setQuads(photo.id, $event)"
           (splitChange)="captures.setSplit(photo.id, $event)"
-          (applyToAll)="applyToAll(photo.id, $event)"
+          (applyToAll)="void applyToAll(photo.id, $event)"
           (keep)="captures.keep(photo.id)"
           (step)="step($event)"
           (close)="open.set(null)"
@@ -520,11 +520,55 @@ export class CaptureViewComponent {
    * that nothing was is a surface arguing with itself. The sentence still
    * carries the count and the reasons; the button carries only the fact.
    */
-  protected applyToAll(photoId: string, gesture: ApplyToAll): void {
-    const outcome = this.captures.applyToAll(photoId, gesture);
+  /**
+   * APPLY TO ALL MEANS ALL -- and asks first, once, at the only moment it is a
+   * real question.
+   *
+   * Owen: "apply to the ones i did by hand, give me a modal that asks if i want
+   * to override hand-picked settings or something." The checkbox this replaces
+   * asked EVERY time about a situation that usually does not exist, which is
+   * how a control teaches people to stop reading it.
+   *
+   * NO HAND-SET PAGES, NO QUESTION. The question only exists when its subject
+   * does, and a turn never raises it -- a bulk turn overwrites nobody's crop.
+   *
+   * THREE ANSWERS AND NOT TWO. Override, leave those alone, or dismiss and
+   * nothing happens at all -- Owen's ruling on the close, and the ordinary rule
+   * that closing a question cancels it. The dismissal key is deliberately NOT
+   * one of the choices, so no button on the card can produce it.
+   */
+  protected async applyToAll(photoId: string, gesture: ApplyToAll): Promise<void> {
+    let asked = gesture;
+    if (gesture.kind === 'stamp' && this.handSet() > 0) {
+      const names = this.captures.handSetNames();
+      const many = names.length !== 1;
+      const answer = await this.confirm.put({
+        title: many
+          ? `Override the ${names.length} pages you set yourself?`
+          : 'Override the page you set yourself?',
+        message: '',
+        detail: [
+          many ? `You placed these ${names.length} by hand: ${names.join(' · ')}`
+            : `You placed ${names[0]} by hand.`,
+          `Applying to all ${this.reach()} photographs gives ${many ? 'them' : 'it'} these `
+            + 'corners instead of the ones you placed. The way each page sits is left alone '
+            + '— turning is never overwritten.',
+        ],
+        choices: [
+          { key: 'spare', label: many ? `Leave those ${names.length} alone` : 'Leave it alone' },
+          { key: 'override', label: `Override all ${this.reach()}` },
+        ],
+        preferred: 'spare',
+        dismissed: 'cancel',
+        checkbox: null,
+      });
+      if (answer.key === 'cancel') return;
+      asked = { kind: 'stamp', includeHandSet: answer.key === 'override' };
+    }
+    const outcome = this.captures.applyToAll(photoId, asked);
     if (outcome.applied === 0) return;
     if (this.applauseTimer !== null) clearTimeout(this.applauseTimer);
-    this.justApplied.set(gesture.kind);
+    this.justApplied.set(asked.kind);
     this.applauseTimer = setTimeout(() => {
       this.justApplied.set(null);
       this.applauseTimer = null;

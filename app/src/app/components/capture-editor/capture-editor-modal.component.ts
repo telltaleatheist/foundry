@@ -197,7 +197,7 @@ import type { ApplyToAll } from '../../core/capture.service';
               [title]="using() === 'split'
                 ? 'Cut every photograph of this shape where this one is cut'
                 : 'Give every photograph of this shape the crop you have placed here'"
-              (click)="applyToAll.emit({ kind: 'stamp', includeHandSet: includeHandSet() })"
+              (click)="stampEverything()"
             >{{ stampSays() }}</button>
           }
 
@@ -228,12 +228,6 @@ import type { ApplyToAll } from '../../core/capture.service';
               <p class="says">You set this page yourself, so it keeps what you gave it.</p>
             }
 
-            @if (handSet() > 0) {
-              <label class="override" [title]="'Apply to the pages you set by hand as well'">
-                <input type="checkbox" [checked]="includeHandSet()" (change)="toggleOverride($event)" />
-                <span>including the {{ handSet() }} set by hand</span>
-              </label>
-            }
           }
         </div>
       </aside>
@@ -394,12 +388,6 @@ import type { ApplyToAll } from '../../core/capture.service';
 
     /* Beside the button it changes, in the tick-box voice confirm-dialog
        already uses for a statement about an act rather than an act of its own. */
-    .override {
-      display: flex; align-items: center; gap: 6px;
-      font-size: 11px; color: var(--text-secondary);
-      cursor: pointer;
-    }
-    .override input { accent-color: var(--accent-strong); cursor: pointer; }
 
     .walk button, .shut {
       flex: 1;
@@ -592,14 +580,15 @@ export class CaptureEditorModalComponent {
    * visit does not.
    */
 
-  /**
-   * Whether the next stamp takes the hand-set pages too.
-   *
-   * NOT REMEMBERED ACROSS A CLOSE, and deliberately not: it is a decision about
-   * one press, and a tick that survived the modal would be an override
-   * somebody switched on for a reason they had an hour ago.
+  /*
+   * A "take the hand-set ones too" CHECKBOX STOOD HERE and is gone. Owen: "that
+   * should be assumed." It asked, on every stamp, about a situation that
+   * usually does not exist -- which is how a control teaches people to stop
+   * reading it -- and it asked BEFORE the act rather than at the moment of
+   * conflict. The question moved to a confirmation that appears only when there
+   * is something of theirs to overwrite, and names it. See
+   * CaptureViewComponent.applyToAll.
    */
-  protected readonly includeHandSet = signal(false);
 
   /**
    * WHETHER APPLY HAS BEEN PRESSED SINCE THIS MODAL OPENED.
@@ -636,14 +625,24 @@ export class CaptureEditorModalComponent {
    * point 2 is unconditional, and a button that sometimes moved the person on
    * would be a button they had to press twice to find out about.
    */
+  /**
+   * The crop and split act, and the thing that moves stage 1 on.
+   *
+   * IT ADVANCES WHATEVER THE STAMP DID OR DID NOT TOUCH, which is Wave 21 point
+   * 2 and still true: a button that sometimes moved the person on would be one
+   * they had to press twice to find out about. On a virgin project the stamp is
+   * a no-op, the recipe comes back byte-identical, and the derived stage
+   * correctly reads "nothing set" -- so without this flag the one press that
+   * reaches stage 2 would leave you in stage 1 with no other way out.
+   *
+   * IT CARRIES NO OVERRIDE FLAG ANY MORE. Whether the hand-set pages come too
+   * is asked at the moment of conflict, by the surface that owns dialogs, and
+   * the modal's job is to say WHICH ACT rather than to answer a question about
+   * it in advance.
+   */
   protected stampEverything(): void {
     this.advanced.set(true);
-    this.applyToAll.emit({ kind: 'stamp', includeHandSet: false });
-  }
-
-  protected toggleOverride(event: Event): void {
-    const box = event.target;
-    if (box instanceof HTMLInputElement) this.includeHandSet.set(box.checked);
+    this.applyToAll.emit({ kind: 'stamp' });
   }
 
   constructor() {
