@@ -1827,6 +1827,26 @@ MEASURED (P1 seq 197, 14 checks on a copy of the live project):
   still confirms overriding hand-placed CROPS, and P2's wording
   sentence stays (a person should know what arrives even now
   that orientation does not). The geometry is P1's, in shared/.
+  LANDED AND MERGED (23fbed4): turnQuad / turnsOf / turnedLike,
+  27 checks. The property that makes it safe: IT MOVES NO CORNER
+  -- the stamp's write is a RELABELLING of which corner prints
+  top-left, no arithmetic to be wrong by a pixel, no tolerance.
+  The halves of a turned sheet BOTH carry the sheet's own turn
+  (measured), so a split target needs no special case. turnsOf
+  is lexicographic (topmost-then-leftmost), not nearest-origin:
+  a distance ties on a diagonal-symmetric crop, a total order
+  does not -- same answer everywhere reachable, and the
+  unreachable diamond case answers 0 deterministically, said in
+  the docblock. His own 25 pages read three-quarters by turnsOf
+  independently of the tally -- two roads, one answer. OWED AT
+  WIRING TIME (the stamp's rewrite, P2, post-sample): the
+  stamp's docblock currently ARGUES THE OPPOSITE ("no separate
+  turn to carry here... stage 1 needs no turn-all") and dies
+  with the change -- rewritten in the same commit; and
+  geometry.ts rotate becomes a re-export of turnQuad, one body
+  behind the short local name. Stage 1 NOW NEEDS the bulk turn
+  control the sample already proposes -- the consequence lands
+  with the wave, not as a surprise.
 
 ## Deferred out loud
 
