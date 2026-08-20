@@ -524,6 +524,15 @@ export class CaptureViewComponent {
    * after one would be two round trips to learn that nothing changed.
    */
   protected async startMint(): Promise<void> {
+    /*
+     * THE DISK IS WHAT GETS MINTED, so it has to be current before the press.
+     * `mintBegin` reads the recipe from the file rather than taking it over the
+     * bridge, and the save is debounced -- so without this, a corner moved or a
+     * page turned in the last four hundred milliseconds is missing from the PDF
+     * and from the arrangement recorded beside it, which means nothing on the
+     * surface would ever say so.
+     */
+    await this.captures.flush();
     const step = await this.mint.mint(this.tab().path);
     if (step === null) return;
     await this.captures.refreshMintedFrom();
