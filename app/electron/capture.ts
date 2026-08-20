@@ -66,6 +66,7 @@ import type {
   CaptureIntakeProgress,
   CaptureMintBegun,
   CaptureMintPage,
+  CaptureOpened,
   CapturePage,
   CapturePhoto,
   CapturePoint,
@@ -75,22 +76,21 @@ import type {
   CaptureSplit,
   CaptureTimeSource,
   LedgerStep,
-  PixelQuad,
 } from '../shared/types';
 import {
+  arrangementOf,
   CAPTURE_RECIPE_PAYLOAD,
   cutOf,
   emptyRecipe,
   joinedQuad,
-  mintedPageIds,
-  outputSizeFor,
+  mintPlan,
   recipeBytes,
   sameShape,
   splitFromFraction,
   WHOLE_FRAME,
 } from '../shared/capture';
 import { beginMint, cancelHere, mintCancelled, noteMintPage, settleMint } from './job-queue';
-import { readManifest, recordMint } from './projects';
+import { currentArrangement, readManifest, recordMint } from './projects';
 import { writeAtomically } from './atomic';
 
 // Re-exported so a caller that already imports this module does not need to
@@ -690,10 +690,16 @@ function validRecipe(value: unknown, file: string): CaptureRecipe {
  * grid of broken images, and a token for a recipe nobody has read has nothing to
  * point at.
  */
-export async function openCapture(projectDir: string): Promise<{ recipe: CaptureRecipe; token: string }> {
+export async function openCapture(projectDir: string): Promise<CaptureOpened> {
   const dir = derivedDir(projectDir);
   await fsp.mkdir(dir, { recursive: true });
-  return { recipe: await readRecipe(projectDir), token: tokenForDerived(dir) };
+  return {
+    recipe: await readRecipe(projectDir),
+    token: tokenForDerived(dir),
+    // Resolved in projects.ts against the catalogue's chain, so this and the
+    // step list's `current` marker are one answer to one question.
+    mintedFrom: await currentArrangement(projectDir),
+  };
 }
 
 /**
@@ -706,7 +712,7 @@ export async function openCapture(projectDir: string): Promise<{ recipe: Capture
  * a project whose `originals/` is full of them, and invite the surface to save
  * that answer back over the file.
  */
-export async function ensureCapture(projectDir: string): Promise<{ recipe: CaptureRecipe; token: string }> {
+export async function ensureCapture(projectDir: string): Promise<CaptureOpened> {
   await fsp.mkdir(originalsDir(projectDir), { recursive: true });
   await fsp.mkdir(derivedDir(projectDir), { recursive: true });
   const file = recipeFile(projectDir);
@@ -1122,9 +1128,7 @@ function pagesFor(photoId: string, from: CapturePhoto | null, decoded: DecodedIm
 }
 
 /** What intake did, beyond the recipe it hands back. */
-export interface IntakeReport {
-  recipe: CaptureRecipe;
-  token: string;
+export interface IntakeReport extends CaptureOpened {
   added: number;
   /** Files already in this project, by sha — dropped twice, copied once. */
   duplicates: string[];
@@ -1290,7 +1294,18 @@ export async function intakePhotos(projectDir: string, paths: readonly string[])
 
     const next: CaptureRecipe = { version: 1, photos, order };
     await writeAtomically(recipeFile(projectDir), Buffer.from(recipeBytes(next)));
-    return { recipe: next, token: tokenForDerived(derived), added, duplicates, refused };
+    return {
+      recipe: next,
+      token: tokenForDerived(derived),
+      // An intake answers with an opening, so it answers the same question an
+      // opening does. Null on a project that has never minted, which is every
+      // project an intake is normally run on -- and NOT undefined, which is a
+      // field the surface would have to know to treat as silence.
+      mintedFrom: await currentArrangement(projectDir),
+      added,
+      duplicates,
+      refused,
+    };
   });
 }
 
@@ -1324,6 +1339,15 @@ interface MintSession {
   jobId: string;
   staging: string;
   pages: CaptureMintPage[];
+  /**
+   * The fingerprint of the recipe THIS mint was begun from, carried to the step.
+   *
+   * Held on the session rather than re-read at commit for the reason
+   * `recordMint` states: a mint takes minutes, the recipe is editable
+   * throughout, and the arrangement recorded must be the one these pages were
+   * rasterized from rather than whatever the file says when the last page lands.
+   */
+  arrangement: string;
   received: Set<number>;
 }
 
@@ -1370,50 +1394,29 @@ async function forget(session: MintSession, mintId: string): Promise<void> {
  */
 export async function mintBegin(projectDir: string): Promise<CaptureMintBegun> {
   const recipe = await readRecipe(projectDir);
-  const photoOf = new Map<string, CapturePhoto>();
-  const pageOf = new Map<string, CapturePage>();
-  for (const photo of recipe.photos) {
-    for (const page of photo.pages) {
-      photoOf.set(page.id, photo);
-      pageOf.set(page.id, page);
-    }
-  }
-
-  const pages: CaptureMintPage[] = [];
   /*
-   * THE LIST COMES FROM `shared/`, so the number the footer promised and the
-   * number the editor read out are the number this prints. Three bodies of one
-   * rule became one (see `mintedPageIds`).
+   * THE WHOLE LIST COMES FROM `shared/` NOW, not just the page ids — so the
+   * number the footer promised, the number the editor read out, the pages this
+   * prints AND the arrangement recorded on the step are one body of one rule
+   * (see `mintPlan`, and `mintedPageIds` for the third time this rule had more
+   * than one). The fingerprint is taken from THIS read of the recipe rather than
+   * at commit, so it describes the book that was actually rasterized even if
+   * somebody edits the file in the minutes a mint takes.
    */
-  for (const pageId of mintedPageIds(recipe)) {
-    const page = pageOf.get(pageId);
-    const photo = photoOf.get(pageId);
-    /*
-     * STILL REFUSED HERE RATHER THAN TRUSTED. `mintedPageIds` drops an id that
-     * names no page, which is the right answer for a COUNT on screen — a number
-     * beside a button must not throw. It is the wrong answer for the mint: a
-     * book quietly short a leaf is the failure the order cross-check exists to
-     * prevent, so reaching this means the file changed under us between the load
-     * and the mint, and that is worth stopping for.
-     */
-    if (page === undefined || photo === undefined) {
-      throw new CaptureError(
-        `The recipe lists a page (${pageId}) that no photograph holds. Reopen the project before minting.`,
-      );
-    }
-    const quadPx = page.quad.map(
-      ([x, y]) => [x * photo.width, y * photo.height] as const,
-    ) as unknown as PixelQuad;
-    const size = outputSizeFor(quadPx);
-    pages.push({
-      pageId,
-      workingCopy: photo.workingCopy,
-      quadPx,
-      sourceWidth: photo.width,
-      sourceHeight: photo.height,
-      outWidth: size.width,
-      outHeight: size.height,
-    });
+  const { pages, missing } = mintPlan(recipe);
+  const arrangement = arrangementOf(recipe);
+  /*
+   * STILL REFUSED HERE RATHER THAN TRUSTED. `mintedPageIds` drops an id that
+   * names no page, which is the right answer for a COUNT on screen — a number
+   * beside a button must not throw. It is the wrong answer for the mint: a
+   * book quietly short a leaf is the failure the order cross-check exists to
+   * prevent, so reaching this means the file changed under us between the load
+   * and the mint, and that is worth stopping for.
+   */
+  if (missing.length > 0) {
+    throw new CaptureError(
+      `The recipe lists a page (${missing[0]}) that no photograph holds. Reopen the project before minting.`,
+    );
   }
 
   if (pages.length === 0) {
@@ -1431,6 +1434,7 @@ export async function mintBegin(projectDir: string): Promise<CaptureMintBegun> {
     jobId: beginMint(projectDir, manifest?.title ?? path.basename(projectDir), pages.length),
     staging,
     pages,
+    arrangement,
     received: new Set<number>(),
   });
   return { mintId, pages };
@@ -1508,7 +1512,7 @@ export async function mintCommit(mintId: string): Promise<LedgerStep> {
       pdf.addPage([width, height]).drawImage(image, { x: 0, y: 0, width, height });
     }
     const bytes = Buffer.from(await pdf.save());
-    const step = await recordMint(session.projectDir, bytes, session.pages.length);
+    const step = await recordMint(session.projectDir, bytes, session.pages.length, session.arrangement);
     settleMint(session.jobId, { file: path.join(session.projectDir, ...step.payload.split('/')) });
     await forget(session, mintId);
     return step;

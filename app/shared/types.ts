@@ -2612,6 +2612,35 @@ export interface LedgerParams {
    */
   fields?: string[];
   /**
+   * `import` (a MINT) — the arrangement these pages were printed from.
+   *
+   * `arrangementOf` (shared/capture.ts) fingerprints the mint input as
+   * `mintBegin` builds it, and this is where that string is kept so the question
+   * can still be asked afterwards. What it is FOR is one sentence on the light
+   * table: the recipe goes on being edited after a mint, and the footer says —
+   * quietly, and only while it is true — that the book on the shelf was minted
+   * from an earlier arrangement. The live side is recomputed from the recipe;
+   * this is the side that has to be remembered, because nothing else in the
+   * project records what the recipe LOOKED LIKE at that instant.
+   *
+   * ON THE STEP RATHER THAN THE MANIFEST, because it is per-mint and
+   * `manifest.archive` is single-valued: an arrangement kept there would be lost
+   * the moment there was a second mint, and standing on an older mint could
+   * never say anything honest about what THAT one was made from.
+   *
+   * IT IS THE ARRANGEMENT AS THE MINT BEGAN, not as it committed — the string is
+   * taken from the same read of the recipe that produced the page list the
+   * renderer rasterized, so it describes the book that was actually printed even
+   * if somebody edited the recipe while it printed.
+   *
+   * ABSENT ON EVERY MINT MADE BEFORE THIS EXISTED, and absent MEANS SILENCE
+   * rather than agreement or disagreement: a project that never recorded one is
+   * a project where nothing can honestly be claimed either way, and the surface
+   * says nothing until the next mint records one. Absent on ordinary imports
+   * too, which have no arrangement to record — their file came from outside.
+   */
+  arrangement?: string;
+  /**
    * `translate` — the translation bank this run wrote, project-relative.
    *
    * WHAT IT IS FOR: a translation's payload is the EPUB, and the bank beside it is
@@ -3188,6 +3217,26 @@ export interface CapturePrepared {
 export interface CaptureOpened {
   recipe: CaptureRecipe;
   token: string;
+  /**
+   * WHAT THE BOOK ON THE SHELF WAS MINTED FROM, or null for silence.
+   *
+   * `arrangementOf` applied to the recipe of the mint the shelf's book descends
+   * from (`currentArrangement`, electron/projects.ts). The light table compares
+   * it against `arrangementOf(recipe)` computed live from the recipe it is
+   * holding, and says — quietly, and only while the two differ — that the book
+   * on the shelf was minted from an earlier arrangement.
+   *
+   * ONE STRING AND NOT A BOOLEAN, so that the comparison happens on the side
+   * that knows what the person is currently looking at. The live side moves on
+   * every edit; this side moves at exactly one moment, `mintCommit`, which the
+   * table itself drives and hears the answer from — which is why delivering it
+   * at open time is not stale.
+   *
+   * NULL MEANS SILENCE rather than agreement: no book, a book minted before the
+   * field existed, or a book this app did not mint. Nothing can be honestly
+   * claimed either way for any of the three.
+   */
+  mintedFrom: string | null;
 }
 
 /**

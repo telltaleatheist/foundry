@@ -25,6 +25,9 @@
  * a rule that does not say which is a rule with two readings.
  */
 import type {
+  CaptureMintPage,
+  CapturePage,
+  CapturePhoto,
   CapturePoint,
   CaptureQuad,
   CaptureRecipe,
@@ -79,6 +82,153 @@ export function mintedPageIds(recipe: CaptureRecipe): string[] {
     }
   }
   return recipe.order.filter((id) => known.has(id) && !struck.has(id));
+}
+
+/**
+ * THE MINT INPUT: every instruction the renderer rasterizes from, in order.
+ *
+ * This is the whole of what reaches the PDF. `capture-mint.service.ts` walks
+ * this list and hands each entry to `render`, which reads `workingCopy`,
+ * `sourceWidth`/`sourceHeight`, `quadPx` and `outWidth`/`outHeight` and never
+ * holds the recipe at all; `mintCommit` then embeds the returned JPEGs and sizes
+ * each page from the same two numbers. Nothing else about the recipe is
+ * consulted between the file and the book.
+ *
+ * IT IS HERE SO THAT `arrangementOf` CANNOT DRIFT FROM THE MINT. The divergence
+ * sentence on the light table turns on whether the recipe still describes the
+ * book on the shelf, and a projection that merely SUMMARISED the mint input
+ * would answer that question about something slightly different from what the
+ * mint does — the two-bodies-of-one-rule defect this file was created to end,
+ * arriving one function further down. `mintBegin` calls this rather than keeping
+ * its own walk, so if the projection is ever wrong the mint is wrong too, which
+ * is the only arrangement in which the sentence can be trusted.
+ *
+ * `missing` IS A GUARD THAT CANNOT FIRE TODAY, KEPT ANYWAY AND SAID PLAINLY.
+ * `mintedPageIds` already drops an id no page answers to, so within one call the
+ * list can only name pages this recipe holds. It is returned rather than thrown
+ * because the two callers want opposite things from it: the mint must refuse a
+ * book that would be short a leaf, and the fingerprint must not throw inside a
+ * renderer that is asking a question about a file somebody is still editing.
+ */
+export function mintPlan(recipe: CaptureRecipe): { pages: CaptureMintPage[]; missing: string[] } {
+  const photoOf = new Map<string, CapturePhoto>();
+  const pageOf = new Map<string, CapturePage>();
+  for (const photo of recipe.photos) {
+    for (const page of photo.pages) {
+      photoOf.set(page.id, photo);
+      pageOf.set(page.id, page);
+    }
+  }
+
+  const pages: CaptureMintPage[] = [];
+  const missing: string[] = [];
+  for (const pageId of mintedPageIds(recipe)) {
+    const page = pageOf.get(pageId);
+    const photo = photoOf.get(pageId);
+    if (page === undefined || photo === undefined) {
+      missing.push(pageId);
+      continue;
+    }
+    const quadPx = page.quad.map(
+      ([x, y]) => [x * photo.width, y * photo.height] as const,
+    ) as unknown as PixelQuad;
+    const size = outputSizeFor(quadPx);
+    pages.push({
+      pageId,
+      workingCopy: photo.workingCopy,
+      quadPx,
+      sourceWidth: photo.width,
+      sourceHeight: photo.height,
+      outWidth: size.width,
+      outHeight: size.height,
+    });
+  }
+  return { pages, missing };
+}
+
+/**
+ * WHAT A MINT WOULD BE MADE FROM, as one comparable string.
+ *
+ * ── The question it exists to answer ────────────────────────────────────────
+ *
+ * A mint is a snapshot of the recipe, and the recipe goes on being edited
+ * afterwards. So the light table's footer has to be able to say — quietly, and
+ * only while it is true — that the book on the shelf was minted from an earlier
+ * arrangement. Something has to compare what the recipe describes NOW against
+ * what the newest mint was made from, and this is that something: main records
+ * it on the mint's step, the renderer recomputes it from the recipe it is
+ * already holding, and the two strings either match or they do not.
+ *
+ * ── Why it is not a hash of the recipe file, which is the whole point ───────
+ *
+ * The recipe holds fields the mint never reads: `byHand`, the photographs'
+ * names, and `prepared` — the ticks a person sets on the prepare rail to say
+ * they have turned the pages. A fingerprint of the FILE would therefore change
+ * the instant somebody ticked a box, and the surface would answer a person who
+ * had just said "yes, I turned them" by telling them their book was out of
+ * date. A false sentence, in the one surface whose reason for existing is to
+ * stop saying false things, produced by the feature standing next to it.
+ *
+ * So it fingerprints the MINT INPUT instead (`mintPlan`), which by construction
+ * moves when and only when the printed book would be arranged differently.
+ *
+ * ── What it deliberately does not answer ───────────────────────────────────
+ *
+ * "Is this a different ARRANGEMENT", not "would the bytes come out identical".
+ * `MINT_DPI` and the JPEG quality live in main, outside this projection, so
+ * changing one of them would produce a different PDF from an unchanged
+ * arrangement and this string would not move. That is the ruled scope (Wave 21b)
+ * and not an oversight: the sentence a person reads says "an earlier
+ * arrangement", and a DPI bump lighting every book's footer in the library at
+ * once would be the same false sentence, wholesale.
+ *
+ * ── The fingerprint itself ─────────────────────────────────────────────────
+ *
+ * FNV-1a over the canonical rendering, written out here rather than taken from
+ * `node:crypto`, because BOTH SIDES OF THE BRIDGE CALL THIS and the renderer has
+ * no crypto module; `SubtleCrypto` would answer, but only asynchronously, and
+ * this is asked on every edit while somebody is dragging a corner. It is an
+ * equality check and not a security primitive — the cost of a collision is one
+ * sentence that stays quiet when it could have spoken, and 64 bits over a string
+ * this short puts that far below the odds of the file being wrong for any other
+ * reason.
+ *
+ * The separator is written as an ESCAPE and never as a literal byte: a raw NUL
+ * in source marks the whole module binary to git and invisible to grep, which
+ * this codebase has paid for four times.
+ */
+export function arrangementOf(recipe: CaptureRecipe): string {
+  const said = mintPlan(recipe).pages.map((page) => [
+    page.pageId,
+    page.workingCopy,
+    page.sourceWidth,
+    page.sourceHeight,
+    page.outWidth,
+    page.outHeight,
+    ...page.quadPx.flat(),
+  ].join('\0')).join('\n');
+  return fingerprint(said);
+}
+
+const FNV_OFFSET = 0xcbf29ce484222325n;
+const FNV_PRIME = 0x100000001b3n;
+const SIXTY_FOUR_BITS = 0xffffffffffffffffn;
+
+/**
+ * The 64-bit FNV-1a of a string, hex, always sixteen characters.
+ *
+ * Each UTF-16 code unit is fed as its two bytes, low first, so the walk is total
+ * over every string JavaScript can hold — an astral character or a lone
+ * surrogate hashes rather than throwing or silently truncating to a byte.
+ */
+function fingerprint(said: string): string {
+  let hash = FNV_OFFSET;
+  for (let index = 0; index < said.length; index += 1) {
+    const unit = said.charCodeAt(index);
+    hash = ((hash ^ BigInt(unit & 0xff)) * FNV_PRIME) & SIXTY_FOUR_BITS;
+    hash = ((hash ^ BigInt(unit >> 8)) * FNV_PRIME) & SIXTY_FOUR_BITS;
+  }
+  return hash.toString(16).padStart(16, '0');
 }
 
 /**
