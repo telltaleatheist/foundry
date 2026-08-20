@@ -1952,6 +1952,19 @@ the wave, every check arithmetic. If transform-origin or the
 percentage basis behaves differently in the browser than in the
 model, all twenty card checks still pass. OWEN'S WALK IS THE GATE:
 the column, each tool, the seeded line, a grid of turned cards.
+AND THE PREDICTED GAP WAS REAL (P2 seq 223, fixed 2554369, merged
+same hour): the card draw failed in a browser while all twenty
+modelled checks passed -- .page img height:auto sat LATER at equal
+specificity and beat .spun img, so the picture kept its natural
+aspect inside a box laid out for the rotated one and the crop sat
+off the photograph: the exact sideways-crop failure the
+one-element protection was built against, arriving underneath it
+by the cascade. Neither guessed cause (transform-origin, the
+percentage basis) -- the resolution, not the computation. Found by
+reading the file in declaration order to decide what P1's offered
+photograph SHOULD be checked against -- the probe offer earned its
+keep before it was declined. Fix: every card image sizes inside
+.spun and only there.
 
 ## Deferred out loud
 
@@ -2088,6 +2101,17 @@ the human-known right order), or it measures agreement, not
 correctness. Companion shape (P1 seq 164, P2 seq 165): a filter
 that matches nothing reports nothing -- an empty list reads exactly
 like "nothing was drawn", a passing check that measured nothing.
+Eleventh (P2 seq 223): A MODEL OF A DECLARATIVE SYSTEM CHECKS THE
+COMPUTATION AND NOT THE RESOLUTION. Twenty assertions modelled what
+the transform computes -- slot aspect, element size, rotation about
+the centre -- and all twenty passed over a card that drew wrong,
+because what decides the pixels is WHICH DECLARATIONS WIN, and that
+question was never asked. A later rule winning is not an error to
+any gate; it is how CSS works. Same family as the eighth entry
+(measured only on the motivating case) on a different axis: the
+right function of the wrong inputs. The check that finds this
+class: read the file in declaration order, or observe the browser
+-- a model has no cascade in it.
 Tenth (P2 seq 189, mechanism corrected by P1 seq 190): A NARROWER
 TYPE DOES NOT FAIL ON A WIDER VALUE -- IT JUST CANNOT NAME THE
 REST. LedgerView.current crossed the bridge fine (preload returns
