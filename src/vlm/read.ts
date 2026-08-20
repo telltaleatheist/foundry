@@ -42,6 +42,7 @@ import {
   type VlmRunResult,
   type VlmUnreadablePage,
 } from './bridge.js';
+import { capFor, worthRetrying } from './band.js';
 import { DEFAULT_VLM_CONCURRENCY, readPagesFromEndpoint } from './endpoint.js';
 import { requireVlmModel, type VlmModelDef } from './models.js';
 import {
@@ -160,6 +161,17 @@ export interface ReadPhaseOptions {
   endpoint?: string;
   endpointModel?: string;
   concurrency?: number;
+  /**
+   * Send every page at the model's own cap, as this program did before the
+   * adaptive one existed.
+   *
+   * IT IS WHAT MAKES A LOSS RECOVERABLE, and without it the claim would be
+   * false. A page refused by the adaptive cap cannot be rescued by reading the
+   * book again: the second run walks the same pages in the same order, builds
+   * the same band, and refuses the same page for the same reason. Re-reading is
+   * only a remedy when something can differ, and this is the something.
+   */
+  fixedCap?: boolean;
   readingsPath?: string;
   freshReadings?: boolean;
   reuseReadings?: boolean;
@@ -363,7 +375,7 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
     for (const page of banked) {
       const reading = readings.get(page)!;
       if (reading.finishReason === 'length') {
-        refuse(page, `it hit the ${model.maxTokens}-token cap when it was read, so its answer is truncated`);
+        refuse(page, `it hit the ${reading.tokens}-token cap when it was read, so its answer is truncated`);
         continue;
       }
       answers.set(page, reading.text);
@@ -390,11 +402,43 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
       opts.log(`${label}: ${wanted.length} page(s) to ${opts.endpoint}, ${concurrency} at a time`);
       const endpointStarted = Date.now();
       let done = 0;
+
+      /*
+       * THE BAND, AND THE ONE RULE THE ARITHMETIC CANNOT ENFORCE.
+       *
+       * capFor is a pure function of the longest page this book has ACCEPTED so
+       * far. That word is the whole invariant and it lives here rather than in
+       * band.ts, because a function that takes a number cannot know where the
+       * number came from.
+       *
+       * A REFUSED PAGE MUST NEVER RAISE THIS. It is the page the cap exists to
+       * stop, it ran to whatever cap it was given, and letting it in would push
+       * the band toward the model's own -- so the band would LOOSEN exactly
+       * where it should tighten, and every later runaway in the book would cost
+       * more than the one before. The failure is silent and self-inflating,
+       * which is why it has its own assertion rather than a comment.
+       */
+      let longestAccepted = 0;
+
+      /*
+       * WHAT EACH PAGE WAS ACTUALLY SENT WITH, which the retry needs and nothing
+       * else records. The band moves while pages are in flight, so by the time a
+       * refusal lands its own cap is history -- and the question the retry asks
+       * is about that history, not about where the band ended up.
+       */
+      const sentCap = new Map<number, number>();
+
+      const capForPage = (page: { number: number }): number => {
+        const cap = capToSend(opts.fixedCap === true, longestAccepted, model.maxTokens);
+        sentCap.set(page.number, cap);
+        return cap;
+      };
+
       await bridge.fromEndpoint({
         endpoint: opts.endpoint!,
         model: opts.endpointModel ?? model.endpointModel ?? model.repo,
         prompt: model.prompt,
-        maxTokens: model.maxTokens,
+        maxTokens: capForPage,
         concurrency,
         pages: wanted.map((p) => ({ number: p.number, imagePath: renderPath(rendersDir, p.number) })),
         onPage: (page) => {
@@ -416,12 +460,12 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
             model: model.id,
           });
           if (page.finishReason === 'length') {
-            refuse(page.number, `it hit the ${model.maxTokens}-token cap, so the model was still`
-              + ' writing when it was cut off');
+            refuse(page.number, cutOff(sentCap.get(page.number) ?? model.maxTokens, longestAccepted));
           } else if (page.text.trim().length === 0) {
             refuse(page.number, `it came back empty from ${model.id}`);
           } else {
             answers.set(page.number, page.text);
+            longestAccepted = bandAfter(longestAccepted, page);
           }
           opts.log(
             `${label}: page ${page.number} (${done}/${wanted.length}) — ${page.text.length} chars, `
@@ -429,6 +473,71 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
           );
         },
       });
+      /*
+       * THE ONE MORE PASS, FOR THE PAGES THE BAND WAS NOT READY FOR.
+       *
+       * A page sent under a cap the run has since left far behind was judged by
+       * a number that is no longer this book's opinion, and its refusal carries
+       * no information. A page sent AT the band the run ended with was judged
+       * fairly and is a runaway; it is never re-read, which is what stops this
+       * costing more time than the cap saves.
+       *
+       * THE FACTOR IS WHY IT IS NOT EVERY REFUSAL. A band CREEPS upward through
+       * any book as prose varies, so "below the final band" catches almost every
+       * early refusal -- measured, that rule spends 122,880 tokens to save
+       * 66,344 and comes out twenty minutes SLOWER than doing nothing. Only a
+       * STEP means the refusal was misjudged, and worthRetrying (band.ts) is
+       * what tells a step from a creep -- it sits beside the margin and the
+       * floor because the three move together.
+       *
+       * At this factor it fires twice in a library of 18,202 pages. It is
+       * insurance against a book none of the forty-three measured is -- a
+       * contiguous run of a different KIND of page, where the whole cohort is
+       * sent before the first answer can raise the band -- and its price on
+       * everything that has actually been read is nothing.
+       */
+      const misjudged = pagesToReread(
+        unreadable.keys(), sentCap, capFor(longestAccepted, model.maxTokens),
+      );
+
+      if (opts.fixedCap !== true && misjudged.length > 0) {
+        opts.log(
+          `${label}: ${misjudged.length} page(s) were cut by a cap this book has since left `
+          + `behind — reading them again at ${model.maxTokens} tokens`,
+        );
+        await bridge.fromEndpoint({
+          endpoint: opts.endpoint!,
+          model: opts.endpointModel ?? model.endpointModel ?? model.repo,
+          prompt: model.prompt,
+          maxTokens: model.maxTokens,
+          concurrency,
+          pages: misjudged.map((number) => ({ number, imagePath: renderPath(rendersDir, number) })),
+          onPage: (page) => {
+            const render = sizes.get(page.number);
+            readings?.append({
+              page: page.number,
+              text: page.text,
+              tokens: page.tokens,
+              finishReason: page.finishReason,
+              seconds: page.seconds,
+              response: page.response,
+              ...(render !== undefined ? { render: { width: render.width, height: render.height } } : {}),
+              ...(maxPixels !== undefined ? { maxPixels } : {}),
+              model: model.id,
+            });
+            if (page.finishReason !== 'length' && page.text.trim().length > 0) {
+              // It was a real page all along. It stops being unreadable, and it
+              // raises the band like any other accepted page -- which is what
+              // spares the rest of its cohort.
+              unreadable.delete(page.number);
+              answers.set(page.number, page.text);
+              longestAccepted = bandAfter(longestAccepted, page);
+              opts.log(`${label}: page ${page.number} was not a runaway — kept at ${page.tokens} tokens`);
+            }
+          },
+        });
+      }
+
       inferenceSeconds = (Date.now() - endpointStarted) / 1000;
       inferredPages = wanted.length;
     }
@@ -447,6 +556,100 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
   };
 }
 
+/**
+ * What to send with this page: the book's own number, or the model's.
+ *
+ * The flag is the whole of the escape hatch. A page refused by the narrowed cap
+ * cannot be rescued by reading the book again -- the second run walks the same
+ * pages, builds the same band, and refuses it identically -- so without a way to
+ * turn the narrowing off, "you can read it again" would be a false sentence.
+ */
+export function capToSend(fixedCap: boolean, longestAccepted: number, modelCap: number): number {
+  return fixedCap ? modelCap : capFor(longestAccepted, modelCap);
+}
+
+/**
+ * WHICH REFUSED PAGES ARE WORTH READING AGAIN, and in what order.
+ *
+ * ── The question, and why it is asked after the pass rather than during it ──
+ *
+ * A page is sent under the band as it stood at that moment, and with twelve
+ * pages in flight that band can be a dozen answers out of date. So a refusal
+ * carries information only if the cap that produced it is still something this
+ * book would say -- and the cheapest moment to know that is when the run has
+ * finished and the band has stopped moving.
+ *
+ * WHAT IT MUST NOT DO IS RETRY A FAIR REFUSAL. A true runaway is refused AT the
+ * band the run ended with, so `worthRetrying` says no and it is never re-read.
+ * That is what keeps this from costing more time than the cap saves: measured,
+ * retrying every refusal below the final band spends 122,880 tokens to save
+ * 66,344.
+ *
+ * A page with no recorded cap is not retried. That means it was never sent by
+ * this pass -- it came out of the bank, or from a run before this feature -- and
+ * a page this pass did not judge is not a page this pass may overturn.
+ *
+ * Sorted, because the second pass reads them in book order like the first, and
+ * a log that jumps about is a log somebody stops reading.
+ */
+export function pagesToReread(
+  refused: Iterable<number>,
+  sentCap: ReadonlyMap<number, number>,
+  finalBand: number,
+): number[] {
+  const worth: number[] = [];
+  for (const number of refused) {
+    const sent = sentCap.get(number);
+    if (sent !== undefined && worthRetrying(sent, finalBand)) worth.push(number);
+  }
+  return worth.sort((a, b) => a - b);
+}
+
+/**
+ * The longest ACCEPTED page after this answer — the only thing that may raise
+ * the band.
+ *
+ * ── This is policy, not arithmetic, which is why it is here ────────────────
+ *
+ * `capFor` takes a number and cannot know where it came from, so nothing in
+ * band.ts can stop a refused page from feeding it. WHICH ANSWERS COUNT is a
+ * property of this loop, and it is the rule with no compiler behind it.
+ *
+ * A REFUSED PAGE MUST NEVER RAISE THE BAND. It is the page the cap exists to
+ * stop; it ran to whatever cap it was given, so its length is a fact about the
+ * cap and not about the book. Letting it in would push the band toward the
+ * model's own — the band would LOOSEN exactly where it should tighten, and
+ * every later runaway in that book would cost more than the one before it.
+ * Silent, and self-inflating, which is why it has an assertion of its own.
+ */
+export function bandAfter(
+  longestAccepted: number,
+  page: { tokens: number; finishReason: string | null; text: string },
+): number {
+  if (page.finishReason === 'length') return longestAccepted;
+  if (page.text.trim().length === 0) return longestAccepted;
+  return page.tokens > longestAccepted ? page.tokens : longestAccepted;
+}
+
+/**
+ * Why a page was cut off, NAMING THE CAP THAT ACTUALLY FIRED.
+ *
+ * It used to name the model's number, and once the cap is a property of the run
+ * that sentence is false on every page the band narrowed: a reader diagnosing a
+ * refusal would be told 8,192 when 5,092 stopped it, and would go looking for a
+ * page four thousand tokens longer than the one they have.
+ *
+ * The second clause is what makes the first actionable -- the number alone is
+ * arbitrary, and "four times the longest page this book has read" is the reason
+ * it is that number.
+ */
+function cutOff(cap: number, longestAccepted: number): string {
+  const why = longestAccepted > 0
+    ? `, which is this book's longest page so far (${longestAccepted} tokens) with room to spare`
+    : '';
+  return `it was still writing at ${cap} tokens${why}, so it was cut off`;
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // foundry vlm-read
 // ═════════════════════════════════════════════════════════════════════════════
@@ -460,6 +663,17 @@ export interface VlmReadOptions {
   endpoint?: string;
   endpointModel?: string;
   concurrency?: number;
+  /**
+   * Send every page at the model's own cap, as this program did before the
+   * adaptive one existed.
+   *
+   * IT IS WHAT MAKES A LOSS RECOVERABLE, and without it the claim would be
+   * false. A page refused by the adaptive cap cannot be rescued by reading the
+   * book again: the second run walks the same pages in the same order, builds
+   * the same band, and refuses the same page for the same reason. Re-reading is
+   * only a remedy when something can differ, and this is the something.
+   */
+  fixedCap?: boolean;
   /** Keep the page renders here — they are deleted after the run otherwise. */
   rendersDir?: string;
   freshReadings?: boolean;

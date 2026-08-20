@@ -149,6 +149,22 @@ const VLM_CONCURRENCY: OptionSpec = {
   describe: `Pages in flight against --vlm-endpoint at once. Default ${DEFAULT_VLM_CONCURRENCY}, the measured knee.`,
 };
 
+/**
+ * The escape hatch for the adaptive cap, and the reason it exists is narrow.
+ *
+ * A page refused by the adaptive cap CANNOT be rescued by reading the book
+ * again: the second run walks the same pages, builds the same band from the same
+ * answers, and refuses the same page for the same reason. Re-reading is only a
+ * remedy when something can differ. This is the something.
+ */
+const VLM_FIXED_CAP: OptionSpec = {
+  name: 'vlm-fixed-cap',
+  type: 'boolean',
+  describe: 'Give every page the model\'s own token cap instead of narrowing it '
+    + 'to what this book has shown. Slower on a book that runs away; the only way '
+    + 'to re-read a page the narrowed cap refused.',
+};
+
 const VLM_READINGS: OptionSpec = {
   name: 'readings',
   type: 'string',
@@ -921,6 +937,7 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
     ...(endpointModel !== undefined ? { endpointModel } : {}),
     ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
     ...(readingsPath !== undefined ? { readingsPath } : {}),
+    ...(flag(args, 'vlm-fixed-cap') ? { fixedCap: true } : {}),
     ...(freshReadings ? { freshReadings: true } : {}),
     ...(reuseReadings ? { reuseReadings: true } : {}),
     ...(skipPages !== undefined ? { skipPages: parsePageList(skipPages, '--skip-pages') } : {}),
@@ -1068,6 +1085,7 @@ async function runVlmRead(args: ParsedArgs): Promise<void> {
     ...(endpointModel !== undefined ? { endpointModel } : {}),
     ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
     ...(optionalString(args, 'renders') ? { rendersDir: optionalString(args, 'renders')! } : {}),
+    ...(flag(args, 'vlm-fixed-cap') ? { fixedCap: true } : {}),
     ...(freshReadings ? { freshReadings: true } : {}),
     ...(reuseReadings ? { reuseReadings: true } : {}),
     ...(skipPages !== undefined ? { skipPages: parsePageList(skipPages, '--skip-pages') } : {}),
@@ -2190,7 +2208,7 @@ export const COMMANDS: readonly Command[] = [
     ].join('\n'),
     options: [
       PDF_IN, OUT_PATH, VLM_FORMAT, VLM_MODEL, VLM_PYTHON, VLM_RENDERS, VLM_LANGUAGE,
-      VLM_ENDPOINT, VLM_ENDPOINT_MODEL, VLM_CONCURRENCY, VLM_READINGS,
+      VLM_ENDPOINT, VLM_ENDPOINT_MODEL, VLM_CONCURRENCY, VLM_FIXED_CAP, VLM_READINGS,
       VLM_FRESH_READINGS, VLM_REUSE_READINGS, VLM_SKIP_PAGES,
       VLM_OVERLAY, VLM_CHAPTERS, VLM_STRIP_MARKERS, VLM_FINAL, VLM_RECORDS,
     ],
@@ -2419,7 +2437,7 @@ export const COMMANDS: readonly Command[] = [
     ].join('\n'),
     options: [
       PDF_IN, VR_READINGS, VLM_MODEL, VLM_PYTHON, VLM_RENDERS, VR_LANGUAGE,
-      VLM_ENDPOINT, VLM_ENDPOINT_MODEL, VLM_CONCURRENCY,
+      VLM_ENDPOINT, VLM_ENDPOINT_MODEL, VLM_CONCURRENCY, VLM_FIXED_CAP,
       VLM_FRESH_READINGS, VLM_REUSE_READINGS, VLM_SKIP_PAGES,
     ],
     run: runVlmRead,
