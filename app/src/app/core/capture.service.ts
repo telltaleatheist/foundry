@@ -439,7 +439,39 @@ export class CaptureService {
     }));
   }
 
-  /** The editor moved corners on one photograph. */
+  /**
+   * The editor moved corners on one photograph — WHICH IS WHAT A HAND IS.
+   *
+   * ── The mark used to wait for a button, and that lost work ──────────────────
+   *
+   * Only the per-page Apply set `byHand`, so somebody who adjusted page 12's
+   * corners and flipped onward without pressing anything had an unprotected
+   * crop: the next apply-to-all overwrote it silently and named it in no skip
+   * list. That is the one loss the mark exists to prevent, happening on the live
+   * path instead of the migration path.
+   *
+   * And it could not heal. The derivation that infers the mark for old recipes
+   * runs only WHILE THE FILE HAS NOT SPOKEN, and the stamp writes `byHand:
+   * false` on every page it touches — so the first apply anybody ever pressed
+   * switched the inference off for the life of the project, and every drag
+   * after that was unprotected for good. The live path was permanently weaker
+   * than the migration path, in the direction that costs an evening.
+   *
+   * ── One rule, two paths ────────────────────────────────────────────────────
+   *
+   * The migration reads "a quad that is neither the whole frame nor the stamp
+   * was dragged". This is the same sentence, written at the moment the drag
+   * happens rather than inferred from its result afterwards, and the two must
+   * not disagree about what a hand is — two rules for one fact is the shape
+   * this feature has paid for repeatedly.
+   *
+   * ── THE PHOTOGRAPH, NOT THE PAGE ───────────────────────────────────────────
+   *
+   * A spread is two pages of one picture, and the stamp copies a whole
+   * configuration rather than a single quad — so marking only the half whose
+   * corner was dragged would leave the other half to be replaced by the next
+   * stamp. Half a protection reads as none.
+   */
   setQuads(photoId: string, quads: readonly CaptureQuad[]): void {
     this.change((recipe) => ({
       ...recipe,
@@ -451,6 +483,7 @@ export class CaptureService {
               pages: photo.pages.map((page, index) => ({
                 ...page,
                 quad: quads[index] ?? page.quad,
+                byHand: true,
               })),
             },
       ),
@@ -588,7 +621,23 @@ export class CaptureService {
         photo.name ?? `Photograph ${position.get(photo.id) ?? '?'}`;
 
       const photos = recipe.photos.map((photo) => {
-        if (photo.id === source.id) return photo;
+        if (photo.id === source.id) {
+          /*
+           * THE SOURCE'S CROP HAS JUST BECOME THE GLOBAL, so it is no longer an
+           * outlier and its mark has to go with the rest.
+           *
+           * Without this, setting the global would permanently exclude the
+           * photograph it was set ON from every later global -- the drag that
+           * placed it marks it (see setQuads), the stamp skips the source, and
+           * the mark would stand forever. The person would have made one page
+           * un-stampable by using it to stamp everything else.
+           *
+           * It needs no idea of which stage it is in, which was the point of
+           * putting it here: whatever the source was before, being the source
+           * is what it is now.
+           */
+          return { ...photo, pages: photo.pages.map((page) => ({ ...page, byHand: false })) };
+        }
         if (!sameShape(source, photo)) {
           skipped.push({ name: name(photo), why: 'shape' });
           return photo;
