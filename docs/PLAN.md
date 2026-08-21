@@ -1653,12 +1653,36 @@ photographed. So the whole of the new door is one field,
   a static import would put half a bundle in the boot chunk. Measured:
   initial 695.96 → 702.64 kB (+6.68), and pdf.js stayed lazy — it is now a
   484 kB chunk SHARED with `app-pdf-view` rather than duplicated.
-- DEFERRED OUT LOUD, and it is Wave 21's arrival that creates it: once a
-  mint files PAGES rather than a PDF, `bookAtPosition` composes `pdf`
-  through `archive.kind === 'pdf'` and answers null — so a CAPTURED book
-  would be the one book in the app that denied having any paper, in a
-  sentence written for an EPUB. `originalPath` becomes a small union when
-  that lands. Named here rather than discovered later.
+- ~~DEFERRED OUT LOUD, and it is Wave 21's arrival that creates it: a
+  CAPTURED book would be the one book in the app that denied having any
+  paper, in a sentence written for an EPUB~~ — **CLOSED ON ARRIVAL.** It
+  is not a union: `bookAtPosition` gives `pages` its own field rather than
+  a second meaning for `pdf`, so `BookLoad` mirrors that split with
+  `originalPages` and the card asks about the captured book FIRST. The
+  card still cannot DRAW a photographed page; what it stops doing is
+  claiming there are none, and `originalPages` is the field whoever draws
+  them will read. **That drawing is the open half of this wave.**
+- **THE CARD WAS BEING REBUILT FOR EVERY GLANCE, and that is the finding
+  worth carrying.** The wip commit left one open question — canvas hang or
+  cold pdf.js load — and the answer was neither: it paints every time, in
+  under a second. What the measuring found instead was that `book-view`
+  mounted the card behind `@if (glanceAt())`, destroying the component on
+  every `pointerleave`. Two sections of `page-glance`'s own header describe
+  state that survives a glance — one worker "built once and kept", a cache
+  making a repeat glance free — and BOTH WERE FALSE. Counted at the
+  `Worker` constructor over a ten-rest walk: **10 rests → 10 workers, none
+  terminated, ~748 ms a glance; mounted once → 1 worker, terminated on
+  close, ~210 ms** (and 210 ms is the probe's own floor). A docblock
+  arguing for an economy is not evidence there is one, and the thing that
+  made every word of it untrue was one `@if` in a different file.
+- **AN INDIRECTION WAS BUILT, MEASURED, AND DROPPED.** The cache-hit path
+  paints in the effect's own turn, which `draw()`'s docblock reads like a
+  reason it should fail, so the paint was routed through a signal. Then the
+  old direct draw was put BACK and measured against repeat rests: it
+  painted every time. Fresh renders land at 500-650 ms and cache hits at
+  the 210 ms floor, a gap far wider than the resolution, so those repeats
+  were certainly hits. The finding went into the docblock and the code
+  stayed simple.
 
 ### Then — the user's
 
@@ -1726,7 +1750,9 @@ supposed to be, and it exists so the same failure is visible next time.
   every app-side unit and the reason the hand-test is not optional. Not
   scheduled because the standing ruling is no unasked tests — if that
   changes, this is where the work starts.
-- **The bundle is 695.96 kB against a 500 kB budget.** Pre-existing.
+- **The bundle is 704.53 kB against a 500 kB budget.** Pre-existing.
+  It went 695.96 → 702.98 (Wave 23, the glance card) → 704.14 (Wave 21's
+  mint-writes-pages) → 704.53 (the captured book's sentence).
 
   **THIS FIGURE WAS 145 kB STALE AND IS THE SECOND TIME THIS LIST HAS DONE
   IT.** It read 552.88 kB here and 550.51 kB in §1 on 2026-08-20, when the
