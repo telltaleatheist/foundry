@@ -3009,6 +3009,61 @@ partial beats a bent whole.
   the stamp arm of `applyToAll`) survives DEPRECATED, comments naming
   W25-P3 as the deleter, so the components compile until P2/P3 land.
 
+### What W25-P2 settled (BUILT; measured in the running app over the index shoot)
+
+- **The rail is the sequence** — Crop → Split → Finish as numbered
+  steps (accented = now, tick = done, dimmed = waiting). The Split step
+  is inert in the crop pass and SAYS WHY ("After the crops — one line
+  then fits them all") rather than greying in silence. Finish is the
+  existing mint button, gate and progress untouched, numbered 3. The
+  persistence sentence stands once, in the foot. Consequence copy comes
+  from `applyCost` only.
+- **Tick mapping**: Turn and Crop fold under step 1 (turn belongs to
+  the crop pass, per Ruled inline), Split under step 2; all three keep
+  their own row and emits, `CapturePrepared` untouched, nothing derives
+  or auto-ticks, Finish still gates on all three.
+- **Absent, not disabled, for both Applies** — with nothing to apply
+  the button could only refuse, so what is drawn is the way forward
+  ("Open a spread, put the line down the gutter, and make it the
+  book's cut — then this cuts the rest there"). Consequence:
+  `applyCuts`' no-cut notice is unreachable from the rail; P3's wiring
+  is where it can still fire.
+- **The complete dot** sits top-left on the card (top-right is the
+  strike's); the "· by hand" words are gone. Wave 24 argued a pip
+  needs a legend — Wave 25 supplies one and makes it a control: the
+  rail's populations are PRESSABLE pills whose pips match the mark.
+  The grid grew a public `showOnly(ids)` door + scroll-into-view,
+  closing Wave 24's deferred item. Verified live: "3 complete"
+  selected exactly its 6 cards, release cleared all 6 dots and the
+  rail moved to "25 follow".
+- **Right-click → Release** — the grid's menu gained the app's
+  scrim idiom (it had none; a click on the rail used to leave it
+  hanging), the item reads "Release N photographs — let the book
+  change them again", present only when the selection holds a complete
+  photograph, and a right-click on an unchosen card takes that card
+  first — without which the gesture only worked on cards already
+  swept. No confirm, deliberately: release destroys nothing.
+- **The cropped projection ships, measured**: from `pass: 'split'`
+  each card draws its rectified page (the mint's own `Rectifier`, ONE
+  GL context owned by the grid, cards borrowing it into their own 2D
+  canvases, sourced from the already-decoded 640px thumbnails). On the
+  25-photograph shoot: 50 cards, 218.5 ms to draw all 50, median
+  3.3 ms/card, 6 drawn on open (`loading="lazy"` keeps the cost on
+  the viewport), 0 redraws on scroll-back, 2 redraws when one spread
+  turns, Reopen instantly back to 50 raw cards.
+- **ROUTED BY THE LEAD AT LANDING, on P2's own recommendation**: the
+  population MEMBERSHIP had no service door, so the view walked the
+  photographs a second time with the invariant (lengths equal
+  `applyCost`'s numbers) promised in a comment. `applyPopulations` now
+  holds the one walk; `applyCost` is its lengths; the view only
+  translates photo ids to card ids. Two readings of one thing cannot
+  disagree.
+- **Left for P3, named**: `CaptureCard.own` keeps its name (renaming
+  it is a service-side edit); the modal's stamp + override dialog
+  paths are untouched and still functional until P3 replaces them.
+- Gates at landing: 418/0, three clean typechecks, `ng build`
+  721.54 kB (WARNING only; was 707.15 at P1), control bytes clean.
+
 ### Superseded by this wave, named so nothing dangles
 
 - Wave 24's modal *Crop all* stamp-on-press → the record + table Apply.

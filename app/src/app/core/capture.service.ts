@@ -684,18 +684,42 @@ export class CaptureService {
    * skip on the same test, so a second count would be a second chance to
    * disagree with the act. Zero everywhere when the book has no crop yet --
    * there is nothing to apply, and the rail draws no button.
+   *
+   * IT IS THE MEMBERSHIP'S LENGTHS, not a count of its own. The rail's pressable
+   * populations need the MEMBERS and this line needs the NUMBERS, and two walks
+   * answering one question is the drift shape this repo has refused by name
+   * (Wave 18: "I had written the correct rule once and the wrong rule twice,
+   * three functions apart"). So the walk happens once, in `applyPopulations`,
+   * and this is arithmetic over its answer -- the sentence and the selection
+   * cannot disagree, because they are readings of one thing.
    */
   readonly applyCost = computed<StampCost>(() => {
+    const { takes, complete, shape } = this.applyPopulations();
+    return { takes: takes.length, complete: complete.length, shape: shape.length };
+  });
+
+  /**
+   * WHO IS IN EACH OF AN APPLY'S THREE POPULATIONS -- photograph ids, disjoint
+   * and exhaustive over the book, or three empty lists while the book has no
+   * standing crop to measure against.
+   *
+   * Shape is asked before completeness, exactly as the Apply itself asks, so a
+   * complete photograph of another shape lands once, under the reason the act
+   * would actually give for leaving it alone. `applyCost` above is this
+   * answer's lengths; the rail's pressable counts are its members.
+   */
+  readonly applyPopulations = computed<Record<keyof StampCost, readonly string[]>>(() => {
     const recipe = this.current();
     const crop = recipe?.book?.crop;
-    if (recipe === null || crop === undefined) return { takes: 0, complete: 0, shape: 0 };
-    let takes = 0;
-    let complete = 0;
-    let shape = 0;
-    for (const photo of recipe.photos) {
-      if (!sameShape(crop, photo)) shape += 1;
-      else if (isComplete(photo)) complete += 1;
-      else takes += 1;
+    const takes: string[] = [];
+    const complete: string[] = [];
+    const shape: string[] = [];
+    if (recipe !== null && crop !== undefined) {
+      for (const photo of recipe.photos) {
+        if (!sameShape(crop, photo)) shape.push(photo.id);
+        else if (isComplete(photo)) complete.push(photo.id);
+        else takes.push(photo.id);
+      }
     }
     return { takes, complete, shape };
   });

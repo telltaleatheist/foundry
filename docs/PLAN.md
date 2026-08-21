@@ -1782,6 +1782,18 @@ re-run by the lead: 418/0, three clean typechecks, `ng build`
 adopted into CAPTURE.md § Wave 25 ("What W25-P1 settled"). P2 (table)
 and P3 (modal) run next, sequentially in the main tree.
 
+**~~P2~~ — LANDED (this commit).** The rail is the sequence (Crop →
+Split → Finish), the complete dot + pressable populations (closes
+Wave 24's deferred clickable count), right-click Release with the
+scrim the grid's menu never had, and the cropped projection after
+Apply — measured in the running app: 50 cards, median 3.3 ms each,
+one GL context, lazy so only the viewport pays. One fix routed by the
+lead at landing on P2's own recommendation: `applyPopulations` is the
+one walk whose lengths ARE `applyCost`, replacing the view's second
+walk. Gates re-run by the lead: 418/0, three clean typechecks,
+`ng build` 721.54 kB (WARNING only). Record in CAPTURE.md § Wave 25
+("What W25-P2 settled"). P3 (modal) runs next.
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the

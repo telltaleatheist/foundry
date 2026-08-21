@@ -7,6 +7,7 @@ import {
   inject,
   input,
   signal,
+  viewChild,
 } from '@angular/core';
 
 import { mintedPageIds } from '@shared/capture';
@@ -14,12 +15,16 @@ import type { CaptureQuad, CaptureSplit } from '@shared/types';
 
 import { CaptureMintService } from '../../core/capture-mint.service';
 import { ConfirmService } from '../../core/confirm.service';
-import { type ApplyToAll, CaptureService, type StampCost } from '../../core/capture.service';
+import {
+  type ApplyToAll,
+  CaptureService,
+  type StampCost,
+} from '../../core/capture.service';
 import type { Tab } from '../../core/documents.service';
 import { CaptureEditorModalComponent } from '../capture-editor/capture-editor-modal.component';
 import type { FractionQuad } from '../capture-editor/geometry';
 import { CaptureGridComponent } from '../capture-grid/capture-grid.component';
-import { CaptureRailComponent } from '../capture-rail/capture-rail.component';
+import { CaptureRailComponent, type Population } from '../capture-rail/capture-rail.component';
 import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';
 
@@ -90,6 +95,7 @@ const ACKNOWLEDGED_FOR_MS = 1600;
           [cards]="captures.cards()"
           [descending]="captures.descending()"
           [arranged]="captures.arranged()"
+          [projecting]="captures.pass() === 'split'"
           (reorder)="captures.reorder($event)"
           (open)="openPage($event)"
           (strike)="captures.toggleStrike($event)"
@@ -97,6 +103,7 @@ const ACKNOWLEDGED_FOR_MS = 1600;
           (dropped)="captures.intake(tab().path, $event)"
         (remove)="void confirmRemoval($event)"
           (turn)="captures.turnPhotos($event.photos, $event.turns)"
+          (release)="releaseThese($event)"
       />
     </div>
 
@@ -118,10 +125,18 @@ const ACKNOWLEDGED_FOR_MS = 1600;
       [minted]="minted()"
       [progress]="mint.progress()"
       [diverged]="captures.diverged()"
+      [pass]="captures.pass()"
+      [standing]="hasCrop()"
+      [bookCut]="hasCut()"
+      [cost]="captures.applyCost()"
       (open)="openTool()"
       (tick)="captures.tick($event)"
       (mint)="void startMint()"
       (stop)="mint.cancel()"
+      (applyCrops)="captures.applyCrops()"
+      (applyCuts)="captures.applyCuts()"
+      (reopen)="captures.reopen()"
+      (select)="showPopulation($event)"
     />
 
     @if (open() !== null) {
@@ -417,6 +432,83 @@ export class CaptureViewComponent {
     const recipe = this.captures.recipe();
     return recipe === null ? 0 : mintedPageIds(recipe).length;
   });
+
+  /**
+   * Whether the book has a crop, and whether it has a cut.
+   *
+   * The rail draws an Apply only where one would do something, so these are the
+   * two facts that decide whether a control exists at all. They are asked of
+   * the recipe rather than derived from a count, because zero photographs able
+   * to take the standing and NO STANDING AT ALL are different states with
+   * different sentences: one says "everything is complete already", the other
+   * says "go and set one".
+   */
+  protected readonly hasCrop = computed<boolean>(
+    () => this.captures.recipe()?.book?.crop !== undefined,
+  );
+  protected readonly hasCut = computed<boolean>(
+    () => this.captures.recipe()?.book?.cut !== undefined,
+  );
+
+  /** The table, for the one thing a parent has to ask it to do. See below. */
+  private readonly grid = viewChild(CaptureGridComponent);
+
+  /**
+   * WHICH CARDS EACH OF THE RAIL'S THREE COUNTS IS ABOUT.
+   *
+   * The membership is the service's (`applyPopulations` — one walk, whose
+   * lengths ARE `applyCost`), so the sentence under the button and the cards a
+   * press lights cannot disagree. What this computed adds is only the
+   * translation the table needs: PAGE ids, in the table's own order, because
+   * that is what a selection is made of — a spread is two cards on one
+   * photograph and selecting the photograph means lighting both.
+   *
+   * (The membership door was routed in by the lead at P2's landing, on P2's own
+   * recommendation — the second walk that stood here carried its invariant in a
+   * comment, which is a promise, not an enforcement.)
+   *
+   * EMPTY UNTIL THE BOOK HAS A CROP, because with no standing there are no
+   * populations: `applyCost` returns zeros in that state and the rail draws no
+   * counts to press.
+   */
+  private readonly populations = computed<Record<Population, readonly string[]>>(() => {
+    const members = this.captures.applyPopulations();
+    const pagesOf = (photos: readonly string[]): readonly string[] => {
+      const wanted = new Set(photos);
+      return this.captures.cards().filter((card) => wanted.has(card.photoId)).map((card) => card.id);
+    };
+    return { follow: pagesOf(members.takes), complete: pagesOf(members.complete), shape: pagesOf(members.shape) };
+  });
+
+  /**
+   * A COUNT ON THE RAIL WAS PRESSED: show me those ones.
+   *
+   * Wave 24 deferred this out loud and named what it would take -- "a selection
+   * input on the grid, whose `chosen` is private today, plus scroll-into-view
+   * to be worth having". The grid grew a `showOnly` door for it; this is the
+   * only thing on this surface that reaches into a child rather than handing it
+   * an input, and the door's own docblock argues why a selection REQUEST cannot
+   * honestly be state.
+   */
+  protected showPopulation(which: Population): void {
+    this.grid()?.showOnly(this.populations()[which]);
+  }
+
+  /**
+   * LET THE BOOK CHANGE THESE AGAIN — the right-click door's other end.
+   *
+   * One call per photograph, which is what the service asks for and costs
+   * nothing: every writer here goes through the same debounced save, so nine
+   * releases are nine edits and one write.
+   *
+   * NO CONFIRM, deliberately, where removal has one. Release destroys nothing —
+   * the page keeps its crop, its cut and its turn, and the only thing that
+   * changes is whether the next Apply is allowed to move it. The undo is to
+   * place a corner or press *This page is right* again.
+   */
+  protected releaseThese(photoIds: readonly string[]): void {
+    for (const id of photoIds) this.captures.release(id);
+  }
 
   /**
    * One photograph along the arrangement, clamped at both ends.
