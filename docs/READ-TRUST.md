@@ -1261,3 +1261,75 @@ he can look at it himself)? The existing refusal path already records a
 page as unreadable *with its reason*, so the machinery for the second
 exists and the first is the choice to say less. Different feel in a
 300-page book; his call, not a guess.
+
+---
+
+## 13. A runaway becomes an EMPTY PAGE, and shape catches what length cannot
+
+Two rulings from Owen, 2026-08-21, both asked as straight questions.
+
+### What a caught page becomes: an empty page
+
+> *"An empty page — the page exists and holds nothing."*
+
+It used to be REFUSED, which put it in the `N PAGE(S) ARE NOT IN THE BOOK`
+list and left a hole where a leaf had been. So a blank scan and a page this
+app failed to open ended the same way, and the book's numbering quietly
+disagreed with the paper. A page whose answer was nonsense **is** a page. It
+just holds nothing.
+
+Three details that make it safe rather than merely tidy:
+
+- **After the retry pass, deliberately.** A page cut by a cap this book has
+  since left behind is read again first; only what is still cut when the band
+  has stopped moving is emptied. Emptying earlier would throw away the pages
+  the retry exists to rescue.
+- **The bank keeps what the model said.** Only the BOOK is emptied. Somebody
+  arguing with this decision next month needs the text that caused it, and a
+  later build with a better judge must be able to re-derive the book from a
+  bank this one did not damage.
+- **Every emptied page is named in the log with its number and its reason.** A
+  page emptied by mistake is a page of somebody's book going quiet; a count
+  alone would be a summary of a decision nobody could check.
+
+### The shape signal: measured against the library, not guessed
+
+> *"Yes, stop the page early."*
+
+**One correction to the premise, made before building:** neither path streams —
+`vlm_page.py` calls mlx-vlm's `generate` and waits, `endpoint.ts` posts and
+waits — so nothing can abort a generation mid-flight. This judges a FINISHED
+answer and saves no inference time. What it buys is the class the cap cannot
+see at all: **nonsense that stops short of the cap**, which is accepted into
+the book today in full, because by the cap's own measure nothing happened.
+
+Thresholds set from every banked page in the library rather than from
+judgement — 329 answers across four banks:
+
+| | measured |
+| --- | --- |
+| worst real page over the 800-char floor | **0.0118** |
+| Flashpoint p6, the runaway Owen reported | **0.3299** (23,857 chars) |
+| the line, `RUNAWAY_SHARE` | **0.15** — 12.7× the worst real page |
+
+Verified by running the SHIPPED function over the library: **0 of 327 real
+pages flagged**, p6 caught.
+
+**The threshold is set where it is SAFE rather than where it is sensitive,**
+because the two errors are not comparable: a false negative costs a page its
+cap once and says so on screen, while a false positive silently empties a page
+somebody's book needed.
+
+### Two things this deliberately does not do
+
+**It does not catch p11.** A real runaway — 16,401 characters — with a share of
+0.0526, *below* the worst real page. It is long nonsense that does not repeat
+itself, and no tuning reaches it without taking real pages along. The cap
+catches that one. **THE CAP BOUNDS LENGTH, THE SHAPE TEST BOUNDS SHAPE**, and
+neither is asked to do the other's job.
+
+**A second signal was built and thrown away.** The longest run of identical
+consecutive lines is **1 on every page in the library, runaways included** —
+this model reflows rather than repeating whole lines. It is the obvious test
+for repetition and it fires on nothing. Shipping it would have been a check
+that never runs, occupying the space where a working one should be.
