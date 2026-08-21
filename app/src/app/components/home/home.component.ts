@@ -147,11 +147,22 @@ import { UiService } from '../../core/ui.service';
                     -->
                     @if (project.capture && projects.originalOf(project) === null) {
                       <!--
-                        A capture project between New Project and its first mint
-                        holds no documents at all, and that is its healthy state
-                        for as long as somebody is photographing a book.
+                        TWO STATES WEARING ONE TAG UNTIL NOW. A capture project
+                        holds no documents before its first mint, and it holds no
+                        documents after one either -- a mint writes a folder of
+                        page images, which is not a file type anything opens, so
+                        it is deliberately not in the catalogue.
+
+                        So "photographs" was true all evening and went on being
+                        printed over a finished book. The row now says which of
+                        the two it is, because they differ in the only thing a
+                        row is for: what to do next.
                       -->
-                      <span class="tag" title="Photographs waiting to be minted into pages">photographs</span>
+                      @if (project.pages) {
+                        <span class="tag" title="The pages have been made — this book is ready to be read">pages</span>
+                      } @else {
+                        <span class="tag" title="Photographs waiting to be minted into pages">photographs</span>
+                      }
                     }
                     @if (!project.capture && projects.originalOf(project) === null) {
                       <span class="tag gone" title="Every document this project listed is missing from the disk">nothing to open</span>
@@ -174,7 +185,19 @@ import { UiService } from '../../core/ui.service';
                   It goes when the reading lands and nothing brings it back
                   short of the bank going away.
                 -->
-                @if (project.reading.needed && projects.originalOf(project) !== null) {
+                <!--
+                  THE GATE USED TO BE "there is a document to open", because the
+                  button opens the book and then the dialog finds it there. A
+                  captured book has no document and the pixels are a folder, so
+                  that gate refused the one kind of book that CANNOT have arrived
+                  with text in it — the row offered nothing, and the dialog it
+                  would have opened had nothing in its list either.
+
+                  reading.needed already says pages are here and unread, for
+                  both kinds. What differs is what the button has to open first,
+                  which is readPages' own business.
+                -->
+                @if (project.reading.needed && (project.pages || projects.originalOf(project) !== null)) {
                   <button
                     class="ocr"
                     (click)="void readPages(project)"
@@ -481,10 +504,12 @@ export class HomeComponent {
   protected glyph(project: ProjectSummary): string {
     if (project.problem !== null) return '⚠';
     const original = this.projects.originalOf(project);
-    // Photographs before they are pages. A capture project has no original to
-    // take a glyph from, and the empty-project glyph beside it means the
-    // opposite thing -- that everything is gone.
-    if (project.capture && original === null) return '▣';
+    // Photographs before they are pages, and PAGES after. A capture project has
+    // no original to take a glyph from either way, and the empty-project glyph
+    // beside it means the opposite thing -- that everything is gone. The scan
+    // glyph is right for a minted book for the same reason it is right for an
+    // imported one: what the row opens is a picture of paper.
+    if (project.capture && original === null) return project.pages ? '▦' : '▣';
     if (original === null) return '⌸';
     return original.kind === 'epub' ? '▤' : '▦';
   }
@@ -496,9 +521,15 @@ export class HomeComponent {
     // The same lie the row told, in the tooltip. A capture project with no
     // original has everything it is supposed to have.
     if (original === null) {
-      return project.capture
-        ? `Open the light table\n${project.dir}`
-        : `${project.dir}\nNothing in this project is still on the disk.`;
+      // The light table either way -- it is what the row opens and saying
+      // otherwise would be a tooltip describing a door that is not there. What
+      // changes is what is on the table, which is the half worth saying.
+      if (project.capture) {
+        return project.pages
+          ? `Open the light table — the pages are made\n${project.dir}`
+          : `Open the light table\n${project.dir}`;
+      }
+      return `${project.dir}\nNothing in this project is still on the disk.`;
     }
     return `Open ${original.label}\n${project.dir}`;
   }
@@ -515,7 +546,25 @@ export class HomeComponent {
    */
   protected async readPages(project: ProjectSummary): Promise<void> {
     const original = this.projects.originalOf(project);
-    if (original === null) return;
+    /*
+     * A CAPTURED BOOK OPENS ITS LIGHT TABLE FIRST, for exactly the reason an
+     * imported one opens its PDF: the dialog converts the book in front of you,
+     * and it finds a capture project through its open tab (`sources`,
+     * ocr-dialog.component.ts) precisely as it finds a PDF through one. There is
+     * no document to open here and never will be, so the tab IS the opening.
+     *
+     * NOT AWAITED, and it does not need to be: `captureTabIn` makes the tab
+     * synchronously in this process and shows it, where opening a file is a full
+     * round trip through main. The await one branch down exists because that
+     * round trip is what put "Open a PDF first" over a book somebody had just
+     * pointed at, and there is no round trip to lose that race with here.
+     */
+    if (original === null) {
+      if (!project.pages) return;
+      this.documents.show(this.documents.captureTabIn(project.dir));
+      this.ui.openOcr();
+      return;
+    }
     /*
      * AWAITED, and the await is the whole of the fix. Opening a document is a
      * full round trip through main — it admits the path, records the recent and

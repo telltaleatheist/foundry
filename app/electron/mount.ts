@@ -558,14 +558,32 @@ export function openFoundryWindow(
       const wanted = path.resolve(projectDir).toLowerCase();
       const project = projects.find((row) => path.resolve(row.dir).toLowerCase() === wanted);
       const original = project === undefined ? null : originalOf(project.documents);
-      if (project === undefined || original === null) {
+      /*
+       * ── A CAPTURE PROJECT HAS NOTHING TO OPEN AND IS STILL OPENABLE ────────
+       *
+       * `originalOf` answers null for one, and it always did between New Project
+       * and the first mint — but a mint used to file a PDF and that null became
+       * a document. It no longer does: the mint writes a folder of page images,
+       * which is deliberately not a catalogued document (`documentArchive`,
+       * electron/projects.ts). So the refusal below, left alone, would have
+       * turned Edit-in-Foundry on a FINISHED captured book into a console line
+       * and an empty window — a door that worked yesterday, for the one kind of
+       * book this app was photographing all week.
+       *
+       * The opening carries no document rather than a fabricated one. What
+       * stands in for it is the light table, which is what a click on that
+       * project's row opens standalone (`openProject`, home.component.ts) — the
+       * same rule through both doors, which is the promise this function's own
+       * docblock makes.
+       */
+      if (project === undefined || (original === null && !project.capture)) {
         console.error(`[mount] ${projectDir} is not a project with anything openable in it.`);
         return;
       }
       win.webContents.send('project:open', {
         dir: project.dir,
-        originalPath: original.path,
-        managed: original.managed,
+        originalPath: original?.path ?? null,
+        managed: original?.managed ?? false,
       });
     }).catch((err: Error) => {
       console.error(`[mount] ${projectDir} could not be opened: ${err.message}`);
