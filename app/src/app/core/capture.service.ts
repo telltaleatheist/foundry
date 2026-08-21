@@ -3,6 +3,7 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import type {
   CaptureIntaken,
   CaptureIntakeProgress,
+  CapturePage,
   CapturePhoto,
   CapturePrepared,
   CaptureQuad,
@@ -808,18 +809,7 @@ export class CaptureService {
     if (wanted.size === 0) return;
     this.change((recipe) => ({
       ...recipe,
-      photos: recipe.photos.map((photo) =>
-        !wanted.has(photo.id)
-          ? photo
-          : {
-              ...photo,
-              pages: photo.pages.map((page) => ({
-                ...page,
-                quad: turnQuad(page.quad, turns),
-                byHand: true,
-              })),
-            },
-      ),
+      photos: recipe.photos.map((photo) => (wanted.has(photo.id) ? turned(photo, turns) : photo)),
     }));
   }
 
@@ -863,8 +853,16 @@ export class CaptureService {
           pages: [
             // Strikes survive a re-drag: which half is a page is a decision
             // about the book, and moving the gutter is not taking it back.
-            { id: `${photo.id}:0`, quad: first, struck: photo.pages[0]?.struck ?? false },
-            { id: `${photo.id}:1`, quad: second, struck: photo.pages[1]?.struck ?? false },
+            /*
+             * byHand, for setQuads' reason: placing a cut on THIS photograph is
+             * setting it by hand, and the pages were being rebuilt from scratch
+             * here -- so the mark was not preserved, it was dropped. A page
+             * somebody cut themselves was unprotected from the next
+             * apply-to-all, which is the one loss the mark exists to prevent,
+             * arriving through the one gesture nobody thought to check.
+             */
+            { id: `${photo.id}:0`, quad: first, struck: photo.pages[0]?.struck ?? false, byHand: true },
+            { id: `${photo.id}:1`, quad: second, struck: photo.pages[1]?.struck ?? false, byHand: true },
           ],
         };
       });
@@ -1417,4 +1415,70 @@ function reportOn(intaken: CaptureIntaken, unreadable: number): string {
     said.push(`${unreadable} could not be read from where they were dragged from.`);
   }
   return said.join(' ');
+}
+
+/**
+ * ONE PHOTOGRAPH, TURNED — AND ITS SPLIT RE-SEATED WITH IT.
+ *
+ * ── A turn does not move a corner, but it does move a PAGE ─────────────────
+ *
+ * `turnQuad` permutes the corner assignment without moving any point, so the
+ * crop stays on exactly the same part of the photograph however many times it
+ * is turned. That is why turning each page's quad on its own LOOKS right.
+ *
+ * It is not right for a spread, and the measurement says so exactly. Turning
+ * the two halves of a centre-split independently, against re-deriving them
+ * from the turned sheet:
+ *
+ *   a quarter turn      the same, both ways
+ *   a half turn         THE HALVES SWAP READING ORDER
+ *   three quarters      THE HALVES SWAP READING ORDER
+ *
+ * Which is obvious once seen: turn a spread upside down and the page that was
+ * on the left is on the right. The independent turn keeps the old order, so
+ * the book silently gets two pages in the wrong sequence -- and it is
+ * invisible on the table, because both cards are there and both look correct.
+ *
+ * So a photograph with a cut in it is turned by rebuilding the WHOLE sheet,
+ * turning that, and asking `halvesOf` for the halves again. The split itself
+ * is untouched: it is a segment in the photograph's own fraction space and a
+ * turn moves nothing, so the cut is still across the same gutter.
+ *
+ * ── WHAT FOLLOWS A HALF, AND WHAT FOLLOWS AN INDEX ────────────────────────
+ *
+ * A strike is a decision about a PHYSICAL page -- "this one is a duplicate" --
+ * so when the order swaps, the strike has to travel with the half rather than
+ * stay on the seat. Each re-derived half is matched back to the turned quad it
+ * equals, and carries that page's strike with it. Matching by GEOMETRY rather
+ * than by a swap rule means this stays right if `halvesOf` ever orders a turn
+ * differently than it does today.
+ */
+function turned(photo: CapturePhoto, turns: number): CapturePhoto {
+  const marked = (page: CapturePage, quad: CaptureQuad): CapturePage =>
+    ({ ...page, quad, byHand: true });
+
+  if (photo.split === null || photo.pages.length !== 2) {
+    return { ...photo, pages: photo.pages.map((page) => marked(page, turnQuad(page.quad, turns))) };
+  }
+
+  const whole = joinedQuad(photo.pages.map((page) => page.quad), photo.split);
+  const halves = halvesOf(turnQuad(whole, turns), photo.split);
+  // Unreachable for a split this app can produce, and leaving the photograph
+  // untouched is the only answer that cannot put a page in the wrong place.
+  if (halves === null) return photo;
+
+  const spun = photo.pages.map((page) => turnQuad(page.quad, turns));
+  return {
+    ...photo,
+    pages: halves.map((quad, seat) => {
+      const came = spun.findIndex((one) => sameQuad(one, quad));
+      const from = photo.pages[came === -1 ? seat : came]!;
+      return { ...marked(from, quad), id: `${photo.id}:${seat}` };
+    }),
+  };
+}
+
+/** Two quads, corner for corner. Fractions out of one turn, so exact is honest. */
+function sameQuad(a: CaptureQuad, b: CaptureQuad): boolean {
+  return a.every((point, index) => point[0] === b[index]![0] && point[1] === b[index]![1]);
 }

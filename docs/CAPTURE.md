@@ -2307,3 +2307,86 @@ Named here so the size is known rather than discovered:
 **A CONTAINER THAT IS TAKEN APART BY THE NEXT STEP WAS NEVER A FORMAT, IT WAS A
 HABIT.** The PDF was here because a reader takes PDFs, and it survived the
 arrival of a reader that takes pictures.
+
+---
+
+## Marks, then Finalize — and a turn re-seats what it turns
+
+**Owen's ruling, 2026-08-20:** *"rotation can be on-the-spot and automatic. but
+we have to make sure if the user rotates, the rect drawing and the page split
+settings all readjust correctly. setting page crops and splits can be the kind
+of thing the user applies to a page/apply to all, and then theres a finalize
+button that does all the final splits/crops... we should be able to disable
+crop/split on any single page, or on all pages, if we dont want to do it, in
+case one page doesnt need it"*
+
+### The half of this that was already true, and the half that was a bug
+
+A crop has always been a MARK: the quad is a rectangle on the photograph and
+nothing is cut until the pages are made. A split has always produced two page
+entries and two cards, so the table already shows what the cut will make.
+
+What was NOT true is the sentence about turning. `turnQuad` permutes the corner
+assignment without moving a point, so turning each page's quad independently
+keeps the crop on the same part of the photograph — and looks right. Measured
+against re-deriving the halves from the turned sheet:
+
+| turn | independent halves vs re-derived |
+| --- | --- |
+| a quarter | the same, both ways |
+| a half | **the halves swap reading order** |
+| three quarters | **the halves swap reading order** |
+
+Turn a spread upside down and the page that was on the left is on the right.
+The independent turn keeps the old order, so the book gets two pages in the
+wrong sequence — and it is **invisible on the table**, because both cards are
+there and both look correct. Fixed at one body (`turned`, capture.service.ts),
+which both the table's turn and the editor's turn now go through: a photograph
+with a cut in it is turned by rebuilding the sheet, turning that, and asking
+`halvesOf` again. The split itself is untouched, because it is a segment in the
+photograph's own fraction space and a turn moves nothing.
+
+A strike travels with the PHYSICAL half rather than with the seat, matched by
+geometry rather than by a swap rule — so it stays right if `halvesOf` ever
+orders a turn differently than it does today.
+
+### What Finalize adds, and what it must not become
+
+The marks already exist and the mint already applies them. So **Finalize is a
+NAME for an act that was there and was never offered**: one press that says
+"make the pages you have been describing", after which the table shows pages
+rather than photographs.
+
+Two rules it has to keep, or it becomes a second model of the same recipe:
+
+1. **FINALIZE READS THE MARKS AND WRITES NOTHING NEW.** It must not be a place
+   where a crop can differ from the crop that was drawn. The moment Finalize
+   holds a decision the marks do not, there are two answers to "where is this
+   page cut" and the table is showing one of them.
+2. **IT IS REVERSIBLE UNTIL THE PAGES ARE READ.** The marks survive it; a
+   finalized project can be un-finalized by leaving the marks alone and
+   discarding what was made from them. The arrangement fingerprint already
+   knows when a mint no longer matches its recipe (Wave 21b), and that is the
+   same question asked once more.
+
+### Disabling a crop or a split — an ABSENT mark, not a disabled one
+
+*"we should be able to disable crop/split on any single page, or on all pages"*
+
+The honest spelling is that the mark is **not there**, rather than there and
+switched off:
+
+- **No crop** on a page is the whole frame — `WHOLE_FRAME`, which the recipe
+  already understands and `isWholeFrame` already reads.
+- **No split** is `split: null` with one page, which is what an uncut
+  photograph already is.
+
+Written that way, "disable" is UNDO of a mark and needs no second state to keep
+consistent. A `disabled: true` flag beside a crop would be a rectangle that is
+stored, drawn, applied to all, and then ignored — the exact shape of the bug
+where the app holds a fact the person cannot see. **A SETTING THAT IS IGNORED
+IS A SETTING THAT WILL BE BELIEVED.**
+
+The all-pages version is then the bulk act it already resembles: clear the
+crop, or clear the cut, across every photograph of this shape, through the same
+apply-to-all that sets them.
