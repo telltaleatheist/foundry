@@ -11,7 +11,7 @@ import type {
 } from '@shared/types';
 
 import {
-  arrangementOf, halvesOf, joinedQuad, sameShape, turnedLike, turnsOf, WHOLE_FRAME,
+  arrangementOf, halvesOf, joinedQuad, sameShape, turnedLike, turnQuad, turnsOf, WHOLE_FRAME,
 } from '@shared/capture';
 
 import { rotate } from '../components/capture-editor/geometry';
@@ -776,6 +776,46 @@ export class CaptureService {
               pages: photo.pages.map((page, index) => ({
                 ...page,
                 quad: quads[index] ?? page.quad,
+                byHand: true,
+              })),
+            },
+      ),
+    }));
+  }
+
+  /**
+   * Turn photographs where they sit on the table — the grid's own act.
+   *
+   * ── It is the same turn the editor makes, through the same body ────────────
+   *
+   * `turnQuad` permutes the corner assignment without moving a corner, so a
+   * turn from the table and a turn from the editor cannot come out differently:
+   * there is one answer to "which way round is this page" and it is `turnsOf`
+   * reading the order these four points are in. A second rotation written here
+   * would be a second opinion about the same photograph.
+   *
+   * ── AND IT MARKS BY HAND, for the reason setQuads does ─────────────────────
+   *
+   * Turning a photograph on the table IS setting it by hand — the person looked
+   * at that one and said which way up it goes. Leaving the mark off would let
+   * the next apply-to-all silently undo a turn somebody performed deliberately,
+   * which is the exact loss the mark exists to prevent, arriving through a new
+   * door. Every page of the photograph is marked, not the one that was clicked:
+   * a spread is two pages of one picture and half a protection reads as none.
+   */
+  turnPhotos(photoIds: readonly string[], turns: number): void {
+    const wanted = new Set(photoIds);
+    if (wanted.size === 0) return;
+    this.change((recipe) => ({
+      ...recipe,
+      photos: recipe.photos.map((photo) =>
+        !wanted.has(photo.id)
+          ? photo
+          : {
+              ...photo,
+              pages: photo.pages.map((page) => ({
+                ...page,
+                quad: turnQuad(page.quad, turns),
                 byHand: true,
               })),
             },
