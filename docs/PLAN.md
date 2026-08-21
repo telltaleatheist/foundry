@@ -1684,13 +1684,20 @@ photographed. So the whole of the new door is one field,
   were certainly hits. The finding went into the docblock and the code
   stayed simple.
 
-### Wave 24 — the book's crop, and the page that has its own (Owen, 2026-08-21) — DESIGNED, NOT BUILT
+### Wave 24 — the book's crop, and the page that has its own (Owen, 2026-08-21) — BUILT
 
 *"the two buttons at the bottom are confusing as hell… the whole paradigm of
 how we're doing it now versus global+individual"*
 
-**Written up in full at docs/CAPTURE.md § Wave 24.** Contract before code, per
-that doc's own rule. Nothing is built.
+**Designed and built. Full record at docs/CAPTURE.md § Wave 24**, whose second
+half — *Wave 24, BUILT* — carries what the walk found and what is still open.
+Contract before code, per that doc's own rule.
+
+Six gates green: 418 pass / 0 fail, root `tsc`, both app tsconfigs, `ng build`
+at **704.40 kB** (down from 704.53 — the wave is a net deletion), cascade-check
+1013 elements with 0 rules quietly losing, control-byte scan clean on all eight
+touched files. Walked in the running app against a scratch copy of the index
+shoot; the scratch copy has been deleted.
 
 - **The diagnosis is one sentence: there is no NOUN for the book's crop.**
   `byHand` is not a property of a page, it is a property of what a future
@@ -1722,9 +1729,28 @@ that doc's own rule. Nothing is built.
   ANYWHERE along its length and slid — `slideSplit` is wired — but there is no
   cursor rule anywhere in that editor, so the line reads as decoration. An
   affordance, not a feature.
-- **One question is open and it is Owen's:** *Crop all* carries the cut too, so
-  a button labelled Crop can cut twenty-three photographs in two. Consequence
-  line, or a second *Cut all* button.
+- **The open question is answered.** *Crop all* carries the cut too, so a
+  button labelled Crop can cut twenty-three photographs in two. Owen ruled: ONE
+  button, and the consequence line carries it — *"Becomes the book's crop and
+  cut. 23 photographs take them, two pages each."*
+- **Three PRE-EXISTING defects the walk exposed, all fixed here.** Intake and
+  removal rebuilt the recipe from scratch and so DELETED the prepare rail's
+  ticks on every drop (and would have deleted the standing). The override
+  dialog was gated on "is anything hand-set", counting the source itself —
+  which the stamp never skips — so it asked about a page that was about to
+  become the standard. And the stamp turned a spread's two pages
+  independently, which puts them in the book BACKWARDS on a half turn: the
+  arithmetic `turned` has measured since Wave 21, arriving through a door
+  nobody had checked.
+- **One thing the design got wrong, found by measuring rather than reading.**
+  Taking the book's cut marked the photograph as its own, so accepting the
+  standing opted it out of the standing. The mark now follows where the cut
+  came FROM — the book's cut leaves it following, the middle is a placement —
+  which is why `cutHere` is a service door and not geometry in a component.
+- **Deferred out loud: the rail's "N by hand" count is still not clickable.**
+  The card mark is built and is the half that matters; selecting exactly those
+  cards from the rail needs a selection input on the grid, whose `chosen` is
+  private today. Not half-built.
 
 ### Then — the user's
 

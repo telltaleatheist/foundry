@@ -47,6 +47,20 @@ export interface CaptureCard {
    */
   readonly width: number;
   readonly height: number;
+  /**
+   * SOMEBODY PLACED THIS ONE THEMSELVES, so a global leaves it alone.
+   *
+   * The table has to say it because the promise is open-ended: a photograph with
+   * its own crop sits out every future *Crop all* for the life of the project.
+   * Without a mark, the way to find the ones that did not move is to press the
+   * button, count the cards, and squint -- and the rail's "2 by hand" says how
+   * many while saying nothing about which.
+   *
+   * A fact about the PHOTOGRAPH, so both cards of a cut spread carry it: the
+   * mark is set on every page of a photograph together, and a pair showing it on
+   * one card and not its twin would read as a defect rather than as a pair.
+   */
+  readonly own: boolean;
 }
 
 /**
@@ -230,6 +244,7 @@ const SWEEP_STARTS_AT = 5;
             [thumb]="card.thumb"
             [label]="card.label"
             [struck]="card.struck"
+            [own]="card.own"
             [quad]="card.quad"
             [width]="card.width"
             [height]="card.height"

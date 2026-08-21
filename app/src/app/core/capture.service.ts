@@ -9,14 +9,13 @@ import type {
   CaptureQuad,
   CaptureRecipe,
   CaptureSplit,
+  CaptureStanding,
 } from '@shared/types';
 
 import {
-  arrangementOf, halvesOf, isWholeFrame, isWholeFrameTurned, joinedQuad, sameShape, turnedLike,
-  turnQuad, turnsOf, WHOLE_FRAME,
+  arrangementOf, halvesOf, isWholeFrameTurned, joinedQuad, sameShape, splitFromFraction,
+  turnedLike, turnQuad, turnsOf, WHOLE_FRAME,
 } from '@shared/capture';
-
-import { rotate } from '../components/capture-editor/geometry';
 import type { CaptureCard } from '../components/capture-grid/capture-grid.component';
 import { api } from './foundry';
 import { NoticeService } from './notice.service';
@@ -130,6 +129,23 @@ export class CaptureService {
         // which way round the page it draws will come out.
         width: found.photo.width,
         height: found.photo.height,
+        /*
+         * THIS PHOTOGRAPH HAS ITS OWN CROP, and the table has to show it.
+         *
+         * "Never overwritten" means a page can sit out every future global for
+         * the life of the project. Without a mark on the card, somebody presses
+         * Crop all, counts the ones that did not move, and has no way to find
+         * them -- the rail says "2 by hand" and nothing anywhere says WHICH two.
+         * That was tolerable while the mark was a policy nobody could see; it
+         * stops being tolerable the moment the mark is the thing standing
+         * between a person and the crop they placed.
+         *
+         * ON THE PHOTOGRAPH, so both halves of a cut spread carry it. The mark
+         * is set on every page of a photograph together (setQuads), and a
+         * spread showing it on one card and not the other would read as a
+         * defect rather than as a pair.
+         */
+        own: found.photo.pages.some((page) => page.byHand === true),
       });
     }
     return cards;
@@ -448,41 +464,21 @@ export class CaptureService {
     }));
   }
 
-  /**
-   * WHICH STAGE THE MODAL OPENS IN — DERIVED, NEVER STORED.
+  /*
+   * A `stage` COMPUTED STOOD HERE AND THE STAGES ARE GONE (Wave 24).
    *
-   * Wave 21 gives the editor two stages: one crop for the whole shoot, then
-   * per-page corrections. The dangerous reading of that design is a stage kept
-   * as state, because the state has to start somewhere and the somewhere is
-   * stage 1 -- so an evening of per-page work, closed and reopened to fix page
-   * 31, would put a person in front of the one button that stamps over all of
-   * it. And pressing that button is how you REACH per-page mode, so it is not
-   * even a button they could avoid.
+   * It answered whether the editor should open on the one wide button that sets
+   * the whole shoot or on the per-page row -- derived from the recipe rather
+   * than stored, because a stored stage starts at 1 and would have put somebody
+   * returning to fix page 31 in front of the button that stamps over an evening
+   * of work.
    *
-   * A virgin project is the one thing stage 1 is for, and it is visible in the
-   * recipe: nothing split, one page each, every quad still the whole frame, no
-   * page claiming a hand. Anything else is a project somebody has started, and
-   * a project somebody has started opens where they left off.
-   *
-   * IT IS ALSO NOT THE ONLY GUARD, WHICH IS THE POINT. The stamp always skips
-   * hand-set pages and names them, so a derivation that got this wrong would
-   * refuse and explain rather than destroy. Ruled at channel seq 129 on exactly
-   * that argument: the cheap rule is allowed to be the outer one because the
-   * expensive rule is underneath it.
-   *
-   * EXACT EQUALITY against the whole frame, no tolerance: intake writes that
-   * constant, so an untouched quad is those literal numbers rather than a
-   * computation that landed near them.
+   * The derivation was right and it has nothing left to decide: there is one
+   * control set in that room now, and the thing stage 1 existed to say -- they
+   * were all shot the same way, so setting one sets them all -- is said better
+   * by the consequence line under Crop all, which gives the actual number.
    */
-  readonly stage = computed<1 | 2>(() => {
-    const recipe = this.current();
-    if (recipe === null) return 1;
-    const untouched = recipe.photos.every((photo) =>
-      photo.split === null
-      && photo.pages.length === 1
-      && photo.pages.every((page) => page.byHand !== true && isWholeFrame(page.quad)));
-    return untouched ? 1 : 2;
-  });
+
 
   /**
    * WHAT THE PREPARE RAIL SAYS ABOUT THE BOOK — facts, counted, never judged.
@@ -639,13 +635,91 @@ export class CaptureService {
    * which the stamp refuses and names -- the trio's rule, that a count on a
    * button is what the button does and not what the book contains.
    */
-  stampReach(photoId: string): number {
+  stampCost(photoId: string): StampCost {
     const recipe = this.current();
-    if (recipe === null) return 0;
-    const source = recipe.photos.find((photo) => photo.id === photoId);
-    if (source === undefined) return 0;
-    return recipe.photos.filter((photo) =>
-      photo.id === source.id || sameShape(source, photo)).length;
+    const source = recipe?.photos.find((photo) => photo.id === photoId);
+    if (recipe === null || source === undefined) return { takes: 0, byHand: 0, shape: 0 };
+    let takes = 1;
+    let byHand = 0;
+    let shape = 0;
+    for (const photo of recipe.photos) {
+      if (photo.id === source.id) continue;
+      if (!sameShape(source, photo)) shape += 1;
+      else if (photo.pages.some((page) => page.byHand === true)) byHand += 1;
+      else takes += 1;
+    }
+    return { takes, byHand, shape };
+  }
+
+  /**
+   * THE BOOK'S CUT, if this photograph is one it could apply to.
+   *
+   * ── The cut is fractions, so the shape is part of the question ────────────
+   *
+   * A cut is two points in a frame's own fraction space, exactly like a crop, so
+   * it only falls on the same gutter in a frame of the same proportions. Offered
+   * on a differently shaped photograph it would land somewhere plausible and
+   * wrong, which is `sameShape`'s whole subject. The standing carries the frame
+   * it was set on for this reason, and this is where that is spent.
+   *
+   * Null whenever there is nothing to offer -- no standing yet, a book of single
+   * pages, or a photograph the standing was not drawn for -- and the caller
+   * falls back to the middle and SAYS SO. The two are different offers and the
+   * surface must not present them as one.
+   */
+  bookCutFor(photoId: string): CaptureSplit | null {
+    const recipe = this.current();
+    const crop = recipe?.book?.crop;
+    const cut = recipe?.book?.cut;
+    if (recipe === null || cut === undefined || crop === undefined) return null;
+    const photo = recipe.photos.find((one) => one.id === photoId);
+    if (photo === undefined || !sameShape(crop, photo)) return null;
+    return cut;
+  }
+
+  /** Whether the book has a standing crop this photograph could take. */
+  hasStanding(photoId: string): boolean {
+    const recipe = this.current();
+    const crop = recipe?.book?.crop;
+    const photo = recipe?.photos.find((one) => one.id === photoId);
+    return crop !== undefined && photo !== undefined && sameShape(crop, photo);
+  }
+
+  /**
+   * GIVE THIS PHOTOGRAPH BACK TO THE BOOK -- the release, named for its outcome.
+   *
+   * ── What it replaces, and why the old name could not be fixed ─────────────
+   *
+   * `keep` was a toggle over `byHand`, and its control had to be called *"Let
+   * apply-to-all change it again"* -- a sentence about a POLICY governing a
+   * FUTURE PRESS, which is the only kind of name available when the thing on the
+   * other side of the release has no name. There was no *the book's crop* to
+   * give a page back to; there was only "whatever the next stamp happens to be
+   * copying from".
+   *
+   * With a standing there is an object, so the control can be named after what a
+   * person watches happen: the page takes the crop the rest of the book has.
+   *
+   * ── IT IS THE ONLY ESCAPE THAT COSTS NOTHING ELSE ─────────────────────────
+   *
+   * The mark is set by dragging, so it can be set by accident -- and before this
+   * the only way out was a global with the override on, which changes every
+   * other page to fix one. This changes exactly the photograph in front of you.
+   *
+   * It does nothing when there is no standing to return to, which is why the
+   * control is ABSENT then rather than disabled: a control that would change
+   * nothing is not shown.
+   */
+  matchTheOthers(photoId: string): void {
+    this.change((recipe) => {
+      const standing = recipe.book;
+      if (standing === undefined) return recipe;
+      const photos = recipe.photos.map((photo) =>
+        (photo.id === photoId ? wearing(photo, standing) ?? photo : photo));
+      // A standing carries a cut, so returning to it can change how many pages
+      // this photograph has -- in either direction.
+      return { ...recipe, photos, order: orderFor(photos, recipe.order) };
+    });
   }
 
   /**
@@ -658,12 +732,33 @@ export class CaptureService {
    * skip notice uses, so the two sentences about the same pages cannot call
    * them different things.
    */
-  handSetNames(): readonly string[] {
+  handSetNames(from: string): readonly string[] {
     const recipe = this.current();
-    if (recipe === null) return [];
+    const source = recipe?.photos.find((photo) => photo.id === from);
+    if (recipe === null || source === undefined) return [];
     const at = new Map(recipe.photos.map((photo, index) => [photo.id, index + 1]));
+    /*
+     * EXACTLY THE PHOTOGRAPHS THE STAMP WOULD SKIP, and it used to be all of
+     * them -- which asked the wrong question on nearly every press.
+     *
+     * It listed every hand-set photograph in the project, so it counted THE
+     * SOURCE (dragging a corner marks it, and the source is the one photograph
+     * a stamp never skips) and it counted photographs of other shapes (which are
+     * skipped for their shape and cannot be overridden by answering this). On a
+     * project where the only hand-set photograph was the one being copied FROM,
+     * the dialog appeared anyway and offered to override a page that was about
+     * to become the standard -- a question with no true answer, in front of a
+     * button somebody presses twenty times an evening.
+     *
+     * The count here is `StampCost.byHand` by construction, which is what the
+     * consequence line under the button promises. The sentence before the press
+     * and the question at the press must be about the same photographs, or one
+     * of them is lying.
+     */
     return recipe.photos
-      .filter((photo) => photo.pages.some((page) => page.byHand === true))
+      .filter((photo) => photo.id !== source.id
+        && sameShape(source, photo)
+        && photo.pages.some((page) => page.byHand === true))
       .map((photo) => photo.name ?? `Photograph ${at.get(photo.id) ?? '?'}`);
   }
 
@@ -705,34 +800,21 @@ export class CaptureService {
       && prepared.split === true;
   });
 
-  /**
-   * STAGE 2'S PER-PAGE APPLY: this photograph was set by hand and stays that way.
+  /*
+   * `keep` STOOD HERE AND IS GONE, replaced by `matchTheOthers` above.
    *
-   * It changes no corner. The corners were already saved -- a drag writes
-   * through to the recipe as it happens, which is what stops a person losing an
-   * adjustment by flipping to the next photograph -- so what is left for this
-   * button to do is the part that was never expressible before: say that the
-   * setting on this page was CHOSEN FOR THIS PAGE, and that the next global
-   * must not quietly take it away.
+   * It toggled `byHand`, which is a fact about what a FUTURE PRESS will do, so
+   * the only names available for its control were names for a policy: *"Let
+   * apply-to-all change it again"*. Owen read it correctly as meaningless. The
+   * toggle was also a strange shape -- pressing it once released the page and
+   * pressing it again re-marked a page nobody had touched since, so the same
+   * control both gave the crop away and took it back with no way to tell which
+   * it was about to do.
    *
-   * On the photograph, not on one page: a spread is two pages of one picture,
-   * and somebody who adjusts the crop has adjusted the picture. Marking only
-   * the half whose corner they happened to drag would leave the other half
-   * exposed to the next stamp, which is half a protection and reads as none.
+   * The release survives, named for its outcome and pointed at a noun. The
+   * re-mark does not, and does not need to: dragging a corner marks the
+   * photograph, so the way to say "this one is mine" is to place it.
    */
-  keep(photoId: string): void {
-    this.change((recipe) => ({
-      ...recipe,
-      photos: recipe.photos.map((photo) => {
-        if (photo.id !== photoId) return photo;
-        // A TOGGLE, because a mark set by mistake would otherwise be permanent
-        // and the only escape from it would be a global with the override on --
-        // which changes every other page to fix one.
-        const marked = photo.pages.some((page) => page.byHand === true);
-        return { ...photo, pages: photo.pages.map((page) => ({ ...page, byHand: !marked })) };
-      }),
-    }));
-  }
 
   /**
    * The editor moved corners on one photograph — WHICH IS WHAT A HAND IS.
@@ -903,8 +985,44 @@ export class CaptureService {
     });
   }
 
-  /** The editor dragged one end of the gutter, or slid the whole cut. */
-  setSplit(photoId: string, split: CaptureSplit): void {
+  /**
+   * THE TICK: cut this photograph in two, WHERE THE BOOK IS CUT.
+   *
+   * ── Taking the book's cut is FOLLOWING it, not diverging from it ──────────
+   *
+   * This is a separate door from `setSplit` for one reason, and it is a reason
+   * the walk found rather than one anybody argued in advance. Every cut used to
+   * mark the photograph hand-set, which was right while cutting was a deliberate
+   * per-page act reached through a button. The tick makes it the ordinary way to
+   * say "this one is a spread too" -- and MEASURED on the scratch shoot, ticking
+   * a photograph so it took the book's own cut then excluded it from every
+   * future Crop all. Accepting the standing opted you out of the standing.
+   *
+   * So the mark follows where the cut CAME FROM. The book's cut leaves the
+   * photograph following; the middle is a placement, because with no standing
+   * there is nothing to follow and this press is what invents the answer.
+   *
+   * IT NEVER CLEARS A MARK SOMEBODY ELSE EARNED. A photograph whose CROP was
+   * placed by hand keeps its mark through this, because the crop is still
+   * theirs -- taking the book's cut says nothing about the corners.
+   */
+  cutHere(photoId: string): void {
+    const recipe = this.current();
+    const photo = recipe?.photos.find((one) => one.id === photoId);
+    if (recipe === null || photo === undefined) return;
+    const sheet = joinedQuad(photo.pages.map((page) => page.quad), photo.split);
+    const book = this.bookCutFor(photoId);
+    this.setSplit(photoId, book ?? splitFromFraction(sheet, 0.5), book === null);
+  }
+
+  /**
+   * The editor dragged one end of the gutter, or slid the whole cut.
+   *
+   * `mine` is what the cut MEANS about this photograph -- see `cutHere`. A drag
+   * is always a placement and defaults to one; only the tick taking the book's
+   * own cut passes false, and even then a mark the CROP earned survives.
+   */
+  setSplit(photoId: string, split: CaptureSplit, mine = true): void {
     this.change((recipe) => {
       const photos = recipe.photos.map((photo) => {
         if (photo.id !== photoId) return photo;
@@ -937,6 +1055,13 @@ export class CaptureService {
          */
         if (halves === null) return photo;
         const [first, second] = halves;
+        /*
+         * A MARK THIS PHOTOGRAPH ALREADY HELD, kept whatever this cut means.
+         * Read from the WHOLE photograph rather than per page, for the reason
+         * setQuads gives: a spread is two pages of one picture, and half a
+         * protection reads as none.
+         */
+        const kept = mine || photo.pages.some((page) => page.byHand === true);
         return {
           ...photo,
           split,
@@ -951,8 +1076,8 @@ export class CaptureService {
              * apply-to-all, which is the one loss the mark exists to prevent,
              * arriving through the one gesture nobody thought to check.
              */
-            { id: `${photo.id}:0`, quad: first, struck: photo.pages[0]?.struck ?? false, byHand: true },
-            { id: `${photo.id}:1`, quad: second, struck: photo.pages[1]?.struck ?? false, byHand: true },
+            { id: `${photo.id}:0`, quad: first, struck: photo.pages[0]?.struck ?? false, byHand: kept },
+            { id: `${photo.id}:1`, quad: second, struck: photo.pages[1]?.struck ?? false, byHand: kept },
           ],
         };
       });
@@ -1008,6 +1133,19 @@ export class CaptureService {
     this.change((recipe) => {
       const source = recipe.photos.find((photo) => photo.id === from);
       if (source === undefined) return recipe;
+      /*
+       * THE SOURCE'S CONFIGURATION, LIFTED INTO A NOUN -- Wave 24, and the whole
+       * of what changed on this path.
+       *
+       * The act is the same act: this photograph's crop and cut become every
+       * other same-shaped photograph's. What is new is that they also become THE
+       * BOOK'S, written into the recipe as a standing rather than evaporating
+       * once the press is over. Everything Wave 24 adds reads that field -- the
+       * cut a fresh photograph is offered, the crop a hand-set page can be
+       * returned to -- and none of it could exist while apply-to-all was a verb
+       * with nothing left behind it.
+       */
+      const standing = gesture.kind === 'stamp' ? standingOf(source) : null;
       /*
        * THE ORIENTATION EVERY OTHER PHOTOGRAPH IS BEING ASKED TO MATCH, read
        * once from the source's FIRST page. Any page of it would answer the same
@@ -1133,7 +1271,6 @@ export class CaptureService {
               skipped.push({ name: name(photo), why: 'byHand' });
               return photo;
             }
-            applied += 1;
             /*
              * IT COPIES THE WHOLE CONFIGURATION, NOT THREE GESTURES IN ORDER.
              *
@@ -1173,29 +1310,29 @@ export class CaptureService {
              * retake is still a blurred retake after somebody adjusts the crop.
              */
             /*
-             * THE WAY THIS PHOTOGRAPH ALREADY SITS, read before its pages are
-             * replaced. Any of its pages would answer the same -- both halves
-             * of a spread carry the sheet's turn -- and a target that somehow
-             * had none keeps the source's orientation rather than inventing an
-             * answer.
+             * THROUGH THE STANDING, WHICH IS ALSO A FIX -- see `wearing`.
+             *
+             * This used to turn each of the source's PAGES into the target's
+             * orientation independently, and that is wrong for a spread by
+             * exactly the arithmetic `turned` measures forty lines below: a half
+             * turn swaps which half reads first, so stamping a cut
+             * configuration onto a photograph facing the other way put its two
+             * pages in the book BACKWARDS. Invisible on the table, because both
+             * cards are there and both look correct.
+             *
+             * Routing through the sheet fixes it for free, because the standing
+             * IS a sheet and a cut. In the ordinary case -- a shoot turned
+             * together, so every target already faces the source -- `turnedLike`
+             * is the identity and `halvesOf` returns the source's own halves, so
+             * the region every page gets is unchanged to the last decimal.
              */
-            const facing = photo.pages[0]?.quad;
-            return {
-              ...photo,
-              split: source.split,
-              pages: source.pages.map((page, index) => ({
-                id: `${photo.id}:${index}`,
-                quad: facing === undefined ? page.quad : turnedLike(page.quad, facing),
-                struck: photo.pages[index]?.struck ?? false,
-                // THE GLOBAL CLEARS THE MARK, ruled at channel seq 129. Left
-                // standing, the first stamp would mark every page hand-set and
-                // the second would skip every one -- a feature that works
-                // exactly once per project. And after an explicit include-them
-                // override the page is no longer hand-set; it is globally set,
-                // and a mark saying otherwise would cost the next global too.
-                byHand: false,
-              })),
-            };
+            const worn = standing === null ? null : wearing(photo, standing);
+            // Unreachable from a standing lifted off a real photograph, and
+            // leaving the target untouched is the only answer that cannot make
+            // a page out of a corner.
+            if (worn === null) return photo;
+            applied += 1;
+            return worn;
           }
         }
       });
@@ -1229,7 +1366,27 @@ export class CaptureService {
        * true for exactly as long as splitting was the only way to change the
        * count.
        */
-      return { ...recipe, photos, order: orderFor(photos, recipe.order) };
+      /*
+       * THE STANDING IS RECORDED EVEN WHEN EVERY TARGET WAS SKIPPED, and that is
+       * deliberate rather than sloppy.
+       *
+       * A press of *Crop all* on a book whose other photographs are all hand-set
+       * changes no other page -- and it still says something true and useful:
+       * THIS is what the book's pages look like. The next fresh photograph takes
+       * it, and every hand-set page now has somewhere to be returned to. Writing
+       * it only when the stamp reached somebody would make the standing arrive
+       * or not depending on facts about other photographs, which is the class of
+       * invisible decision this field exists to end.
+       *
+       * A turn writes nothing here. It copies no crop, so it has no opinion
+       * about what the book's pages look like.
+       */
+      return {
+        ...recipe,
+        photos,
+        order: orderFor(photos, recipe.order),
+        ...(standing === null ? {} : { book: standing }),
+      };
     });
     return { applied, skipped: skipped.length };
   }
@@ -1303,6 +1460,23 @@ export interface ApplyOutcome {
   skipped: number;
 }
 
+/**
+ * WHAT *CROP ALL* WOULD COST, in the three populations the consequence line
+ * under it has to name. See `CaptureService.stampCost`.
+ *
+ * The three are exhaustive and disjoint by construction -- every photograph in
+ * the project is in exactly one of them -- which is what lets the sentence be
+ * read as an account of the whole book rather than as three unrelated numbers.
+ */
+export interface StampCost {
+  /** Photographs that will hold this crop afterwards, THIS ONE INCLUDED. */
+  takes: number;
+  /** Spared because somebody placed them: the ruling, made countable. */
+  byHand: number;
+  /** Spared because the same fractions are not the same region on them. */
+  shape: number;
+}
+
 /** What the prepare rail counts. Facts about the recipe, said in numbers. */
 export interface PrepareCounts {
   /** Photographs on the table, struck included -- the rail counts pictures. */
@@ -1340,16 +1514,12 @@ export type ApplyToAll =
    */
   | { kind: 'stamp'; includeHandSet?: boolean };
 
-const WHOLE: CaptureQuad = [[0, 0], [1, 0], [1, 1], [0, 1]];
-
-/**
- * Whether a quad is still the whole photograph, corner for corner.
- *
- * Exact, because the value being compared against is the one intake WROTE.
- * A tolerance here would be inventing a question about numbers that were
- * copied rather than computed, and its answer would drift with the tolerance.
+/*
+ * A local `WHOLE` CONSTANT AND ITS DOCBLOCK STOOD HERE, orphaned: the function
+ * they belonged to had already moved to shared/capture.ts as `isWholeFrame`,
+ * and only the constant and the comment describing the departed function were
+ * left. Swept while the file was open.
  */
-
 
 /**
  * The photographs a stamp would not touch, said once per reason.
@@ -1549,4 +1719,110 @@ function turned(photo: CapturePhoto, turns: number): CapturePhoto {
 /** Two quads, corner for corner. Fractions out of one turn, so exact is honest. */
 function sameQuad(a: CaptureQuad, b: CaptureQuad): boolean {
   return a.every((point, index) => point[0] === b[index]![0] && point[1] === b[index]![1]);
+}
+
+/**
+ * ONE PHOTOGRAPH'S CONFIGURATION, LIFTED INTO THE BOOK'S STANDING.
+ *
+ * ── The sheet, never the pages ────────────────────────────────────────────
+ *
+ * `joinedQuad` is the same body the editor draws from and `setSplit` re-cuts
+ * from, so lifting a standing and wearing it are exact inverses rather than two
+ * approximations that drift apart over a few adjustments. Storing the HALVES
+ * instead would be storing a reading order, and a reading order is a fact about
+ * the photograph it was taken from -- see `turned` above for the measurement
+ * that makes that concrete.
+ *
+ * ── THE FRAME COMES WITH IT, because a crop is fractions of something ─────
+ *
+ * `sameShape` is what stops a portrait crop resolving to a plausible, stretched
+ * region of a landscape frame, and it needs two shapes. Pointing at the source
+ * photograph by id would work until somebody removed it, which is a thing they
+ * may do at any time; the two numbers cost nothing and cannot go missing.
+ */
+function standingOf(photo: CapturePhoto): CaptureStanding {
+  return {
+    crop: {
+      quad: joinedQuad(photo.pages.map((page) => page.quad), photo.split),
+      width: photo.width,
+      height: photo.height,
+    },
+    // A book of single pages has no cut, and an absent key says that better
+    // than a null does -- the file stays silent about what nobody set.
+    ...(photo.split === null ? {} : { cut: photo.split }),
+  };
+}
+
+/**
+ * ONE PHOTOGRAPH WEARING THE BOOK'S CROP AND CUT -- the only body that applies a
+ * standing, and it is deliberately the only one.
+ *
+ * ── Two callers, and they must not be two rules ──────────────────────────
+ *
+ * The stamp dresses every same-shaped photograph in it, and *Match the others*
+ * dresses one. Written twice, "what it means to take the book's crop" would have
+ * two answers on the day it was defined -- which is the defect `outputSizeFor`,
+ * `sameShape` and `splitFromFraction` were each moved into `shared/` to prevent,
+ * and each of those had two bodies within hours.
+ *
+ * ── IT KEEPS THE TURN AND COPIES THE CROP, which is Owen's ruling ─────────
+ *
+ * `turnedLike` moves no corner: it relabels which corner prints top-left, taking
+ * that label from the photograph being dressed. So a page somebody turned
+ * upright stays upright while receiving the book's crop exactly, to the last
+ * decimal, because there is no arithmetic here to be wrong by a pixel.
+ *
+ * ── AND IT CUTS THE SHEET RATHER THAN CARRYING TWO HALVES ────────────────
+ *
+ * Which is what makes it right for a spread facing the other way. Turn a spread
+ * upside down and the page that was on the left is on the right; halves carried
+ * across keep their old order and the book silently gets two pages in the wrong
+ * sequence. Re-deriving them from the turned sheet re-orders them into reading
+ * order for free, because the corner order IS the orientation.
+ *
+ * ── What null means ──────────────────────────────────────────────────────
+ *
+ * No crop in the standing -- nothing to wear -- or a cut that resolves against
+ * this sheet to neighbouring edges, which cuts a corner off and is a shape the
+ * mint cannot print. Both are answered by leaving the photograph alone, because
+ * the alternative is inventing a page.
+ *
+ * STRIKES BELONG TO THE PHOTOGRAPH, NOT TO THE CONFIGURATION, so they stay on
+ * the seat they were on. A page struck for being a blurred retake is still a
+ * blurred retake after somebody changes its crop.
+ */
+function wearing(photo: CapturePhoto, standing: CaptureStanding): CapturePhoto | null {
+  const crop = standing.crop;
+  if (crop === undefined) return null;
+  /*
+   * THE WAY THIS PHOTOGRAPH ALREADY SITS, read before its pages are replaced.
+   * Any of its pages would answer the same -- both halves of a spread carry the
+   * sheet's turn -- and a photograph that somehow had none keeps the standing's
+   * own orientation rather than inventing an answer.
+   */
+  const facing = photo.pages[0]?.quad;
+  const sheet = facing === undefined ? crop.quad : turnedLike(crop.quad, facing);
+  const cut = standing.cut ?? null;
+  const halves = cut === null ? null : halvesOf(sheet, cut);
+  if (cut !== null && halves === null) return null;
+  const quads: readonly CaptureQuad[] = halves ?? [sheet];
+  return {
+    ...photo,
+    split: cut,
+    pages: quads.map((quad, seat) => ({
+      id: `${photo.id}:${seat}`,
+      quad,
+      struck: photo.pages[seat]?.struck ?? false,
+      /*
+       * THE GLOBAL CLEARS THE MARK, ruled at channel seq 129. Left standing, the
+       * first stamp would mark every page hand-set and the second would skip
+       * every one -- a feature that works exactly once per project.
+       *
+       * It is equally right on the *Match the others* path, and for a clearer
+       * reason there: a page that has just taken the book's crop is not a page
+       * somebody set by hand. That is the whole content of the press.
+       */
+      byHand: false,
+    })),
+  };
 }

@@ -3320,6 +3320,73 @@ export interface CaptureRecipe {
    * a person who wants to mint from the keyboard has not lied to anybody.
    */
   prepared?: CapturePrepared;
+  /**
+   * THE BOOK'S OWN CROP AND CUT — the noun this stage spent three waves without.
+   *
+   * See `CaptureStanding`. Absent means nobody has pressed *Crop all* yet, which
+   * is every recipe written before Wave 24 and every project on its first
+   * evening. There is no migration and that is a decision: deriving a standing
+   * from an existing recipe would mean guessing which of twenty-five crops is
+   * the book's, and an invisible decision is the exact thing this field exists
+   * to abolish.
+   */
+  book?: CaptureStanding;
+}
+
+/**
+ * WHAT THE BOOK'S PAGES LOOK LIKE WHEN NOBODY HAS SAID OTHERWISE.
+ *
+ * ── The absence this fills ─────────────────────────────────────────────────
+ *
+ * `CapturePage.byHand` is not a property of a page. It is a property of what a
+ * future button press will do to that page — which is why, for three waves, its
+ * control could not be named after an outcome and had to be named after a
+ * policy: *"Let apply-to-all change it again"*. Nobody holds policies in their
+ * head. They hold objects.
+ *
+ * Apply-to-all was a verb with no noun. It copied from whichever photograph
+ * somebody happened to be standing on and was then gone — there was no *the
+ * book's crop* to look at, to return a page to, or to offer a fresh photograph.
+ * Every awkward thing on that surface descended from that one absence, including
+ * the split line that reset to dead centre on every step, because with no book's
+ * cut the only fallbacks were "this photograph's" and "the middle".
+ *
+ * ── IT IS STORED, AND IT IS ONLY EVER SET THROUGH A PAGE ───────────────────
+ *
+ * There is no editor for the book's crop and there deliberately is not one: a
+ * crop cannot be judged against a page you cannot see, so a "representative
+ * photograph" would send a person straight to the awkward frame — where dragging
+ * detaches it from the very thing they were trying to set. *Crop all* is the
+ * only writer.
+ *
+ * ── THE SHAPE IS PART OF THE CROP, NOT METADATA ABOUT IT ───────────────────
+ *
+ * A quad is fractions of a frame, so it only means the same region on a frame of
+ * the same proportions. Copied onto a differently shaped photograph the
+ * fractions resolve in bounds, plausible, and silently STRETCHED all the way
+ * into the finished PDF. `sameShape` is the guard and it needs something to
+ * compare against, so the standing carries the frame it was drawn for rather
+ * than pointing at a photograph that may since have been removed.
+ */
+export interface CaptureStanding {
+  /**
+   * The whole SHEET, before any cut — the same quad `joinedQuad` reassembles,
+   * with the dimensions of the photograph it was placed on.
+   *
+   * The sheet and not the pages, for the reason `turned` in capture.service.ts
+   * argues at length: turning two halves independently keeps their old reading
+   * order, and a half turn swaps which one reads first. A standing that stored
+   * halves would hand a photograph facing the other way its pages backwards.
+   */
+  crop?: { quad: CaptureQuad; width: number; height: number };
+  /**
+   * Where the book is cut, or absent for a book of single pages.
+   *
+   * In the same fraction space as `crop.quad` and only meaningful beside it —
+   * `halvesOf` re-seats it onto whatever sheet it is given, so it survives a
+   * turn without needing one of its own.
+   */
+  cut?: CaptureSplit;
 }
 
 /**
