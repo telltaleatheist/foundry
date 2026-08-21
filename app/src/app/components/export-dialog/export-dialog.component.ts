@@ -283,9 +283,19 @@ import { api } from '../../core/foundry';
   styles: [`
     /* The OCR dialog's card, to the pixel. Two modals in one app that differ by
        a few pixels of padding read as two apps. */
-    :host { position: fixed; inset: 0; z-index: 1200; display: block; }
+    /*
+     * THE HOST IS INERT AND ONLY ITS CHILDREN ARE NOT -- confirm-dialog's rule,
+     * hardened here after a hunt for a swallowed click (2026-08-21): this host
+     * is a full-window sheet of glass, and it was safe only because an @if
+     * unmounts it -- which is safety by accident, and the first surface that
+     * renders one of these unconditionally becomes a silent full-window click
+     * trap. The scrim and the card say auto below, so nothing a person can see
+     * behaves differently.
+     */
+    :host { position: fixed; inset: 0; z-index: 1200; display: block; pointer-events: none; }
 
     .scrim {
+      pointer-events: auto;
       position: absolute; inset: 0;
       background: rgba(0, 0, 0, 0.45);
       backdrop-filter: blur(4px);
@@ -293,6 +303,7 @@ import { api } from '../../core/foundry';
     }
 
     .card {
+      pointer-events: auto;
       position: relative;
       margin: 8vh auto 0;
       width: 460px;
@@ -709,7 +720,7 @@ export class ExportDialogComponent {
         this.problem.set(`The ${this.labelFor(kind)} of ${this.nameFor(input)} is already being made.`);
         return;
       }
-      this.ui.shelfExpanded.set(true);
+      this.ui.summonShelf(false); // hosted: no shelf to summon, and the call is deliberately nothing
       /*
        * ONE SENTENCE NOW, AND IT SAYS THE JOB IS MOVING. A translated export used
        * to be HELD — it ran the translator as its second stage, which can spend

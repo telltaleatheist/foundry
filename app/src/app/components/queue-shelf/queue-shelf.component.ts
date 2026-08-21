@@ -11,7 +11,7 @@ import { QueueService } from '../../core/queue.service';
 import { OpenDocumentsService } from '../../core/documents.service';
 import { NoticeService } from '../../core/notice.service';
 import { UiService } from '../../core/ui.service';
-import { api } from '../../core/foundry';
+import { api, hosted } from '../../core/foundry';
 
 /**
  * The queue shelf — docked bottom-right, collapsed to a pill, unrolling upward.
@@ -54,6 +54,19 @@ import { api } from '../../core/foundry';
       arrive some other way for anybody not watching the shelf. Polite rather
       than assertive: a job being queued is news, not an interruption.
     -->
+    <!--
+      HOSTED, THERE IS NO SHELF AT ALL. Owen's ruling, 2026-08-21, verbatim:
+      "when im in bookforge, the shelf shouldnt appear at all. thats the
+      hangup. bookforge should be using its own queue." The hosted window's
+      queue IS the host's (Wave 16); its rows draw in the host's own chrome
+      and its held reads are released from the host's queue page (the host
+      side traced held -> queued -> picked end to end, same day). A mirrored
+      shelf here was a second surface for the same work, and its only removal
+      was the row's ✕ — which cancels the job. The live region goes with it:
+      its sentences ("Press Start on the queue") are about a surface this
+      window no longer has.
+    -->
+    @if (!hosted()) {
     <p class="sr-only" role="status" aria-live="polite">{{ ui.shelfSaid() }}</p>
 
     @if (queue.jobs().length > 0) {
@@ -252,6 +265,7 @@ import { api } from '../../core/foundry';
         }
       </div>
     }
+    }
   `,
   styles: [`
     /* Read, never seen. Clipped rather than display:none or visibility:hidden,
@@ -288,7 +302,24 @@ import { api } from '../../core/foundry';
       width: 320px;
       max-width: calc(100vw - 32px);
       display: flex;
-      flex-direction: column-reverse;
+      /*
+        THE HEAD IS THE TOP OF THE PANEL, which is where chrome goes.
+
+        This was column-reverse — the head hugged the bottom edge and the
+        panel grew upward past it — and the costume swap that produced is a
+        measured defect, not a taste: expanded, the JOB ROW sat on top wearing
+        a dark bar and an ✕ (a dialog titlebar to any eye, except its ✕
+        cancels the job), while the actual collapse control rendered at the
+        FOOT dressed as a status line. Owen clicked "the head" and reported
+        "nothing happens — it stays open"; he had clicked the row's bar,
+        because it is the thing that looks like a head. Two agents read the
+        toggle's logic and found it sound — the defect was never in the
+        logic. Plain column puts the one clickable strip where every panel
+        keeps its chrome; the fixed bottom edge still anchors the pill in the
+        corner, and the panel grows upward from under the head instead of
+        over it.
+      */
+      flex-direction: column;
       background: var(--bg-elevated);
       border: 1px solid var(--border-default);
       border-radius: var(--radius-lg);
@@ -422,6 +453,8 @@ import { api } from '../../core/foundry';
   `],
 })
 export class QueueShelfComponent {
+  /** Hosted, the whole component renders nothing — see the template's own note. */
+  protected readonly hosted = hosted;
   protected readonly queue = inject(QueueService);
   protected readonly ui = inject(UiService);
   private readonly documents = inject(OpenDocumentsService);

@@ -1,5 +1,7 @@
 import { Injectable, signal } from '@angular/core';
 
+import { hosted } from './foundry';
+
 /**
  * WHICH HOST ACT IS BEING CONFIGURED, AND WHAT IT WOULD RUN AGAINST.
  *
@@ -160,9 +162,29 @@ export class UiService {
     this.shelfSaid.set(said);
   }
 
-  focusShelf(): void {
+  /**
+   * A DIALOG JUST PUT WORK ON THE QUEUE — the one door through which every
+   * dialog summons the shelf, and the place the hosted rule lives.
+   *
+   * STANDALONE, this is the behaviour the dialogs always had, spelled once
+   * instead of four times: unroll the shelf, and for the OCR dialog move real
+   * DOM focus to Start, since a held read's next press is exactly that button
+   * (the counter's own docblock carries why it is a counter).
+   *
+   * HOSTED, IT DOES NOTHING, because hosted THERE IS NO SHELF — Owen's ruling,
+   * 2026-08-21, verbatim: *"when im in bookforge, the shelf shouldnt appear at
+   * all. thats the hangup. bookforge should be using its own queue."* The add
+   * was routed to the host's queue (Wave 16), the host's own chrome announces
+   * it, and the host's queue page releases a held read (traced end to end by
+   * the host side, same day). The gate is here AND on the shelf's own render
+   * (queue-shelf), because a summons with nobody home and a home nobody can
+   * summon are two halves of one rule, and a caller cannot be trusted to
+   * remember the half it does not draw.
+   */
+  summonShelf(focus: boolean): void {
+    if (hosted()) return;
     this.shelfExpanded.set(true);
-    this.focusShelfAt.update((count) => count + 1);
+    if (focus) this.focusShelfAt.update((count) => count + 1);
   }
 
   /**

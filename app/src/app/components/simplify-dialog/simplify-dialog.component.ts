@@ -202,9 +202,19 @@ const REWRITES: readonly { mode: RewriteMode; name: string; what: string }[] = [
     </div>
   `,
   styles: [`
-    :host { position: fixed; inset: 0; z-index: 1200; display: block; }
+    /*
+     * THE HOST IS INERT AND ONLY ITS CHILDREN ARE NOT -- confirm-dialog's rule,
+     * hardened here after a hunt for a swallowed click (2026-08-21): this host
+     * is a full-window sheet of glass, and it was safe only because an @if
+     * unmounts it -- which is safety by accident, and the first surface that
+     * renders one of these unconditionally becomes a silent full-window click
+     * trap. The scrim and the card say auto below, so nothing a person can see
+     * behaves differently.
+     */
+    :host { position: fixed; inset: 0; z-index: 1200; display: block; pointer-events: none; }
 
     .scrim {
+      pointer-events: auto;
       position: absolute; inset: 0;
       background: rgba(0, 0, 0, 0.45);
       backdrop-filter: blur(4px);
@@ -212,6 +222,7 @@ const REWRITES: readonly { mode: RewriteMode; name: string; what: string }[] = [
     }
 
     .card {
+      pointer-events: auto;
       position: relative;
       margin: 8vh auto 0;
       width: 460px;
@@ -464,7 +475,7 @@ export class SimplifyDialogComponent {
       // The shelf, opened, because the job is HELD and the Start button is in
       // there. Closing onto a collapsed shelf would leave a night of GPU
       // configured, idle and out of sight.
-      this.ui.shelfExpanded.set(true);
+      this.ui.summonShelf(false); // hosted: no shelf to summon, and the call is deliberately nothing
       this.ui.closeSimplify();
     } catch (err) {
       this.problem.set(err instanceof Error ? err.message : String(err));

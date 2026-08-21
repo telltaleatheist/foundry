@@ -1807,6 +1807,38 @@ settled"). **OPEN: the hand-test** — nothing in P3 was exercised in
 the running app; the split-pass gutter drag and the ghost first, then
 the whole loop with a release and a reopen on the way.
 
+### Wave 26 — hosted, there is no shelf (Owen, 2026-08-21, via the switchboard) — LANDED (this commit)
+
+Owen, verbatim: *"when im in bookforge, the shelf shouldnt appear at
+all. thats the hangup. bookforge should be using its own queue. and it
+does add it to the bookforge queue. but the shelf still appears in
+bookforge's foundry vendor."* Diagnosed jointly on `bookforge-sync`
+(seqs 152–154): routing was FINE (their trace); the shelf was the
+defect — no dismiss, its only ✕ routed and CANCELLED the job, and the
+head toggle read as dead because `column-reverse` rendered the real
+head at the FOOT dressed as a status line while the job row sat on top
+wearing a titlebar and an ✕. Two agents read the toggle's logic and
+found it sound; the defect was geometry.
+
+- **Hosted renders NOTHING** — one `@if (!hosted())` around the whole
+  shelf, live region included. The host's queue page releases a held
+  read (their side traced held → queued → picked end to end; caveat
+  recorded there: not yet smoke-tested, and their ▶ un-pauses their
+  whole queue — theirs to own).
+- **`summonShelf(focus)` on UiService** is the one door the four
+  dialogs now use (ocr/export/simplify/translate); hosted it does
+  nothing, and the gate is ALSO on the render because a summons with
+  nobody home and a home nobody can summon are two halves of one rule.
+- **The head is the top of the panel** — `column-reverse` → `column`,
+  so the one clickable strip sits where every panel keeps its chrome.
+  Standalone keeps its shelf exactly as it was otherwise.
+- **The six dialog hosts got confirm-dialog's inert-host rule**
+  (`pointer-events: none` + auto on scrim/card): all were safe only
+  because an @if unmounts them, which is safety by accident. Promised
+  to BookForge at seq 153; done here.
+- BookForge gets all of it at the next re-vendor, which still HOLDS
+  until Owen's Wave 25 hand-test passes.
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the

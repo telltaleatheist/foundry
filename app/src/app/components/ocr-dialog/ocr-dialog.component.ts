@@ -189,9 +189,19 @@ import { api } from '../../core/foundry';
     </div>
   `,
   styles: [`
-    :host { position: fixed; inset: 0; z-index: 1200; display: block; }
+    /*
+     * THE HOST IS INERT AND ONLY ITS CHILDREN ARE NOT -- confirm-dialog's rule,
+     * hardened here after a hunt for a swallowed click (2026-08-21): this host
+     * is a full-window sheet of glass, and it was safe only because an @if
+     * unmounts it -- which is safety by accident, and the first surface that
+     * renders one of these unconditionally becomes a silent full-window click
+     * trap. The scrim and the card say auto below, so nothing a person can see
+     * behaves differently.
+     */
+    :host { position: fixed; inset: 0; z-index: 1200; display: block; pointer-events: none; }
 
     .scrim {
+      pointer-events: auto;
       position: absolute; inset: 0;
       background: rgba(0, 0, 0, 0.45);
       backdrop-filter: blur(4px);
@@ -199,6 +209,7 @@ import { api } from '../../core/foundry';
     }
 
     .card {
+      pointer-events: auto;
       position: relative;
       margin: 8vh auto 0;
       width: 460px;
@@ -636,7 +647,6 @@ export class OcrDialogComponent {
         this.added.set(`${this.nameFor(input)} is already waiting to be read — nothing was added.`);
         return;
       }
-      this.ui.shelfExpanded.set(true);
       /*
        * THE DIALOG GOES AND THE ATTENTION FOLLOWS THE JOB.
        *
@@ -658,7 +668,12 @@ export class OcrDialogComponent {
        */
       this.ui.announce(
         `Added ${this.nameFor(input)} to be read. Press Start on the queue to run it.`);
-      this.ui.focusShelf();
+      /*
+       * One door for the unroll-and-focus, because the hosted rule lives in it:
+       * hosted there is no shelf to summon (Owen's ruling — the host's queue
+       * page is the one queue surface) and this call is deliberately nothing.
+       */
+      this.ui.summonShelf(true);
       this.ui.closeOcr();
     } catch (err) {
       // Never swallowed and never a console line: the two things that can fail
