@@ -142,6 +142,7 @@ const ACKNOWLEDGED_FOR_MS = 1600;
           [outOfTurn]="outOfTurn()"
           [handSetHere]="photo.handSet"
           [justApplied]="justApplied()"
+          (turnBy)="captures.turnPhotos([photo.id], $event)"
           (quadsChange)="setQuads(photo.id, $event)"
           (splitChange)="captures.setSplit(photo.id, $event)"
           (applyToAll)="void applyToAll(photo.id, $event)"

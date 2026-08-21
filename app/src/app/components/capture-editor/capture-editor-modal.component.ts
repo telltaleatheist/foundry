@@ -13,7 +13,7 @@ import { halvesOf, joinedQuad, splitFromFraction } from '@shared/capture';
 import type { CaptureQuad, CaptureSplit } from '@shared/types';
 
 import { CapturePageEditorComponent } from './capture-page-editor.component';
-import { type Dimensions, type FractionQuad, rotate } from './geometry';
+import { type Dimensions, type FractionQuad } from './geometry';
 import type { PrepareVerb } from '../capture-rail/capture-rail.component';
 import type { ApplyToAll } from '../../core/capture.service';
 
@@ -600,6 +600,8 @@ export class CaptureEditorModalComponent {
   readonly quadsChange = output<readonly FractionQuad[]>();
   readonly splitChange = output<CaptureSplit>();
   readonly applyToAll = output<ApplyToAll>();
+  /** A quarter turn of this photograph, for the service to perform. */
+  readonly turnBy = output<number>();
   /** Stage 2's per-page Apply — this page is set by hand and stays that way. */
   readonly keep = output<void>();
   readonly step = output<number>();
@@ -724,8 +726,24 @@ export class CaptureEditorModalComponent {
     });
   }
 
+  /**
+   * Turn this photograph a quarter — THROUGH THE SERVICE, not by rotating the
+   * quads on the way out.
+   *
+   * It used to emit `quads.map(rotate)`, which is right for a page and wrong
+   * for a spread: turning two halves independently keeps their old reading
+   * order, and a half turn swaps which one reads first. That is measured (see
+   * `turned` in capture.service.ts) and it was invisible here, because the
+   * editor draws both halves and both look correct.
+   *
+   * A spread's turn has to rebuild the sheet and re-derive the halves, and the
+   * component that draws two quads has no business knowing that. So the turn
+   * travels as a TURN and the one body that understands cuts performs it —
+   * the same body the table's turn goes through, which is what keeps the two
+   * surfaces from disagreeing about which way round a page is.
+   */
   protected turn(turns: number): void {
-    this.quadsChange.emit(this.quads().map((quad) => rotate(quad, turns)));
+    this.turnBy.emit(turns);
   }
 
   /**
