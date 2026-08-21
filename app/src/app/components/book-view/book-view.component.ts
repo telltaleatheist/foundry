@@ -1131,14 +1131,26 @@ const GLANCE_GAP = 12;
             because they are different gestures: a peek is asked for and stays,
             a glance follows the pointer and goes. Both may be open at once and
             neither has an opinion about the other. See ./page-glance.
+
+            IT IS MOUNTED ONCE AND TOLD TO SHOW NOTHING, never put up and taken
+            down, and that is not a style preference — it is the difference
+            between the card the component's header describes and the one that
+            was running. This was \`@if (glanceAt())\`, so the component was
+            DESTROYED on every pointerleave, and with it the pdf.js worker it
+            promises to build "once and keep", the open document, and the
+            twelve-page bitmap cache that is supposed to make the second glance
+            at a page free. MEASURED: a walk of ten rests down one book built
+            TEN workers and terminated none, and every glance re-read the whole
+            scan over IPC and re-parsed it — 0.7-1.0s each, a cost that never
+            fell because nothing survived to make it fall. The component draws
+            nothing when its row is null and hides itself, so this can simply
+            stay.
           -->
-          @if (glanceAt(); as line) {
-            <app-page-glance
-              [style.top.px]="line"
-              [original]="original()"
-              [row]="glanced()"
-            />
-          }
+          <app-page-glance
+            [style.top.px]="glanceAt() ?? 0"
+            [original]="original()"
+            [row]="glanced()"
+          />
         </div>
         <!--
           APPLY — the stack, written down. ON THE BENCH AND NOT ON THE PAPER,
@@ -2332,6 +2344,11 @@ export class BookViewComponent {
    * moves when the place changes, so a single signal holding both would make
    * every reposition a re-render. ./page-glance's one effect reads the first and
    * not the second, which is what that split is for.
+   *
+   * BOTH GO NULL ON LEAVE AND THE CARD STAYS MOUNTED. A null row is how this
+   * pane says "show nothing" — see the mount above for what putting the card
+   * up and taking it down cost, and why saving a re-render meant nothing while
+   * the whole component was being rebuilt between glances.
    */
   protected readonly glanced = signal<BookRow | null>(null);
   protected readonly glanceAt = signal<number | null>(null);

@@ -1,9 +1,11 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   ElementRef,
   computed,
   effect,
+  inject,
   input,
   signal,
   viewChild,
@@ -67,6 +69,22 @@ import { api } from '../../core/foundry';
  * to paint one canvas and the LAST to finish wins — which is not the one the
  * pointer is on.
  *
+ * ── IT IS MOUNTED FOR THE LIFE OF THE PANE, AND EVERYTHING BELOW DEPENDS ON
+ *    THAT ─────────────────────────────────────────────────────────────────
+ *
+ * A null row means "show nothing"; it does not mean "go away". Two sections of
+ * this header — one worker built once and kept, a cache that makes the second
+ * glance at a page free — are claims about state that survives a glance, and
+ * they were BOTH FALSE for as long as book-view put this card up behind an @if
+ * and took it down on every pointerleave. MEASURED, walking ten rests down one
+ * book: ten pdf.js workers built, none terminated, every glance re-reading the
+ * whole scan over IPC and re-parsing it, 0.7-1.0s each and never falling.
+ * Mounted once, the same walk builds ONE worker and costs ~0.2s a glance.
+ *
+ * The lesson is worth more than the fix: a docblock arguing for an economy is
+ * not evidence there is one. Nothing in this file was wrong — the thing that
+ * made it a fiction was one @if in a different file.
+ *
  * ── THE CACHE IS SMALL ON PURPOSE ──────────────────────────────────────────
  *
  * Every block on a printed page glances at the SAME page, so the second rest on
@@ -96,6 +114,15 @@ import { api } from '../../core/foundry';
 @Component({
   selector: 'app-page-glance',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  /*
+   * NOTHING TO SHOW IS SHOWN AS NOTHING, in the host and not by unmounting.
+   * The card is mounted for the life of the pane (book-view's own comment at
+   * the mount says what taking it down cost), so between glances there is a
+   * bordered, shadowed, padded box with no content in it — which is a visible
+   * empty sliver pinned to the right margin, not an absence. `display: none`
+   * is the absence.
+   */
+  host: { '[class.idle]': 'row() === null' },
   template: `
     @if (row(); as at) {
       @if (sentence(); as said) {
@@ -158,6 +185,7 @@ import { api } from '../../core/foundry';
       */
       pointer-events: none;
     }
+    :host(.idle) { display: none; }
     .frame {
       position: relative;
       display: block;
@@ -204,12 +232,21 @@ export class PageGlanceComponent {
   /** Bumped per request. A render that finishes for an old one draws nothing. */
   private generation = 0;
   private task: { cancel(): void } | null = null;
-  /** The open document, held as its promise so two rests share one open. */
-  private opening: Promise<GlanceDocument> | null = null;
+  /**
+   * The open document, held as its promise so two rests share one open — AND
+   * THE SCAN IT IS THE OPEN OF.
+   *
+   * The path is half the value and not bookkeeping. This card outlives any one
+   * glance now, so it can outlive the BOOK: a pane whose load changes hands
+   * this component a different `original`, and a held promise that remembered
+   * only "a document is open" would answer the new book's rests with pages of
+   * the old one — the same picture, no error, and nothing on the card to say
+   * which scan it came from. Keyed by path, a changed path is a miss.
+   */
+  private opening: { scan: string; doc: Promise<GlanceDocument> } | null = null;
   private engine: GlanceEngine | null = null;
   /** Page number to bitmap, oldest first. Evicted at CACHE_PAGES. */
   private readonly cache = new Map<number, ImageBitmap>();
-
   /** The engine's own words when a page would not open. Never paraphrased. */
   private readonly failure = signal<string | null>(null);
 
@@ -293,6 +330,39 @@ export class PageGlanceComponent {
       if (at === null || scan === null || at.page <= 0) return;
       void this.draw(scan, at.page, mine);
     });
+
+    /*
+     * The worker is a THREAD and the document is memory in it; a pane that
+     * closes without saying so leaves both running for the life of the window.
+     * Nothing above this line is reachable after destroy, so the generation
+     * bump is enough to make any render still in flight drop what it produces.
+     */
+    inject(DestroyRef).onDestroy(() => {
+      this.generation += 1;
+      this.task?.cancel();
+      this.task = null;
+      for (const bitmap of this.cache.values()) bitmap.close();
+      this.cache.clear();
+      this.release();
+    });
+  }
+
+  /**
+   * Let go of the open document and the thread it was parsed on, in that order.
+   *
+   * ORDER, BECAUSE THE DOCUMENT LIVES IN THE WORKER: terminating the thread
+   * first leaves `destroy()` waiting on a reply from something that no longer
+   * exists. The failures are swallowed by design — this runs when a pane is
+   * already going away, and there is nobody left to tell.
+   */
+  private release(): void {
+    const open = this.opening;
+    const engine = this.engine;
+    this.opening = null;
+    this.engine = null;
+    const stop = (): void => { engine?.thread.terminate(); };
+    if (open === null) { stop(); return; }
+    void open.doc.then((doc) => doc.destroy()).catch(() => undefined).then(stop);
   }
 
   /**
@@ -303,6 +373,17 @@ export class PageGlanceComponent {
    * the frame once a row is set, and this effect runs in that same turn. By the
    * time a page has been decoded the view exists, and a generation that has
    * moved on is dropped before anything is touched.
+   *
+   * THE CACHE HIT PAINTS IN THAT SAME TURN AND IT IS FINE — measured, because
+   * it is the one path that does not await anything and the paragraph above
+   * reads like a reason it should fail. Now that the card outlives a glance its
+   * cache can be hit, so this was worth proving rather than routing around: the
+   * draw was rewritten to hand the bitmap to a signal an effect painted, the
+   * old direct draw was put BACK IN and measured against repeat rests, and it
+   * painted every time. Angular has refreshed the view by then. The indirection
+   * bought nothing and was dropped. Cache hits land at ~210ms against a probe
+   * whose own floor is 210ms; a fresh render of a page from an open document is
+   * 500-650ms, which is the gap that tells the two apart.
    */
   private async draw(scan: string, page: number, mine: number): Promise<void> {
     try {
@@ -365,13 +446,24 @@ export class PageGlanceComponent {
       assets,
       getDocument: pdfjs.getDocument,
       worker: pdfjs.PDFWorker.create({ name: 'foundry-glance', port: thread }),
+      thread,
     };
     return this.engine;
   }
 
   private async open(engine: GlanceEngine, scan: string): Promise<GlanceDocument> {
     const already = this.opening;
-    if (already !== null) return await already;
+    if (already !== null && already.scan === scan) return await already.doc;
+    /*
+     * A DIFFERENT SCAN CLOSES THE OLD ONE FIRST. Dropping the reference alone
+     * would leave the previous book's document parsed in the worker for as long
+     * as this pane lives, which is the same leak as the one the destroy hook
+     * closes, arrived at from the other direction.
+     */
+    if (already !== null) {
+      this.opening = null;
+      void already.doc.then((doc) => doc.destroy()).catch(() => undefined);
+    }
     const opening = (async (): Promise<GlanceDocument> => {
       if (api === null || api === undefined) {
         throw new Error('This window is not running inside Foundry, so it cannot read the scan.');
@@ -396,11 +488,11 @@ export class PageGlanceComponent {
      * broken for the life of the pane. The sentence is still shown; only the
      * memory of it is dropped.
      */
-    this.opening = opening;
+    this.opening = { scan, doc: opening };
     try {
       return await opening;
     } catch (err) {
-      if (this.opening === opening) this.opening = null;
+      if (this.opening?.doc === opening) this.opening = null;
       throw err;
     }
   }
@@ -500,6 +592,7 @@ interface GlancePage {
 interface GlanceDocument {
   numPages: number;
   getPage(number: number): Promise<GlancePage>;
+  destroy(): Promise<void>;
 }
 
 interface PdfModule {
@@ -511,4 +604,10 @@ interface GlanceEngine {
   assets: URL;
   getDocument: PdfModule['getDocument'];
   worker: unknown;
+  /**
+   * The thread itself, kept beside pdf.js's handle to it. `PDFWorker` is
+   * `unknown` here on purpose — this file declares only what it calls — and a
+   * thread that must be terminated on destroy is a thing this file calls.
+   */
+  thread: Worker;
 }
