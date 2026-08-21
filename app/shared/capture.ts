@@ -415,37 +415,55 @@ export function turnQuad(quad: CaptureQuad, turns: number): CaptureQuad {
  * the photograph's own top-left, which is a fact about the file and is exactly
  * what a stamp needs in order to leave a turn alone.
  *
- * ── Why the topmost-then-leftmost corner, rather than the nearest one ───────
+ * ── IT READS THE TOP EDGE'S DIRECTION, AND THE OLD RULE COST OWEN TWO PAGES ─
  *
- * The corner that reads as the photograph's top-left is the one with the
- * smallest `y`, and the smallest `x` among equals. That is a LEXICOGRAPHIC
- * order on the same two numbers the quad already holds: total, exact, and free
- * of any comparison of magnitudes.
+ * The corner order IS the orientation, and this file says so everywhere:
+ * `WHOLE_FRAME`'s docblock pins the tuple as *"top-left, top-right,
+ * bottom-right, bottom-left OF THE OUTPUT PAGE"*. So `quad[0] → quad[1]` is the
+ * page's TOP EDGE by definition, and which way that edge points IS the turn:
+ * right is 0, up is 1, left is 2, down is 3. This reads the invariant the tuple
+ * already states.
  *
- * The obvious alternative — the corner nearest the origin — needs a distance,
- * and distances tie. A crop symmetric about the diagonal (a diamond, and any
- * square centred on the frame) has two corners the same distance from (0, 0)
- * and no honest way to choose between them, so the answer would depend on a
- * tie-break nobody could predict from looking at the picture. Lexicographic
- * order ties only when two corners are the SAME POINT, which is a degenerate
- * quad rather than a shape somebody drew.
+ * IT USED TO GUESS INSTEAD, by picking the topmost-then-leftmost corner and
+ * answering with its index — asking "which corner LOOKS like the photograph's
+ * top-left" rather than "which way does the top edge point". Those agree on
+ * anything drawn square, and they disagreed on a real shoot the day the split
+ * landed. MEASURED, off Owen's `index` recipe: a spread turned three quarters,
+ * cut in two, produced a first half reading 3 and a second half reading 0 —
+ * so the light table drew one half upright and its twin lying on its side.
+ *
+ * The arithmetic of why, because it is the general lesson. The old rule decided
+ * between `quad[0]` and `quad[3]` — the two ends of a roughly HORIZONTAL edge,
+ * so their `y` values are nearly equal and any skew at all picks the winner. On
+ * the whole photograph `quad[3]` sat 0.030 higher, because that is how the book
+ * lay under the camera. On the lower half the top edge is THE CUT, and the cut
+ * a hand drew tilted the other way — `quad[0]` 0.021 higher — so the comparison
+ * flipped and the turn was lost. Nothing was wrong with the halves:
+ * `halvesOf` preserves the corner roles exactly, and the roles were still
+ * right. The reading of them was not.
+ *
+ * A direction cannot fail that way. The old rule compared two numbers that are
+ * nearly EQUAL by construction; this one compares two numbers that differ by
+ * the width of the page, and a hand-drawn tilt of a couple of degrees moves it
+ * nowhere near the boundary.
  *
  * ── What it cannot do, said plainly ────────────────────────────────────────
  *
- * A crop tilted more than 45° makes "which corner is the top-left" genuinely
- * ambiguous, and this will answer confidently anyway. That is not a case the
- * editor can produce — a de-skew is a few degrees and a turn is exactly a
- * quarter — but a hand-edited recipe could, and the honest note is that the
- * answer there is a convention rather than a fact.
+ * A crop tilted more than 45° makes "which way is the top edge pointing"
+ * genuinely ambiguous, and this will answer confidently anyway. That is not a
+ * case the editor can produce — a de-skew is a few degrees and a turn is exactly
+ * a quarter — but a hand-edited recipe could, and the honest note is that the
+ * answer there is a convention rather than a fact. Exactly 45° goes to the
+ * horizontal reading, and a degenerate quad whose first two corners are the same
+ * point answers 0, which is the only answer available when there is no edge.
  */
 export function turnsOf(quad: CaptureQuad): QuadTurns {
-  let best: QuadTurns = 0;
-  for (const index of [1, 2, 3] as const) {
-    const [x, y] = quad[index];
-    const [bestX, bestY] = quad[best];
-    if (y < bestY || (y === bestY && x < bestX)) best = index;
-  }
-  return best;
+  const [fromX, fromY] = quad[0];
+  const [toX, toY] = quad[1];
+  const alongX = toX - fromX;
+  const alongY = toY - fromY;
+  if (Math.abs(alongX) >= Math.abs(alongY)) return alongX >= 0 ? 0 : 2;
+  return alongY < 0 ? 1 : 3;
 }
 
 /**
