@@ -35,8 +35,9 @@ same commit that lands it.
   root `bunx tsc --noEmit`; from `app/`:
   `bunx tsc -p tsconfig.electron.json --noEmit`,
   `bunx tsc -p tsconfig.app.json --noEmit`, `bunx ng build` (the
-  550.51 kB against a 500 kB budget WARNING is pre-existing; an ERROR is
-  not). Plus a raw-control-byte scan of every touched file.
+  695.96 kB against a 500 kB budget WARNING is pre-existing; an ERROR is
+  not — and see §7, where that number was 145 kB stale until somebody
+  re-measured it). Plus a raw-control-byte scan of every touched file.
 - **No new tests** (user ruling). Fix the ones a change invalidates; name
   each in the report. Do not add a suite nobody asked for.
 - Long WHY comments in the codebase's essay voice. Escape backticks as \`
@@ -1623,6 +1624,42 @@ everything else so i dont want to cripple its other work."
   has zero callers. They should go together, in their own commit, when
   somebody is in that file for a reason of their own.
 
+### Wave 23 — the page beside the block (Owen, 2026-08-20) — IN THIS COMMIT
+
+*"i want to hover over a block and see that page of the original beside
+it."*
+
+Everything the answer needs has been in the book file since v2 and no
+surface had ever read it: a row carries `page`, `box`, `pageWidth` and
+`pageHeight`. WHAT WAS MISSING WAS THE SCAN — a `book` tab's path is the
+PROJECT directory, and nothing on the load named the document the reading
+photographed. So the whole of the new door is one field,
+`BookLoad.originalPath`, and everything else is drawing.
+
+- REST, NOT ENTER. A pane of prose is swept across on the way somewhere
+  else, and a card on every crossing would flash a dozen times down a page,
+  each flash costing a PDF page render. The timer is 180 ms and lives in
+  the sheet's own `pointerenter`/`pointerleave`.
+- IT IS NOT THE PEEK CARD. The sheet already has a card beside the hand —
+  the note peek, opened by CLICKING a marker. This wears the same paper on
+  purpose and keeps separate state, because they are different gestures: a
+  peek is asked for and STAYS, a glance follows the pointer and GOES.
+- NO OUTLINE ON A BLOCK THAT CROSSED A LEAF. A merged row's box is
+  composed — origin from the first part, height SUMMED — so outlining one
+  would draw a rectangle running off the bottom of the page. The page is
+  still shown and the footer says it carried on, which is the true thing a
+  box cannot say.
+- pdf.js IS LOADED ON THE FIRST GLANCE. `app-book-view` is not deferred, so
+  a static import would put half a bundle in the boot chunk. Measured:
+  initial 695.96 → 702.64 kB (+6.68), and pdf.js stayed lazy — it is now a
+  484 kB chunk SHARED with `app-pdf-view` rather than duplicated.
+- DEFERRED OUT LOUD, and it is Wave 21's arrival that creates it: once a
+  mint files PAGES rather than a PDF, `bookAtPosition` composes `pdf`
+  through `archive.kind === 'pdf'` and answers null — so a CAPTURED book
+  would be the one book in the app that denied having any paper, in a
+  sentence written for an EPUB. `originalPath` becomes a small union when
+  that lands. Named here rather than discovered later.
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the
@@ -1689,11 +1726,24 @@ supposed to be, and it exists so the same failure is visible next time.
   every app-side unit and the reason the hand-test is not optional. Not
   scheduled because the standing ruling is no unasked tests — if that
   changes, this is where the work starts.
-- **The bundle is 552.88 kB against a 500 kB budget.** Pre-existing.
-  R6c's deletions took it from 657.06 kB — the first time it has ever
-  moved down — and it is still a WARNING rather than an ERROR. What is
-  left is Angular plus this app's own components; there is no second
-  editing surface in it to remove.
+- **The bundle is 695.96 kB against a 500 kB budget.** Pre-existing.
+
+  **THIS FIGURE WAS 145 kB STALE AND IS THE SECOND TIME THIS LIST HAS DONE
+  IT.** It read 552.88 kB here and 550.51 kB in §1 on 2026-08-20, when the
+  build measured 695.96 kB — and the two spellings had drifted from each
+  other as well, which is the tell. §1's own rule already names the class
+  from the test suite ("a stale 396 pass sat here while the suite measured
+  384, and a number nobody re-measures is not a gate"), and the same rule
+  applies to every number in this file: A FIGURE QUOTED AS A GATE IS A
+  MEASUREMENT OR IT IS DECORATION. Measured twice on 2026-08-20, on main
+  at `e0e301c`, independently by two agents who agreed to the byte.
+
+  It is still a WARNING rather than an ERROR, which is the thing the gate
+  actually tests. What is left is Angular plus this app's own components;
+  there is no second editing surface in it to remove. (R6c's deletions did
+  take it down once — the only fall in this list's history — and the
+  657.06 → 552.88 recorded for that is the last figure here anybody
+  measured at the time they wrote it.)
 - **`epub-final` writes with `Bun.write`**, so the Save-As edition path is
   not atomic where the old repack was. Same as the queue's `final/`
   writes. Flagged when it landed rather than buried.

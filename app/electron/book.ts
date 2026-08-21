@@ -62,6 +62,7 @@ import { promises as fsp } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { admit } from './documents';
 import { writeBookFile, writeEpubBook } from './engine';
 import { writeAtomically } from './atomic';
 import { CurateBridgeError, rekeyCuration } from '../shared/curate-bridge';
@@ -890,6 +891,36 @@ async function bookFrom(projectDir: string, from: LedgerStep | null): Promise<Bo
   const figures = parsed.rows.some((row) => row.image !== undefined)
     ? figuresPrefixFor(imagesDirFor(at.bank))
     : null;
+  /*
+   * THE SCAN, FOR THE PAGE-BESIDE-THE-BLOCK PANE — `at.pdf`, which is
+   * `bookAtPosition`'s own resolution of it and not a second one composed here.
+   * That field is already null for an EPUB project and for a project holding no
+   * PDF archive, which is exactly the silence `BookLoad.originalPath` documents,
+   * so this needs no test of its own: asking the resolver twice would be two
+   * answers to "what did this reading photograph".
+   *
+   * ── AND IT IS ADMITTED HERE, WHICH IT HAS TO BE ────────────────────────────
+   *
+   * `document:read-bytes` is gated by `admitted`, whose refusal is *"was never
+   * opened in this app"* — and an archived scan HAS never been opened. Nobody
+   * opened the file; they opened the PROJECT, and the book they are reading is
+   * a bank made from a document they may never have seen a page of. So without
+   * this line the pane asks for the one thing it exists to show and is refused
+   * by the app's own front door. MEASURED, not reasoned: the card mounted, sat
+   * with an unpainted 300x150 canvas, and settled on the sentence *"Error
+   * invoking remote method 'document:read-bytes'"*. Six gates were green.
+   *
+   * `admit` and not a widening of the gate, because `admit`'s own docblock is
+   * this exact case written down in advance: *"MAIN RESOLVED IT, SO MAIN ADMITS
+   * IT — for the paths this process composes and then hands to a renderer that
+   * is about to open them. Never for a path the renderer named."* This process
+   * composed it, out of the catalogue, and the renderer is about to open it.
+   *
+   * NO EXISTENCE CHECK. The pane opens it and says what happened; a check here
+   * would be a second opinion taken a moment earlier, and the honest failure is
+   * the one the reader meets at the moment they ask for the page.
+   */
+  if (at.pdf !== null) admit(at.pdf);
   return {
     ok: true,
     // THE TITLE IS THE PROJECT'S. A book file is a list of blocks and has no idea
@@ -903,6 +934,7 @@ async function bookFrom(projectDir: string, from: LedgerStep | null): Promise<Bo
     seams: parsed.header.seams,
     loose: parsed.header.loose,
     figures,
+    originalPath: at.pdf,
     ops,
     tip,
     /*
@@ -1358,6 +1390,14 @@ export async function viewExportedBook(target: string): Promise<BookOutcome> {
     seams: parsed.header.seams,
     loose: parsed.header.loose,
     figures,
+    /*
+     * NULL BY CONSTRUCTION, NOT BY OMISSION. This door explodes a finished EPUB
+     * out of `final/` for reading, and an EPUB has never had pages — every row
+     * it produces carries `page: 0`, the no-page frame. There is no scan behind
+     * this book to peek at, and `BookLoad.originalPath` documents that silence
+     * as one of its two ordinary meanings.
+     */
+    originalPath: null,
     ops: [],
     tip: null,
     translation: null,

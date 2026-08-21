@@ -16,6 +16,7 @@ import {
 
 import { PDF_BLOCK_CATEGORIES, pdfCategoryColour, pdfCategoryLabel } from '@shared/categories';
 import type { BookLoad, BookRow } from '@shared/book';
+import { PageGlanceComponent } from './page-glance.component';
 // The reader's words for the three rewrites, and the only copy of them: the
 // dialog's cards, the queue's row and this pane's sentences all print the same
 // table, so a mode cannot be one thing in the history and another on a tooltip.
@@ -315,9 +316,23 @@ const ALIGNED_MIN_REM = 68;
  */
 const SCROLL_SETTLE_MS = 400;
 
+/*
+ * ── The glance ──────────────────────────────────────────────────────────────
+ *
+ * HOW LONG A POINTER MUST STOP before the original's page appears beside the
+ * block. Long enough that sweeping down a column of forty paragraphs opens
+ * nothing — the whole reason the trigger is rest and not enter — and short
+ * enough that a person who has stopped to look does not wonder whether they
+ * have to click. It is the same order as a tooltip because it is answering the
+ * same kind of question.
+ */
+const GLANCE_REST_MS = 180;
+/** The least the card may sit from the top of the paper. */
+const GLANCE_GAP = 12;
+
 @Component({
   selector: 'app-book-view',
-  imports: [NgTemplateOutlet, ComparePickerComponent],
+  imports: [NgTemplateOutlet, ComparePickerComponent, PageGlanceComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <!--
@@ -968,7 +983,7 @@ const SCROLL_SETTLE_MS = 400;
               [class.spanned]="spans(line)"
               [class.twin]="twinned() === line.row.id"
               [class.drop-target]="draggingRule()?.over === line.row.id"
-              (pointerenter)="lightRow(line)"
+              (pointerenter)="lightRow(line, $event)"
               (pointerleave)="dim()"
               (contextmenu)="blockMenu($event, line)"
             >
@@ -1107,6 +1122,22 @@ const SCROLL_SETTLE_MS = 400;
                 }
               </p>
             </aside>
+          }
+          <!--
+            THE ORIGINAL PAGE, BESIDE THE BLOCK THE POINTER IS RESTING ON.
+            *"i want to hover over a block and see that page of the original
+            beside it."* Placed here, beside the note peek, because the two are
+            the same idiom on the same paper — and kept as separate state
+            because they are different gestures: a peek is asked for and stays,
+            a glance follows the pointer and goes. Both may be open at once and
+            neither has an opinion about the other. See ./page-glance.
+          -->
+          @if (glanceAt(); as line) {
+            <app-page-glance
+              [style.top.px]="line"
+              [original]="original()"
+              [row]="glanced()"
+            />
           }
         </div>
         <!--
@@ -2293,6 +2324,25 @@ export class BookViewComponent {
   protected readonly chosen = signal<ReadonlySet<string>>(new Set());
   /** The note whose apparatus is under the pointer — it and its markers light together. */
   protected readonly lit = signal<string | null>(null);
+  /**
+   * ── The glance: the original's page, beside the block resting under the hand
+   *
+   * `glanced` is the ROW and `glanceAt` is where its card goes, kept apart
+   * deliberately: the card re-renders a PDF page when the row changes and only
+   * moves when the place changes, so a single signal holding both would make
+   * every reposition a re-render. ./page-glance's one effect reads the first and
+   * not the second, which is what that split is for.
+   */
+  protected readonly glanced = signal<BookRow | null>(null);
+  protected readonly glanceAt = signal<number | null>(null);
+  /** The rest timer. Null between glances, which is nearly always. */
+  private resting: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * THE SCAN THIS BOOK WAS READ OFF, or null for a book with no paper behind it.
+   * Read straight off the load rather than resolved here — `BookLoad.originalPath`
+   * carries the whole argument for what null means and why it means it twice.
+   */
+  protected readonly original = computed<string | null>(() => this.book()?.originalPath ?? null);
   /** The block a jump landed on, tinted for `PULSE_MS`. */
   protected readonly pulse = signal<string | null>(null);
   /** The source page a hovered ghost names, hairlining every block it spans. */
@@ -3434,10 +3484,76 @@ export class BookViewComponent {
     this.lit.set(noteId);
   }
 
-  /** A note row under the pointer lights its own markers. Anything else lights nothing. */
-  protected lightRow(line: Line): void {
+  /**
+   * A note row under the pointer lights its own markers. Anything else lights
+   * nothing — and either way, the glance timer starts.
+   *
+   * THE GLANCE IS ARMED HERE RATHER THAN SHOWN HERE, which is the whole of
+   * rest-not-enter: a pointer crossing this block on its way somewhere else
+   * fires this and then fires `dim` a few milliseconds later, and the timer is
+   * cleared before it ever runs. Only a pointer that STOPS gets a card. See
+   * `GLANCE_REST_MS` and ./page-glance.
+   */
+  protected lightRow(line: Line, event?: PointerEvent): void {
     this.lit.set(line.ordinal === null ? null : line.row.id);
     this.twin(line.row.id);
+    if (event !== undefined) this.armGlance(line.row, event);
+  }
+
+  /**
+   * Wait for the pointer to settle, then put the original's page beside it.
+   *
+   * THE GEOMETRY IS TAKEN NOW AND NOT WHEN THE TIMER FIRES. The block's rect is
+   * read at the moment of entry, while the pointer is demonstrably over it; a
+   * measurement taken `GLANCE_REST_MS` later would be of a sheet that may have
+   * scrolled under a wheel that never left the block, and the card would open
+   * beside where the block USED to be. It is the same sheet-coordinate frame
+   * `peekAt` works in, for the same reason: the card rides the scroll as ink on
+   * the paper rather than as furniture over it.
+   *
+   * ── ONLY THE VERTICAL IS COMPUTED, AND THAT IS THE FIX ─────────────────────
+   *
+   * This first placed the card BESIDE the block horizontally — to the right
+   * where the paper had room, to the left where it did not, which is `peekAt`'s
+   * rule. MEASURED, IT PUT THE CARD OVER THE PROSE: the flip needed the card's
+   * own width, that width was a `px` constant here mirroring a `rem` width
+   * declared in the component, AND THE APP'S ROOT FONT IS 13px — so the constant
+   * said 256 about a card that renders at 195, the fit test failed where it
+   * would have fitted, and the card landed on the paragraph being read.
+   *
+   * That is a two-spellings defect and the repair is to stop needing the number.
+   * The card now pins itself to the right margin in its own stylesheet
+   * (`right`, ./page-glance) and this decides only WHICH LINE it sits on. A
+   * width declared once, in the file that draws it, cannot disagree with itself
+   * — and a glance that always arrives in the same column is easier to read
+   * than one that jumps sides, which is a second reason to prefer it.
+   *
+   * The note peek still flips, and should: it is opened by a CLICK, so covering
+   * text is something the reader asked for and can undo. This one appears under
+   * a pointer that never asked, and may not.
+   */
+  private armGlance(row: BookRow, event: PointerEvent): void {
+    this.disarmGlance();
+    const block = event.currentTarget;
+    if (!(block instanceof HTMLElement)) return;
+    const sheet = block.closest('.sheet');
+    if (!(sheet instanceof HTMLElement)) return;
+    const y = Math.max(GLANCE_GAP, block.getBoundingClientRect().top - sheet.getBoundingClientRect().top);
+    this.resting = setTimeout(() => {
+      this.resting = null;
+      this.glanced.set(row);
+      this.glanceAt.set(y);
+    }, GLANCE_REST_MS);
+  }
+
+  /** The timer goes and the card with it. Safe to call when neither exists. */
+  private disarmGlance(): void {
+    if (this.resting !== null) {
+      clearTimeout(this.resting);
+      this.resting = null;
+    }
+    this.glanced.set(null);
+    this.glanceAt.set(null);
   }
 
   /**
@@ -3458,10 +3574,11 @@ export class BookViewComponent {
     this.twinned.set(this.aligned() ? id : null);
   }
 
-  /** The pointer left a block: the note goes out and so does its twin. */
+  /** The pointer left a block: the note goes out, its twin with it, the glance too. */
   protected dim(): void {
     this.lit.set(null);
     this.twinned.set(null);
+    this.disarmGlance();
   }
 
   protected haunt(page: number | null): void {
