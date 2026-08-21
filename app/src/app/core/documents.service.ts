@@ -531,9 +531,56 @@ export class OpenDocumentsService {
    * questions about a TAB, which is why the answer stays here.
    */
   projectDirOf(tab: Tab): string | null {
-    if (!pathIsProject(tab)) return this.projects.projectFor(tab.path)?.dir ?? null;
-    const key = fold(tab.path);
-    return this.projects.items().find((project) => fold(project.dir) === key)?.dir ?? null;
+    /*
+     * ONE QUESTION, ONE ANSWER, AND THE BRANCH THAT USED TO BE HERE WAS A BUG.
+     *
+     * ── Owen's report ─────────────────────────────────────────────────────────
+     *
+     * *"when i export an epub and then click on it in foundry, the narrate
+     * button disappears, but a narrate button appears inside the epub's worktree
+     * item. i dont care if theres a narrate button on the epub in the worktree
+     * but the narrate button should not disappear if the user clicks epub.
+     * thats the exact opposite behavior of what it should be."*
+     *
+     * ── Why it disappeared, which is not where anybody was looking ───────────
+     *
+     * This used to ask `pathIsProject` first and, for a book tab, look the path
+     * up as a project DIRECTORY by exact match. That is true of the tab
+     * `bookTabIn` makes, whose path IS a project. IT IS FALSE OF THE ONE
+     * `openExportView` MAKES: that is also `kind: 'book'`, and its path is an
+     * EPUB FILE in `final/`. So the exact-directory lookup found nothing, this
+     * returned null, and `ActionMenu.hostReady` — which asks only whether the
+     * project can run a host act — had no project to ask about.
+     *
+     * So it was never Narrate that vanished. EVERY host act vanished at once,
+     * because the window had stopped being able to say which book was in front
+     * of it. The tree's export row kept its button because that path asks what
+     * the ROW produces (`produces: 'export'`) and never comes through here,
+     * which is exactly the inversion Owen described: the button left the place
+     * that had lost the project and stayed in the place that had not.
+     *
+     * ── The fix is a deletion, and it is provably not a change ───────────────
+     *
+     * `projectFor` already answers both shapes in one comparison — it tests
+     * `target === dir || target.startsWith(dir + '/')`, and its own docblock
+     * argues the equality case at length ("THE DIRECTORY ITSELF IS IN ITS OWN
+     * PROJECT"), added when the proof sheet hit this same class from the other
+     * side. So the branch was asking a narrower version of a question the
+     * fallback already answered correctly, and removing it gives the identical
+     * answer for every tab whose path IS a project and a right answer for the
+     * one whose path is not.
+     *
+     * ── What is still true, and is somebody else's to fix ───────────────────
+     *
+     * `pathIsProject` STILL CLAIMS THAT EVERY BOOK TAB'S PATH IS A DIRECTORY,
+     * and that claim is false for an export view. It is not repaired here
+     * because it is a type predicate seven other sites narrow on, and this
+     * defect needed one of them corrected rather than seven audited at speed.
+     * The honest discriminator is already on the tab: `viewOnly` is set in
+     * exactly one place, `openExportView`, and means precisely "this book tab is
+     * a finished file rather than a project".
+     */
+    return this.projects.projectFor(tab.path)?.dir ?? null;
   }
 
   // ── Naming ───────────────────────────────────────────────────────────────
