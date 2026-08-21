@@ -637,36 +637,23 @@ export class CaptureService {
       && photo.pages.some((page) => turnsOf(page.quad) !== facing)).length;
   }
 
-  /**
-   * HOW MANY PHOTOGRAPHS WOULD END UP WITH THIS CONFIGURATION -- the number the
-   * crop and split acts carry.
+  /*
+   * A `stampCost` COUNT STOOD HERE AND WENT WITH THE PRESS IT COUNTED (W25-P3).
    *
-   * The source counts, because it already has it: "use this crop on all 25"
-   * describes the state the press leaves the book in, and the source is one of
-   * the twenty-five. What is NOT counted is a photograph of another shape,
-   * which the stamp refuses and names -- the trio's rule, that a count on a
-   * button is what the button does and not what the book contains.
+   * It answered "how many photographs would end up with THIS photograph's
+   * configuration", which is a question only a press with a SOURCE can ask. The
+   * modal's *Crop all* was that press; it is a record now, and a record reaches
+   * exactly one photograph -- the book's standing -- so there is no population
+   * to count and no consequence line to carry one.
+   *
+   * `applyCost` below is the surviving count and is not this one renamed. It is
+   * asked of THE BOOK, from the table, where the propagation now lives.
    */
-  stampCost(photoId: string): StampCost {
-    const recipe = this.current();
-    const source = recipe?.photos.find((photo) => photo.id === photoId);
-    if (recipe === null || source === undefined) return { takes: 0, complete: 0, shape: 0 };
-    let takes = 1;
-    let complete = 0;
-    let shape = 0;
-    for (const photo of recipe.photos) {
-      if (photo.id === source.id) continue;
-      if (!sameShape(source, photo)) shape += 1;
-      else if (isComplete(photo)) complete += 1;
-      else takes += 1;
-    }
-    return { takes, complete, shape };
-  }
 
   /**
    * WHAT AN APPLY WOULD COST — the same three populations, asked of THE BOOK.
    *
-   * ── Why this is a second body and not `stampCost` with a different source ──
+   * ── Why this is not the old per-source count with a different argument ────
    *
    * Because the act has no source any more. Wave 24's press copied from the
    * photograph somebody happened to be standing on, so the count had to name
@@ -795,51 +782,19 @@ export class CaptureService {
     });
   }
 
-  /**
-   * WHAT THE PAGES A STAMP WOULD SPARE ARE CALLED -- for the sentence that asks
-   * before overwriting them.
+  /*
+   * A `completeNames` LIST STOOD HERE AND WENT WITH THE QUESTION IT ANSWERED.
    *
-   * SUPERSEDED BY WAVE 25 AND KEPT UNTIL P3 LANDS. The question it feeds -- the
-   * override dialog under Wave 24's *Crop all* -- has no subject any more:
-   * complete photographs are simply left out, and release is the explicit door
-   * for a person who wants one back in the flow. The modal still compiles
-   * against it, so it stays until the modal stops asking; W25-P3 deletes both
-   * ends together.
+   * It named the photographs a stamp would spare, for the dialog that asked
+   * whether to overwrite them anyway. Wave 25 removed the subject rather than
+   * the sentence: complete photographs are simply left out of every global, and
+   * RELEASE is the explicit door for a person who wants one back in the flow --
+   * a deliberate press on the one photograph they mean, rather than a question
+   * at stamp time about a population they have to hold in their head.
    *
-   * Named rather than counted, because "override 3 pages" and "override
-   * IMG_0212, IMG_0227 and IMG_0238" are different questions: the second one a
-   * person can check against what they remember doing. The same fallback the
-   * skip notice uses, so the two sentences about the same pages cannot call
-   * them different things.
+   * The names themselves are not lost. `announce` still lists what a global left
+   * alone, through `namerFor`, which is where that fallback always lived.
    */
-  completeNames(from: string): readonly string[] {
-    const recipe = this.current();
-    const source = recipe?.photos.find((photo) => photo.id === from);
-    if (recipe === null || source === undefined) return [];
-    const at = new Map(recipe.photos.map((photo, index) => [photo.id, index + 1]));
-    /*
-     * EXACTLY THE PHOTOGRAPHS THE STAMP WOULD SKIP, and it used to be all of
-     * them -- which asked the wrong question on nearly every press.
-     *
-     * It listed every hand-set photograph in the project, so it counted THE
-     * SOURCE (dragging a corner marks it, and the source is the one photograph
-     * a stamp never skips) and it counted photographs of other shapes (which are
-     * skipped for their shape and cannot be overridden by answering this). On a
-     * project where the only hand-set photograph was the one being copied FROM,
-     * the dialog appeared anyway and offered to override a page that was about
-     * to become the standard -- a question with no true answer, in front of a
-     * button somebody presses twenty times an evening.
-     *
-     * The count here is `StampCost.complete` by construction, which is what the
-     * consequence line under the button promises. The sentence before the press
-     * and the question at the press must be about the same photographs, or one
-     * of them is lying -- which is also why the test moved to `isComplete` with
-     * the skip rather than being left reading `byHand` under a new name.
-     */
-    return recipe.photos
-      .filter((photo) => photo.id !== source.id && sameShape(source, photo) && isComplete(photo))
-      .map((photo) => photo.name ?? `Photograph ${at.get(photo.id) ?? '?'}`);
-  }
 
   /** Whether the person has ticked one of the rail's three verbs. */
   ticked(verb: keyof CapturePrepared): boolean {
@@ -1134,45 +1089,43 @@ export class CaptureService {
    */
 
   /**
-   * APPLY TO ALL — a COPY onto every photograph of the same shape, and a
-   * refusal, out loud, for the ones that are not.
+   * TURN THE REST OF THE BOOK TO MATCH THIS ONE — the modal's one global, and
+   * now the only thing this door does.
    *
-   * ── THE STAMP ARM IS SUPERSEDED BY WAVE 25 AND STILL COMPILES ────────────
+   * ── THE STAMP ARM IS GONE (W25-P3), AND WHAT REPLACED IT IS TWO ACTS ─────
    *
-   * Its work is now two acts on two surfaces: `recordCrop` in the modal, which
-   * sets the book's crop and stamps nothing, and `applyCrops` on the table,
-   * which lands the standing on every photograph that is not complete. The
-   * split is the scope rule — a control in the modal speaks for the photograph
-   * it has open — and a press there that changed twenty-four other pictures was
-   * the modal speaking for the book.
+   * It copied one photograph's whole configuration onto every other photograph
+   * of the same shape, from a button in the modal. That press is now
+   * `recordCrop` — which sets the book's standing and touches nobody else — and
+   * the table's `applyCrops`, which lands the standing on every photograph that
+   * is not complete. The split is THE SCOPE RULE: a control in the modal speaks
+   * for the photograph it has open, and a press there that changed twenty-four
+   * other pictures was the modal speaking for the book.
    *
-   * The TURN arm is not superseded. A turn applies across photographs of
-   * DIFFERENT shapes and a crop does not, so it stays its own act, and it is
-   * still the one global that overwrites nobody's crop.
+   * Everything the stamp arm knew survives in those two: `standingOf` lifts the
+   * configuration, `wearing` puts it on, `isComplete` decides who is skipped and
+   * `announce` says what happened. Nothing was deleted except the SURFACE the
+   * act was reached from.
    *
-   * The stamp arm survives until W25-P3 replaces the modal's *Crop all* with
-   * the record, and goes with it.
+   * ── THE TURN IS NOT SUPERSEDED, and it is a different act in two ways ────
    *
-   * ── Why shape and not size ──────────────────────────────────────────────────
+   * It applies across photographs of DIFFERENT shapes, where a crop cannot — so
+   * folding it into the book's crop would make "all" mean two different sets in
+   * one sentence. And it overwrites nobody's corners: `turnedLike` relabels
+   * which corner prints top-left, so every crop on every photograph survives a
+   * bulk turn to the last decimal.
    *
-   * The recipe is in fractions, so a copy between two photographs of the same
-   * shape is exact at any resolution. Between two SHAPES it is a stretch that
-   * lands inside the frame and looks plausible — the acceptance shoot has
-   * twenty-six portrait photographs and one landscape, so this is the shoot we
-   * have rather than a hypothetical. `sameShape` (shared/capture.ts) is the 2% test, and
-   * the skipped photographs are NAMED rather than silently left out: a copy that
-   * quietly did not happen to one card in twenty-seven is worse than one that
-   * did the wrong thing loudly.
+   * SHAPE STILL DECIDES WHO IS ASKED, though, because "match this one" is a
+   * question about the same rectangle seen the same way round: the acceptance
+   * shoot has twenty-six portrait photographs and one landscape, and the odd one
+   * is NAMED rather than silently left out. `sameShape` (shared/capture.ts) is
+   * the 2% test.
    *
-   * A SPLIT ONLY EVER TOUCHES UNSPLIT PHOTOS, which is the doc's own rule: "a
-   * page already split and hand-adjusted is never re-split out from under the
-   * user."
-   *
-   * AND A CROP ONLY COPIES BETWEEN PHOTOS WITH THE SAME NUMBER OF PAGES. Two
-   * quads copied onto an unsplit photograph would have to invent a split to hold
-   * the second one; one quad onto a split photograph would leave its right-hand
-   * page untouched and half-updated. Neither is a thing the person asked for, so
-   * both are skips with a reason.
+   * IT SKIPS NOBODY FOR BEING COMPLETE, deliberately. Complete means the book
+   * has stopped moving this photograph's CROP; the way round a page sits is a
+   * fact the person set by turning it, and a bulk turn that spared complete
+   * photographs would leave exactly the pages somebody had already worked on
+   * lying the wrong way up.
    */
   applyToAll(from: string, gesture: ApplyToAll): ApplyOutcome {
     /*
@@ -1197,19 +1150,6 @@ export class CaptureService {
       const source = recipe.photos.find((photo) => photo.id === from);
       if (source === undefined) return recipe;
       /*
-       * THE SOURCE'S CONFIGURATION, LIFTED INTO A NOUN -- Wave 24, and the whole
-       * of what changed on this path.
-       *
-       * The act is the same act: this photograph's crop and cut become every
-       * other same-shaped photograph's. What is new is that they also become THE
-       * BOOK'S, written into the recipe as a standing rather than evaporating
-       * once the press is over. Everything Wave 24 adds reads that field -- the
-       * cut a fresh photograph is offered, the crop a hand-set page can be
-       * returned to -- and none of it could exist while apply-to-all was a verb
-       * with nothing left behind it.
-       */
-      const standing = gesture.kind === 'stamp' ? standingOf(source) : null;
-      /*
        * THE ORIENTATION EVERY OTHER PHOTOGRAPH IS BEING ASKED TO MATCH, read
        * once from the source's FIRST page. Any page of it would answer the same
        * -- a split photograph's halves both carry the sheet's turn -- and one
@@ -1219,165 +1159,50 @@ export class CaptureService {
       const name = namerFor(recipe);
 
       const photos = recipe.photos.map((photo) => {
-        if (photo.id === source.id) {
-          /*
-           * ONLY THE STAMP CLEARS THE MARK, and the narrowing is a fix rather
-           * than a tidy. This arm used to clear it for EVERY gesture, so
-           * pressing the bulk-turn button silently handed the source's hand-set
-           * crop back to the next global -- a protection lost to a press that
-           * had nothing to do with cropping, and lost invisibly.
-           *
-           * A turn copies no crop, so the source's crop has not become anything
-           * and its mark still means what it meant.
-           */
-          if (gesture.kind !== 'stamp') return photo;
-          /*
-           * THE SOURCE'S CROP HAS JUST BECOME THE GLOBAL, so it is no longer an
-           * outlier and its mark has to go with the rest. `placed`'s field goes
-           * with the provenance, for `wearing`'s reason: this photograph now
-           * holds exactly what the book holds, and a stored answer beside that
-           * could only contradict it.
-           *
-           * Without this, setting the global would permanently exclude the
-           * photograph it was set ON from every later global -- the drag that
-           * placed it marks it (see setQuads), the stamp skips the source, and
-           * the mark would stand forever. The person would have made one page
-           * un-stampable by using it to stamp everything else.
-           *
-           * It needs no idea of which stage it is in, which was the point of
-           * putting it here: whatever the source was before, being the source
-           * is what it is now.
-           */
-          return placed({
-            ...photo,
-            pages: photo.pages.map((page) => ({ ...page, byHand: false })),
-          });
-        }
+        /*
+         * THE SOURCE IS LEFT EXACTLY AS IT IS, and it always was on this arm.
+         * A turn copies no crop, so the source's crop has not become anything
+         * and its mark still means what it meant. (The stamp arm cleared the
+         * mark here, for a reason that died with it: it skipped the source, so
+         * a marked source would have opted out of the standing it authored.
+         * `recordCrop` does not skip anybody, so it clears nothing.)
+         */
+        if (photo.id === source.id) return photo;
         if (!sameShape(source, photo)) {
           skipped.push({ name: name(photo), why: 'shape' });
           return photo;
         }
-        switch (gesture.kind) {
-          case 'turn': {
-            /*
-             * MAKE THIS ONE MATCH THAT ONE -- a question about the book, and
-             * never about how many times somebody pressed a button just now.
-             *
-             * The gesture it replaced applied a RELATIVE number of quarters
-             * counted during the current visit to the editor, which had two
-             * consequences and neither was intended: the control was dead on
-             * arrival at every photograph (the counter resets when the picture
-             * changes), so it could not be used at all without first turning
-             * something; and stepping to the next page and back forgot the
-             * turns you had already made while the page stayed turned.
-             *
-             * Reading the ORIENTATIONS instead answers the same way ten seconds
-             * later or next Tuesday, which is the property `arrangementOf` has
-             * for the same reason: a question about state is stable, a question
-             * about a visit is not.
-             *
-             * A PAGE AT A TIME, because a split photograph's halves each carry
-             * the sheet's own turn -- measured rather than assumed, P1's
-             * twenty-seven checks -- so every page of a spread lands in the same
-             * orientation with no special case for the split.
-             *
-             * It moves no corner. `turnedLike` is a relabelling, so every crop
-             * on every photograph survives this to the last decimal.
-             */
-            if (like === null) return photo;
-            applied += 1;
-            return {
-              ...photo,
-              pages: photo.pages.map((page) => ({ ...page, quad: turnedLike(page.quad, like) })),
-            };
-          }
-          case 'stamp': {
-            /*
-             * THE COMPLETE SKIP, WHICH IS THE ONLY GUARD LEFT ON THIS ARM.
-             *
-             * It read `byHand` until Wave 25 and now reads `isComplete`, which
-             * is the same population plus the pages a person approved without
-             * moving. One test, so the dot on the card and the skip here cannot
-             * promise different things.
-             *
-             * Two older skips retired into it. "Already split" was standing in
-             * for hand-adjusted from before there was a word for it, and
-             * keeping it would have made the first global split permanently
-             * un-re-splittable -- a gutter placed slightly wrong on the first
-             * pass could never be placed again except by hand, twenty-seven
-             * times over. And the page-count refusal existed because a quad
-             * copy alone could not invent a split; this arm copies the split
-             * too, so a one-page photograph can now receive a two-page
-             * configuration and the count follows rather than blocking.
-             */
-            if (isComplete(photo) && !gesture.includeComplete) {
-              skipped.push({ name: name(photo), why: 'complete' });
-              return photo;
-            }
-            /*
-             * IT COPIES THE WHOLE CONFIGURATION, NOT THREE GESTURES IN ORDER.
-             *
-             * The plan-back worried about ordering -- split before rect, or
-             * every unsplit photograph is refused on page-count grounds with a
-             * reasonable-sounding list of refusals. That ordering problem does
-             * not exist once the stamp copies the SOURCE'S PAGES rather than
-             * replaying what was done to them: the split, the crop and the turn
-             * are all already in those quads, because the corner order IS the
-             * orientation and the halves ARE the split.
-             *
-             * BUT THE TURN IS THE ONE THING IT DOES NOT COPY, and this
-             * paragraph used to say the opposite.
-             *
-             * It said that copying a quad copies the turn -- true, because the
-             * corner order IS the orientation -- and drew the conclusion that
-             * stage 1 therefore needed no bulk-turn control. Owen ruled the
-             * other way: "copy the crop, keep the turn". A photograph you
-             * turned upright stays upright when you hand its corners back to
-             * the global, because the way round a page sits is a fact about
-             * THAT photograph and the crop is a fact about the shoot.
-             *
-             * So the crop arrives in the TARGET'S OWN ORIENTATION.
-             * `turnedLike` moves no corner -- it is a relabelling of which
-             * corner prints top-left -- so the region every page gets is the
-             * source's region exactly, to the last decimal, with no arithmetic
-             * in it to be wrong by a pixel.
-             *
-             * AND THE CONCLUSION DIED WITH THE PREMISE. Stage 1 now needs the
-             * bulk turn as much as stage 2 does, because this button no longer
-             * carries one; that control landed in the commit before this one,
-             * deliberately in that order, so that the capability existed on
-             * purpose before this stopped supplying it by accident.
-             *
-             * STRIKES BELONG TO THE PHOTOGRAPH, NOT TO THE CONFIGURATION, so
-             * they stay where they are. A page struck because it was a blurred
-             * retake is still a blurred retake after somebody adjusts the crop.
-             */
-            /*
-             * THROUGH THE STANDING, WHICH IS ALSO A FIX -- see `wearing`.
-             *
-             * This used to turn each of the source's PAGES into the target's
-             * orientation independently, and that is wrong for a spread by
-             * exactly the arithmetic `turned` measures forty lines below: a half
-             * turn swaps which half reads first, so stamping a cut
-             * configuration onto a photograph facing the other way put its two
-             * pages in the book BACKWARDS. Invisible on the table, because both
-             * cards are there and both look correct.
-             *
-             * Routing through the sheet fixes it for free, because the standing
-             * IS a sheet and a cut. In the ordinary case -- a shoot turned
-             * together, so every target already faces the source -- `turnedLike`
-             * is the identity and `halvesOf` returns the source's own halves, so
-             * the region every page gets is unchanged to the last decimal.
-             */
-            const worn = standing === null ? null : wearing(photo, standing);
-            // Unreachable from a standing lifted off a real photograph, and
-            // leaving the target untouched is the only answer that cannot make
-            // a page out of a corner.
-            if (worn === null) return photo;
-            applied += 1;
-            return worn;
-          }
-        }
+        /*
+         * MAKE THIS ONE MATCH THAT ONE -- a question about the book, and never
+         * about how many times somebody pressed a button just now.
+         *
+         * The gesture it replaced applied a RELATIVE number of quarters counted
+         * during the current visit to the editor, which had two consequences and
+         * neither was intended: the control was dead on arrival at every
+         * photograph (the counter resets when the picture changes), so it could
+         * not be used at all without first turning something; and stepping to
+         * the next page and back forgot the turns you had already made while the
+         * page stayed turned.
+         *
+         * Reading the ORIENTATIONS instead answers the same way ten seconds
+         * later or next Tuesday, which is the property `arrangementOf` has for
+         * the same reason: a question about state is stable, a question about a
+         * visit is not.
+         *
+         * A PAGE AT A TIME, because a split photograph's halves each carry the
+         * sheet's own turn -- measured rather than assumed, P1's twenty-seven
+         * checks -- so every page of a spread lands in the same orientation with
+         * no special case for the split.
+         *
+         * It moves no corner. `turnedLike` is a relabelling, so every crop on
+         * every photograph survives this to the last decimal.
+         */
+        if (like === null) return photo;
+        applied += 1;
+        return {
+          ...photo,
+          pages: photo.pages.map((page) => ({ ...page, quad: turnedLike(page.quad, like) })),
+        };
       });
 
       /*
@@ -1389,41 +1214,24 @@ export class CaptureService {
        * twenty-five untouched ones. "didnt work... maybe it takes a while but
        * there was no indicator" is the correct reading of a surface that
        * reports only its own refusals.
-       *
-       * The verb is the gesture's, because "applied to 25" makes somebody work
-       * out what was applied. They pressed a button that said what it would do;
-       * the sentence should say it happened.
-       */
-      this.notices.notice.set(announce(gesture.kind === 'turn' ? 'Turned' : 'Applied to', applied, skipped));
-      /*
-       * ALWAYS REBUILT, because a stamp can now change how many pages a
-       * photograph has IN EITHER DIRECTION -- it copies the source's page list,
-       * so an unsplit photograph gains a page and a split one can lose the one
-       * it had. This used to be rebuilt only for the split gesture, which was
-       * true for exactly as long as splitting was the only way to change the
-       * count.
        */
       /*
-       * THE STANDING IS RECORDED EVEN WHEN EVERY TARGET WAS SKIPPED, and that is
-       * deliberate rather than sloppy.
-       *
-       * A press of *Crop all* on a book whose other photographs are all hand-set
-       * changes no other page -- and it still says something true and useful:
-       * THIS is what the book's pages look like. The next fresh photograph takes
-       * it, and every hand-set page now has somewhere to be returned to. Writing
-       * it only when the stamp reached somebody would make the standing arrive
-       * or not depending on facts about other photographs, which is the class of
-       * invisible decision this field exists to end.
-       *
-       * A turn writes nothing here. It copies no crop, so it has no opinion
-       * about what the book's pages look like.
+       * The verb is the GESTURE'S and not a constant, even now that there is one
+       * gesture: this door is a union with room in it, and a sentence hard-coded
+       * to the only arm that exists today is the shape that goes wrong quietly
+       * on the day a second one lands.
        */
-      return {
-        ...recipe,
-        photos,
-        order: orderFor(photos, recipe.order),
-        ...(standing === null ? {} : { book: standing }),
-      };
+      this.notices.notice.set(
+        announce(gesture.kind === 'turn' ? 'Turned' : 'Applied to', applied, skipped),
+      );
+      /*
+       * THE ORDER IS NOT REBUILT, because a turn cannot change which pages
+       * exist. The stamp arm could -- it copied the source's page list, so an
+       * unsplit photograph gained one and a split one could lose the one it had
+       * -- and `orderFor` stood here for that. `turnPhotos`, which is this same
+       * act reached from the table, has never needed it either.
+       */
+      return { ...recipe, photos };
     });
     return { applied, skipped: skipped.length };
   }
@@ -1808,20 +1616,27 @@ export interface ApplyOutcome {
 }
 
 /**
- * WHAT *CROP ALL* WOULD COST, in the three populations the consequence line
- * under it has to name. See `CaptureService.stampCost`.
+ * WHAT AN APPLY WOULD COST, in the three populations the consequence line under
+ * it has to name. See `CaptureService.applyCost`, which is its only reader.
  *
  * The three are exhaustive and disjoint by construction -- every photograph in
  * the project is in exactly one of them -- which is what lets the sentence be
  * read as an account of the whole book rather than as three unrelated numbers.
+ *
+ * IT KEEPS THE NAME `StampCost` and the name is now a fossil: the stamp it was
+ * written for is gone (W25-P3) and the table's Apply inherited the shape. The
+ * rename is a service-side edit and nothing depends on the word, so it is said
+ * here rather than done in passing by the package that deleted the press.
  */
 export interface StampCost {
   /**
    * Photographs that will hold this crop afterwards.
    *
-   * THIS ONE INCLUDED when the count is `stampCost`'s, because the press
-   * describes the state it leaves the book in and the source is one of the
-   * twenty-five. `applyCost` has no source to include -- see there.
+   * EVERY PHOTOGRAPH IS A CANDIDATE, because the Apply lands the BOOK'S crop
+   * and belongs to no photograph -- including the one the standing was lifted
+   * from, which takes it again exactly and harmlessly unless it has since been
+   * completed. (A `stampCost` counted this from a SOURCE and had to include it
+   * by hand; that count went with the press.)
    */
   takes: number;
   /**
@@ -1861,33 +1676,33 @@ export interface PrepareCounts {
   pagesFromSplits: number;
 }
 
+/**
+ * WHAT A GLOBAL PRESS IN THE MODAL ASKS FOR — and there is one of them.
+ *
+ * ── The stamp arm was deleted here by W25-P3, with its override flag ─────────
+ *
+ * `{ kind: 'stamp'; includeComplete?: boolean }` stood beside this one. It
+ * carried a whole photograph's configuration onto every other photograph of the
+ * same shape, and the flag was the answer to a dialog asking whether to
+ * overwrite the pages somebody had set by hand. Both are gone in one piece,
+ * because Wave 25 removed the QUESTION rather than the sentence: the modal
+ * records the book's crop and propagates nothing, the table's Apply propagates
+ * and skips every complete photograph, and RELEASE is the deliberate press that
+ * puts one back in the flow.
+ *
+ * A ONE-ARM UNION IS STILL A UNION, and it stays spelled as one. Collapsing it
+ * to a bare string would make the day a second global arrives an edit to every
+ * caller's emit rather than an added arm here.
+ */
 export type ApplyToAll =
   /**
    * Quarter turns, so every photo gets the TURN rather than this photo's
-   * corners. Kept for STAGE 2 ONLY (ruled, channel seq 129): it is the one act
-   * that changes every page without overwriting hand-set crops, because a turn
-   * permutes each page's own corners rather than replacing them.
+   * corners. It is the one act that changes every page without overwriting
+   * hand-set crops, because a turn permutes each page's own corners rather than
+   * replacing them -- and the one that reaches photographs of other shapes,
+   * which is why it never folded into the crop.
    */
-  | { kind: 'turn' }
-  /**
-   * THE WHOLE CONFIGURATION OF ONE PHOTOGRAPH, COPIED ONTO THE REST.
-   *
-   * This one arm is what used to be `quad` and `split` and, on a virgin
-   * project, `rotate` as well -- three gestures replaying three separate
-   * decisions onto every photograph, each with its own skip rule, each free to
-   * disagree with the others about which photographs it had touched.
-   *
-   * `includeComplete` is the explicit override behind the skip. Off, a stamp
-   * leaves complete pages alone and names them; on, it takes them too.
-   *
-   * SUPERSEDED BY WAVE 25 AND KEPT UNTIL P3 LANDS. Release is the explicit door
-   * now -- a deliberate press on the ONE photograph a person wants back in the
-   * flow, rather than a question at stamp time about a population they have to
-   * hold in their head. The modal still asks it, so the flag survives until the
-   * modal does not; W25-P3 deletes the question, this flag and `completeNames`
-   * in one go.
-   */
-  | { kind: 'stamp'; includeComplete?: boolean };
+  | { kind: 'turn' };
 
 /*
  * A local `WHOLE` CONSTANT AND ITS DOCBLOCK STOOD HERE, orphaned: the function

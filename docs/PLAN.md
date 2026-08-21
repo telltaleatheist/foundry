@@ -1794,6 +1794,19 @@ walk. Gates re-run by the lead: 418/0, three clean typechecks,
 `ng build` 721.54 kB (WARNING only). Record in CAPTURE.md § Wave 25
 ("What W25-P2 settled"). P3 (modal) runs next.
 
+**~~P3~~ — LANDED (this commit), and the WAVE IS BUILT.** Pass-aware
+modal (line-only on the rectified page in the split pass, with the
+photograph↔page coordinate crossing done through the shader's own
+closed form); record-not-stamp; the say-so in both passes; "Follow the
+book again" discovered to BE the release (`wearing` already clears the
+mark); the ghost shipped; the stamp-on-press path, override dialog,
+`stampCost` and `completeNames` deleted with gravestones. Gates re-run
+by the lead: 418/0, three clean typechecks, `ng build` 728.87 kB
+(WARNING only). Record in CAPTURE.md § Wave 25 ("What W25-P3
+settled"). **OPEN: the hand-test** — nothing in P3 was exercised in
+the running app; the split-pass gutter drag and the ghost first, then
+the whole loop with a release and a reopen on the way.
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the

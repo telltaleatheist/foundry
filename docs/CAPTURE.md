@@ -3064,6 +3064,58 @@ partial beats a bent whole.
 - Gates at landing: 418/0, three clean typechecks, `ng build`
   721.54 kB (WARNING only; was 707.15 at P1), control bytes clean.
 
+### What W25-P3 settled (BUILT; gates green, NOT yet walked in the running app)
+
+- **The split-pass stage draws the rectified page** through the
+  editor's own `Rectifier` (no second GL context), and the one
+  genuinely hard part is coordinate honesty: the recipe stores the
+  gutter in PHOTOGRAPH fractions and the stage draws the PAGE, and a
+  homography does not preserve ratios along a line (~1% of edge at
+  ordinary keystone — a line seated by `at` would draw beside the real
+  gutter). `pageMapFor()` builds the shader's own closed form plus its
+  adjugate inverse; the hit test runs in the drawn space and the
+  recipe write crosses back exactly once, so `seatSplit`/`slideSplit`/
+  `setSplit` run unchanged. The duplication of `rectify.ts`'s private
+  homography is named in a docblock; lift to geometry.ts at a third
+  caller.
+- **Record-not-stamp**: "Make this the book's crop" / "Make this line
+  the book's cut" → `recordCrop`/`recordCut`; the line reads "Becomes
+  the book's crop and cut. Applied from the table." In the split pass
+  the record button is ABSENT on an uncut photograph — `recordCut`
+  there would CLEAR the book's cut under a label that says make one.
+- **The say-so is in BOTH passes** — it is the only way to complete a
+  page without moving anything, and the crop pass is where most pages
+  are looked at and left alone. Acknowledgement is the step itself;
+  the last photograph lights the button instead.
+- **"Follow the book again" IS the release** — `wearing` already
+  deletes `complete` and clears every `byHand` (a page that has just
+  taken the standing is a follower by construction), so the compound
+  act P3 first composed was removed. One door.
+- **The ghost shipped** (crop pass only): the book's crop dashed under
+  a complete page's own, absent when it would sit exactly under the
+  solid outline — which is most of the book.
+- **Filmstrip thumbs are RAW in both passes, deferred out loud** — the
+  modal owns no Rectifier (the editor below and the table behind each
+  own one), and 44px thumbs do not earn a third context. Marks and
+  position are honest on a raw thumb.
+- **Deleted with the press they served**: `stampCost`,
+  `completeNames`, `ApplyToAll`'s stamp arm (`includeComplete` with
+  it), the view's override-dialog block and its `cost()` computed.
+  The turn arm survives whole. Gravestone comments at each site.
+- **Not built, named**: the mockup's split-pass readouts ("49.8% from
+  the left", "22 follow it") — the populations sentence lives on the
+  rail's Apply, where the act is, and a second sentence about one
+  press is the drift shape; "Back to cropping" in the modal — Reopen
+  is the rail's.
+- Gates at landing (builder AND lead): 418/0, three clean typechecks,
+  `ng build` 728.87 kB (WARNING only; was 721.54 at P2), control
+  bytes clean.
+- **THE WAVE'S OPEN ITEM IS THE HAND-TEST.** Nothing in P3 was
+  exercised in the running app; the split-pass gutter drag and the
+  ghost are the two things to walk first, then the whole loop: crop a
+  page → record → Apply → split → say-so walk → Apply → Finish, with
+  a release and a reopen on the way.
+
 ### Superseded by this wave, named so nothing dangles
 
 - Wave 24's modal *Crop all* stamp-on-press → the record + table Apply.
