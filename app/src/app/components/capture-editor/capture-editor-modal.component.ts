@@ -606,7 +606,18 @@ export class CaptureEditorModalComponent {
    * it.
    */
   protected readonly cutSays = computed<string>(() => {
-    if (this.twoPages()) return 'Drag either end, or grab the line anywhere to slide it.';
+    /*
+     * THE TICKED SENTENCE NAMES THE OUTCOME BEFORE THE GESTURE.
+     *
+     * It used to open with "Drag either end", which is a hint about a handle and
+     * says nothing about what ticking DID. Owen, on meeting it: *"what does it do
+     * when we split pages?"* -- a fair question of a control whose whole effect
+     * is a number that changed somewhere else on the screen. The readout above
+     * does say "pages 8-9 of 49", and it is the only thing that did.
+     */
+    if (this.twoPages()) {
+      return 'This is two pages of the book. Drag either end, or grab the line anywhere to slide it.';
+    }
     return this.bookCut() === null
       ? 'Cuts down the middle. Drag the line onto the gutter afterwards.'
       : 'Cuts where the rest of the book is cut.';
