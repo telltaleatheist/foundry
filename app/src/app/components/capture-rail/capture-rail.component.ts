@@ -111,11 +111,11 @@ interface Task {
           being edited, and this one line carries the difference.
         -->
         @if (diverged()) {
-          <p class="moved">The book on the shelf was minted from an earlier arrangement.</p>
+          <p class="moved">The book on the shelf was made from an earlier arrangement.</p>
         }
 
         @if (progress(); as running) {
-          <p class="why">Minting page {{ running.done }} of {{ running.total }}…</p>
+          <p class="why">Making page {{ running.done }} of {{ running.total }}…</p>
           <button class="stop" type="button" (click)="stop.emit()">Stop</button>
         } @else {
           <!--
@@ -127,7 +127,7 @@ interface Task {
             @if (ready()) {
               {{ pages() }}
             } @else {
-              Mint unlocks when every step is ticked.
+              Finishing unlocks when every step is ticked.
             }
           </p>
           <button
@@ -137,7 +137,7 @@ interface Task {
             [disabled]="!ready() || mintable() === 0"
             [title]="mintTitle()"
             (click)="mint.emit()"
-          >{{ minted() ? 'Mint again' : 'Mint the pages' }}</button>
+          >{{ minted() ? 'Finish again' : 'Finish the pages' }}</button>
         }
       </footer>
     </aside>
@@ -317,12 +317,32 @@ export class CaptureRailComponent {
     return pages === 1 ? '1 page' : `${pages} pages`;
   });
 
+  /**
+   * WHAT THE LAST ACT PROMISES, IN THE PERSON'S OWN WORDS.
+   *
+   * Owen described the act he was looking for as "a finalize button that does
+   * all the final splits/crops" -- and it was already here, called Mint,
+   * offering to "Make the PDF from these pages". Two things were wrong with
+   * that and neither was the button.
+   *
+   * MINT IS THE SYSTEM'S WORD. It is a good word inside the code, where a mint
+   * is a specific event with a fingerprint and a step, and it is the wrong word
+   * on a control: nobody arrives at a light table looking for a mint. The
+   * vocabulary of an interface is signposting, so it uses the vocabulary of the
+   * person reading it.
+   *
+   * AND "MAKE THE PDF" NAMED THE CONTAINER RATHER THAN THE WORK. Under Owen's
+   * pages-not-PDF ruling (docs/CAPTURE.md) the product of this act is the
+   * PAGES; a PDF is something somebody exports afterwards, on purpose. A button
+   * that promised a PDF was promising the one part of this that was about to
+   * stop being true.
+   */
   protected readonly mintTitle = computed<string>(() => {
-    if (this.mintable() === 0) return 'There are no pages to mint yet';
+    if (this.mintable() === 0) return 'There are no pages to make yet';
     if (!this.ready()) return 'Tick all three steps first';
     return this.minted()
-      ? 'Mint these pages again, as a new book beside the last one'
-      : 'Make the PDF from these pages';
+      ? 'Make these pages again, as a new book beside the last one'
+      : 'Cut, crop and turn every page as you have marked them';
   });
 }
 
