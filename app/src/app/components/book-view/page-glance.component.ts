@@ -224,6 +224,16 @@ export class PageGlanceComponent {
    */
   readonly original = input.required<string | null>();
 
+  /**
+   * The photographed pages, for a book that was captured rather than scanned.
+   *
+   * READ ONLY TO SAY A TRUE SENTENCE, for now. This card cannot draw a page
+   * image yet — everything below it opens a PDF — so all this changes is WHICH
+   * silence the reader is told about: a captured book has paper, it is just
+   * paper this card has not learned to show. See `BookLoad.originalPages`.
+   */
+  readonly originalPages = input.required<string | null>();
+
   /** The block to show, or null for a pointer resting on nothing. */
   readonly row = input.required<BookRow | null>();
 
@@ -262,6 +272,18 @@ export class PageGlanceComponent {
   protected readonly sentence = computed<string | null>(() => {
     const at = this.row();
     if (at === null) return null;
+    /*
+     * THE CAPTURED BOOK IS ASKED ABOUT FIRST, because the sentence below is
+     * false about it. Its paper exists and was photographed page by page; what
+     * is missing is this card's ability to draw one, and saying "it arrived as
+     * a book rather than as a scan" over a project holding two dozen
+     * photographs would be the app telling a reader something it can see is
+     * untrue.
+     */
+    if (this.original() === null && this.originalPages() !== null && at.page > 0) {
+      return 'This book was read off photographed pages rather than a scan, and this card '
+        + 'cannot show one yet — the photographs are in the project, under its archive.';
+    }
     if (this.original() === null || at.page <= 0) {
       return 'This book has no paper behind it — it arrived as a book rather than as a scan, '
         + 'so there is no photograph of this block to show.';

@@ -425,6 +425,26 @@ export interface BookLoad {
    */
   originalPath: string | null;
   /**
+   * THE PHOTOGRAPHED PAGES THIS BOOK WAS READ OFF, when that is what it was.
+   *
+   * A SECOND FIELD AND NOT A WIDENING OF `originalPath`, mirroring the choice
+   * `bookAtPosition` already made between `pdf` and `pages` and for the same
+   * reason: the two are not interchangeable to whoever is about to open one.
+   * `originalPath` answers *"what document can be rasterised"*; this answers
+   * *"where are the page images"*, and a directory handed to something expecting
+   * a PDF is a failure at the far end of the app from the decision that caused
+   * it.
+   *
+   * IT EXISTS BECAUSE THE ALTERNATIVE WAS A LIE. A captured project's archive is
+   * a DIRECTORY of photographed pages, so `at.pdf` is null for it and the glance
+   * card's sentence for a null scan — *"it arrived as a book rather than as a
+   * scan"* — would be said over a book that has 25 photographs of paper. The
+   * card still cannot draw one; what this buys is that it stops claiming they do
+   * not exist. Rendering them is the open work (docs/PLAN.md), and this is the
+   * field it will read when somebody does it.
+   */
+  originalPages: string | null;
+  /**
    * The translation this position stands under, or null for a book in its own
    * language — and with it, the source the aligned view draws in its left column.
    */

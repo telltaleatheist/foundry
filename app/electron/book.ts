@@ -921,6 +921,15 @@ async function bookFrom(projectDir: string, from: LedgerStep | null): Promise<Bo
    * the one the reader meets at the moment they ask for the page.
    */
   if (at.pdf !== null) admit(at.pdf);
+  /*
+   * AND THE PAGES, ADMITTED FOR THE SAME REASON. A captured project's archive is
+   * a directory of photographs rather than a PDF, so `at.pdf` is null and
+   * `at.pages` is where the paper is. Nothing opens one yet; it is admitted here
+   * anyway, beside the resolution that produced it, because the alternative is a
+   * second place that has to remember why — which is how the PDF's own admit
+   * came to be missing in the first place.
+   */
+  if (at.pages !== null) admit(at.pages);
   return {
     ok: true,
     // THE TITLE IS THE PROJECT'S. A book file is a list of blocks and has no idea
@@ -935,6 +944,7 @@ async function bookFrom(projectDir: string, from: LedgerStep | null): Promise<Bo
     loose: parsed.header.loose,
     figures,
     originalPath: at.pdf,
+    originalPages: at.pages,
     ops,
     tip,
     /*
@@ -1398,6 +1408,9 @@ export async function viewExportedBook(target: string): Promise<BookOutcome> {
      * as one of its two ordinary meanings.
      */
     originalPath: null,
+    // Null for the same reason and by the same construction: an EPUB has no
+    // paper of either kind behind it.
+    originalPages: null,
     ops: [],
     tip: null,
     translation: null,
