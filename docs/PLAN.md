@@ -1684,6 +1684,48 @@ photographed. So the whole of the new door is one field,
   were certainly hits. The finding went into the docblock and the code
   stayed simple.
 
+### Wave 24 — the book's crop, and the page that has its own (Owen, 2026-08-21) — DESIGNED, NOT BUILT
+
+*"the two buttons at the bottom are confusing as hell… the whole paradigm of
+how we're doing it now versus global+individual"*
+
+**Written up in full at docs/CAPTURE.md § Wave 24.** Contract before code, per
+that doc's own rule. Nothing is built.
+
+- **The diagnosis is one sentence: there is no NOUN for the book's crop.**
+  `byHand` is not a property of a page, it is a property of what a future
+  button press will do to that page — which is why its control can only be
+  named after a policy (*"Let apply-to-all change it again"*) instead of an
+  outcome. Apply-to-all is a verb with no noun: it copies from whichever
+  photograph you are standing on and is then gone.
+- **THE SEMANTICS ARE NOT CHANGING, and that is the useful finding.** Owen:
+  *"if i change crop positions for a page, it should be assumed correct and
+  should not be overwritten"* — which is already exactly what the code does.
+  The rule was never wrong; it was invisible, and its escape hatch was named
+  after a policy. This wave is naming and visibility.
+- **The same missing noun is the split line "not persisting" between pages.**
+  The proposal resets to dead centre on every step, deliberately, because with
+  no book's cut the only fallbacks are "this photograph's" or "the middle". One
+  cause, two complaints.
+- **A global mode and an individual mode were proposed by Owen and argued
+  down**, recorded in CAPTURE.md so they are not re-proposed: a mode makes
+  dragging mean different things depending on state you cannot see, and the
+  thing it would buy — watching a change land everywhere — is not visible,
+  because the editor shows one photograph at a time.
+- **Split becomes a checkbox rather than a mode**, which also ends the primary
+  button's shape-shifting between "Cut this one into two pages" and the global
+  stamp.
+- **One control rule carries most of the design**, and it is this stage's own
+  precedent: *a control that would change nothing is not shown*. A photograph
+  that matches the rest carries no buttons at all.
+- **Found while designing, not built:** the gutter can already be grabbed
+  ANYWHERE along its length and slid — `slideSplit` is wired — but there is no
+  cursor rule anywhere in that editor, so the line reads as decoration. An
+  affordance, not a feature.
+- **One question is open and it is Owen's:** *Crop all* carries the cut too, so
+  a button labelled Crop can cut twenty-three photographs in two. Consequence
+  line, or a second *Cut all* button.
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the

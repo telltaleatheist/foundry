@@ -2462,3 +2462,196 @@ IS A SETTING THAT WILL BE BELIEVED.**
 The all-pages version is then the bulk act it already resembles: clear the
 crop, or clear the cut, across every photograph of this shape, through the same
 apply-to-all that sets them.
+---
+
+## Wave 24 — the book's crop, and the page that has its own (Owen, 2026-08-21)
+
+*"the two buttons at the bottom are confusing as hell. let apply to all change
+it again, and cut this one into two pages. too verbose at best, confusing at
+worst… the whole paradigm of how we're doing it now versus global+individual"*
+
+### The diagnosis: there is no NOUN for the book's crop
+
+`byHand` is not a property of a page. It is a property of **what a future button
+press will do to that page** — which is why its control cannot be named after an
+outcome and has to be named after a policy: *"Let apply-to-all change it
+again"*. Nobody holds policies in their head. They hold objects.
+
+Everything awkward in this surface descends from that one absence:
+
+- **Apply-to-all is a verb with no noun.** It copies from whichever photograph
+  you happen to be standing on and is then gone. There is no *the book's crop*
+  to look at, return to, or re-place.
+- **The mark is set as a side effect of dragging**, so a person is opted out of
+  something they were never shown.
+- **It is invisible outside the modal.** The rail says "2 by hand"; nothing says
+  WHICH two.
+- **The split proposal resets to the middle on every step**, which Owen reported
+  as the line not persisting. It is deliberate, and the docblock's reasoning is
+  sound *given the model*: with no book's cut, the only fallbacks are "this
+  photograph's" or "dead centre". For twenty-five frames of one book on one
+  stand, dead centre is the wrong guess every time.
+- There is already a patch proving the strain: the global must CLEAR the mark,
+  or apply-to-all would work exactly once per project.
+
+**The two levels already exist and the app never says so.** The prepare rail is
+the book (Turn / Crop / Split are all global); the modal is the page. Both
+levels compete for the same buttons, and the buttons shape-shift to cope.
+
+### What is NOT changing, which is the useful finding
+
+Owen: *"if i change crop positions for a page, it should be assumed correct and
+should not be overwritten."*
+
+**That is already the behaviour.** A hand-placed crop is marked and apply-to-all
+spares it. The rule was never wrong. This wave changes the NAMING and the
+VISIBILITY and leaves the semantics alone.
+
+### The model
+
+A photograph is in one of two states, and the state is visible:
+
+- **Following the book** — it takes the book's crop, and its cut if the book has
+  one. The default for every photograph as it arrives.
+- **Its own** — somebody placed a crop or a cut on it directly. It is never
+  overwritten by a global act again unless it is explicitly put back.
+
+Dragging a corner or a gutter on a page moves it to *its own*. That stays a side
+effect, and deliberately: it means the destructive act — changing every page —
+is only ever an explicit press, never a gesture. **A person fixing one bad frame
+must not be able to move the other twenty-four by accident.**
+
+### Rejected: a global mode and an individual mode
+
+Considered at Owen's suggestion and argued down, recorded here so it is not
+re-proposed:
+
+1. A mode makes **dragging mean different things depending on state you cannot
+   see**. Forget which mode you are in and the same gesture either fixes one
+   page or moves twenty-five.
+2. The thing a global mode would buy — watching a change land everywhere — **is
+   not visible**, because the editor shows one photograph at a time. It would be
+   a mode whose effects cannot be observed.
+3. We are removing a mode from the split in this same wave, for the same reason.
+
+What was right in the instinct is that a person wants to know where they stand.
+That is an INDICATOR, not a mode. The button is already the deliberate moment:
+pressing it *is* entering global mode, for exactly one act, with the
+consequences written on it.
+
+### The schema — one new field, and no migration
+
+    CaptureRecipe {
+      version: 1
+      photos: CapturePhoto[]
+      order: string[]
+      prepared?: CapturePrepared
+      book?: CaptureStanding          // NEW
+    }
+
+    CaptureStanding {
+      crop?: { quad: CaptureQuad; width: number; height: number }
+      cut?: CaptureSplit
+    }
+
+The crop carries **the shape it was set on**, because a crop is fractions of a
+frame and only means the same thing on a frame of the same proportions —
+`sameShape` already guards this, and the existing stamp already reports a
+photograph skipped `why: 'shape'`.
+
+`CapturePage.byHand` stays exactly as it is. It is an honest field name and it
+is internal; what changes is that the phrase never reaches a person.
+
+**NO MIGRATION, and that is a decision rather than laziness.** An absent `book`
+means "no standing crop yet", and the first *Crop all* sets it. Deriving one
+from an existing recipe would mean guessing which of twenty-five crops is the
+book's — an invisible decision, which is the exact class of thing this wave
+exists to remove.
+
+### The controls, exactly
+
+The rule that does most of the work, and it is this stage's own precedent (from
+the split button: *"not a disabled button but an ABSENT one"*):
+
+> **A control that would change nothing is not shown.**
+
+So a photograph that matches the rest carries **no buttons at all**. Just the
+picture and its handles.
+
+    ┌─ photograph ─────────────┐   ┌─ this page ───────────────┐
+    │                          │   │  ↺  ↻                     │
+    │   picture + handles      │   │  ☑  Two pages             │
+    │                          │   │  ─────────────────────    │
+    │                          │   │  [ Crop all ]             │
+    │                          │   │  23 pages take this crop. │
+    │                          │   │  2 you set by hand keep   │
+    │                          │   │  theirs.                  │
+    └──────────────────────────┘   └───────────────────────────┘
+
+| control | when it is there | what it does |
+| --- | --- | --- |
+| **Crop all** | always | this page's crop (and cut) become the book's, and every FOLLOWING photograph of this shape takes them |
+| **Match the others** | only on a page that has its own | gives the page back to the book's crop |
+| **Turn all** | only when something is out of step | unchanged act, shortened label, absent rather than greyed |
+| **Two pages** ☑ | always | ticked cuts this photograph, unticked rejoins it |
+
+The consequence line under *Crop all* is not decoration. It is the whole of how
+a person knows what a global act will cost before pressing it, and it must name
+all three populations: what will change, what is spared for being hand-set, and
+what is spared for being a different shape.
+
+### Split becomes a CHECKBOX, not a mode
+
+A split is not a tool you are holding. It is a fact about the photograph: this
+is a spread, or it is not. As a mode you can stand in "split mode" on an uncut
+photograph — which is precisely the state that produced *"i set it, i hit ok,
+and nothing happened"* — and it forces the primary button to change identity
+between "Cut this one into two pages" and the global stamp. A control that
+quietly does two jobs is the defect; the tick is the fix, and the cut is what
+ticking it MEANS.
+
+Unticking rejoins, which already exists.
+
+### The cut carries forward
+
+An uncut photograph proposes **the book's cut**, and falls back to the middle
+only when the book has none yet. This answers the existing docblock's worry
+directly: the offered line is not one somebody placed on a different picture, it
+is the book's, and the surface says so.
+
+### The gutter can already be grabbed anywhere — it just does not look it
+
+`slideSplit` is built and wired: the whole cut slides from a grab **anywhere
+along its length**, not merely at a centre handle. What is missing is any sign
+of it — there is **no cursor rule anywhere in that editor**, no hover state, and
+only the two end dots are styled as handles, so the line reads as decoration.
+This is an affordance, not a feature: a grab cursor and a hover thickening.
+
+### The light-table mark stops being optional
+
+"Never overwritten" means a page can sit out every future global for the life of
+the project. Without a mark on the card, a person eventually presses *Crop all*,
+counts the ones that did not move, and has no way to find them. So: a small mark
+on a card that has its own crop, and the rail's count made clickable to select
+exactly those.
+
+### Deferred out loud
+
+- **No separate editor for the book's crop.** Considered and dropped: you cannot
+  judge a crop against a page you cannot see, so a "representative photograph"
+  would send a person straight to the awkward frame — where dragging detaches
+  it. The book's crop is STORED but only ever SET through a page.
+- **Crop and cut detach together.** A page could in principle follow the book's
+  cut while holding its own crop. Simpler is together, and nothing has yet
+  needed otherwise.
+- **Turn stays its own act.** A turn applies across photographs of DIFFERENT
+  shapes and a crop does not, so folding them into one button would make "all"
+  mean two different sets in one sentence.
+
+### One question still open
+
+*Crop all* carries the crop, the cut, and whether the photograph is a spread —
+which is what today's stamp already does. That makes a button labelled **Crop**
+able to cut twenty-three photographs in two. The consequence line says so before
+it is pressed, which may be enough; the alternative is a second button, *Cut
+all*, appearing only when this photograph is ticked. **Owen's call.**
