@@ -2725,6 +2725,51 @@ has to survive the next global, or the cut comes straight back.
 | the offer | "Cuts down the middle" with no standing; "Cuts where the rest of the book is cut" with one |
 | the cut taken | byte-identical to `book.cut`, and `byHand` left `[false, false]` |
 
+### Two found in use, after the wave landed
+
+**A checkbox is not a text field.** `styles.scss` gave every `input`
+`width: 100%` and a 10px inset — right for a thing you type into, wrong for a
+thing you tick. The box stretched the full 235px of the column and "Two pages"
+wrapped with the words nowhere near it. Fixed at the source, not at the tick:
+of the four checkboxes and radios in the app, host-op-dialog undid the width
+with `width:16px;height:16px;padding:0`, wsl-backend with `width:auto`, and the
+confirm dialog and simplify dialog never undid it at all. Four call sites, three
+hand-rolled compensations, one that forgot. Measured after: 13x13 box, 8px gap,
+one line.
+
+**Three handles were stacked on every gutter knob, and it cost three grabs.**
+`halvesOf` hands each half the cut's endpoints AS CORNERS — on a side-by-side
+cut the top point is half A's corner 1 and half B's corner 0 — so a cut
+photograph drew eight corner handles, four of them underneath the two knobs, and
+the hit test asked corners first.
+
+Owen: *"when i grab the splitter knobs, it grabs a crop node rather than the
+yellow splitter node. then i grab it again and its a second crop node. finally,
+the third and yellow grab is the actual splitter, and the other two i grabbed
+snap to the yellow."* The last clause is the whole mechanism: the first two
+grabs moved real corners of real halves, and the moment the gutter finally
+moved, `setSplit` rebuilt both halves from `halvesOf` and put them back. Two
+gestures that did something and then undid it.
+
+A corner that IS the cut is not a corner — there is nothing an independent drag
+of one could mean, because the halves must stay joined along the cut. So it is
+neither drawn nor grabbed. The ends are tested before the corners, and the
+merge is GEOMETRIC rather than structural on purpose: the corner indices are
+knowable, and encoding them would be a third place that knows `halvesOf`'s
+layout, after `halvesOf` and `joinedQuad`.
+
+Measured, pressing through CDP's Input domain so the pointer is real — a
+synthetic `PointerEvent` cannot answer this at all, because `grab()` ends in
+`setPointerCapture`, which throws for a pointerId with no live pointer and
+aborts the gesture half-made:
+
+| | before | after |
+| --- | --- | --- |
+| corner handles on a cut photograph | 8 | 4 |
+| what the first press on a knob takes | crop corner | the knob, 3 times of 3 |
+| the line, away from a knob | slides | slides |
+| a real crop corner | holds | holds |
+
 ### Still open, said out loud
 
 **The rail's "N by hand" count is not clickable.** The design asked for it to

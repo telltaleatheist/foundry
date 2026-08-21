@@ -576,16 +576,60 @@ export class CapturePageEditorComponent {
   private readonly frameBox = signal<{ width: number; height: number }>({ width: 0, height: 0 });
 
   /** Every corner of every quad, flattened for the template. */
-  protected readonly handles = computed(() =>
-    this.quads().flatMap((quad, quadIndex) =>
-      ([0, 1, 2, 3] as const).map((corner) => ({
-        key: `${quadIndex}:${corner}`,
-        quad: quadIndex,
-        corner,
-        at: quad[corner],
-      })),
-    ),
-  );
+  /**
+   * THE CORNER HANDLES — AND NOT THE ONES THAT ARE REALLY THE GUTTER.
+   *
+   * ── Three handles were stacked on every knob, and it cost three grabs ──────
+   *
+   * `halvesOf` gives the two halves the cut's endpoints AS CORNERS: on a
+   * side-by-side cut the top point is half A's corner 1 and half B's corner 0,
+   * and the bottom point is half A's corner 2 and half B's corner 3. So a cut
+   * photograph drew EIGHT corner handles, four of them underneath the two gutter
+   * knobs, and `under()` tested corners first.
+   *
+   * Owen: *"when i grab the splitter knobs, it grabs a crop node rather than the
+   * yellow splitter node. then i grab it again and its a second crop node.
+   * finally, the third and yellow grab is the actual splitter, and the other two
+   * i grabbed snap to the yellow."* That last clause is the whole mechanism: the
+   * first two grabs moved real corners of real halves, and the moment the gutter
+   * finally moved, `setSplit` rebuilt both halves from `halvesOf` and put them
+   * back. Two gestures that did something, and then undid it.
+   *
+   * ── A corner that is the cut is not a corner, it is the cut ────────────────
+   *
+   * There is nothing an independent drag of one could mean. The halves must stay
+   * joined along the cut -- that is what makes them two pages of one sheet -- so
+   * any state where they are not is one the next gutter drag erases. So the
+   * handle is not drawn and (see `under`) not grabbed either.
+   *
+   * GEOMETRIC RATHER THAN STRUCTURAL, deliberately. The corner indices above are
+   * exact and knowable, and encoding them here would be a THIRD place that knows
+   * `halvesOf`'s corner layout -- after `halvesOf` and `joinedQuad` -- which is
+   * the drift this file's neighbours keep paying for. Asking "is this corner
+   * where the gutter is" needs no such knowledge and stays right if the layout
+   * ever changes.
+   *
+   * The tolerance is loose on purpose. A crop corner dragged after the cut moves
+   * the sheet and re-seats the gutter, so the stored half-corners can go stale
+   * against it -- and while they are more than a handle apart, both draw, which
+   * is true. The next gutter drag rebuilds them and they merge again.
+   */
+  protected readonly handles = computed(() => {
+    const line = this.cut();
+    const ends = line === null ? [] : [line.a.point, line.b.point];
+    const isTheCut = (at: FractionPoint): boolean =>
+      ends.some((end) => Math.hypot(at[0] - end[0], at[1] - end[1]) <= HANDLES_MERGE);
+    return this.quads().flatMap((quad, quadIndex) =>
+      ([0, 1, 2, 3] as const)
+        .filter((corner) => !isTheCut(quad[corner]))
+        .map((corner) => ({
+          key: `${quadIndex}:${corner}`,
+          quad: quadIndex,
+          corner,
+          at: quad[corner],
+        })),
+    );
+  });
 
   /**
    * THE ONE PAGE THE GUTTER CUTS, whether or not it has been cut yet.
@@ -726,13 +770,29 @@ export class CapturePageEditorComponent {
    * the gesture went unused. This is an affordance rather than a feature: the
    * capability was already there and had nothing pointing at it.
    *
-   * ── THE ORDER IS THE GRAB'S ORDER, and it is load-bearing ────────────────
+   * ── THE ORDER IS LOAD-BEARING, AND IT USED TO BE WRONG ───────────────────
    *
-   * Corners, then the cut's ends, then the line between them. An end is ALWAYS
-   * on the line and the reverse is not true, so testing the line first would
-   * make the ends ungrabbable — the same class of defect as the overhanging
-   * corners. Sharing one body is what keeps the cursor honest: it cannot promise
-   * a grab the press would resolve differently, because it is the same walk.
+   * The cut's ENDS, then corners, then the line between the ends.
+   *
+   * Ends before the line, because an end is ALWAYS on the line and the reverse
+   * is not true — testing the line first would make the ends ungrabbable, the
+   * same class of defect as the corner handles that hung over the listening
+   * element.
+   *
+   * ENDS BEFORE CORNERS, which is the fix, and it reads backwards until you know
+   * that ON A CUT PHOTOGRAPH THE ENDS *ARE* CORNERS. `halvesOf` hands each half
+   * the cut's endpoints as two of its four corners, so three targets sat on
+   * every knob and the corner loop answered twice before the gutter ever got
+   * asked. Owen met it as three grabs to move one line, the first two of them
+   * silently dragging halves apart. See `handles` for the full account.
+   *
+   * Nothing else is shadowed by the reorder: the only corners inside a cut end's
+   * radius are the ones that are that cut end. The sheet's own four corners are
+   * a page away from it, and `SLIVER_FLOOR` keeps them there.
+   *
+   * Sharing one body with the cursor is what keeps the affordance honest: it
+   * cannot promise a grab the press would resolve differently, because it is the
+   * same walk.
    */
   private under(at: FractionPoint): Under | null {
     // THE SPUN ELEMENT, NOT THE SLOT: the radius is in the photograph's own
@@ -744,12 +804,6 @@ export class CapturePageEditorComponent {
     // The hit radius is in PIXELS on screen and converted, so the handle is the
     // same size to the hand whatever the picture has been scaled to.
     const radius = width === 0 ? 0 : 14 / width;
-
-    const quads = this.quads();
-    for (let index = 0; index < quads.length; index += 1) {
-      const corner = cornerNear(toPixels(quads[index]!, UNIT), [at[0], at[1]], radius);
-      if (corner !== null) return { what: 'corner', quad: index, corner };
-    }
 
     /*
      * THE LINE THAT IS DRAWN IS THE LINE THAT CAN BE GRABBED, and asking
@@ -764,12 +818,21 @@ export class CapturePageEditorComponent {
      * one question, asked once, for both halves.
      */
     const line = this.cut();
-    if (line === null) return null;
 
-    for (const which of ['a', 'b'] as const) {
-      const point = line[which].point;
-      if (Math.hypot(at[0] - point[0], at[1] - point[1]) <= radius) return { what: 'end', which };
+    if (line !== null) {
+      for (const which of ['a', 'b'] as const) {
+        const point = line[which].point;
+        if (Math.hypot(at[0] - point[0], at[1] - point[1]) <= radius) return { what: 'end', which };
+      }
     }
+
+    const quads = this.quads();
+    for (let index = 0; index < quads.length; index += 1) {
+      const corner = cornerNear(toPixels(quads[index]!, UNIT), [at[0], at[1]], radius);
+      if (corner !== null) return { what: 'corner', quad: index, corner };
+    }
+
+    if (line === null) return null;
 
     /*
      * SLIDING THE WHOLE CUT, which is the common gesture and would otherwise
@@ -1013,6 +1076,22 @@ const UNIT: Dimensions = { width: 1, height: 1 };
 function clamp(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
+
+/**
+ * How near a crop corner must be to a cut's end before it IS that end.
+ *
+ * In the photograph's own fraction space, so it scales with the picture. One
+ * per cent is about 8px on an 800px-wide picture -- comfortably inside the 14px
+ * grab radius, so a corner this rule hides was never separately grabbable
+ * anyway, and comfortably above the float noise of re-seating (measured at
+ * 5.6e-17 in `slideSplit`'s own note), so two points that ARE one point always
+ * merge.
+ *
+ * It has to stay under the grab radius. Above it, this would hide a handle that
+ * the pointer could still reach -- a control that is invisible and live, which
+ * is worse than the stacked handles it replaced.
+ */
+const HANDLES_MERGE = 0.01;
 
 /**
  * WHAT THE POINTER FOUND — a corner of some page, an end of the cut, or the cut
