@@ -368,9 +368,21 @@ export class CaptureViewComponent {
    * button and nothing else.
    *
    * Asked of the CATALOGUE rather than of the recipe, because the recipe cannot
-   * know: a mint writes a PDF and a ledger step and leaves the recipe
+   * know: a mint writes pages and a ledger step and leaves the recipe
    * byte-identical, which is the property that lets a person keep editing after
-   * one. The document list is where a minted book becomes visible.
+   * one.
+   *
+   * IT USED TO ASK `documents.length > 0` AND THAT ANSWER IS NOW ALWAYS FALSE.
+   * A mint files no document row -- a folder of page images is not a file type
+   * anything can open, so it is not in the catalogue's document list at all
+   * (`documentArchive`, electron/projects.ts). Left as it was, the button would
+   * have said "Finish the pages" forever, including to somebody looking at a
+   * book they had already made: a feature un-shipping itself with nothing on
+   * screen to say so.
+   *
+   * `pages` IS THE SAME QUESTION ASKED OF THE FIELD THAT MOVED. It is set and
+   * cleared in the same manifest write as the mint step and its discard, so it
+   * cannot disagree with the history the light table is showing.
    *
    * NOT the same question as the divergence sentence, which asks whether the
    * book on the shelf was made from THIS arrangement -- that one is main's
@@ -378,7 +390,7 @@ export class CaptureViewComponent {
    */
   protected readonly minted = computed<boolean>(() => {
     const project = this.projects.projectFor(this.tab().path);
-    return project !== null && project.documents.length > 0;
+    return project !== null && project.pages;
   });
 
   /**

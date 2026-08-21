@@ -60,8 +60,6 @@ import * as zlib from 'node:zlib';
 import { promisify } from 'node:util';
 import { nativeImage } from 'electron';
 
-import { PDFDocument } from 'pdf-lib';
-
 import type {
   CaptureIntakeProgress,
   CaptureMintBegun,
@@ -1353,9 +1351,6 @@ interface MintSession {
 
 const mints = new Map<string, MintSession>();
 
-/** Nominal dots per inch for the page box. 72 points to the inch. */
-const MINT_DPI = 300;
-
 function sessionOf(mintId: string): MintSession {
   const session = mints.get(mintId);
   if (session === undefined) {
@@ -1467,22 +1462,33 @@ export async function mintPage(mintId: string, index: number, jpeg: ArrayBuffer)
 }
 
 /**
- * Assemble the PDF, file it as the project's document, and answer with the step.
+ * Move the pages into the project, file them as its origin, answer with the step.
  *
- * ── AN IMAGE-ONLY PDF, WHICH IS THE ENTIRE OUTPUT OF THIS STAGE ─────────────
+ * ── THE PAGES ARE THE BOOK, AND THE PDF WAS A ROUND TRIP ────────────────────
  *
- * One JPEG per page, drawn to fill its own page box, no text layer and no
- * fonts. From here the book is an ordinary scanned PDF and nothing downstream
- * knows a photograph was ever involved — which is the seam this whole feature
- * was designed around.
+ * This used to assemble an image-only PDF — one JPEG per page, drawn to fill a
+ * page box at a nominal 300 dpi — and the very next thing that happened to that
+ * PDF was a rasteriser turning it back into one image per page. Owen ruled the
+ * container out: *"i agree that this doesnt need to be a pdf. if the user
+ * explicitly wants to export it as one, they can. but the ultimate goal here is
+ * to generate a bank with the vlm"*. So the staged pages ARE the output, and
+ * `vlm-read --pages <dir>` reads them as they are.
  *
- * THE PAGE BOX IS THE PIXELS AT A NOMINAL 300 DPI. Nothing is resampled: the
- * JPEG goes in at its own resolution and the box is sized to suit it, so the
- * declared page is roughly the physical page it was photographed from. The read
- * stage rasterizes at its own budget later; this number never constrains it.
+ * NOTHING IS RE-ENCODED AND NOTHING IS COPIED. The renderer already wrote each
+ * rectified page as a JPEG into `capture/mints/<id>/`, inside the project, for
+ * the reason stated above `MintSession` — and that decision pays here: the
+ * commit is a RENAME on one volume, so a shoot of several hundred megabytes
+ * lands in the time it takes to update a directory entry. A staging directory
+ * in %TEMP% would have made this a cross-volume copy of the whole book.
+ *
+ * THE NAMES ARE THE READING ORDER, zero-padded to four digits. The engine sorts
+ * numerically on the first run of digits in a name (`pagesInDirectory`,
+ * src/vlm/bridge.ts) so the padding is a courtesy to anybody looking in the
+ * folder rather than a contract — but `page-2` sorting before `page-10` is the
+ * trap that rule exists to avoid, and agreeing with it costs nothing.
  *
  * REFUSES A BOOK WITH A HOLE IN IT. Every page main asked for must have come
- * back. A missing one would print a book quietly short a leaf, which is exactly
+ * back. A missing one would file a book quietly short a leaf, which is exactly
  * the failure the order cross-check exists to prevent one layer up.
  */
 export async function mintCommit(mintId: string): Promise<LedgerStep> {
@@ -1502,17 +1508,22 @@ export async function mintCommit(mintId: string): Promise<LedgerStep> {
   }
 
   try {
-    const pdf = await PDFDocument.create();
-    for (let index = 0; index < session.pages.length; index++) {
-      const asked = session.pages[index]!;
-      const jpeg = await fsp.readFile(path.join(session.staging, `${index}.jpg`));
-      const image = await pdf.embedJpg(jpeg);
-      const width = (asked.outWidth * 72) / MINT_DPI;
-      const height = (asked.outHeight * 72) / MINT_DPI;
-      pdf.addPage([width, height]).drawImage(image, { x: 0, y: 0, width, height });
-    }
-    const bytes = Buffer.from(await pdf.save());
-    const step = await recordMint(session.projectDir, bytes, session.pages.length, session.arrangement);
+    /*
+     * THE MOVE IS THE COMMIT, AND IT HAPPENS INSIDE `recordMint`'s MANIFEST
+     * LOCK. The name of the directory has to be one this project has not spent
+     * before — readings hang off the step whose payload is that name — and only
+     * the manifest knows which names are spent, so the destination is chosen
+     * there and handed back here to be filled.
+     */
+    const step = await recordMint(session.projectDir, async (into) => {
+      let written = 0;
+      for (let index = 0; index < session.pages.length; index++) {
+        const page = `page-${String(index + 1).padStart(4, '0')}.jpg`;
+        await fsp.rename(path.join(session.staging, `${index}.jpg`), path.join(into, page));
+        written += 1;
+      }
+      return written;
+    }, session.arrangement);
     settleMint(session.jobId, { file: path.join(session.projectDir, ...step.payload.split('/')) });
     await forget(session, mintId);
     return step;

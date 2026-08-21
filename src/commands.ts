@@ -288,6 +288,13 @@ const VLM_FINAL: OptionSpec = {
  * the entire product: a run with nowhere to put it would spend the GPU-hours and
  * leave nothing behind.
  */
+const PAGES_IN: OptionSpec = {
+  name: 'pages',
+  type: 'string',
+  placeholder: '<dir>',
+  describe: 'A directory of page images to read as they are. Exactly one of this and --pdf.',
+};
+
 const VR_READINGS: OptionSpec = {
   name: 'readings',
   type: 'string',
@@ -2440,7 +2447,7 @@ export const COMMANDS: readonly Command[] = [
       'real GPU. What never happens is a page quietly guessed at.',
     ].join('\n'),
     options: [
-      PDF_IN, VR_READINGS, VLM_MODEL, VLM_PYTHON, VLM_RENDERS, VR_LANGUAGE,
+      PDF_IN, PAGES_IN, VR_READINGS, VLM_MODEL, VLM_PYTHON, VLM_RENDERS, VR_LANGUAGE,
       VLM_ENDPOINT, VLM_ENDPOINT_MODEL, VLM_CONCURRENCY, VLM_FIXED_CAP,
       VLM_FRESH_READINGS, VLM_REUSE_READINGS, VLM_SKIP_PAGES,
     ],

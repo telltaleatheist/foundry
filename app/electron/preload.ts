@@ -278,7 +278,7 @@ const api: FoundryApi = {
     subscribe<{ from: string; to: string }>('document:relocated', listener),
   onNavigate: (listener) => subscribe<string>('app:navigate', listener),
   onProjectOpen: (listener) =>
-    subscribe<{ dir: string; originalPath: string; managed: boolean }>('project:open', listener),
+    subscribe<{ dir: string; originalPath: string | null; managed: boolean }>('project:open', listener),
   onMenuAction: (listener) => subscribe<MenuAction>('menu:action', listener),
   // The window is going and the documents in it have not been asked yet. The
   // payload is nothing — what is open is the renderer's own business, and this

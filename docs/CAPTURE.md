@@ -2308,6 +2308,78 @@ Named here so the size is known rather than discovered:
 HABIT.** The PDF was here because a reader takes PDFs, and it survived the
 arrival of a reader that takes pictures.
 
+### BUILT — and what a walk of it measured
+
+The engine half landed at `abc4d1a` (`vlm-read --pages <dir>`, `VlmSource`,
+`ImagePages`). The app half is the wave described above, and the numbers below
+are one project — a COPY of Owen's 25-photograph `index-5bc13190` — walked
+offscreen through `tools/open-and-measure.js` before and after.
+
+| | before | after |
+|---|---|---|
+| the mint takes | **31 s** | **13 s** |
+| what it writes | `archive/index.pdf` + `working/index.pdf` | `archive/index pages/` — 25 files, 57.2 MB |
+| `manifest.documents` | one `pdf` row | `[]` |
+| the rail's button | Finish again | Finish again |
+| Home's glyph and tag | ▦, no tag | ▦, **pages** |
+| Home's row opens | the PDF (`app-pdf-view`) | the light table (`app-capture-view`) |
+| Home's OCR button | present | present |
+| the OCR card's source | `index · PDF` | `index · photographed pages` |
+
+The commit is a **rename**, not a copy: the staging directory is inside the
+project already, so 57 MB of JPEG moves in the time a directory entry takes, and
+`capture/mints/` is empty afterwards. **Less than half the wall-clock, and a
+generation of loss gone with it.**
+
+#### What it cost, measured rather than predicted
+
+The cost list above was right about (1)–(4) and (6). Item (5) — the step chain —
+was right that it had a trap in it and understated it: `currentBookStep` walks
+`documents.find(kind === 'pdf')`, so with no document row it answered null, and
+`currentArrangement` with it. That is `LedgerView.current`, so **the divergence
+sentence would have stopped appearing and the mint button would have said
+"Finish the pages" over a finished book** — a feature un-shipping itself with
+nothing on screen to say so. It asks the ledger directly now, by the rule the
+function already trusted: *a step carrying an arrangement is a mint, because only
+a mint records one.*
+
+Four more that were not on the list, each of which fails somewhere with no
+visible connection to the mint:
+
+1. **`summarise`'s empty-documents fallback** composed a `ProjectDocument` out of
+   `manifest.archive` — with a `pages` archive that is a document row whose PATH
+   IS A FOLDER, which `originalOf` would return and Home would try to open as a
+   book. It refuses a pages archive by name. This is the site that actually
+   decides what a captured project opens on.
+2. **`destroyPayload`** used `recursive: false` as a guard, because a payload had
+   always been one file. A mint's payload is a directory now, so the guard would
+   have stranded 57 MB of page images that nothing in Foundry named — the exact
+   orphan it existed to make visible. It asks the disk instead.
+3. **`archiveAfterLoss`** re-points the archive at the newest surviving file on
+   the dying kind's chain, and a pages archive has no chain. After two mints,
+   discarding the newer one would have nulled the archive while the older mint's
+   step and directory were both still there — precisely the two-mint bug that
+   function was written to fix, arriving again through the other door.
+4. **The hosted deep link.** `openFoundryWindow` refuses a project `originalOf`
+   answers null for, which since the mint stopped filing a document is every
+   captured book — so Edit-in-Foundry on a FINISHED shoot became a console line
+   and an empty window. `project:open` now carries `originalPath: null` and the
+   renderer lands on the light table, which is what Home's own row does.
+
+#### What this wave does NOT do, said out loud
+
+- **No figure crops for a captured book.** `vlm-book` cuts a Picture row's image
+  out of a PDF page (`bookAtPosition.pdf`), and there is no PDF. It answers null
+  through the test that was already there, and the engine "cuts nothing and says
+  so". Real capability, lost until `vlm-book --pages` exists.
+- **No image PDF until somebody builds the export.** Owen's ruling promises one
+  on demand; this wave does not build the demand.
+- **No page-image viewer.** Home's row opens the light table, which is the
+  truthful picture of what the pages are. `bookAtPosition` exposes the directory
+  as `pages`, beside `pdf` and never folded into it, so a pane that wants to show
+  the paper behind a block can find it — *"there is a scan"* and *"the scan is a
+  PDF"* are two facts and stay separable.
+
 ---
 
 ## Marks, then Finalize — and a turn re-seats what it turns

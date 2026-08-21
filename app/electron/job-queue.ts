@@ -1399,8 +1399,21 @@ function argsFor(
   /*
    * ── READING THE PAGES ────────────────────────────────────────────────────
    *
-   * `foundry vlm-read --pdf X --readings Y`. It fills the bank, drops the
-   * completion marker beside it, and writes no document at all.
+   * `foundry vlm-read --pdf X --readings Y`, or `--pages <dir>` where the pages
+   * are already pictures. It fills the bank, drops the completion marker beside
+   * it, and writes no document at all.
+   *
+   * TWO FLAGS AND NEVER BOTH, which is the engine's own rule and is stated
+   * there rather than defended here: *"a reading is of exactly one thing"*, and
+   * `sourceFor` (src/vlm/read.ts) refuses a run that passes both rather than
+   * resolving it by a precedence nobody would agree about. This end cannot pass
+   * both — `ReadRequest.inputKind` is one value and it selects the flag — so the
+   * refusal is unreachable from this app, which is where an unreachable refusal
+   * belongs.
+   *
+   * ABSENT MEANS `--pdf`. The queue survives restarts, so rows enqueued by a
+   * build that predates the mint's change are still on the shelf, and every one
+   * of them is a reading of a PDF.
    *
    * NO `--out` AND NO `--format`, which is the whole of the split on the command
    * line: this run has no opinion about what the book will eventually be, and it
@@ -1409,7 +1422,8 @@ function argsFor(
    * reading — so neither can be asked for while it is being configured.
    */
   if (request.kind === 'read') {
-    const args = ['vlm-read', '--pdf', request.inputPath, '--readings', request.readingsPath];
+    const flag = request.inputKind === 'pages' ? '--pages' : '--pdf';
+    const args = ['vlm-read', flag, request.inputPath, '--readings', request.readingsPath];
     if (request.skipPages && request.skipPages.trim().length > 0) {
       args.push('--skip-pages', request.skipPages.trim());
     }

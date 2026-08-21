@@ -1167,8 +1167,15 @@ export interface FoundryApi {
    * that BookForge can build against it; the tab this should open is a wave of
    * its own (docs/PLAN.md, Wave 7).
    */
+  /*
+   * `originalPath` IS NULL FOR A PROJECT WITH NO DOCUMENT, which since the mint
+   * stopped writing a PDF means every captured book. The opening is still an
+   * opening — what it lands on is the light table — and a null here is the
+   * honest way to say "this project has no file to put on screen", where the
+   * alternatives were a fabricated path and a door that refused.
+   */
   onProjectOpen(
-    listener: (project: { dir: string; originalPath: string; managed: boolean }) => void,
+    listener: (project: { dir: string; originalPath: string | null; managed: boolean }) => void,
   ): () => void;
   /** File→Save As / Close Tab, which are accelerators on the menu. */
   onMenuAction(listener: (action: MenuAction) => void): () => void;

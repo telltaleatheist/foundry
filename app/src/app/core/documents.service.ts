@@ -712,8 +712,16 @@ export class OpenDocumentsService {
    * imported EPUB's origin row answers sheet=true (positionView owns that test),
    * so such a project opens onto its book — the only surface it has.
    */
-  async openProject(projectDir: string, originalPath: string, managed = false): Promise<void> {
-    await this.openFile(originalPath, managed);
+  async openProject(projectDir: string, originalPath: string | null, managed = false): Promise<void> {
+    /*
+     * NO DOCUMENT MEANS THE LIGHT TABLE, which is the same answer Home's row
+     * gives for the same project (`openProject`, home.component.ts). A captured
+     * book has no catalogued document before its first mint and none after one
+     * either, so a host's Edit-in-Foundry has to land somewhere — and the
+     * surface the person was working on is the table.
+     */
+    if (originalPath === null) this.show(this.captureTabIn(projectDir));
+    else await this.openFile(originalPath, managed);
     if (this.ledger.historyFor(projectDir) === null) await this.ledger.refresh(projectDir);
   }
 
