@@ -941,3 +941,35 @@ function alignment(split: CaptureSplit, from: CapturePoint, to: CapturePoint): n
   if (spans === 0) return 0;
   return Math.abs(cut[0] * edge[0] + cut[1] * edge[1]) / spans;
 }
+
+/**
+ * Whether a quad is the whole photograph — that is, whether there is NO CROP.
+ *
+ * EXACT, and not a tolerance: intake wrote those numbers and every gesture in
+ * this app either leaves them alone or replaces them wholesale, so a quad that
+ * is the whole frame is the whole frame bit for bit. A tolerance here would be
+ * inventing an uncertainty that the data does not have.
+ */
+export function isWholeFrame(quad: CaptureQuad): boolean {
+  return quad.every((corner, index) =>
+    corner[0] === WHOLE_FRAME[index]![0] && corner[1] === WHOLE_FRAME[index]![1]);
+}
+
+/**
+ * Whether a quad is the whole photograph UP TO A TURN.
+ *
+ * NOT A REPLACEMENT FOR `isWholeFrame`, and the difference is a question rather
+ * than a precision. "Has this person cropped anything?" is this one — a turn
+ * moves no corner, so a turned whole frame is still no crop. "Has this person
+ * touched this project at all?" is `isWholeFrame`, because a turn IS something
+ * somebody did and a turned project should open where they left off.
+ *
+ * Same shape, two different questions, written down so the next reader does not
+ * fix one into the other.
+ */
+export function isWholeFrameTurned(quad: CaptureQuad): boolean {
+  for (let turns = 0; turns < 4; turns += 1) {
+    if (isWholeFrame(turnQuad(quad, turns))) return true;
+  }
+  return false;
+}

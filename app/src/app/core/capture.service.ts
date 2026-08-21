@@ -12,7 +12,8 @@ import type {
 } from '@shared/types';
 
 import {
-  arrangementOf, halvesOf, joinedQuad, sameShape, turnedLike, turnQuad, turnsOf, WHOLE_FRAME,
+  arrangementOf, halvesOf, isWholeFrame, isWholeFrameTurned, joinedQuad, sameShape, turnedLike,
+  turnQuad, turnsOf, WHOLE_FRAME,
 } from '@shared/capture';
 
 import { rotate } from '../components/capture-editor/geometry';
@@ -813,6 +814,95 @@ export class CaptureService {
     }));
   }
 
+  /**
+   * TAKE THE CROP OFF THIS PHOTOGRAPH -- Owen: "we should be able to disable
+   * crop/split on any single page, or on all pages, if we dont want to do it,
+   * in case one page doesnt need it".
+   *
+   * ── IT REMOVES THE MARK, IT DOES NOT DISABLE IT ────────────────────────────
+   *
+   * docs/CAPTURE.md, "Marks, then Finalize": no crop IS the whole frame, which
+   * this recipe already understands and `isWholeFrame` already reads. A
+   * `disabled: true` beside a stored rectangle would be a crop that is kept,
+   * drawn, applied to all and then ignored -- and A SETTING THAT IS IGNORED IS
+   * A SETTING THAT WILL BE BELIEVED. So "disable" is UNDO, and there is no
+   * second state for anything to fall out of step with.
+   *
+   * ── AND THERE IS NO SEPARATE "ALL PAGES" ACT, BY CONSTRUCTION ──────────────
+   *
+   * Clearing the crop here leaves this photograph holding the whole frame, and
+   * apply-to-all copies THIS photograph's configuration onto the others. So
+   * "none of them need a crop" is already spelled: clear it here, then apply to
+   * all. A second bulk act would be a second path to the same recipe, and the
+   * two would eventually disagree about split pages.
+   *
+   * A CUT SURVIVES ITS CROP. Removing the crop from a spread means "use the
+   * whole photograph", not "un-cut it" -- so the halves are re-derived from the
+   * whole frame and the gutter stays exactly where it was put.
+   */
+  clearCrop(photoId: string): void {
+    this.change((recipe) => ({
+      ...recipe,
+      photos: recipe.photos.map((photo) => {
+        if (photo.id !== photoId) return photo;
+        if (photo.split === null || photo.pages.length !== 2) {
+          return {
+            ...photo,
+            pages: photo.pages.map((page) => ({ ...page, quad: WHOLE_FRAME, byHand: true })),
+          };
+        }
+        const halves = halvesOf(WHOLE_FRAME, photo.split);
+        if (halves === null) return photo;
+        return {
+          ...photo,
+          pages: photo.pages.map((page, seat) => ({
+            ...page,
+            quad: halves[seat] ?? page.quad,
+            byHand: true,
+          })),
+        };
+      }),
+    }));
+  }
+
+  /**
+   * PUT A CUT SPREAD BACK TOGETHER — one page again, keeping its crop.
+   *
+   * The inverse of `setSplit` and the same sentence as `clearCrop`: no split is
+   * `split: null` with one page, which is what an uncut photograph already is,
+   * so removing a cut needs no state that says a cut is present-but-off.
+   *
+   * The rejoined page keeps the crop the two halves were describing —
+   * `joinedQuad` is the same body the editor draws from and `setSplit` re-cuts
+   * from, so joining and re-cutting are exact inverses rather than two
+   * approximations that drift apart over a few adjustments.
+   *
+   * A STRIKE ON EITHER HALF STRIKES THE PAGE. Rejoining two pages of which one
+   * was struck cannot keep half a strike, and dropping it would quietly
+   * restore a page somebody had rejected — so the surviving page is struck if
+   * either half was, which is the answer that cannot lose a decision.
+   */
+  clearSplit(photoId: string): void {
+    this.change((recipe) => {
+      const photos = recipe.photos.map((photo) => {
+        if (photo.id !== photoId || photo.split === null) return photo;
+        const whole = joinedQuad(photo.pages.map((page) => page.quad), photo.split);
+        return {
+          ...photo,
+          split: null,
+          pages: [{
+            id: `${photo.id}:0`,
+            quad: whole,
+            struck: photo.pages.some((page) => page.struck),
+            byHand: true,
+          }],
+        };
+      });
+      // A rejoin changes which pages exist, exactly as a cut does.
+      return { ...recipe, photos, order: orderFor(photos, recipe.order) };
+    });
+  }
+
   /** The editor dragged one end of the gutter, or slid the whole cut. */
   setSplit(photoId: string, split: CaptureSplit): void {
     this.change((recipe) => {
@@ -1259,29 +1349,7 @@ const WHOLE: CaptureQuad = [[0, 0], [1, 0], [1, 1], [0, 1]];
  * A tolerance here would be inventing a question about numbers that were
  * copied rather than computed, and its answer would drift with the tolerance.
  */
-/**
-   * Whether a quad is the whole photograph UP TO A TURN.
-   *
-   * Still exact, for `isWholeFrame`'s own reason: intake WROTE those numbers and
-   * a turn only reorders them, so nothing here is a computation that landed
-   * near a value and no tolerance is being invented.
-   *
-   * NOT A REPLACEMENT FOR `isWholeFrame`, which `stage` is right to use as it
-   * stands: a turn IS something a person did, so a turned project is not virgin
-   * and should open where they left off. Same shape, two different questions --
-   * written down so the next reader does not fix one into the other.
-   */
-function isWholeFrameTurned(quad: CaptureQuad): boolean {
-  for (let turns = 0; turns < 4; turns += 1) {
-    if (isWholeFrame(rotate(quad, turns) as CaptureQuad)) return true;
-  }
-  return false;
-}
 
-function isWholeFrame(quad: CaptureQuad): boolean {
-  return quad.every((corner, index) =>
-    corner[0] === WHOLE_FRAME[index]![0] && corner[1] === WHOLE_FRAME[index]![1]);
-}
 
 /**
  * The photographs a stamp would not touch, said once per reason.
