@@ -45,6 +45,7 @@ import {
   type VlmUnreadablePage,
 } from './bridge.js';
 import { capFor, worthRetrying } from './band.js';
+import { looksLikeRunaway } from './runaway.js';
 import { DEFAULT_VLM_CONCURRENCY, readPagesFromEndpoint } from './endpoint.js';
 import { requireVlmModel, type VlmModelDef } from './models.js';
 import {
@@ -366,6 +367,13 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
   const refuse = (number: number, reason: string): void => {
     if (!unreadable.has(number)) unreadable.set(number, { number, reason });
   };
+  /*
+   * WHICH REFUSALS WERE ABOUT LENGTH. A page that ran away and a page that
+   * never rendered are both unreadable to the retry pass and end differently
+   * after it -- see the sweep below -- and the reason string is prose written
+   * for a person, which is not a thing to make a decision out of.
+   */
+  const ranAway = new Set<number>();
   let inferenceSeconds = run.inferenceSeconds;
   let inferredPages = run.pages.filter((page) => !page.skipped).length + run.unreadable.length;
 
@@ -378,6 +386,7 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
     for (const page of banked) {
       const reading = readings.get(page)!;
       if (reading.finishReason === 'length') {
+        ranAway.add(page);
         refuse(page, `it hit the ${reading.tokens}-token cap when it was read, so its answer is truncated`);
         continue;
       }
@@ -463,6 +472,7 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
             model: model.id,
           });
           if (page.finishReason === 'length') {
+            ranAway.add(page.number);
             refuse(page.number, cutOff(sentCap.get(page.number) ?? model.maxTokens, longestAccepted));
           } else if (page.text.trim().length === 0) {
             refuse(page.number, `it came back empty from ${model.id}`);
@@ -545,6 +555,62 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
       inferenceSeconds = (Date.now() - endpointStarted) / 1000;
       inferredPages = wanted.length;
     }
+  }
+
+  /*
+   * ── A RUNAWAY BECOMES AN EMPTY PAGE ──────────────────────────────────────
+   *
+   * Owen's ruling, 2026-08-21, asked as a straight question and answered
+   * "an empty page": a page whose answer was nonsense IS a page, it just holds
+   * nothing. It used to be REFUSED, which put it in the "N PAGE(S) ARE NOT IN
+   * THE BOOK" list and left a hole where a leaf of the book had been -- so a
+   * blank scan and a page this app failed to open ended the same way, and the
+   * numbering quietly disagreed with the paper.
+   *
+   * TWO WAYS IN, ONE FATE. A page is emptied when it hit its cap (length, which
+   * the band bounds) or when it repeats itself past what a page does (shape,
+   * which `looksLikeRunaway` bounds). Neither is asked to do the other's job --
+   * see runaway.ts, where the page that proves it is named.
+   *
+   * AFTER THE RETRY PASS, DELIBERATELY. A page cut by a cap this book has since
+   * left behind is read again first; only what is still cut when the band has
+   * stopped moving is emptied. Emptying before the retry would throw away the
+   * pages the retry exists to rescue.
+   *
+   * THE BANK KEEPS WHAT THE MODEL SAID. Only the BOOK is emptied. The bank is
+   * the record of the read and stays the record of the read -- somebody
+   * arguing with this decision a month from now needs the text that caused it,
+   * and a later build with a better judge can re-derive the book from a bank it
+   * did not damage.
+   */
+  const emptied: { number: number; why: string }[] = [];
+  for (const number of ranAway) {
+    if (!unreadable.has(number)) continue;
+    unreadable.delete(number);
+    answers.set(number, '');
+    emptied.push({ number, why: 'it ran past its cap' });
+  }
+  for (const [number, text] of answers) {
+    if (text.length === 0) continue;
+    const verdict = looksLikeRunaway(text);
+    if (!verdict.runaway) continue;
+    answers.set(number, '');
+    emptied.push({
+      number,
+      why: `one phrase was ${Math.round(verdict.share * 100)}% of it`,
+    });
+  }
+  if (emptied.length > 0) {
+    /*
+     * NAMED, EVERY ONE, WITH ITS NUMBER AND ITS REASON. A page emptied by
+     * mistake is a page of somebody's book going quiet, so it must be visible
+     * the moment it happens rather than at proofreading. The count alone would
+     * be a summary of a decision nobody could check.
+     */
+    opts.log(
+      `${label}: ${emptied.length} page(s) left EMPTY — `
+      + emptied.map((one) => `page ${one.number} (${one.why})`).join(', '),
+    );
   }
 
   return {
