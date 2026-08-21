@@ -1149,6 +1149,7 @@ const GLANCE_GAP = 12;
           <app-page-glance
             [style.top.px]="glanceAt() ?? 0"
             [original]="original()"
+            [originalPages]="originalPages()"
             [row]="glanced()"
           />
         </div>
@@ -2360,6 +2361,12 @@ export class BookViewComponent {
    * carries the whole argument for what null means and why it means it twice.
    */
   protected readonly original = computed<string | null>(() => this.book()?.originalPath ?? null);
+  /**
+   * The photographed pages, for a captured book. Read straight off the load for
+   * the same reason as the scan above — `BookLoad.originalPages` carries the
+   * whole argument for why it is a second field rather than a wider first one.
+   */
+  protected readonly originalPages = computed<string | null>(() => this.book()?.originalPages ?? null);
   /** The block a jump landed on, tinted for `PULSE_MS`. */
   protected readonly pulse = signal<string | null>(null);
   /** The source page a hovered ghost names, hairlining every block it spans. */
