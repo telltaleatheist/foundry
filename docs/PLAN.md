@@ -1770,8 +1770,17 @@ Work packages W25-P1 (model) / P2 (table) / P3 (modal) are fenced in
 the contract, P1 first. Closes Wave 24's deferred "N by hand is not
 clickable" and retires its override dialog. Deferred out loud: the
 Book-card stacked see-through editor, until the one-cut-fits-all
-promise is measured weaker than designed. AWAITING Owen's sign-off on
-the contract before the packages are assigned.
+promise is measured weaker than designed. Owen signed off 2026-08-21.
+
+**~~P1~~ — LANDED (this commit).** `complete`/`pass` on the schema,
+`isComplete` as the one skip predicate, `placed()` deleting a stored
+answer on every hand placement, `applyCrops`/`applyCuts`/`reopen`,
+`recordCrop`/`recordCut` (record-without-stamp), the electron
+validator carrying both fields. Five gates green by the builder AND
+re-run by the lead: 418/0, three clean typechecks, `ng build`
+707.15 kB (WARNING only; was 704.40). The build's decisions are
+adopted into CAPTURE.md § Wave 25 ("What W25-P1 settled"). P2 (table)
+and P3 (modal) run next, sequentially in the main tree.
 
 ### Then — the user's
 

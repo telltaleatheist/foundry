@@ -590,6 +590,27 @@ function validRecipe(value: unknown, file: string): CaptureRecipe {
       fail(file, `photograph ${index} has a name that is not a name`);
     }
 
+    /*
+     * THE BOOK STOPS MOVING THIS ONE — carried, never consulted, and carrying
+     * is again the whole job.
+     *
+     * `byHand`'s contract for the fourth time, and it earns the fourth telling
+     * because the two fields fail differently. A dropped `byHand` loses a mark
+     * that could be re-derived from the quads (`handsRead`, above). A dropped
+     * `complete` loses an answer NOTHING can re-derive: the say-so is a person
+     * speaking about a page they decided not to move, so it leaves no trace in
+     * the geometry, and a release leaves a page whose lines still look
+     * hand-placed. Both would silently revert to the derive on the next save.
+     *
+     * ABSENT IS LEGAL AND IS NOT A FALSE. It means "ask the pages" — see
+     * `CapturePhoto.complete`. Present and not a boolean is a writer that
+     * thinks it recorded a decision and did not.
+     */
+    const said = photo['complete'];
+    if (said !== undefined && typeof said !== 'boolean') {
+      fail(file, `photograph ${index} says it is complete in something that is not a yes or a no`);
+    }
+
     return {
       id,
       file: text('file'),
@@ -602,6 +623,7 @@ function validRecipe(value: unknown, file: string): CaptureRecipe {
       takenAtSource: source as CaptureTimeSource,
       split,
       pages: checkedPages,
+      ...(typeof said === 'boolean' ? { complete: said } : {}),
     };
   });
 
@@ -671,12 +693,28 @@ function validRecipe(value: unknown, file: string): CaptureRecipe {
 
   const standing = validStanding(row['book'], file);
 
+  /*
+   * WHICH PASS THE PROJECT IS IN — carried for the reason everything optional
+   * here is carried, and refused for a reason of its own.
+   *
+   * `'split'` OR ABSENT, AND NOTHING ELSE. Absent is the crop pass and is every
+   * recipe ever written; there is deliberately no `'crop'` to write, so a file
+   * saying one is a file written against a model this app does not have. A pass
+   * this side accepted and did not understand would be read as "not the split
+   * pass" and would silently reopen somebody's crops.
+   */
+  const pass = row['pass'];
+  if (pass !== undefined && pass !== 'split') {
+    fail(file, `it says the project is in the ${String(pass)} pass, and a project is in the split pass or in neither`);
+  }
+
   return {
     version: 1,
     photos: handsRead(checked),
     order: order as string[],
     ...(ticks === undefined ? {} : { prepared: ticks }),
     ...(standing === undefined ? {} : { book: standing }),
+    ...(pass === 'split' ? { pass } : {}),
   };
 }
 

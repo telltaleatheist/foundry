@@ -2923,8 +2923,7 @@ coming back changes nothing") and the per-page marks carry the count.
 ### Schema — two fields, no migration
 
     CapturePhoto.complete?: boolean   // absent = derive: any page byHand
-    CaptureRecipe.pass?: 'split'      // absent = cropping; Finish needs
-                                      // both applies to have happened
+    CaptureRecipe.pass?: 'split'      // absent = cropping; cleared by Reopen
 
 `byHand` STAYS, as provenance (where a line came from decides whether a
 placement completes — Wave 24's `cutHere` rule, unmoved). The derive on
@@ -2932,6 +2931,15 @@ absent `complete` means an existing project's hand-set pages arrive
 complete with nothing rewritten — the same no-migration posture as the
 standing itself. `isComplete(photo)` lives in the service and is the
 ONE test every skip reads, per the one-predicate rule.
+
+Two consequences of the derive, spelled so they cannot be
+half-implemented: the explicit field is WRITTEN only by the say-so
+(*This page is right* → `true`) and by release (→ `false`); and a hand
+placement DELETES an explicit `false` rather than writing beside it —
+a released-then-replaced photograph must read complete again, and the
+derive is the one place that answer lives. The split pass's Apply is a
+stamp act with no state of its own: Finish keeps the rail's tick gate,
+per "Ruled inline" below.
 
 ### Ruled inline (say so if wrong, they are cheap to change)
 
@@ -2970,6 +2978,36 @@ filmstrip, release from *Where it stands*.
 P2 and P3 meet only at P1's service doors. Any package finding this
 contract wrong edits this document first and says so — an honest
 partial beats a bent whole.
+
+### What W25-P1 settled (BUILT; the build's own decisions, adopted into the contract)
+
+- **`recordCrop` does NOT clear the source's mark**, where Wave 24's
+  stamp did. Wave 24 cleared it because the stamp skipped the source, so
+  a marked source would have opted out of the standing it had just
+  authored. With record and Apply separated, being skipped costs the
+  source nothing: what it holds IS the standing. A complete source stays
+  complete.
+- **`applyCrops` refuses when the book has no standing crop** — with a
+  notice saying to set one from a page first — rather than moving the
+  pass on an act that did not happen. The split pass is therefore only
+  ever entered with a standing crop in hand, which is what makes
+  `recordCut`'s no-crop refusal unreachable through the passes.
+- **`isComplete` lives in the service, not `shared/capture.ts`** —
+  nothing in main reads `complete` (left out of the stamp, never the
+  mint, made structural), so a predicate in shared/ would advertise a
+  question main is supposed never to ask.
+- **The electron validator carries both fields** (`complete` must be a
+  boolean; `pass` must be `'split'` or absent — an unknown pass is
+  refused rather than read as "not split", which would silently reopen
+  someone's crops). `validRecipe` rebuilds field by field, so an
+  uncarried field is deleted on the next save; carrying is the fix.
+- **`applyCuts` cuts each photograph's own sheet** (`cutWith`, one body
+  shared with `setSplit`) — it keeps every crop, marks nobody, and is
+  repeatable because the cut is always made against the sheet, so a
+  second press moves the gutter rather than quartering the page.
+- The Wave 24 override machinery (`includeComplete`, `completeNames`,
+  the stamp arm of `applyToAll`) survives DEPRECATED, comments naming
+  W25-P3 as the deleter, so the components compile until P2/P3 land.
 
 ### Superseded by this wave, named so nothing dangles
 

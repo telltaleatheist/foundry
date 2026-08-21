@@ -3283,6 +3283,50 @@ export interface CapturePhoto {
    * reading order for free.
    */
   pages: CapturePage[];
+  /**
+   * THE BOOK STOPS MOVING THIS PHOTOGRAPH — one state where Wave 24 had two.
+   *
+   * Complete means exactly that and nothing more. Every global act skips it;
+   * nothing else in the project changes because of it. It is NOT a freeze and
+   * it is NOT an exclusion from the finished book: at Finish every photograph
+   * gets its pixels cut at whatever lines it holds, complete and follower
+   * alike. Complete is left out of the STAMP, never out of the MINT.
+   *
+   * ── ABSENT IS A DERIVATION, NOT A FALSE ──────────────────────────────────
+   *
+   * Absent means "ask the pages": a photograph any of whose pages carries
+   * `byHand` is complete. That is Owen's standing ruling — a hand-placed change
+   * is assumed correct — and reading it rather than storing it is what lets
+   * every project written before Wave 25 arrive with its hand-set pages already
+   * complete and NOTHING REWRITTEN. Same no-migration posture as the standing
+   * crop itself, and for the same reason: a migration here would have to guess.
+   *
+   * ── WHO WRITES IT, WHICH IS A SHORT LIST ON PURPOSE ─────────────────────
+   *
+   * The say-so (*This page is right*) writes true; release writes false. Those
+   * two are the only writers, because they are the only acts whose answer the
+   * pages cannot already give.
+   *
+   * And every act that PLACES a line — a corner dragged, a gutter slid, a crop
+   * cleared, a spread rejoined — DELETES this field rather than writing beside
+   * it. A photograph that was released and then re-placed must read complete
+   * again, and the derive is the one place that answer lives; a `false` left
+   * lying beside a hand-placed page would out-argue the hand that placed it.
+   * Wearing the book's crop deletes it too, for the mirror reason: a page that
+   * has just taken the standing is a follower by construction.
+   *
+   * ── `byHand` STAYS, AS PROVENANCE ────────────────────────────────────────
+   *
+   * It is not this field under another name. It records WHERE A LINE CAME FROM,
+   * which is what decides whether an act completes a page at all: taking the
+   * book's own cut leaves a photograph following (Wave 24's `cutHere` ruling),
+   * and sliding the line yourself completes it. Delete `byHand` and that
+   * distinction has nowhere to live.
+   *
+   * Carried by the validator and read by nothing in main, exactly as `byHand`
+   * is — see the note there, which is the third statement of the same contract.
+   */
+  complete?: boolean;
 }
 
 /** `capture/recipe.json`, read and written whole. */
@@ -3331,6 +3375,39 @@ export interface CaptureRecipe {
    * to abolish.
    */
   book?: CaptureStanding;
+  /**
+   * WHICH PASS THIS PROJECT IS IN — crop everything, then split everything.
+   *
+   * ── Why the order is worth storing at all ────────────────────────────────
+   *
+   * Owen: *"maybe my goal should be to crop the pages so theyre positioned
+   * right, then it moves to the page splitting after cropping is done. if
+   * cropping is done, page splits will almost certainly be lined up already."*
+   * That is the whole argument. Once the crops are applied every page is a
+   * squared, registered rectangle, so the gutter sits in nearly the same
+   * fractional place on all of them and ONE cut placed once fits the book. The
+   * pass is what makes that true by construction rather than by luck.
+   *
+   * It is also what lets each surface offer one kind of handle: corners in the
+   * crop pass, the line in the split pass. What is grabbable answers the
+   * question "am I changing this page or the book" before it is asked.
+   *
+   * ── ABSENT IS THE CROP PASS, and there is no `'crop'` to write ───────────
+   *
+   * Every recipe ever written is in the crop pass, which is where a project
+   * starts and where *Reopen crops* returns it. Storing the beginning would be
+   * storing a default, and the file stays silent about what nobody chose — the
+   * same rule `prepared` follows for its unticked verbs.
+   *
+   * ── IT IS A COMMITMENT POINT, NOT A SECOND RENDER ────────────────────────
+   *
+   * Apply moves the pass and lands the book's crop on the followers; from there
+   * every surface DRAWS the rectified projection. The pixels are still cut once,
+   * at Finish. Which is exactly what makes *Reopen crops* free: clearing this
+   * field costs nothing and destroys nothing, and the project reopens as it was
+   * left.
+   */
+  pass?: 'split';
 }
 
 /**

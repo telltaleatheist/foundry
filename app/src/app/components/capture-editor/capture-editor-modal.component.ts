@@ -522,7 +522,7 @@ export class CaptureEditorModalComponent {
    * sentence cannot promise a different act from the one the button performs.
    * See `StampCost`.
    */
-  readonly cost = input<StampCost>({ takes: 0, byHand: 0, shape: 0 });
+  readonly cost = input<StampCost>({ takes: 0, complete: 0, shape: 0 });
 
   /**
    * Whether there is a book's crop for THIS photograph to be returned to.
@@ -573,7 +573,7 @@ export class CaptureEditorModalComponent {
    * The counts are the service's, so the sentence and the act cannot disagree.
    */
   protected readonly cropAllCosts = computed<string>(() => {
-    const { takes, byHand, shape } = this.cost();
+    const { takes, complete, shape } = this.cost();
     const cut = this.twoPages();
     const said: string[] = [
       cut ? 'Becomes the book\'s crop and cut.' : 'Becomes the book\'s crop.',
@@ -581,10 +581,10 @@ export class CaptureEditorModalComponent {
     if (takes > 1) {
       said.push(`${takes} photographs take ${cut ? 'them' : 'it'}${cut ? ', two pages each' : ''}.`);
     }
-    if (byHand > 0) {
-      said.push(byHand === 1
+    if (complete > 0) {
+      said.push(complete === 1
         ? 'One you placed by hand keeps its own.'
-        : `${byHand} you placed by hand keep their own.`);
+        : `${complete} you placed by hand keep their own.`);
     }
     if (shape > 0) {
       said.push(shape === 1

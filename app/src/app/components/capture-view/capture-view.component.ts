@@ -345,7 +345,7 @@ export class CaptureViewComponent {
    * hand-set, including the source itself and photographs of other shapes that
    * a stamp skips for a reason this dialog cannot change. What the surface
    * actually needs is the population a given press would spare, which is
-   * `StampCost.byHand` and comes from the same walk the stamp makes.
+   * `StampCost.complete` and comes from the same walk the stamp makes.
    */
 
   /** The ticks, or an empty answer while nothing is loaded. */
@@ -398,7 +398,7 @@ export class CaptureViewComponent {
    */
   protected readonly cost = computed<StampCost>(() => {
     const id = this.open();
-    return id === null ? { takes: 0, byHand: 0, shape: 0 } : this.captures.stampCost(id);
+    return id === null ? { takes: 0, complete: 0, shape: 0 } : this.captures.stampCost(id);
   });
 
   /** Whether this photograph has a book's crop it could be given back to. */
@@ -576,12 +576,12 @@ export class CaptureViewComponent {
      * ASKED OF THE PHOTOGRAPHS THIS PRESS WOULD ACTUALLY SPARE, which is the
      * same population the consequence line under the button has just named.
      * It used to be asked whenever ANY photograph in the project was hand-set,
-     * source and other shapes included -- see `handSetNames`.
+     * source and other shapes included -- see `completeNames`.
      */
-    if (gesture.kind === 'stamp' && this.cost().byHand > 0) {
-      const names = this.captures.handSetNames(photoId);
+    if (gesture.kind === 'stamp' && this.cost().complete > 0) {
+      const names = this.captures.completeNames(photoId);
       const many = names.length !== 1;
-      const reach = this.cost().takes + this.cost().byHand;
+      const reach = this.cost().takes + this.cost().complete;
       const answer = await this.confirm.put({
         title: many
           ? `Override the ${names.length} pages you set yourself?`
@@ -603,7 +603,7 @@ export class CaptureViewComponent {
         checkbox: null,
       });
       if (answer.key === 'cancel') return;
-      asked = { kind: 'stamp', includeHandSet: answer.key === 'override' };
+      asked = { kind: 'stamp', includeComplete: answer.key === 'override' };
     }
     const outcome = this.captures.applyToAll(photoId, asked);
     if (outcome.applied === 0) return;
