@@ -3,6 +3,7 @@ import {
   Component,
   DestroyRef,
   ElementRef,
+  afterNextRender,
   computed,
   effect,
   inject,
@@ -22,7 +23,9 @@ import {
   toPixels,
   withCorner,
 } from './geometry';
-import { cutOf, joinedQuad, outputSizeFor, seatSplit, slideSplit } from '@shared/capture';
+import {
+  cutOf, joinedQuad, outputSizeFor, seatSplit, slideSplit, turnsOf, WHOLE_FRAME,
+} from '@shared/capture';
 import type { CaptureQuad, CaptureSplit } from '@shared/types';
 
 import { Rectifier } from './rectify';
@@ -132,7 +135,38 @@ import { Rectifier } from './rectify';
         <div
           class="picture"
           #picture
-          [style.aspect-ratio]="aspectRatio()"
+          [style.aspect-ratio]="turned().box"
+          [style.width]="turned().slotWidth"
+          [style.height]="turned().slotHeight"
+        >
+        <!--
+          THE PHOTOGRAPH IS SHOWN THE WAY ROUND IT WILL PRINT.
+
+          Owen, three separate reports, the last of them: "no matter how i
+          rotated it, the thumbnails are properly rotated, but the main image
+          inside the modal is not rotated". It was not, and that was the
+          design -- a turn permutes the corner assignment without moving a
+          corner, so the picture is identical before and after and only the
+          first-corner mark moves.
+
+          It is a bad argument, and the evidence is that the person it was
+          written for could not read it three times running. The table draws the
+          printed orientation, so the editor was the one surface disagreeing
+          with every other: turn twenty-five spreads upright, see them upright
+          on the table, open one, find it on its side.
+
+          Picture and handles turn as ONE element, as the card does and for the
+          same reason -- the handles are drawn in the photograph's own fraction
+          space, so turning one without the other would put a sideways crop over
+          an upright photograph, which reads as a bug in the crop rather than as
+          an absence.
+        -->
+        <div
+          class="spun"
+          #spun
+          [style.width]="turned().spunWidth"
+          [style.height]="turned().spunHeight"
+          [style.transform]="turned().spin"
         >
           <!--
             (load) IS THE OTHER HALF OF THE REDRAW, and see repaint() for why an
@@ -213,6 +247,7 @@ import { Rectifier } from './rectify';
           }
         </div>
         </div>
+        </div>
 
       </div>
 
@@ -288,6 +323,12 @@ import { Rectifier } from './rectify';
       user-select: none;
       background: var(--bg-sunken);
     }
+    /*
+     * Laid out at the PHOTOGRAPH's aspect and rotated onto the slot, exactly as
+     * the card's .spun is -- see the template. Centred, because a rotation
+     * about a corner would swing the picture out of the box.
+     */
+    .spun { position: absolute; top: 50%; left: 50%; transform-origin: center; }
     .picture img { display: block; width: 100%; height: 100%; }
 
     .handles { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
@@ -400,6 +441,8 @@ export class CapturePageEditorComponent {
    */
   private readonly frame = viewChild.required<ElementRef<HTMLElement>>('frame');
   private readonly picture = viewChild.required<ElementRef<HTMLElement>>('picture');
+  /** The element that carries the turn -- see turned() and fractionOf(). */
+  private readonly spun = viewChild.required<ElementRef<HTMLElement>>('spun');
   private readonly photo = viewChild.required<ElementRef<HTMLImageElement>>('photo');
   /*
    * The preview canvases, in template order — which is `previews()` order,
@@ -422,10 +465,60 @@ export class CapturePageEditorComponent {
   /** Where the pointer was, and where the ends were, when a line drag started. */
   private slidFrom: { at: FractionPoint; split: CaptureSplit } | null = null;
 
-  protected readonly aspectRatio = computed(() => {
+  /**
+   * HOW TO LAY THIS PHOTOGRAPH OUT SO IT SITS THE WAY THE PAGE WILL PRINT.
+   *
+   * The same arithmetic the card does, through the same turnsOf, so the table
+   * and the editor cannot disagree about which way round a page is. The SLOT
+   * takes the printed aspect and the element inside is laid out at the
+   * photograph's own, so that rotating it lands exactly on the slot.
+   *
+   * -- WHY THE SLOT'S SIZE IS CHOSEN HERE AND NOT LEFT TO CSS ----------------
+   *
+   * The card writes width:100% and stops, because the grid hands it a definite
+   * width. This has to FIT inside a frame that constrains both axes, and
+   * aspect-ratio with max-width and max-height DOES NOT PRESERVE THE RATIO WHEN
+   * IT CLAMPS. Measured in Chromium: a turned page in a narrow frame came out
+   * 496x372 inside a slot of 496x396, and the handle layer stopped matching the
+   * picture. A crop outline sitting beside the photograph instead of on it is a
+   * worse defect than a picture facing the wrong way, which is why the first
+   * attempt at this was reverted rather than shipped.
+   *
+   * So the BINDING AXIS is made definite and the ratio derives the other. Which
+   * axis binds is a fact about the FRAME, not about the photograph, which is
+   * why the frame is measured. Five CSS-only spellings were tried and none held
+   * the ratio across turned-and-upright times narrow-and-wide; this rule holds
+   * all four.
+   */
+  protected readonly turned = computed(() => {
     const { width, height } = this.dimensions();
-    return `${width} / ${height}`;
+    const turns = turnsOf(this.quads()[0] ?? WHOLE_FRAME);
+    const sideways = turns % 2 === 1;
+    const box = sideways ? height / width : width / height;
+    const room = this.frameBox();
+    // Until the frame has been measured the height binds, which is what this
+    // editor did before it turned anything -- so the first paint is never worse
+    // than it used to be.
+    const heightBinds = room.height === 0 || room.width / room.height > box;
+    return {
+      turns,
+      box: String(box),
+      slotWidth: heightBinds ? 'auto' : '100%',
+      slotHeight: heightBinds ? '100%' : 'auto',
+      spunWidth: sideways ? (100 / box) + '%' : '100%',
+      spunHeight: sideways ? (100 * box) + '%' : '100%',
+      spin: 'translate(-50%, -50%) rotate(' + (turns * 90) + 'deg)',
+    };
   });
+
+  /**
+   * The frame's CONTENT box, watched.
+   *
+   * contentRect and not getBoundingClientRect, because the frame carries 12px
+   * of padding to keep the handles off the clip, and the question here is how
+   * much room the picture actually has.
+   */
+  private readonly frameBox = signal<{ width: number; height: number }>({ width: 0, height: 0 });
 
   /** Every corner of every quad, flattened for the template. */
   protected readonly handles = computed(() =>
@@ -511,6 +604,23 @@ export class CapturePageEditorComponent {
     });
 
     /*
+     * WATCH THE FRAME, because which axis binds the picture is a fact about the
+     * room and not about the photograph -- see turned(). A ResizeObserver and
+     * not a window resize listener: the frame changes when the rail opens, when
+     * the previews change height and when the window resizes, and only one of
+     * those is a window event.
+     */
+    const watcher = new ResizeObserver((entries) => {
+      const box = entries[0]?.contentRect;
+      if (box !== undefined) this.frameBox.set({ width: box.width, height: box.height });
+    });
+    inject(DestroyRef).onDestroy(() => watcher.disconnect());
+    // afterNextRender and not an effect: the frame is one element for the life
+    // of this component, so there is nothing to re-observe -- and a required
+    // view query read from an effect is a race with the view that creates it.
+    afterNextRender(() => watcher.observe(this.frame().nativeElement));
+
+    /*
      * Redraw whenever the quads move. It reads `previews()` and `source()`, so
      * the effect re-runs on a drag, a turn, a split, or a change of photograph
      * — and does nothing at all while the pointer is still.
@@ -542,7 +652,12 @@ export class CapturePageEditorComponent {
 
   protected grab(event: PointerEvent): void {
     const at = this.fractionOf(event);
-    const { width } = this.picture().nativeElement.getBoundingClientRect();
+    // THE SPUN ELEMENT, NOT THE SLOT: the radius is in the photograph's own
+    // fraction space, and a rotation preserves lengths -- so the photograph's
+    // on-screen x extent is the width it was LAID OUT at, whichever way round
+    // it now sits. Measuring the slot would make the hit radius wrong by the
+    // aspect ratio on every turned photograph.
+    const width = this.spun().nativeElement.offsetWidth;
     // The hit radius is in PIXELS on screen and converted, so the handle is the
     // same size to the hand whatever the picture has been scaled to.
     const radius = width === 0 ? 0 : 14 / width;
@@ -709,7 +824,24 @@ export class CapturePageEditorComponent {
   private fractionOf(event: PointerEvent): FractionPoint {
     const box = this.picture().nativeElement.getBoundingClientRect();
     if (box.width === 0 || box.height === 0) return [0, 0];
-    return [(event.clientX - box.left) / box.width, (event.clientY - box.top) / box.height];
+    const u = (event.clientX - box.left) / box.width;
+    const v = (event.clientY - box.top) / box.height;
+    /*
+     * TURNED BACK, because the slot is the axis-aligned box on screen and the
+     * quads live in the photograph's own space -- the same space only at turn
+     * 0. A quarter turn clockwise puts the photograph's top-left at the slot's
+     * top-right, so the inverse reads the slot's y for the photograph's x.
+     *
+     * Without it every handle would be where it LOOKS and nowhere it is
+     * grabbed, on turned photographs only: invisible until somebody turns a
+     * spread, and unusable from then on.
+     */
+    switch (this.turned().turns) {
+      case 1: return [v, 1 - u];
+      case 2: return [1 - u, 1 - v];
+      case 3: return [1 - v, u];
+      default: return [u, v];
+    }
   }
 
   /**
