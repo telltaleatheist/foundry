@@ -9,7 +9,7 @@ import {
   signal,
 } from '@angular/core';
 
-import { halvesOf, joinedQuad, splitFromFraction } from '@shared/capture';
+import { halvesOf, isWholeFrameTurned, joinedQuad, splitFromFraction } from '@shared/capture';
 import type { CaptureQuad, CaptureSplit } from '@shared/types';
 
 import { CapturePageEditorComponent } from './capture-page-editor.component';
@@ -156,6 +156,16 @@ import type { ApplyToAll } from '../../core/capture.service';
             <p class="says">Turns this photograph only.</p>
           } @else if (using() === 'cropped') {
             <p class="says">Drag the four corners onto the page.</p>
+            <!--
+              REMOVING A CROP IS REMOVING THE MARK, so it is offered only when
+              there is one. A control that is always there and does nothing four
+              times out of five teaches people to stop reading it.
+            -->
+            @if (!wholeFrame()) {
+              <button class="btn quiet" type="button" (click)="clearCrop.emit()">
+                Use the whole photograph
+              </button>
+            }
           } @else {
             <p class="says">
               @if (quads().length === 1) {
@@ -164,6 +174,11 @@ import type { ApplyToAll } from '../../core/capture.service';
                 Drag either end to move the cut.
               }
             </p>
+            @if (quads().length > 1) {
+              <button class="btn quiet" type="button" (click)="clearSplit.emit()">
+                Put this back together as one page
+              </button>
+            }
           }
         </div>
 
@@ -602,6 +617,21 @@ export class CaptureEditorModalComponent {
   readonly applyToAll = output<ApplyToAll>();
   /** A quarter turn of this photograph, for the service to perform. */
   readonly turnBy = output<number>();
+  /** Take the crop off this photograph — the whole frame, which is no crop. */
+  readonly clearCrop = output<void>();
+  /** Put a cut spread back together as one page. */
+  readonly clearSplit = output<void>();
+
+  /**
+   * Whether this photograph has NO crop on it — the whole frame, however many
+   * times it has been turned.
+   *
+   * Through the shared body rather than a comparison written here: "is there a
+   * crop" is a question the service already answers for the rail's count, and
+   * two spellings of it would eventually disagree about a turned photograph.
+   */
+  protected readonly wholeFrame = computed(() =>
+    isWholeFrameTurned(joinedQuad(this.quads() as readonly CaptureQuad[], this.split())));
   /** Stage 2's per-page Apply — this page is set by hand and stays that way. */
   readonly keep = output<void>();
   readonly step = output<number>();
