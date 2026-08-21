@@ -96,6 +96,7 @@ const ACKNOWLEDGED_FOR_MS = 1600;
           (reverse)="captures.reverse()"
           (dropped)="captures.intake(tab().path, $event)"
         (remove)="void confirmRemoval($event)"
+          (turn)="captures.turnPhotos($event.photos, $event.turns)"
       />
     </div>
 

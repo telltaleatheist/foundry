@@ -157,12 +157,13 @@ import type { ApplyToAll } from '../../core/capture.service';
           } @else if (using() === 'cropped') {
             <p class="says">Drag the four corners onto the page.</p>
           } @else {
-            <p class="says">Drag either end of the line onto the gutter, then cut.</p>
-            @if (quads().length === 1) {
-              <button class="btn quiet" type="button" (click)="splitInTwo()">
-                Cut this spread into two pages
-              </button>
-            }
+            <p class="says">
+              @if (quads().length === 1) {
+                Drag either end of the line onto the gutter.
+              } @else {
+                Drag either end to move the cut.
+              }
+            </p>
           }
         </div>
 
@@ -189,6 +190,36 @@ import type { ApplyToAll } from '../../core/capture.service';
                 : 'Turn the rest of the book to match the one you are looking at'"
               (click)="applyToAll.emit({ kind: 'turn' })"
             >{{ turnAllSays() }}</button>
+          } @else if (using() === 'split' && quads().length === 1) {
+            <!--
+              THE CUT OF THIS PAGE IS THE PRIMARY ACT UNTIL THIS PAGE IS CUT.
+
+              Owen: *"there doesnt seem to be an apply button for page
+              splitting. i set it, i hit ok, and nothing happened"*. He was
+              right and the button he pressed was this one. Dragging the line
+              makes a PROPOSAL; the cut of this photograph was a a quiet
+              secondary up in the tool's description, while the button in the
+              act position -- the big one, under "When this one looks right" --
+              was the stamp, which copies THIS page's quads onto the book. With
+              nothing cut here yet, that stamped one uncut quad onto twenty-seven
+              photographs: a real act, correctly performed, that changes nothing
+              anybody can see.
+
+              Its own label was the evidence and nobody read it: "Cut all 27
+              here — 27 pages". Twenty-seven photographs cut into twenty-seven
+              pages is not a cut. Cut, it says 54.
+
+              So the act position holds the act the person is reaching for. The
+              global cut cannot be pressed before there is a cut to copy, which
+              is not a disabled button but an ABSENT one -- it is not a thing
+              you may do yet, rather than a thing you may not.
+            -->
+            <button
+              class="btn primary"
+              type="button"
+              title="Cut this photograph into two pages along the line"
+              (click)="splitInTwo()"
+            >Cut this one into two pages</button>
           } @else {
             <button
               class="btn primary"
@@ -208,24 +239,32 @@ import type { ApplyToAll } from '../../core/capture.service';
             </p>
           } @else {
             <!--
-              PER-PAGE, AND IT MOVES NO CORNER. The corners were saved as they
-              were dragged, so what is left for this button is the part that was
-              never expressible before: this setting was chosen FOR THIS PAGE,
-              and the next global must not quietly take it away. It toggles, so
-              a mark set by mistake is not permanent.
-            -->
-            <button
-              class="btn kept"
-              type="button"
-              [class.on]="handSetHere()"
-              [title]="handSetHere()
-                ? 'Let apply-to-all change this photograph again'
-                : 'Leave this photograph alone when you apply to all'"
-              (click)="keep.emit()"
-            >{{ handSetHere() ? 'Leave this one alone ✓' : 'Leave this one alone' }}</button>
+              IT SAYS WHAT IS TRUE, AND ONLY WHEN IT IS TRUE.
 
+              Owen: *"the 'leave this one alone' button is confusing. i dont
+              know what purpose it serves"*. He was reading it correctly. It
+              was a toggle that ASKED HIM TO DECLARE something the app had
+              already watched him do -- setQuads writes byHand on the drag
+              itself, and has since the mark stopped waiting for a button. So
+              on the common visit the control was offering to set a mark that
+              was already set, under a label describing the state it was
+              leaving.
+
+              What is actually left is the RELEASE, and a release is only
+              meaningful once there is something to release. So the mark is now
+              a sentence rather than a control, and the only button is the one
+              that undoes it -- named for what it does when pressed rather than
+              for the state it produces. A page nobody has touched shows
+              neither, because there is nothing to say about it.
+            -->
             @if (handSetHere()) {
-              <p class="says">You set this page yourself, so it keeps what you gave it.</p>
+              <p class="says">You set this one by hand, so apply-to-all leaves it alone.</p>
+              <button
+                class="btn quiet"
+                type="button"
+                title="Let apply-to-all change this photograph again"
+                (click)="keep.emit()"
+              >Let apply-to-all change it again</button>
             }
 
           }

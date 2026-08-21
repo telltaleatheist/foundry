@@ -152,6 +152,35 @@ const SWEEP_STARTS_AT = 5;
       <button type="button" (click)="reverse.emit()" [disabled]="arranged() || cards().length === 0">
         {{ descending() ? 'Oldest first' : 'Newest first' }}
       </button>
+
+      <!--
+        TURNING IS A TABLE ACT, not only an editor one.
+
+        Owen: *"i think rotate should be the kind of thing where i select items
+        on the main window and then click rotate and it just rotates the ones i
+        have selected in-place"*. Turning a photograph the right way up is the
+        commonest thing anybody does to a shoot and it needed a double-click, a
+        modal, a tool tab and a trip back -- for a gesture whose whole content
+        is "this one is on its side".
+
+        It acts on the SELECTION and says how many, because a turn that quietly
+        took the whole table would be unrecoverable-looking on a shoot of
+        fifty. Nothing chosen, nothing offered.
+      -->
+      <span class="turnpair">
+        <button
+          type="button"
+          [disabled]="chosenPhotos().length === 0"
+          [title]="turnSays('anticlockwise')"
+          (click)="turnChosen(-1)"
+        >⟲</button>
+        <button
+          type="button"
+          [disabled]="chosenPhotos().length === 0"
+          [title]="turnSays('clockwise')"
+          (click)="turnChosen(1)"
+        >⟳</button>
+      </span>
       @if (arranged()) {
         <!--
           Said out loud rather than just disabling the button: the sort is gone
@@ -238,6 +267,14 @@ const SWEEP_STARTS_AT = 5;
         should read the nine.
       -->
       <div class="menu" [style.left.px]="at.x" [style.top.px]="at.y">
+        <button type="button" (click)="turnChosen(-1)">
+          Turn {{ chosenPhotos().length }}
+          {{ chosenPhotos().length === 1 ? 'photograph' : 'photographs' }} left
+        </button>
+        <button type="button" (click)="turnChosen(1)">
+          Turn {{ chosenPhotos().length }}
+          {{ chosenPhotos().length === 1 ? 'photograph' : 'photographs' }} right
+        </button>
         <button type="button" (click)="removeChosen()">
           Delete {{ chosenPhotos().length }}
           {{ chosenPhotos().length === 1 ? 'photograph' : 'photographs' }}…
@@ -513,6 +550,29 @@ export class CaptureGridComponent {
     this.chose.emit(this.chosen());
   }
 
+  /**
+   * Turn every chosen photograph a quarter, in place, on the table.
+   *
+   * IT DOES NOT CLOSE THE MENU WHEN IT CAME FROM THE HEADER and it does when it
+   * came from the menu -- one line, because the menu is a place you press once
+   * and the header is a place you press four times to get all the way round.
+   * Leaving the selection alone is the same thought: after a turn the same
+   * photographs are still chosen, so a shoot that came out sideways is four
+   * presses rather than four sweeps.
+   */
+  protected turnChosen(turns: number): void {
+    const photos = this.chosenPhotos();
+    if (this.menu() !== null) this.menu.set(null);
+    if (photos.length > 0) this.turn.emit({ photos, turns });
+  }
+
+  /** What a turn button promises, counted. */
+  protected turnSays(way: string): string {
+    const count = this.chosenPhotos().length;
+    if (count === 0) return 'Choose photographs on the table to turn them';
+    return `Turn ${count} ${count === 1 ? 'photograph' : 'photographs'} ${way}`;
+  }
+
   protected removeChosen(): void {
     // PHOTOGRAPHS, matching the number the menu just showed. The parent asks
     // the question about exactly what this offered to do.
@@ -605,6 +665,8 @@ export class CaptureGridComponent {
   readonly chose = output<readonly string[]>();
   /** Delete these PHOTOGRAPHS — the owner confirms and calls the door. */
   readonly remove = output<readonly string[]>();
+  /** Turn these photographs a quarter each, where they sit. */
+  readonly turn = output<{ photos: readonly string[]; turns: number }>();
 
   /** The slot a dragged card would land in front of, or null when nothing is up. */
   protected readonly landing = signal<number | null>(null);
