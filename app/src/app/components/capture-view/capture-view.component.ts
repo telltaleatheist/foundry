@@ -14,12 +14,12 @@ import type { CaptureQuad, CaptureSplit } from '@shared/types';
 
 import { CaptureMintService } from '../../core/capture-mint.service';
 import { ConfirmService } from '../../core/confirm.service';
-import { type ApplyToAll, CaptureService } from '../../core/capture.service';
+import { type ApplyToAll, CaptureService, type StampCost } from '../../core/capture.service';
 import type { Tab } from '../../core/documents.service';
 import { CaptureEditorModalComponent } from '../capture-editor/capture-editor-modal.component';
 import type { FractionQuad } from '../capture-editor/geometry';
 import { CaptureGridComponent } from '../capture-grid/capture-grid.component';
-import { CaptureRailComponent, type PrepareVerb } from '../capture-rail/capture-rail.component';
+import { CaptureRailComponent } from '../capture-rail/capture-rail.component';
 import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';
 
@@ -118,7 +118,7 @@ const ACKNOWLEDGED_FOR_MS = 1600;
       [minted]="minted()"
       [progress]="mint.progress()"
       [diverged]="captures.diverged()"
-      (open)="openTool($event)"
+      (open)="openTool()"
       (tick)="captures.tick($event)"
       (mint)="void startMint()"
       (stop)="mint.cancel()"
@@ -132,23 +132,22 @@ const ACKNOWLEDGED_FOR_MS = 1600;
           [dimensions]="photo.dimensions"
           [quads]="photo.quads"
           [split]="photo.split"
-          [stage]="captures.stage()"
-          [tool]="tool()"
           [hasPrevious]="walkIndex() > 0"
           [hasNext]="walkIndex() < walk().length - 1"
           [name]="photo.name"
-          [reach]="reach()"
-          [handSet]="handSet()"
+          [cost]="cost()"
+          [canMatch]="canMatch()"
+          [bookCut]="bookCut()"
           [outOfTurn]="outOfTurn()"
           [handSetHere]="photo.handSet"
           [justApplied]="justApplied()"
           (turnBy)="captures.turnPhotos([photo.id], $event)"
           (clearCrop)="captures.clearCrop(photo.id)"
-          (clearSplit)="captures.clearSplit(photo.id)"
+          (twoPagesChange)="setTwoPages(photo.id, $event)"
           (quadsChange)="setQuads(photo.id, $event)"
           (splitChange)="captures.setSplit(photo.id, $event)"
           (applyToAll)="void applyToAll(photo.id, $event)"
-          (keep)="captures.keep(photo.id)"
+          (matchTheOthers)="captures.matchTheOthers(photo.id)"
           (step)="step($event)"
           (close)="open.set(null)"
         />
@@ -210,15 +209,6 @@ export class CaptureViewComponent {
 
   /** The photograph on the editor, by photo id, or null for the whole table. */
   protected readonly open = signal<string | null>(null);
-
-  /**
-   * WHICH TOOL THE EDITOR OPENS ON, set by the rail's row and then the
-   * person's. It lives here rather than in the modal because the modal is
-   * created and destroyed by the open flag, and a tool that reset every time
-   * somebody closed the editor would make "Split spreads" a one-press setting
-   * they had to re-press after every glance at the table.
-   */
-  protected readonly tool = signal<PrepareVerb>('cropped');
 
   /** Which apply-to-all just landed, for the button that was pressed. */
   protected readonly justApplied = signal<ApplyToAll['kind'] | null>(null);
@@ -347,18 +337,16 @@ export class CaptureViewComponent {
    * an hour, reads "of 54" and then counts the PDF is owed all three being the
    * same arithmetic rather than the same intention.
    */
-  /**
-   * How many PHOTOGRAPHS somebody has set by hand — what the override offers to
-   * override, and the reason it is only drawn when there is one.
+  /*
+   * A `handSet` COUNT STOOD HERE and asked the wrong question.
    *
-   * Photographs and not pages, like every other count this surface shows a
-   * person: a split spread whose crop was adjusted is one thing they did.
+   * It counted every hand-set photograph in the project, and the override
+   * dialog was gated on it -- so the dialog appeared whenever ANYTHING was
+   * hand-set, including the source itself and photographs of other shapes that
+   * a stamp skips for a reason this dialog cannot change. What the surface
+   * actually needs is the population a given press would spare, which is
+   * `StampCost.byHand` and comes from the same walk the stamp makes.
    */
-  protected readonly handSet = computed(() => {
-    const recipe = this.captures.recipe();
-    if (recipe === null) return 0;
-    return recipe.photos.filter((photo) => photo.pages.some((page) => page.byHand === true)).length;
-  });
 
   /** The ticks, or an empty answer while nothing is loaded. */
   protected readonly prepared = computed(() => this.captures.recipe()?.prepared ?? {});
@@ -403,10 +391,26 @@ export class CaptureViewComponent {
     return id === null ? 0 : this.captures.outOfTurnWith(id);
   });
 
-  /** How many photographs the crop and split acts would reach, for the open one. */
-  protected readonly reach = computed<number>(() => {
+  /**
+   * WHAT *CROP ALL* WOULD COST from the photograph that is open — the three
+   * populations the consequence line names. Asked of the service, which owns
+   * every rule about what a gesture reaches.
+   */
+  protected readonly cost = computed<StampCost>(() => {
     const id = this.open();
-    return id === null ? 0 : this.captures.stampReach(id);
+    return id === null ? { takes: 0, byHand: 0, shape: 0 } : this.captures.stampCost(id);
+  });
+
+  /** Whether this photograph has a book's crop it could be given back to. */
+  protected readonly canMatch = computed<boolean>(() => {
+    const id = this.open();
+    return id !== null && this.captures.hasStanding(id);
+  });
+
+  /** The cut the tick would use, or null when only the middle is available. */
+  protected readonly bookCut = computed(() => {
+    const id = this.open();
+    return id === null ? null : this.captures.bookCutFor(id);
   });
 
   protected readonly mintable = computed(() => {
@@ -483,22 +487,27 @@ export class CaptureViewComponent {
     if (agreed) await this.captures.remove(photoIds);
   }
 
-  /** A card was clicked: the editor opens on the PHOTOGRAPH that page is on. */
   /**
-   * A rail row: pick up that tool, and open the editor where the work is.
+   * A rail row: open the editor where the work is.
    *
-   * IT DOES NOT MOVE SOMEBODY WHO IS ALREADY IN THE ROOM. If the editor is open
-   * the tool changes under them and the photograph does not, because pressing
-   * "Split spreads" while looking at photograph 12 means "split THIS", not "go
-   * back to the beginning". Otherwise it opens on the first photograph in the
-   * arrangement, which is where a pass through the book starts.
+   * ── The verb is no longer carried, and the row still means something ──────
+   *
+   * It used to set a TOOL the modal opened on, because Turn, Crop and Split were
+   * three modes in there. The modes are gone (Wave 24) -- every control is on
+   * screen at once -- so the three rows open the same room, and what each one
+   * still says is "start a pass through the book thinking about this".
+   *
+   * IT DOES NOT MOVE SOMEBODY WHO IS ALREADY IN THE ROOM, which matters more now
+   * than it did: with no tool to change, taking a person back to photograph 1
+   * would be the only thing the press did.
    */
-  protected openTool(verb: PrepareVerb): void {
-    this.tool.set(verb);
+  protected openTool(): void {
     if (this.open() !== null) return;
     const first = this.walk()[0];
     if (first !== undefined) this.open.set(first);
   }
+
+  /** A card was clicked: the editor opens on the PHOTOGRAPH that page is on. */
 
   protected openPage(pageId: string): void {
     const recipe = this.captures.recipe();
@@ -516,9 +525,17 @@ export class CaptureViewComponent {
     this.captures.setQuads(photoId, quads as readonly CaptureQuad[]);
   }
 
-  /** Kept so the template has one name for it whatever the segment type is. */
-  protected setSplit(photoId: string, split: CaptureSplit): void {
-    this.captures.setSplit(photoId, split);
+  /**
+   * The Two-pages tick, both ways.
+   *
+   * Routed through ONE method rather than two template expressions, because the
+   * two directions are one control: a template that wired the cut and forgot the
+   * rejoin would give a tick that goes one way and sticks, and nothing about the
+   * markup would look wrong.
+   */
+  protected setTwoPages(photoId: string, on: boolean): void {
+    if (on) this.captures.cutHere(photoId);
+    else this.captures.clearSplit(photoId);
   }
 
   /**
@@ -555,9 +572,16 @@ export class CaptureViewComponent {
    */
   protected async applyToAll(photoId: string, gesture: ApplyToAll): Promise<void> {
     let asked = gesture;
-    if (gesture.kind === 'stamp' && this.handSet() > 0) {
-      const names = this.captures.handSetNames();
+    /*
+     * ASKED OF THE PHOTOGRAPHS THIS PRESS WOULD ACTUALLY SPARE, which is the
+     * same population the consequence line under the button has just named.
+     * It used to be asked whenever ANY photograph in the project was hand-set,
+     * source and other shapes included -- see `handSetNames`.
+     */
+    if (gesture.kind === 'stamp' && this.cost().byHand > 0) {
+      const names = this.captures.handSetNames(photoId);
       const many = names.length !== 1;
+      const reach = this.cost().takes + this.cost().byHand;
       const answer = await this.confirm.put({
         title: many
           ? `Override the ${names.length} pages you set yourself?`
@@ -566,13 +590,13 @@ export class CaptureViewComponent {
         detail: [
           many ? `You placed these ${names.length} by hand: ${names.join(' · ')}`
             : `You placed ${names[0]} by hand.`,
-          `Applying to all ${this.reach()} photographs gives ${many ? 'them' : 'it'} these `
+          `Applying to all ${reach} photographs gives ${many ? 'them' : 'it'} these `
             + 'corners instead of the ones you placed. The way each page sits is left alone '
             + '— turning is never overwritten.',
         ],
         choices: [
           { key: 'spare', label: many ? `Leave those ${names.length} alone` : 'Leave it alone' },
-          { key: 'override', label: `Override all ${this.reach()}` },
+          { key: 'override', label: `Override all ${reach}` },
         ],
         preferred: 'spare',
         dismissed: 'cancel',

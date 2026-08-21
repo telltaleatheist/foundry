@@ -72,6 +72,7 @@ import type {
   CaptureQuad,
   CaptureRecipe,
   CaptureSplit,
+  CaptureStanding,
   CaptureTimeSource,
   LedgerStep,
 } from '../shared/types';
@@ -668,12 +669,91 @@ function validRecipe(value: unknown, file: string): CaptureRecipe {
     }
   }
 
+  const standing = validStanding(row['book'], file);
+
   return {
     version: 1,
     photos: handsRead(checked),
     order: order as string[],
     ...(ticks === undefined ? {} : { prepared: ticks }),
+    ...(standing === undefined ? {} : { book: standing }),
   };
+}
+
+/**
+ * THE BOOK'S STANDING CROP AND CUT — carried, refused if malformed, read by
+ * nothing in main.
+ *
+ * `byHand`'s contract for the third time and for the third time it is not
+ * politeness: `validRecipe` rebuilds the recipe field by field and `writeRecipe`
+ * validates on the way out too, so a field main "ignores" is DELETED on the next
+ * save. The thing this one protects is the answer to "what do the rest of the
+ * pages look like", which a person set once and expects to still be there next
+ * week.
+ *
+ * ── Absent at every level, and each absence means something different ──────
+ *
+ * No `book` at all is every recipe written before Wave 24 and every project
+ * before its first *Crop all*. A `book` with no `crop` is a book whose pages are
+ * uncropped and cut anyway — a shoot of spreads photographed edge to edge, which
+ * is a real thing somebody can do. A `crop` with no `cut` is the ordinary book
+ * of single pages. So none of the three is required and none of them implies
+ * another.
+ *
+ * ── WHAT IT REFUSES, AND THE ONE THING IT DOES NOT CHECK ───────────────────
+ *
+ * A quad that is not four points, a frame with no positive size, a cut that is
+ * not two points: all refused, because each is a writer that believes it
+ * recorded a standing and did not. What is NOT checked is whether the cut lands
+ * on opposite edges of the crop — the per-photograph split is checked for that
+ * (a corner cut off is a shape the mint cannot print), but the standing is never
+ * printed. It is re-seated by `halvesOf` against whatever sheet it is applied
+ * to, and a standing that resolves to nothing simply offers no cut. Refusing to
+ * OPEN a project over a line that only ever proposes would be the validator
+ * spending a person's whole recipe on a suggestion.
+ */
+function validStanding(value: unknown, file: string): CaptureStanding | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    fail(file, 'it records the book\'s crop in something that is not a crop and a cut');
+  }
+  const row = value as Record<string, unknown>;
+
+  let crop: CaptureStanding['crop'];
+  const held = row['crop'];
+  if (held !== undefined && held !== null) {
+    if (typeof held !== 'object' || Array.isArray(held)) fail(file, 'the book\'s crop is not a crop');
+    const asked = held as Record<string, unknown>;
+    const side = (key: string): number => {
+      const measure = asked[key];
+      if (typeof measure !== 'number' || !Number.isFinite(measure) || measure <= 0) {
+        fail(file, `the book's crop was drawn for a frame with no ${key}`);
+      }
+      return measure;
+    };
+    crop = {
+      quad: validQuad(asked['quad'], file, 'the book\'s crop'),
+      width: side('width'),
+      height: side('height'),
+    };
+  }
+
+  let cut: CaptureSplit | undefined;
+  const line = row['cut'];
+  if (line !== undefined && line !== null) {
+    if (typeof line !== 'object' || Array.isArray(line)) fail(file, 'the book\'s cut is not a line');
+    const ends = line as Record<string, unknown>;
+    cut = {
+      a: validPoint(ends['a'], file, 'the book\'s cut starts where it'),
+      b: validPoint(ends['b'], file, 'the book\'s cut ends where it'),
+    };
+  }
+
+  // A standing holding neither is a standing that says nothing, and writing the
+  // empty object back would be a key that means "somebody pressed the button
+  // and nothing came of it". Silence says that better.
+  if (crop === undefined && cut === undefined) return undefined;
+  return { ...(crop === undefined ? {} : { crop }), ...(cut === undefined ? {} : { cut }) };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1290,7 +1370,21 @@ export async function intakePhotos(projectDir: string, paths: readonly string[])
     // driven by this sits at 26 of 27 while the recipe is written.
     report({ projectDir, done: paths.length, total: paths.length, file: '' });
 
-    const next: CaptureRecipe = { version: 1, photos, order };
+    /*
+     * SPREAD, NOT REBUILT — and it was rebuilt until Wave 24, which quietly cost
+     * something every time.
+     *
+     * This wrote `{ version: 1, photos, order }`, so an intake DELETED every
+     * field it did not name: the prepare rail's ticks, and now the book's
+     * standing crop. Dragging four more photographs into a project was enough to
+     * un-answer three questions somebody had already answered, and nothing on
+     * the surface said so — the rail simply had its boxes cleared.
+     *
+     * The two locals are the only things an intake changes. Everything else
+     * about the recipe belongs to the person, and the way to keep it is to carry
+     * the recipe rather than to remember each field.
+     */
+    const next: CaptureRecipe = { ...recipe, photos, order };
     await writeAtomically(recipeFile(projectDir), Buffer.from(recipeBytes(next)));
     return {
       recipe: next,
@@ -1598,8 +1692,11 @@ export async function removePhotos(
     if (doomed.length === 0) return recipe;
 
     const orphanedPages = new Set(doomed.flatMap((photo) => photo.pages.map((page) => page.id)));
+    // Spread for intake's reason: a removal decides which photographs are in
+    // the project and nothing else, so the ticks and the book's standing crop
+    // travel through it untouched rather than being dropped by omission.
     const next: CaptureRecipe = {
-      version: 1,
+      ...recipe,
       photos: recipe.photos.filter((photo) => !going.has(photo.id)),
       order: recipe.order.filter((id) => !orphanedPages.has(id)),
     };

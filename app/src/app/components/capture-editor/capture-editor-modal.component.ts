@@ -3,55 +3,58 @@ import {
   Component,
   HostListener,
   computed,
-  effect,
   input,
   output,
-  signal,
 } from '@angular/core';
 
-import { halvesOf, isWholeFrameTurned, joinedQuad, splitFromFraction } from '@shared/capture';
+import { isWholeFrameTurned, joinedQuad } from '@shared/capture';
 import type { CaptureQuad, CaptureSplit } from '@shared/types';
 
 import { CapturePageEditorComponent } from './capture-page-editor.component';
 import { type Dimensions, type FractionQuad } from './geometry';
-import type { PrepareVerb } from '../capture-rail/capture-rail.component';
-import type { ApplyToAll } from '../../core/capture.service';
+import type { ApplyToAll, StampCost } from '../../core/capture.service';
 
 /**
- * THE EDITOR AS A ROOM YOU STEP INTO, AND THE TWO STAGES OF THE WORK.
+ * THE EDITOR AS A ROOM YOU STEP INTO: this photograph, then the rest of the book.
  *
  * ── Why a modal and not a pane ──────────────────────────────────────────────
  *
  * Wave 21 point 1, from Owen's own reading of PDFElement: the grid is where you
- * choose, and the editor is where you work. Until tonight the editor REPLACED
- * the grid inside the same tab, so leaving it meant a button called "All
- * photographs" and coming back meant finding your card again. A modal keeps the
- * table underneath, which is the difference between going somewhere and opening
- * something.
+ * choose, and the editor is where you work. The editor used to REPLACE the grid
+ * inside the same tab, so leaving it meant a button called "All photographs" and
+ * coming back meant finding your card again. A modal keeps the table underneath,
+ * which is the difference between going somewhere and opening something.
  *
- * ── THE STAGES ARE THE BUTTONS, AND THERE IS NO STAGE LABEL ─────────────────
+ * ── THE TWO LEVELS ARE THE TWO GROUPS, AND THAT IS THE WHOLE STRUCTURE ──────
  *
- * docs/CAPTURE.md Wave 21: stage 1 sets ONE crop for the whole shoot, and
- * pressing Apply IS the transition; stage 2 is per-page, and flipping edits the
- * page in front of you. This component never writes "Stage 1 of 2" anywhere,
- * because a number is a thing you have to learn and the footer already shows the
- * difference: one wide button that changes everything, or a row of buttons that
- * change one page and one that changes the rest.
+ * Wave 24. The controls that change THIS PHOTOGRAPH are in one group and the
+ * controls that change THE BOOK are in another, each under a heading that says
+ * so. Both levels have existed since Wave 21 and the app never said which was
+ * which -- the rail was the book, this column was the page, and the buttons
+ * shape-shifted between the two. Owen: *"the two buttons at the bottom are
+ * confusing as hell… the whole paradigm of how we're doing it now versus
+ * global+individual"*.
  *
- * The stage is DERIVED and never stored (the plan-back at channel seq 128,
- * ruled at 129). See `stage` on the service side: a project where nobody has
- * touched anything is stage 1, and every other project is stage 2. That is what
- * stops the dangerous reading of the design -- closing the modal after an
- * evening of per-page work and reopening it onto the one button that stamps
- * over all of it.
+ * Two things went to make that legible. THE TOOL SELECTOR, because Turn, Crop
+ * and Split were modes over a picture whose corners and gutter stayed draggable
+ * in all three -- so a mode changed no gesture, only which buttons were on
+ * screen. And THE STAGES: a derived stage 1 / stage 2 that decided whether the
+ * primary button set the whole shoot or one page. There is one control set now
+ * and it does not change, which is what lets every control be named after its
+ * outcome instead of after the state it is in.
+ *
+ * What holds the surface together instead is one rule, and it is this stage's
+ * own precedent (from the split button: *"not a disabled button but an ABSENT
+ * one"*):
+ *
+ *     A CONTROL THAT WOULD CHANGE NOTHING IS NOT SHOWN.
  *
  * ── What it does NOT own ────────────────────────────────────────────────────
  *
  * The corners, the split line and the previews are still
  * `CapturePageEditorComponent`, unchanged and still pointable at any image. What
- * moved up here is the GESTURE ROW -- turn, split, and the applies -- because
- * those are acts on the whole shoot and the picture below is one photograph.
- * The editor went back to being the surface the corners are chosen on.
+ * lives up here is the ACTS -- because those are decisions about the shoot, and
+ * the picture below is one photograph.
  */
 @Component({
   selector: 'app-capture-editor-modal',
@@ -69,10 +72,8 @@ import type { ApplyToAll } from '../../core/capture.service';
           [dimensions]="dimensions()"
           [quads]="quads()"
           [split]="split()"
-          [proposal]="proposal()"
           (quadsChange)="quadsChange.emit($event)"
           (splitChange)="splitChange.emit($event)"
-          (proposalChange)="proposal.set($event)"
         />
       </div>
 
@@ -110,179 +111,135 @@ import type { ApplyToAll } from '../../core/capture.service';
           </div>
         </div>
 
-        <div class="toolrow">
-          <div class="cap">What you are doing</div>
-          <!--
-            ONE VOCABULARY WITH THE RAIL, not a second one that has to be
-            mapped: these are the keys of CapturePrepared. A tool called Crop
-            and a verb called cropped with a translation between them would be
-            two names for one thing.
-          -->
-          <div class="tools" role="tablist">
-            <button
-              type="button"
-              role="tab"
-              [attr.aria-selected]="using() === 'turned'"
-              [class.on]="using() === 'turned'"
-              (click)="using.set('turned')"
-            >Turn</button>
-            <button
-              type="button"
-              role="tab"
-              [attr.aria-selected]="using() === 'cropped'"
-              [class.on]="using() === 'cropped'"
-              (click)="using.set('cropped')"
-            >Crop</button>
-            <button
-              type="button"
-              role="tab"
-              [attr.aria-selected]="using() === 'split'"
-              [class.on]="using() === 'split'"
-              (click)="using.set('split')"
-            >Split</button>
-          </div>
-        </div>
+        <!--
+          THIS PHOTOGRAPH, THEN THE REST OF THE BOOK — the two levels, named.
 
-        <!-- WHAT THIS TOOL DOES TO THE PHOTOGRAPH IN FRONT OF YOU. The corners
-             and the gutter stay draggable in every tool -- direct manipulation
-             is how this editor is used, and a tool that hid the handles would
-             turn the photograph into a picture. -->
+          They have both existed since Wave 21 and the app never said so: the
+          prepare rail is the book and this column is the page, and the buttons
+          shape-shifted to cope with carrying both. Owen: *"the two buttons at
+          the bottom are confusing as hell… the whole paradigm of how we're doing
+          it now versus global+individual"*.
+
+          THE TOOL SELECTOR IS GONE, and that is the structural change. Turn,
+          Crop and Split were three exclusive MODES over one picture whose
+          corners and gutter were draggable in all three -- so the mode never
+          changed what a gesture did, only which buttons were on screen, which is
+          a mode you cannot see the effect of. Every control it used to hide is
+          here at once, governed by one rule instead:
+
+            A CONTROL THAT WOULD CHANGE NOTHING IS NOT SHOWN.
+
+          Which is this stage's own precedent, from the split button: *"not a
+          disabled button but an ABSENT one"*. A photograph that matches the rest
+          therefore carries almost nothing -- just the picture and its handles.
+        -->
         <div class="does">
-          @if (using() === 'turned') {
-            <div class="turnpair">
-              <button type="button" title="Turn this photograph anticlockwise" (click)="turn(-1)">⟲</button>
-              <button type="button" title="Turn this photograph clockwise" (click)="turn(1)">⟳</button>
-            </div>
-            <p class="says">Turns this photograph only.</p>
-          } @else if (using() === 'cropped') {
-            <p class="says">Drag the four corners onto the page.</p>
-            <!--
-              REMOVING A CROP IS REMOVING THE MARK, so it is offered only when
-              there is one. A control that is always there and does nothing four
-              times out of five teaches people to stop reading it.
-            -->
-            @if (!wholeFrame()) {
-              <button class="btn quiet" type="button" (click)="clearCrop.emit()">
-                Use the whole photograph
-              </button>
-            }
-          } @else {
-            <p class="says">
-              @if (quads().length === 1) {
-                Drag either end of the line onto the gutter.
-              } @else {
-                Drag either end to move the cut.
-              }
-            </p>
-            @if (quads().length > 1) {
-              <button class="btn quiet" type="button" (click)="clearSplit.emit()">
-                Put this back together as one page
-              </button>
+          <div class="cap">This photograph</div>
+
+          <div class="turnpair">
+            <button type="button" title="Turn this photograph anticlockwise" (click)="turn(-1)">⟲</button>
+            <button type="button" title="Turn this photograph clockwise" (click)="turn(1)">⟳</button>
+          </div>
+
+          <!--
+            A TICK, NOT A TOOL. A split is not something you are holding; it is a
+            fact about the photograph -- this is a spread, or it is not. As a
+            mode you could stand in "split mode" on an uncut photograph, which is
+            precisely the state that produced *"i set it, i hit ok, and nothing
+            happened"*, and it forced the primary button to change identity
+            between cutting this one and stamping the book.
+
+            TICKING IS THE CUT. There is no place it out and confirm it later,
+            because unticking rejoins -- keeping the crop, through the same body
+            the cut came from -- so the act is reversible and needs no rehearsal.
+          -->
+          <label class="tick">
+            <input
+              type="checkbox"
+              [checked]="twoPages()"
+              (change)="setTwoPages($any($event.target).checked)"
+            />
+            <span>Two pages</span>
+          </label>
+          <p class="says">{{ cutSays() }}</p>
+
+          <!--
+            REMOVING A CROP IS REMOVING THE MARK, so it is offered only when
+            there is one. A control that is always there and does nothing four
+            times out of five teaches people to stop reading it.
+          -->
+          @if (!wholeFrame()) {
+            <button class="btn quiet" type="button" (click)="clearCrop.emit()">
+              Use the whole photograph
+            </button>
+          }
+
+          <!--
+            THE RELEASE, NAMED FOR ITS OUTCOME AT LAST.
+
+            This button used to read *"Let apply-to-all change it again"* -- a
+            sentence about a POLICY governing a FUTURE PRESS, which was the only
+            kind of name available while there was nothing on the other side of
+            the release to point at. Owen: *"i dont know what the point of this
+            is"*. He was reading it correctly.
+
+            There is a noun now (CaptureStanding), so the control can be named
+            after what a person watches happen. It is absent when the book has no
+            standing yet, because then there is nothing to match.
+          -->
+          @if (handSetHere()) {
+            <p class="says">You placed this crop, so Crop all leaves it alone.</p>
+            @if (canMatch()) {
+              <button
+                class="btn quiet"
+                type="button"
+                title="Give this photograph the crop the rest of the book has"
+                (click)="matchTheOthers.emit()"
+              >Match the others</button>
             }
           }
         </div>
 
         <div class="acts">
-          <div class="cap">When this one looks right</div>
+          <div class="cap">The rest of the book</div>
 
           <!--
-            EACH TOOL OWNS ITS OWN ACT, and the act is always about the whole
-            book. Turn's act turns, Crop's act crops, Split's act cuts.
-
-            This is the design pass's structural change and it answers the
-            second finding directly: two buttons a person could not tell apart
-            are never on screen together any more, because only one of them
-            belongs to the tool in hand.
+            ABSENT RATHER THAN GREYED, for the reason the split button already
+            establishes. It used to sit here disabled saying "The others already
+            match", which is a control explaining why it is not a control.
           -->
-          @if (using() === 'turned') {
+          @if (outOfTurn() > 0) {
             <button
-              class="btn primary"
+              class="btn quiet"
               type="button"
               [class.applied]="justApplied() === 'turn'"
-              [disabled]="outOfTurn() === 0"
-              [title]="outOfTurn() === 0
-                ? 'Every other photograph already sits this way round'
-                : 'Turn the rest of the book to match the one you are looking at'"
+              title="Turn the rest of the book to match the one you are looking at"
               (click)="applyToAll.emit({ kind: 'turn' })"
             >{{ turnAllSays() }}</button>
-          } @else if (using() === 'split' && quads().length === 1) {
-            <!--
-              THE CUT OF THIS PAGE IS THE PRIMARY ACT UNTIL THIS PAGE IS CUT.
-
-              Owen: *"there doesnt seem to be an apply button for page
-              splitting. i set it, i hit ok, and nothing happened"*. He was
-              right and the button he pressed was this one. Dragging the line
-              makes a PROPOSAL; the cut of this photograph was a a quiet
-              secondary up in the tool's description, while the button in the
-              act position -- the big one, under "When this one looks right" --
-              was the stamp, which copies THIS page's quads onto the book. With
-              nothing cut here yet, that stamped one uncut quad onto twenty-seven
-              photographs: a real act, correctly performed, that changes nothing
-              anybody can see.
-
-              Its own label was the evidence and nobody read it: "Cut all 27
-              here — 27 pages". Twenty-seven photographs cut into twenty-seven
-              pages is not a cut. Cut, it says 54.
-
-              So the act position holds the act the person is reaching for. The
-              global cut cannot be pressed before there is a cut to copy, which
-              is not a disabled button but an ABSENT one -- it is not a thing
-              you may do yet, rather than a thing you may not.
-            -->
-            <button
-              class="btn primary"
-              type="button"
-              title="Cut this photograph into two pages along the line"
-              (click)="splitInTwo()"
-            >Cut this one into two pages</button>
-          } @else {
-            <button
-              class="btn primary"
-              type="button"
-              [class.applied]="justApplied() === 'stamp'"
-              [title]="using() === 'split'
-                ? 'Cut every photograph of this shape where this one is cut'
-                : 'Give every photograph of this shape the crop you have placed here'"
-              (click)="stampEverything()"
-            >{{ stampSays() }}</button>
           }
 
-          @if (showing() === 1) {
-            <p class="says">
-              They were all shot the same way, so setting one sets them all. You can fix
-              the odd ones afterwards.
-            </p>
-          } @else {
-            <!--
-              IT SAYS WHAT IS TRUE, AND ONLY WHEN IT IS TRUE.
+          <!--
+            ONE BUTTON, AND THE LINE UNDER IT IS WHERE THE HONESTY LIVES.
 
-              Owen: *"the 'leave this one alone' button is confusing. i dont
-              know what purpose it serves"*. He was reading it correctly. It
-              was a toggle that ASKED HIM TO DECLARE something the app had
-              already watched him do -- setQuads writes byHand on the drag
-              itself, and has since the mark stopped waiting for a button. So
-              on the common visit the control was offering to set a mark that
-              was already set, under a label describing the state it was
-              leaving.
+            Crop all carries the cut as well as the crop -- which is what the
+            stamp has always done -- so a button labelled Crop can cut
+            twenty-three photographs in two. Owen ruled that the consequence line
+            covers it rather than a second Cut all appearing and disappearing
+            beside it.
 
-              What is actually left is the RELEASE, and a release is only
-              meaningful once there is something to release. So the mark is now
-              a sentence rather than a control, and the only button is the one
-              that undoes it -- named for what it does when pressed rather than
-              for the state it produces. A page nobody has touched shows
-              neither, because there is nothing to say about it.
-            -->
-            @if (handSetHere()) {
-              <p class="says">You set this one by hand, so apply-to-all leaves it alone.</p>
-              <button
-                class="btn quiet"
-                type="button"
-                title="Let apply-to-all change this photograph again"
-                (click)="keep.emit()"
-              >Let apply-to-all change it again</button>
-            }
-
-          }
+            So the line is not decoration. It is the whole of how a person knows
+            what a global act will cost BEFORE pressing it, and it has to name
+            all three populations: what changes, what is spared for being
+            hand-set, and what is spared for being a different shape.
+          -->
+          <button
+            class="btn primary"
+            type="button"
+            [class.applied]="justApplied() === 'stamp'"
+            title="Make this the crop the rest of the book takes"
+            (click)="stampEverything()"
+          >{{ cropAllSays() }}</button>
+          <p class="says">{{ cropAllCosts() }}</p>
         </div>
       </aside>
     </div>
@@ -360,7 +317,6 @@ import type { ApplyToAll } from '../../core/capture.service';
     .who .pos { color: var(--text-tertiary); font-size: 11.5px; margin-top: 2px; }
     .walk { display: flex; gap: 6px; margin-top: 10px; }
 
-    .toolrow { padding: 12px 16px 0; }
     .cap {
       color: var(--text-tertiary); font-size: 11px;
       text-transform: uppercase; letter-spacing: 0.06em;
@@ -368,6 +324,22 @@ import type { ApplyToAll } from '../../core/capture.service';
     }
 
     .does { padding: 14px 16px 0; display: flex; flex-direction: column; gap: 8px; }
+    /*
+     * A REAL CHECKBOX, not a styled div with a role. The tick is the whole
+     * control -- label included, so the words are as clickable as the box -- and
+     * the native element brings the keyboard, the focus ring and the
+     * announcement with it. This app has no tick-box of its own to borrow from;
+     * the confirm dialog's is the only other one and it is inside a dialog
+     * component that cannot be reached from here.
+     */
+    .tick {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 12px; color: var(--text-primary);
+      cursor: pointer;
+      user-select: none;
+    }
+    .tick input { accent-color: var(--accent); cursor: pointer; margin: 0; }
+
     .turnpair { display: flex; gap: 8px; }
     .turnpair button {
       flex: 1; padding: 9px 0;
@@ -500,26 +472,20 @@ export class CaptureEditorModalComponent {
   /** The gutter as two endpoints, or null while this photograph is one page. */
   readonly split = input<CaptureSplit | null>(null);
 
-  /**
-   * WHICH STAGE THIS PROJECT OPENS IN — derived by the service from the recipe,
-   * never stored, never decided here.
+  /*
+   * A `stage` INPUT AND A `tool` INPUT STOOD HERE AND BOTH ARE GONE (Wave 24).
    *
-   * A stage this component owned outright would reset every time the modal was
-   * closed, which is the failure the derivation exists to prevent: an evening of
-   * per-page work, reopened onto the button that stamps over all of it.
-   */
-  readonly stage = input.required<1 | 2>();
-
-  /**
-   * WHICH TOOL THIS OPENED ON — the rail's verb, arriving as an input.
+   * `stage` said whether this project opens on the one wide button that sets the
+   * whole shoot or on the per-page row. There is one control set now and it does
+   * not change, so there is no stage to be in -- the encouragement it carried
+   * ("they were all shot the same way, so setting one sets them all") is said
+   * better and more precisely by the consequence line under Crop all, which
+   * gives the actual number.
    *
-   * The rail's three rows each open this same room, and the row is the only
-   * thing that knows which one was pressed. It is an input rather than a
-   * parameter because the modal outlives the press: walking to the next
-   * photograph keeps the tool, which is what somebody splitting twenty-five
-   * spreads wants and what re-deriving it per photograph would take away.
+   * `tool` said which of Turn, Crop or Split the rail's row had asked for. The
+   * modes are gone with the selector; the rail's three rows still open this
+   * room, and now they all open the same one.
    */
-  readonly tool = input<PrepareVerb>('cropped');
 
   /**
    * HOW MANY OTHER PHOTOGRAPHS WOULD ACTUALLY TURN -- the service's count, not
@@ -550,64 +516,114 @@ export class CaptureEditorModalComponent {
   readonly name = input<string | null>(null);
 
   /**
-   * How many photographs the crop and split acts would reach, counting this
-   * one. Same rule as the turn count beside it: the number on a button is what
-   * the button does, not what the book contains, so a photograph of another
-   * shape is left out because the stamp refuses and names it.
+   * WHAT *CROP ALL* WOULD COST, in the three populations the line under it names.
+   *
+   * The service counts it against the same rules the stamp applies, so the
+   * sentence cannot promise a different act from the one the button performs.
+   * See `StampCost`.
    */
-  readonly reach = input<number>(0);
+  readonly cost = input<StampCost>({ takes: 0, byHand: 0, shape: 0 });
 
-  /** What the crop and split acts say -- the same act, named for the tool. */
-  protected readonly stampSays = computed<string>(() => {
-    if (this.justApplied() === 'stamp') return 'Applied ✓';
-    const reach = this.reach();
-    if (this.using() === 'split') {
-      return `Cut all ${reach} here — ${reach * this.quads().length} pages`;
+  /**
+   * Whether there is a book's crop for THIS photograph to be returned to.
+   *
+   * False before anybody has pressed *Crop all*, and false for a photograph of a
+   * shape the standing was not drawn for -- which is not the same question as
+   * "is there a standing at all", and is why the parent asks it per photograph.
+   */
+  readonly canMatch = input<boolean>(false);
+
+  /**
+   * WHERE THE BOOK IS CUT, or null when it has no cut this photograph could take.
+   *
+   * ── Owen: *"the split page line is not persisting from page to page"* ──────
+   *
+   * It was not, and deliberately: the proposal reset to dead centre on every
+   * step, because with no book's cut the only fallbacks were "this photograph's"
+   * and "the middle". For twenty-five frames of one book on one stand, the
+   * middle is the wrong guess every time. Same missing noun, second complaint.
+   *
+   * Null does not mean "use the middle quietly" -- it means say so. The two
+   * offers are different and `cutSays` tells them apart out loud, because a line
+   * placed where the rest of the book is cut and a line placed nowhere in
+   * particular are worth different amounts of trust.
+   */
+  readonly bookCut = input<CaptureSplit | null>(null);
+
+  /** Whether this photograph is a spread — which is what the tick means. */
+  protected readonly twoPages = computed(() => this.quads().length > 1);
+
+  /** What the primary act says. One label now, because it is one act. */
+  protected readonly cropAllSays = computed<string>(() =>
+    (this.justApplied() === 'stamp' ? 'Applied ✓' : 'Crop all'));
+
+  /**
+   * THE CONSEQUENCE LINE — every population the press touches, before it lands.
+   *
+   * Four short sentences at most, and each of them earns its place:
+   *
+   *   what this press MEANS, which is the part that has never been sayable --
+   *     there was no book's crop to become;
+   *   who TAKES it, which is the old button's number moved under the button;
+   *   who is SPARED for being hand-set, which is Owen's ruling made visible.
+   *     Left unsaid, a count of photographs that did not move reads as failure;
+   *   who is spared for being a different SHAPE, which the notice bar reports
+   *     afterwards and which is worth knowing before rather than after.
+   *
+   * The counts are the service's, so the sentence and the act cannot disagree.
+   */
+  protected readonly cropAllCosts = computed<string>(() => {
+    const { takes, byHand, shape } = this.cost();
+    const cut = this.twoPages();
+    const said: string[] = [
+      cut ? 'Becomes the book\'s crop and cut.' : 'Becomes the book\'s crop.',
+    ];
+    if (takes > 1) {
+      said.push(`${takes} photographs take ${cut ? 'them' : 'it'}${cut ? ', two pages each' : ''}.`);
     }
-    return reach === 1
-      ? 'Use this crop on this photograph'
-      : `Use this crop on all ${reach} photographs`;
+    if (byHand > 0) {
+      said.push(byHand === 1
+        ? 'One you placed by hand keeps its own.'
+        : `${byHand} you placed by hand keep their own.`);
+    }
+    if (shape > 0) {
+      said.push(shape === 1
+        ? 'One is a different shape and is left out.'
+        : `${shape} are a different shape and are left out.`);
+    }
+    return said.join(' ');
+  });
+
+  /**
+   * WHAT TICKING WOULD DO, or what dragging does once it is ticked.
+   *
+   * The unticked sentence is the one that matters: it says WHERE the cut will
+   * land before somebody commits to having one, and it distinguishes the book's
+   * cut from the middle. That distinction is the visible half of the fix for the
+   * line not persisting -- a person who reads "cuts where the rest of the book
+   * is cut" knows the placement carried, and a person who reads "down the
+   * middle" knows it has not been set yet and that this press will be what sets
+   * it.
+   */
+  protected readonly cutSays = computed<string>(() => {
+    if (this.twoPages()) return 'Drag either end, or grab the line anywhere to slide it.';
+    return this.bookCut() === null
+      ? 'Cuts down the middle. Drag the line onto the gutter afterwards.'
+      : 'Cuts where the rest of the book is cut.';
   });
 
   /** What the bulk-turn button says, which is always what it would do. */
   protected readonly turnAllSays = computed<string>(() => {
     if (this.justApplied() === 'turn') return 'Turned ✓';
     const others = this.outOfTurn();
-    if (others === 0) return 'The others already match';
     return others === 1
       ? 'Turn the other one to match this'
       : `Turn the other ${others} to match this one`;
   });
 
-  /**
-   * The tool actually in front of you, which starts as the one the rail asked
-   * for and then belongs to the person.
-   *
-   * AN EFFECT AND NOT A COMPUTED, for the reason the stage flag next door
-   * carries: a computed cannot be written to, and this must be, or pressing
-   * Crop inside the editor would be undone on the next change detection by the
-   * input that opened it. The effect re-seats it when the RAIL asks again --
-   * opening "Split spreads" after working in Crop lands on Split.
-   */
-  protected readonly using = signal<PrepareVerb>('cropped');
-
-  /**
-   * THE CUT THE SPLIT TOOL IS OFFERING, before anybody has taken it.
-   *
-   * Held here rather than in the recipe because Owen ruled the tool PROPOSES:
-   * choosing Split must not change the page count of the book, and there is no
-   * un-cut to undo it with. It lives in the modal rather than the page editor
-   * because the modal owns the tool that summons it and the button that takes
-   * it -- the editor draws it and moves it, which is all the editor does with
-   * anything.
-   */
-  protected readonly proposal = signal<CaptureSplit | null>(null);
-
   readonly hasPrevious = input.required<boolean>();
   readonly hasNext = input.required<boolean>();
-  /** How many photographs in this project somebody has set by hand. */
-  readonly handSet = input<number>(0);
-  /** Whether THIS photograph is one of them. */
+  /** Whether THIS photograph was placed by hand. */
   readonly handSetHere = input<boolean>(false);
   /** Which act just landed, for the button that was pressed. Owned by the parent. */
   readonly justApplied = input<ApplyToAll['kind'] | null>(null);
@@ -619,8 +635,14 @@ export class CaptureEditorModalComponent {
   readonly turnBy = output<number>();
   /** Take the crop off this photograph — the whole frame, which is no crop. */
   readonly clearCrop = output<void>();
-  /** Put a cut spread back together as one page. */
-  readonly clearSplit = output<void>();
+  /**
+   * THE TICK, AS AN ANSWER RATHER THAN AN ACT: true cuts, false rejoins.
+   *
+   * One output for both directions, because they are one control and one
+   * question. Two outputs -- a cut and a `clearSplit` -- would let a caller wire
+   * half of a checkbox, which is a tick that goes one way and sticks.
+   */
+  readonly twoPagesChange = output<boolean>();
 
   /**
    * Whether this photograph has NO crop on it — the whole frame, however many
@@ -632,8 +654,8 @@ export class CaptureEditorModalComponent {
    */
   protected readonly wholeFrame = computed(() =>
     isWholeFrameTurned(joinedQuad(this.quads() as readonly CaptureQuad[], this.split())));
-  /** Stage 2's per-page Apply — this page is set by hand and stays that way. */
-  readonly keep = output<void>();
+  /** Give this photograph back to the book's crop. See `canMatch`. */
+  readonly matchTheOthers = output<void>();
   readonly step = output<number>();
   readonly close = output<void>();
 
@@ -661,99 +683,54 @@ export class CaptureEditorModalComponent {
    * CaptureViewComponent.applyToAll.
    */
 
-  /**
-   * WHETHER APPLY HAS BEEN PRESSED SINCE THIS MODAL OPENED.
+  /*
+   * AN `advanced` FLAG AND A `showing` STAGE STOOD HERE AND WENT WITH THE STAGES.
    *
-   * ── The derivation cannot see a press that changed nothing ─────────────────
+   * They existed to work around one thing: on a virgin project the stamp copies
+   * whole-frame quads onto whole-frame quads, so the recipe afterwards was byte
+   * for byte the recipe before and the DERIVED stage still read "nobody has set
+   * anything" -- leaving somebody in stage 1 having pressed the one button that
+   * was supposed to take them out of it. Measured: three untouched photographs,
+   * stamp from the first, stage 1 before and stage 1 after.
    *
-   * docs/CAPTURE.md point 2: Apply stamps every same-shaped page "even if
-   * nothing was changed first; pressing Apply IS what advances the stage". On a
-   * virgin project that press copies whole-frame quads onto whole-frame quads
-   * and clears a byHand nobody had set -- so the recipe afterwards is byte for
-   * byte the recipe before, the derivation still reads "nobody has set
-   * anything", and the person stays in stage 1 having pressed the one button
-   * that was supposed to take them out of it.
-   *
-   * Measured before it was fixed: three untouched photographs, stamp from the
-   * first, stage 1 before and stage 1 after.
-   *
-   * ── Which is why the two are not the same question ─────────────────────────
-   *
-   * The input answers WHERE THIS PROJECT OPENS, from what is on disk. This
-   * answers WHAT HAS HAPPENED SINCE, and it is deliberately as short-lived as
-   * the modal: closing without having changed anything and reopening in stage 1
-   * is correct, because nothing has been set and stage 1 is where nothing-set
-   * belongs. The dangerous case -- reopening after real work -- is answered by
-   * the derivation, which by then has something to see.
+   * There is no stage to be stuck in now. And the press is no longer a no-op on
+   * a virgin project either, which is the quieter half: it records the book's
+   * standing crop, so it changes the recipe even when it changes no photograph.
    */
-  private readonly advanced = signal(false);
-
-  /** The stage actually on screen: where the project opened, or past it. */
-  protected readonly showing = computed<1 | 2>(() => (this.advanced() ? 2 : this.stage()));
 
   /**
-   * Stage 1's Apply. It advances whatever the stamp did or did not touch --
-   * point 2 is unconditional, and a button that sometimes moved the person on
-   * would be a button they had to press twice to find out about.
-   */
-  /**
-   * The crop and split act, and the thing that moves stage 1 on.
+   * *CROP ALL* — this photograph's crop and cut become the book's, and every
+   * following photograph of this shape takes them.
    *
-   * IT ADVANCES WHATEVER THE STAMP DID OR DID NOT TOUCH, which is Wave 21 point
-   * 2 and still true: a button that sometimes moved the person on would be one
-   * they had to press twice to find out about. On a virgin project the stamp is
-   * a no-op, the recipe comes back byte-identical, and the derived stage
-   * correctly reads "nothing set" -- so without this flag the one press that
-   * reaches stage 2 would leave you in stage 1 with no other way out.
-   *
-   * IT CARRIES NO OVERRIDE FLAG ANY MORE. Whether the hand-set pages come too
-   * is asked at the moment of conflict, by the surface that owns dialogs, and
-   * the modal's job is to say WHICH ACT rather than to answer a question about
+   * IT CARRIES NO OVERRIDE FLAG. Whether the hand-set photographs come too is
+   * asked at the moment of conflict, by the surface that owns dialogs, and this
+   * component's job is to say WHICH ACT rather than to answer a question about
    * it in advance.
    */
   protected stampEverything(): void {
-    this.advanced.set(true);
     this.applyToAll.emit({ kind: 'stamp' });
   }
 
-  constructor() {
-    /*
-     * THE RAIL ASKING AGAIN RE-SEATS THE TOOL, and pressing a tool in here does
-     * not. Both halves matter: opening "Split spreads" has to land on Split even
-     * if the last thing somebody did in this modal was crop, and switching to
-     * Crop inside the modal has to survive walking to the next photograph.
-     *
-     * Reading only `tool` is what keeps those apart -- the effect re-runs when
-     * the RAIL's answer changes, not when `using` does.
-     */
-    effect(() => {
-      this.using.set(this.tool());
-    });
+  /*
+   * THE TICK EMITS THE ANSWER, NOT THE GEOMETRY.
+   *
+   * `cutInTwo` stood here and composed the segment itself -- the book's cut, or
+   * `splitFromFraction` down the middle -- then emitted a split and two quads.
+   * It has moved to `CaptureService.cutHere`, and the move is not tidying: WHERE
+   * THE CUT CAME FROM decides whether this photograph is following the book or
+   * placing its own, and only the side that owns the standing can answer that.
+   * Composing it here meant the component knew the cut and the service had to
+   * guess what it meant, which is how ticking to take the book's own cut came to
+   * mark the photograph hand-set and exclude it from the standing it had just
+   * accepted.
+   *
+   * `bookCut` stays an input, for the SENTENCE. Saying which of the two offers
+   * is on the table is this component's job; making it is not.
+   */
 
-    /*
-     * THE LINE IS THERE BEFORE THE FIRST GESTURE, which is the whole of finding
-     * 5. Down the middle, upright, with a knob at each end, the moment the
-     * Split tool opens on a photograph nobody has cut.
-     *
-     * `splitFromFraction` is the same body main's migration reads an old {x}
-     * with, so "the line down the middle" has one answer in this app rather
-     * than one here and one there.
-     *
-     * IT IS PUT AWAY AGAIN whenever it cannot mean anything -- another tool,
-     * another photograph, or a photograph that has actually been cut. A stale
-     * proposal surviving a step to the next page would offer a cut somebody
-     * placed on a different picture.
-     */
-    effect(() => {
-      const quads = this.quads();
-      if (this.using() !== 'split' || this.split() !== null || quads.length !== 1) {
-        this.proposal.set(null);
-        return;
-      }
-      const sheet = quads[0];
-      if (sheet === undefined) return;
-      this.proposal.set(splitFromFraction(sheet as CaptureQuad, 0.5));
-    });
+  /** Ticked cuts this photograph, unticked rejoins it. Both are exact. */
+  protected setTwoPages(on: boolean): void {
+    this.twoPagesChange.emit(on);
   }
 
   /**
@@ -776,43 +753,6 @@ export class CaptureEditorModalComponent {
     this.turnBy.emit(turns);
   }
 
-  /**
-   * Cut this photograph into two pages at the split handle.
-   *
-   * From `joined`, never from `quads()[0]`: after a split that first quad is the
-   * left half, and re-splitting it would halve the page again on every press.
-   * The middle is the default because a spread photographed straight on is split
-   * down the middle, and asking somebody to place a line before they may press
-   * the button would be ceremony.
-   */
-  protected splitInTwo(): void {
-    const sheet = joinedQuad(this.quads() as readonly CaptureQuad[], this.split());
-    /*
-     * THE MIDDLE, THROUGH THE ONE BODY THAT KNOWS WHAT THAT MEANS. A spread
-     * photographed straight on is split down the middle, and asking somebody to
-     * place a line before they may press the button would be ceremony.
-     *
-     * `splitFromFraction` is the same function main's migration reads an old
-     * {x} with, which is the point of it being in shared: "the vertical segment
-     * a fraction always meant" has one answer rather than one here and one
-     * there.
-     */
-    /*
-     * WHERE THE LINE ACTUALLY IS, not down the middle again. The tool put it
-     * there and the person may have dragged it onto the gutter since; cutting
-     * at 0.5 regardless would throw away the placing this button exists to
-     * confirm. The fallback is the middle for the case where there is somehow
-     * no proposal to read.
-     */
-    const split = this.proposal() ?? splitFromFraction(sheet, 0.5);
-    const halves = halvesOf(sheet, split);
-    // Unreachable for a segment built from a fraction -- both ends are put on
-    // opposite edges by construction -- and doing nothing is the only answer
-    // that cannot make a page out of a corner.
-    if (halves === null) return;
-    this.splitChange.emit(split);
-    this.quadsChange.emit([halves[0], halves[1]]);
-  }
 
   /**
    * Escape closes, and the arrows walk.

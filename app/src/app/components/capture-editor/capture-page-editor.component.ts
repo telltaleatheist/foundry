@@ -124,13 +124,26 @@ import { Rectifier } from './rectify';
           in the padding is simply a fraction slightly outside [0,1] -- which the
           drag already clamps, and which cornerNear already measures honestly.
         -->
+        <!--
+          THE CURSOR IS THE ONLY THING SAYING ANY OF THIS IS DRAGGABLE.
+
+          Every handle here is pointer-events:none, so the browser hit-tests
+          nothing and a :hover rule on a corner or the gutter would never match.
+          The frame carries the classes instead, off the same walk the press
+          uses -- see under(). Held beats hovering, because a hand that has
+          already taken hold of something is past being told it could.
+        -->
         <div
           class="frame"
           #frame
+          [class.can-grab]="over() !== null"
+          [class.grabbing]="held() !== null || holdingSplit() !== null"
+          [class.on-cut]="onTheCut()"
           (pointerdown)="grab($event)"
           (pointermove)="drag($event)"
           (pointerup)="release($event)"
           (pointercancel)="release($event)"
+          (pointerleave)="over.set(null)"
         >
         <div
           class="picture"
@@ -197,7 +210,6 @@ import { Rectifier } from './rectify';
             @if (cut(); as line) {
               <line
                 class="split"
-                [class.proposed]="proposing()"
                 vector-effect="non-scaling-stroke"
                 [attr.x1]="line.a.point[0]" [attr.y1]="line.a.point[1]"
                 [attr.x2]="line.b.point[0]" [attr.y2]="line.b.point[1]"
@@ -310,6 +322,22 @@ import { Rectifier } from './rectify';
       padding: 12px;
       touch-action: none;
     }
+    /*
+     * THE CURSOR, AND THERE WAS NONE IN THIS COMPONENT AT ALL UNTIL WAVE 24.
+     *
+     * Not a preference: with nothing here, a picture whose every corner and
+     * whose whole gutter can be dragged looked exactly like a picture. The
+     * corners at least LOOK like handles -- round, raised, the shape everything
+     * uses -- and the cut's ends borrow that shape, so the one thing with no
+     * sign whatever was the LINE, which slides from a grab anywhere along it.
+     *
+     * "grabbing" beats "can-grab" by coming later at equal specificity, which is
+     * the right way round: a hand that has hold of something is past being
+     * offered it. Both are on the frame because the frame is what the pointer is
+     * actually over -- see the template.
+     */
+    .frame.can-grab { cursor: grab; }
+    .frame.grabbing { cursor: grabbing; }
 
     /*
       The box IS the picture — see the class docblock. \`max-height: 100%\` with
@@ -334,11 +362,21 @@ import { Rectifier } from './rectify';
     .handles { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
     .outline { fill: none; stroke: var(--accent, #4c9aff); stroke-width: 2; }
     .split { stroke: var(--warn, #d08770); stroke-width: 2; stroke-dasharray: 6 4; }
-    /* A PROPOSAL WEARS THE HANDLES' COLOUR, because that is what it is: a thing
-       you are placing, not a cut this book has made. Same weight, so it is
-       exactly as visible -- being unmissable the moment the tool opens is the
-       whole reason it exists. */
-    .split.proposed { stroke: var(--accent, #4c9aff); }
+    /*
+     * THICKER UNDER THE HAND — the other half of the affordance, and the half
+     * that says WHICH thing the cursor is about.
+     *
+     * A grab cursor over a picture full of handles does not say what would be
+     * grabbed. The line answering to the hand does, and it answers for its whole
+     * length, which is the fact that was invisible: slideSplit has always taken
+     * a grab anywhere along the cut, and only the two end dots looked like they
+     * could be held.
+     *
+     * On the frame rather than on the line, because the line cannot be hovered
+     * -- it is pointer-events:none like every handle here, so the hit test is
+     * under() and the class it sets is the only thing that knows.
+     */
+    .frame.on-cut .split { stroke-width: 3.5; stroke-dasharray: none; }
 
     .handle {
       position: absolute;
@@ -412,27 +450,26 @@ export class CapturePageEditorComponent {
    */
   readonly split = input<CaptureSplit | null>(null);
 
-  /**
-   * A CUT THAT HAS NOT HAPPENED YET -- the line the Split tool shows you before
-   * you have split anything.
+  /*
+   * A `proposal` INPUT STOOD HERE, AND THE CHECKBOX RETIRED IT (Wave 24).
    *
-   * Owen: "i clicked split spreads and it looked no different from place crop.
-   * it was supposed to be a single line with two knobs that i drag to the right
-   * position." It was not: the gutter draws from `split`, a photograph nobody
-   * has split has none, and so the tool changed which buttons were on screen
-   * and left the picture identical to Crop.
+   * It was the line the Split TOOL drew before anything had been cut -- a
+   * suggestion you could move and then confirm with a button, because choosing a
+   * tool must not change the page count of the book and there was no un-cut.
    *
-   * So the line comes first. It is a PROPOSAL and not a cut -- Owen's ruling --
-   * which is why it is a second input rather than a split written into the
-   * recipe the moment somebody clicks a tool to have a look: choosing a tool
-   * must not change the page count of the book, and there is no un-cut.
+   * Both halves of that reasoning are gone. Split is no longer a tool you stand
+   * in, it is a tick that says whether this photograph is a spread; ticking IS
+   * the cut, so there is no interval during which a line exists and a page does
+   * not. And there is an un-cut now and there has been since `clearSplit`:
+   * unticking rejoins, keeping the crop, through the same body the cut came
+   * from.
+   *
+   * So a line on this picture is a fact about the recipe again, which is what
+   * makes `cut()` below one question rather than two.
    */
-  readonly proposal = input<CaptureSplit | null>(null);
 
   readonly quadsChange = output<readonly FractionQuad[]>();
   readonly splitChange = output<CaptureSplit>();
-  /** The proposed line moved. Nothing is cut and nothing is saved. */
-  readonly proposalChange = output<CaptureSplit>();
 
   /**
    * The listening surface. Capture is set here rather than on the picture
@@ -464,6 +501,24 @@ export class CapturePageEditorComponent {
   protected readonly holdingSplit = signal<'a' | 'b' | 'line' | null>(null);
   /** Where the pointer was, and where the ends were, when a line drag started. */
   private slidFrom: { at: FractionPoint; split: CaptureSplit } | null = null;
+
+  /**
+   * WHAT THE POINTER IS OVER WHILE NOTHING IS HELD — the affordance, and only
+   * that.
+   *
+   * It changes the cursor and thickens the line under the hand. It decides
+   * nothing: `grab` asks `under` again on the press rather than reading this,
+   * so a stale hover can never start a gesture on the wrong thing.
+   */
+  protected readonly over = signal<Under['what'] | null>(null);
+
+  /** Whether the hand is on the cut, either resting on it or moving it. */
+  protected readonly onTheCut = computed(() => {
+    const gutter = this.holdingSplit();
+    if (gutter !== null) return true;
+    const over = this.over();
+    return over === 'end' || over === 'line';
+  });
 
   /**
    * HOW TO LAY THIS PHOTOGRAPH OUT SO IT SITS THE WAY THE PAGE WILL PRINT.
@@ -559,19 +614,18 @@ export class CapturePageEditorComponent {
    * person did here.
    */
   /**
-   * THE LINE ON SCREEN, whether it has been cut yet or not.
+   * THE LINE ON SCREEN, which since Wave 24 is exactly the line in the recipe.
    *
-   * A real split wins over a proposal, always: once a photograph has been cut
-   * the gutter is a fact about it, and a stale proposal underneath must not be
-   * able to draw over the thing it became.
+   * It used to be `split() ?? proposal()` -- a real cut, or a suggested one --
+   * and the two had to be told apart everywhere downstream, including in the
+   * half of the drag gesture that once forgot to. A tick that cuts leaves one
+   * source of truth, so this is a re-seating of the stored segment and nothing
+   * else.
    */
   protected readonly cut = computed(() => {
-    const split = this.split() ?? this.proposal();
+    const split = this.split();
     return split === null ? null : cutOf(this.sheet(), split);
   });
-
-  /** Whether what is drawn is a proposal rather than a cut this book has made. */
-  protected readonly proposing = computed(() => this.split() === null && this.proposal() !== null);
 
   /** The size each page will mint at, and whether its corners are on the photo. */
   protected readonly previews = computed(() =>
@@ -650,8 +704,37 @@ export class CapturePageEditorComponent {
     return quad.map(([x, y]) => `${x},${y}`).join(' ');
   }
 
-  protected grab(event: PointerEvent): void {
-    const at = this.fractionOf(event);
+  /**
+   * WHAT IS UNDER THE POINTER — one hit test, for the grab AND for the cursor.
+   *
+   * ── Why the cursor cannot come from `:hover` ──────────────────────────────
+   *
+   * Every handle on this picture is `pointer-events: none`. It has to be: the
+   * corner handles overhang the picture's edge, and a press on the overhanging
+   * part must still be heard by the frame that owns the pointer capture — which
+   * is the defect that made corners near the border ungrabbable the first time.
+   * So the browser does no hit testing here at all; this method IS the hit
+   * testing, and anything that wants to know what the pointer is over has to ask
+   * it rather than write a `:hover` rule that will never match.
+   *
+   * ── Which is how the gutter came to be invisible ─────────────────────────
+   *
+   * `slideSplit` has been wired since Wave 21: the whole cut slides from a grab
+   * ANYWHERE along its length, not merely at the two ends. Nothing said so.
+   * There is no cursor rule anywhere in this component, no hover state, and only
+   * the two end dots are styled as handles — so the line reads as decoration and
+   * the gesture went unused. This is an affordance rather than a feature: the
+   * capability was already there and had nothing pointing at it.
+   *
+   * ── THE ORDER IS THE GRAB'S ORDER, and it is load-bearing ────────────────
+   *
+   * Corners, then the cut's ends, then the line between them. An end is ALWAYS
+   * on the line and the reverse is not true, so testing the line first would
+   * make the ends ungrabbable — the same class of defect as the overhanging
+   * corners. Sharing one body is what keeps the cursor honest: it cannot promise
+   * a grab the press would resolve differently, because it is the same walk.
+   */
+  private under(at: FractionPoint): Under | null {
     // THE SPUN ELEMENT, NOT THE SLOT: the radius is in the photograph's own
     // fraction space, and a rotation preserves lengths -- so the photograph's
     // on-screen x extent is the width it was LAID OUT at, whichever way round
@@ -665,53 +748,27 @@ export class CapturePageEditorComponent {
     const quads = this.quads();
     for (let index = 0; index < quads.length; index += 1) {
       const corner = cornerNear(toPixels(quads[index]!, UNIT), [at[0], at[1]], radius);
-      if (corner !== null) {
-        this.held.set({ quad: index, corner });
-        this.frame().nativeElement.setPointerCapture(event.pointerId);
-        return;
-      }
+      if (corner !== null) return { what: 'corner', quad: index, corner };
     }
 
-    /*
-     * THE ENDS FIRST, THEN THE LINE BETWEEN THEM.
-     *
-     * An end wins over the line it is on, because an end is ALWAYS on the line
-     * and the reverse is not true -- testing the line first would make the
-     * handles ungrabbable, which is the same class of defect as the corner
-     * handles that hung over the listening element.
-     */
     /*
      * THE LINE THAT IS DRAWN IS THE LINE THAT CAN BE GRABBED, and asking
      * `cut()` rather than `split()` is the whole of that sentence.
      *
      * Owen: *"i couldnt grab the knobs to move the split - it didnt do
-     * anything when i click/dragged the knob"*. The knobs were there. The
-     * template draws them from `cut()`, which is `split() ?? proposal()`, so a
-     * SEEDED PROPOSAL puts two handles and a gutter on the picture -- and this
-     * method used to refuse the press unless `split()` was non-null, which on a
-     * proposal it is not, by definition. So the gesture died at its first line
-     * and the person got a picture of a control.
-     *
-     * `drag` below already knew better: it resolves `split() ?? proposal()` and
-     * picks its destination from which one answered. THE TWO HALVES OF ONE
-     * GESTURE DISAGREED -- the half that MOVES the cut understood proposals and
-     * the half that STARTS the move did not -- and a gesture is only as wired as
-     * its first half.
-     *
-     * The tell was in the code and not in the behaviour: the `split` this
-     * replaces was read once, used for nothing, and existed only to refuse. A
-     * local whose sole effect is a guard is a guard nobody meant to write.
+     * anything when i click/dragged the knob"*. The knobs were there, seeded by
+     * a proposal, and the press used to refuse anything `split()` did not
+     * answer for -- so the half of the gesture that MOVES the cut understood
+     * proposals and the half that STARTS it did not, and a gesture is only as
+     * wired as its first half. The proposal is retired and the lesson is not:
+     * one question, asked once, for both halves.
      */
     const line = this.cut();
-    if (line === null) return;
+    if (line === null) return null;
 
     for (const which of ['a', 'b'] as const) {
       const point = line[which].point;
-      if (Math.hypot(at[0] - point[0], at[1] - point[1]) <= radius) {
-        this.holdingSplit.set(which);
-        this.frame().nativeElement.setPointerCapture(event.pointerId);
-        return;
-      }
+      if (Math.hypot(at[0] - point[0], at[1] - point[1]) <= radius) return { what: 'end', which };
     }
 
     /*
@@ -726,6 +783,20 @@ export class CapturePageEditorComponent {
      * volume is turned a quarter before anything else happens to it.
      */
     if (distanceToEdge(at, line.a.point, line.b.point) <= radius) {
+      return { what: 'line', from: { a: line.a.point, b: line.b.point } };
+    }
+    return null;
+  }
+
+  protected grab(event: PointerEvent): void {
+    const at = this.fractionOf(event);
+    const found = this.under(at);
+    if (found === null) return;
+    if (found.what === 'corner') {
+      this.held.set({ quad: found.quad, corner: found.corner });
+    } else if (found.what === 'end') {
+      this.holdingSplit.set(found.which);
+    } else {
       this.holdingSplit.set('line');
       /*
        * THE ORIGIN IS THE SEATED SEGMENT, NOT THE STORED ONE.
@@ -738,24 +809,35 @@ export class CapturePageEditorComponent {
        * the wrong place. The seated points are where the line actually is,
        * which is where a slide has to start.
        */
-      this.slidFrom = { at, split: { a: line.a.point, b: line.b.point } };
-      this.frame().nativeElement.setPointerCapture(event.pointerId);
+      this.slidFrom = { at, split: found.from };
     }
+    this.frame().nativeElement.setPointerCapture(event.pointerId);
   }
 
   protected drag(event: PointerEvent): void {
     const holding = this.held();
     const gutter = this.holdingSplit();
-    if (holding === null && gutter === null) return;
+    if (holding === null && gutter === null) {
+      /*
+       * NOTHING IS HELD, SO THE ONLY THING TO DO IS SAY WHAT COULD BE.
+       *
+       * On the same handler as the drag rather than a second `pointermove`
+       * listener: two listeners on one element for one pointer is two things
+       * that can disagree about where it is, and this component has already paid
+       * for that shape once in the two halves of the split gesture.
+       */
+      this.over.set(this.under(this.fractionOf(event))?.what ?? null);
+      return;
+    }
     const at = this.fractionOf(event);
 
     if (gutter !== null) {
-      const split = this.split() ?? this.proposal();
+      const split = this.split();
       if (split === null) return;
       const sheet = this.sheet();
-      // A proposal is moved, not saved: the same geometry, a different
-      // destination, decided once here rather than at each emit below.
-      const moved = this.split() === null ? this.proposalChange : this.splitChange;
+      // One destination since the proposal retired: every gutter on this
+      // picture is a cut the recipe already holds, so moving one is a save.
+      const moved = this.splitChange;
 
       if (gutter === 'line') {
         /*
@@ -812,6 +894,11 @@ export class CapturePageEditorComponent {
     this.held.set(null);
     this.holdingSplit.set(null);
     this.slidFrom = null;
+    // The hand is still where it let go, so what it is over is still true --
+    // but nothing will say so until the pointer moves again, and a cursor that
+    // reverted to the default on release would read as the handle vanishing
+    // under a hand that had not moved.
+    this.over.set(this.under(this.fractionOf(event))?.what ?? null);
     // Asked of the FRAME, which is what took the capture. Asking the picture
     // would be asking an element that never holds one, so the release below
     // would never run and the next press would arrive already captured.
@@ -926,6 +1013,26 @@ const UNIT: Dimensions = { width: 1, height: 1 };
 function clamp(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
+
+/**
+ * WHAT THE POINTER FOUND — a corner of some page, an end of the cut, or the cut
+ * itself.
+ *
+ * A discriminated union rather than three nullable answers, because the three
+ * are EXCLUSIVE and ORDERED: a point near an end of the cut is also near the
+ * cut, and the walk that finds it has already decided which one wins. Three
+ * separate results would let a caller take both and re-decide, which is how the
+ * press and the drag came to disagree about the same pointer the first time.
+ *
+ * `line` carries the SEATED segment it was found against, so the slide starts
+ * from where the line actually is rather than from the stored endpoints, which
+ * go stale against a crop dragged after the cut. Handing it back with the answer
+ * means the caller cannot forget to re-seat.
+ */
+type Under =
+  | { what: 'corner'; quad: number; corner: 0 | 1 | 2 | 3 }
+  | { what: 'end'; which: 'a' | 'b' }
+  | { what: 'line'; from: CaptureSplit };
 
 /*
  * THE OFF-THE-ENDS CLAMP WENT WITH THE FRACTION, and the hazard it guarded is

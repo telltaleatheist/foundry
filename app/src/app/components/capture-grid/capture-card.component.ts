@@ -93,7 +93,25 @@ import type { CaptureQuad } from '@shared/types';
           </svg>
         </span>
       </span>
-      <span class="label">{{ label() }}</span>
+      <!--
+        THE MARK, AND WHY IT IS A WORD RATHER THAN A DOT.
+
+        "By hand" is the rail's exact phrase for the same photographs -- "25 of
+        27 cropped · 2 by hand" -- so the table and the rail count the same thing
+        in the same words, and a person who reads the rail's number has somewhere
+        to go and look for it. A pip would have needed a legend, and a legend for
+        one mark is a legend nobody reads.
+
+        Inside the label line rather than over the picture: the photographs are
+        the only bright thing on this table, and a badge sitting on one would be
+        annotating the work by covering it.
+      -->
+      <span class="label">
+        {{ label() }}
+        @if (own()) {
+          <span class="own" title="You placed this crop, so Crop all leaves it alone">· by hand</span>
+        }
+      </span>
     </button>
 
     <button
@@ -244,6 +262,10 @@ import type { CaptureQuad } from '@shared/types';
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    /* Coloured, because it is the one thing on the label line that is a STATUS
+       rather than a name -- and quiet, because it is true of a handful of cards
+       on a table of fifty and must not read as an alarm on each of them. */
+    .own { color: var(--accent, #4c9aff); }
 
     .strike {
       position: absolute;
@@ -282,6 +304,15 @@ export class CaptureCardComponent {
    * they press Delete on the lot.
    */
   readonly chosen = input<boolean>(false);
+
+  /**
+   * Whether somebody placed this photograph's crop themselves.
+   *
+   * See `CaptureCard.own` for why the table has to show it at all: the promise
+   * is that a global never overwrites it, which means the card can sit out every
+   * *Crop all* for the life of the project with nothing to say so.
+   */
+  readonly own = input<boolean>(false);
 
   /** The page this card will mint, in the thumbnail's own fraction space. */
   readonly quad = input.required<CaptureQuad>();

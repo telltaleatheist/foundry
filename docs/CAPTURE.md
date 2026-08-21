@@ -2648,10 +2648,95 @@ exactly those.
   shapes and a crop does not, so folding them into one button would make "all"
   mean two different sets in one sentence.
 
-### One question still open
+### The open question, answered
 
 *Crop all* carries the crop, the cut, and whether the photograph is a spread —
-which is what today's stamp already does. That makes a button labelled **Crop**
-able to cut twenty-three photographs in two. The consequence line says so before
-it is pressed, which may be enough; the alternative is a second button, *Cut
-all*, appearing only when this photograph is ticked. **Owen's call.**
+which is what the stamp already did. That makes a button labelled **Crop** able
+to cut twenty-three photographs in two. **Owen ruled: one button, and the
+consequence line carries it.** The alternative — a second *Cut all* appearing
+only while the tick is on — was declined for the reason the tick itself exists:
+a control that appears and disappears beside another control is a second thing
+to learn about a single act.
+
+So the line names the cut whenever there is one: *"Becomes the book's crop and
+cut. 23 photographs take them, two pages each."*
+
+---
+
+## Wave 24, BUILT — what the walk found that the design did not
+
+Everything above is built. The gates are green (418 pass / 0 fail; both
+tsconfigs; `ng build` at **704.40 kB** against the standing 500 kB budget
+warning, down from 704.53; cascade-check 1013 elements, 0 rules quietly losing;
+control-byte scan clean on all eight touched files). What follows is only the
+part the design could not have known.
+
+### Three defects the walk exposed, all of them pre-existing
+
+**Intake and removal DELETED every recipe field they did not name.** Both built
+`{ version: 1, photos, order }` from scratch, so dragging four photographs into a
+project silently cleared the prepare rail's ticks — and would have cleared the
+book's standing crop the moment it existed. Nothing on the surface said so; the
+rail simply had its boxes emptied. Both now spread the recipe they read.
+
+**The override dialog asked about the wrong photographs.** It was gated on "is
+anything in this project hand-set", which counts THE SOURCE (dragging a corner
+marks it, and the source is the one photograph a stamp never skips) and counts
+photographs of other shapes, which are skipped for a reason no answer to this
+question can change. On a project whose only hand-set photograph was the one
+being copied FROM, the dialog appeared anyway and offered to override a page
+about to become the standard. Measured on the scratch shoot: four hand-set
+photographs, source among them, dialog named all four. It now names exactly the
+population the consequence line promises — measured again, three.
+
+**The stamp put a spread's pages in the book BACKWARDS.** It turned each of the
+source's PAGES into the target's orientation independently, and a half turn
+swaps which half reads first — the arithmetic `turned` has measured since Wave
+21, arriving through a door nobody had checked. Routing the stamp through the
+sheet fixes it for free, because a standing IS a sheet and a cut. Invisible on
+the table, because both cards are there and both look correct.
+
+### And one the design got wrong
+
+**Taking the book's cut marked the photograph as its own.** Every cut wrote
+`byHand`, which was right while cutting was a deliberate per-page act reached
+through a button. The tick makes it the ordinary way to say *this one is a
+spread too* — and measured on the scratch shoot, ticking a photograph so that it
+took the book's own cut then excluded it from every later *Crop all*. **Accepting
+the standing opted you out of the standing.**
+
+The mark now follows WHERE THE CUT CAME FROM: the book's cut leaves the
+photograph following, the middle is a placement. Which is why `cutHere` is a
+service door rather than geometry composed in the component — only the side that
+owns the standing can say what a cut MEANS.
+
+Unticking still marks, and must: a photograph you have declared a single page
+has to survive the next global, or the cut comes straight back.
+
+### Measured, on a scratch copy of the index shoot (25 photographs)
+
+| | |
+| --- | --- |
+| light-table marks | 6 cards on 4 photographs, matching the recipe exactly |
+| consequence line | "Becomes the book's crop. 22 photographs take it. 3 you placed by hand keep their own." — against `takes 22 / byHand 3 / shape 0` on disk |
+| *Crop all* | `book.crop` on disk with its quad and its 3024x4032 frame |
+| *Match the others* | absent before the first stamp, present after; pressing it took a hand-set spread back to the book's uncut crop, 27 pages → 26 |
+| the tick | cut ⇄ rejoin round-tripped exactly: 49 pages → 48 → 49, order with it |
+| the offer | "Cuts down the middle" with no standing; "Cuts where the rest of the book is cut" with one |
+| the cut taken | byte-identical to `book.cut`, and `byHand` left `[false, false]` |
+
+### Still open, said out loud
+
+**The rail's "N by hand" count is not clickable.** The design asked for it to
+select exactly those cards on the table. The mark is built and is the half that
+matters — you can now SEE which photographs sat out a global — but finding them
+from the rail's number still means scanning. It needs a selection input on the
+grid, whose `chosen` is private today, plus scroll-into-view to be worth having.
+Deferred rather than half-built.
+
+**A photograph can still be marked by a gesture it did not mean.** Dragging a
+corner marks the whole photograph, which is right, and so does clearing a crop
+and rejoining a spread. Those are all placements. But a person who ticks Two
+pages on twenty-five photographs one at a time before pressing *Crop all* will
+have marked all twenty-five — and the consequence line will tell them so, which
+is the new part. Watch whether the sentence is enough.
