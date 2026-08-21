@@ -2785,3 +2785,199 @@ and rejoining a spread. Those are all placements. But a person who ticks Two
 pages on twenty-five photographs one at a time before pressing *Crop all* will
 have marked all twenty-five — and the consequence line will tell them so, which
 is the new part. Watch whether the sentence is enough.
+
+---
+
+## Wave 25 — two passes, and the complete page (Owen, 2026-08-21) — CONTRACT
+
+Designed in conversation over mockups (the "The Book's Crop" canvas,
+synthesis page); contract before code, per this doc's own rule. Owen's
+rulings verbatim, because they ARE the design:
+
+> *"maybe my goal should be to crop the pages so theyre positioned right,
+> then it moves to the page splitting after cropping is done. if cropping
+> is done, page splits will almost certainly be lined up already."*
+
+> *"i need a way to finalize the action. per-page or globally. when i
+> change something on one page, it stays that way. if i leave and come
+> back, it's set to that. then i can apply all crops and itll actually
+> crop the image."*
+
+> *"any action taken on the main page with the list of items … is a
+> global action. any action taken on an individual page in a modal is an
+> individual action. we can mark individual pages complete in the modal,
+> and we can hit apply changes on the main level … to actually apply the
+> cuts. if an individual page has already been cut, it doesnt have
+> anything to cut and is left out of the global cut."*
+
+> *"instead of 'freezing', its just not changeable on a global level
+> anymore, unless you select it, right-click, and hit release lock."*
+
+### The three ideas, and why they end the global/individual argument
+
+**1. THE SURFACE NAMES THE SCOPE.** Nobody ever chooses a mode, because
+where the hand is IS the mode — which is Wave 24's own diagnosis ("the
+rail is the book, the modal is the page, and the app never said which
+was which") committed to as the rule instead of left as an accident.
+Stated precisely, because the table carries per-card gestures too:
+
+    A control on a CARD speaks for that photograph.
+    A control on the RAIL speaks for the book.
+    The MODAL speaks for the photograph it has open.
+
+**2. CROP AND SPLIT ARE PASSES IN ORDER, not tools on one surface.**
+Crop everything → APPLY → split on the cropped pages → FINISH. The
+insight that carries it: once crops are applied, every page is a
+squared, registered rectangle, so the gutter sits in nearly the same
+fractional place on all of them — one cut placed once fits the whole
+book, and the "well-aligned shoot needs no ceremony" case happens BY
+CONSTRUCTION rather than by a mode switch. This is also why the scope
+switch (canvas Option B) is not being built: each pass has one kind of
+handle on its stage — corners in the crop pass, the line in the split
+pass — so what is grabbable answers the scope question before it is
+asked.
+
+**3. COMPLETE — one state where Wave 24 had two.** A photograph is
+COMPLETE when a person has either placed something on it by hand
+(Owen's standing ruling: a hand-placed change is assumed correct) or
+pressed *This page is right* in the modal. Complete means exactly one
+thing: THE BOOK STOPS MOVING THIS PHOTOGRAPH. Every global act skips
+it. It is not a deep-freeze — release (a deliberate press, below) puts
+it back in the flow. And it is NEVER "left out of the pipeline": at
+Finish every photograph gets its pixels cut at whatever lines it holds,
+complete and follower alike. Complete is left out of the STAMP, never
+the MINT.
+
+The Wave 24 provenance rule survives inside this unchanged: a placement
+completes, an acceptance does not. Ticking *Two pages* so the page takes
+the book's own cut leaves it following (re-seating harmlessly at the
+next Apply); sliding the line yourself completes it.
+
+### The loop, end to end
+
+    CROP PASS    work the modal page by page, or set the book's crop
+                 from one well-fitted page; every touch completes that
+                 page and is kept the moment it is made
+    APPLY        table-level: the book's crop lands on every photograph
+                 that is not complete; every surface flips to drawing
+                 the cropped projection
+    SPLIT PASS   the modal shows the CROPPED page — square, registered,
+                 no corner handles; the book's cut is the only line;
+                 slide it on a page and that page completes; press
+                 "This page is right" to complete without moving it
+    APPLY        same act, same skip rule, for the cut
+    FINISH       cuts the pixels once, makes the pages, mints the PDF
+
+**APPLY IS A COMMITMENT POINT, NOT A SECOND RENDER** (ruled in
+conversation: proposed, and "everything else sounds right"). Every
+surface draws the rectified projection from Apply onward — the WebGL
+rectify that already serves live preview and mint is the drawing path —
+but pixels are cut ONCE, at Finish. Which is what makes *Reopen crops*
+free: it costs nothing, destroys nothing, and reopens exactly as left.
+
+**PERSISTENCE IS ALREADY TRUE AND BECOMES SAID.** Every drag has always
+written to the recipe at the moment it was made; what was missing is
+any surface saying so, which is why it FELT unset. The rail carries the
+sentence ("everything above is kept the moment you do it — leaving and
+coming back changes nothing") and the per-page marks carry the count.
+
+### The controls, exactly
+
+**The table (the book's surface):**
+
+- The rail becomes the SEQUENCE: Crop (with *Apply crops*, then
+  "Applied" + *Reopen*) → Split (with its own Apply) → Finish. The
+  consequence line moves to the Apply button, where the act now lives:
+  *"22 take the book's crop. 3 complete keep their own."*
+- Cards carry the COMPLETE mark (one dot; it replaces the by-hand mark
+  as the thing a person sees). The rail's counts are PRESSABLE and
+  select those cards — which closes Wave 24's deferred "N by hand is
+  not clickable" as part of this wave rather than as its own.
+- Right-click a card → *Release — let the book change it again* (the
+  app's scrim+menu idiom). Release clears complete; the page keeps its
+  lines until the next Apply overwrites them. This door replaces the
+  override dialog entirely: with complete pages simply left out, there
+  is nothing to ask at stamp time, and the dialog Wave 24 rebuilt goes.
+- Existing per-card gestures (turn, strike/remove) stay, and are
+  individual acts by rule 1.
+
+**The modal (the photograph's surface):**
+
+- PASS-AWARE: crop pass shows corners + turn + the *Two pages* tick;
+  split pass shows the line alone on the cropped projection.
+- *This page is right — next* completes the page and steps on. It is
+  the person speaking, exactly the rail-tick philosophy at page grain.
+- *Make this the book's crop* / *Make this line the book's cut* SETS
+  THE STANDING AND STAMPS NOTHING — propagation is Apply's job, on the
+  table, per rule 1. The button's line says so: *"Applied from the
+  table."* (This moves Wave 24's stamp-on-press to the table; the
+  modal's press becomes a record, which is the smaller act its surface
+  entitles it to.)
+- THE FILMSTRIP along the modal's foot: every photograph, complete
+  marks visible, current lit, click to jump. It is what makes a global
+  act's reach VISIBLE from inside the modal and what makes the walk
+  navigable without closing anything.
+- Releasing from the modal: the *Where it stands* block offers release
+  on a complete page, same semantics as the card's right-click.
+
+### Schema — two fields, no migration
+
+    CapturePhoto.complete?: boolean   // absent = derive: any page byHand
+    CaptureRecipe.pass?: 'split'      // absent = cropping; Finish needs
+                                      // both applies to have happened
+
+`byHand` STAYS, as provenance (where a line came from decides whether a
+placement completes — Wave 24's `cutHere` rule, unmoved). The derive on
+absent `complete` means an existing project's hand-set pages arrive
+complete with nothing rewritten — the same no-migration posture as the
+standing itself. `isComplete(photo)` lives in the service and is the
+ONE test every skip reads, per the one-predicate rule.
+
+### Ruled inline (say so if wrong, they are cheap to change)
+
+- **Turn belongs to the crop pass** — orienting the shot is part of
+  deciding its rectangle. The split pass's modal shows no turn.
+- **Finish does not gate on the marks.** The rail says how many pages
+  were never looked at ("7 to look at"); the existing tick-gate stays
+  the honesty check. A person who trusts the book's lines may finish
+  without walking.
+- **The Book card / stacked see-through editor (canvas Option A's
+  centrepiece) is DEFERRED OUT LOUD.** The pass model removes most of
+  its need: the book's lines are set through a page (*Make this the
+  book's…*), which is Wave 24's "no separate editor" deferral holding.
+  If the split pass's one-cut-fits-all promise turns out weaker than
+  measured, the stack view is the instrument to reach for.
+
+### Work packages (disjoint fences, contract-first)
+
+**W25-P1 — the model.** `shared/types.ts` fields above;
+`capture.service.ts`: `isComplete`, the complete/release doors, the
+pass field and its transitions, Apply (stamp skipping complete — the
+`StampCost` counts move from byHand to complete), Reopen, the split
+pass's book-cut record-without-stamp. No component edits. Merges
+first; P2/P3 build against it.
+
+**W25-P2 — the table.** `capture-rail` becomes the sequence;
+`capture-grid`/`capture-card`: complete dot, right-click release menu,
+pressable counts with selection + scroll-into-view, the cropped
+projection on cards after Apply. Consumes P1's doors, never edits them.
+
+**W25-P3 — the modal.** `capture-editor-modal` + `capture-page-editor`:
+pass-aware control sets, the cropped-projection stage in the split
+pass, *This page is right — next*, the record-not-stamp primary, the
+filmstrip, release from *Where it stands*.
+
+P2 and P3 meet only at P1's service doors. Any package finding this
+contract wrong edits this document first and says so — an honest
+partial beats a bent whole.
+
+### Superseded by this wave, named so nothing dangles
+
+- Wave 24's modal *Crop all* stamp-on-press → the record + table Apply.
+- The override dialog ("also change the N you set by hand?") → gone;
+  release is the explicit door.
+- The by-hand card mark and rail count → the complete mark and counts.
+- Wave 24's still-open "count not clickable" → closed by W25-P2.
+- Wave 24's watch-item "a person who ticks Two pages 25 times marks
+  them all" → dissolved: accepting the book's cut never completed a
+  page, and propagation now happens at Apply anyway.

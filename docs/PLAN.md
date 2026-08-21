@@ -1752,6 +1752,27 @@ shoot; the scratch copy has been deleted.
   cards from the rail needs a selection input on the grid, whose `chosen` is
   private today. Not half-built.
 
+### Wave 25 — two passes, and the complete page (Owen, 2026-08-21) — CONTRACT DRAWN
+
+Designed over mockups (the "The Book's Crop" canvas) in conversation;
+the full contract is **docs/CAPTURE.md § Wave 25**, not duplicated here.
+The three ideas: THE SURFACE NAMES THE SCOPE (card = photograph, rail =
+book, modal = the photograph it has open — no mode, ever); CROP AND
+SPLIT BECOME PASSES IN ORDER (crop → Apply → split on the cropped
+projection → Finish, because applied crops register the pages and one
+cut then fits the book); and COMPLETE, one state unifying Wave 24's
+by-hand protection with a per-page say-so mark — a complete photograph
+is skipped by every global act until an explicit release, and is left
+out of the STAMP, never the MINT. Apply is a commitment point (the
+projection flips everywhere; pixels are cut once, at Finish).
+
+Work packages W25-P1 (model) / P2 (table) / P3 (modal) are fenced in
+the contract, P1 first. Closes Wave 24's deferred "N by hand is not
+clickable" and retires its override dialog. Deferred out loud: the
+Book-card stacked see-through editor, until the one-cut-fits-all
+promise is measured weaker than designed. AWAITING Owen's sign-off on
+the contract before the packages are assigned.
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the
