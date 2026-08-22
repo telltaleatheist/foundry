@@ -28,7 +28,9 @@ import type {
 } from '@shared/types';
 
 import { api } from '../../core/foundry';
+import { ConfirmService } from '../../core/confirm.service';
 import { HostOpsService } from '../../core/host-ops.service';
+import { IntakeWorkspaceService, type WorkspaceImage } from '../../core/intake-workspace.service';
 import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';
 import { OpenDocumentsService, pathIsProject, type Tab } from '../../core/documents.service';
@@ -450,18 +452,202 @@ import { ActionMenuComponent } from '../action-menu/action-menu.component';
         (dragleave)="onLeave()"
         (drop)="onDrop($event, null)"
       >
+        <!--
+          ══ THE WORKSPACE ═══════════════════════════════════════════════════
+
+          Owen, 2026-08-22, in full, because every decision below is one clause
+          of it:
+
+          \`"lets remove the 'OCR...' button from the homepage. and the drop zone
+          on the home page - lets have it accept images (HEIC, PNG, JPG, etc) as
+          input, not just PDF. if the user drag/drops images into the home
+          screen, it pulls them all up in the organizer and they can select one
+          or more, right-click them, and select 'create new book' from them.
+          itll pop up a modal to name the new book and open in the project just
+          as though they had started a new book from the home page. im thinking
+          we can put the tree workflows in accordions just like the inspector
+          chapter/notes/furniture accordions. each book opened will be an
+          accordion with an X next to it to close, or an arrow to minimize it.
+          the working area where theyre defining what's a book and what isn't
+          can be labeled 'workspace' or something until theyve finished defining
+          the pages as new books. then they close the workspace and whatever
+          wasnt assigned to a new library/book is cleared away. if they want to
+          pull it up again theyll have to re-upload the images. but theyll be
+          saved in the new books they added. the pages are moved out of the
+          workspace and into the new project they create when they click create
+          new project or whatever."\`
+
+          IT IS DRAWN ONLY WHILE IT HOLDS SOMETHING. An empty Workspace header
+          over an empty library would be furniture explaining a state nobody is
+          in — and the drop that fills it is the thing that makes it appear,
+          which is how anybody learns the two are connected.
+
+          FIRST, ABOVE THE BOOKS. It is the one accordion here that is about
+          work in progress rather than about work already filed, and five open
+          books would otherwise push it under the fold on the one screen where
+          somebody is mid-gesture.
+        -->
+        @if (workspace.holding()) {
+          <section class="accordion" [class.shut]="!workspaceOpen()">
+            <div class="ahead">
+              <button
+                class="atwist"
+                [attr.aria-expanded]="workspaceOpen()"
+                [title]="workspaceOpen() ? 'Fold the workspace away' : 'Show the workspace'"
+                (click)="workspaceOpen.set(!workspaceOpen())"
+              >
+                <span class="acaret">{{ workspaceOpen() ? '▾' : '▸' }}</span>
+                <span class="alabel">Workspace</span>
+                <span class="count">{{ workspace.count() }}</span>
+              </button>
+              <!--
+                THE ✕ IS A DESTRUCTION AND IS ASKED ABOUT — see \`shutWorkspace\`.
+                It wears the danger hover for the same reason Home's delete does:
+                this is the only control in the panel that ends something that
+                cannot be got back by pressing anything.
+              -->
+              <button
+                class="ax danger"
+                title="Close the workspace — anything not yet made into a book is cleared"
+                aria-label="Close the workspace"
+                (click)="void shutWorkspace()"
+              >✕</button>
+            </div>
+            @if (workspaceOpen()) {
+              <div class="shots">
+                <!--
+                  THE CARD IS A BUTTON so the keyboard reaches it and the a11y
+                  tree calls it what it is. \`draggable="false"\` on the picture
+                  because a native image drag out of here would hand the app's
+                  own blob URL to whatever it landed on.
+                -->
+                @for (shot of workspace.items(); track shot.id) {
+                  <button
+                    class="shot"
+                    type="button"
+                    [class.chosen]="chosen().has(shot.id)"
+                    [attr.aria-pressed]="chosen().has(shot.id)"
+                    [title]="shot.name"
+                    (click)="pickShot($event, shot)"
+                    (contextmenu)="onShotMenu($event, shot)"
+                  >
+                    <!--
+                      ── A HEIC MAY NOT DRAW, AND THAT IS ANSWERED RATHER THAN
+                         ASSUMED EITHER WAY ────────────────────────────────────
+
+                      Chromium decodes PNG and JPEG in an \`<img>\` and does not
+                      reliably decode HEIC — which is the format of the case this
+                      whole workspace was built for, a book photographed with a
+                      phone. Main can decode one (libheif, at intake), but asking
+                      it to would mean decoding every dropped photograph before
+                      anybody has said which of them are a book, in the process
+                      that must not be blocked, for a picture 96 pixels wide.
+
+                      So the card asks the platform and believes the answer.
+                      \`(error)\` is the browser saying it could not draw this
+                      one, and the mark takes its place — the same camera the
+                      tree uses for photographs-before-they-are-pages, so the
+                      substitute is still this app's own vocabulary. If a later
+                      Chromium learns HEIC, the picture simply appears and
+                      nothing here has to be revisited.
+
+                      THE NAME IS ON THE CARD EITHER WAY, which is what makes a
+                      grid of marks usable at all: it is the person's own file,
+                      named by them or their camera, and capture intake's rule
+                      about filenames in copy is the same rule — this is the one
+                      place the name IS the content.
+                    -->
+                    @if (undrawable().has(shot.id)) {
+                      <span class="noshot" aria-hidden="true">
+                        <svg><use href="#ft-capture" /></svg>
+                      </span>
+                    } @else {
+                      <img
+                        [src]="shot.url"
+                        [alt]="shot.name"
+                        draggable="false"
+                        (error)="cannotDraw(shot.id)"
+                      />
+                    }
+                    <span class="sname">{{ shot.name }}</span>
+                  </button>
+                }
+              </div>
+              <!--
+                THE GESTURE, SAID ONCE, UNDER THE CARDS. A right-click menu is
+                the one act in this app with nothing on screen to suggest it —
+                capture-grid gets away with silence because its menu repeats
+                acts the header already offers, and this menu is the only door
+                there is.
+              -->
+              <p class="ahint">
+                Select images, then right-click to make a book from them. Closing this clears
+                whatever is left.
+              </p>
+            }
+          </section>
+        }
+
         @for (group of groups(); track group.key) {
           <!--
-            role=group with the book's name on it, so the tree inside is
-            announced as belonging to something rather than as a run of
-            unrelated cards. There is no header element any more: the first card
-            IS the book — its import, the thing it all started from.
+            ── EACH BOOK IS AN ACCORDION (Owen, above) ────────────────────────
+
+            *"each book opened will be an accordion with an X next to it to
+            close, or an arrow to minimize it."* The idiom is the inspector's,
+            character for character — \`.accordion\`, a head with a caret,
+            a label in small caps, a count — because there is one accordion in
+            this app and a second one two pixels different reads as a rendering
+            bug rather than as a decision.
+
+            THIS IS CHROME AROUND THE GROUP, NOT A NEW GROUP. The rows inside
+            are the same \`#line\` template with the same drag, drop, selection,
+            menu and footer gestures they have always had; what is new is a head
+            over them and the ability to fold the whole book away. A tree that
+            was rebuilt to gain a header would have been the wrong trade.
+
+            role=group with the book's name on it stays where it was — on the
+            element holding the CARDS — so the tree is still announced as
+            belonging to something. The first card is still the book itself: its
+            import, the thing it all started from. The head names it a second
+            time, which is what a person needs when the book is folded shut and
+            the card that carries the name is not on screen.
           -->
-          <div class="group" role="group" [attr.aria-label]="'Book: ' + group.title">
-            @for (row of group.rows; track row.key) {
-              <ng-container [ngTemplateOutlet]="line" [ngTemplateOutletContext]="{ $implicit: row }" />
+          <section class="accordion" [class.shut]="shutBooks().has(group.key)">
+            <div class="ahead">
+              <button
+                class="atwist"
+                [attr.aria-expanded]="!shutBooks().has(group.key)"
+                [title]="shutBooks().has(group.key) ? 'Show this book' : 'Fold this book away'"
+                (click)="foldBook(group.key)"
+              >
+                <span class="acaret">{{ shutBooks().has(group.key) ? '▸' : '▾' }}</span>
+                <span class="alabel">{{ group.title }}</span>
+                <span class="count">{{ group.rows.length }}</span>
+              </button>
+              <!--
+                THE CLOSE-BOOK DOOR, MIRRORED ONTO THE HEAD. The root card still
+                carries its own ✕ and the right-click still offers Close book;
+                this is the third door onto the same call, and it exists because
+                a folded book has no root card on screen to press. All three go
+                through \`closeProject\` — nothing on disk, every tab closed the
+                ordinary way, so a document holding uncommitted work still gets
+                its one question.
+              -->
+              <button
+                class="ax"
+                title="Close this book — nothing is deleted"
+                [attr.aria-label]="'Close ' + group.title"
+                (click)="closeProject(group)"
+              >✕</button>
+            </div>
+            @if (!shutBooks().has(group.key)) {
+              <div class="group" role="group" [attr.aria-label]="'Book: ' + group.title">
+                @for (row of group.rows; track row.key) {
+                  <ng-container [ngTemplateOutlet]="line" [ngTemplateOutletContext]="{ $implicit: row }" />
+                }
+              </div>
             }
-          </div>
+          </section>
         }
 
         @for (row of loose(); track row.key) {
@@ -831,6 +1017,43 @@ import { ActionMenuComponent } from '../action-menu/action-menu.component';
           }
         </div>
       }
+
+      <!--
+        ── THE WORKSPACE'S OWN MENU ────────────────────────────────────────────
+
+        *"they can select one or more, right-click them, and select 'create new
+        book' from them."* One item, because there is one thing to do with a
+        pile of loose images, and this app's rule for a menu is that an act which
+        would change nothing is absent rather than greyed (capture-grid, Wave
+        24). Removing an image on its own is deliberately NOT here: the workspace
+        is cleared by closing it, which is the door Owen named, and a second
+        subtractive act would be a second answer to "how do I get rid of this".
+
+        IT COUNTS THE IMAGES for the reason the light table's menu counts
+        photographs — somebody about to move nine of them out of this list should
+        read the nine before the naming card appears.
+
+        A SEPARATE SIGNAL FROM THE TREE'S MENU, not a second mode on it: that one
+        is about a Row and every branch in it asks \`open.row.kind\`. Two menus
+        that can never be open at once are still two questions, and one signal
+        holding either would be a union nobody could read.
+      -->
+      @if (shotMenu(); as at) {
+        <div class="menu-scrim" (click)="shotMenu.set(null)" (contextmenu)="shotMenu.set(null)"></div>
+        <div
+          class="menu"
+          role="menu"
+          aria-label="Actions for the selected images"
+          [style.left.px]="at.x"
+          [style.top.px]="at.y"
+          (keydown.escape)="shotMenu.set(null)"
+        >
+          <button role="menuitem" (click)="createFromChosen()">
+            Create new book from {{ chosen().size }}
+            {{ chosen().size === 1 ? 'image' : 'images' }}…
+          </button>
+        </div>
+      }
     </div>
     }
 
@@ -963,8 +1186,135 @@ import { ActionMenuComponent } from '../action-menu/action-menu.component';
     .list.landing { background: var(--accent-faint); }
 
     /* Each book is a run; the space between two of them is what says where one
-       ends. Heavier chrome would make the panel read as several lists. */
-    .group { margin-bottom: 14px; }
+       ends. The head above it now says the same thing louder, so the margin is
+       what separates the CARDS from their own head rather than one book from
+       the next — see \`.accordion\`, which carries the between-books space. */
+    .group { margin-bottom: 4px; }
+
+    /*
+      ── THE ACCORDIONS ────────────────────────────────────────────────────────
+
+      THE INSPECTOR'S IDIOM, ON PURPOSE AND MEASURED AGAINST IT: a head row with
+      a twist on the left, a small-caps label, a count on the right, and a body
+      that is simply not rendered when shut. The numbers are that panel's —
+      9px twist, 10px/600 label at 0.08em, an 11px tabular count — because two
+      accordions in one window that differ by a pixel read as a bug.
+
+      WHAT IS NOT COPIED IS THE FLEX. The inspector's sections SHARE a fixed
+      column height (\`flex: 1 1 0\` with each body scrolling itself), which is
+      right for three sections that are always the same three. Here the number of
+      sections is the number of open books, and giving each of them an equal
+      share of the panel would make every book's tree shorter as another book
+      opened. This list scrolls as one, which is what it has always done.
+
+      THE HEAD IS A ROW OF TWO CONTROLS AND NOT ONE, which is why \`.ahead\` is a
+      div holding buttons rather than being a button itself: a ✕ nested inside a
+      button is invalid markup, and the version of it that "works" is a click
+      handler racing its own parent.
+    */
+    .accordion { margin-bottom: 14px; }
+    .accordion.shut { margin-bottom: 6px; }
+
+    .ahead { display: flex; align-items: baseline; gap: 2px; }
+    .atwist {
+      flex: 1; min-width: 0;
+      display: flex; align-items: baseline; gap: 8px;
+      padding: 6px 4px 6px 6px;
+      background: transparent; border: none; border-radius: var(--radius-sm);
+      text-align: left; cursor: pointer;
+    }
+    .atwist:hover { background: var(--bg-hover); }
+    /*
+      NAMED \`acaret\` AND NOT \`twist\`, WHICH IS THE WHOLE OF THE REASON IT HAS
+      AN AWKWARD NAME. \`.twist\` is already taken in this stylesheet — it is the
+      CARD's expander arrow, ten pixels wide with a fixed line box so that the
+      marks to its right line up whether or not a node has children — and a
+      second rule of the same name at the same specificity is decided by
+      declaration order, which is a coin flip dressed as a cascade. The two
+      arrows look alike because they are the same idea at two scales; they are
+      not the same rule and must not share a selector.
+    */
+    .acaret { flex: 0 0 auto; color: var(--text-tertiary); font-size: 9px; line-height: 1; }
+    .alabel {
+      flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-size: 10px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--text-tertiary);
+    }
+    .atwist:hover .alabel { color: var(--text-secondary); }
+
+    /* The head's own ✕ — the card's \`.x\` at the head's smaller weight. Quiet
+       until the pointer is on it, like every other ✕ in this panel. */
+    .ax {
+      flex: 0 0 auto;
+      padding: 4px 6px;
+      background: transparent; border: none; border-radius: var(--radius-sm);
+      color: var(--text-muted); font-size: 10px; line-height: 1; cursor: pointer;
+    }
+    .ax:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .ax.danger:hover { background: var(--error-soft); color: var(--error); }
+
+    /*
+      ── THE WORKSPACE'S GRID ──────────────────────────────────────────────────
+
+      \`auto-fill\` at a 96px minimum, so the panel decides how many columns it
+      has rather than this file guessing: three at the sidebar's 384px, and still
+      a grid rather than a broken row if that number ever moves again (it has
+      moved twice already — see the \`:host\` docblock).
+
+      A FIXED-HEIGHT PICTURE WITH \`object-fit: contain\`, because a shoot is
+      portrait pages and screenshots in whatever the screen was: cropping to fill
+      would cut the top off every page, and letting each card take its own aspect
+      would make a grid that steps up and down like a broken staircase.
+    */
+    .shots {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+      gap: 6px;
+      padding: 2px 2px 6px;
+    }
+    .shot {
+      display: flex; flex-direction: column; gap: 4px;
+      padding: 4px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      text-align: left;
+      transition: border-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  background-color 100ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .shot:hover { border-color: var(--border-strong); }
+    /* Chosen is the accent, which is this app's one word for "this one" — the
+       same statement the standing card makes with the same colour. */
+    .shot.chosen { border-color: var(--accent); background: var(--accent-faint); }
+    .shot img {
+      display: block; width: 100%; height: 72px;
+      object-fit: contain;
+      background: var(--bg-sunken);
+      border-radius: var(--radius-sm);
+    }
+    /* The stand-in, at the picture's exact size so a grid of mixed formats does
+       not step up and down where the HEICs are. */
+    .noshot {
+      display: flex; align-items: center; justify-content: center;
+      width: 100%; height: 72px;
+      background: var(--bg-sunken);
+      border-radius: var(--radius-sm);
+      color: var(--text-muted);
+    }
+    .noshot svg { width: 22px; height: 22px; }
+    .sname {
+      font-size: 10px; color: var(--text-tertiary);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .shot.chosen .sname { color: var(--text-secondary); }
+
+    .ahint {
+      margin: 0; padding: 0 4px 4px;
+      font-size: 11px; line-height: 1.45; color: var(--text-muted);
+    }
 
     /*
       ── THE DRAWN LINEAGE ─────────────────────────────────────────────────────
@@ -1377,6 +1727,18 @@ export class OpenDocumentsComponent {
   /** The card before a footer act runs past unapplied work — see `run`. */
   private readonly unapplied = inject(UnappliedService);
   private readonly router = inject(Router);
+  /**
+   * The intake workspace — loose images waiting to be told which book they are.
+   *
+   * IT IS DRAWN HERE BECAUSE THIS IS WHERE THE BOOKS ARE. Owen's word for what
+   * this panel is doing is "accordions", and the workspace is one of them: the
+   * pile that has not become a book yet, sitting above the ones that have. A
+   * surface of its own would have been a second library on a screen whose whole
+   * redesign was about having one.
+   */
+  protected readonly workspace = inject(IntakeWorkspaceService);
+  /** The card asked before the workspace is cleared — see `shutWorkspace`. */
+  private readonly confirm = inject(ConfirmService);
 
   constructor() {
     /*
@@ -1455,6 +1817,72 @@ export class OpenDocumentsComponent {
    * the class docblock.
    */
   private readonly collapsed = signal<ReadonlySet<string>>(new Set());
+
+  // ── The accordions, and the workspace inside one of them ───────────────────
+
+  /**
+   * The BOOKS somebody has folded away, by group key.
+   *
+   * SHUT RATHER THAN OPEN, exactly as `collapsed` above is, and for the same
+   * reason said one level up: a book that opens while you are looking at the
+   * library must appear OPEN. A set of "which are expanded" would make every
+   * newly opened book arrive folded, so the act of opening a book would hide it.
+   *
+   * A SECOND SET RATHER THAN A MEMBER OF THE FIRST, because the two fold
+   * different things: `collapsed` is keyed by ROW key and hides a node's
+   * children inside a tree, and this is keyed by GROUP key and hides the whole
+   * tree. One set holding both would work until two keys collided, and the
+   * failure would be a book that folds when you fold a step.
+   *
+   * Session-only, like everything else in this panel's view state.
+   */
+  protected readonly shutBooks = signal<ReadonlySet<string>>(new Set());
+
+  /** Whether the workspace accordion is open. It arrives open: see `foldBook`. */
+  protected readonly workspaceOpen = signal(true);
+
+  /**
+   * The images somebody has selected in the workspace, by id.
+   *
+   * IN THE COMPONENT AND NOT IN THE SERVICE. What is selected is a fact about a
+   * surface — it dies with the panel and means nothing to anybody else — where
+   * the images themselves outlive every redraw and are what the create acts on.
+   * Putting the selection in the service would be the same merge of two
+   * different lifetimes that made this panel two selectors in the first place.
+   */
+  protected readonly chosen = signal<ReadonlySet<string>>(new Set());
+
+  /**
+   * Where a Shift-range starts from: the last image clicked WITHOUT Shift.
+   *
+   * A range needs two ends and the platform only gives one; every list of this
+   * shape keeps the other. Null until somebody has clicked once, which is why a
+   * Shift-click with no anchor behaves as a plain click rather than selecting
+   * from the top — the top is not somewhere the person put anything.
+   */
+  private shotAnchor: string | null = null;
+
+  /** Where the workspace's own context menu is, or null. */
+  protected readonly shotMenu = signal<{ x: number; y: number } | null>(null);
+
+  /**
+   * The images this browser could not draw — see the card's own comment.
+   *
+   * IT IS NEVER EMPTIED, and it does not need to be: an id here is a folded
+   * path, and a file that would not decode a moment ago is the same file with
+   * the same path. It empties itself when the workspace does, because the ids
+   * that could be in it are the ids of images that are no longer on the table.
+   */
+  protected readonly undrawable = signal<ReadonlySet<string>>(new Set());
+
+  protected cannotDraw(id: string): void {
+    this.undrawable.update((broken) => {
+      if (broken.has(id)) return broken;
+      const next = new Set(broken);
+      next.add(id);
+      return next;
+    });
+  }
 
   /**
    * The books this panel is about: a project is OPEN while one of its documents
@@ -2779,6 +3207,159 @@ export class OpenDocumentsComponent {
    */
   protected closeProject(group: Group): void {
     for (const id of [...group.tabIds]) void this.documents.close(id);
+  }
+
+  // ── The accordions ─────────────────────────────────────────────────────────
+
+  /**
+   * Fold one book away, or open it.
+   *
+   * *"an arrow to minimize it"* (Owen). No `stopPropagation` here, unlike
+   * `toggle` above: that one sits INSIDE a card whose own click stands the
+   * position on the row, and this is a head with nothing behind it.
+   *
+   * FOLDING IS NOT CLOSING and the head draws both, side by side, because they
+   * are the two different things a person means by "get this out of my way": one
+   * is about the panel and is free, the other closes the tabs and moves the book
+   * off the screen.
+   */
+  protected foldBook(key: string): void {
+    this.shutBooks.update((shut) => {
+      const next = new Set(shut);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  }
+
+  // ── The workspace ──────────────────────────────────────────────────────────
+
+  /**
+   * Click an image: this one, or add to what is already picked.
+   *
+   * THE THREE GESTURES EVERY LIST OF THIS SHAPE HAS. A plain click replaces the
+   * selection and sets the anchor; Ctrl/Cmd toggles one and moves the anchor to
+   * it (so a range can be started from the thing you just added); Shift takes
+   * everything between the anchor and here, in the list's own order, which is
+   * drop order — the order on screen, which is the only order a range can mean.
+   *
+   * THE MARQUEE IS DELIBERATELY NOT HERE. The light table has one because it is
+   * a full-window grid of a hundred and seventy-nine photographs where sweeping
+   * is genuinely faster; this is a panel three columns wide, where a marquee
+   * would mostly be a way to start a drag by accident on a surface whose rows
+   * above it are draggable for something else entirely.
+   */
+  protected pickShot(event: MouseEvent, shot: WorkspaceImage): void {
+    const items = this.workspace.items();
+    if (event.shiftKey && this.shotAnchor !== null) {
+      const from = items.findIndex((one) => one.id === this.shotAnchor);
+      const to = items.findIndex((one) => one.id === shot.id);
+      if (from >= 0 && to >= 0) {
+        const lo = Math.min(from, to);
+        const hi = Math.max(from, to);
+        this.chosen.set(new Set(items.slice(lo, hi + 1).map((one) => one.id)));
+        return;
+      }
+    }
+    if (event.ctrlKey || event.metaKey) {
+      this.chosen.update((picked) => {
+        const next = new Set(picked);
+        if (!next.delete(shot.id)) next.add(shot.id);
+        return next;
+      });
+      this.shotAnchor = shot.id;
+      return;
+    }
+    this.chosen.set(new Set([shot.id]));
+    this.shotAnchor = shot.id;
+  }
+
+  /**
+   * Right-click an image.
+   *
+   * ON A CARD OUTSIDE THE SELECTION, THE RIGHT-CLICK IS ALSO THE SELECTION —
+   * capture-grid's own correction, and the same bug it fixed: a menu opened on
+   * one card while a different set was highlighted offered an act about
+   * something the person was not pointing at. Inside the selection it changes
+   * nothing, because "right-click the ones you swept" is the whole gesture Owen
+   * described.
+   */
+  protected onShotMenu(event: MouseEvent, shot: WorkspaceImage): void {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!this.chosen().has(shot.id)) {
+      this.chosen.set(new Set([shot.id]));
+      this.shotAnchor = shot.id;
+    }
+    this.shotMenu.set({ x: event.clientX, y: event.clientY });
+  }
+
+  /**
+   * "Create new book…" — hand the selection to the naming card.
+   *
+   * NOTHING IS MADE HERE. The card asks the name, the workspace service runs the
+   * two doors (`capture:create` then `capture:intake`) and opens the project the
+   * way "Photograph a book…" opens one. This method's whole job is to turn a
+   * selection into the question, which is what Owen described happening:
+   * right-click, then *"itll pop up a modal to name the new book"*.
+   */
+  protected createFromChosen(): void {
+    const picked = [...this.chosen()];
+    this.shotMenu.set(null);
+    if (picked.length === 0) return;
+    this.ui.openCaptureNew(picked);
+    // The selection goes with the question. Whatever comes back — a book, or a
+    // cancelled card — the images it was about have either left this list or are
+    // still in it to be picked again, and a highlight left over from a dialog
+    // nobody finished is a statement about a gesture that ended.
+    this.chosen.set(new Set());
+    this.shotAnchor = null;
+  }
+
+  /**
+   * Close the workspace — and clear whatever was never made into a book.
+   *
+   * *"then they close the workspace and whatever wasnt assigned to a new
+   * library/book is cleared away. if they want to pull it up again theyll have
+   * to re-upload the images."* (Owen.) So this ✕ is not the tidying-away its
+   * neighbour on a book's head is: closing a book leaves the book on disk and
+   * one click from coming back, and closing this DESTROYS the only handle this
+   * app has on images nobody has assigned.
+   *
+   * WHICH IS WHY IT ASKS, in the app's one confirmation card, naming the count —
+   * the same card and the same shape as every other destruction here. It names
+   * a NUMBER and no filenames: the cards on screen are the person's own
+   * photographs and their names are on them, and a question listing nine of them
+   * would be a dialog reading a list back to somebody who is looking at it.
+   *
+   * THE ANSWER IS THE ANSWER TO A REAL LOSS, so the destructive button is last
+   * and says what it does, and a dismissal keeps everything (`ConfirmService`).
+   */
+  protected async shutWorkspace(): Promise<void> {
+    const left = this.workspace.count();
+    if (left > 0) {
+      const yes = await this.confirm.ask({
+        message: left === 1
+          ? 'Close the workspace and clear the one image left in it?'
+          : `Close the workspace and clear the ${left} images left in it?`,
+        detail: [
+          left === 1
+            ? 'This image has not been made into a book, so nothing on disk holds it — '
+              + 'it is only here, in this window.'
+            : 'These images have not been made into a book, so nothing on disk holds them — '
+              + 'they are only here, in this window.',
+          'Anything you have already made into a book is safe in that book and is not affected. '
+            + 'To get these back, drag them in again.',
+        ],
+        confirm: left === 1 ? 'Clear it' : 'Clear them',
+      });
+      if (!yes) return;
+    }
+    this.workspace.clear();
+    this.chosen.set(new Set());
+    this.shotAnchor = null;
+    // Open, ready for the next drop. A workspace that reappeared folded shut
+    // would hide the very thing that just arrived.
+    this.workspaceOpen.set(true);
   }
 
   /**

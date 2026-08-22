@@ -20,6 +20,7 @@ import { ToastTrayComponent } from './components/toast-tray/toast-tray.component
 import { BookStacksService } from './core/book-stacks.service';
 import { CaptureService } from './core/capture.service';
 import { OpenDocumentsService, pathIsProject } from './core/documents.service';
+import { IntakeWorkspaceService, isWorkspaceImage } from './core/intake-workspace.service';
 import { NoticeService } from './core/notice.service';
 import { PositionSyncService } from './core/position-sync.service';
 import { ProjectsService } from './core/projects.service';
@@ -272,6 +273,13 @@ import { api } from './core/foundry';
 export class App {
   private readonly documents = inject(OpenDocumentsService);
   private readonly captures = inject(CaptureService);
+  /**
+   * The intake workspace — where a dropped IMAGE goes when no light table is in
+   * front of it. Injected here because the drop seam is here: this is the one
+   * handler that sees every file the window is given, and sorting them is a
+   * decision about the drop rather than about any surface.
+   */
+  private readonly shelf = inject(IntakeWorkspaceService);
   private readonly stage = inject(StageService);
   private readonly notices = inject(NoticeService);
   private readonly stacks = inject(BookStacksService);
@@ -595,10 +603,19 @@ export class App {
    * was true until a light table could be on screen and is a lie the moment one
    * is. It is the same sentence `onDrop` acts on, read off the same tab, so
    * the two cannot drift into promising one thing and doing another.
+   *
+   * AND IT NAMES BOTH DOORS NOW, because a drop on the ordinary window has two
+   * meanings since Wave 38: a document opens, and an IMAGE goes to the intake
+   * workspace. The veil promising only the first over a window that will do
+   * either would be the same lie in a smaller font. Hosted there is no
+   * workspace, so hosted the veil says what it always said.
    */
-  protected readonly dropSays = computed(() =>
-    this.intaking() === null ? 'Drop a PDF to open it' : 'Drop photographs to add them',
-  );
+  protected readonly dropSays = computed(() => {
+    if (this.intaking() !== null) return 'Drop photographs to add them';
+    return this.shelf.available()
+      ? 'Drop a PDF to open it, or photographs to make a book from'
+      : 'Drop a PDF to open it';
+  });
 
   /**
    * The capture project a dropped file would go INTO, or null for the document
@@ -646,9 +663,66 @@ export class App {
       return;
     }
 
+    /*
+     * ── THE MIXED DROP, SORTED BY WHAT THE FILE IS ───────────────────────────
+     *
+     * Owen (2026-08-22): *"the drop zone on the home page - lets have it accept
+     * images (HEIC, PNG, JPG, etc) as input, not just PDF. if the user
+     * drag/drops images into the home screen, it pulls them all up in the
+     * organizer"*. A drop is not one kind of thing — somebody selecting a
+     * folder's worth of a book can easily hand over a PDF and forty
+     * photographs in one gesture — so the files are SORTED rather than the drop
+     * being classified. A PDF or an EPUB goes through the document door it has
+     * always gone through, one tab each; an image goes to the intake workspace,
+     * all of them together, because a pile is what the workspace is for.
+     *
+     * ── WHY THE SEAM IS HERE AND NOT ON HOME'S RECTANGLE ─────────────────────
+     *
+     * Home HAS a drop target and it is decorative in the strict sense — the
+     * whole window takes the drop, and the rectangle exists so that anybody
+     * knows that (HomeComponent's docblock, and this class's). Hanging the
+     * workspace off that element would rebuild the exact failure the capture
+     * front-tab routing was written to fix: a strip down one side of the light
+     * table, with every drop that missed it falling through to the document
+     * admission and coming back as "IMG_0238.HEIC is not something Foundry
+     * opens". A person dropping photographs at this app is not aiming at a
+     * rectangle either.
+     *
+     * ── AND IT IS NOT GATED ON HOME BEING ON SCREEN ──────────────────────────
+     *
+     * The workspace lives in the library sidebar, which is permanent chrome on
+     * every route. So the rule is about the FILE, not about what is in front of
+     * it: an image is never a document this app can open, and with no capture
+     * project in front there is exactly one useful thing to do with one. Gating
+     * on the route would mean the same gesture, one second apart, either
+     * organised a shoot or raised a refusal — and the refusal is what it used
+     * to raise, which is what Owen was ending.
+     *
+     * HOSTED, THERE IS NO WORKSPACE and images fall through to the document
+     * door as they always did: `available` is the one place that decides it
+     * (`IntakeWorkspaceService`), for the reason "Photograph a book…" is behind
+     * the same guard — a project born here would land in a library the host is
+     * not keeping.
+     */
+    const images = this.shelf.available() ? files.filter(isWorkspaceImage) : [];
+    if (images.length > 0) {
+      this.shelf.take(images);
+      /*
+       * AND THE PANEL IS OPENED, because the workspace is IN it. A drop that
+       * landed behind a collapsed 30-pixel stub is a drop that vanished — the
+       * toast would say twenty images arrived and the window would show no sign
+       * of one. This is the shell's business rather than the service's: the
+       * service holds the images, the shell holds the furniture they are drawn
+       * in, and a service reaching out to un-collapse a panel would be the
+       * wrong half of the app deciding what is on screen.
+       */
+      this.ui.documentsShown.set(true);
+    }
+
     // Every file, not just the first: a drop of three books is three tabs, which
     // is the whole reason there are tabs.
     for (const file of files) {
+      if (images.includes(file)) continue;
       void this.documents.openDropped(file);
     }
   }

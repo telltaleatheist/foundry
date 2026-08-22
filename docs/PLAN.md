@@ -2042,7 +2042,7 @@ beside it: the PDF viewer's selection stops re-inking the hidden text
 layer white (`color: transparent` on the layer's own ::selection — the
 global rule was winning the color per-property).
 
-### Wave 38 — the Home intake workspace (Owen, 2026-08-22) — RULED, NEXT
+### Wave 38 — the Home intake workspace (Owen, 2026-08-22) — BUILT (this commit)
 
 Owen, verbatim intent: the OCR… button leaves Home; the drop zone
 accepts images (HEIC/PNG/JPG) as well as PDFs; dropped images land in
@@ -2052,8 +2052,76 @@ images → right-click → *Create new book* → a naming modal → a capture
 project with those pages MOVED in, opening as Photograph-a-book does;
 closing the workspace clears the unassigned (re-upload to recover) —
 the assigned are already safe in their projects. Mixed drops: PDFs
-keep today's behaviour, images go to the workspace. Assigned to an
-agent on the clean tree after this commit.
+keep today's behaviour, images go to the workspace. All of it built;
+the ruling is quoted in full at `IntakeWorkspaceService`'s head and
+again over the accordion that draws it.
+
+- **THE SEAM IS THE WINDOW'S DROP HANDLER, NOT HOME'S RECTANGLE.** Home's
+  target is decorative and always has been — the whole window takes the
+  drop, and the rectangle exists so anybody knows that — so hanging the
+  workspace off that element would have rebuilt the exact failure the
+  capture front-tab routing was written to fix (a strip you can miss,
+  and every miss coming back as "IMG_0238.HEIC is not something Foundry
+  opens"). `App.onDrop` SORTS the files instead of classifying the drop:
+  a capture tab in front still swallows everything, then images go to
+  the workspace and the rest through `openDropped`, one tab each. Mixed
+  drops therefore work without a rule about which kind "wins".
+- **IT IS NOT GATED ON HOME BEING ON SCREEN**, deliberately. The
+  workspace lives in the library sidebar, which is permanent chrome on
+  every route, so the rule is about the FILE and not about what is in
+  front of it — an image is never a document this app opens, and gating
+  on the route would mean the same gesture one second apart either
+  organised a shoot or raised the refusal Owen was ending.
+- **THE EXTENSION LIST MOVED TO `shared/capture.ts`** as
+  `PHOTOGRAPH_TYPES` (+ `isPhotographName`), with the whole HEIC/PNG/JPEG
+  argument and the EXIF no-rotation ruling carried across intact. It was
+  `READABLE`, private to main, which was right while only main had an
+  opinion about what a photograph is; the renderer has one now, and a
+  second list of five extensions would be two answers to the question
+  the capture stage exists to answer once.
+- **CREATE IS THE TWO EXISTING DOORS AND THE WORD "THEN".**
+  `capture:create` (named, empty project) then `capture:intake` (copy,
+  hash, decode, append), then the light table opened from the DIRECTORY
+  exactly as `CaptureNewDialogComponent` opens one — "just as though they
+  had started a new book from the home page" kept true by doing the same
+  thing rather than something equivalent. `CaptureService.intake` split
+  into a `File` door and a path door (`intakePaths`) and now RETURNS the
+  report it used to swallow, because "did it run at all" is a question
+  the notice cannot answer and a list must not be emptied on a guess.
+- **PARTIAL REFUSALS: WHAT WAS ASSIGNED IS ASSIGNED.** The intake's own
+  report goes to the toasts as it does for every other drop (counts,
+  duplicates, each refusal in main's words); the workspace then drops the
+  whole selection, refusals included, because the only handle this side
+  has on a refused file is a BASENAME and matching one back onto a table
+  that may hold `page-001.png` from two folders is the fold this repo
+  forbids everywhere else. A wrong match would silently keep the wrong
+  picture and destroy the right one. An intake that never ran changes
+  nothing and the named project still opens, so its light table is the
+  recovery.
+- **THE ACCORDIONS ARE CHROME AROUND THE GROUPS**, in the inspector's
+  idiom — head, caret, small-caps label, count — with a ✕ on each book's
+  head mirroring the close-book door the root card and the right-click
+  already carry (three doors, one `closeProject`; the head's exists
+  because a folded book has no root card on screen). Shut-not-open, like
+  the node collapse one level down, so a book that opens while you are
+  looking at the library appears open. The caret is `.acaret` and not
+  `.twist`: `.twist` is taken by the card's own expander, and two rules
+  of one name at one specificity is a coin flip dressed as a cascade.
+- **A HEIC MAY NOT DRAW AND THE CARD ASKS RATHER THAN ASSUMES.**
+  Chromium decodes PNG/JPEG in an `<img>` and not reliably HEIC — the
+  format of the case this feature exists for. Decoding through main
+  would mean decoding every dropped photograph before anybody has said
+  which are a book, in the process that must not block, for a 96-pixel
+  picture. So `(error)` swaps in the tree's own camera mark, and a later
+  Chromium that learns HEIC simply draws it.
+- Standalone only, decided in one place (`IntakeWorkspaceService.available`)
+  for the reason "Photograph a book…" is behind the same guard: hosted,
+  a project born here would land in a library the host is not keeping,
+  and hosted has no Home. Hosted, images meet the document door exactly
+  as before.
+- Gates: 418 pass / 0 fail, three clean typechecks, `ng build` complete
+  with the pre-existing budget WARNING at **757.63 kB** (746.57 at the
+  last landing).
 
 ### Wave 35 — the queue as a slot board (Owen, 2026-08-22) — RULED, NEEDS A CONTRACT
 

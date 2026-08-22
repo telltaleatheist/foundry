@@ -11,6 +11,7 @@ import type { ProjectSummary } from '@shared/types';
 
 import { api, hosted } from '../../core/foundry';
 import { CaptureService } from '../../core/capture.service';
+import { IntakeWorkspaceService } from '../../core/intake-workspace.service';
 import { ProjectsService } from '../../core/projects.service';
 import { OpenDocumentsService } from '../../core/documents.service';
 import { NoticeService } from '../../core/notice.service';
@@ -81,8 +82,29 @@ import { UiService } from '../../core/ui.service';
         <h1>Foundry</h1>
         <p>Recast a poorly scanned PDF into a clean EPUB.</p>
 
+        <!--
+          THE RECTANGLE IS STILL DECORATIVE AND NOW SAYS TWO THINGS.
+
+          Owen (2026-08-22): \`"the drop zone on the home page - lets have it
+          accept images (HEIC, PNG, JPG, etc) as input, not just PDF."\` It
+          already accepted them in the only sense that matters — the WHOLE
+          WINDOW takes the drop and always has (see App) — so what was missing
+          was not a handler on this element but a meaning for the files:
+          documents open, images go to the workspace. The seam is in the shell's
+          own drop handler, where every file the window is given can be sorted
+          at once; this rectangle goes on doing the one job it has ever had,
+          which is telling somebody the gesture exists.
+
+          Hosted it says what it always said: there is no workspace there
+          (\`IntakeWorkspaceService.available\`), so promising one would be an
+          invitation to a door that is not in the wall.
+        -->
         <div class="target">
-          <span>Drop a PDF anywhere in this window</span>
+          @if (workspace.available()) {
+            <span>Drop a PDF anywhere in this window — or photographs, to make a book from</span>
+          } @else {
+            <span>Drop a PDF anywhere in this window</span>
+          }
         </div>
 
         <div class="actions">
@@ -98,7 +120,26 @@ import { UiService } from '../../core/ui.service';
           @if (!hosted()) {
             <button class="ghost" (click)="ui.openCaptureNew()">Photograph a book…</button>
           }
-          <button class="ghost" (click)="ui.openOcr()">OCR…</button>
+          <!--
+            "OCR…" STOOD HERE AND IS GONE (Owen, 2026-08-22: \`"lets remove the
+            'OCR...' button from the homepage"\`).
+
+            It was the one button on this screen aimed at NOTHING. Every other
+            act here is about a book you have named by pressing it — a row, a
+            file dialog, a new project — and this one opened a card whose whole
+            job is to convert the document in front of you, on the one screen in
+            this app where there is no document in front of you. Pressed cold it
+            answered "Open a PDF first", which is a button telling somebody they
+            should not have pressed it.
+
+            THE READ IS NOT GONE, IT IS WHERE THE BOOK IS. Every row in the list
+            below that has pages nobody has read carries its own OCR pill, which
+            opens the book and then the card (\`readPages\`); the action menu at
+            the foot of the library offers the same act against the standing
+            position; and the tree's own "from here" footer offers it on the step
+            it would run from. Three doors, and all three of them know which book
+            they are about.
+          -->
           <button class="ghost" (click)="settings()">Settings</button>
         </div>
 
@@ -389,6 +430,8 @@ export class HomeComponent {
   protected readonly documents = inject(OpenDocumentsService);
   private readonly notices = inject(NoticeService);
   protected readonly ui = inject(UiService);
+  /** Read for one question: is there a workspace to promise? See the target. */
+  protected readonly workspace = inject(IntakeWorkspaceService);
   private readonly captures = inject(CaptureService);
   private readonly router = inject(Router);
 

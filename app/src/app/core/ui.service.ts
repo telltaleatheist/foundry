@@ -74,6 +74,30 @@ export class UiService {
   /** Naming a book before photographing it. See CaptureNewDialogComponent. */
   readonly captureNewOpen = signal(false);
   /**
+   * WHICH IMAGES THE NAMED BOOK IS BEING MADE FROM — empty for the plain door.
+   *
+   * The dialog above asks one question ("what book is this?") on behalf of two
+   * gestures: *Photograph a book…* on Home, which makes an empty project to
+   * shoot into, and *Create new book…* on the intake workspace, which makes one
+   * and moves photographs into it. Same question, same card, same one-shot name;
+   * what differs is what is standing behind it, and that is these ids.
+   *
+   * ── WHY IT IS NOT A `null`-IS-SHUT REQUEST LIKE `hostOpOpen` ────────────────
+   *
+   * Because it is not the thing that opens the dialog — the boolean above is,
+   * and the boolean is in `dialogs` where the one-question-at-a-time rule can
+   * reach it. Making the payload the opener would take the card out of that list
+   * and leave `only()` with one dialog it does not know how to close.
+   *
+   * THE STALE-PAYLOAD TRAP `hostOpOpen` WARNS ABOUT IS SHUT BY AN INVARIANT
+   * INSTEAD: `openCaptureNew` is the only way in and it ALWAYS writes this,
+   * defaulting to empty. So the card cannot be opened against a selection
+   * somebody made ten minutes ago, whatever route it was closed by — including
+   * `only()` closing it from under another dialog, which clears the boolean and
+   * leaves this set until the next opener overwrites it.
+   */
+  readonly captureNewFrom = signal<readonly string[]>([]);
+  /**
    * THE HOST'S OWN OPERATION DIALOG — the only one of these that carries data.
    *
    * ── Why it is a request and not a boolean ───────────────────────────────────
@@ -250,12 +274,21 @@ export class UiService {
     this.hostOpOpen.set(null);
   }
 
-  openCaptureNew(): void {
+  /**
+   * `from` is the workspace images the new book is being made of, or nothing at
+   * all for the plain "photograph a book" door. Written on every open — see
+   * `captureNewFrom` for why that default is the whole of the safety.
+   */
+  openCaptureNew(from: readonly string[] = []): void {
+    this.captureNewFrom.set([...from]);
     this.only(this.captureNewOpen);
   }
 
   closeCaptureNew(): void {
     this.captureNewOpen.set(false);
+    // Cleared on the way out as well as written on the way in, so nothing else
+    // can read a selection off a card that is not on screen.
+    this.captureNewFrom.set([]);
   }
 
   openOcr(): void {

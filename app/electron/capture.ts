@@ -84,6 +84,7 @@ import {
   emptyRecipe,
   joinedQuad,
   mintPlan,
+  PHOTOGRAPH_TYPES,
   recipeBytes,
   sameShape,
   splitFromFraction,
@@ -1358,28 +1359,19 @@ export interface IntakeReport extends CaptureOpened {
   refused: { file: string; why: string }[];
 }
 
-/**
- * What this stage accepts.
+/*
+ * `READABLE` STOOD HERE AND IS NOW `PHOTOGRAPH_TYPES` IN shared/capture.ts,
+ * with the whole of its argument — the HEIC/PNG/JPEG measurement, and the EXIF
+ * double-rotation fear this stage answers by rotating NOTHING — moved intact
+ * beside the definition rather than left behind as a summary.
  *
- * HEIC/HEIF decode through libheif, measured on the acceptance shoot. PNG and
- * JPEG decode through Electron's own imaging (Owen, 2026-08-22, dragging 179
- * screenshots: *"i just took screenshots of a book"* — a book photographed
- * with a phone is HEIC, a book captured off a screen is PNG, and both are
- * photographs of pages by this stage's own definition).
- *
- * THE v1 REFUSAL'S FEAR IS ANSWERED, NOT IGNORED. It refused JPEG because
- * Electron might apply EXIF Orientation "by somebody else's rules" — the
- * double-rotation hazard that nearly turned the index shoot 90° wrong. The
- * answer is the same one the HEIC path settled on: THIS INTAKE APPLIES NO
- * ROTATION OF ITS OWN, ever. Whatever grid the decoder hands over is the
- * working copy; the light table shows it the moment it lands, and Turn — the
- * stage's own instrument, one gesture — is how a person corrects a sideways
- * frame, exactly as they already do for a spread shot lying on its side. A
- * silent sideways copy was the fear; a VISIBLE sideways card with the tool
- * beside it is the ordinary case this stage was built for. (Screenshots, the
- * case that reopened this, carry no orientation at all.)
+ * It moved because Wave 38 gave the RENDERER an opinion about what a photograph
+ * is: Home's drop zone sorts a dropped file into the document door or into the
+ * intake workspace before any of it crosses the bridge, and a second list of
+ * five extensions over there would be two answers to the one question this
+ * stage exists to answer. The refusal written below is now a refusal of exactly
+ * the files the other side declined to keep.
  */
-const READABLE = new Set(['.heic', '.heif', '.png', '.jpg', '.jpeg']);
 
 /** Which of the readable kinds goes through libheif rather than Electron. */
 const HEIC_LIKE = new Set(['.heic', '.heif']);
@@ -1457,7 +1449,7 @@ export async function intakePhotos(projectDir: string, paths: readonly string[])
       // so this is the only place the window gets a chance to breathe.
       await breathe();
       const extension = path.extname(resolved).toLowerCase();
-      if (!READABLE.has(extension)) {
+      if (!PHOTOGRAPH_TYPES.has(extension)) {
         refused.push({
           file: name,
           why: `${extension || 'a file with no extension'} is not a photograph this stage reads — HEIC, PNG or JPEG`,
@@ -1486,7 +1478,7 @@ export async function intakePhotos(projectDir: string, paths: readonly string[])
 
       /*
        * TWO DECODERS, ONE INVARIANT: whatever comes out is the working grid,
-       * with no rotation of this intake's own (the READABLE docblock carries
+       * with no rotation of this intake's own (`PHOTOGRAPH_TYPES`' docblock carries
        * the whole argument). HEIC goes through libheif exactly as before. PNG
        * and JPEG go through Electron's imaging — and a PNG's working copy is
        * THE BYTES THEMSELVES, byte for byte: it is already the lossless format

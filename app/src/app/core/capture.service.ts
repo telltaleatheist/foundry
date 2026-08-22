@@ -322,7 +322,7 @@ export class CaptureService {
    * another application's virtual folder, and the person deserves to know their
    * photograph did not arrive.
    */
-  async intake(projectDir: string, files: readonly File[]): Promise<void> {
+  async intake(projectDir: string, files: readonly File[]): Promise<CaptureIntaken | null> {
     /*
      * THE CALLER NAMES THE PROJECT, and that is not ceremony.
      *
@@ -337,7 +337,7 @@ export class CaptureService {
      * The tab knows which project it is. Taking it as an argument makes the two
      * one fact, and lets a drop work during the load rather than vanish into it.
      */
-    if (api === null) return;
+    if (api === null) return null;
     const paths: string[] = [];
     for (const file of files) {
       const path = api.pathForFile(file);
@@ -348,26 +348,68 @@ export class CaptureService {
       // many, beside everything else that happened.
       if (path !== '') paths.push(path);
     }
-    const unreadable = files.length - paths.length;
+    return this.intakePaths(projectDir, paths, files.length - paths.length);
+  }
+
+  /**
+   * The same intake, named by PATH rather than by a dropped `File`.
+   *
+   * ── Why the door was split in two (Wave 38) ────────────────────────────────
+   *
+   * `intake` above is the DROP door: something arrived from outside the window
+   * and the browser's handle on it has to be turned into a path before main can
+   * be told anything. That is the only thing it does that this does not.
+   *
+   * The intake workspace already holds paths — it took each one with
+   * `pathForFile` at the moment of the drop, because an object URL outlives the
+   * drag and `webUtils` is only reachable from the preload — so routing it back
+   * through a `File` list would be this app converting a path into a browser
+   * object in order to convert it into a path again. Worse, it would be the
+   * workspace holding the ONE handle that must not be re-derived later, and
+   * re-deriving it anyway.
+   *
+   * `unreadable` is the count the caller could not turn into a path at all. It
+   * is a parameter rather than a fact this method could work out, because only
+   * the side holding the original list knows how many things were in it.
+   *
+   * ── IT ANSWERS WITH THE REPORT, WHICH IT USED TO SWALLOW ───────────────────
+   *
+   * The notice is still set here — every caller wants the same sentence and
+   * composing it twice is how two surfaces start disagreeing about what just
+   * happened. What is new is that the report is also RETURNED, because "create
+   * a book from these" has a second question the notice cannot answer: did the
+   * intake happen at all? A caller that empties its own list on the strength of
+   * an intake that threw would have destroyed the only copy of the person's
+   * selection. `null` is "it did not run"; anything else is main's account of
+   * what it did, refusals and all.
+   */
+  async intakePaths(
+    projectDir: string,
+    paths: readonly string[],
+    unreadable: number,
+  ): Promise<CaptureIntaken | null> {
+    if (api === null) return null;
     if (paths.length === 0) {
       this.notices.notice.set(
         unreadable === 1
           ? 'That file could not be read from where it was dragged from.'
           : `None of those ${unreadable} files could be read from where they were dragged from.`,
       );
-      return;
+      return null;
     }
     // Shown from the moment the ask is made rather than from main's first
     // push, which does not arrive until a photograph is decoded.
     this.run.set({ projectDir, done: 0, total: paths.length, file: '' });
     try {
-      const intaken = await api.capture.intake(projectDir, paths);
+      const intaken = await api.capture.intake(projectDir, [...paths]);
       this.directory.set(projectDir);
       this.door.set(intaken.token);
       this.current.set(intaken.recipe);
       this.notices.notice.set(reportOn(intaken, unreadable));
+      return intaken;
     } catch (err) {
       this.complain(err);
+      return null;
     } finally {
       // Cleared here and nowhere else: main's closing push says done === total,
       // but the recipe is not on screen until the invoke has answered, and a
