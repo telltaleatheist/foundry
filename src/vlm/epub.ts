@@ -128,7 +128,10 @@ p:first-child, h1 + p, h2 + p, h3 + p { text-indent: 0; }
 p.image { font-style: italic; text-indent: 0; margin: 1em 0; }
 sup { font-size: 0.75em; line-height: 0; vertical-align: super; }
 table { border-collapse: collapse; margin: 1em 0; }
-td, th { border: 1px solid currentColor; padding: 0.2em 0.4em; }
+/* No rules on a dots table -- Owen's ruling, 2026-08-22: the model's Table
+   blocks are contents pages and indexes, set type in columns, and a cell
+   border makes them read as a spreadsheet. Spacing carries the columns. */
+td, th { border: none; padding: 0.2em 0.6em; }
 `;
 
 export function esc(text: string): string {
