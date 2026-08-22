@@ -194,14 +194,7 @@ export class CaptureService {
     return !runsWith(times, 1) && !runsWith(times, -1);
   });
 
-  /**
-   * Which way the capture-time sort is running, for the reverse button's label.
-   * All-equal times read as ascending, which is as true as anything can be.
-   */
-  readonly descending = computed(() => {
-    const times = this.orderedTimes();
-    return runsWith(times, -1) && !runsWith(times, 1);
-  });
+  /* `descending` stood here — the reverse button's label. See `sortBy`. */
 
   constructor() {
     /*
@@ -390,42 +383,76 @@ export class CaptureService {
   }
 
   /**
-   * REVERSE, BY SPREAD AND NOT BY CARD — the doc's sharpest trap.
+   * SORT, BY SPREAD AND NOT BY CARD — the doc's sharpest trap, inherited from
+   * the reverse button this act replaces.
    *
    * "A book shot back-to-front reverses into reading order by spread; within
    * each split the left page still precedes the right. Reversing raw page cards
-   * would silently swap every pair."
+   * would silently swap every pair." The same holds for any reordering: the
+   * PHOTOGRAPHS are sorted and each photograph's own pages ride along in their
+   * standing sequence. Grouping is by first appearance rather than by the
+   * recipe's photo list, because after a drag the order is the person's and the
+   * groups should follow what is on screen.
    *
-   * So the photographs are reversed and each photograph's own pages are left
-   * alone. Grouping is by first appearance rather than by the recipe's photo
-   * list, because after a drag the order is the person's and the groups should
-   * follow what is on screen.
+   * ── Two keys, both Owen's (2026-08-22) ───────────────────────────────────
+   *
+   * *"it should be able to sort them by filename or by date saved. ascending
+   * or descending. sorting by filename will sort by date anyway since these
+   * files are screenshots."* A phone shoot carries EXIF times and sorts by
+   * them; a screenshot shoot carries mtimes that survive some copies and not
+   * others, and its FILENAMES carry the truth. So both keys are offered and
+   * neither is guessed at.
+   *
+   * NAME IS A NATURAL COMPARE (`numeric: true`), so "page 2" precedes
+   * "page 10" — a plain lexicographic sort puts them the other way, which on a
+   * numbered shoot is the whole book shuffled. `takenAt` is an ISO-8601 string
+   * and compares as itself.
+   *
+   * A SORT IS ALLOWED ON AN ARRANGED TABLE, where the old reverse was not:
+   * flipping an arrangement was meaningless (what is the reverse of your own
+   * order?), but sorting one is a person deliberately abandoning it for a rule,
+   * and the act says which rule. The sort is stable, so ties keep their
+   * standing order.
    */
-  reverse(): void {
+  sortBy(key: 'name' | 'taken', descending: boolean): void {
     this.change((recipe) => {
       const groups = new Map<string, string[]>();
       for (const id of recipe.order) {
         /*
          * An id no photograph claims groups UNDER ITSELF rather than being
-         * skipped. Skipping it dropped it from the order the reversal returned,
-         * which is a page deleted from the book by a button that says
-         * "Newest first" — and invisibly, because `cards` does not draw an
-         * unresolvable id either. It cannot arise from anything this service
-         * writes; it can arise from a hand-edited recipe, and electron's
-         * validator does not cross-check `order` against the declared pages
-         * (raised, channel seq 46). Preserving it costs one `?? id`.
+         * skipped — dropping it would be a page deleted from the book by a
+         * sort button, invisibly, because `cards` does not draw an
+         * unresolvable id either. It can only arise from a hand-edited
+         * recipe; preserving it costs one `?? id`.
          */
         const photoId = this.pageIn(recipe, id)?.photo.id ?? id;
         const group = groups.get(photoId);
         if (group === undefined) groups.set(photoId, [id]);
         else group.push(id);
       }
-      return {
-        ...recipe,
-        order: [...groups.values()].reverse().flat(),
-      };
+      const byId = new Map(recipe.photos.map((photo) => [photo.id, photo] as const));
+      const keyed = [...groups.entries()].map(([photoId, pages]) => {
+        const photo = byId.get(photoId);
+        // The unclaimed id's own text stands in for both keys: it stays in the
+        // book, sorted somewhere defensible, rather than being special-cased.
+        const word = key === 'name' ? (photo?.name ?? photoId) : (photo?.takenAt ?? photoId);
+        return { word, pages };
+      });
+      keyed.sort((one, other) =>
+        one.word.localeCompare(other.word, undefined, { numeric: true, sensitivity: 'base' }));
+      if (descending) keyed.reverse();
+      return { ...recipe, order: keyed.flatMap((group) => group.pages) };
     });
   }
+
+  /*
+   * `reverse()` STOOD HERE AND THE SORT SUBSUMES IT (Owen, 2026-08-22). The
+   * button it served could only flip a time-ordered table and disabled itself
+   * the moment anybody dragged; "newest first" is now one of four sort acts
+   * that work from any standing order. `descending` — the computed that
+   * labelled that button — went with it; `arranged` stays, because the drag
+   * hint still reads it.
+   */
 
   /**
    * Remove photographs from the project, bank and all.

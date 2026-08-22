@@ -172,13 +172,29 @@ const SWEEP_STARTS_AT = 5;
     <header>
       <span class="count">{{ cards().length }} {{ cards().length === 1 ? 'page' : 'pages' }}</span>
       <!--
-        Disabled on an empty table as well as an arranged one. Reversing nothing
-        is a control that does nothing, which this component has already decided
-        once (the note below) reads as a broken app rather than as a no-op.
+        SORT IS A MENU OF FOUR ACTS, not a toggle — Owen (2026-08-22), after
+        179 screenshots arrived in drop order: \`"it should be able to sort
+        them by filename or by date saved. ascending or descending."\` The
+        reverse button this replaces could only flip a time-ordered table and
+        went dead the moment anybody dragged; a named sort works from any
+        standing order, because choosing a rule IS abandoning the arrangement,
+        deliberately. Disabled only on an empty table, where sorting nothing
+        reads as a broken app rather than a no-op (this header's own ruling).
       -->
-      <button type="button" (click)="reverse.emit()" [disabled]="arranged() || cards().length === 0">
-        {{ descending() ? 'Oldest first' : 'Newest first' }}
-      </button>
+      <span class="sortwrap">
+        <button type="button" [disabled]="cards().length === 0" (click)="sortOpen.set(!sortOpen())">
+          Sort ▾
+        </button>
+        @if (sortOpen()) {
+          <div class="menu-scrim" (click)="sortOpen.set(false)" (contextmenu)="sortOpen.set(false)"></div>
+          <div class="menu sortmenu" role="menu">
+            <button type="button" (click)="pickSort('name', false)">By name, A to Z</button>
+            <button type="button" (click)="pickSort('name', true)">By name, Z to A</button>
+            <button type="button" (click)="pickSort('taken', false)">Oldest first</button>
+            <button type="button" (click)="pickSort('taken', true)">Newest first</button>
+          </div>
+        }
+      </span>
 
       <!--
         TURNING IS A TABLE ACT, not only an editor one.
@@ -386,6 +402,16 @@ const SWEEP_STARTS_AT = 5;
       font-size: 12px; text-align: left; white-space: nowrap; cursor: pointer;
     }
     .menu button:hover { background: var(--bg-hover); color: var(--text-primary); }
+    /*
+     * The sort dropdown wears the context menu's own clothes and hangs off its
+     * button instead of the pointer: same card, same rows, anchored under the
+     * control that opened it. Declared after \`.menu\` so the anchor overrides
+     * the pointer positioning at equal specificity — the cascade rule this
+     * repo checks by hand (cascade-check reports equal-specificity collisions;
+     * this one is deliberate and order-resolved).
+     */
+    .sortwrap { position: relative; }
+    .sortmenu { position: absolute; left: auto; top: calc(100% + 4px); right: 0; }
 
     /* The table and the strip side by side; the header above the table only. */
     :host { display: flex; flex-direction: row; height: 100%; min-height: 0; }
@@ -795,8 +821,6 @@ export class CaptureGridComponent {
 
   /** The pages, in the order they should be drawn. */
   readonly cards = input.required<readonly CaptureCard[]>();
-  /** Which way the capture-time sort runs, while there still is one. */
-  readonly descending = input.required<boolean>();
   /** True once the person has dragged, after which the sort no longer applies. */
   readonly arranged = input.required<boolean>();
   /**
@@ -865,8 +889,15 @@ export class CaptureGridComponent {
   readonly strike = output<string>();
   /** Let the book change these PHOTOGRAPHS again — the right-click door. */
   readonly release = output<readonly string[]>();
-  /** Asked for, not done: only the service can reverse by spread. */
-  readonly reverse = output<void>();
+  /** A sort was picked: the key and the direction. Only the service can sort by spread. */
+  readonly sortBy = output<{ key: 'name' | 'taken'; descending: boolean }>();
+  /** Whether the Sort dropdown is open. Session-only chrome, nobody else's fact. */
+  protected readonly sortOpen = signal(false);
+  /** Close the menu, then ask — the act belongs to the service, like every reorder. */
+  protected pickSort(key: 'name' | 'taken', descending: boolean): void {
+    this.sortOpen.set(false);
+    this.sortBy.emit({ key, descending });
+  }
   /**
    * Files dropped on the strip. `File` rather than a path, because turning one
    * into the other is `api.pathForFile` and this component holds no bridge —
