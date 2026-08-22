@@ -379,7 +379,10 @@ import { hosted } from '../../core/foundry';
     /* The Settings page's own shell, so the two routes in this app are the same
        kind of surface: a scrolling column with a head at the top of it. */
     :host { display: block; height: 100%; overflow-y: auto; }
-    .page { padding: 20px 24px 60px; max-width: 1100px; }
+    /* Centred in the window, not hugging its left edge -- Owen (2026-08-22):
+       "instead of aligning to the left, maybe align the queue page in the
+       center." The cap is unchanged; the auto margins are the whole move. */
+    .page { padding: 20px 24px 60px; max-width: 1100px; margin: 0 auto; }
 
     .min { min-width: 0; }
     .grow { flex: 1; }
