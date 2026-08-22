@@ -113,7 +113,33 @@ decides, `executeJob` works). What changes inside it:
   working unchanged — a running row is a running row whichever lane runs
   it.
 
-## 4. The shelf draws the board
+## 4. The chrome draws the board
+
+> **Wave 43 re-housed this section's furniture and none of its rules.**
+> Everything below was written about the queue SHELF — a pill docked in
+> the bottom-right corner. The shelf is deleted (Owen, 2026-08-22:
+> *"can you make the queue shelf a bar along the top right that i can
+> click and look at, and put a button in it for 'more info' thatll take
+> me to a queue page that looks like bookforge's queue page? this is
+> just ui work mostly, not changing the way it works on an engine
+> level."*). Read "the shelf" below as **the dropdown panel under the
+> top-right chip**, which draws exactly what the shelf drew, off exactly
+> the same table, by exactly these rules.
+>
+> The drawing rules now live in `app/src/app/core/queue-view.service.ts`
+> — one description of the queue, read by BOTH surfaces, which is the
+> arrangement BookForge already reached (its tray and its queue page
+> read one service, after a period in which they *"spoke different
+> dialects"*). The chip and panel are `components/queue-bar`; the page is
+> `pages/queue`, on the `/queue` route, standalone-only by `canMatch`.
+>
+> **What the PAGE adds, and it is a reading of the same table:** the
+> bench, one card per SLOT — GPU 1 of 1, CPU 1 of 2, CPU 2 of 2 — always
+> all three, occupied or free. The scheduler does not say which slot a
+> job landed in and the page does not pretend it does: a lane's running
+> rows are dealt into that lane's slots in queue order, and the fact
+> drawn is the one main really guarantees, that at most `SLOTS[lane]`
+> run at once. Nothing in §1–§3 changed to allow it.
 
 - Rows grouped by lane: a GPU section and a CPU section, each headed by
   its slot count and its occupancy (`1 of 1 running`, `2 slots free`);
@@ -138,6 +164,18 @@ decides, `executeJob` works). What changes inside it:
   bar stays on the head for the glanceable case.
 - The head/chrome rules from Wave 26 stand (head on top, its ✕ semantics
   unchanged); standalone-only, exactly as the whole shelf is.
+- **Wave 43: standalone-only now covers THREE surfaces, not one.** The
+  chip, the panel and the page are each gated, and the route refuses
+  hosted with `canMatch` so it falls through to the workspace rather
+  than failing a navigation. Owen's 2026-08-21 ruling — *"when im in
+  bookforge, the shelf shouldnt appear at all"* — is a rule about
+  Foundry drawing a queue at all, so a redesign that turned one surface
+  into three had to gate all three or it would have quietly repealed
+  it. The ✕'s two meanings are unchanged in both surfaces, and Start is
+  still the one control that releases the WHOLE held batch: the page
+  groups waiting rows by book but deliberately draws no per-book Start,
+  because `queue.start()` has no such door and a button that started
+  four other books would be a lie.
 
 ## 5. What the build must verify and report
 
