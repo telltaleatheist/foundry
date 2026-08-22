@@ -64,8 +64,15 @@ import { readTable, type TableRow } from './table';
  * (`BookLoad.ops`); PENDING is the LIFO stack of what has been done since. Undo
  * pops, redo re-pushes, Apply writes the stack down as a step and clears it — at
  * which point the pointer moves, the pane reloads, and the very same ops come
- * back on the chain. Closing without Apply scraps the stack, which is the ruling
- * (docs/RENDERER.md §3) and is what the closing question is about.
+ * back on the chain.
+ *
+ * CLOSING WITHOUT APPLY USED TO SCRAP THE STACK (docs/RENDERER.md §3), and Owen
+ * reversed that on 2026-08-22 after a project lost real work to it. Every gesture
+ * below now also writes the difference to the project's sidecar on a debounce
+ * (`remember`, and `BookStacksService` at the other end), and `load` puts it back
+ * at the same step. The closing question stays and stops being a warning: it is
+ * the offer to RECORD the work as a step, which matters because everything made
+ * from this book is built from the recorded steps.
  *
  * ── THE GESTURES, and which op each of them mints ───────────────────────────
  *
@@ -2380,10 +2387,17 @@ export class BookViewComponent {
   /**
    * THE STACK — everything decided since the last Apply, oldest first.
    *
-   * A LIFO in memory and nowhere else (docs/RENDERER.md §0, ruling 5). Undo pops
-   * the last one onto `undone`; redo puts it back; Apply writes the whole list as
-   * a step and empties both. Closing scraps it, which is what the closing question
-   * is about (`BookStack`, core/book-stacks.service.ts).
+   * A LIFO the app works out of (docs/RENDERER.md §0, ruling 5). Undo pops the
+   * last one onto `undone`; redo puts it back; Apply writes the whole list as a
+   * step and empties both.
+   *
+   * IT USED TO BE "IN MEMORY AND NOWHERE ELSE", and closing scrapped it. That
+   * ruling was reversed on 2026-08-22 after a real project lost real work to it:
+   * every gesture below also hands the difference to `rememberPending`, which
+   * writes it to the project's sidecar on a debounce, and `load` puts it back. The
+   * list is still the only thing anything DRAWS from and still the only thing undo
+   * touches — the sidecar is a copy that catches the window falling over, not a
+   * second account of the book.
    *
    * IT IS A SIGNAL BECAUSE THE VIEW IS A FUNCTION OF IT. Every gesture on this
    * surface ends as a push here, and the sheet is `replayOps` over the chain and
@@ -2760,7 +2774,20 @@ export class BookViewComponent {
        * whether it still applies. Nothing is parked when everything is
        * recorded, so the map stays the size of the abandoned work.
        */
-      if (registered !== null
+      /*
+       * AND NOT AFTER AN APPLY THAT HAS NOT COME BACK YET. `landed` is true
+       * between a successful `book:apply` and the reload it causes (see its own
+       * comment), and in that gap the stack still LOOKS unwritten: the ops are
+       * still on `pending` and `landedOps` is still empty, because clearing
+       * either one early would flash the unedited book. Closing the tab in that
+       * gap — which is exactly what the closing card's Apply does — used to leave
+       * a parked entry for a tab that no longer exists, which was a harmless leak
+       * in a map. It stopped being harmless when parking began flushing to the
+       * sidecar: the file would come back holding decisions main had just
+       * recorded as a step, and the next open would offer them again as a delta
+       * against a book that already has them.
+       */
+      if (registered !== null && !this.landed
         && (this.waiting() > 0 || this.undone().length > 0)) {
         stacks.parkBookStack(registered, {
           revision: this.tab().revision,
@@ -2990,6 +3017,8 @@ export class BookViewComponent {
          * silence here would be indistinguishable from a successful return.
          */
         const parked = this.stacks.claimBookStack(this.tab().id);
+        let restored = false;
+        let letGo = false;
         if (parked !== null) {
           const same = parked.revision === this.tab().revision
             && JSON.stringify(parked.landed) === JSON.stringify(tip);
@@ -2997,8 +3026,10 @@ export class BookViewComponent {
             this.landedOps.set(parked.landed);
             this.pending.set([...parked.pending]);
             this.undone.set([...parked.undone]);
+            restored = true;
           } else if (unwritten(parked.landed, parked.pending) > 0) {
             const lost = unwritten(parked.landed, parked.pending);
+            letGo = true;
             this.notices.notice.set(
               lost === 1
                 ? 'The change waiting on this book was let go — the book here changed while you '
@@ -3006,6 +3037,77 @@ export class BookViewComponent {
                 : `The ${lost} changes waiting on this book were let go — the book here changed `
                   + 'while you were looking at another tab.',
             );
+          }
+        }
+        /*
+         * ── AND THE SIDECAR, WHICH IS THE COPY THAT OUTLIVES THIS WINDOW ─────
+         *
+         * The parked stack above survives a glance at another tab; this survives
+         * everything else — a close, a crash, a window somebody's host closed
+         * without asking (user report, 2026-08-21, and Owen's reversal of "closing
+         * without applying scraps it" the next day). It is asked for only when
+         * nothing has already answered for this stack, which is what keeps the two
+         * from arguing: the parked copy is at least as fresh, because parking
+         * flushes to this very file on its way past.
+         *
+         * A LOSS THIS PANE HAS JUST ANNOUNCED CLEARS IT INSTEAD. Moving to another
+         * step scraps the stack by a ruling that has not been reversed — ops are a
+         * delta against the step they were made on, and carrying them would apply
+         * somebody's strikes to a document they made no decision about — and the
+         * notice above or the one at the top of this function has just said so.
+         * Leaving the file behind after that would hold work the person has been
+         * told is gone, until the next gesture silently overwrote it, which is the
+         * one shape this whole feature exists to make impossible.
+         *
+         * A REFUSAL IS RENDERED VERBATIM and the file stays where it is. Main
+         * composes it — it is the side that knows which step and which reading the
+         * held stack was made against — and the commonest refusal is the useful
+         * one: the work is held at ANOTHER step, and standing back on that step is
+         * how somebody picks it up — so the file is LEFT WHERE IT IS on a refusal,
+         * because standing back on that step has to find it there.
+         *
+         * NOT FOR AN EXPORT VIEW OR A COMPARED COLUMN, and the guard is
+         * `viewing()` because it is the one that answers both. Neither is a
+         * POSITION: the first is a file exploded read-only out of `final/` and the
+         * second is a frozen row, neither has a stack, and `pendingRead` is asked
+         * of a project directory — handing it an EPUB's path would be a refusal
+         * about a question nobody asked.
+         */
+        if (this.viewing() || restored) {
+          // Nothing to do. A restored stack is already answered for, and the file
+          // and the parked copy are the same stack.
+        } else if (letGo || scrapped > 0) {
+          await this.stacks.discardPending(projectDir);
+        } else {
+          /*
+           * ITS OWN `try`, so a sidecar that will not read cannot blank the book.
+           * The outer catch turns a rejection into `problem`, which is the empty
+           * sheet with a sentence on it — the right answer for a book that could
+           * not be loaded and quite the wrong one for a recovery that could not
+           * be offered, because the book itself is fine and is already drawn.
+           */
+          try {
+            const held = await api.book.pendingRead(projectDir);
+            if (ticket !== this.asked) return;
+            if (!held.ok) {
+              this.notices.notice.set(held.reason);
+            } else if (held.stack !== null) {
+              const back = [...tip.slice(0, held.stack.kept), ...held.stack.tail];
+              this.pending.set(back);
+              this.undone.set([...held.stack.undone]);
+              const many = unwritten(tip, back);
+              if (many > 0) {
+                this.notices.notice.set(
+                  many === 1
+                    ? 'One change you had not applied was put back on the page. Apply it to record '
+                      + 'it as a step.'
+                    : `${many} changes you had not applied were put back on the page. Apply them to `
+                      + 'record them as a step.',
+                );
+              }
+            }
+          } catch (err) {
+            this.notices.notice.set(err instanceof Error ? err.message : String(err));
           }
         }
       } else {
@@ -4181,6 +4283,56 @@ export class BookViewComponent {
     this.mode.set('workbench');
     this.pending.update((held) => [...held, ...ops]);
     this.undone.set([]);
+    this.remember();
+  }
+
+  /**
+   * THE STACK, TOWARDS THE DISK — called by every gesture that changes it.
+   *
+   * ── Three callers and not an effect, deliberately ───────────────────────────
+   *
+   * `push`, `undo` and `redo` are the whole of what a person can do to this list;
+   * `load` and `apply` are the other two writers and neither of them is a change
+   * somebody made — one is the disk arriving and the other is the disk being
+   * written — so both say what they mean for themselves. An effect over
+   * `pending()` would have been shorter and would have fired DURING a load, while
+   * the old book's stack was still standing and the new book's had not been
+   * hydrated yet, writing one book's decisions into another book's sidecar.
+   *
+   * WHAT IS SENT IS THE DIFFERENCE, not the list: `kept` is how much of the tip's
+   * recorded ops the working list still begins with, and the tail is what was made
+   * since (`PendingStack`, shared/ops.ts — its comment has the identity argument
+   * for why a faithful `{landed, pending}` could not survive the round trip).
+   *
+   * AN EXPORT VIEW REMEMBERS NOTHING. It has no position, no stack and no project
+   * pointer to be a delta against; the guard is the same one `push` states.
+   *
+   * ── ONE SIDECAR PER PROJECT, AND THE ONE CASE THAT COSTS ───────────────────
+   *
+   * The file is `ops/pending.jsonl` — one per project, because there is one book
+   * pane per project and one pointer for it to be standing on. That makes exactly
+   * one sequence lossy, and it is named here rather than discovered: work held at
+   * step A, the pointer moved to step B by some other route (the tree, another
+   * window, a reopened app), and then a gesture made at B. The read at B refuses
+   * the held stack OUT LOUD and says where it is — *"stand on the step you made
+   * them at to pick them up"* — and the first gesture afterwards writes over it.
+   * So it is announced rather than silent, and the announcement comes before the
+   * overwrite rather than after. Closing it completely would mean a file per step
+   * (`pending.<id8>.jsonl`), which is a different design with orphans of its own
+   * — no step names those files, so no sweep would ever take them — and it is not
+   * what this fix was asked for.
+   */
+  private remember(): void {
+    if (this.viewing()) return;
+    const landed = this.landedOps();
+    const held = this.pending();
+    let kept = 0;
+    while (kept < landed.length && kept < held.length && landed[kept] === held[kept]) kept += 1;
+    this.stacks.rememberPending(this.tab().path, {
+      kept,
+      tail: held.slice(kept),
+      undone: this.undone(),
+    });
   }
 
   /**
@@ -4207,6 +4359,9 @@ export class BookViewComponent {
     this.mode.set('workbench');
     this.pending.set(held.slice(0, -1));
     this.undone.update((taken) => [...taken, last]);
+    // Taking a change back is a change to what is waiting. A sidecar that only
+    // ever grew would hold decisions the person has taken off the page.
+    this.remember();
   }
 
   /** Ctrl+Shift+Z / Ctrl+Y. Puts the last-undone op back where it was. */
@@ -4217,6 +4372,7 @@ export class BookViewComponent {
     this.mode.set('workbench');
     this.undone.set(taken.slice(0, -1));
     this.pending.update((held) => [...held, last]);
+    this.remember();
   }
 
   /** What the button says. The count is IN the label, on `labelFor`'s rule. */
@@ -4279,6 +4435,21 @@ export class BookViewComponent {
       } else {
         this.landed = true;
       }
+      /*
+       * ── THE SIDECAR GOES, AND IT GOES BEFORE THE RELOAD ────────────────────
+       *
+       * These decisions are a step now, so the held copy is a duplicate — and a
+       * duplicate that would be offered back as a recovery on the next open, as a
+       * delta against a book that already has it. Awaited rather than fired,
+       * because the very next thing that happens is `ledger.adopt` → a pointer
+       * move → a reload, and that reload ASKS FOR THIS FILE; a clear still in
+       * flight would race it.
+       *
+       * ONE OF THE TWO SANCTIONED SCRAPS (`discardPending` names both). It is
+       * safe here in a way it is nowhere else: main has already answered, so the
+       * work is on disk in the one place that outlives everything.
+       */
+      await this.stacks.discardPending(this.tab().path);
       this.ledger.adopt(this.tab().path, history);
       return true;
     } catch (err) {

@@ -30,8 +30,11 @@ conversation that produced it.
 5. **Ledger-based, with derived banks at commits.** *"we should still operate
    off of a ledger-based system, and when the changes are saved/committed, we
    could produce a new, second bank with the updates/changes."* The stack is
-   LIFO in memory; Apply writes it to disk as a step and clears it; closing
-   without applying scraps it.
+   LIFO in memory; Apply writes it to disk as a step and clears it. *"Closing
+   without applying scraps it" was the original ruling and Owen REVERSED it
+   (2026-08-22, Wave 29, after losing a chapter rename to it): the pending
+   stack now also flushes to a sidecar (`ops/pending.jsonl`) so nothing is
+   ever silently scrapped — Apply and an explicit discard are the only ends.*
 6. **No fallbacks, ever.** Fix at the root; error if there's a problem.
 7. **No OCR errors.** *"assume they dont exist."* Kills bulk-fix and suspicion
    heuristics; keeps only LINKING flags (a marker with no note, a note with no

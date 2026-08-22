@@ -2286,13 +2286,13 @@ export interface RecentDocument {
  * lives and it is worth drawing; what it is not is a reason to interrupt
  * somebody on their way out of a tab.
  *
- * So what is left is two genuine losses. `modified` is "you have edited this
- * since the copy YOU chose was written" — a copy on the user's own disk that is
- * now behind, which closing does not fix and nothing else will mention.
- * `edits` is the other, and it is the one loss closing genuinely destroys: the
- * proof sheet's stack, in memory, scrapped by a close without Apply. Main writes
- * a different sentence for each, and a tab that owes neither closes without a
- * question.
+ * So what is left is two things worth a sentence. `modified` is "you have edited
+ * this since the copy YOU chose was written" — a copy on the user's own disk that
+ * is now behind, which closing does not fix and nothing else will mention.
+ * `edits` is the other: the proof sheet's stack, with no Apply behind it. It WAS
+ * a loss — scrapped by a close, until 2026-08-22 — and it is now a decision, one
+ * the card offers to make (see the field). Main writes a different sentence for
+ * each, and a tab that owes neither closes without a question.
  */
 export interface CloseWarning {
   title: string;
@@ -2303,11 +2303,15 @@ export interface CloseWarning {
    * How many changes are on the book pane's stack with no Apply behind them, or
    * null when this tab is not a book or has nothing waiting.
    *
-   * ── The one loss in this app that closing genuinely destroys ────────────────
+   * ── It used to be the one loss closing genuinely destroyed ──────────────────
    *
-   * It is in memory, it is the only copy, and the ruling is that closing without
-   * Apply scraps it (docs/RENDERER.md §3). So this is the rare case where "you
-   * will lose this" is the true sentence.
+   * The stack was in memory, it was the only copy, and the ruling was that
+   * closing without Apply scrapped it. Owen reversed that on 2026-08-22 after a
+   * real project lost real work to it: the stack is written to a sidecar as it is
+   * made and comes back the next time the book is opened at the same step, so
+   * closing costs nothing and only the card's own Discard throws anything away.
+   * What this count is FOR is unchanged — the card offers to record the work as a
+   * step, because a make-act built from the ledger is built without it.
    *
    * A COUNT AND NOT A LIST. The card says how much is at stake; what each op says
    * is on the paper behind the dialog, in the cancel marks and the changed
@@ -2329,6 +2333,55 @@ export interface CloseWarning {
  * happened anyway would have thrown away the very thing the answer asked to keep.
  */
 export type CloseAnswer = 'close' | 'save' | 'keep';
+
+/**
+ * THE MAKE-ACT THIS APP IS ABOUT TO RUN, named so a card can say which one it is.
+ *
+ * Four words rather than a sentence the renderer composes, because the sentences
+ * are main's (`ConfirmService`) and a caller that handed over prose would be the
+ * renderer writing its own copy for this app's one card. `host` is somebody
+ * else's act ordered through the socket — Foundry does not know what it makes,
+ * only that it consumes the book at a position.
+ */
+export type MakeAct = 'export' | 'translate' | 'simplify' | 'host';
+
+/**
+ * THE WARNING BEFORE A MAKE-ACT RUNS PAST WORK NOBODY APPLIED.
+ *
+ * ── The defect this card exists for ─────────────────────────────────────────
+ *
+ * A chapter renamed and a paragraph retyped on the book pane, no second Apply,
+ * Export pressed — and the EPUB came out without either, silently (user report,
+ * 2026-08-21). It is not a bug in the export: every make-act is arithmetic over
+ * the LEDGER, the pane's stack is a delta that has not reached the ledger, and a
+ * book made from the ledger is therefore honest about the ledger and silent about
+ * the stack. The only thing missing was somebody saying so before hours of GPU
+ * went into the wrong book.
+ *
+ * IT IS THE CLOSING QUESTION'S TWIN AND SHARES ITS ARITHMETIC. `edits` is
+ * `unwritten` (shared/ops.ts), counted by the one function the pane's tray and
+ * the closing card already count with, because two counts of one fact is how a
+ * dialog comes to disagree with the button that opened it.
+ */
+export interface UnappliedWarning {
+  /** The book, as the tab names it — the card says which one it means. */
+  title: string;
+  /** How many changes are waiting with no Apply behind them. Never zero: no card is raised. */
+  edits: number;
+  /** Which act was pressed, so the card can name it. */
+  act: MakeAct;
+}
+
+/**
+ * How that question was answered.
+ *
+ * THREE ANSWERS, and the middle one is why this is not a boolean. "Cancel" and
+ * "go ahead without them" are genuinely different intentions — the second is a
+ * person who meant to make the older book, which is a real thing to want from a
+ * position they are standing on — and collapsing them would make the safe answer
+ * the only answer.
+ */
+export type UnappliedAnswer = 'apply' | 'without' | 'cancel';
 
 /**
  * How "Read this book again?" was answered.

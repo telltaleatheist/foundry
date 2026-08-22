@@ -16,6 +16,7 @@ import { TranslateDialogComponent } from './components/translate-dialog/translat
 import { CaptureNewDialogComponent } from './components/capture-new-dialog/capture-new-dialog.component';
 import { CaptureProgressComponent } from './components/capture-progress/capture-progress.component';
 import { QueueShelfComponent } from './components/queue-shelf/queue-shelf.component';
+import { ToastTrayComponent } from './components/toast-tray/toast-tray.component';
 import { BookStacksService } from './core/book-stacks.service';
 import { CaptureService } from './core/capture.service';
 import { OpenDocumentsService, pathIsProject } from './core/documents.service';
@@ -24,6 +25,7 @@ import { PositionSyncService } from './core/position-sync.service';
 import { ProjectsService } from './core/projects.service';
 import { StageService } from './core/stage.service';
 import { UiService } from './core/ui.service';
+import { UnappliedService } from './core/unapplied.service';
 import { api } from './core/foundry';
 
 /**
@@ -96,7 +98,8 @@ import { api } from './core/foundry';
   selector: 'app-root',
   imports: [
     RouterOutlet, OpenDocumentsComponent, InspectorComponent,
-    QueueShelfComponent, OcrDialogComponent, ExportDialogComponent, TranslateDialogComponent,
+    QueueShelfComponent, ToastTrayComponent,
+    OcrDialogComponent, ExportDialogComponent, TranslateDialogComponent,
     SimplifyDialogComponent, MetadataDialogComponent,
     ConfirmDialogComponent, HostOpDialogComponent, HostStatusComponent,
     CaptureNewDialogComponent, CaptureProgressComponent,
@@ -148,6 +151,30 @@ import { api } from './core/foundry';
         }
       </div>
       <app-queue-shelf />
+
+      <!--
+        THE NOTICES, AND THEY ARE IN THE SHELL NOW RATHER THAN ON A ROUTE.
+
+        \`app-notice-bar\` is deleted (Owen's ruling, 2026-08-22: Foundry's notices
+        should be toasts, hit on a multi-line capture refusal drawn as a band
+        across the top of the window). What replaces it is a stack of cards in the
+        bottom-right corner, above the shelf — \`ToastTrayComponent\`, whose
+        docblock carries the ruling, the arithmetic of the offset and the cost of
+        having no severity.
+
+        THE BAR WAS MOUNTED IN THE WORKSPACE PAGE, which was a smaller mistake
+        hiding inside the big one: a notice is about the WINDOW, not about a
+        route, and half the writers of the signal — the action menu, the library
+        panel, the queue shelf's Save… — can be pressed with Settings on screen.
+        Every one of those sentences was raised into a component that was not
+        rendered, and vanished without ever being drawn. Here it is a sibling of
+        the shelf and the dialogs, which is what it always was in kind: chrome
+        over the whole window, alive on every route.
+
+        Always mounted, never gated: the tray IS the reader of
+        \`NoticeService.notice\`, and a gate would be a door with nobody behind it.
+      -->
+      <app-toast-tray />
 
       @if (ui.ocrOpen()) {
         <app-ocr-dialog />
@@ -272,6 +299,8 @@ export class App {
    */
   private readonly projects = inject(ProjectsService);
   protected readonly ui = inject(UiService);
+  /** The card before File→Export runs past unapplied work — see `onMenuAction`. */
+  private readonly unapplied = inject(UnappliedService);
   private readonly router = inject(Router);
 
   /*
@@ -362,7 +391,19 @@ export class App {
      * say gets a branch here before it is taught to say it.
      */
     api?.onMenuAction((action) => {
-      if (action === 'export') this.ui.openExport();
+      /*
+       * THE MENU'S EXPORT ASKS THE SAME QUESTION THE RAIL'S DOES — the card about
+       * work nobody applied (`UnappliedService`). It is asked HERE, at the third
+       * door onto the same dialog, rather than inside `UiService.openExport`
+       * where one line would have covered all three: that service would have to
+       * inject the gate, the gate reaches the stacks and the stacks reach the
+       * confirm card, and the confirm card injects `UiService` — a dependency
+       * cycle Angular would refuse at startup. Three call sites and no cycle is
+       * the honest trade, and this comment is the reason it is not tidier.
+       */
+      if (action === 'export') {
+        void this.unapplied.clearedHere('export').then((ok) => { if (ok) this.ui.openExport(); });
+      }
       else if (action === 'save') void this.stage.saveActive();
       else if (action === 'save-as') void this.stage.saveActiveAs();
       else if (action === 'toggle-documents') this.toggleDocuments();

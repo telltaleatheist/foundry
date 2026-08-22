@@ -20,6 +20,7 @@ import type {
   HostNodeProgress,
   LedgerParams,
   LedgerStep,
+  MakeAct,
   NodeOutput,
   ProjectDocumentKind,
   ProjectSummary,
@@ -33,6 +34,7 @@ import { OpenDocumentsService, pathIsProject, type Tab } from '../../core/docume
 import { NoticeService } from '../../core/notice.service';
 import { StageService } from '../../core/stage.service';
 import { UiService } from '../../core/ui.service';
+import { UnappliedService } from '../../core/unapplied.service';
 import { ActionMenuComponent } from '../action-menu/action-menu.component';
 
 /**
@@ -1371,6 +1373,8 @@ export class OpenDocumentsComponent {
   private readonly hostOps = inject(HostOpsService);
   /** Public to the template AND to the host binding above, which is a template too. */
   protected readonly ui = inject(UiService);
+  /** The card before a footer act runs past unapplied work — see `run`. */
+  private readonly unapplied = inject(UnappliedService);
   private readonly router = inject(Router);
 
   constructor() {
@@ -2440,11 +2444,33 @@ export class OpenDocumentsComponent {
    * invokes on this click exactly as every operation did before, which is the
    * compatibility promise stated where it is kept.
    */
-  protected run(event: MouseEvent, row: Row, act: Act): void {
+  protected async run(event: MouseEvent, row: Row, act: Act): Promise<void> {
     // Without this the click also lands on the card, which for a step would
     // re-stand it and for a host node would do nothing — but both of them would
     // fire while a dialog was opening over the top.
     event.stopPropagation();
+    /*
+     * ── AND FIRST, THE CARD ABOUT WORK NOBODY APPLIED ─────────────────────────
+     *
+     * Every act this footer offers is a MAKE-ACT — an export, a translation, a
+     * rewrite, or one of the host's — and every one of them is arithmetic over the
+     * recorded steps. A book pane holding changes with no Apply behind them would
+     * therefore have produced the book WITHOUT them, silently (Owen's report,
+     * 2026-08-21; `UnappliedService` has the whole account). `read` is the one act
+     * here that is not: an OCR read makes the bank the ops are a delta against,
+     * so it has nothing to be missing, and asking about it would be a card raised
+     * over a gesture it does not describe.
+     *
+     * AIMED AT THE ROW'S OWN PROJECT, which is the book this footer belongs to
+     * rather than whatever tab happens to be up — the same directory every branch
+     * below sends.
+     */
+    const made: MakeAct | null = act.host !== null
+      ? 'host'
+      : act.id === 'translate' || act.id === 'simplify' || act.id === 'export'
+        ? act.id
+        : null;
+    if (made !== null && !await this.unapplied.cleared(row.dir, made)) return;
     if (act.host !== null) {
       if (row.dir === null) return;
       const nodeId = this.nodeIdFor(row);

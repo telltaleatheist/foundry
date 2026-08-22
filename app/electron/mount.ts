@@ -647,6 +647,28 @@ const awaitingExports = new Set<AwaitedExport>();
  * decision an export makes is main's already (the pixels, the bank, the
  * translation's words, the derived book with the changes replayed into it).
  *
+ * ── THE ONE CARD IT CANNOT RAISE, NAMED HERE SO IT IS NOT DISCOVERED TWICE ──
+ *
+ * Every make-act pressed in the Foundry window is now gated on unapplied work:
+ * Export, Translate, Simplify and a host act all ask first when the book pane is
+ * holding changes nobody applied, because a make-act is arithmetic over the
+ * RECORDED STEPS and would otherwise quietly produce the book without them
+ * (`UnappliedService`, src/app/core/unapplied.service.ts — the defect it was
+ * written for). THIS CALL IS NOT GATED AND CANNOT BE. It runs in main, ordered by
+ * the host over the mount seam, with no window to draw a card in and nobody in
+ * front of it — and it may arrive for a project no window in this process has
+ * open.
+ *
+ * It is a known limit rather than a hole, on the same reasoning that lets it ask
+ * nothing about the format: the host reaches this because somebody pressed the
+ * host's act, that press went through `hostOps.invoke` in a window, and the gate
+ * asked its question THERE. What is unreachable is the host calling this on its
+ * own initiative — a scheduled run, a retry, an act ordered from the host's own
+ * chrome — and closing that would mean either a question main asks of a window
+ * that may not exist, or a refusal that stops somebody else's queue over a stack
+ * they can no longer see. Neither is worth having; the person's own copy of the
+ * work is safe on the sidecar either way.
+ *
  * IT IS NOT HELD. A rendering never is (electron/job-queue.ts): it is arithmetic
  * over a bank already on the disk, seconds, no model — so nothing waits for
  * anybody to find the shelf and press Start, which would be the one way an

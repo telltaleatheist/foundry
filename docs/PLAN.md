@@ -601,8 +601,9 @@ system."*
 2. **The app renders that page and never writes to it.** NOT STARTED.
    A strike pushes `{at:{page,order,note}, strike}` onto the in-memory
    stack and the frame paints it; nothing touches a file. Apply writes
-   the stack to the ledger step and clears it; closing without applying
-   scraps it. Standing on any step = base bank + replay of the chain.
+   the stack to the ledger step and clears it. (Scrap-on-close was
+   REVERSED at Wave 29: the stack flushes to a sidecar and survives.)
+   Standing on any step = base bank + replay of the chain.
 
 3. **Then the deletions.** `working/` trees, `setBlockCuts` and the
    splicing family, `overlays/*.json`, `curations/*.json`,
@@ -1841,7 +1842,8 @@ found it sound; the defect was geometry.
 - **ADDENDUM, LANDED `fd899bf`:** the gate and the host's hold-removal
   crossed and left a hosted Add with NO confirmation anywhere (found by
   the host side before anybody hit it). `confirmQueued` on UiService is
-  the one door: hosted the sentence lands on the NOTICE BAR, standalone
+  the one door: hosted the sentence lands on the notice surface (the
+  toast tray, as of Wave 32), standalone
   on the shelf's live region as before; all four dialogs route through
   it, and the hosted OCR sentence drops the Start clause because a
   routed read runs on its own now (their hold is gone, their 1ed04c1d).
@@ -1868,7 +1870,24 @@ icons-only. Order, active, waiting-pulse, disabled-not-hidden, hosted
 rules and the 30px stub all survive; the component docblock records
 the fourth arrangement without deleting the first three.
 
-### Wave 29 — nothing unapplied is skipped or lost (Owen, 2026-08-22) — IN FLIGHT
+### Wave 29 — nothing unapplied is skipped or lost (Owen, 2026-08-22) — LANDED (this commit)
+
+**Built and landed.** What the build settled beyond the contract:
+`unappliedIn`/`applyUnapplied` moved INTO BookStacksService so the ask
+card and the close question share one predicate and one apply door; the
+gate sits at every act door (the action menu's five, the tree footer's,
+the app menu's export) and at dialog OPEN — checked honest: none of the
+three make-dialogs has a source picker, so the book at open is the book
+for the card's life. The sidecar is `ops/pending.jsonl` (fixed name, in
+ops/ because that directory's own contract is never-swept), guarded by
+step id + sixteen hex of the bank receipt, refused OUT LOUD when stale,
+cleared by Apply and by the explicit Discard. Named costs: a host-
+ordered export through the mount seam cannot ask (recorded at
+`exportEpubFromStep`); one sidecar per project means a rare step-
+hopping sequence overwrites held work after announcing it. Found on the
+way: IPC-CHANNELS.md had drifted to three different counts (doc 71,
+table 79, source 80) — reconciled to 84/84/84 from source, plus the
+push and family the table never had.
 
 Diagnosed on Owen's own hosted project, read-only: his chapter rename
 and text edits never became ops (unapplied stack), the export honestly
@@ -1888,6 +1907,36 @@ scrapped. Two units, one agent:
   open behind an identity guard, cleared by Apply and by the explicit
   discard answer. New IPC doors; IPC-CHANNELS.md regenerates in the
   landing commit for BookForge's keeper.
+
+### Wave 31 — the capture intake reads screenshots, and the table sorts (Owen, 2026-08-22) — LANDED (this commit)
+
+Two rulings from Owen photographing-by-screenshot: *"i just took
+screenshots of a book"* (179 PNGs refused by the v1 HEIC-only gate) and
+*"it should be able to sort them by filename or by date saved,
+ascending or descending."* Intake now reads HEIC/HEIF (libheif, as
+ever), PNG (working copy = the bytes themselves, byte-identical) and
+JPEG (one transcode by the imaging that decoded it) — and applies NO
+rotation of its own, ever: the v1 refusal's double-rotation fear is
+answered by the table showing the truth and Turn being one gesture.
+The reverse button became a **Sort ▾** menu of four acts (name A–Z/Z–A
+with natural compare, oldest/newest first), sorting by spread so split
+pages never swap, stable on ties, and usable even on an arranged table
+— choosing a rule is deliberately abandoning the arrangement.
+`reverse()` and `descending` retired with gravestones.
+
+### Wave 32 — the notices become toasts (Owen, 2026-08-22) — LANDED (this commit)
+
+*"we should probably add toast notifications."* The `notice.set` door
+did not move — the new toast tray CONSUMES the signal (append, reset to
+null), so zero call sites changed and two silent losses of the strip
+died with it: a second sentence no longer overwrites an unread first,
+and two identical refusals are no longer one. Bottom-right above the
+shelf's corner (z 1100, between shelf 900 and dialogs 1200), 8s with
+hover-pause, ✕, four visible + a queue that never drops, pre-line for
+multi-line reports, permanent polite live region. notice-bar deleted
+whole. NAMED COST, deferred not forgotten: no severity field yet, so a
+refusal expires on the same clock as a confirmation — severity is the
+next wave if it bites.
 
 ### Wave 30 — the glance obeys the click (Owen, 2026-08-22) — RULED, QUEUED BEHIND WAVE 29
 

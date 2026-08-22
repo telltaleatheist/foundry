@@ -23,6 +23,7 @@ import { ProjectsService } from '../../core/projects.service';
 import { OpenDocumentsService } from '../../core/documents.service';
 import { StageService } from '../../core/stage.service';
 import { UiService } from '../../core/ui.service';
+import { UnappliedService } from '../../core/unapplied.service';
 
 /**
  * THE ACTION MENU — an ordered list of everything this app can be asked to do,
@@ -826,6 +827,8 @@ export class ActionMenuComponent {
   private readonly ledger = inject(LedgerService);
   private readonly hostOps = inject(HostOpsService);
   private readonly notices = inject(NoticeService);
+  /** The card before any of the four make-acts below runs past unapplied work. */
+  private readonly unapplied = inject(UnappliedService);
   private readonly router = inject(Router);
 
   /** Lit when the panel is actually on screen, which needs both halves of it. */
@@ -976,9 +979,29 @@ export class ActionMenuComponent {
    * EVERY REFUSAL IS A SENTENCE ON THE STRIP, which is this menu's own habit for
    * a button that cannot grey itself out against a fact this deep in the model.
    */
-  protected runHostAct(operationId: string): void {
+  protected async runHostAct(operationId: string): Promise<void> {
     const dir = this.target();
     if (dir === null) return;
+    /*
+     * AND THE SAME QUESTION THE THREE DIALOGS ABOVE ASK, for the same reason and
+     * one seam further out. A host act that consumes the book asks Foundry to
+     * EXPORT the step it names (`exportEpubFromStep`, electron/mount.ts) and then
+     * works on that file — so an act ordered over a pane holding unapplied changes
+     * spends somebody else's queue on a book without them, and the result lands
+     * in the tree looking exactly like the one they meant.
+     *
+     * AIMED BY `target()`, NOT BY THE ACTIVE DOCUMENT. This menu can be pressed
+     * over a project it is holding rather than the one on screen, and the gate has
+     * to look at the book the act will actually be made from.
+     *
+     * ASKED BEFORE ANY OF THE REFUSALS BELOW, deliberately: those are about
+     * whether the act can be aimed at all, and a person who has just answered
+     * "apply them and continue" should have their changes recorded even if the
+     * aim then turns out to be impossible. The alternative — refuse first, ask
+     * second — would make the answer depend on the order two unrelated facts
+     * happen to be checked in.
+     */
+    if (!await this.unapplied.cleared(dir, 'host')) return;
     if (this.hostOps.offersFor('book').some((offer) => offer.id === operationId)) {
       const standing = this.ledger.standingIn(dir);
       if (standing === null) {
@@ -1180,8 +1203,26 @@ export class ActionMenuComponent {
     return canExportFrom(project, project === null ? null : this.ledger.standingIn(project.dir));
   }
 
-  protected openExport(): void {
+  /**
+   * ASKED ABOUT UNAPPLIED WORK FIRST, and this is the shape all three of these
+   * openers share.
+   *
+   * An export is arithmetic over the RECORDED STEPS, so a book pane holding
+   * changes nobody applied would have quietly produced the book without them
+   * (`UnappliedService` — Owen's own report, 2026-08-21). The card is raised
+   * BEFORE the dialog rather than at its Add press because none of these three
+   * dialogs has a source picker: each computes its `source()` from the active
+   * document's project, so the book this gate looks at is the book the card will
+   * act on for the whole life of it, and settling the question first beats
+   * settling it after somebody has picked a language and a model.
+   *
+   * THE NAVIGATION HAPPENS FIRST EITHER WAY. A press from Settings means "go and
+   * do this to the document", and a person who then answers Cancel is a person
+   * back among their documents rather than one stranded on a settings page.
+   */
+  protected async openExport(): Promise<void> {
     void this.router.navigateByUrl('/');
+    if (!await this.unapplied.clearedHere('export')) return;
     this.ui.openExport();
   }
 
@@ -1212,8 +1253,9 @@ export class ActionMenuComponent {
     return canTranslateFrom(project, project === null ? null : this.ledger.standingIn(project.dir));
   }
 
-  protected translate(): void {
+  protected async translate(): Promise<void> {
     void this.router.navigateByUrl('/');
+    if (!await this.unapplied.clearedHere('translate')) return;
     this.ui.openTranslate();
   }
 
@@ -1229,8 +1271,9 @@ export class ActionMenuComponent {
     return canSimplifyFrom(project, project === null ? null : this.ledger.standingIn(project.dir));
   }
 
-  protected simplify(): void {
+  protected async simplify(): Promise<void> {
     void this.router.navigateByUrl('/');
+    if (!await this.unapplied.clearedHere('simplify')) return;
     this.ui.openSimplify();
   }
 
