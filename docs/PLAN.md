@@ -35,7 +35,7 @@ same commit that lands it.
   root `bunx tsc --noEmit`; from `app/`:
   `bunx tsc -p tsconfig.electron.json --noEmit`,
   `bunx tsc -p tsconfig.app.json --noEmit`, `bunx ng build` (the
-  738.63 kB against a 500 kB budget WARNING is pre-existing; an ERROR is
+  801.07 kB against a 500 kB budget WARNING is pre-existing; an ERROR is
   not — and see §7, where that number was 145 kB stale until somebody
   re-measured it). Plus a raw-control-byte scan of every touched file.
 - **No new tests** (user ruling). Fix the ones a change invalidates; name
@@ -2575,6 +2575,47 @@ directions.
 
 Also closed by this: the part-divider cost in §7.
 
+### Wave 45 — the sweep: a census of a pattern, verdicted (Owen, 2026-08-22) — BUILT
+
+> "give me the ability to detect things in parentheses, light them up, and
+> strike them selectively. maybe line them up in a list and i scroll
+> through and click what i want to keep or delete from the blocks. theres
+> a lot of (see sandoval p. 170), etc. stuck in this one book… maybe i
+> should be able to regex search for something, have it listed in the
+> list, and selectively delete/keep them as well."
+
+A census modal (Owen chose direction A over the in-place "lit galley" on
+the design canvas): preset chips for parentheses and brackets plus a free
+regex field, every match listed with its sentence quoted and the span lit,
+a CUT/KEEP verdict per row starting from all-cut, `Keep all`/`Cut all` as
+the two workflows, and a landing verb that names its count. A span cut is
+a `text` op with the seam mended; a match that empties its block is a
+`strike`; one variadic push lands the sitting and the tray's Apply flow is
+untouched. On a translated pass the sweep does what the hand does —
+serial record corrections for spans, ops for strikes. The full contract
+is **docs/SWEEP.md**; deferred out loud there: saved patterns,
+multi-pattern sittings, batch undo, cross-block matches.
+
+**Built whole, §2.7 included** — `core/sweep.ts` (the scan, the seam and the
+plan, as pure functions), `SweepDialogComponent`, a `Sweep` tile between OCR
+and Translate, `UiService.sweepOpen`, and two new members on `BookStack`:
+`translated()` and `correct(id, text)`, the second wired straight to the
+viewer's own correction machinery so the one-in-flight rule, the load ticket
+and the book refresh stay in one place.
+
+**Four divergences from the contract, each argued where it is built.** (1) A
+SHELVED ROW IS NOT SWEPT: it is in the file and not in the flow, so `reveal`
+cannot travel to it and no edition emits it — a verdict about it would be a
+verdict about text nobody can see. (2) The verdict inks are the SHELL's
+`--error` and `--warn`, not the paper's `--ink-strike` / `--ink-flag`: those
+are declared on the book viewer's own host and mixed for a cream sheet, and
+the same hex on charcoal is a strike nobody can read. (3) A VIEW-ONLY TAB IS
+REFUSED at the tile and again in the card, because the viewer's `push` refuses
+one with a sentence and the card would otherwise have closed and announced the
+cuts on top of that refusal. (4) The seam's both-sides-whitespace clause keeps
+a NEWLINE over a space where the two meet, since a line break inside a block
+is structure a person can see.
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the
@@ -2641,11 +2682,15 @@ supposed to be, and it exists so the same failure is visible next time.
   every app-side unit and the reason the hand-test is not optional. Not
   scheduled because the standing ruling is no unasked tests — if that
   changes, this is where the work starts.
-- **The bundle is 738.63 kB against a 500 kB budget.** Pre-existing.
+- **The bundle is 801.07 kB against a 500 kB budget.** Pre-existing.
   It went 695.96 → 702.98 (Wave 23, the glance card) → 704.14 (Wave 21's
   mint-writes-pages) → 704.53 (the captured book's sentence) → 737.93
   (waves 24 through 32, unattributed between them) → 738.63 (Wave 30,
-  the glance's placement).
+  the glance's placement) → 801.07 (waves 33 through 45, unattributed
+  between them; the sweep itself measured +0.13 against the tree it
+  landed on. Re-measured at Wave 45's landing, 2026-08-22 — this list
+  had drifted a third time, reading 738.63 against a source measuring
+  801.07, caught by the Wave 45 builder).
 
   The 737.93 baseline was re-measured on 2026-08-22 on `cf995c5` in a
   clean detached worktree, per this file's own rule below.

@@ -12,6 +12,7 @@ import { OcrDialogComponent } from './components/ocr-dialog/ocr-dialog.component
 import { OpenDocumentsComponent } from './components/open-documents/open-documents.component';
 import { MetadataDialogComponent } from './components/metadata-dialog/metadata-dialog.component';
 import { SimplifyDialogComponent } from './components/simplify-dialog/simplify-dialog.component';
+import { SweepDialogComponent } from './components/sweep-dialog/sweep-dialog.component';
 import { TranslateDialogComponent } from './components/translate-dialog/translate-dialog.component';
 import { CaptureNewDialogComponent } from './components/capture-new-dialog/capture-new-dialog.component';
 import { CaptureProgressComponent } from './components/capture-progress/capture-progress.component';
@@ -101,7 +102,7 @@ import { api } from './core/foundry';
     RouterOutlet, OpenDocumentsComponent, InspectorComponent,
     QueueBarComponent, ToastTrayComponent,
     OcrDialogComponent, ExportDialogComponent, TranslateDialogComponent,
-    SimplifyDialogComponent, MetadataDialogComponent,
+    SimplifyDialogComponent, MetadataDialogComponent, SweepDialogComponent,
     ConfirmDialogComponent, HostOpDialogComponent, HostStatusComponent,
     CaptureNewDialogComponent, CaptureProgressComponent,
   ],
@@ -215,6 +216,18 @@ import { api } from './core/foundry';
 
       @if (ui.captureNewOpen()) {
         <app-capture-new-dialog />
+      }
+
+      <!--
+        THE SWEEP, WHICH IS THE ONE DIALOG HERE THAT IS NOT ABOUT THE POSITION.
+        The five above configure an act against the step somebody is standing on;
+        this one is about the BOOK PANE that is open, reads that pane's own replay
+        and pushes onto that pane's own stack (docs/SWEEP.md). It is mounted with
+        them because it is a modal and obeys the one-question-at-a-time rule with
+        them, and for no other reason.
+      -->
+      @if (ui.sweepOpen()) {
+        <app-sweep-dialog />
       }
 
       <!--

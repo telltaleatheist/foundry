@@ -70,6 +70,21 @@ export class UiService {
   readonly simplifyOpen = signal(false);
   /** The Metadata dialog — the book's own record, not the app's idea of it. */
   readonly metadataOpen = signal(false);
+  /**
+   * The Sweep — a census of one pattern across the open book, verdicted (Wave 45).
+   *
+   * IT IS A DIALOG LIKE THE FIVE ABOVE AND IT IS ABOUT SOMETHING ELSE ENTIRELY,
+   * which is worth saying here because the difference decides what it may do.
+   * Those five configure an ACT against the position — a reading, a translation,
+   * an export, a record — and each of them consumes the ledger, which is why each
+   * is asked about unapplied work before it opens. This one stages MORE unapplied
+   * work onto the very pane the person is standing in front of: it reads
+   * `BookStack.view()`, it lands `BookStack.push()`, and the tray's Apply is
+   * untouched by it. So there is no `clearedHere` in front of it and there must
+   * not be one (docs/SWEEP.md §1) — a card asking somebody to apply their edits
+   * before making more of the same kind is a card that has misread its own act.
+   */
+  readonly sweepOpen = signal(false);
 
   /** Naming a book before photographing it. See CaptureNewDialogComponent. */
   readonly captureNewOpen = signal(false);
@@ -281,6 +296,7 @@ export class UiService {
     this.simplifyOpen,
     this.metadataOpen,
     this.captureNewOpen,
+    this.sweepOpen,
     this.confirmOpen,
   ] as const;
 
@@ -368,6 +384,14 @@ export class UiService {
 
   closeMetadata(): void {
     this.metadataOpen.set(false);
+  }
+
+  openSweep(): void {
+    this.only(this.sweepOpen);
+  }
+
+  closeSweep(): void {
+    this.sweepOpen.set(false);
   }
 
   /*
