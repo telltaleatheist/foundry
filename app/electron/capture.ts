@@ -1034,7 +1034,7 @@ const THUMB_EDGE = 640;
  * encoder above explains: a decoded file format has no channel order to get
  * wrong, and this is the one place Electron's imaging is in the path at all.
  */
-function encodeThumbnail(png: Buffer, image: DecodedImage): Buffer {
+function encodeThumbnail(png: Buffer, image: { width: number; height: number }): Buffer {
   const wide = image.width >= image.height;
   const thumb = nativeImage.createFromBuffer(png).resize({
     ...(wide ? { width: THUMB_EDGE } : { height: THUMB_EDGE }),
@@ -1211,7 +1211,7 @@ function takenAtFrom(times: ExifTimes, modifiedAt: Date): TakenAt {
  * keep in agreement.
  */
 
-function pagesFor(photoId: string, from: CapturePhoto | null, decoded: DecodedImage): {
+function pagesFor(photoId: string, from: CapturePhoto | null, decoded: { width: number; height: number }): {
   pages: CapturePage[];
   split: CaptureSplit | null;
   inherited: boolean;
@@ -1255,14 +1255,28 @@ export interface IntakeReport extends CaptureOpened {
 /**
  * What this stage accepts.
  *
- * HEIC ONLY IN v1, AND THE REFUSAL IS DELIBERATE. The acceptance shoot is 27
- * HEIC files and libheif's behaviour on them is measured. A JPEG would decode
- * through Electron instead, on a path where EXIF Orientation is applied by
- * somebody else's rules — which is the exact hazard that nearly turned this
- * shoot 90° wrong, and it would arrive untested. A named refusal is a sentence
- * a person can act on; a sideways working copy is a bug they have to notice.
+ * HEIC/HEIF decode through libheif, measured on the acceptance shoot. PNG and
+ * JPEG decode through Electron's own imaging (Owen, 2026-08-22, dragging 179
+ * screenshots: *"i just took screenshots of a book"* — a book photographed
+ * with a phone is HEIC, a book captured off a screen is PNG, and both are
+ * photographs of pages by this stage's own definition).
+ *
+ * THE v1 REFUSAL'S FEAR IS ANSWERED, NOT IGNORED. It refused JPEG because
+ * Electron might apply EXIF Orientation "by somebody else's rules" — the
+ * double-rotation hazard that nearly turned the index shoot 90° wrong. The
+ * answer is the same one the HEIC path settled on: THIS INTAKE APPLIES NO
+ * ROTATION OF ITS OWN, ever. Whatever grid the decoder hands over is the
+ * working copy; the light table shows it the moment it lands, and Turn — the
+ * stage's own instrument, one gesture — is how a person corrects a sideways
+ * frame, exactly as they already do for a spread shot lying on its side. A
+ * silent sideways copy was the fear; a VISIBLE sideways card with the tool
+ * beside it is the ordinary case this stage was built for. (Screenshots, the
+ * case that reopened this, carry no orientation at all.)
  */
-const READABLE = new Set(['.heic', '.heif']);
+const READABLE = new Set(['.heic', '.heif', '.png', '.jpg', '.jpeg']);
+
+/** Which of the readable kinds goes through libheif rather than Electron. */
+const HEIC_LIKE = new Set(['.heic', '.heif']);
 
 /**
  * Copy photographs into the project, decode them once, and add them to the
@@ -1340,7 +1354,7 @@ export async function intakePhotos(projectDir: string, paths: readonly string[])
       if (!READABLE.has(extension)) {
         refused.push({
           file: name,
-          why: `${extension || 'a file with no extension'} is not a photograph this stage reads yet — HEIC only for now`,
+          why: `${extension || 'a file with no extension'} is not a photograph this stage reads — HEIC, PNG or JPEG`,
         });
         continue;
       }
@@ -1364,24 +1378,48 @@ export async function intakePhotos(projectDir: string, paths: readonly string[])
         continue;
       }
 
-      let decoded: DecodedImage;
-      try {
-        decoded = await decodeHeic(bytes, name);
-      } catch (err) {
-        refused.push({ file: name, why: (err as Error).message });
-        continue;
+      /*
+       * TWO DECODERS, ONE INVARIANT: whatever comes out is the working grid,
+       * with no rotation of this intake's own (the READABLE docblock carries
+       * the whole argument). HEIC goes through libheif exactly as before. PNG
+       * and JPEG go through Electron's imaging — and a PNG's working copy is
+       * THE BYTES THEMSELVES, byte for byte: it is already the lossless format
+       * the working copy exists to be, and a decode-reencode of a lossless
+       * file buys a chance to be wrong about channel order and nothing else.
+       * A JPEG is transcoded once to PNG by the same imaging that decoded it,
+       * so no hand-written encoder ever touches a channel order Electron chose.
+       */
+      let frame: { width: number; height: number };
+      let png: Buffer;
+      if (HEIC_LIKE.has(extension)) {
+        let decoded: DecodedImage;
+        try {
+          decoded = await decodeHeic(bytes, name);
+        } catch (err) {
+          refused.push({ file: name, why: (err as Error).message });
+          continue;
+        }
+        frame = { width: decoded.width, height: decoded.height };
+        png = await encodePng(decoded);
+      } else {
+        const image = nativeImage.createFromBuffer(bytes);
+        if (image.isEmpty()) {
+          refused.push({ file: name, why: 'it could not be decoded as an image — the file may be damaged' });
+          continue;
+        }
+        frame = image.getSize();
+        png = extension === '.png' ? bytes : image.toPNG();
       }
 
       const original = `${id}${extension}`;
       const workingCopy = `${id}.png`;
       const thumb = `${id}.${THUMB_EDGE}.jpg`;
-      const png = await encodePng(decoded);
       await writeAtomically(path.join(originals, original), bytes);
       await writeAtomically(path.join(derived, workingCopy), png);
-      await writeAtomically(path.join(derived, thumb), encodeThumbnail(png, decoded));
+      await writeAtomically(path.join(derived, thumb), encodeThumbnail(png, frame));
 
       const stat = await fsp.stat(resolved);
-      const { pages, split } = pagesFor(id, photos[photos.length - 1] ?? null, decoded);
+      const { pages, split } = pagesFor(id, photos[photos.length - 1] ?? null, frame);
       photos.push({
         id,
         file: `${ORIGINALS}/${original}`,
@@ -1394,8 +1432,8 @@ export async function intakePhotos(projectDir: string, paths: readonly string[])
         // THE DECODER'S DIMENSIONS. EXIF's are about the other grid, and storing
         // them here would make the aspect rule above answer about a photograph
         // nobody is looking at.
-        width: decoded.width,
-        height: decoded.height,
+        width: frame.width,
+        height: frame.height,
         ...takenAtFrom(readExifTimes(bytes), stat.mtime),
         split,
         pages,
