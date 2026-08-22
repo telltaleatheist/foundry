@@ -484,17 +484,16 @@ export class CaptureViewComponent {
    * byte-identical, which is the property that lets a person keep editing after
    * one.
    *
-   * IT USED TO ASK `documents.length > 0` AND THAT ANSWER IS NOW ALWAYS FALSE.
-   * A mint files no document row -- a folder of page images is not a file type
-   * anything can open, so it is not in the catalogue's document list at all
-   * (`documentArchive`, electron/projects.ts). Left as it was, the button would
-   * have said "Finish the pages" forever, including to somebody looking at a
-   * book they had already made: a feature un-shipping itself with nothing on
-   * screen to say so.
+   * IT ASKS `originalOf` AGAIN, which is where this question started and where
+   * Wave 41 put it back. For two days a mint filed NO document row -- a folder
+   * of page images is not a file type anything can open -- so `originalOf`
+   * answered null over a finished book and the button would have said "Finish
+   * the pages" forever, including to somebody looking at a book they had already
+   * made. A summary field called `pages` stood in for it.
    *
-   * `pages` IS THE SAME QUESTION ASKED OF THE FIELD THAT MOVED. It is set and
-   * cleared in the same manifest write as the mint step and its discard, so it
-   * cannot disagree with the history the light table is showing.
+   * A mint catalogues its PDF now (`catalogueMint`, electron/projects.ts), so
+   * the original is there to be found and the stand-in is gone. One question,
+   * asked of the catalogue, in the words every other surface uses.
    *
    * NOT the same question as the divergence sentence, which asks whether the
    * book on the shelf was made from THIS arrangement -- that one is main's
@@ -502,7 +501,7 @@ export class CaptureViewComponent {
    */
   protected readonly minted = computed<boolean>(() => {
     const project = this.projects.projectFor(this.tab().path);
-    return project !== null && project.pages;
+    return project !== null && this.projects.originalOf(project) !== null;
   });
 
   /**

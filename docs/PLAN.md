@@ -1979,6 +1979,14 @@ Owen's first real walk of the Wave 25 passes, arriving as rulings:
   DIR for a captured, read project — the same face the OCR dialog
   accepts, resolved by `importDocument`'s own inside-a-project rule
   (`projectDirOf` resolves the dir to itself; verified before use).
+  **SUPERSEDED BY WAVE 41 — the branch is retired with a gravestone in
+  each of the three files.** It was a correct patch aimed at one
+  consumer of a fact that was wrong at the source: a project whose
+  archive names no file. The mint files a PDF, so `originalOf` answers
+  for a captured book and the line under the retired branch —
+  unchanged, the ordinary one — does the whole job. The class this
+  item belonged to (the pages view, the figure `--pages` face, this)
+  is closed at its source rather than patched a fourth time.
 - **BUILT (this commit): the unapplied question, Owen's refinement of
   Wave 29.** Verbatim: *"any action they take, whether it's switching to
   a different step or narrating or anything at all, should ask if they
@@ -2037,10 +2045,25 @@ OFFER recorded, not the outcome, which is the loop guard — and both
 ensure doors REMAKE a book whose figures are missing when a source now
 exists (absent marker = older engine, resolved by reading the rows
 once; a failing remake caps at one attempt per launch). The refusal's
-advice no longer implies the original must be a PDF. Also landed
-beside it: the PDF viewer's selection stops re-inking the hidden text
+there. The refusal's advice no longer implies the original must be a PDF.
+Also landed beside it: the PDF viewer's selection stops re-inking the hidden text
 layer white (`color: transparent` on the layer's own ::selection — the
 global rule was winning the color per-property).
+
+**PARTIALLY SUPERSEDED BY WAVE 41, and the halves are worth separating.**
+THE ENGINE'S `--pages` FACE STAYS, whole and untouched: `vlm-book --pages`
+is a capability of the command, documented on the command, usable from a
+terminal, and the crop-from-a-page's-own-pixels work behind it is exactly
+as good as it was. `BookFigures.from` keeps its `'pages'` member for the
+same reason — a book file written that way must go on parsing here.
+WHAT RETIRES IS THE APP'S SELECTION OF IT: `writeBookFile` loses its
+`pagesPath` option, `bookAtPosition` loses its `pages` field, and the
+figure heal's source is `at.pdf` alone, because a captured project's
+archive is a PDF now and there is no second shape of pixels for this side
+to describe. THE FIGURE HEAL ITSELF IS UNTOUCHED and composes with the new
+container heal by ordering: `bookAtPosition` awaits `healMintedArchive`
+before it composes `pdf`, so the PDF exists before `ensureReadingBook`
+asks whether the figures do. PDF first, then figures.
 
 ### Wave 38 — the Home intake workspace (Owen, 2026-08-22) — BUILT (this commit)
 
@@ -2321,6 +2344,116 @@ window's drop handler reads the FRONT TAB and the front tab is a finished
 book — if that bites, it is one clause in `intaking`.
 
 Gates: the lead runs them. Scoped: root `tsc`, both app tsconfigs clean.
+
+**SUPERSEDED BY WAVE 41, AND THE BRIEF'S OWN PREMISE IS WHY.** This wave
+opened by recording that *"the brief's premise was stale"* — Owen expected
+pdf.js and there was no PDF to open, so the smallest honest answer was the
+pages drawn as pages. Wave 41 makes the premise true instead: the mint
+assembles the PDF, so the minted row opens in pdf.js, which is what the
+quoted brief asked for verbatim. Retired with it: `app-pages-view`,
+`capture:pages-load`, the fourth tab kind, `positionView.pages`,
+`showPages`, `documentOfStep`'s null-for-a-mint arm, and the OCR dialog's
+`photographed()` second face. WHAT SURVIVES: the light table keeps every
+door (*Edit the photographs* is still gated on the project being a capture,
+and `showTable` still draws the capture row by rule); the minted card in
+the tree is still called **The pages**; and the three NOT-DONE items above
+are answered by a PDF viewer that already has a page count and a scroll.
+The deferred image-PDF export is answered too — the container exists, and a
+Save from the minted book copies it out.
+
+### Wave 41 — the mint produces a PDF, and a captured project becomes ordinary (Owen, 2026-08-22) — BUILT (this commit)
+
+> *"maybe we should mint a pdf from the pages after theyre fully arranged
+> and complete, and then we build the bank after that (not necessarily from
+> the pdf, but the pdf can exist so it doesnt confuse bookforge or anything
+> else). the pdf is just the images on each page."*
+
+and, on being told this would also retire the night's pages-face patches:
+
+> *"this might fix our current problem as well. the system isnt trying to
+> sift through images, it's using the original pdf just like it normally
+> would."*
+
+and, mid-build, settling the read:
+
+> *"if we're building the bank from the images anyway maybe we should just
+> build it from the pdf. why not? it would help maintain provenance, and
+> nothing will be lost."*
+
+**THE DEFECT THIS ENDS IS A CLASS, NOT A BUG.** BookForge's adoption refused
+both of Owen's captured projects — *"records no imported original — its
+catalogue's archive names no file"* — because a captured project's
+`manifest.archive` was `{kind: 'pages', file: '<stem> pages'}`, a FOLDER.
+Every consumer that asks a project what it was made from hit the same wall,
+and three of them had been patched one at a time in a single evening (Wave
+36's make-dialog faces, Wave 34's page viewer, Wave 37's figure `--pages`).
+The ruling ends it at the source: THE MINT PRODUCES A PDF AS THE ARCHIVED
+ORIGINAL, and from that moment a captured project is an ORDINARY project.
+
+- **The mint assembles and catalogues.** `mintCommit` binds the rectified
+  page JPEGs into an image-only PDF (pdf-lib, `embedJpg`, no re-encode, page
+  box = pixels at a nominal 300 dpi) and `recordMint` files it exactly as
+  `importDocument` files a scan: `archive/<stem>.pdf`, `manifest.archive`
+  with `kind: 'pdf'`, the live copy in `working/`, and a `documents` origin
+  row (`retention: 'irreplaceable'`, `WHY_MINTED`). `originalOf` answers,
+  Home draws a book, the make-dialogs find a source, the figure cutter has a
+  PDF, and a host reading the catalogue finds a file. The four writes are one
+  function, `catalogueMint`, shared with the heal so the two cannot drift.
+- **THE CALL ON THE FOLDER, STATED: a new mint leaves none.** The JPEGs go
+  into the container byte for byte, so a folder beside it would be a second
+  complete copy of the shoot kept for readers that no longer exist. MEASURED
+  on Owen's star-gods: 179 pages, 126.1 MB of JPEG in, 126.2 MB of PDF out —
+  the container costs 0.1 MB and nothing is decoded. The HEAL is the other
+  way round on purpose and says so in its own comment: it KEEPS the folder,
+  unreferenced, because a migration that frees disk by erasing the thing it
+  was migrating has no way to be sorry.
+- **The heal.** `healMintedArchive` assembles the missing PDF from the pages
+  folder a project already holds (order = the folder's own zero-padded names,
+  verified against the writer that made them), rewrites the manifest through
+  `catalogueMint`, and re-points the mint step's payload at the PDF in the
+  same `withManifest`. Once per project per process, on the figure heal's
+  posture — a refusal is a log line and the project opens exactly as it did.
+  AWAITED at `bookAtPosition` (so the container exists before anything reads
+  `pdf`) and FIRED-NOT-AWAITED at `listProjects` (so Home and a host's
+  adoption converge within a second of launch without a library screen held
+  behind a migration). Proved end to end on a copy of Owen's real project:
+  179 pages assembled in 1.5 s, manifest rewritten, folder still on disk.
+  **The named cost:** a listing composed in the second before a heal lands
+  draws that project as photographs. It is what it drew yesterday, it is
+  recoverable by doing nothing, and `announceProjects` redraws it.
+- **The retirement sweep**, each with a gravestone naming this wave:
+  `app-pages-view` (deleted), `capture:pages-load` + `loadMintedPages` +
+  `CaptureMintedPages` + the preload arm + the `FoundryApi` member, the
+  `pages` TAB KIND and `pagesTabIn`, `positionView.pages` and `showPages`,
+  `documentOfStep`'s null-for-a-mint arm, `ProjectSummary.pages` (every
+  consumer now asks `originalOf(project) === null`, which is what they all
+  meant), `BookLoad.originalPages` and the glance card's second sentence,
+  `bookAtPosition.pages`, `writeBookFile`'s `pagesPath`, `ReadSourceKind` /
+  `ReadingPlan.sourceKind` / `ReadRequest.inputKind`, `planReading`'s
+  project-directory face, and the three make-dialogs' captured branches.
+  **Clicking the minted book opens pdf.js**, which is Wave 34's brief
+  verbatim.
+- **WHAT IS KEPT, AND WHY** — the audit is in the wave's report, and three
+  decisions are worth this file: (1) the ENGINE keeps `vlm-read --pages` and
+  `vlm-book --pages` untouched, along with `BookFigures.from`'s `'pages'`
+  member — that is engine surface area, and what retired is the app being in
+  two minds about which flag it wants; (2) `ProjectArchive.kind` keeps
+  `'pages'` as READ-ONLY history, because refusing the value at `readArchive`
+  would make an unhealed project unparseable in the same breath as taking
+  away the only thing that could heal it; (3) `archiveAfterLoss`'s pages arm,
+  `destroyPayload`'s ask-the-disk, `documentArchive`'s narrowing and
+  `readingState.needed`'s `'pages'` clause all stay as TRANSITIONAL guards
+  for a project touched between launch and its heal.
+- **`mintedFromPhotographs` survives** with one caller: the library tree calls
+  a minted row *The pages* rather than *The original*, which is a true and
+  lasting difference between a book somebody dragged in and one this app
+  printed out of photographs.
+- Gates: 418 pass / 0 fail, root `tsc`, both leaf configs, `ng build` complete
+  with the pre-existing budget WARNING at **756.21 kB** (760.68 at the last
+  landing — the sweep took 4.47 kB off). Control-byte scan clean over every
+  touched file. IPC: **84 handles / 84 names, down from 85**, and
+  docs/IPC-CHANNELS.md is regenerated — including the correction that its own
+  count had been reading 71 against a source measuring 85.
 
 ### Then — the user's
 

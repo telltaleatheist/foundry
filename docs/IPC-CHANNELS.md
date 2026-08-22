@@ -1,11 +1,25 @@
 # Foundry's IPC channels — the whole list, for the collision audit
 
 Every channel name this app owns, enumerated from `app/electron` rather than
-from memory, regenerated on 2026-08-22 (the unapplied-work wave: four doors in
+from memory, regenerated on 2026-08-22 for **Wave 41, which REMOVES a door** —
+`capture:pages-load`, the listing of a mint's page images, retired with the
+folder it listed when the mint went back to writing a PDF (docs/PLAN.md, Wave
+41). It is the first removal this file has recorded.
+
+**THE COUNT IN THIS FILE WAS 71 AND THE SOURCE MEASURED 85.** Re-counted for
+this regeneration, by script, over `app/electron/ipc.ts`: **84 `ipcMain.handle`
+call sites, 84 distinct channel names, zero `ipcMain.on`** after the removal;
+85 before it. Nothing was renamed and no name collides. The stale 71 dates from
+2026-08-18 and every wave since has added doors under it without moving it —
+which is the exact failure docs/PLAN.md §1 names about the test count, arriving
+in the file whose whole job is to be counted. A FIGURE QUOTED AS A GATE IS A
+MEASUREMENT OR IT IS DECORATION. The per-family tables below are the authority
+for the NAMES; where a total contradicts them, the tables win.
+
+Before that, regenerated on 2026-08-22 (the unapplied-work wave: four doors in
 `book:`, and two names that had been missing from these tables since the capture
 stage — `capture:remove` and the `capture:intake-progress` push, both in the
-source and neither in a row, which is why the counts below moved by more than
-four). Before that on 2026-08-19 (the capture stage: eight doors, one new
+source and neither in a row). Before that on 2026-08-19 (the capture stage: eight doors, one new
 family, and a second host on the one scheme; before that on
 2026-08-18, the host status chip: two doors and one
 push; then the offers push, which is a push and no door at all; then the
@@ -206,7 +220,7 @@ family most likely to grow doors.
 
 ### Eight names added on 2026-08-19 — the capture stage (a ninth, the intake-progress push, followed the same day; see the pushes section)
 
-One new family, `capture:`, all eight registered in `app/electron/ipc.ts`
+One new family, `capture:`, all of it registered in `app/electron/ipc.ts`
 like every other door. Four answer today (create, intake, recipe-load,
 recipe-save); the four mint doors are registered and REFUSE BY NAME until
 the mint merge lands — a caller gets a sentence, not a missing-handler
@@ -214,6 +228,36 @@ throw. The family is new, so it cannot collide with anything BookForge
 reported; the prefixing question above is unchanged by it. The same wave
 added a SECOND HOST on the `foundry-file:` scheme — see the scheme
 section at the bottom.
+
+### One name REMOVED on 2026-08-22 — the mint writes a PDF again (Wave 41)
+
+**`capture:pages-load` is gone.** It answered a mint's page images as plain
+basenames in reading order plus a door token that served them, and it existed
+only because the mint wrote a folder and no container — so the minted row had no
+document for a viewer to open and the app grew a page-scroller for the occasion.
+
+Owen ruled the container back in: *"maybe we should mint a pdf from the pages
+after theyre fully arranged and complete… the pdf can exist so it doesnt confuse
+bookforge or anything else"*, and *"the system isnt trying to sift through
+images, it's using the original pdf just like it normally would."* The minted row
+now resolves through `ledger:document-at` like every other document in the app,
+pdf.js draws it, and there is nothing left for a listing door to answer.
+
+- **Nothing else moved.** No name was renamed, no family was added or emptied —
+  `capture:` keeps NINE doors (create, intake, recipe-load, recipe-save, remove,
+  and the four mint doors) and its intake-progress push. The `foundry-file:`
+  capture host is unchanged in shape and now registers ONE directory again
+  (`derived/`) rather than two, which is a fact about which directories a token
+  is minted for and not about the scheme — and it makes the scheme section at the
+  bottom of this file true again, which it had quietly stopped being.
+- **What a keeper should expect**: 84 `ipcMain.handle` call sites and 84 distinct
+  names, down from 85. See the note at the top of this file about the 71 that had
+  been sitting here since 2026-08-18.
+- **Payload shapes**: `ReadRequest` LOST its optional `inputKind` and
+  `ReadingPlan` its `sourceKind` — the two-value `'pdf' | 'pages'` selection that
+  chose a read flag. A reading is of a PDF. This is inside `queue:enqueue` and
+  `workspace:plan-reading`, neither of which is renamed, and both fields were
+  Foundry's own — no host reads them.
 
 ### Four names added on 2026-08-22 — unapplied work stops being losable
 
@@ -293,8 +337,7 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `capture:intake` | Dropped photographs: copy to the bank, hash, decode, working copy + thumbnail, EXIF time, recipe append. Answers added/duplicates/refused so a mixed drop is countable. |
 | `capture:mint-abort` | Abandon a mint in flight; the partial assembly is swept. Refuses by name until the mint merge. |
 | `capture:mint-begin` | Open a mint: the page list with pixel-space quads and output sizes, one id to write against. Refuses by name until the mint merge. |
-| `capture:mint-commit` | Close the mint: move the rectified pages into `archive/`, set the manifest archive, append the step. |
-| `capture:pages-load` | The pages a mint made, in reading order, plus a door token that serves them — what the minted row opens (`app-pages-view`). Reads the POSITION to decide which mint, so a re-mint's older row still opens its own book. Names only, never paths: the pictures come back over `foundry-file://capture/<token>/<name>`. Admits nothing. |
+| `capture:mint-commit` | Close the mint: assemble the rectified pages into an image-only PDF, file it in `archive/` with a live copy and a `documents` origin row, set the manifest archive, append the step. |
 | `capture:mint-page` | One rasterized page's JPEG, renderer to main, so no full-book buffer ever exists in one heap. Refuses by name until the mint merge. |
 | `capture:recipe-load` | The recipe plus a fresh door token — how a reopened project gets its light table back. |
 | `capture:recipe-save` | The whole recipe document, validated before it touches disk. |

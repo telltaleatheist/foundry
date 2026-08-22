@@ -647,32 +647,21 @@ export class PositionSyncService {
      * about a position.
      */
     /*
-     * ── AND A MINT ROW SHOWS THE PAGES, WHICH IS THE THIRD PICTURE ────────────
+     * ── AND A MINT ROW SHOWS ITS PDF, LIKE EVERY OTHER IMPORT (Wave 41) ──────
      *
+     * A third branch stood here — `view.pages` routing to `app-pages-view` —
+     * because a minted book was a FOLDER of page images and the mint wrote no
+     * container. It was Owen's Wave 34 answer to the click that did nothing:
      * *"when i do finalize, it creates 'this book' in the worktree. correct. but
      * when i click it, i expected it to take me to a pdf-like layout (even if we
      * havent assembled into a pdf officially yet) where i can scroll through each
-     * page as it would look in a pdf. then i can run OCR on it, then i can strike
-     * things… thats what i expected."* (Owen, 2026-08-22.)
+     * page as it would look in a pdf."*
      *
-     * What he clicked did nothing that looked like an answer, and the reason is
-     * that this line had two branches for a project with three kinds of row in
-     * it. A minted book is a FOLDER of page images — the mint writes no container,
-     * by Owen's own earlier ruling (`recordMint`) — so it is not a document
-     * `showDocument` can point a viewer at and it is not the proof sheet either,
-     * because nothing has read it yet. It fell to `showDocument`, which asked main
-     * for a path, was handed the archive folder, and tried to OPEN it: no
-     * extension, a refusal at the door, and the app announced that the pages were
-     * no longer there while they sat on the disk.
-     *
-     * `view.pages` is the row's own answer (shared/ledger.ts) and main resolves
-     * documents by the same test, so the surface and the resolver cannot come to
-     * two opinions about one click.
-     *
-     * ORDERED AFTER THE SHEET, and the order can never matter: `sheet` is true of
-     * an import only for a project that arrived as an EPUB, whose origin has no
-     * parent, and `pages` is true only of an import that HAS one. Written in an
-     * order that would still be right if that stopped being true.
+     * The parenthesis is now spent: the mint assembles the PDF (`recordMint`,
+     * electron/projects.ts), `documentOfStep` answers with it, and the row falls
+     * to `showDocument` — which opens it in pdf.js. That is the sentence above
+     * with the hedge removed, and it costs this function a branch instead of
+     * buying it one.
      */
     /*
      * ── AND THE CAPTURE ROW SHOWS THE LIGHT TABLE, SAID OUT LOUD AT LAST ─────
@@ -699,11 +688,9 @@ export class PositionSyncService {
      */
     const swapped = view.sheet
       ? this.showBook(move)
-      : view.pages
-        ? this.showPages(move)
-        : view.step?.action === 'capture'
-          ? this.showTable(move)
-          : await this.showDocument(move, target);
+      : view.step?.action === 'capture'
+        ? this.showTable(move)
+        : await this.showDocument(move, target);
     /*
      * AND NOTHING IS DONE TO THE SCAN'S PAGES, which is where a loop used to be.
      *
@@ -896,23 +883,19 @@ export class PositionSyncService {
       return;
     }
     /*
-     * AND A PROJECT FIRST SEEN STANDING ON A MINT OPENS ITS PAGES, which is the
-     * same correction for the third picture.
+     * A SECOND ARM STOOD HERE (Wave 41's gravestone) opening a minted project's
+     * PAGES, because a capture project had no document to open and every door
+     * into one therefore showed the LIGHT TABLE — right for a project being
+     * photographed and wrong for one whose pointer is on a book it had already
+     * made. Somebody who minted yesterday, quit, and reopened would have been put
+     * in front of the photographs with the row they were standing on highlighted
+     * in the tree beside them.
      *
-     * A capture project has no document to open, so every door into one shows
-     * the LIGHT TABLE (`openProject`) — right for a project being photographed
-     * and wrong for one whose pointer is on a book it has already made. Without
-     * this, somebody who minted yesterday, quit, and opened the project again
-     * would be put in front of the photographs with the row they were standing on
-     * highlighted in the tree beside them: the two selectors disagreeing, which
-     * is the exact complaint this whole effect exists to answer.
-     *
-     * THE LIGHT TABLE IS NOT TAKEN AWAY BY IT. `openProject` has already made
-     * that tab and it stays in the library one click off — which also keeps the
-     * OCR dialog's source list honest, since that list is drawn from the tabs
-     * this window holds.
+     * A minted project has an original now, so `openProject` (home.component.ts)
+     * takes the ordinary door and lands on the position like any other book, and
+     * `showPosition` above puts the right thing on screen. The correction is made
+     * one layer up, where it is made for every project.
      */
-    if (move.now.view.pages) this.showPages(move);
   }
 
   /**
@@ -963,38 +946,21 @@ export class PositionSyncService {
     return false;
   }
 
-  /**
-   * Put the project's PAGES on screen — the book a mint made, as pictures.
+  /*
+   * ── GRAVESTONE: `showPages` (Wave 41) ─────────────────────────────────────
    *
-   * ── `showBook` with one word changed, and the word is the whole difference ──
+   * `showBook` with one word changed: one tab per project, named by the
+   * directory, contents re-asked whenever the pointer moved — over the folder of
+   * rectified page images a mint had written rather than over the project's
+   * blocks. The revision bump did more work here than it does for the book,
+   * because a project can hold TWO mints and standing on either row is two
+   * different books behind one tab path.
    *
-   * A `read` row's picture is the project's blocks; a MINT row's picture is the
-   * folder of rectified page images that mint wrote, and neither is a file. So
-   * this is the sheet's arrangement over a different subject: one tab per
-   * project, named by the directory, contents re-asked whenever the pointer
-   * moves. It is not generalised with `showBook` for `captureTabIn`'s reason —
-   * the two differ in what they are FOR, and a shared helper taking a factory
-   * would share only the three lines any of them has.
-   *
-   * ── THE REVISION IS DOING MORE WORK HERE THAN IT DOES FOR THE BOOK ─────────
-   *
-   * A project can hold two mints. A re-mint after recipe edits is a NEW document
-   * — readings hang off the old one, untouched (docs/CAPTURE.md) — so standing on
-   * the older row and standing on the newer one are two different books behind
-   * one tab path. `loadMintedPages` reads the pointer to decide which, and
-   * without the bump the tab would go on showing whichever it happened to load
-   * first: clicking between your own two mints and watching the app do nothing.
-   *
-   * ANSWERS FALSE, ALWAYS, for `showBook`'s reason: the boolean its caller wants
-   * is "did the pages under the block editor move", and nothing here points a PDF
-   * viewer anywhere.
+   * A mint writes a PDF, so a minted row is a document row and `showDocument`
+   * shows it — and the two-mints case it existed for is served by the same
+   * machinery that serves a re-import: `documentOfStep` resolves the STEP's own
+   * payload, so standing on the older mint opens the older mint's book.
    */
-  private showPages(move: PositionMove): boolean {
-    const id = this.documents.pagesTabIn(move.dir);
-    this.documents.bumpRevision(id);
-    this.stage.reveal(id);
-    return false;
-  }
 
   /**
    * Put the project's LIGHT TABLE on screen — the photographs and their recipe.

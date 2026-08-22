@@ -357,16 +357,26 @@ export class OcrDialogComponent {
   private readonly picked = signal<string | null>(null);
 
   /**
-   * Every book open in the app whose PAGES a model could read.
+   * Every book open in the app whose PAGES a model could read — as PATHS TO
+   * DOCUMENTS, every one of them.
    *
-   * ── Why a capture project is in this list ───────────────────────────────────
+   * ── Why a light table is still in this list, and what it contributes ────
    *
-   * A minted book used to be a PDF and arrived here as one. It is a folder of
-   * page images now (`recordMint`, electron/projects.ts) and is deliberately not
-   * catalogued as a document, so there is no tab of kind `pdf` for it and no
-   * path for this list to hold — and the OCR door on Home is gated on the
-   * project having a document, so THE ONE KIND OF BOOK THAT CANNOT ARRIVE WITH
-   * TEXT IN IT had no way left to order a reading.
+   * A minted book was a folder of page images between `ecbf238` and Wave 41, so
+   * there was no tab of kind `pdf` for it and no path for this list to hold, and
+   * the one kind of book that CANNOT have arrived with text in it had no way to
+   * order a reading. The answer then was to offer the PROJECT DIRECTORY and have
+   * `planReading` recognise it as one.
+   *
+   * A mint files a PDF now, so a captured book is an ordinary document with an
+   * ordinary tab. What is NOT ordinary is where somebody is standing when they
+   * press OCR: the light table is a surface of its own, it stays open after a
+   * mint (the photographs remain editable — that is what makes a re-mint
+   * possible at all), and a person looking at it has pointed at a book as
+   * clearly as anybody looking at a PDF. So a capture tab contributes its
+   * PROJECT'S ORIGINAL to this list — a path to a file, exactly like every
+   * other entry — and there is no project-directory face left on either side of
+   * the bridge.
    *
    * THE ALTERNATIVE WAS A BUTTON ON THE CAPTURE RAIL, and it was rejected on
    * what this dialog holds: `--skip-pages` and `--language`. A photographed book
@@ -375,58 +385,43 @@ export class OcrDialogComponent {
    * enqueued straight past this form would have taken both choices away from
    * precisely the books that need them.
    *
-   * A CAPTURE TAB'S PATH IS THE PROJECT DIRECTORY, which is what `planReading`
-   * recognises on the other side (it asks whether the path IS a project rather
-   * than taking a second argument). And it is offered only once the project has
-   * pages: before the mint there is nothing on the disk to read, and offering it
-   * would queue three hours of GPU against a folder that does not exist yet.
+   * BEFORE THE MINT IT CONTRIBUTES NOTHING, which is the half that has never
+   * changed: there is nothing on the disk to read, and offering it would queue
+   * three hours of GPU against a book that does not exist yet.
    */
   protected readonly sources = computed(() => [...new Set(this.documents.tabs()
-    .filter((tab) => tab.kind === 'pdf' || this.photographed(tab))
-    .map((tab) => tab.path))]);
+    .flatMap((tab) => {
+      if (tab.kind === 'pdf') return [tab.path];
+      if (tab.kind !== 'capture') return [];
+      const original = this.mintedOriginal(tab.path);
+      return original === null ? [] : [original];
+    }))]);
 
   /**
-   * Is this tab a captured book with pages on the disk?
+   * The book a capture project has minted, or null while it is still a shoot.
    *
-   * ── BOTH FACES OF ONE PROJECT, WHICH IS WHY IT IS A FUNCTION NOW ───────────
-   *
-   * It used to be `kind === 'capture'`, spelled at three sites, and that was the
-   * whole truth for exactly as long as a capture project had one surface. It has
-   * two: the LIGHT TABLE, where the photographs are arranged, and the PAGES a
-   * mint made, which is what clicking the minted row opens (`app-pages-view`).
-   * They name the same project directory — which is the path this dialog offers
-   * and `planReading` recognises on the other side — so the reading is identical
-   * whichever of them is in front of the person.
-   *
-   * Left as it was, somebody who clicked their minted book and then pressed OCR
-   * met the empty state telling them to open a PDF first, standing in front of
-   * the pages they had just made. The one kind of book that cannot arrive with
-   * text in it would have been the one kind that could not be read.
-   *
-   * THE PAGES TEST SURVIVES UNCHANGED and is still the half that matters: before
-   * a mint there is nothing on the disk, and offering it would queue three hours
-   * of GPU against a folder that does not exist yet.
+   * ONE QUESTION, ASKED OF THE CATALOGUE. `originalOf` is what Home, the tree
+   * and the three make-dialogs ask about every project in the app, and a
+   * captured project has been able to answer it since its mint learned to file a
+   * PDF (`catalogueMint`, electron/projects.ts). The summary field that stood in
+   * for it while a mint wrote a folder — `ProjectSummary.pages` — is retired
+   * with the folder it described.
    */
-  private photographed(tab: Tab): boolean {
-    return (tab.kind === 'capture' || tab.kind === 'pages')
-      && (this.projects.projectFor(tab.path)?.pages ?? false);
+  private mintedOriginal(projectDir: string): string | null {
+    const project = this.projects.projectFor(projectDir);
+    if (project === null || !project.capture) return null;
+    return this.projects.originalOf(project)?.path ?? null;
   }
 
   /**
    * A light table is open and has nothing to read yet — photographs, no mint.
    *
    * Asked of the same two facts the source list is: a capture tab, and whether
-   * its project has pages. The negative half is what makes this a different
+   * its project has a book yet. The negative half is what makes this a different
    * sentence rather than the same one said twice.
    */
   protected readonly photographing = computed(() => this.documents.tabs()
-    .some((tab) => tab.kind === 'capture' && !(this.projects.projectFor(tab.path)?.pages ?? false)));
-
-  /** Is this candidate a folder of photographed pages rather than a document? */
-  protected pagesSource(candidate: string): boolean {
-    return this.projects.projectFor(candidate)?.pages === true
-      && this.documents.tabs().some((tab) => this.photographed(tab) && tab.path === candidate);
-  }
+    .some((tab) => tab.kind === 'capture' && this.mintedOriginal(tab.path) === null));
 
   protected readonly source = computed(() => {
     const chosen = this.picked();
@@ -451,11 +446,14 @@ export class OcrDialogComponent {
   private readonly suggested = computed(() => {
     const tab = this.stage.activeDocument();
     if (tab === null) return null;
-    // The captured book in front of you is the book in front of you, once it has
-    // pages — the light table and the pages a mint made are two faces of one
-    // project and name one directory. `sources` is the one rule about what may
-    // be read, so it is asked rather than repeated here.
-    if (this.photographed(tab)) return this.sources().includes(tab.path) ? tab.path : null;
+    // The captured book in front of you is the book in front of you, once it
+    // has been minted: a light table names its project, and the project's
+    // original is the document a reading is of. `sources` is the one rule about
+    // what may be read, so its answer is what this defaults to.
+    if (tab.kind === 'capture') {
+      const original = this.mintedOriginal(tab.path);
+      return original !== null && this.sources().includes(original) ? original : null;
+    }
     return tab.kind === 'pdf' ? tab.path : null;
   });
 
@@ -486,11 +484,11 @@ export class OcrDialogComponent {
    * belongs.
    */
   protected optionFor(filePath: string): string {
-    // A folder of photographs is not one of the three file types `typeLabel`
-    // names, and calling it "PDF" would be the option lying about what it is.
-    // The qualifier exists so two rows of one project are told apart, and that
-    // is exactly the work this phrase does.
-    if (this.pagesSource(filePath)) return qualify(this.nameFor(filePath), null, 'photographed pages');
+    // EVERY CANDIDATE IS A PDF AGAIN. A "photographed pages" qualifier stood
+    // here for a folder, which is not one of the three file types `typeLabel`
+    // names and could not be called "PDF" without the option lying about what
+    // it was. A mint files a PDF, so a captured book and an imported scan are
+    // the same kind of row in this picker and read the same way.
     return qualify(this.nameFor(filePath), 'pdf', '');
   }
 
@@ -642,13 +640,14 @@ export class OcrDialogComponent {
          */
         inputPath: plan.sourcePath,
         /*
-         * AND WHAT THAT PATH IS, which main answered from the project's own
-         * catalogue. It selects `--pdf` or `--pages` at the command line
-         * (`argsFor`) and is never re-derived there: by the time the job runs,
-         * the only thing left to ask the path is whether it happens to be a
-         * directory, which is a guess where this is a fact.
+         * AN `inputKind` RODE HERE (Wave 41's gravestone), answered by main from
+         * the project's own catalogue, selecting `--pdf` or `--pages` at the
+         * command line. A reading is of a PDF: the mint assembles one, so the
+         * question has one answer and the flag is spelled once. Owen: *"if we're
+         * building the bank from the images anyway maybe we should just build it
+         * from the pdf… it would help maintain provenance, and nothing will be
+         * lost."*
          */
-        inputKind: plan.sourceKind,
         readingsPath: plan.readingsPath,
         /*
          * Carried, never re-minted. The bank above may be named after this id —

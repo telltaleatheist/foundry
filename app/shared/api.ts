@@ -19,7 +19,6 @@ import type {
   CaptureIntaken,
   CaptureIntakeProgress,
   CaptureMintBegun,
-  CaptureMintedPages,
   CaptureOpened,
   CaptureRecipe,
   CloseAnswer,
@@ -1155,15 +1154,16 @@ export interface FoundryApi {
     onIntakeProgress(listener: (progress: CaptureIntakeProgress) => void): () => void;
     /** The recipe, and the door token that makes its pictures loadable. */
     recipeLoad(projectDir: string): Promise<CaptureOpened>;
-    /**
-     * The pages a mint made, in reading order, with the token that serves them.
+    /*
+     * ── GRAVESTONE: `pagesLoad` (Wave 41) ─────────────────────────────────────
      *
-     * THE POSITION DECIDES WHICH MINT, so this takes the project and nothing
-     * else — the same shape `book:load` has, for the same reason: the tab names
-     * a directory that never moves and the row somebody stands on is what
-     * changes. A project with no mint refuses in the app's voice.
+     * The pages a mint made, in reading order, with the token that served them.
+     * It took the project and nothing else because the POSITION decided which
+     * mint — the same shape `book:load` has, for the same reason.
+     *
+     * The mint writes a PDF and the minted row opens it through the ordinary
+     * document path, so there is no listing for a renderer to ask for.
      */
-    pagesLoad(projectDir: string): Promise<CaptureMintedPages>;
     /**
      * Take photographs out of the project altogether, and answer with what is
      * left.

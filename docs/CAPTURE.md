@@ -238,27 +238,48 @@ on the capture step always shows the light table; standing on the minted
 step shows the PDF.) For a project not yet minted, that makes the grid the
 main viewer:
 
-**Both halves of that were built in Wave 34, and the second half no longer
-says "the PDF".** Owen, 2026-08-22, having minted and clicked the row:
-*"i expected it to take me to a pdf-like layout (even if we havent
-assembled into a pdf officially yet) where i can scroll through each page
-as it would look in a pdf. then i can run OCR on it, then i can strike
-things."* There is no PDF — the mint writes page images and no container,
-by Owen's own earlier ruling (`recordMint`) — so what the minted row opens
-is **`app-pages-view`**: the rectified pages, one under the next, on the
-PDF viewer's own furniture. A fourth tab kind, `pages`, whose path is the
-project directory and whose contents are re-asked on every pointer move,
-so an older mint's row still opens that mint's own book. The pages come
-from `capture:pages-load` and are served through the existing capture
-host, whose token now covers two directories (`captureServedFile`).
+**Both halves of that were built in Wave 34, and at WAVE 41 the second half
+says "the PDF" again — which is what this paragraph said before either.**
 
-What the click did BEFORE that wave, recorded because it is the defect and
-not merely the absence: `documentAtPosition` answered the minted row with
-the archive FOLDER, `openFile` handed it to `openDocument`, which read no
-extension off it and refused — so the app announced that the pages were no
-longer there while they sat on the disk. `documentOfStep` now answers null
-for a mint, which is what "this row names no document of its own" has
-always meant here.
+Owen, 2026-08-22, having minted and clicked the row: *"i expected it to
+take me to a pdf-like layout (even if we havent assembled into a pdf
+officially yet) where i can scroll through each page as it would look in a
+pdf. then i can run OCR on it, then i can strike things."* Wave 34 answered
+the sentence and not the parenthesis: there was no PDF, because the mint
+wrote page images and no container, so the minted row opened
+**`app-pages-view`** — the rectified pages one under the next, on the PDF
+viewer's own furniture, in a fourth tab kind whose contents were re-asked
+on every pointer move.
+
+Wave 41 answers the parenthesis. Owen: *"maybe we should mint a pdf from
+the pages after theyre fully arranged and complete… the pdf is just the
+images on each page"*, and *"the system isnt trying to sift through images,
+it's using the original pdf just like it normally would."* The mint
+assembles an image-only PDF and files it as the project's original, so
+**clicking the minted row opens pdf.js**, exactly as clicking an imported
+scan does. `app-pages-view`, the `pages` tab kind, `capture:pages-load` and
+`positionView.pages` are all retired, each with a gravestone naming the
+wave. THE OLDER-MINT RULE SURVIVES UNCHANGED and by better machinery:
+`documentOfStep` resolves the STEP's own payload, so standing on an older
+mint opens that mint's own book without a re-ask.
+
+What the click did between `ecbf238` and Wave 34, recorded because it is
+the defect and not merely the absence: `documentAtPosition` answered the
+minted row with the archive FOLDER, `openFile` handed it to
+`openDocument`, which read no extension off it and refused — so the app
+announced that the pages were no longer there while they sat on the disk.
+There is no folder to answer with any more.
+
+**A PROJECT MINTED BEFORE WAVE 41 IS HEALED, NOT LEFT BEHIND.**
+`healMintedArchive` (electron/projects.ts) assembles the missing PDF out of
+the pages folder the project already holds, in the folder's own zero-padded
+name order, and catalogues it exactly as a fresh mint does — archive
+record, live copy, `documents` origin row, and the mint step's payload
+re-pointed. **It keeps the pages folder**, unreferenced, on the rule that a
+heal never deletes user data. A NEW mint leaves no folder at all: the JPEGs
+go into the container byte for byte, so a folder beside it would be a
+second complete copy of the shoot. Measured on a 179-page book: 126.1 MB of
+JPEG in, 126.2 MB of PDF out, 1.5 seconds.
 
 The first half was true by ACCIDENT until the same wave: a capture row fell
 through to the branch that reveals whichever of a project's tabs comes
@@ -267,7 +288,7 @@ is written down in the router (`showTable`, position-sync.service.ts)
 rather than resting on tab order. **The light table keeps every door it
 had**: the tree's *The photographs* row, and the action menu's *Edit the
 photographs*, which is gated on the project being a capture and therefore
-lights from the page view as well.
+lights from the minted book's own PDF tab as well.
 
 The minted row's card in the tree is called **The pages** rather than *The
 original*: the action is `import` for the seven reasons above, and the

@@ -564,10 +564,15 @@ async function ensureReadingBook(
      * ── THE BOOK IS THERE AND ITS FIGURES ARE NOT ──────────────────────────────
      *
      * ONE CONDITION, and it is the ensure step doing its job with information it
-     * did not have before: this project HAS pages now (a scan, or the photographs
-     * a capture made), and the book beside it was made by a run that was given
-     * none. Every other book takes the same `return` it always took, on the same
-     * line, having done nothing.
+     * did not have before: this project HAS a scan now, and the book beside it
+     * was made by a run that was given none. Every other book takes the same
+     * `return` it always took, on the same line, having done nothing.
+     *
+     * THE SOURCE IS `at.pdf` AND NOTHING ELSE SINCE WAVE 41. It used to be
+     * `at.pdf ?? at.pages`, because a captured project's archive was a folder;
+     * `bookAtPosition` heals one into a PDF before it composes this, and the two
+     * fields are one field again. The engine keeps its `--pages` face — this side
+     * simply has no caller for it.
      *
      * IT COSTS SECONDS AND IT CHANGES NO ID. A book file is a pure function of
      * the bank and re-running the reflow over the same bank mints the same names
@@ -581,7 +586,7 @@ async function ensureReadingBook(
      * failed remake leaves the book that was already there intact, and refusing
      * to draw it would take a working position down over a picture.
      */
-    const source = at.pdf ?? at.pages;
+    const source = at.pdf;
     const key = path.resolve(at.book).toLowerCase();
     if (source !== null && !figuresHealed.has(key) && await figuresMissing(at.book)) {
       figuresHealed.add(key);
@@ -592,7 +597,6 @@ async function ensureReadingBook(
       );
       const healed = await writeBookFile(at.bank, at.book, {
         pdfPath: at.pdf,
-        pagesPath: at.pages,
         language: at.language,
       });
       if (!healed.ok) {
@@ -650,14 +654,15 @@ async function ensureReadingBook(
     };
   }
   /*
-   * THE PAGES, WHICHEVER SHAPE THIS PROJECT'S ARE. A manifest names one archive
-   * and `bookAtPosition` splits it into the two facts a caller can act on, so at
-   * most one of these is ever non-null — a scanned document to rasterise, or the
-   * folder of photographs a capture project made, which ARE the pages.
+   * THE PAGES, AND THERE IS ONE SHAPE OF THEM AGAIN. This passed `pdfPath` and
+   * `pagesPath` between `ecbf238` and Wave 41, because a manifest could name a
+   * FOLDER of photographs as its archive and `bookAtPosition` split that into two
+   * fields. It names a PDF either way now — a mint writes one and an older
+   * project is healed into one — so a scanned book and a photographed book reach
+   * the reflow through the same argument.
    */
   const made = await writeBookFile(at.bank, at.book, {
     pdfPath: at.pdf,
-    pagesPath: at.pages,
     language: at.language,
   });
   if (!made.ok) {
@@ -772,7 +777,7 @@ async function ensureTranslationBook(
      * SUCCESSFUL heal permanent, and the set is what stops a failing one repeating
      * on every open.
      */
-    const source = at.pdf ?? at.pages;
+    const source = at.pdf;
     const key = path.resolve(book).toLowerCase();
     if (source !== null && !figuresHealed.has(key) && await figuresMissing(book)) {
       figuresHealed.add(key);
@@ -1126,14 +1131,11 @@ async function bookFrom(projectDir: string, from: LedgerStep | null): Promise<Bo
    */
   if (at.pdf !== null) admit(at.pdf);
   /*
-   * AND THE PAGES, ADMITTED FOR THE SAME REASON. A captured project's archive is
-   * a directory of photographs rather than a PDF, so `at.pdf` is null and
-   * `at.pages` is where the paper is. Nothing opens one yet; it is admitted here
-   * anyway, beside the resolution that produced it, because the alternative is a
-   * second place that has to remember why — which is how the PDF's own admit
-   * came to be missing in the first place.
+   * A SECOND ADMIT STOOD HERE FOR THE PAGES FOLDER (Wave 41's gravestone). A
+   * captured project's archive was a directory of photographs, so `at.pdf` was
+   * null and a second field held the paper. There is one field now and one
+   * admit: a photographed book's original is a PDF like any other's.
    */
-  if (at.pages !== null) admit(at.pages);
   return {
     ok: true,
     // THE TITLE IS THE PROJECT'S. A book file is a list of blocks and has no idea
@@ -1148,7 +1150,6 @@ async function bookFrom(projectDir: string, from: LedgerStep | null): Promise<Bo
     loose: parsed.header.loose,
     figures,
     originalPath: at.pdf,
-    originalPages: at.pages,
     ops,
     tip,
     /*
@@ -1612,9 +1613,6 @@ export async function viewExportedBook(target: string): Promise<BookOutcome> {
      * as one of its two ordinary meanings.
      */
     originalPath: null,
-    // Null for the same reason and by the same construction: an EPUB has no
-    // paper of either kind behind it.
-    originalPages: null,
     ops: [],
     tip: null,
     translation: null,

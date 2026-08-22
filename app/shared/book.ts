@@ -181,7 +181,17 @@ export interface BookFigures {
   blocks: number;
   /** How many of them name a crop on the disk. */
   cut: number;
-  /** The face the run was handed, or null where it was handed none. */
+  /**
+   * The face the run was handed, or null where it was handed none.
+   *
+   * `pages` STAYS IN THIS UNION and is not a Wave 41 gravestone. The app stopped
+   * SELECTING `--pages` at that wave — a captured project's archive is a PDF now
+   * — but `vlm-book --pages` is a capability of the command, usable from a
+   * terminal, and this field records what the RUN was offered. A book file made
+   * that way is a book file this app must go on reading correctly, and refusing
+   * the value would make a perfectly good book unparseable to prove a point
+   * about which flag Foundry's own jobs pass.
+   */
   from: 'pdf' | 'pages' | 'epub' | null;
 }
 
@@ -454,27 +464,26 @@ export interface BookLoad {
    * the pixels the blocks were read from. A peek at the wrong one would be a
    * picture of a page this book was not made from.
    */
-  originalPath: string | null;
-  /**
-   * THE PHOTOGRAPHED PAGES THIS BOOK WAS READ OFF, when that is what it was.
+  /*
+   * ── GRAVESTONE: `originalPages` (Wave 41) ─────────────────────────────────
    *
-   * A SECOND FIELD AND NOT A WIDENING OF `originalPath`, mirroring the choice
-   * `bookAtPosition` already made between `pdf` and `pages` and for the same
-   * reason: the two are not interchangeable to whoever is about to open one.
-   * `originalPath` answers *"what document can be rasterised"*; this answers
-   * *"where are the page images"*, and a directory handed to something expecting
-   * a PDF is a failure at the far end of the app from the decision that caused
-   * it.
+   * A second field stood here naming the DIRECTORY of photographed pages a
+   * captured book was read off, mirroring `bookAtPosition`'s own split between
+   * `pdf` and `pages`. It existed because the alternative was a lie: `at.pdf` was
+   * null for such a book, so the glance card's sentence for a null scan — *"it
+   * arrived as a book rather than as a scan"* — would have been said over a book
+   * with twenty-five photographs of paper behind it. What the field bought was
+   * that the card stopped claiming they did not exist; it could never draw one,
+   * and the wave that was going to teach it how never landed.
    *
-   * IT EXISTS BECAUSE THE ALTERNATIVE WAS A LIE. A captured project's archive is
-   * a DIRECTORY of photographed pages, so `at.pdf` is null for it and the glance
-   * card's sentence for a null scan — *"it arrived as a book rather than as a
-   * scan"* — would be said over a book that has 25 photographs of paper. The
-   * card still cannot draw one; what this buys is that it stops claiming they do
-   * not exist. Rendering them is the open work (docs/PLAN.md), and this is the
-   * field it will read when somebody does it.
+   * It does not need to. A captured project's original IS a PDF now (`recordMint`
+   * writes one; `healMintedArchive` gives one to every project made before that),
+   * so `originalPath` is non-null for it and the glance card's existing pdf face
+   * draws the page — which is a better outcome than the one the second field was
+   * holding a place for. Owen: *"the system isnt trying to sift through images,
+   * it's using the original pdf just like it normally would."*
    */
-  originalPages: string | null;
+  originalPath: string | null;
   /**
    * The translation this position stands under, or null for a book in its own
    * language — and with it, the source the aligned view draws in its left column.

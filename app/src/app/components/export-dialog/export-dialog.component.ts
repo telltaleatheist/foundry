@@ -446,17 +446,21 @@ export class ExportDialogComponent {
     const project = this.projects.projectFor(tab.path);
     if (project === null) return tab.kind === 'pdf' ? tab.path : null;
     /*
-     * THE CAPTURED FACE. A captured project's archive is PAGES -- a folder,
-     * not a file -- since the mint stopped writing a container (ecbf238), so
-     * originalOf finds no origin row and this dialog refused the one kind of
-     * book the app makes end to end (Owen's first full walk, 2026-08-22:
-     * "Open a book first" over an applied, read, captured book). Any path
-     * inside a project resolves it (importDocument's own rule) and the
-     * project DIR resolves to itself (projectDirOf), which is the same face
-     * the OCR dialog already accepts. Gated on the reading, because with no
-     * bank there is no book to make anything from.
+     * A CAPTURED FACE STOOD HERE (Wave 41's gravestone) answering the PROJECT
+     * DIRECTORY for a captured, read project. It existed because a captured
+     * project's archive was PAGES -- a folder, not a file -- since the mint
+     * stopped writing a container at `ecbf238`, so `originalOf` found no origin
+     * row and this dialog refused the one kind of book the app makes end to end
+     * (Owen's first full walk, 2026-08-22: "Open a book first" over an applied,
+     * read, captured book).
+     *
+     * The mint files its PDF now (`catalogueMint`, electron/projects.ts) and
+     * every project made before it is healed into one, so `originalOf` answers
+     * for a captured book exactly as it does for an imported scan -- which is
+     * the line immediately below, unchanged, doing the whole job. Owen: "the
+     * system isnt trying to sift through images, it's using the original pdf
+     * just like it normally would."
      */
-    if (project.capture && project.reading.done) return project.dir;
     return this.projects.originalOf(project)?.path ?? (tab.kind === 'pdf' ? tab.path : null);
   });
 

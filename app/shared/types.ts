@@ -155,17 +155,16 @@ export interface ReadRequest {
   kind: 'read';
   /** The pixels: `WorkspacePlan.sourcePath`, which is the archived original. */
   inputPath: string;
-  /**
-   * WHAT THAT PATH IS — `ReadingPlan.sourceKind`, carried the one hop from the
-   * plan to the command line.
+  /*
+   * ── GRAVESTONE: `inputKind` (Wave 41) ─────────────────────────────────────
    *
-   * OPTIONAL, AND ABSENT MEANS `pdf`. A job enqueued by a build that predates
-   * this carries none, and a reading of a PDF is what every one of them is; the
-   * queue is persisted across restarts, so a required field here would be a
-   * shelf full of rows that no longer parse. The same argument `stepId` makes
-   * two fields down.
+   * An optional `ReadSourceKind` rode here for one hop, from `ReadingPlan` to the
+   * command line, so `argsFor` could spell `--pages` for a captured project whose
+   * archive was a folder. Owen: *"if we're building the bank from the images
+   * anyway maybe we should just build it from the pdf. why not? it would help
+   * maintain provenance, and nothing will be lost."* A reading is of a PDF, one
+   * input and one story, and the flag is spelled once with no field to carry.
    */
-  inputKind?: ReadSourceKind;
   /** `--readings`. The product of this job, not an input to it. */
   readingsPath: string;
   /** `--skip-pages`, verbatim: "3,17,19-24". Pages that are not part of the book. */
@@ -1023,44 +1022,40 @@ export interface WorkspacePlan {
  * engine's own rule (resume, or archive and re-read) and this app has never had
  * a flag that could second-guess it.
  */
-/**
- * WHAT THE PIXELS OF A BOOK ARE, which is now two things.
+/*
+ * ── GRAVESTONE: `ReadSourceKind` (Wave 41) ──────────────────────────────────
  *
- * `pdf` is a document to rasterise and `pages` is a directory of page images in
- * reading order — the mint's own output, read as it is with no rasteriser
- * involved at all. They reach the engine as `--pdf <file>` and `--pages <dir>`,
- * which is the whole of the difference on a command line.
+ * A two-member union stood here — `'pdf' | 'pages'` — mirroring the engine's two
+ * read flags, because a captured project's pixels were a directory of page
+ * images and an imported book's were a document. It was never `VlmSource` said
+ * again: the engine's union carries the RESOLVED ordered list and this was the
+ * ask, so the ordering rule stayed in exactly one place.
  *
- * ── Why this is not `VlmSource` said again ──────────────────────────────────
+ * The app has one kind of pixels again. A mint writes an image-only PDF
+ * (`recordMint`) and `healMintedArchive` gives one to every project made before
+ * it, so `ReadingPlan.sourcePath` is a PDF for every project this app can plan a
+ * reading of. Owen: *"if we're building the bank from the images anyway maybe we
+ * should just build it from the pdf. why not? it would help maintain provenance,
+ * and nothing will be lost."*
  *
- * The engine's union (src/vlm/bridge.ts) carries `paths` for the pages case: the
- * ORDERED LIST, after `sourceFor` has resolved a directory into one. That is
- * what the engine holds AFTER the ask; this is the ask. Composing the list on
- * this side would be a second implementation of the ordering rule — the one the
- * engine's own docblock says is the caller's and is never re-derived — written
- * down here only to be thrown away at a flag that takes a folder.
- *
- * So this mirrors THE TWO FLAGS rather than the far side's resolved shape, and
- * the ordering stays in one place.
+ * `vlm-read --pages` KEEPS ITS FLAG. That is the engine's surface area and it is
+ * documented on the command; what retired is this app's ability to be in two
+ * minds about which one it wants.
  */
-export type ReadSourceKind = 'pdf' | 'pages';
 
 export interface ReadingPlan {
   key: string;
   /** The pixels — `archive/`, which nothing in this app ever writes. */
   sourcePath: string;
-  /**
-   * WHICH FLAG THE PATH ABOVE IS FOR, decided by main and carried rather than
-   * sniffed at the other end.
+  /*
+   * ── GRAVESTONE: `sourceKind` (Wave 41) ────────────────────────────────────
    *
-   * It is answered HERE because this is where the project's catalogue is in
-   * hand: the caller pointed at a document or at a project, and what that
-   * project's archive turned out to BE is a fact about the project rather than
-   * about the ask. A consumer that re-derived it by asking whether the path is a
-   * directory would be guessing, at the far end of a bridge, at something that
-   * was certain at this one.
+   * A `ReadSourceKind` was answered here, where the project's catalogue is in
+   * hand, and carried to the command line so nothing had to sniff whether the
+   * path was a directory. There is nothing to decide: `sourcePath` is a PDF for
+   * every project this app can plan a reading of. See `planReading`, which
+   * carries Owen's provenance ruling in full.
    */
-  sourceKind: ReadSourceKind;
   /**
    * The bank THIS reading fills, which is no longer one path per project.
    *
@@ -1225,15 +1220,21 @@ export interface ProjectArchive {
    */
   file: string;
   /**
-   * WHAT THE IMPORT IS. `pages` is a folder of page images in reading order —
-   * what a mint writes now — and it is a THIRD value rather than a flag beside
-   * `pdf` because every site that branches here is choosing what to open, what to
-   * hand a command line, or what to call the thing on screen, and none of those
-   * has an answer that is "a PDF, but".
+   * WHAT THE IMPORT IS.
    *
-   * OLD MANIFESTS ARE UNTOUCHED BY CONSTRUCTION: nothing writes `pages` but the
-   * mint, so a project imported as a scan or an EPUB reads back exactly as it
-   * did. `readArchive` admits the third value and still refuses anything else.
+   * `pages` — a folder of page images in reading order — is READ-ONLY HISTORY as
+   * of Wave 41. It was what a mint wrote between `ecbf238` and there, and it was
+   * a third value rather than a flag beside `pdf` because every site that
+   * branches here is choosing what to open, what to hand a command line, or what
+   * to call the thing on screen, and none of those has an answer that is "a PDF,
+   * but". That was true of a folder and is the reason the folder had to go.
+   *
+   * NOTHING WRITES IT ANY MORE. A mint files a PDF (`recordMint`) and
+   * `healMintedArchive` rewrites every manifest that still says this into one
+   * that says `pdf`. The member survives so that a project on somebody's disk
+   * still PARSES on the launch that heals it — `readArchive` refusing the value
+   * would make an unhealed project unreadable in the same breath as taking away
+   * the only thing that could heal it.
    */
   kind: 'pdf' | 'epub' | 'pages';
   /** The 8 hex characters the project key ends in — the content hash. */
@@ -2163,26 +2164,22 @@ export interface ProjectSummary {
    * already knows without opening the recipe or listing a folder.
    */
   capture: boolean;
-  /**
-   * THIS PROJECT'S BOOK IS A FOLDER OF PAGE IMAGES — it has been minted.
+  /*
+   * ── GRAVESTONE: `pages` (Wave 41) ─────────────────────────────────────────
    *
-   * ── Why a listing has to carry this at all ──────────────────────────────────
+   * A boolean stood here meaning "this project's book is a folder of page images
+   * — it has been minted", and it had to exist because `documents` was EMPTY for
+   * a captured project both before its first mint and after it: a mint filed no
+   * document row, so "somebody is still photographing this" and "this is a
+   * finished book waiting to be read" were indistinguishable from a summary, and
+   * Home said *photographs* and offered the light table for both.
    *
-   * `capture` says a project arrived as photographs and never stops being true.
-   * `documents` is empty for a captured project BEFORE its first mint and after
-   * it, because a mint files no document (`documentArchive`, electron/projects.ts).
-   * So the two facts every surface actually wants to tell apart — "somebody is
-   * still photographing this" and "this is a finished book waiting to be read" —
-   * were indistinguishable from a summary, and Home said "photographs" and
-   * offered the light table for both.
-   *
-   * IT IS NOT `minted`. What a caller does with it is decide whether there are
-   * PIXELS HERE THAT A MODEL COULD READ, which is a question about what is on
-   * the disk now rather than about an event in the history; a project whose
-   * mint step was discarded is not minted and has no pages, and both of those
-   * are this one field going false together.
+   * A mint files its PDF now (`catalogueMint`, electron/projects.ts), so the
+   * question every consumer was really asking has a better answer they were all
+   * already computing: `originalOf(project) === null`. Before a mint there is no
+   * original; after one there is, and the project is ordinary. One question, one
+   * answer, and no third field to keep in agreement with the other two.
    */
-  pages: boolean;
   /**
    * The terminal documents this project has produced — what the left nav lists,
    * indented under the project row.
@@ -3616,39 +3613,20 @@ export interface CaptureOpened {
   mintedFrom: string | null;
 }
 
-/**
- * THE PAGES A MINT MADE, ready to be drawn — what `capture:pages-load` answers.
+/*
+ * ── GRAVESTONE: `CaptureMintedPages` (Wave 41) ──────────────────────────────
  *
- * ── Why this is a door of its own and not part of the recipe ───────────────
+ * The payload of `capture:pages-load`: a mint's page images as plain basenames
+ * in reading order, plus a token that put their directory on the capture host's
+ * allow-list. It was a door of its own rather than part of the recipe because it
+ * described a different thing — a BOOK that had been made and would never be
+ * edited, against the photographs the light table is still arranging.
  *
- * Because it is about a different thing. `CaptureOpened` describes the
- * PHOTOGRAPHS and the recipe over them — what the light table arranges, crops
- * and strikes — and it moves every time somebody drags a corner. This describes
- * a BOOK that has been made: a folder of rectified page images in `archive/`,
- * fixed at the moment of the mint and never edited again. Folding them together
- * would make every recipe load carry a listing of a directory the table has no
- * use for, and would tie a finished book's contents to a document that is still
- * being written.
- *
- * ── The token is the same host, and that is deliberate ────────────────────
- *
- * `foundry-file://capture/<token>/<name>`, minted for the pages directory by the
- * same allow-list the working copies use (`captureServedFile`). One host, one
- * refusal, one shape of URL for every picture this stage serves.
+ * There is no folder to list. The mint writes an image-only PDF and the minted
+ * row opens it through the ordinary document path, so pdf.js draws the pages and
+ * the app owes this stage no second viewer. The door, its preload arm, its
+ * `FoundryApi` member and `app-pages-view` retired with it.
  */
-export interface CaptureMintedPages {
-  /**
-   * The page images, in reading order, as plain basenames.
-   *
-   * NAMES AND NOT URLS, because composing the URL is the renderer's job and it
-   * already does it for every other picture in this stage — one spelling of
-   * `foundry-file://capture/<token>/<name>` in the app rather than two that can
-   * disagree about escaping.
-   */
-  pages: string[];
-  /** Mints them onto the door's allow-list. See `CaptureOpened.token`. */
-  token: string;
-}
 
 /**
  * What `capture:create` answers with — an empty project that already exists.

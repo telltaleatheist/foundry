@@ -1246,7 +1246,6 @@ const GLANCE_MARGIN = 12;
             [style.top.px]="glanceAt() ?? 0"
             [style.left.px]="glanceLeft()"
             [original]="original()"
-            [originalPages]="originalPages()"
             [row]="glanced()"
           />
         </div>
@@ -2499,12 +2498,13 @@ export class BookViewComponent {
    * carries the whole argument for what null means and why it means it twice.
    */
   protected readonly original = computed<string | null>(() => this.book()?.originalPath ?? null);
-  /**
-   * The photographed pages, for a captured book. Read straight off the load for
-   * the same reason as the scan above — `BookLoad.originalPages` carries the
-   * whole argument for why it is a second field rather than a wider first one.
+  /*
+   * A SECOND SIGNAL STOOD HERE (Wave 41's gravestone) for `originalPages`, the
+   * folder of photographed pages a captured book was read off. A captured book's
+   * original IS a PDF now, so `original` above answers for it and the glance
+   * card's pdf face draws the page — which is what the second field was holding
+   * a place for and never got.
    */
-  protected readonly originalPages = computed<string | null>(() => this.book()?.originalPages ?? null);
   /** The block a jump landed on, tinted for `PULSE_MS`. */
   protected readonly pulse = signal<string | null>(null);
   /** The source page a hovered ghost names, hairlining every block it spans. */

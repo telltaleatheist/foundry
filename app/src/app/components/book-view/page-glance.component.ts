@@ -272,15 +272,19 @@ export class PageGlanceComponent {
    */
   readonly original = input.required<string | null>();
 
-  /**
-   * The photographed pages, for a book that was captured rather than scanned.
+  /*
+   * ── GRAVESTONE: `originalPages` (Wave 41) ─────────────────────────────────
    *
-   * READ ONLY TO SAY A TRUE SENTENCE, for now. This card cannot draw a page
-   * image yet — everything below it opens a PDF — so all this changes is WHICH
-   * silence the reader is told about: a captured book has paper, it is just
-   * paper this card has not learned to show. See `BookLoad.originalPages`.
+   * A second input stood here naming the folder of photographs a captured book
+   * was read off, and it was read ONLY to say a true sentence: this card could
+   * not draw a page image, everything below it opens a PDF, so all it changed
+   * was WHICH silence the reader was told about.
+   *
+   * A captured book's original is a PDF now (`recordMint`, electron/projects.ts),
+   * so `original` above is non-null for it and the machinery below this line
+   * draws the page — the outcome the second input was a placeholder for, reached
+   * by giving the book a container instead of teaching the card a second format.
    */
-  readonly originalPages = input.required<string | null>();
 
   /** The block to show, or null for a sheet with no card up. */
   readonly row = input.required<BookRow | null>();
@@ -321,17 +325,16 @@ export class PageGlanceComponent {
     const at = this.row();
     if (at === null) return null;
     /*
-     * THE CAPTURED BOOK IS ASKED ABOUT FIRST, because the sentence below is
-     * false about it. Its paper exists and was photographed page by page; what
-     * is missing is this card's ability to draw one, and saying "it arrived as
-     * a book rather than as a scan" over a project holding two dozen
-     * photographs would be the app telling a reader something it can see is
-     * untrue.
+     * A CAPTURED-BOOK ARM STOOD HERE (Wave 41's gravestone) saying that this
+     * book was read off photographed pages and the card could not show one. It
+     * existed because the sentence below is FALSE about such a book: its paper
+     * exists and was photographed page by page, and saying "it arrived as a book
+     * rather than as a scan" over a project holding two dozen photographs would
+     * be the app telling a reader something it can see is untrue.
+     *
+     * There is no such book any more. A mint's pages are bound into a PDF, so a
+     * captured book reaches the ordinary path and this card draws its paper.
      */
-    if (this.original() === null && this.originalPages() !== null && at.page > 0) {
-      return 'This book was read off photographed pages rather than a scan, and this card '
-        + 'cannot show one yet — the photographs are in the project, under its archive.';
-    }
     if (this.original() === null || at.page <= 0) {
       return 'This book has no paper behind it — it arrived as a book rather than as a scan, '
         + 'so there is no photograph of this block to show.';

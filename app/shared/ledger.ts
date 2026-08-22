@@ -587,13 +587,16 @@ export function mintedStep(
  *
  * ── Why it is a function here rather than a comparison at the call sites ────
  *
- * Because three layers ask it now and they must not drift: `positionView.pages`
- * (below) decides what surface the app puts on screen for this row,
- * `documentOfStep` (electron/projects.ts) decides that there is no FILE at it,
- * and the door that serves the page images decides which mint it was asked
- * about. Two spellings of `action === 'import' && parent !== null` is the shape
- * this file's own history keeps warning about: the day one of them grows a
- * clause, a row opens one surface and resolves to another.
+ * Two of the three layers that asked it retired at Wave 41 — `positionView.pages`
+ * and `documentOfStep`'s refusal both existed because a mint named a folder, and
+ * a mint names a PDF now. What still asks is the LIBRARY TREE, which calls a
+ * minted row *The pages* rather than *The original* (open-documents.component.ts),
+ * and that is a true and lasting difference between a book somebody dragged in
+ * and one this app printed out of photographs.
+ *
+ * It stays a function for the reason it became one: two spellings of
+ * `action === 'import' && parent !== null` is the shape this file's own history
+ * keeps warning about, and one caller today is two callers next month.
  *
  * A null step is false rather than a refusal, for `positionView`'s reason: a
  * project with nothing recorded yet stands nowhere, and nowhere is not a mint.
@@ -3112,39 +3115,25 @@ export interface PositionView {
    * exists to stop being the answer.
    */
   sheet: boolean;
-  /**
-   * True when what stands at this position is THE PAGES A MINT MADE — a folder
-   * of rectified page images, drawn one under the next.
+  /*
+   * ── GRAVESTONE: `pages`, THE THIRD PICTURE (Wave 41) ──────────────────────
    *
-   * ── The third picture, and why the position had to grow a name for it ──────
+   * A third boolean stood here: true when what stood at this position was THE
+   * PAGES A MINT MADE — a folder of rectified page images, drawn one under the
+   * next by `app-pages-view`. The position had grown a name for it because a
+   * captured book was neither of the two pictures that existed: the mint wrote
+   * page images into `archive/` and filed no document, so the row had no file for
+   * a viewer to open and no bank for a sheet to draw. Before the field, the row
+   * resolved to the FOLDER, `openFile` found no extension on it, and the app said
+   * the pages were no longer there about pages sitting on the disk.
    *
-   * There were two: a DOCUMENT (`showDocument` points a viewer at a file) and the
-   * SHEET (`sheet`, the book file's blocks). A captured book is neither. The mint
-   * writes page images into `archive/` and files no document at all — Owen ruled
-   * the container out (*"i agree that this doesnt need to be a pdf"*,
-   * `recordMint`) — so the row that names it has no file for a viewer to open and
-   * no bank for a sheet to draw. Before this field it resolved to the FOLDER, and
-   * a folder handed to `openFile` is a path with no extension: the open was
-   * refused and the app said the pages were no longer there, about pages that
-   * were sitting on the disk.
-   *
-   * ── What the person asked for ──────────────────────────────────────────────
-   *
-   * *"when i do finalize, it creates 'this book' … but when i click it, i
-   * expected it to take me to a pdf-like layout (even if we havent assembled into
-   * a pdf officially yet) where i can scroll through each page as it would look
-   * in a pdf. then i can run OCR on it, then i can strike things"* (Owen,
-   * 2026-08-22). The parenthesis is the whole design: there is no PDF and there
-   * is not going to be one, so what the row opens is the pages themselves.
-   *
-   * ── It is EXCLUSIVE OF `sheet` and of a document, by construction ──────────
-   *
-   * `sheet` is true for an import only where the project arrived as an EPUB, and
-   * a project that arrived as an EPUB has a null-parented origin — so no step can
-   * ever answer true to both. The one caller routes on `sheet` first anyway,
-   * because a reading hung off a mint is a `read` row and shows the book.
+   * Owen's brief for it was *"i expected it to take me to a pdf-like layout (even
+   * if we havent assembled into a pdf officially yet)"*, and the parenthesis was
+   * the whole design — there was no PDF and there was not going to be one. There
+   * is one now, by his own later ruling (`recordMint`, electron/projects.ts), so
+   * the row is an ordinary document row, `showDocument` opens it, and pdf.js
+   * draws the pages. Two pictures again.
    */
-  pages: boolean;
   /**
    * The edit steps whose ops are replayed over the book here, oldest first.
    *
@@ -3198,14 +3187,21 @@ export function positionView(ledger: ProjectLedger): PositionView {
       || (step.action === 'import' && importedAsEpub(ledger))
     ),
     /*
-     * THE THIRD PICTURE, ASKED HERE FOR THE REASON `sheet` IS. The renderer
-     * routes on it and main resolves documents by it, and those two sides
-     * agreeing is not optional: a row that opened the page scroll while main
-     * answered the archive folder would be a viewer and a resolver describing
-     * two different things about one click. `mintedFromPhotographs` is the one
-     * spelling of the test, and this is the one place the position asks it.
+     * ── GRAVESTONE: `pages`, THE THIRD PICTURE (Wave 41) ──────────────────────
+     *
+     * A third boolean stood here — `mintedFromPhotographs(step)` — because a
+     * minted row named a FOLDER and there was no document for `showDocument` to
+     * point a viewer at. The renderer routed on it to `app-pages-view` and main
+     * resolved documents by the same test, and those two sides agreeing was not
+     * optional: a row that opened the page scroll while main answered the archive
+     * folder would be a viewer and a resolver describing two different things
+     * about one click.
+     *
+     * A mint's payload is a PDF now (`recordMint`, electron/projects.ts), so a
+     * minted row IS a document row and falls to `showDocument` like every other
+     * import — which is Owen's Wave 34 expectation arriving as a PDF instead of
+     * as an imitation of one. Two pictures again: the sheet, and a document.
      */
-    pages: mintedFromPhotographs(step),
     edits: editsInEffect(ledger),
   };
 }

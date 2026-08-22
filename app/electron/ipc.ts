@@ -27,7 +27,6 @@ import { cancelSetup, setupWslEnv } from './backend-setup';
 import {
   ensureCapture,
   intakePhotos,
-  loadMintedPages,
   mintAbort,
   mintBegin,
   mintCommit,
@@ -1690,27 +1689,20 @@ export function registerIpc(): void {
     intakePhotos(projectDir, paths));
   ipcMain.handle('capture:recipe-load', (_event, projectDir: string) => openCapture(projectDir));
   /*
-   * THE BOOK THE MINT MADE, LISTED — and it is a READ of a directory this
-   * process chose, which is why it admits nothing.
+   * ── GRAVESTONE: `capture:pages-load` (Wave 41) ────────────────────────────
    *
-   * `document:open-path` exists to decide whether a path may be opened at all,
-   * and `ledger:document-at` admits what it resolves because the renderer is
-   * about to point a viewer at it. Neither applies here: nothing is opened and
-   * no path crosses the bridge. What comes back is a list of BASENAMES and a
-   * token, and the token is the whole authorisation — the pictures are then
-   * fetched on `foundry-file://capture/<token>/<name>`, where the allow-list
-   * refuses a directory this process never registered. A door that admitted a
-   * folder for being asked about it would be a door granting access to a folder
-   * for being asked about it, which is the sentence `capture:recipe-load` is
-   * already written under.
+   * A door stood here that listed the page images a mint had made and handed
+   * back a token to serve them, because the mint wrote pictures and no
+   * container. It admitted nothing — the token was the whole authorisation —
+   * and it read the POSITION to decide which mint, so a re-mint's older row
+   * still opened its own book.
    *
-   * WHICH mint, IS THE POSITION'S ANSWER (`loadMintedPages`), so this handler
-   * takes the project and nothing else — exactly as `book:load` does, for the
-   * identical reason: the tab names a directory that never moves, and the row
-   * somebody is standing on is what decides the contents.
+   * The mint writes a PDF (`recordMint`) and the minted row resolves to it
+   * through `ledger:document-at` like every other document in the app, so
+   * pdf.js draws the pages and this door has nothing to answer. Removing it
+   * moves the handle count in docs/IPC-CHANNELS.md, which BookForge's keeper
+   * test reads — the table is regenerated in the same commit.
    */
-  ipcMain.handle('capture:pages-load', (_event, projectDir: string) =>
-    loadMintedPages(projectDir));
   /*
    * REMOVAL, WHICH IS THE ONE DOOR THAT DELETES ANYTHING IRREPLACEABLE. It is
    * allowed to because the bank holds copies of files that still exist where

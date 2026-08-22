@@ -1494,21 +1494,23 @@ function argsFor(
   /*
    * ── READING THE PAGES ────────────────────────────────────────────────────
    *
-   * `foundry vlm-read --pdf X --readings Y`, or `--pages <dir>` where the pages
-   * are already pictures. It fills the bank, drops the completion marker beside
-   * it, and writes no document at all.
+   * `foundry vlm-read --pdf X --readings Y`. It fills the bank, drops the
+   * completion marker beside it, and writes no document at all.
    *
-   * TWO FLAGS AND NEVER BOTH, which is the engine's own rule and is stated
-   * there rather than defended here: *"a reading is of exactly one thing"*, and
-   * `sourceFor` (src/vlm/read.ts) refuses a run that passes both rather than
-   * resolving it by a precedence nobody would agree about. This end cannot pass
-   * both — `ReadRequest.inputKind` is one value and it selects the flag — so the
-   * refusal is unreachable from this app, which is where an unreachable refusal
-   * belongs.
+   * ── ONE FLAG (Wave 41), AND THE ENGINE STILL HAS TWO ───────────────────────
    *
-   * ABSENT MEANS `--pdf`. The queue survives restarts, so rows enqueued by a
-   * build that predates the mint's change are still on the shelf, and every one
-   * of them is a reading of a PDF.
+   * This chose between `--pdf` and `--pages` off `ReadRequest.inputKind`, because
+   * a captured project's archive was a folder of photographs and the engine had
+   * learned to read one at Wave 21. Owen ended the choice: *"if we're building
+   * the bank from the images anyway maybe we should just build it from the pdf.
+   * why not? it would help maintain provenance, and nothing will be lost."* The
+   * mint writes the PDF, so there is one input and one story — bank ← PDF ←
+   * pages — and `planReading` states the provenance argument in full.
+   *
+   * `vlm-read --pages` IS UNTOUCHED AND STAYS. It is a capability of the command
+   * and works from a terminal exactly as it did; what retired is the app's
+   * selection of it. The engine's own *"a reading is of exactly one thing"*
+   * refusal for a run naming both is now unreachable from here twice over.
    *
    * NO `--out` AND NO `--format`, which is the whole of the split on the command
    * line: this run has no opinion about what the book will eventually be, and it
@@ -1517,8 +1519,7 @@ function argsFor(
    * reading — so neither can be asked for while it is being configured.
    */
   if (request.kind === 'read') {
-    const flag = request.inputKind === 'pages' ? '--pages' : '--pdf';
-    const args = ['vlm-read', flag, request.inputPath, '--readings', request.readingsPath];
+    const args = ['vlm-read', '--pdf', request.inputPath, '--readings', request.readingsPath];
     if (request.skipPages && request.skipPages.trim().length > 0) {
       args.push('--skip-pages', request.skipPages.trim());
     }
@@ -3121,17 +3122,19 @@ async function landReadProducts(bankPath: string, readFrom: string): Promise<voi
  * refusal into a book somebody can read, and the log line is the announcement §2
  * asks for.
  *
- * THE FIGURES COME WITH IT AND ARE NOT THIS SIDE'S BUSINESS. The pages are passed
- * in whichever shape this project's archive holds them — `--pdf` for a scanned
- * document, `--pages` for the photographs a capture made — and the engine sweeps
- * `readings/<key>.images/` and re-cuts only the pages that carry Picture blocks
- * (src/vlm/book-run.ts). A project whose original is an EPUB has no pages to cut
- * and the engine says so — an ordinary answer, not a hole.
+ * THE FIGURES COME WITH IT AND ARE NOT THIS SIDE'S BUSINESS. The archived
+ * original is passed as `--pdf` and the engine sweeps `readings/<key>.images/`,
+ * re-cutting only the pages that carry Picture blocks (src/vlm/book-run.ts). A
+ * project whose original is an EPUB has no pages to cut and the engine says so —
+ * an ordinary answer, not a hole.
  *
- * THE PAGES FACE IS WAVE 37 AND IT WAS A REAL HOLE. This call passed `--pdf` or
- * nothing, so a captured project — whose archive is a folder — landed its reading
- * and reflowed with no source at all, cutting none of its figures; the book was
- * valid, opened fine, and refused every picture at export months later.
+ * THE PAGES FACE WAS WAVE 37 AND IS GONE FROM THIS SIDE AT WAVE 41. It was a
+ * real hole: this call passed `--pdf` or nothing, so a captured project — whose
+ * archive was a FOLDER — landed its reading and reflowed with no source at all,
+ * cutting none of its figures; the book was valid, opened fine, and refused every
+ * picture at export months later. Wave 37 gave the engine `--pages` to close it;
+ * Wave 41 closed it one layer further back, by making a captured project's
+ * archive a PDF, so both faces of this call are one face again.
  *
  * A REFUSAL IS THE ENGINE'S OWN WORDS TO THE TERMINAL AND NOTHING ELSE. The bank
  * is real, it is complete, and it is what those hours bought; reporting the
@@ -3143,11 +3146,10 @@ async function landReadProducts(bankPath: string, readFrom: string): Promise<voi
 async function remakeBookFile(at: BookAtPosition): Promise<void> {
   console.log(
     `[job] the reading landed, so ${at.book} is being remade from ${at.bank}`
-    + `${at.pdf === null && at.pages === null ? ' (nothing archived to cut figures from)' : ''}.`,
+    + `${at.pdf === null ? ' (nothing archived to cut figures from)' : ''}.`,
   );
   const made = await writeBookFile(at.bank, at.book, {
     pdfPath: at.pdf,
-    pagesPath: at.pages,
     language: at.language,
   });
   if (!made.ok) {

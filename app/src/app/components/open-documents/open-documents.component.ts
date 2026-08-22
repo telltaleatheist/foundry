@@ -4147,10 +4147,10 @@ function iconForTab(tab: Tab): string {
   // either exists, and drawing it as a page would announce it as a document the
   // reader went and opened by hand.
   if (tab.kind === 'capture') return 'ft-capture';
-  // A minted book wears the SCAN's mark, and that is what it is: pages
-  // photographed and rectified, with nothing read out of them yet. The book's
-  // own symbol would promise a reading that has not happened.
-  if (tab.kind === 'pages') return 'ft-scan';
+  // A `pages` KIND had its own arm here (Wave 41's gravestone) wearing the
+  // SCAN's mark, because a minted book was a folder of rectified pages with
+  // nothing read out of them yet. A mint writes a PDF, so a minted book is a
+  // `pdf` tab and takes the page mark below with every other document.
   return tab.kind === 'book' ? 'ft-book' : 'ft-page';
 }
 

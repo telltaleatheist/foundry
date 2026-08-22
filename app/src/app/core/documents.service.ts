@@ -87,23 +87,21 @@ import { api, hosted } from './foundry';
  * every other tab the project is the folder the file is IN, and for this one the
  * path IS the project.
  *
- * ── AND `pages` IS THE THIRD THING THAT IS NOT A FILE EITHER ───────────────
+ * ── GRAVESTONE: THE `pages` KIND (Wave 41) ─────────────────────────────────
  *
- * A captured book is a FOLDER of rectified page images: the mint writes them and
- * files no document, because Owen ruled the container out (*"i agree that this
- * doesnt need to be a pdf"*, `recordMint`). So the one thing a `pdf` tab is for
- * — a path pdf.js can be handed — does not exist for it, and pointing this app's
- * one PDF viewer at a directory is how the app came to tell somebody their pages
- * were no longer there while they sat on the disk.
+ * A fourth kind stood in this union for a captured book, which was a FOLDER of
+ * rectified page images: the mint wrote them and filed no document, because Owen
+ * had ruled the container out. So the one thing a `pdf` tab is for — a path
+ * pdf.js can be handed — did not exist for it, and pointing this app's one PDF
+ * viewer at a directory is how the app came to tell somebody their pages were no
+ * longer there while they sat on the disk.
  *
- * It carries the PROJECT DIRECTORY for the book tab's reason and not merely by
- * analogy: a project can hold two mints, standing on either row is how you look
- * at that one, and a tab that named a mint's own folder would be a second tab
- * every time somebody re-minted. One tab per project, contents decided by the
- * position, re-asked on every move — the book tab's whole shape, over pictures
- * instead of blocks.
+ * The mint writes the container again (`recordMint`, electron/projects.ts) and
+ * older projects are healed into one, so a captured book opens in a `pdf` tab
+ * like every other scan in the library. Three kinds, and the light table is the
+ * only one of them a captured project still needs of its own.
  */
-export type TabKind = 'pdf' | 'book' | 'capture' | 'pages';
+export type TabKind = 'pdf' | 'book' | 'capture';
 
 /**
  * WHETHER THIS TAB'S `path` IS A DIRECTORY RATHER THAN A FILE.
@@ -120,24 +118,24 @@ export type TabKind = 'pdf' | 'book' | 'capture' | 'pages';
  * path is a file changes nothing — which is the difference between a decision
  * recorded once and a decision re-taken correctly seven times.
  *
- * The three directory kinds are otherwise nothing alike: a `book` tab is a
- * reading of a finished book, a `capture` tab is a light table of photographs
- * that are not a book yet, and a `pages` tab is the book a mint made, drawn as
- * the pictures it is. They share a filesystem fact, not a nature, and every site
- * that cares about the nature still asks about the kind.
+ * The two directory kinds are otherwise nothing alike: a `book` tab is a reading
+ * of a finished book and a `capture` tab is a light table of photographs that are
+ * not a book yet. They share a filesystem fact, not a nature, and every site that
+ * cares about the nature still asks about the kind.
  *
- * THE FOURTH KIND JOINED HERE AND NOWHERE ELSE, which is this function's own
- * promise being kept rather than a coincidence. `pages` was added to the union
- * above and to this line, and the seven sites that ask "is the path a directory"
- * were correct for it before anybody looked at them.
+ * A FOURTH KIND JOINED HERE AND NOWHERE ELSE AND LEFT THE SAME WAY, which is this
+ * function's own promise kept twice. `pages` was added to the union above and to
+ * this line at Wave 34, and the seven sites that ask "is the path a directory"
+ * were correct for it before anybody looked at them; it was removed from the same
+ * two places at Wave 41, and they were correct again.
  *
  * IT IS A TYPE PREDICATE and that is not decoration: the sites it replaces were
  * narrowing `kind` by testing it, and one of them passes the narrowed kind to a
  * function that only accepts `pdf`. A plain boolean compiled everywhere except
  * there, where it failed loudly — which is the behaviour worth having.
  */
-export function pathIsProject(tab: Tab): tab is Tab & { kind: 'book' | 'capture' | 'pages' } {
-  return tab.kind === 'book' || tab.kind === 'capture' || tab.kind === 'pages';
+export function pathIsProject(tab: Tab): tab is Tab & { kind: 'book' | 'capture' } {
+  return tab.kind === 'book' || tab.kind === 'capture';
 }
 
 export interface Tab {
@@ -884,47 +882,20 @@ export class OpenDocumentsService {
     return made.id;
   }
 
-  /**
-   * This project's PAGE VIEW tab — the book a mint made — made if it has none
-   * yet. Never a second one.
+  /*
+   * ── GRAVESTONE: `pagesTabIn` (Wave 41) ─────────────────────────────────────
    *
-   * ── What it is for ─────────────────────────────────────────────────────────
-   *
+   * This project's PAGE VIEW tab, made if it had none. It existed for Owen's
    * *"i expected it to take me to a pdf-like layout (even if we havent assembled
    * into a pdf officially yet) where i can scroll through each page as it would
-   * look in a pdf"* (Owen, 2026-08-22). A mint writes page images and no
-   * container, so this is the surface the app owes that sentence: the pages, one
-   * under the next, at the row that made them.
+   * look in a pdf"*, and it was one tab per project with the POSITION deciding
+   * which mint's pages it drew — the book tab's shape, over pictures.
    *
-   * ── ONE PER PROJECT, THOUGH A PROJECT CAN HOLD TWO MINTS ───────────────────
-   *
-   * The tab names the project and the POSITION decides which mint's pages it
-   * draws, which is exactly the book tab's arrangement and is chosen for the same
-   * reason: a tab per mint would accumulate a tab every time somebody re-minted,
-   * and each of them would go on showing a book the pointer had left. Standing on
-   * an older mint's row still shows that mint's pages, because the load reads the
-   * pointer (`loadMintedPages`, electron/capture.ts) and `showPages` bumps the
-   * revision on every move.
-   *
-   * IT DOES NOT REPLACE THE LIGHT TABLE and must never be made to. The photographs
-   * and their recipe stay editable after a mint — that is what makes a re-mint
-   * possible at all — so the capture tab stays open in the library and *Edit the
-   * photographs* still goes to it. Two faces of one project, exactly as a scan and
-   * its book are.
-   *
-   * Made here rather than through `openFile` for the reason the two above it are:
-   * there is no path for main to decide about. `capture:pages-load` admits
-   * nothing, and a door answering "yes, you may open this directory" would be a
-   * door granting access to a folder for being asked about it.
+   * The mint assembles the PDF now, so a minted row opens through `openFile`
+   * like any other document and lands in a `pdf` tab. The light table keeps its
+   * own tab (`captureTabIn`, above) because the photographs stay editable after a
+   * mint — that is what makes a re-mint possible at all.
    */
-  pagesTabIn(projectDir: string): string {
-    const key = fold(projectDir);
-    const already = this.all().find((tab) => tab.kind === 'pages' && fold(tab.path) === key);
-    if (already !== undefined) return already.id;
-    const made = this.blankTab('pages', projectDir, this.projectTitleOf(projectDir));
-    this.all.update((tabs) => [...tabs, made]);
-    return made.id;
-  }
 
   /**
    * The single tab factory. Shows an existing tab for the same file rather
@@ -1617,20 +1588,13 @@ export class OpenDocumentsService {
         + 'are saved into the project as they are made.');
       return;
     }
-    if (tab.kind === 'pages') {
-      /*
-       * THE PAGES ARE NOT A FILE EITHER, and this is the sentence that would have
-       * been a bug without the branch: `documentSaveCopy` would have been handed a
-       * project directory and a `.pdf` name for it. What a person wants from Save
-       * over a folder of pages is the container the mint deliberately does not
-       * write, which is an export and is not built yet — so the sentence says
-       * where the pages ARE rather than promising a door that does not exist.
-       */
-      this.notices.notice.set(
-        `${tab.title} is a folder of pages, not a file — they are filed in the project as the mint `
-        + 'makes them, and reading them is what turns them into a book.');
-      return;
-    }
+    /*
+     * A THIRD BRANCH STOOD HERE for a `pages` tab (Wave 41's gravestone), saying
+     * that the pages were a folder rather than a file and that the container a
+     * Save would have produced was not built yet. It is built: the mint writes
+     * it, so a minted book reaches the ordinary Save below and copies out as the
+     * PDF it is.
+     */
     try {
       const destination = await api.documentSaveCopy(
         tab.path, suggestName(baseName(tab.path), '.pdf'));

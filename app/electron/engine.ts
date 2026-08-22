@@ -529,29 +529,32 @@ function oneWriterOf(outPath: string, write: () => Promise<BookOutcome>): Promis
  * book's header, and the engine's default (`en`) is the engine's own documented
  * rule rather than a spelling this side repeats.
  *
- * ── TWO FIELDS FOR THE PAGES, AND NEVER BOTH AT ONCE ────────────────────────
+ * ── ONE FIELD FOR THE PAGES AGAIN (Wave 41), AND THE ENGINE KEEPS TWO ───────
  *
- * `pdfPath` is a scanned document to rasterise and `pagesPath` is a DIRECTORY of
- * page photographs, which is what a capture project's archive is. They are two
- * fields rather than one because they are two facts — the split `bookAtPosition`
- * already keeps for the same reason, and the reason a captured book's figures
- * were never cut at all: `--pdf` was the reflow's only face until Wave 37, so a
- * project whose archive is a folder reflowed with no source, and every Picture
- * block in it refused at export.
+ * A `pagesPath` stood beside `pdfPath` from Wave 37 to Wave 41, naming a
+ * DIRECTORY of page photographs, because a capture project's archive WAS a
+ * folder — `--pdf` was the reflow's only face until Wave 37, so such a project
+ * reflowed with no source at all and every Picture block in it refused at export.
  *
- * A MANIFEST HAS EXACTLY ONE ARCHIVE KIND, so no caller in this app can hand
- * over both; the engine refuses a run that names both anyway, which is where an
- * unreachable-from-here refusal belongs.
+ * The app no longer has such a project to describe: a mint writes a PDF and
+ * `healMintedArchive` gives one to every project made before it, so
+ * `bookAtPosition` answers `pdf` for a photographed book exactly as it does for
+ * an imported scan. Owen: *"the system isnt trying to sift through images, it's
+ * using the original pdf just like it normally would."*
+ *
+ * `vlm-book --pages` IS UNTOUCHED AND STAYS. It is engine surface area — a
+ * capability the command has, documented on the command, usable from a terminal
+ * — and Wave 37's work behind it is exactly as good as it was. What retired is
+ * the APP's selection of it, which is a different thing from the ability.
  */
 export function writeBookFile(
   readingsPath: string,
   outPath: string,
-  opts: { pdfPath: string | null; pagesPath: string | null; language: string | null },
+  opts: { pdfPath: string | null; language: string | null },
 ): Promise<BookOutcome> {
   return oneWriterOf(outPath, async () => {
     const args = ['vlm-book', '--readings', readingsPath, '--out', outPath];
     if (opts.pdfPath !== null) args.push('--pdf', opts.pdfPath);
-    if (opts.pagesPath !== null) args.push('--pages', opts.pagesPath);
     if (opts.language !== null) args.push('--language', opts.language);
     const run = runEngine(args);
     /*
