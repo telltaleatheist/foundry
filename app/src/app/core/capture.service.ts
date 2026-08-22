@@ -846,19 +846,44 @@ export class CaptureService {
     }));
   }
 
-  /**
-   * THE MINT GATE: every verb ticked, and not one of them derived.
-   *
-   * Tonight is the argument for it -- he minted before turning because the
-   * surface offered the last act first. It applies to projects that already
-   * exist, which was decided rather than discovered: a gate that exempted
-   * existing projects would exempt exactly the project it was built for.
+  /*
+   * `readyToMint` STOOD HERE — the mint gate, every verb ticked — and Owen
+   * REVERSED it (2026-08-22): *"sometimes i wont need to do any of the three.
+   * if thats the case i should be able to click finish/finalize anyway."* The
+   * gate was built the night he minted before turning, and it was right for
+   * that night; a shoot of screenshots that needs no turn, no crop and no cut
+   * showed its other face — three ceremonial ticks between a person and the
+   * one act they came for. Finish is pressable whenever there are pages now,
+   * and the ticks below are the record, not the lock.
    */
-  readonly readyToMint = computed<boolean>(() => {
-    const prepared = this.current()?.prepared;
-    return prepared?.turned === true
-      && prepared.cropped === true
-      && prepared.split === true;
+
+  /**
+   * WHAT THE WORK ITSELF SAYS IS DONE — the derived half of the rail's ticks.
+   *
+   * Owen: *"it should auto-check the one i already worked on."* This amends
+   * the standing tick ruling HALFWAY: the old rule was that the derivation
+   * never touches a tick because no rule can know the pages are right. That
+   * stays true in the direction that matters — nothing here ever CLEARS what
+   * a person said — but a turn that was performed, a crop that was placed (or
+   * a standing set), a cut that exists are facts, and a box left empty beside
+   * work visibly done reads as the app not noticing. The display is
+   * said-OR-evident; the person's own tick still covers "I looked and nothing
+   * was needed", which no derivation can say.
+   */
+  readonly evident = computed<{ turned: boolean; cropped: boolean; split: boolean }>(() => {
+    const recipe = this.current();
+    if (recipe === null) return { turned: false, cropped: false, split: false };
+    let turned = false;
+    let cropped = recipe.book?.crop !== undefined;
+    let split = recipe.book?.cut !== undefined;
+    for (const photo of recipe.photos) {
+      if (turned && cropped && split) break;
+      const sheet = joinedQuad(photo.pages.map((page) => page.quad), photo.split);
+      if (!turned && turnsOf(sheet) !== 0) turned = true;
+      if (!cropped && !isWholeFrameTurned(sheet)) cropped = true;
+      if (!split && photo.pages.length > 1) split = true;
+    }
+    return { turned, cropped, split };
   });
 
   /*

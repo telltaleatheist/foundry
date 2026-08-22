@@ -360,16 +360,29 @@ const SWEEP_STARTS_AT = 5;
       </div>
     }
 
-    <aside
-      class="dropzone"
-      [class.hot]="hot()"
-      (dragenter)="warm($event)"
-      (dragover)="warm($event)"
-      (dragleave)="cool()"
-      (drop)="take($event)"
-    >
-      <span>Drop photographs here</span>
-    </aside>
+    <!--
+      THE STRIP EARNS ITS SPACE ONLY ON AN EMPTY TABLE — Owen (2026-08-22):
+      \`"remove the 'drop photos here' box thats taking up extra space...
+      after theyve already dragged pages in they should know they can drag
+      more pages in there. keep it a drop zone but give the space to the page
+      thumbnails."\` The whole table takes drops either way (both paths call
+      the same intake; the strip's stopPropagation only ever prevented a
+      double). What the strip was FOR — a gesture with nowhere visible to aim
+      is a gesture people do not discover — is only true of a table with
+      nothing on it, so that is the only table that draws it.
+    -->
+    @if (cards().length === 0) {
+      <aside
+        class="dropzone"
+        [class.hot]="hot()"
+        (dragenter)="warm($event)"
+        (dragover)="warm($event)"
+        (dragleave)="cool()"
+        (drop)="take($event)"
+      >
+        <span>Drop photographs here</span>
+      </aside>
+    }
   `,
   styles: [`
     .table { position: relative; }

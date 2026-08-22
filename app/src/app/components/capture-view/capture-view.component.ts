@@ -123,7 +123,6 @@ const ACKNOWLEDGED_FOR_MS = 1600;
       [counts]="captures.prepare()"
       [prepared]="prepared()"
       [mintable]="mintable()"
-      [ready]="captures.readyToMint()"
       [minted]="minted()"
       [progress]="mint.progress()"
       [diverged]="captures.diverged()"
@@ -170,6 +169,7 @@ const ACKNOWLEDGED_FOR_MS = 1600;
           (splitChange)="captures.setSplit(photo.id, $event)"
           (applyToAll)="turnTheRest(photo.id, $event)"
           (recordStanding)="record(photo.id, $event)"
+          (applyStanding)="applyAll(photo.id, $event)"
           (rightNext)="sayRight(photo.id)"
           (release)="releaseThese([photo.id])"
           (followAgain)="followAgain(photo.id)"
@@ -245,7 +245,7 @@ export class CaptureViewComponent {
    * light: the bulk turn, the record, and the say-so at the very end of the walk
    * where there is no next photograph to step to.
    */
-  protected readonly justApplied = signal<'turn' | 'record' | 'right' | null>(null);
+  protected readonly justApplied = signal<'turn' | 'record' | 'stamp' | 'right' | null>(null);
   private applauseTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
@@ -459,7 +459,21 @@ export class CaptureViewComponent {
    */
 
   /** The ticks, or an empty answer while nothing is loaded. */
-  protected readonly prepared = computed(() => this.captures.recipe()?.prepared ?? {});
+  /**
+   * SAID OR EVIDENT — the rail's ticks show the person's word OR'd with what
+   * the work itself proves (Owen, 2026-08-22: \`"it should auto-check the one
+   * i already worked on"\`). Nothing ever clears a said tick; see
+   * \`CaptureService.evident\` for the half of the old ruling that survives.
+   */
+  protected readonly prepared = computed(() => {
+    const said = this.captures.recipe()?.prepared ?? {};
+    const evident = this.captures.evident();
+    return {
+      turned: said.turned === true || evident.turned,
+      cropped: said.cropped === true || evident.cropped,
+      split: said.split === true || evident.split,
+    };
+  });
 
   /**
    * WHETHER THIS PROJECT HAS A BOOK YET, which changes one word on the mint
@@ -776,6 +790,23 @@ export class CaptureViewComponent {
   }
 
   /**
+   * RECORD AND APPLY, ONE PRESS -- Owen's own friction (2026-08-22): the
+   * record lived in the modal and the Apply on the rail, and nothing in the
+   * modal said so. Two doors underneath, unchanged and in order: the record,
+   * then the SAME Apply the rail presses, whose announce says what it touched.
+   */
+  protected applyAll(photoId: string, which: 'crop' | 'cut'): void {
+    if (which === 'cut') {
+      this.captures.recordCut(photoId);
+      this.captures.applyCuts();
+    } else {
+      this.captures.recordCrop(photoId);
+      this.captures.applyCrops();
+    }
+    this.applaud('stamp');
+  }
+
+  /**
    * *THIS PAGE IS RIGHT — NEXT*: complete this photograph, then step on.
    *
    * ── The acknowledgement is the STEP, except at the end of the walk ────────
@@ -819,7 +850,7 @@ export class CaptureViewComponent {
   }
 
   /** Light the button that was pressed, for long enough to read. */
-  private applaud(what: 'turn' | 'record' | 'right'): void {
+  private applaud(what: 'turn' | 'record' | 'stamp' | 'right'): void {
     if (this.applauseTimer !== null) clearTimeout(this.applauseTimer);
     this.justApplied.set(what);
     this.applauseTimer = setTimeout(() => {

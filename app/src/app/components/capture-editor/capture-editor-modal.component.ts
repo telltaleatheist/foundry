@@ -114,6 +114,22 @@ export interface EditorFrame {
             (quadsChange)="quadsChange.emit($event)"
             (splitChange)="splitChange.emit($event)"
           />
+          <!--
+            THE WALK, AT THE HAND — Owen (2026-08-22), stepping a 179-page
+            screenshot shoot: \`"maybe an arrow on the left and right side of
+            each page so i can move between the pages quickly and easily."\`
+            The cluster's Back/Next and the arrow keys both survive; these are
+            the same act at the place the eye already is, the lightbox idiom.
+            ABSENT at either end rather than disabled, this stage's own rule —
+            and they sit at the stage's edges, outside the photograph's usual
+            fit, so they cover no corner anybody is trying to grab.
+          -->
+          @if (hasPrevious()) {
+            <button class="leaf back" type="button" title="Previous photograph (left arrow)" (click)="step.emit(-1)">‹</button>
+          }
+          @if (hasNext()) {
+            <button class="leaf next" type="button" title="Next photograph (right arrow)" (click)="step.emit(1)">›</button>
+          }
         </div>
 
         <!--
@@ -352,6 +368,27 @@ export interface EditorFrame {
                 (click)="recordStanding.emit(splitting() ? 'cut' : 'crop')"
               >{{ recordSays() }}</button>
               <p class="says">{{ recordMeans() }}</p>
+              <!--
+                RECORD-AND-APPLY IN ONE PRESS — Owen (2026-08-22), from his
+                first real walk of the passes: \`"it wasnt obvious to me that i
+                had to apply all crops from the main window instead of from
+                within the modal. maybe there should be a button to apply crops
+                to all pages... probably just an additional button."\` The two
+                acts stay two doors underneath (the record, then the same Apply
+                the rail presses — one predicate, one door); this button is the
+                pair reachable from where the person is standing. The rail's
+                Apply remains the place the consequence line lives in full; the
+                announce says what this press touched.
+              -->
+              <button
+                class="btn quiet"
+                type="button"
+                [class.applied]="justApplied() === 'stamp'"
+                [title]="splitting()
+                  ? 'Make this line the book\\'s cut and cut every following photograph now'
+                  : 'Make this the book\\'s crop and apply it to every following photograph now'"
+                (click)="applyStanding.emit(splitting() ? 'cut' : 'crop')"
+              >{{ justApplied() === 'stamp' ? 'Applied ✓' : (splitting() ? 'Make it the book\\'s cut and cut the rest' : 'Make it the book\\'s crop and apply to all') }}</button>
             } @else {
               <p class="says">
                 Tick <em>Two pages</em>, put the line down the gutter, and this is where you
@@ -456,8 +493,32 @@ export interface EditorFrame {
      */
     .work { flex: 1; min-height: 0; display: flex; flex-direction: row; }
 
-    .stage { flex: 1; min-width: 0; display: flex; }
+    .stage { flex: 1; min-width: 0; display: flex; position: relative; }
     .stage app-capture-page-editor { flex: 1; min-width: 0; }
+    /*
+     * The side arrows: quiet until wanted. A permanent pair of bright discs
+     * flanking every photograph would be chrome louder than the corners being
+     * placed; at rest they sit at the scrim's own register and the hover is
+     * what makes one a control. 44px hit target, vertically centred on the
+     * stage rather than the picture, so they never move as portrait and
+     * landscape frames trade heights.
+     */
+    .leaf {
+      position: absolute; top: 50%; transform: translateY(-50%);
+      z-index: 2;
+      width: 44px; height: 64px;
+      display: grid; place-items: center;
+      background: rgba(24, 23, 21, 0.55);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      color: var(--text-secondary);
+      font-size: 26px; line-height: 1;
+      cursor: pointer;
+      transition: background-color 120ms cubic-bezier(0, 0, 0.2, 1), color 120ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .leaf:hover { background: var(--bg-elevated); color: var(--text-primary); border-color: var(--border-strong); }
+    .leaf.back { left: 10px; }
+    .leaf.next { right: 10px; }
 
     .cluster {
       width: 268px; flex: none;
@@ -892,7 +953,7 @@ export class CaptureEditorModalComponent {
    * because the acknowledgement outlives the click by a second and a half and
    * this component holds no timers.
    */
-  readonly justApplied = input<'turn' | 'record' | 'right' | null>(null);
+  readonly justApplied = input<'turn' | 'record' | 'stamp' | 'right' | null>(null);
 
   readonly quadsChange = output<readonly FractionQuad[]>();
   readonly splitChange = output<CaptureSplit>();
@@ -930,6 +991,8 @@ export class CaptureEditorModalComponent {
    * button knows which one it drew, so it says.
    */
   readonly recordStanding = output<'crop' | 'cut'>();
+  /** The record AND the table's Apply, one press — see the button's own comment. */
+  readonly applyStanding = output<'crop' | 'cut'>();
   /** Complete this photograph and step to the next. */
   readonly rightNext = output<void>();
   /** Let the book change this one again. Same door as the card's right-click. */

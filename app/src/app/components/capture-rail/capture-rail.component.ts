@@ -224,7 +224,7 @@ interface Task {
         the other two because it is the end of the same sequence rather than a
         different kind of thing sitting underneath it.
       -->
-      <footer class="foot" [class.now]="ready() && mintable() > 0">
+      <footer class="foot" [class.now]="mintable() > 0">
         <div class="line">
           <span class="no">3</span>
           <span class="words">
@@ -257,18 +257,19 @@ interface Task {
             pages are struck and as spreads are split, and a button whose own
             name reflows under the pointer is hard to aim at.
           -->
-          <p class="why">
-            @if (ready()) {
-              {{ pages() }}
-            } @else {
-              Finishing unlocks when every step is ticked.
-            }
-          </p>
+          <!--
+            THE GATE IS GONE — Owen (2026-08-22): \`"sometimes i wont need to
+            do any of the three. if thats the case i should be able to click
+            finish/finalize anyway."\` The ticks above stay as the record
+            (auto-set by the work itself, still yours to set by hand); the
+            only thing that disables Finish now is having nothing to finish.
+          -->
+          <p class="why">{{ pages() }}</p>
           <button
             class="mint"
             type="button"
-            [class.ready]="ready() && mintable() > 0"
-            [disabled]="!ready() || mintable() === 0"
+            [class.ready]="mintable() > 0"
+            [disabled]="mintable() === 0"
             [title]="mintTitle()"
             (click)="mint.emit()"
           >{{ minted() ? 'Finish again' : 'Finish the pages' }}</button>
@@ -626,7 +627,6 @@ export class CaptureRailComponent {
   /** Pages a mint would produce — struck ones already left out. */
   readonly mintable = input.required<number>();
   /** Every verb ticked. The service owns the rule; this only draws it. */
-  readonly ready = input.required<boolean>();
   /** True once this project has a minted book, which changes one word. */
   readonly minted = input(false);
   readonly progress = input<{ done: number; total: number } | null>(null);
@@ -805,7 +805,6 @@ export class CaptureRailComponent {
    */
   protected readonly mintTitle = computed<string>(() => {
     if (this.mintable() === 0) return 'There are no pages to make yet';
-    if (!this.ready()) return 'Tick all three steps first';
     return this.minted()
       ? 'Make these pages again, as a new book beside the last one'
       : 'Cut, crop and turn every page as you have marked them';
