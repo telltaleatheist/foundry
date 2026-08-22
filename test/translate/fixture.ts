@@ -571,7 +571,7 @@ export interface FakeServer extends Transport {
  */
 export function fakeOllama(
   answer: (user: string, attempt: number) => string = (user) => shout(user),
-  models: string[] = ['qwen3:32b'],
+  models: string[] = ['qwen3.8:27b'],
 ): FakeServer {
   const asked: string[] = [];
   const attempts = new Map<string, number>();

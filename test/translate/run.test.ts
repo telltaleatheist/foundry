@@ -380,7 +380,7 @@ test('a missing model is refused before any block is sent, with the list of mode
     await assert.rejects(
       translateEpub({ epubPath: epub, outPath: out, to: 'en', transport: server, log: quiet }),
       (error: Error) => {
-        assert.match(error.message, /has no model named "qwen3:32b"/);
+        assert.match(error.message, /has no model named "qwen3.8:27b"/);
         assert.match(error.message, /qwen2\.5:14b, llama3\.1:8b/);
         return true;
       },
@@ -1155,7 +1155,7 @@ test('a different model or different instructions re-asks the whole book', async
    */
   const { epub, out, clean } = scratch(paragraphs(P1, P2, P3));
   const { bankPath } = bankIn(out);
-  const models = ['qwen3:32b', 'qwen2.5:14b'];
+  const models = ['qwen3.8:27b', 'qwen2.5:14b'];
   try {
     const first = fakeOllama(undefined, models);
     await translateEpub({
@@ -1355,7 +1355,7 @@ test('freshBank with no bank at all is refused rather than doing nothing', async
 test('the key is the question and nothing else about where the block sits', () => {
   const question = {
     text: 'Ein ⟦e1⟧deutscher⟦/e1⟧ Satz.',
-    model: 'qwen3:32b',
+    model: 'qwen3.8:27b',
     to: 'en',
     from: 'de' as string | null,
     instructions: undefined as string | undefined,
@@ -1372,7 +1372,7 @@ test('the key is the question and nothing else about where the block sits', () =
   // boundary is a different question, not the same one.
   assert.notEqual(
     bankKey({ ...question, model: 'qwen3:32', to: 'ben' }),
-    bankKey({ ...question, model: 'qwen3:32b', to: 'en' }),
+    bankKey({ ...question, model: 'qwen3.8:27b', to: 'en' }),
   );
 });
 

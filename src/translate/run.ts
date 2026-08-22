@@ -182,8 +182,18 @@ export class TranslateError extends Error {
   }
 }
 
-/** The model the default points at. See this file's header for the measurements. */
-export const DEFAULT_TRANSLATE_MODEL = 'qwen3:32b';
+/**
+ * The model the default points at.
+ *
+ * qwen3.8:27b as of 2026-08-22, Owen's ruling: "its brand new, should be on
+ * this system, and is very powerful. probably best suited for this job. 27b
+ * is the standard we'll use for every task." It replaced qwen3:32b, whose
+ * measurements are in this file's header and still stand as the record of
+ * why the qwen3 family and not qwen2.5. takesThinkField's prefix match
+ * covers the new family spelling (qwen3.8...) already, verified before the
+ * switch. The mirror in app/shared/pipeline.ts moves in the same commit.
+ */
+export const DEFAULT_TRANSLATE_MODEL = 'qwen3.8:27b';
 
 /** Ollama's own default, which is where it is unless somebody moved it. */
 export const DEFAULT_OLLAMA_ENDPOINT = 'http://localhost:11434';
