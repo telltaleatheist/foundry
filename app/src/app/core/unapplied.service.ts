@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 
 import { fold } from '@shared/original';
-import type { MakeAct } from '@shared/types';
+import type { UnappliedAct } from '@shared/types';
 
 import { BookStacksService } from './book-stacks.service';
 import { OpenDocumentsService, type Tab } from './documents.service';
@@ -9,8 +9,22 @@ import { StageService } from './stage.service';
 import { api } from './foundry';
 
 /**
- * THE GATE BEFORE A MAKE-ACT — nothing this app makes runs past work nobody
- * applied without somebody being asked first.
+ * THE GATE BEFORE AN ACT — nothing this app does runs past work nobody applied
+ * without somebody being asked first.
+ *
+ * ── IT USED TO SAY "BEFORE A MAKE-ACT", AND OWEN WIDENED IT ─────────────────
+ *
+ * Verbatim (2026-08-22): *"any action they take, whether it's switching to a
+ * different step or narrating or anything at all, should ask if they want to
+ * apply changes in a modal."* The four make-acts were the four that could make
+ * the WRONG BOOK, which is the loudest failure but not the only one; standing on
+ * a different step lets the stack go entirely, and it did so with nothing but a
+ * sentence on the notice strip after the fact. So the act is now an
+ * `UnappliedAct` and `stand` is one of them.
+ *
+ * AND THE ANSWERS BECAME TWO. Apply changes, or Discard — and Discard means what
+ * it says, which is new here: this gate used to be incapable of losing anybody's
+ * work. See `cleared` for the whole of what each answer does.
  *
  * ── The defect, in Owen's own project ───────────────────────────────────────
  *
@@ -112,15 +126,31 @@ export class UnappliedService {
   /**
    * ASK, IF THERE IS ANYTHING TO ASK ABOUT — true when the act may go ahead.
    *
-   * ── The three answers ──────────────────────────────────────────────────────
+   * ── The two answers, and the dismissal ─────────────────────────────────────
    *
-   * Apply-and-continue goes through the ONE press (`applyUnapplied`), which is the
-   * same press the closing card makes and the same amend-or-land decision the
-   * sheet's own button makes; an apply main refuses answers false, because
-   * continuing would make the very book the person just asked not to make.
-   * Without-them proceeds exactly as the app did before this gate existed — it is
-   * a real thing to want, and it is not the default. Cancel, and a card nobody
-   * answered, stop.
+   * *"if they hit discard, it does whatever action they selected to the step
+   * theyre on after dropping changes they made. if they hit apply changes, the
+   * action they select is executed after applying all changes."* (Owen,
+   * 2026-08-22.) Both answers therefore END IN THE ACT RUNNING — this function
+   * answers true for both — and what differs is the book it runs against.
+   *
+   * APPLY goes through the ONE press (`applyUnapplied`), which is the same press
+   * the closing card makes and the same amend-or-land decision the sheet's own
+   * button makes. An apply main REFUSES answers false, and that is the one place
+   * this function departs from "both answers go ahead": continuing would make the
+   * very book the person just asked not to make, from a page still holding every
+   * change they asked to record. Main's own sentence is already on the notice
+   * strip saying why it would not land.
+   *
+   * DISCARD goes through `discardUnapplied`, which empties the pane, the parked
+   * copy and the sidecar — three places, and the one that is easy to forget is
+   * the pane, because the tab is not closing here and a viewer left holding the
+   * ops would hand them straight back. It cannot fail: nothing is written, one
+   * file is deleted, and a delete that refuses is reported by the notice and does
+   * not stop the act the person asked for.
+   *
+   * A DISMISSAL STOPS EVERYTHING. Escape, the scrim, a window that could not ask
+   * — all of them arrive here as `cancel`, and the act does not run.
    *
    * NOTHING WAITING IS THE ORDINARY CASE and costs two map lookups: no card, no
    * round trip, no await anybody can see.
@@ -130,16 +160,57 @@ export class UnappliedService {
    * something about an act it knows nothing about — the act's own refusals are
    * better informed than any guess made here.
    */
-  async cleared(projectDir: string | null, act: MakeAct): Promise<boolean> {
-    if (projectDir === null || !api) return true;
+  async cleared(projectDir: string | null, act: UnappliedAct): Promise<boolean> {
+    return await this.clearedFor(projectDir, act) !== 'stop';
+  }
+
+  /**
+   * THE SAME GATE, ANSWERING WHAT IT DID RATHER THAN MERELY WHETHER TO GO ON.
+   *
+   * ── The defect that made this a second door (found building Wave 36) ───────
+   *
+   * One caller needs more than a boolean, and it needs it to keep the card's own
+   * promise. The tree footer's act press (`run`, open-documents) asks this gate
+   * and then STANDS ON THE ROW the act was pressed from. That is right for every
+   * answer but one. An Apply on a position with no amendable tip lands the stack
+   * as a CHILD of that position and moves the pointer onto it — deliberately, and
+   * `RETAINED_BESIDE_YOU`'s own comment says why: an edit's ops are in effect
+   * nowhere but on the path through the step that holds them. So standing back on
+   * the row afterwards puts the pointer BEHIND the work that was just recorded,
+   * and the export that follows is made without it.
+   *
+   * Which is the original defect exactly — *"a chapter renamed, a paragraph
+   * retyped, an EPUB exported without either"* — re-entered through the door
+   * built to close it, in the one case where somebody did everything right and
+   * pressed Apply when asked. The card now says in words that the act runs "from
+   * the book you are looking at", and it has to be true.
+   *
+   * ── Three answers, and the third is a FACT rather than a permission ─────────
+   *
+   * `'applied'` says the pointer has moved onto a step that did not exist when
+   * the press began. It is the caller's business what to do about that, because
+   * only the caller knows where it was about to send the pointer next; this
+   * service has no idea and must not guess. `cleared` above stays the door for
+   * everybody who does not stand on anything afterwards — the three make-dialogs
+   * and the app menu, which read the position as it now is and therefore get the
+   * new step for free.
+   */
+  async clearedFor(
+    projectDir: string | null,
+    act: UnappliedAct,
+  ): Promise<'stop' | 'go' | 'applied'> {
+    if (projectDir === null || !api) return 'go';
     const pane = this.paneFor(projectDir);
-    if (pane === null) return true;
+    if (pane === null) return 'go';
     const edits = this.stacks.unappliedIn(pane.id);
-    if (edits === 0) return true;
+    if (edits === 0) return 'go';
     const answered = await api.confirmUnapplied({ title: pane.title, edits, act });
-    if (answered === 'cancel') return false;
-    if (answered === 'without') return true;
-    return await this.stacks.applyUnapplied(pane);
+    if (answered === 'cancel') return 'stop';
+    if (answered === 'discard') {
+      await this.stacks.discardUnapplied(pane);
+      return 'go';
+    }
+    return await this.stacks.applyUnapplied(pane) ? 'applied' : 'stop';
   }
 
   /**
@@ -151,7 +222,7 @@ export class UnappliedService {
    * passed null would be indistinguishable from a caller that had failed to work
    * out which project it meant.
    */
-  async clearedHere(act: MakeAct): Promise<boolean> {
+  async clearedHere(act: UnappliedAct): Promise<boolean> {
     return await this.cleared(this.activeProject(), act);
   }
 }

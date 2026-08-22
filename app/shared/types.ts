@@ -2346,6 +2346,30 @@ export type CloseAnswer = 'close' | 'save' | 'keep';
 export type MakeAct = 'export' | 'translate' | 'simplify' | 'host';
 
 /**
+ * AND EVERY ACT THE UNAPPLIED CARD NOW STANDS IN FRONT OF, which is wider than
+ * the four above.
+ *
+ * ── Why a second union rather than a fifth member of `MakeAct` ──────────────
+ *
+ * Because `MakeAct` means something precise and useful — an act that MAKES a
+ * book out of the recorded steps — and half a dozen places lean on that meaning
+ * (`hostActPositionFrom` picks a node id for one, the action menu decides which
+ * press is one, the export's own refusals are about one). Standing on a
+ * different step makes nothing. It is the other half of Owen's ruling
+ * (2026-08-22): *"any action they take, whether it's switching to a different
+ * step or narrating or anything at all, should ask if they want to apply
+ * changes in a modal."* Adding `stand` to `MakeAct` would have made every one of
+ * those tests quietly wrong about a thing that is not a make-act at all; adding
+ * it here widens the CARD without widening the concept.
+ *
+ * `stand` COSTS SOMETHING REAL, which is why it is on the list. The stack is a
+ * delta against the step it was made on, so moving the pointer has always let it
+ * go (the pane says so on the notice strip). The card is what turns that from a
+ * thing somebody is told after the fact into a thing they decide.
+ */
+export type UnappliedAct = MakeAct | 'stand';
+
+/**
  * THE WARNING BEFORE A MAKE-ACT RUNS PAST WORK NOBODY APPLIED.
  *
  * ── The defect this card exists for ─────────────────────────────────────────
@@ -2369,19 +2393,35 @@ export interface UnappliedWarning {
   /** How many changes are waiting with no Apply behind them. Never zero: no card is raised. */
   edits: number;
   /** Which act was pressed, so the card can name it. */
-  act: MakeAct;
+  act: UnappliedAct;
 }
 
 /**
  * How that question was answered.
  *
- * THREE ANSWERS, and the middle one is why this is not a boolean. "Cancel" and
- * "go ahead without them" are genuinely different intentions — the second is a
- * person who meant to make the older book, which is a real thing to want from a
- * position they are standing on — and collapsing them would make the safe answer
- * the only answer.
+ * ── TWO BUTTONS AND A WAY OUT — Owen's refinement, 2026-08-22 ───────────────
+ *
+ * Verbatim: *"discard/apply changes. if they hit discard, it does whatever
+ * action they selected to the step theyre on after dropping changes they made.
+ * if they hit apply changes, the action they select is executed after applying
+ * all changes."* So the card asks one question with one shape wherever it is
+ * raised, and `cancel` is not a button any more — it is what Escape and a click
+ * outside the card answer, which is the app's own `dismissed` machinery
+ * (`AppQuestion.dismissed`) rather than a third choice competing with the two
+ * that mean something.
+ *
+ * `without` IS RETIRED AND THIS IS ITS GRAVESTONE. It meant *"continue without
+ * them"* — leave the stack on the page and make the older book anyway — and the
+ * argument for it was real: making the recorded book from a position you are
+ * standing on is a thing somebody can genuinely mean. It went because the
+ * question got wider. As a make-act's third answer it was a coherent choice; as
+ * an answer to *"you are about to move to another step"* it is meaningless (the
+ * move lets the stack go either way), and one card with three answers HERE and
+ * two answers THERE is two cards wearing one name. The narrow want it served is
+ * still reachable in two gestures nobody can misread: undo back to the recorded
+ * book, or stand on the step and press the act again.
  */
-export type UnappliedAnswer = 'apply' | 'without' | 'cancel';
+export type UnappliedAnswer = 'apply' | 'discard' | 'cancel';
 
 /**
  * How "Read this book again?" was answered.

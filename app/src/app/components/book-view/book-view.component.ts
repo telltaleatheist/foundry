@@ -684,6 +684,55 @@ const GLANCE_MARGIN = 12;
     @if (!problem() && !loading()) {
       <div class="tray head" [style.display]="viewing() ? 'none' : null">
         <!--
+          ── APPLY, WHERE THE PERSON IS ALREADY LOOKING ───────────────────────
+
+          *"and maybe there should be another apply changes button somewhere
+          obvious. the button on the side of the workbench works but it isnt
+          obvious"* (Owen, 2026-08-22). The tray at the foot of the bench is
+          right where it is and it stays — a verb you reach for mid-page should
+          ride the scroll — but it is one small button in a corner of a wide
+          bench, in the same weight as Undo beside it, and a person with three
+          changes on the page and an export to run did not find it.
+
+          THIS IS THE HEAD ROW, WHICH IS A ROW OF FACTS, AND A VERB IS NOT ONE.
+          That objection is the head's own (see the register's comment below) and
+          it is answered rather than ignored: this button is not furniture that
+          sits here explaining itself. It EXISTS ONLY WHILE THERE IS SOMETHING TO
+          APPLY, which makes it the same kind of thing as the rest of the row —
+          a fact about this page, stated as the one press that changes it — and
+          absent the rest of the time, on the house's absent-not-disabled rule.
+          The tray's button is the opposite and deliberately so: it is DISABLED
+          at zero, so the affordance can be learnt before there is anything to
+          press it with. Learn it there; be caught by it here.
+
+          THE ACCENT IS THE POINT and it is spent once. Nothing else on this
+          surface is filled with it — the registers are the shell's greys, the
+          paper has its own inks — so the one accent-filled thing in the pane is
+          the one press that is waiting on somebody.
+
+          IT DRAWS IN THE EDITION TOO, unlike the foot tray (which the mode makes
+          \`inert\`). The argument there is that the tray is the bench's
+          furniture and the edition has none; the argument here is stronger the
+          other way. Looking at the finished book is exactly when somebody
+          discovers a change they meant to record, and a stack is
+          mode-independent — the edition is a projection of the same ops — so
+          the press means the same thing from either register.
+
+          THE COUNT IS THE TRAY'S OWN LABEL, not a second spelling of it. One
+          function, one wording, two places it is drawn; the card that main
+          composes says "Apply changes" without a number because its own title
+          carries the count, and that is the seam's copy rather than this one's.
+        -->
+        @if (waiting() > 0) {
+          <button
+            type="button"
+            class="act now"
+            [disabled]="applying()"
+            title="Record every change on this page as one row in Steps"
+            (click)="apply()"
+          >{{ applying() ? 'Applying…' : applyLabel() }}</button>
+        }
+        <!--
           COMPARE SITS IN THE HEAD ROW, beside the registers, because this row is
           already the answer to "what am I looking at, and how" — and a second
           step beside this one is one more answer to that. It is drawn only where
@@ -2147,6 +2196,29 @@ const GLANCE_MARGIN = 12;
     .act:disabled { opacity: 0.4; cursor: default; }
     .act.ghost { background: transparent; color: var(--text-secondary); }
 
+    /* ── The obvious Apply, at the head of the pane ────────────────────────
+       The app's own filled-accent verb (the capture editor's \`.btn.primary\`
+       is where that pairing is settled: accent ground, inverse ink, 600) at
+       this row's size rather than that column's. \`margin-right: auto\` puts
+       it at the LEFT end of a row whose other children are flushed right —
+       the verb and the facts do not sit in one cluster, and nothing has to be
+       re-ordered in the template to say so.
+
+       NO :disabled RULE OF ITS OWN. It is drawn only while there is something
+       to apply, so the only moment it can be disabled is the second an Apply
+       is in flight, and \`.act:disabled\`'s fade already says that. */
+    .act.now {
+      margin-right: auto;
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--text-inverse);
+      font-weight: 600;
+    }
+    .act.now:hover:not(:disabled) {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+
     /* ── §5 The register, at the head of the column the tray closes ────────── */
 
     /* The tray's measure without the tray's stickiness: the head stands
@@ -2808,6 +2880,7 @@ export class BookViewComponent {
       undo: () => this.undo(),
       redo: () => this.redo(),
       apply: () => this.apply(),
+      discard: () => this.discardStack(),
       view: () => this.view(),
       selected: () => this.chosen(),
       chaptersOwned: () => this.chaptersOwned(),
@@ -4654,6 +4727,59 @@ export class BookViewComponent {
     } finally {
       this.applying.set(false);
     }
+  }
+
+  /**
+   * DISCARD — the stack taken off the page, on somebody's own say-so.
+   *
+   * ── Whose gesture this is, and what it is NOT ──────────────────────────────
+   *
+   * There is no button on this surface that calls it. The only caller is
+   * `BookStacksService.discardUnapplied`, which is the Discard answer to the card
+   * Owen's ruling put in front of every act (2026-08-22): *"if they hit discard,
+   * it does whatever action they selected to the step theyre on after dropping
+   * changes they made."* The pane is one of the three places that stack lives —
+   * the parked copy and the project's sidecar are the other two — and the service
+   * empties all three in one call, because "discarded" changes that come back on
+   * the next gesture or the next open are not discarded.
+   *
+   * ── BACK TO THE RECORDED BOOK, NOT TO AN EMPTY ONE ─────────────────────────
+   *
+   * `pending` starts life as a COPY of the tip's own ops when the position is an
+   * amendable edit step (see `load`), which is what makes `waiting()` a
+   * difference rather than a length. So the way back is `landedOps` — put the
+   * list where the disk has it — and that is the same arithmetic read the other
+   * way round: after this, `unwritten(landed, pending)` is zero by construction,
+   * for a tip with ops and for a position without one alike. Setting an empty
+   * array instead would have thrown away applied history on an amendable step and
+   * then offered the removal to the next Apply as a decision nobody made.
+   *
+   * ── THE LIVE EDITOR GOES WITH IT, UNCOMMITTED ──────────────────────────────
+   *
+   * `apply` commits the block being retyped first, because "apply what is on
+   * screen" has to include the words under the caret. This does the opposite for
+   * the same reason: those words are unapplied work too, and committing them here
+   * would push a text op onto a stack one microtask before it is emptied — or,
+   * worse, after. `editingId` is dropped rather than blurred, so the editor
+   * element is torn out of the view and its `blur` handler never runs.
+   *
+   * ── AND IT DOES NOT WRITE THE SIDECAR ──────────────────────────────────────
+   *
+   * No `remember()` here, deliberately, and it is not an omission the next reader
+   * should fix. The caller clears the file immediately afterwards — which also
+   * cancels the debounced write this pane may already owe — so a `remember` would
+   * be one write racing one delete over a stack nobody wants. The next real
+   * gesture writes the honest state.
+   */
+  protected discardStack(): void {
+    this.editingId.set(null);
+    this.renaming.set(null);
+    this.mode.set('workbench');
+    this.pending.set([...this.landedOps()]);
+    this.undone.set([]);
+    // Both cards are about a paragraph whose marks may have just changed under
+    // them — `load`'s own reason for putting them down.
+    this.dismissCards();
   }
 
   // ───────────────────────────────────────────────────────────────────────────

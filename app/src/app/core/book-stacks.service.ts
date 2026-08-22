@@ -78,6 +78,23 @@ export interface BookStack {
   /** Land the stack as a step. Resolves false when main refused; the sentence is its own. */
   apply(): Promise<boolean>;
   /**
+   * THROW THE STACK OFF THE PAGE — the pane's half of the sanctioned scrap.
+   *
+   * The other half is the sidecar, and neither half is optional: clearing the
+   * file while the pane still held the ops would have written them straight back
+   * on the next gesture's debounce, and clearing the pane while the file held
+   * them would have offered them again as a recovery on the next open. So this
+   * is never called on its own — `discardUnapplied` below is the door, and it
+   * presses both.
+   *
+   * IT RETURNS TO THE RECORDED BOOK rather than to an empty page. The stack
+   * begins life as a copy of the tip's own ops (see the viewer's `load`), so
+   * "discard what has not been applied" means "put the list back to what the
+   * disk says", which is also the only reading under which an amendment's
+   * undone-below-the-boundary ops come back.
+   */
+  discard(): void;
+  /**
    * THE BOOK AS THE SHEET IS DRAWING IT — the file with the chain and the stack
    * replayed, and null while the viewer is still opening.
    *
@@ -323,6 +340,50 @@ export class BookStacksService {
     }
   }
 
+  /**
+   * DROP IT — the other answer to the unapplied card, and the one that destroys.
+   *
+   * ── THREE PLACES HOLD THIS STACK, AND ALL THREE HAVE TO LET GO ─────────────
+   *
+   * This is the whole of why it is a method here rather than two lines at the
+   * call site. Unapplied work lives in up to three places at once and each of
+   * them is a route by which "discarded" changes come back:
+   *
+   *  1. THE LIVE VIEWER's own `pending`/`undone` signals — what is on the paper
+   *     in front of the person. `discard()` on the stack interface.
+   *  2. THE PARKED STACK, when the pane is not the tab on screen. `dropParked`,
+   *     which is the same door the closing question's `letGo` path uses.
+   *  3. THE SIDECAR under the project, which is the copy that outlives the
+   *     window. `discardPending`, which is `book:pending-clear`.
+   *
+   * The closing card's Discard reaches all three too, and it is worth saying how,
+   * because it looks like it only reaches one: it awaits `discardPending`
+   * (documents.service.ts, `questionBefore`), then `close` calls `dropParked`,
+   * and the live viewer is destroyed by the tab going — its signals die with the
+   * component and its destroy hook declines to park anything because the sidecar
+   * has already been cleared under it. THAT LAST STEP IS THE ONE THIS PATH DOES
+   * NOT GET. Nothing is closing here. The tab stays, the component stays, and a
+   * viewer left holding the ops would put them back on the debounce and hand them
+   * to the next Apply — so the in-memory drop is explicit, and it is first.
+   *
+   * ORDER MATTERS AND IT IS NOT ALPHABETICAL. The pane is emptied BEFORE the file
+   * is cleared: `discardPending` cancels the outstanding debounced write and
+   * deletes the project's entry from `owed`, so a pane that emptied itself first
+   * can only have made that entry staler, never resurrected it. The reverse order
+   * would leave a window in which a gesture (or the pane's own bookkeeping) could
+   * write the doomed stack back after the file was gone.
+   *
+   * IT IS AWAITED, on `discardPending`'s own rule: the act the person chose runs
+   * next, and for a position move that act ends in a load that ASKS FOR THIS
+   * FILE. A clear still in flight would be a recovery card for work somebody just
+   * threw away.
+   */
+  async discardUnapplied(tab: Tab): Promise<void> {
+    this.bookStackFor(tab.id)?.discard();
+    this.parkedStacks.delete(tab.id);
+    await this.discardPending(tab.path);
+  }
+
   // ───────────────────────────────────────────────────────────────────────────
   // THE SIDECAR — unapplied work, on disk, continuously
   // ───────────────────────────────────────────────────────────────────────────
@@ -397,12 +458,22 @@ export class BookStacksService {
   /**
    * THROW THE HELD STACK AWAY — the one sanctioned scrap, and it is awaited.
    *
-   * TWO CALLERS AND BOTH ARE A PERSON SPEAKING: an Apply, which has just recorded
-   * every one of these decisions as a step, and the closing card's Discard, which
-   * is somebody reading a sentence about what they are about to lose and pressing
-   * the red button anyway. Nothing else in the app may reach it — the whole point
+   * EVERY CALLER IS A PERSON SPEAKING, and there are three of them now. An Apply,
+   * which has just recorded every one of these decisions as a step. The closing
+   * card's Discard, which is somebody reading a sentence about what they are
+   * about to lose and pressing the red button anyway. And, since Owen's
+   * two-answer ruling (2026-08-22), the unapplied card's Discard, through
+   * `discardUnapplied` above — the same red button in front of a different
+   * question, and the reason that one is a method is that it has a live viewer to
+   * empty as well. Nothing else in the app may reach any of this: the whole point
    * of the file is that no window closing, no crash and no glance at another tab
    * can.
+   *
+   * (There is one further clear, and it is not a person: the viewer's own `load`
+   * clears the file after announcing that a position move let the stack go. That
+   * is the same scrap this card now asks about, said out loud at the moment it
+   * happens — and with the card in front of the move, it is what runs after
+   * somebody has already answered Discard.)
    *
    * THE OUTSTANDING WRITE IS CANCELLED FIRST, and that is the correctness rather
    * than an optimisation: a debounced write still on the timer would land AFTER

@@ -2324,8 +2324,21 @@ export class OpenDocumentsComponent {
    *
    * A STEP MOVES THE POSITION and everything else follows: main resolves what
    * that step shows and the panes are told (`ledger:go` → `showPosition`). It
-   * costs nothing, asks nothing and throws nothing away — the promise every
+   * costs nothing to the project and throws nothing away — the promise every
    * history panel makes by looking like one, now made by the navigator itself.
+   *
+   * IT USED TO SAY "ASKS NOTHING" TOO, and Owen's 2026-08-22 ruling took that
+   * clause. The one thing a move can cost is the book pane's unapplied stack,
+   * which cannot travel to the step being moved to, and the app used to report
+   * that after the fact rather than ask about it. `stand` now raises the card —
+   * only where there is something to lose, and only when the row is not the one
+   * already being stood on, so the ordinary click is still the free, instant,
+   * silent thing this paragraph promises.
+   *
+   * THE SELECTION IS TAKEN FIRST AND KEPT EITHER WAY. It is a fact about which
+   * card's footer is unrolled rather than about where anybody is standing, so a
+   * dismissed question leaves the row picked and the position where it was, which
+   * is exactly what somebody who wanted to look at that row's acts asked for.
    *
    * A HOST NODE MOVES NOTHING. There is no position to go to — it is somebody
    * else's job, and the ledger has never heard of it — so the click does the one
@@ -2465,16 +2478,63 @@ export class OpenDocumentsComponent {
      * AIMED AT THE ROW'S OWN PROJECT, which is the book this footer belongs to
      * rather than whatever tab happens to be up — the same directory every branch
      * below sends.
+     *
+     * ── AND THE ANSWER IS READ, NOT JUST OBEYED (Wave 36) ─────────────────────
+     *
+     * `clearedFor` rather than `cleared` because this is the one press that moves
+     * the pointer AFTER the gate has run, and an Apply moves it too — onto the
+     * edit step it has just landed as a child of the position. Standing back on
+     * this row afterwards would put the act behind the very changes somebody just
+     * pressed Apply to include. `standing` is read BEFORE the card is raised for
+     * exactly that comparison: it is the position the stack was made at, and it
+     * is meaningless afterwards.
      */
     const made: MakeAct | null = act.host !== null
       ? 'host'
       : act.id === 'translate' || act.id === 'simplify' || act.id === 'export'
         ? act.id
         : null;
-    if (made !== null && !await this.unapplied.cleared(row.dir, made)) return;
+    const standing = this.ledger.standingIn(row.dir)?.id ?? null;
+    const gate = made === null ? 'go' : await this.unapplied.clearedFor(row.dir, made);
+    if (gate === 'stop') return;
+    /*
+     * WHERE THE APPLY LEFT THE POINTER IS WHERE THIS ACT BELONGS — but only when
+     * the row pressed IS the row the changes were made at.
+     *
+     * That condition is the whole of the care here. Apply lands a child of the
+     * STANDING position, which is not necessarily this row: somebody can stand on
+     * one step, make changes, and press Export on a different row further up the
+     * tree. In that case the new edit step has nothing to do with the act, and
+     * skipping the move would silently export a step nobody clicked. So the move
+     * is skipped in exactly one shape — pressed on the row that was being stood
+     * on, and applied — where the pointer is already one step better than where
+     * this was about to send it.
+     */
+    const landedHere = gate === 'applied' && standing !== null && standing === row.step?.id;
     if (act.host !== null) {
       if (row.dir === null) return;
-      const nodeId = this.nodeIdFor(row);
+      /*
+       * ── AND A HOST ACT NAMES THE STEP THE APPLY JUST LANDED ─────────────────
+       *
+       * The same correction as the move below, expressed the only way a host act
+       * can express it: this branch does not stand on anything, it hands an id
+       * over the socket and the host takes that id back to an export of the step
+       * it names. `nodeIdFor(row)` names the row — which, after an Apply that
+       * landed a child of this very row, is the step WITHOUT the changes. Owen's
+       * ruling names this act in particular (*"whether it's switching to a
+       * different step or narrating or anything at all"*), and a narration made
+       * from the un-applied book is precisely the hours-of-GPU-on-the-wrong-book
+       * failure the card exists to prevent — reached, in this one shape, by
+       * answering the card correctly.
+       *
+       * THE POSITION IS RE-READ RATHER THAN COMPOSED. `applyUnapplied` adopts
+       * main's own history before it resolves, so the ledger this asks is already
+       * the post-Apply one; working the new id out from the answer would be this
+       * panel keeping a second opinion about where main put the pointer.
+       */
+      const nodeId = landedHere
+        ? this.ledger.standingIn(row.dir)?.id ?? this.nodeIdFor(row)
+        : this.nodeIdFor(row);
       if (nodeId === null) {
         /*
          * A ROW THAT CANNOT SAY WHAT IT WOULD ACT ON GETS A SENTENCE, not a
@@ -2500,7 +2560,25 @@ export class OpenDocumentsComponent {
       });
       return;
     }
-    void this.stand(row).then(() => {
+    /*
+     * ── AND THE MOVE ONTO THE ROW ASKS ONLY IF NOTHING ELSE HAS ──────────────
+     *
+     * Every act here stands on the row before it opens its dialog, and standing
+     * is itself something the unapplied card now guards (`stand`). Handing it
+     * `made !== null` is how the two questions stay one: a make-act has already
+     * been answered for against this very project a few lines above, so the move
+     * says nothing; a READ has not, because an OCR is not a make-act — it makes
+     * the bank the ops are a delta against, so it has nothing to be missing — and
+     * the move it performs is exactly the one somebody should be asked about.
+     * That is the honest split: the card is raised once per press, by whichever
+     * of the two halves of the press actually costs something.
+     */
+    const moved = landedHere ? Promise.resolve(true) : this.stand(row, made !== null);
+    void moved.then((go) => {
+      // A dismissed card stops the whole press, not merely the move: opening the
+      // dialog anyway would leave somebody configuring a read of a book they just
+      // said they did not want to leave the step of.
+      if (!go) return;
       void this.router.navigateByUrl('/');
       if (act.id === 'read') this.ui.openOcr();
       else if (act.id === 'translate') this.ui.openTranslate();
@@ -2613,15 +2691,48 @@ export class OpenDocumentsComponent {
    * Stand on the step this card names — the gesture that used to live on a Steps
    * row in the inspector (docs/WORKBENCH.md §6c: the section moved here whole).
    *
-   * FREE, INSTANT AND UNCONFIRMED — one line of the manifest, no job, no
-   * rendering, no question asked.
+   * FREE, INSTANT AND — UNTIL 2026-08-22 — UNCONFIRMED. One line of the
+   * manifest, no job, no rendering. It still costs nothing to the project. What
+   * it can cost is the PAGE: the book pane's stack is a delta against the step it
+   * was made on, so a move has always let it go, and the app said so on the
+   * notice strip AFTERWARDS. Owen's ruling turns that into a decision — *"any
+   * action they take, whether it's switching to a different step or narrating or
+   * anything at all, should ask if they want to apply changes in a modal"* — so
+   * the same card every make-act raises stands in front of the move as well:
+   * Apply changes and go, Discard and go, or dismiss and stay where you are.
    *
-   * The card already being current is not a no-op worth guarding: main answers
-   * with the same ledger and the panel repaints to the same thing, and a click
-   * that did nothing is cheaper than a branch that has to be kept true.
+   * ── THIS IS THE ONE SEAM, and it is one because the door is one ────────────
+   *
+   * `LedgerService.go` is the only person-initiated position move in the window
+   * and this is its only caller (checked, not assumed). What ELSE moves a
+   * position is main — a landed job, another window, the pointer following an
+   * Apply — and none of those is asked, because by the time the renderer hears
+   * about them the move has already happened in the catalogue and a card would be
+   * asking permission for something already true. `PositionSyncService` reacts to
+   * those; it does not initiate them, and it must not grow a question.
+   *
+   * ── AND THE ACT'S OWN PRESS DOES NOT ASK TWICE ─────────────────────────────
+   *
+   * `run` gates the make-acts itself, against the same book and with the same
+   * card, and then calls this to move onto the row first. `asked` is how it says
+   * so. A second card between the answer and the act would be the app asking
+   * whether to apply changes that the previous answer has just applied — or just
+   * discarded.
+   *
+   * ── STANDING WHERE YOU ALREADY STAND IS NOT A MOVE ─────────────────────────
+   *
+   * The old comment said the current card was "not a no-op worth guarding", and
+   * that was true of a click that cost nothing. It is not true of a click that
+   * raises a modal: re-clicking the row you are standing on would put a card
+   * about losing work in front of somebody whose work is not going anywhere. So
+   * the guard exists now, it is narrow, and it guards the QUESTION rather than
+   * the move — the move still goes through main and still repaints to the same
+   * thing, which is the cheap, always-correct behaviour the old comment defends.
    */
-  private async stand(row: Row): Promise<void> {
-    if (row.dir === null || row.step === null) return;
+  private async stand(row: Row, asked = false): Promise<boolean> {
+    if (row.dir === null || row.step === null) return true;
+    if (!asked && this.ledger.standingIn(row.dir)?.id !== row.step.id
+      && !await this.unapplied.cleared(row.dir, 'stand')) return false;
     // A position is a thing to LOOK at, so the workspace has to be on screen for
     // it to mean anything — the same reason a document row navigates.
     void this.router.navigateByUrl('/');
@@ -2633,6 +2744,15 @@ export class OpenDocumentsComponent {
       // over.
       this.notices.notice.set(err instanceof Error ? err.message : String(err));
     }
+    /*
+     * TRUE MEANS "NOBODY SAID STOP", which is a narrower claim than "the pointer
+     * moved" and is the one the caller needs. A row with nothing to stand on and
+     * a move main refused both answer true: the first was never a move, the
+     * second has already put its own sentence on the notice strip, and neither is
+     * a reason to swallow the act the person pressed. The single false is the
+     * card being dismissed, because that IS somebody saying stop.
+     */
+    return true;
   }
 
   /** Fold a node shut, or open it. The click must not also stand on the card. */

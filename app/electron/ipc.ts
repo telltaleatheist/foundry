@@ -165,15 +165,38 @@ const CLOSE = 'Close it';
 const APPLY = 'Apply these changes, then close';
 const DISCARD = 'Discard them and close';
 /*
- * And the make-act card's three, which are a different question about the same
- * stack: what a make-act costs is the WRONG BOOK, never the changes, so none of
- * these words is about losing anything. "Continue" rather than a verb per act —
- * the card's own title already says which act was pressed, and four spellings of
- * one button is four things to keep in step.
+ * And the unapplied card's two.
+ *
+ * ── THE RULING THAT MADE THEM TWO (Owen, 2026-08-22, verbatim) ──────────────
+ *
+ * *"if the user has 'this book' selected with un-applied changes, the export
+ * option shouldnt be grayed out. but any action they take, whether it's
+ * switching to a different step or narrating or anything at all, should ask if
+ * they want to apply changes in a modal. discard/apply changes. if they hit
+ * discard, it does whatever action they selected to the step theyre on after
+ * dropping changes they made. if they hit apply changes, the action they select
+ * is executed after applying all changes. and maybe there should be another
+ * apply changes button somewhere obvious. the button on the side of the
+ * workbench works but it isnt obvious"*
+ *
+ * `APPLY_AND_CONTINUE`, `WITHOUT_THEM` AND `CANCEL` STOOD HERE. The first was
+ * "Apply them and continue" and is now simply "Apply changes" — the ruling's own
+ * words, and the same words the second obvious button in the book pane wears, so
+ * there is ONE name in this app for the one press. The second, "Continue without
+ * them", is retired with the answer behind it (`UnappliedAnswer` carries the
+ * argument). The third was a button; a cancel is now the app's own dismissal —
+ * Escape or a click outside — because a card with three buttons where one of
+ * them is "do nothing" makes the two that mean something harder to read, and the
+ * ruling asked for two.
+ *
+ * DISCARD WEARS THE ERROR COLOUR HERE TOO, on the closing card's precedent and
+ * for its reason: this is now the SECOND gesture in the app that can throw
+ * unapplied work away, and a button that destroys has to be aimed at rather than
+ * fallen onto. It is the only difference in weight between the two answers —
+ * both are legitimate, one is irreversible.
  */
-const APPLY_AND_CONTINUE = 'Apply them and continue';
-const WITHOUT_THEM = 'Continue without them';
-const CANCEL = 'Cancel';
+const APPLY_CHANGES = 'Apply changes';
+const DISCARD_CHANGES = 'Discard changes';
 
 /**
  * Whether a path sits inside a directory, on Windows' terms.
@@ -1919,7 +1942,26 @@ export function registerIpc(): void {
   ipcMain.handle('book:pending-clear', (_event, projectDir: string) =>
     clearPendingStack(projectDir));
   /**
-   * THE CARD BEFORE A MAKE-ACT RUNS PAST WORK NOBODY APPLIED.
+   * THE CARD IN FRONT OF EVERY ACT THAT WOULD RUN PAST WORK NOBODY APPLIED.
+   *
+   * ── OWEN'S RULING, VERBATIM (2026-08-22) ────────────────────────────────────
+   *
+   * *"if the user has 'this book' selected with un-applied changes, the export
+   * option shouldnt be grayed out. but any action they take, whether it's
+   * switching to a different step or narrating or anything at all, should ask if
+   * they want to apply changes in a modal. discard/apply changes. if they hit
+   * discard, it does whatever action they selected to the step theyre on after
+   * dropping changes they made. if they hit apply changes, the action they select
+   * is executed after applying all changes. and maybe there should be another
+   * apply changes button somewhere obvious. the button on the side of the
+   * workbench works but it isnt obvious"*
+   *
+   * Every clause of that has a home: the two buttons are here, the widened set of
+   * acts is `UnappliedAct` and `UnappliedService`, "it does whatever action they
+   * selected" is that service running the act after either answer, "shouldnt be
+   * grayed out" is the make-act predicates NOT consulting the stack (they never
+   * did, and it was checked rather than assumed), and the obvious button is at the
+   * head of the book pane.
    *
    * ── Why this is a door and not four lines in the renderer ───────────────────
    *
@@ -1934,26 +1976,66 @@ export function registerIpc(): void {
    *
    * The closing card's own argument: a dialog whose only route to keeping the
    * work is *cancel, find Apply, press again* has made the person do the app's
-   * job. "Without them" is a real answer and is kept — making the older book from
-   * a position you are standing on is a thing somebody can genuinely mean — but
-   * it is the middle button, not the default.
+   * job. It is what Enter takes and Discard is last, which is this app's rule for
+   * every card that can destroy something.
    *
-   * NOTHING HERE IS DANGEROUS, so nothing wears the error colour. Every one of
-   * the three answers leaves the stack exactly where it is: this card cannot lose
-   * anybody's work, which is precisely the difference between it and the closing
-   * one.
+   * ── AND THIS CARD CAN NOW DESTROY SOMETHING, WHICH IT COULD NOT BEFORE ──────
+   *
+   * The three-answer version was safe by construction: apply, or go on without
+   * them, or cancel — every one of them left the stack on the page, and the
+   * docblock that stood here said so and gave that as the reason nothing wore the
+   * error colour. Discard changes that. This is the second gesture in the app
+   * (the closing card's own Discard is the first) that throws unapplied work
+   * away, so it wears the error colour, it is last, and the detail says out loud
+   * that it is for good. The one that used to be safe-by-construction is now
+   * safe-by-aiming, which is a weaker guarantee honestly stated rather than a
+   * stale sentence about a card that no longer exists.
+   *
+   * ── ONE CARD, FIVE ACTS, TWO SENTENCES THAT VARY ────────────────────────────
+   *
+   * `runs` says what the act would be made from and `then` says what happens
+   * after the answer. Everything else — the title, the count, the warning about
+   * Discard, the way out — is identical wherever this is raised, because it is
+   * one question and a person should not have to re-read it to find out whether
+   * this is the same box they answered a minute ago.
    */
   ipcMain.handle(
     'book:confirm-unapplied',
     (_event, warning: UnappliedWarning): Asked<UnappliedAnswer> => {
       const changes = warning.edits === 1 ? '1 change' : `${warning.edits} changes`;
-      const makes = warning.act === 'translate'
-        ? 'The translation would be made from'
+      const them = warning.edits === 1 ? 'it' : 'them';
+      /*
+       * WHAT THE ACT WOULD BE MADE FROM — and standing is the odd one out, which
+       * is exactly why it needs its own sentence rather than a fifth spelling of
+       * the make-act line. A move makes nothing; what it costs is that the stack
+       * cannot come with it, because ops are a delta against the step they were
+       * made on and carrying them would apply somebody's decisions to a book they
+       * never made them about.
+       */
+      const runs = warning.act === 'stand'
+        ? 'Changes on the book belong to the step they were made on, so moving to another step '
+          + 'cannot take them along. They would be left behind here.'
+        : (warning.act === 'translate'
+          ? 'The translation would be made from'
+          : warning.act === 'simplify'
+            ? 'The rewrite would be made from'
+            : warning.act === 'export'
+              ? 'The exported book would be'
+              : 'The work would be made from')
+          + ' the book as it was recorded, which is the book WITHOUT those changes — changes reach '
+          + 'anything made from this book only once they are applied as a step.';
+      // What happens the moment the card closes, in the words of the thing the
+      // person pressed. The card's own title says nothing about the act, so this
+      // is the only place it is named.
+      const then = warning.act === 'translate'
+        ? 'the translation is set up'
         : warning.act === 'simplify'
-          ? 'The rewrite would be made from'
+          ? 'the rewrite is set up'
           : warning.act === 'export'
-            ? 'The exported book would be'
-            : 'The work would be made from';
+            ? 'the export is set up'
+            : warning.act === 'stand'
+              ? 'the step you clicked is opened'
+              : 'the work goes ahead';
       return {
         kind: 'ask',
         question: {
@@ -1962,22 +2044,25 @@ export function registerIpc(): void {
             : `${warning.edits} changes are not applied yet`,
           message: `“${warning.title}” has ${changes} on the page that have not been applied.`,
           detail: [
-            `${makes} the book as it was recorded, which is the book WITHOUT those changes — `
-            + 'changes reach anything made from this book only once they are applied as a step.',
-            'Applying now records all of them as one row in Steps, and then the work is made from '
-            + 'the book you are looking at. Nothing here throws anything away: the changes stay on '
-            + 'the page whichever answer you give.',
+            runs,
+            `Apply changes records all of ${them} as one row in Steps, and then ${then} from the `
+            + 'book you are looking at.',
+            `Discard changes throws ${them} away for good — nothing puts ${them} back — and then `
+            + `${then} from the book as it was recorded.`,
+            'Press Escape, or click outside this card, to leave everything exactly as it is.',
           ],
           choices: [
-            { key: 'apply', label: APPLY_AND_CONTINUE },
-            { key: 'without', label: WITHOUT_THEM },
-            { key: 'cancel', label: CANCEL },
+            { key: 'apply', label: APPLY_CHANGES },
+            { key: 'discard', label: DISCARD_CHANGES, danger: true },
           ],
           preferred: 'apply',
           /*
-           * A DISMISSAL IS A CANCEL. Escape and the scrim are somebody stepping
-           * away from a question, and the only answer that changes nothing at all
-           * is the one that does not start hours of work.
+           * A DISMISSAL IS A CANCEL, and it is now the ONLY cancel — the button
+           * went with Owen's two-answer ruling. Escape and the scrim are somebody
+           * stepping away from a question, and the only outcome that changes
+           * nothing at all is the one that neither destroys work nor starts hours
+           * of it. The detail says so in words, because a way out nobody is told
+           * about is not a way out.
            */
           dismissed: 'cancel',
           checkbox: null,
