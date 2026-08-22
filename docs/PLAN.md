@@ -1969,6 +1969,28 @@ Owen's first real walk of the Wave 25 passes, arriving as rulings:
   installed `qwen3.8:27b-24g` variant is noted in case it is the wanted
   one.)
 
+### Wave 36 — the captured face exports, and the unapplied question becomes Discard/Apply everywhere (Owen, 2026-08-22)
+
+- **LANDED (this commit): the captured face.** Owen's full walk ended at
+  *"Open a book first"* from Export over an applied, read, captured
+  book: a captured project's archive is PAGES (a folder, since
+  `ecbf238`), so `originalOf` finds no origin row and all THREE
+  make-dialogs' `source()` answered null. Each now answers the PROJECT
+  DIR for a captured, read project — the same face the OCR dialog
+  accepts, resolved by `importDocument`'s own inside-a-project rule
+  (`projectDirOf` resolves the dir to itself; verified before use).
+- **IN FLIGHT: the unapplied question, Owen's refinement of Wave 29.**
+  Verbatim: *"any action they take, whether it's switching to a
+  different step or narrating or anything at all, should ask if they
+  want to apply changes in a modal. discard/apply changes."* The card's
+  three answers become TWO — **Discard** (drop the stack, then run the
+  chosen act on the step as recorded) and **Apply changes** (apply,
+  then run) — plus dismissal as cancel. The gate widens from the
+  make-acts to EVERY act leaving the position, position moves included.
+  Export must never GRAY on unapplied changes — the card is the gate.
+  And Apply gets a second, obvious home: *"the button on the side of
+  the workbench works but it isnt obvious."*
+
 ### Wave 35 — the queue as a slot board (Owen, 2026-08-22) — RULED, NEEDS A CONTRACT
 
 *"the queue shelf should probably look a bit more like the bookforge

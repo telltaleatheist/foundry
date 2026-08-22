@@ -369,6 +369,18 @@ export class SimplifyDialogComponent {
      */
     if (project === null) return null;
     if (!canSimplifyFrom(project, this.ledger.standingIn(project.dir))) return null;
+    /*
+     * THE CAPTURED FACE. A captured project's archive is PAGES -- a folder,
+     * not a file -- since the mint stopped writing a container (ecbf238), so
+     * originalOf finds no origin row and this dialog refused the one kind of
+     * book the app makes end to end (Owen's first full walk, 2026-08-22:
+     * "Open a book first" over an applied, read, captured book). Any path
+     * inside a project resolves it (importDocument's own rule) and the
+     * project DIR resolves to itself (projectDirOf), which is the same face
+     * the OCR dialog already accepts. Gated on the reading, because with no
+     * bank there is no book to make anything from.
+     */
+    if (project.capture && project.reading.done) return project.dir;
     return this.projects.originalOf(project)?.path ?? null;
   });
 
