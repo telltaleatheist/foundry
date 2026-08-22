@@ -237,6 +237,42 @@ doc's own promise that the recipe stays re-editable after a read. Standing
 on the capture step always shows the light table; standing on the minted
 step shows the PDF.) For a project not yet minted, that makes the grid the
 main viewer:
+
+**Both halves of that were built in Wave 34, and the second half no longer
+says "the PDF".** Owen, 2026-08-22, having minted and clicked the row:
+*"i expected it to take me to a pdf-like layout (even if we havent
+assembled into a pdf officially yet) where i can scroll through each page
+as it would look in a pdf. then i can run OCR on it, then i can strike
+things."* There is no PDF — the mint writes page images and no container,
+by Owen's own earlier ruling (`recordMint`) — so what the minted row opens
+is **`app-pages-view`**: the rectified pages, one under the next, on the
+PDF viewer's own furniture. A fourth tab kind, `pages`, whose path is the
+project directory and whose contents are re-asked on every pointer move,
+so an older mint's row still opens that mint's own book. The pages come
+from `capture:pages-load` and are served through the existing capture
+host, whose token now covers two directories (`captureServedFile`).
+
+What the click did BEFORE that wave, recorded because it is the defect and
+not merely the absence: `documentAtPosition` answered the minted row with
+the archive FOLDER, `openFile` handed it to `openDocument`, which read no
+extension off it and refused — so the app announced that the pages were no
+longer there while they sat on the disk. `documentOfStep` now answers null
+for a mint, which is what "this row names no document of its own" has
+always meant here.
+
+The first half was true by ACCIDENT until the same wave: a capture row fell
+through to the branch that reveals whichever of a project's tabs comes
+first, and a capture project had exactly one. It has two now, so the rule
+is written down in the router (`showTable`, position-sync.service.ts)
+rather than resting on tab order. **The light table keeps every door it
+had**: the tree's *The photographs* row, and the action menu's *Edit the
+photographs*, which is gated on the project being a capture and therefore
+lights from the page view as well.
+
+The minted row's card in the tree is called **The pages** rather than *The
+original*: the action is `import` for the seven reasons above, and the
+WORDS on a card are not one of those seven — nothing was imported from
+anywhere.
 one card per page (initially one per photo), sorted by capture time — EXIF
 `DateTimeOriginal`, falling back to file mtime — with an ascending/
 descending toggle. Cards drag to reorder; once the user has dragged, the

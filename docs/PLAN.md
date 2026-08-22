@@ -35,7 +35,7 @@ same commit that lands it.
   root `bunx tsc --noEmit`; from `app/`:
   `bunx tsc -p tsconfig.electron.json --noEmit`,
   `bunx tsc -p tsconfig.app.json --noEmit`, `bunx ng build` (the
-  695.96 kB against a 500 kB budget WARNING is pre-existing; an ERROR is
+  738.63 kB against a 500 kB budget WARNING is pre-existing; an ERROR is
   not — and see §7, where that number was 145 kB stale until somebody
   re-measured it). Plus a raw-control-byte scan of every touched file.
 - **No new tests** (user ruling). Fix the ones a change invalidates; name
@@ -1938,13 +1938,188 @@ whole. NAMED COST, deferred not forgotten: no severity field yet, so a
 refusal expires on the same clock as a confirmation — severity is the
 next wave if it bites.
 
-### Wave 30 — the glance obeys the click (Owen, 2026-08-22) — RULED, QUEUED BEHIND WAVE 29
+### Wave 33 — the walk's rulings: the gate goes, the book's apply reaches the modal, and the room loses its clutter (Owen, 2026-08-22) — LANDED (this commit)
+
+Owen's first real walk of the Wave 25 passes, arriving as rulings:
+
+- **The mint gate is REVERSED**: *"sometimes i wont need to do any of the
+  three... i should be able to click finish/finalize anyway. it should
+  auto-check the one i already worked on."* Finish is pressable whenever
+  there are pages; the ticks stay as the record and are now SAID-OR-
+  EVIDENT (`CaptureService.evident` — a turn performed, a crop placed or
+  a standing set, a cut made). The old ruling's surviving half: nothing
+  ever CLEARS a tick a person set.
+- **Record-and-apply in one press, in the modal** — *"it wasnt obvious
+  that i had to apply all crops from the main window"*: a second button
+  under the record ("Make it the book's crop and apply to all", cut twin
+  in the split pass), the same two doors underneath in order.
+- **Side arrows on the editor's stage** — the lightbox walk, absent at
+  either end; Back/Next and arrow keys survive.
+- **The drop strip draws only on an EMPTY table** — the window is the
+  drop target whenever a capture tab is up (verified at app.ts's drop
+  routing before removal).
+- **The inspector nulls itself on the light table** — its subject is the
+  ledger; the recipe's inspector is the rail.
+- **The Chapters acts are sticky at the list's foot** — pick a block
+  anywhere, the press is right there.
+- **`qwen3.8:27b` is the default translate/simplify model** — Owen:
+  *"27b is the standard we'll use for every task."* Both copies of the
+  constant, the CLI help, and the five test-fixture pins moved together;
+  `takesThinkField`'s prefix already covered the new family. (The
+  installed `qwen3.8:27b-24g` variant is noted in case it is the wanted
+  one.)
+
+### Wave 35 — the queue as a slot board (Owen, 2026-08-22) — RULED, NEEDS A CONTRACT
+
+*"the queue shelf should probably look a bit more like the bookforge
+queue, where it has two cpu slots and one gpu slot, and i can see
+details about the step thats taking place."* NOT a coat of paint: the
+standalone queue is deliberately ONE serial slot (the pump), so lanes
+are a scheduler change with resource declarations, not a shelf
+restyle. Wants a contract before code, and the Wave 16 lesson applies
+— one machine's GPU wants one owner, so the lanes must not let a CPU
+export and a GPU read fight the card's feeding.
+
+### Wave 30 — the glance obeys the click (Owen, 2026-08-22) — BUILT (this commit)
 
 Owen's ruling on Wave 23's page glance, verbatim intent: it appears
 only when a block is CLICKED (not on hover-rest); it sits to the RIGHT
 of the page, outside the visible paper, unless it will not fit — then
 it may sit where it does today; and with multiple blocks selected it
-does not show at all. Correctness (Wave 29) lands first.
+does not show at all. All three built, in two files.
+
+- **THE CLICK IS THE ONE THAT WAS ALREADY THERE.** No new gesture and no
+  new listener: `release`'s plain branch already made a block THE
+  selection, and it now also aims the card. Clicking the next paragraph
+  re-aims rather than opening a second card, because there is one card
+  for the same reason there is one selection. `GLANCE_REST_MS` (180 ms)
+  and its `pointerenter` timer are deleted with a gravestone — Wave 23's
+  rest-not-enter argument was RIGHT FOR A HOVER TRIGGER and the hover is
+  what went, so the reasoning is kept in the stone rather than thrown
+  out. The timer is deleted rather than set to zero: a zero-length rest
+  is a hover trigger wearing a constant's clothes.
+- **THE CARD STANDS IN THE BENCH'S DEAD SPACE WHEN IT FITS.** One inline
+  `left` decides both placements — an over-constrained absolute box
+  ignores its `right` in LTR, so the fallback needs no class and no
+  `@media`, it is simply the component's own stylesheet unchallenged.
+  Measured, root font 13px: sheet `min(46rem, 92%)` = 598 px, card
+  15rem = 195 px, wanting 195 + 12 + 12 = 219 px of margin. A 1280 px
+  bench leaves 341 px a side, so it fits with 122 px to spare. Below
+  ~1038 px of bench the 92% rule takes over and dead space collapses to
+  4 % a side; the aligned pair's columns are narrower still. **The
+  fallback is not an edge case, it is what a laptop sees.**
+- **THE WIDTH IS READ OFF THE ELEMENT, WHICH IS WHY `display: none`
+  BECAME `visibility: hidden`.** Wave 23 paid for a `px` constant in
+  book-view mirroring a `rem` width in page-glance — root font 13px, the
+  constant said 256 about a box that renders at 195, and the card landed
+  on the paragraph being read. A box with no layout has no width, so
+  keeping `display: none` would have made the FIRST click of every
+  session measure zero and fail the fit. Everything `display: none`
+  bought is still bought: invisible, out of the a11y tree, no pointer,
+  no room in the flow (it is absolutely positioned).
+- **MULTI-SELECT: REFUSED AT THE GESTURE, CLEARED AT THE BACKSTOP.**
+  Alt-click (whole category) and Ctrl/Shift-click dismiss and never
+  summon — *the rule is about the gesture, not the count*, so a Ctrl
+  click that happens to land back on one block still does not summon.
+  An effect on `chosen().size > 1` catches every other door (marquee,
+  split's two halves, join, a panel reaching through the stack). **It
+  CLEARS rather than masks, and that asymmetry is the ruling**: a
+  computed that merely hid would resurrect a card aimed ten gestures ago
+  the moment a selection fell back to one. The glance answers a click.
+- Dismissed by Escape (which now puts down both cards — one key,
+  because a reader cannot tell which of two handlers they are
+  addressing), by a click on no block, by the register flip and by a
+  load. **The card no longer goes on `pointerleave`** — a card somebody
+  asked for does not leave because the hand moved.
+- Re-placed on a PANE resize rather than `window:resize`, hooked into
+  the `ResizeObserver` that was already there: the dead space is a fact
+  about this pane and changes when the left nav or inspector opens
+  without the window moving. Only the placement signals are written, so
+  page-glance's one effect does not run and **no page is re-rendered by
+  dragging a window edge.**
+- **NOT DONE, SAID OUT LOUD:** no vertical clamp against the viewport
+  was added. The card is ink in SHEET coordinates — that is what lets it
+  ride a scroll instead of being chased down one — and a viewport clamp
+  is a promise that frame cannot keep past the next wheel click. Today's
+  top clamp (`GLANCE_GAP`, off the paper's head margin) is unchanged and
+  there is still no bottom clamp, exactly as in Wave 23.
+- **NOT DONE, SAID OUT LOUD:** there is no ✕ on the card. The ruling
+  named "the existing close affordance" and there has never been one —
+  the card takes no pointer. Escape and a click on empty paper are the
+  two outs, and `press`'s own comment notes there is little empty paper
+  on a dense sheet, so if that bites, a ✕ (and the `pointer-events` that
+  comes with it) is the next move.
+
+Gates: 418 pass / 0 fail, root `tsc`, both app tsconfigs, `ng build` at
+**738.63 kB** (WARNING, pre-existing; baseline re-measured at 737.93 kB
+on `cf995c5` in a clean worktree, so this wave is +0.70 kB), control-byte
+scan clean on both touched files. The build was gated in a detached
+worktree because another agent's in-flight capture edits were in the main
+tree and broke the Angular compiler on files this wave does not touch.
+
+### Wave 34 — the minted book opens as pages (Owen, 2026-08-22) — BUILT (this commit)
+
+> *"when i do finalize, it creates 'this book' in the worktree. correct. but
+> when i click it, i expected it to take me to a pdf-like layout (even if we
+> havent assembled into a pdf officially yet) where i can scroll through each
+> page as it would look in a pdf. then i can run OCR on it, then i can strike
+> things… thats what i expected."*
+
+**What the click did, traced before anything was written.** The minted row
+stands on a step whose picture the router had no third branch for: `sheet`
+sent a row to the proof sheet, everything else went to `showDocument`.
+`documentAtPosition` answered a mint with `archive/<stem> pages` — a
+DIRECTORY, because `exists` says yes to one — the renderer handed it to
+`openFile`, `openDocument` read no extension off it and refused, and the
+app announced that the pages were no longer there while they sat on the
+disk. The ROOT row (the capture step) resolved to nothing and revealed
+whichever project tab came first, which is why it looked like the click did
+nothing at all.
+
+**The brief's premise was stale and Owen's own parenthesis is why.** There
+is no minted PDF to open: the mint has written page images and no container
+since `ecbf238` (2026-08-20, Owen's *"i agree that this doesnt need to be a
+pdf"*). So the smallest honest answer is not a route into pdf.js — it is
+the pages, drawn as pages.
+
+- **`positionView.pages`** — the third picture, spelled once
+  (`mintedFromPhotographs`: an import step WITH a parent is a mint by
+  construction). Main resolves documents by the same test, so the surface
+  and the resolver cannot disagree about one click.
+- **`documentOfStep` answers null for a mint**, which is what "this row
+  names no document of its own" has always meant. Nothing consumed the
+  folder: the two callers that once tested the position's document for
+  `.epub` were rewritten waves ago.
+- **A fourth tab kind, `pages`**, path = the project directory, contents
+  re-asked on every pointer move — the book tab's shape, over pictures. So
+  standing on an older mint still opens THAT mint's book. It joined at
+  `pathIsProject` and nowhere else, which is that predicate's promise kept.
+- **`app-pages-view`** — one scroller, `<img loading="lazy">` with an
+  `aspect-ratio: auto <ratio>` box so a 400-page shoot is not fetched at
+  once. `capture:pages-load` lists the names and mints a token; the
+  pictures come back through the EXISTING capture host, whose token now
+  covers two directories (`captureServedFile`). No new protocol host.
+- **The light table keeps every door.** *Edit the photographs* is gated on
+  the project being a capture, so it lights from the page view too; and the
+  capture row now shows the table BY RULE (`showTable`) rather than by the
+  accident of a project having had exactly one tab.
+- **The OCR dialog was a REGRESSION WAITING** and is fixed in the same
+  breath: its source list keyed off `kind === 'capture'`, so pressing OCR
+  in front of the pages would have met *"Open a PDF first"*. Both faces of
+  one project now qualify (`photographed`), and they name one directory, so
+  the reading is identical either way. Verified from source, not assumed:
+  the picker never went through the import step's payload.
+- The minted card in the tree is called **The pages**, not *The original*.
+
+**NOT DONE, SAID OUT LOUD:** no zoom, no page counter, no thumbnail rail on
+the page view — it shows and holds nothing, and every one of those is a
+control somebody has to ask for. No image PDF export either; that is still
+the deferred *"if the user explicitly wants to export it as one, they
+can"*. And a drop onto the page view is not routed to intake, because the
+window's drop handler reads the FRONT TAB and the front tab is a finished
+book — if that bites, it is one clause in `intaking`.
+
+Gates: the lead runs them. Scoped: root `tsc`, both app tsconfigs clean.
 
 ### Then — the user's
 
@@ -2012,9 +2187,14 @@ supposed to be, and it exists so the same failure is visible next time.
   every app-side unit and the reason the hand-test is not optional. Not
   scheduled because the standing ruling is no unasked tests — if that
   changes, this is where the work starts.
-- **The bundle is 704.53 kB against a 500 kB budget.** Pre-existing.
+- **The bundle is 738.63 kB against a 500 kB budget.** Pre-existing.
   It went 695.96 → 702.98 (Wave 23, the glance card) → 704.14 (Wave 21's
-  mint-writes-pages) → 704.53 (the captured book's sentence).
+  mint-writes-pages) → 704.53 (the captured book's sentence) → 737.93
+  (waves 24 through 32, unattributed between them) → 738.63 (Wave 30,
+  the glance's placement).
+
+  The 737.93 baseline was re-measured on 2026-08-22 on `cf995c5` in a
+  clean detached worktree, per this file's own rule below.
 
   **THIS FIGURE WAS 145 kB STALE AND IS THE SECOND TIME THIS LIST HAS DONE
   IT.** It read 552.88 kB here and 550.51 kB in §1 on 2026-08-20, when the

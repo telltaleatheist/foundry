@@ -142,6 +142,7 @@ import {
   mergedMetadata,
   metadataInEffect,
   migrateLedger,
+  mintedFromPhotographs,
   mintedStep,
   orphanedBanks,
   originOf,
@@ -3186,6 +3187,31 @@ async function documentOfStep(
      * has replaced it — the archive is the only place the untouched scan still is,
      * and that is what the revert row is for.
      */
+    /*
+     * ── A MINT NAMES NO DOCUMENT, BECAUSE IT NAMES A FOLDER ───────────────────
+     *
+     * A minted step's payload is `archive/<stem> pages`, a DIRECTORY of rectified
+     * page images (`recordMint`, above). Every line below this one is about a
+     * FILE — a live copy to prefer over the archive, an existence test whose
+     * answer a viewer is then pointed at — and `exists` cheerfully says yes to a
+     * folder, so this used to answer with the directory. What happened next was
+     * the defect Owen reported: the renderer handed that path to `openFile`,
+     * `openDocument` read no extension off it and refused, and the app said the
+     * pages were no longer there while they sat on the disk.
+     *
+     * NULL IS THE HONEST ANSWER and it is the same one a read row gets: this
+     * position has no document of its own. What it HAS is a picture, and the
+     * picture is the pages — `positionView.pages` is what routes them, exactly as
+     * `sheet` routes the rows below (`showPages`, core/position-sync.service.ts).
+     *
+     * IT IS ASKED BEFORE THE LIVE COPY rather than after, because
+     * `reconcileLivePdf` is a directory walk and a manifest reconcile run for an
+     * answer that is thrown away — and because a project that once held a PDF and
+     * has since been minted could have a live copy whose `from` is some earlier
+     * archive entry. Ordering the test first means no arrangement of layers can
+     * make a mint resolve to a file that is not its pages.
+     */
+    if (mintedFromPhotographs(view.step)) return null;
     const live = view.step.action === 'import' ? await liveCopyOf(resolved, manifest, view.step.payload) : null;
     return await onDisk(resolved, live ?? view.step.payload);
   }

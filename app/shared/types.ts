@@ -3571,6 +3571,40 @@ export interface CaptureOpened {
 }
 
 /**
+ * THE PAGES A MINT MADE, ready to be drawn — what `capture:pages-load` answers.
+ *
+ * ── Why this is a door of its own and not part of the recipe ───────────────
+ *
+ * Because it is about a different thing. `CaptureOpened` describes the
+ * PHOTOGRAPHS and the recipe over them — what the light table arranges, crops
+ * and strikes — and it moves every time somebody drags a corner. This describes
+ * a BOOK that has been made: a folder of rectified page images in `archive/`,
+ * fixed at the moment of the mint and never edited again. Folding them together
+ * would make every recipe load carry a listing of a directory the table has no
+ * use for, and would tie a finished book's contents to a document that is still
+ * being written.
+ *
+ * ── The token is the same host, and that is deliberate ────────────────────
+ *
+ * `foundry-file://capture/<token>/<name>`, minted for the pages directory by the
+ * same allow-list the working copies use (`captureServedFile`). One host, one
+ * refusal, one shape of URL for every picture this stage serves.
+ */
+export interface CaptureMintedPages {
+  /**
+   * The page images, in reading order, as plain basenames.
+   *
+   * NAMES AND NOT URLS, because composing the URL is the renderer's job and it
+   * already does it for every other picture in this stage — one spelling of
+   * `foundry-file://capture/<token>/<name>` in the app rather than two that can
+   * disagree about escaping.
+   */
+  pages: string[];
+  /** Mints them onto the door's allow-list. See `CaptureOpened.token`. */
+  token: string;
+}
+
+/**
  * What `capture:create` answers with — an empty project that already exists.
  *
  * THE DIRECTORY IS THE POINT. Every other project in this app is born by

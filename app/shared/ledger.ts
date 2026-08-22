@@ -573,6 +573,36 @@ export function mintedStep(
 }
 
 /**
+ * IS THIS ROW A MINT — a book made HERE, out of photographs this project holds?
+ *
+ * ── The test is the parent, and it is the marker `mintedStep` chose ─────────
+ *
+ * A mint's action is `import` on purpose (the essay above `mintedStep` has the
+ * seven sites that made that the right answer), so the action alone cannot tell
+ * a minted book from a scan somebody dragged in. What tells them apart is the
+ * PARENT: `originStep` is the only other construction site of an import step and
+ * it hard-codes `parent: null`, and `parseLedger` refuses a ledger with two
+ * roots — so an import step with a parent is a mint BY CONSTRUCTION and there is
+ * nothing to keep in sync.
+ *
+ * ── Why it is a function here rather than a comparison at the call sites ────
+ *
+ * Because three layers ask it now and they must not drift: `positionView.pages`
+ * (below) decides what surface the app puts on screen for this row,
+ * `documentOfStep` (electron/projects.ts) decides that there is no FILE at it,
+ * and the door that serves the page images decides which mint it was asked
+ * about. Two spellings of `action === 'import' && parent !== null` is the shape
+ * this file's own history keeps warning about: the day one of them grows a
+ * clause, a row opens one surface and resolves to another.
+ *
+ * A null step is false rather than a refusal, for `positionView`'s reason: a
+ * project with nothing recorded yet stands nowhere, and nowhere is not a mint.
+ */
+export function mintedFromPhotographs(step: LedgerStep | null): boolean {
+  return step !== null && step.action === 'import' && step.parent !== null;
+}
+
+/**
  * What a step is CALLED, in the app's voice — never a filename.
  *
  * The count is in the label rather than beside it because the row is one line
@@ -3083,6 +3113,39 @@ export interface PositionView {
    */
   sheet: boolean;
   /**
+   * True when what stands at this position is THE PAGES A MINT MADE — a folder
+   * of rectified page images, drawn one under the next.
+   *
+   * ── The third picture, and why the position had to grow a name for it ──────
+   *
+   * There were two: a DOCUMENT (`showDocument` points a viewer at a file) and the
+   * SHEET (`sheet`, the book file's blocks). A captured book is neither. The mint
+   * writes page images into `archive/` and files no document at all — Owen ruled
+   * the container out (*"i agree that this doesnt need to be a pdf"*,
+   * `recordMint`) — so the row that names it has no file for a viewer to open and
+   * no bank for a sheet to draw. Before this field it resolved to the FOLDER, and
+   * a folder handed to `openFile` is a path with no extension: the open was
+   * refused and the app said the pages were no longer there, about pages that
+   * were sitting on the disk.
+   *
+   * ── What the person asked for ──────────────────────────────────────────────
+   *
+   * *"when i do finalize, it creates 'this book' … but when i click it, i
+   * expected it to take me to a pdf-like layout (even if we havent assembled into
+   * a pdf officially yet) where i can scroll through each page as it would look
+   * in a pdf. then i can run OCR on it, then i can strike things"* (Owen,
+   * 2026-08-22). The parenthesis is the whole design: there is no PDF and there
+   * is not going to be one, so what the row opens is the pages themselves.
+   *
+   * ── It is EXCLUSIVE OF `sheet` and of a document, by construction ──────────
+   *
+   * `sheet` is true for an import only where the project arrived as an EPUB, and
+   * a project that arrived as an EPUB has a null-parented origin — so no step can
+   * ever answer true to both. The one caller routes on `sheet` first anyway,
+   * because a reading hung off a mint is a `read` row and shows the book.
+   */
+  pages: boolean;
+  /**
    * The edit steps whose ops are replayed over the book here, oldest first.
    *
    * `editsInEffect`, unwrapped, and it is in the picture for the reason every
@@ -3134,6 +3197,15 @@ export function positionView(ledger: ProjectLedger): PositionView {
       || step.action === 'translate'
       || (step.action === 'import' && importedAsEpub(ledger))
     ),
+    /*
+     * THE THIRD PICTURE, ASKED HERE FOR THE REASON `sheet` IS. The renderer
+     * routes on it and main resolves documents by it, and those two sides
+     * agreeing is not optional: a row that opened the page scroll while main
+     * answered the archive folder would be a viewer and a resolver describing
+     * two different things about one click. `mintedFromPhotographs` is the one
+     * spelling of the test, and this is the one place the position asks it.
+     */
+    pages: mintedFromPhotographs(step),
     edits: editsInEffect(ledger),
   };
 }

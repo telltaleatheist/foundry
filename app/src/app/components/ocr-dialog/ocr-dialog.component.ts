@@ -8,7 +8,7 @@ import type { JobRequest } from '@shared/types';
 import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';
 import { QueueService } from '../../core/queue.service';
-import { OpenDocumentsService } from '../../core/documents.service';
+import { OpenDocumentsService, type Tab } from '../../core/documents.service';
 import { StageService } from '../../core/stage.service';
 import { UiService } from '../../core/ui.service';
 import { api, hosted } from '../../core/foundry';
@@ -382,9 +382,35 @@ export class OcrDialogComponent {
    * would queue three hours of GPU against a folder that does not exist yet.
    */
   protected readonly sources = computed(() => [...new Set(this.documents.tabs()
-    .filter((tab) => tab.kind === 'pdf'
-      || (tab.kind === 'capture' && (this.projects.projectFor(tab.path)?.pages ?? false)))
+    .filter((tab) => tab.kind === 'pdf' || this.photographed(tab))
     .map((tab) => tab.path))]);
+
+  /**
+   * Is this tab a captured book with pages on the disk?
+   *
+   * ── BOTH FACES OF ONE PROJECT, WHICH IS WHY IT IS A FUNCTION NOW ───────────
+   *
+   * It used to be `kind === 'capture'`, spelled at three sites, and that was the
+   * whole truth for exactly as long as a capture project had one surface. It has
+   * two: the LIGHT TABLE, where the photographs are arranged, and the PAGES a
+   * mint made, which is what clicking the minted row opens (`app-pages-view`).
+   * They name the same project directory — which is the path this dialog offers
+   * and `planReading` recognises on the other side — so the reading is identical
+   * whichever of them is in front of the person.
+   *
+   * Left as it was, somebody who clicked their minted book and then pressed OCR
+   * met the empty state telling them to open a PDF first, standing in front of
+   * the pages they had just made. The one kind of book that cannot arrive with
+   * text in it would have been the one kind that could not be read.
+   *
+   * THE PAGES TEST SURVIVES UNCHANGED and is still the half that matters: before
+   * a mint there is nothing on the disk, and offering it would queue three hours
+   * of GPU against a folder that does not exist yet.
+   */
+  private photographed(tab: Tab): boolean {
+    return (tab.kind === 'capture' || tab.kind === 'pages')
+      && (this.projects.projectFor(tab.path)?.pages ?? false);
+  }
 
   /**
    * A light table is open and has nothing to read yet — photographs, no mint.
@@ -399,7 +425,7 @@ export class OcrDialogComponent {
   /** Is this candidate a folder of photographed pages rather than a document? */
   protected pagesSource(candidate: string): boolean {
     return this.projects.projectFor(candidate)?.pages === true
-      && this.documents.tabs().some((tab) => tab.kind === 'capture' && tab.path === candidate);
+      && this.documents.tabs().some((tab) => this.photographed(tab) && tab.path === candidate);
   }
 
   protected readonly source = computed(() => {
@@ -425,10 +451,11 @@ export class OcrDialogComponent {
   private readonly suggested = computed(() => {
     const tab = this.stage.activeDocument();
     if (tab === null) return null;
-    // The light table in front of you is the book in front of you, once it has
-    // pages. `sources` is the one rule about what may be read, so it is asked
-    // rather than repeated here.
-    if (tab.kind === 'capture') return this.sources().includes(tab.path) ? tab.path : null;
+    // The captured book in front of you is the book in front of you, once it has
+    // pages — the light table and the pages a mint made are two faces of one
+    // project and name one directory. `sources` is the one rule about what may
+    // be read, so it is asked rather than repeated here.
+    if (this.photographed(tab)) return this.sources().includes(tab.path) ? tab.path : null;
     return tab.kind === 'pdf' ? tab.path : null;
   });
 

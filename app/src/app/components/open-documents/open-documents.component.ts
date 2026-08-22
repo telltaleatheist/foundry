@@ -15,6 +15,7 @@ import {
 } from '@shared/stages';
 import type { HostNodeAction } from '@shared/host-ops';
 import { languageNameFor } from '@shared/languages';
+import { mintedFromPhotographs } from '@shared/ledger';
 import type {
   HostNode,
   HostNodeProgress,
@@ -3445,6 +3446,10 @@ function iconForTab(tab: Tab): string {
   // either exists, and drawing it as a page would announce it as a document the
   // reader went and opened by hand.
   if (tab.kind === 'capture') return 'ft-capture';
+  // A minted book wears the SCAN's mark, and that is what it is: pages
+  // photographed and rectified, with nothing read out of them yet. The book's
+  // own symbol would promise a reading that has not happened.
+  if (tab.kind === 'pages') return 'ft-scan';
   return tab.kind === 'book' ? 'ft-book' : 'ft-page';
 }
 
@@ -3502,7 +3507,17 @@ function iconForHostKind(kind: HostNode['kind']): string {
 function titleForStep(step: LedgerStep): string {
   switch (step.action) {
     case 'import':
-      return 'The original';
+      /*
+       * A MINT IS AN IMPORT AND IS NOT "The original", which is a card this tree
+       * drew for two waves and which sent Owen looking for his book somewhere
+       * else. A minted step's action is `import` on purpose — seven sites branch
+       * on it and every one is right that way (`mintedStep`, shared/ledger.ts) —
+       * but the WORDS on the card are not one of those seven: what this row names
+       * is the pages the mint made out of this project's own photographs, and
+       * nothing was imported from anywhere. The card now says what pressing it
+       * opens, which is the rule every other title on this tree keeps.
+       */
+      return mintedFromPhotographs(step) ? 'The pages' : 'The original';
     /*
      * A NOUN, on the same precedent as "The original" and "The book": what a
      * person wants off this card is the artifact, not the act. Standing here is

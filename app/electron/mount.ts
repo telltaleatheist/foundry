@@ -95,7 +95,7 @@ import { pathToFileURL } from 'node:url';
 import { net, protocol, session } from 'electron';
 
 import { bookFigureFile } from './book';
-import { captureDerivedFile } from './capture';
+import { captureServedFile } from './capture';
 import { openDocument } from './documents';
 import { type FoundryHost, recordHost } from './host';
 import {
@@ -299,24 +299,31 @@ function registerFileProtocol(): void {
 
     if (url.host === 'capture') {
       /*
-       * `/<token>/<name>` — a working copy or a thumbnail of ONE capture
-       * project, out of the single directory that token was minted for
-       * (`captureDerivedFile`, electron/capture.ts). The shape is the book
-       * host’s above, deliberately: allow-list, plain basename, 403 for
-       * anything else, and no path check anybody has to keep right.
+       * `/<token>/<name>` — one picture of ONE capture project, out of the
+       * single directory that token was minted for (`captureServedFile`,
+       * electron/capture.ts). The shape is the book host’s above,
+       * deliberately: allow-list, plain basename, 403 for anything else, and
+       * no path check anybody has to keep right.
        *
-       * THE ORIGINALS HAVE NO HOST AND CANNOT BE GIVEN ONE FROM HERE. The
-       * token maps to `capture/derived/`, and every file under it is
-       * reconstructible from the photographs plus the recipe. The photographs
-       * themselves — which for an archive shoot may be the only copies that
-       * exist — are not addressable through this scheme at all.
+       * TWO KINDS OF PICTURE COME THROUGH IT: the working copies and
+       * thumbnails under `capture/derived/`, which the light table draws, and
+       * the rectified pages a mint wrote into `archive/`, which the page view
+       * draws. One host rather than two, because the decision they need is the
+       * same decision — did this process register that directory — and a
+       * second host would be a second copy of it to keep right.
+       *
+       * THE ORIGINALS HAVE NO HOST AND CANNOT BE GIVEN ONE FROM HERE. Every
+       * file either token reaches is one this app MADE, and remakes on demand
+       * from the photographs plus the recipe. The photographs themselves —
+       * which for an archive shoot may be the only copies that exist — are not
+       * addressable through this scheme at all.
        */
       const segments = url.pathname.split('/').filter((part) => part.length > 0);
       const token = segments.shift();
       if (token === undefined || segments.length !== 1) {
         return new Response('No project and picture were named.', { status: 400 });
       }
-      const picture = captureDerivedFile(token, decodeURIComponent(segments[0]!));
+      const picture = captureServedFile(token, decodeURIComponent(segments[0]!));
       if (picture === null) {
         return new Response('That project\u2019s photographs are not open in this app.', { status: 403 });
       }

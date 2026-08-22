@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 
 import { CaptureViewComponent } from '../capture-view/capture-view.component';
 import { BookViewComponent } from '../book-view/book-view.component';
+import { PagesViewComponent } from '../pages-view/pages-view.component';
 import { PdfViewComponent } from '../pdf-view/pdf-view.component';
 import type { Tab } from '../../core/documents.service';
 
@@ -38,11 +39,17 @@ import type { Tab } from '../../core/documents.service';
  * like the PDF engine because there is no chunk to defer — it is this app's own
  * components over rows that arrive on an IPC call.
  *
- * THERE WERE FOUR KINDS AND THERE ARE TWO. `app-epub-view` rendered an unpacked
+ * AND THE THIRD KIND THAT IS NOT A FILE EITHER is a captured book's PAGES —
+ * `app-pages-view`, the folder of rectified images a mint wrote, scrolled like a
+ * PDF because that is what the person asked for and there is no PDF to give
+ * them. It sits beside the light table rather than replacing it: one project has
+ * a table of photographs AND, once it has been minted, a book made from them.
+ *
+ * THE KINDS THAT WENT ARE NOT COMING BACK. `app-epub-view` rendered an unpacked
  * book in a sandboxed <iframe> and `app-html-editor` showed one of its chapters
  * as text beside it; both are deleted with the editing world they belonged to
- * (docs/RENDERER.md §7), and what is drawn here is a document this app SHOWS or
- * the book it EDITS.
+ * (docs/RENDERER.md §7). What is drawn here is a document this app SHOWS, the
+ * book it EDITS, or one of the two surfaces a capture project has.
  *
  * The empty state is Home's job now, not this component's: this only ever runs
  * with a tab, and a viewer with nothing in it is a screen the workspace does not
@@ -50,7 +57,7 @@ import type { Tab } from '../../core/documents.service';
  */
 @Component({
   selector: 'app-viewer',
-  imports: [BookViewComponent, CaptureViewComponent, PdfViewComponent],
+  imports: [BookViewComponent, CaptureViewComponent, PagesViewComponent, PdfViewComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (tab().kind === 'book') {
@@ -64,6 +71,16 @@ import type { Tab } from '../../core/documents.service';
         would be a cost with nothing bought.
       -->
       <app-capture-view [tab]="tab()" />
+    } @else if (tab().kind === 'pages') {
+      <!--
+        THE BOOK A MINT MADE, and it is here rather than in the PDF branch below
+        because there is no PDF: a mint writes rectified page images and files no
+        container (Owen's ruling, \`recordMint\`). NOT DEFERRED, for the light
+        table's reason — it is one component drawing <img> elements, and a
+        placeholder frame between clicking a row and seeing the pages would be a
+        cost with nothing bought.
+      -->
+      <app-pages-view [tab]="tab()" />
     } @else {
       <!--
         @defer, so pdf.js is its own chunk rather than half of the bundle the

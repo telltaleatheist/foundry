@@ -27,6 +27,7 @@ import { cancelSetup, setupWslEnv } from './backend-setup';
 import {
   ensureCapture,
   intakePhotos,
+  loadMintedPages,
   mintAbort,
   mintBegin,
   mintCommit,
@@ -1665,6 +1666,28 @@ export function registerIpc(): void {
   ipcMain.handle('capture:intake', (_event, projectDir: string, paths: string[]) =>
     intakePhotos(projectDir, paths));
   ipcMain.handle('capture:recipe-load', (_event, projectDir: string) => openCapture(projectDir));
+  /*
+   * THE BOOK THE MINT MADE, LISTED — and it is a READ of a directory this
+   * process chose, which is why it admits nothing.
+   *
+   * `document:open-path` exists to decide whether a path may be opened at all,
+   * and `ledger:document-at` admits what it resolves because the renderer is
+   * about to point a viewer at it. Neither applies here: nothing is opened and
+   * no path crosses the bridge. What comes back is a list of BASENAMES and a
+   * token, and the token is the whole authorisation — the pictures are then
+   * fetched on `foundry-file://capture/<token>/<name>`, where the allow-list
+   * refuses a directory this process never registered. A door that admitted a
+   * folder for being asked about it would be a door granting access to a folder
+   * for being asked about it, which is the sentence `capture:recipe-load` is
+   * already written under.
+   *
+   * WHICH mint, IS THE POSITION'S ANSWER (`loadMintedPages`), so this handler
+   * takes the project and nothing else — exactly as `book:load` does, for the
+   * identical reason: the tab names a directory that never moves, and the row
+   * somebody is standing on is what decides the contents.
+   */
+  ipcMain.handle('capture:pages-load', (_event, projectDir: string) =>
+    loadMintedPages(projectDir));
   /*
    * REMOVAL, WHICH IS THE ONE DOOR THAT DELETES ANYTHING IRREPLACEABLE. It is
    * allowed to because the bank holds copies of files that still exist where

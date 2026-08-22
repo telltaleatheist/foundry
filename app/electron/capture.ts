@@ -63,6 +63,7 @@ import { nativeImage } from 'electron';
 import type {
   CaptureIntakeProgress,
   CaptureMintBegun,
+  CaptureMintedPages,
   CaptureMintPage,
   CaptureOpened,
   CapturePage,
@@ -88,8 +89,9 @@ import {
   splitFromFraction,
   WHOLE_FRAME,
 } from '../shared/capture';
+import { mintedFromPhotographs, positionOf } from '../shared/ledger';
 import { beginMint, cancelHere, mintCancelled, noteMintPage, settleMint } from './job-queue';
-import { currentArrangement, readManifest, recordMint } from './projects';
+import { currentArrangement, ledgerOf, readManifest, recordMint } from './projects';
 import { writeAtomically } from './atomic';
 
 // Re-exported so a caller that already imports this module does not need to
@@ -134,18 +136,36 @@ function recipeFile(projectDir: string): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /*
- * `foundry-file://capture/<token>/<name>` — the working copies and thumbnails of
- * ONE project's `derived/`, and nothing else on this disk.
+ * `foundry-file://capture/<token>/<name>` — ONE FLAT DIRECTORY of this stage's
+ * pictures, and nothing else on this disk.
  *
  * Minted per directory and reused, exactly like the book host's: the map stays
  * the size of the library rather than growing with every project open. The token
  * is the whole authorisation — a URL the renderer composes for a directory
  * nothing registered meets a 403 rather than a read.
+ *
+ * ── TWO DIRECTORIES ARE SERVED NOW, AND THE TOKEN IS WHY THAT IS SAFE ──────
+ *
+ * It used to be `derived/` alone, and the names said so (`tokenForDerived`,
+ * `captureDerivedFile`). The minted PAGES are the second: a folder under
+ * `archive/` holding the rectified page images the mint wrote, which the page
+ * view draws one under the next. They are a different layer with a different
+ * retention, so serving them is a decision and not a widening that happened by
+ * itself — and it is the same decision, made twice, on the same terms: a caller
+ * inside this module asks for a token for a directory it named, and nothing
+ * outside can ask for a token at all. A renderer that composed a URL for a
+ * folder nobody registered still meets a 403.
+ *
+ * THE ORIGINALS STILL HAVE NO HOST AND CANNOT BE GIVEN ONE FROM OUTSIDE. Both
+ * served directories hold files this app MADE — decoded working copies,
+ * thumbnails, rectified pages — every one of them remakeable from the
+ * photographs plus the recipe. The photographs themselves, which for an archive
+ * shoot may be the only copies that exist, are addressable through no host here.
  */
 const captureTokens = new Map<string, string>();
 const captureDirs = new Map<string, string>();
 
-function tokenForDerived(dir: string): string {
+function tokenForServing(dir: string): string {
   const known = captureTokens.get(dir);
   if (known !== undefined) return known;
   const token = randomUUID();
@@ -159,11 +179,12 @@ function tokenForDerived(dir: string): string {
  * this process never agreed to serve.
  *
  * THE NAME MUST BE A PLAIN BASENAME, on `bookFigureFile`'s argument and with its
- * refusals: intake writes `derived/` flat, so a separator in the name is not a
- * file this app made — it is a traversal, and it meets the same null an unknown
- * token does rather than a `resolve()` that might climb.
+ * refusals: both served directories are FLAT — intake writes `derived/` flat and
+ * a mint writes its pages flat — so a separator in the name is not a file this
+ * app made. It is a traversal, and it meets the same null an unknown token does
+ * rather than a `resolve()` that might climb.
  */
-export function captureDerivedFile(token: string, name: string): string | null {
+export function captureServedFile(token: string, name: string): string | null {
   const dir = captureDirs.get(token);
   if (dir === undefined) return null;
   if (name.length === 0 || name.includes('/') || name.includes('\\') || name.includes('..')) {
@@ -811,12 +832,97 @@ export async function openCapture(projectDir: string): Promise<CaptureOpened> {
   await fsp.mkdir(dir, { recursive: true });
   return {
     recipe: await readRecipe(projectDir),
-    token: tokenForDerived(dir),
+    token: tokenForServing(dir),
     // Resolved in projects.ts against the catalogue's chain, so this and the
     // step list's `current` marker are one answer to one question.
     mintedFrom: await currentArrangement(projectDir),
   };
 }
+
+/**
+ * THE PAGES A MINT MADE, listed and served — everything the page view needs.
+ *
+ * ── What this answers, in the person's own words ───────────────────────────
+ *
+ * *"when i do finalize, it creates 'this book' … but when i click it, i expected
+ * it to take me to a pdf-like layout (even if we havent assembled into a pdf
+ * officially yet) where i can scroll through each page as it would look in a
+ * pdf"* (Owen, 2026-08-22). The parenthesis is the reason this door exists at
+ * all: the mint writes page images and no container (`recordMint`,
+ * electron/projects.ts), so there is no file for the PDF viewer to open and the
+ * pages have to be listed and served as themselves.
+ *
+ * ── IT READS THE POSITION, WHICH IS WHAT MAKES RE-MINTS REACHABLE ──────────
+ *
+ * The tab that draws these names the PROJECT, exactly as the book tab does, so
+ * the question "which pages" has to be answered by the pointer rather than by
+ * the tab's path. A project can hold two mints — a re-mint is a NEW document and
+ * readings do not follow it (docs/CAPTURE.md) — and standing on either row is
+ * how you look at that one. The renderer re-asks on every move for the same
+ * reason `book:load` is re-asked: the path under the tab never changes and the
+ * answer does.
+ *
+ * A POSITION THAT IS NOT A MINT FALLS BACK TO THE NEWEST ONE rather than
+ * refusing. The pointer moves for reasons that have nothing to do with this tab
+ * — focusing a document, a step landing — and a page view that emptied itself
+ * because somebody clicked the light table's own row would be a surface that
+ * loses its contents to an unrelated gesture. The newest mint is the book this
+ * project currently is, which is the honest answer to "show me the pages" when
+ * the pointer is not pointing at a particular one.
+ *
+ * ── THE ORDER IS THE NAMES, AND THE NAMES ARE THE ORDER ────────────────────
+ *
+ * `mintCommit` writes `page-0001.jpg` upward, zero-padded to four digits,
+ * precisely so that the plain lexicographic sort a directory listing gives is
+ * reading order. Nothing here re-derives the arrangement from the recipe: the
+ * recipe is editable and these pages are not, so the folder is the only record
+ * of what this book actually says and the only one that cannot have moved on.
+ *
+ * A REFUSAL IS A SENTENCE. A project with no mint, or a mint whose folder
+ * somebody has moved, says so in the app's voice — the surface puts it on the
+ * notice strip — because a page view that drew nothing would look like a book
+ * with no pages in it.
+ */
+export async function loadMintedPages(projectDir: string): Promise<CaptureMintedPages> {
+  const manifest = await readManifest(projectDir);
+  const ledger = ledgerOf(manifest);
+  const standing = positionOf(ledger);
+  const step = mintedFromPhotographs(standing)
+    ? standing
+    : [...ledger.steps].reverse().find((row) => mintedFromPhotographs(row)) ?? null;
+  if (step === null) {
+    throw new CaptureError(
+      `${manifest.title} has no pages yet. Mint the photographs and the book they make is what `
+      + 'opens here.',
+    );
+  }
+  const dir = path.join(projectDir, ...step.payload.split('/'));
+  let names: string[];
+  try {
+    names = await fsp.readdir(dir);
+  } catch {
+    throw new CaptureError(
+      `The pages of ${manifest.title} are not where this project filed them, so there is nothing `
+      + 'to show. Minting the photographs again makes them anew.',
+    );
+  }
+  return {
+    // Sorted rather than trusted: `readdir` answers in whatever order the
+    // filesystem feels like, and on one of them that is creation order.
+    pages: names.filter((name) => SERVED_PAGE_TYPES.has(path.extname(name).toLowerCase())).sort(),
+    token: tokenForServing(dir),
+  };
+}
+
+/**
+ * What a minted page can be, so a stray file in the folder is not drawn as one.
+ *
+ * The mint writes JPEG and nothing else; the others are here because a person
+ * looking at their own project folder is entitled to have put a PNG in it, and
+ * because the day the mint's format changes this list is the one that has to
+ * know. Anything else — a `.DS_Store`, a note somebody left — is not a page.
+ */
+const SERVED_PAGE_TYPES = new Set(['.jpg', '.jpeg', '.png', '.webp']);
 
 /**
  * The same thing, for a project that does not have a recipe yet.
@@ -1464,7 +1570,7 @@ export async function intakePhotos(projectDir: string, paths: readonly string[])
     await writeAtomically(recipeFile(projectDir), Buffer.from(recipeBytes(next)));
     return {
       recipe: next,
-      token: tokenForDerived(derived),
+      token: tokenForServing(derived),
       // An intake answers with an opening, so it answers the same question an
       // opening does. Null on a project that has never minted, which is every
       // project an intake is normally run on -- and NOT undefined, which is a

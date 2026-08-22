@@ -282,7 +282,8 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `capture:intake` | Dropped photographs: copy to the bank, hash, decode, working copy + thumbnail, EXIF time, recipe append. Answers added/duplicates/refused so a mixed drop is countable. |
 | `capture:mint-abort` | Abandon a mint in flight; the partial assembly is swept. Refuses by name until the mint merge. |
 | `capture:mint-begin` | Open a mint: the page list with pixel-space quads and output sizes, one id to write against. Refuses by name until the mint merge. |
-| `capture:mint-commit` | Close the mint: assemble the PDF, set the manifest archive, append the step. Refuses by name until the mint merge. |
+| `capture:mint-commit` | Close the mint: move the rectified pages into `archive/`, set the manifest archive, append the step. |
+| `capture:pages-load` | The pages a mint made, in reading order, plus a door token that serves them — what the minted row opens (`app-pages-view`). Reads the POSITION to decide which mint, so a re-mint's older row still opens its own book. Names only, never paths: the pictures come back over `foundry-file://capture/<token>/<name>`. Admits nothing. |
 | `capture:mint-page` | One rasterized page's JPEG, renderer to main, so no full-book buffer ever exists in one heap. Refuses by name until the mint merge. |
 | `capture:recipe-load` | The recipe plus a fresh door token — how a reopened project gets its light table back. |
 | `capture:recipe-save` | The whole recipe document, validated before it touches disk. |
