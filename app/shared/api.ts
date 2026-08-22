@@ -219,7 +219,16 @@ export interface FoundryApi {
   confirmReRead(prompt: ReReadPrompt): Promise<boolean>;
   /**
    * "These changes are not applied yet" — asked before Export, Translate,
-   * Simplify or a host act runs over a book with a stack waiting on it.
+   * Simplify, a host act or a move to another step runs over a book with a stack
+   * waiting on it.
+   *
+   * THE LIST GREW ON 2026-08-22 and so did the weight of the answers. Owen:
+   * *"any action they take, whether it's switching to a different step or
+   * narrating or anything at all, should ask if they want to apply changes in a
+   * modal. discard/apply changes."* The act crossing this seam is therefore an
+   * `UnappliedAct` rather than a `MakeAct`, and the answer is one of two rather
+   * than one of three — see `UnappliedAnswer`, which carries the gravestone for
+   * the one that went.
    *
    * ── The defect ──────────────────────────────────────────────────────────────
    *
@@ -234,9 +243,9 @@ export interface FoundryApi {
    * the book, which act — and main composes, because the one thing the renderer
    * must never do to this dialog is write its own copy.
    *
-   * `'cancel'` IS WHAT AN UNANSWERED QUESTION MEANS, and it is the only one of the
-   * three that changes nothing at all. A dismissal must never be read as consent to
-   * spend hours making the wrong book.
+   * `'cancel'` IS WHAT AN UNANSWERED QUESTION MEANS, and it is now the only
+   * answer that changes nothing at all — the other two record a step or destroy
+   * a stack. A dismissal must never be read as consent to either.
    */
   confirmUnapplied(warning: UnappliedWarning): Promise<UnappliedAnswer>;
 

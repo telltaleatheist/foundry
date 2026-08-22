@@ -1199,7 +1199,9 @@ async function cropRenders(
   python?: string,
 ): Promise<readonly DotsCropped[]> {
   const cropped = await cropPageRenders({
-    pdfPath,
+    // The bank route always has a document — `vlm-convert` is the command that
+    // takes one — so this face is named here rather than plumbed through.
+    source: { kind: 'pdf', path: pdfPath },
     dpi: VLM_DPI,
     cropsDir: path.join(rendersDir, 'crops'),
     requests: requests.map((r) => ({ page: r.page, box: r.box, name: r.name })),

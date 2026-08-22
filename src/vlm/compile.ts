@@ -599,9 +599,20 @@ function chapterBody(
         if (format === 'txt') break;
         if (row.image === undefined) {
           throw new CompileError(
+            /*
+             * THE ADVICE HAS TO BE TRUE IN BOTH FACES, and until Wave 37 it was
+             * true in one. It used to say "with the archived original beside
+             * them", which a person reads as A PDF — and the book that most
+             * often reaches this refusal is a CAPTURED one, whose archive is a
+             * folder of photographs and never was a document. Somebody following
+             * that sentence would go looking for a file that does not exist and
+             * conclude the pixels were lost. The pages are the pages, whichever
+             * shape they arrived in, so that is what it says now.
+             */
             `"${row.id}" is a picture and this book never had its figures cut, so there is nothing to `
-            + 'put on the page. Make the book again from the pages it was read out of, with the '
-            + 'archived original beside them, and the figures are cut in seconds.',
+            + 'put on the page. Make the book again from the pages it was read out of — the scanned '
+            + 'document, or the photographs of the pages themselves — and the figures are cut in '
+            + 'seconds.',
           );
         }
         const file = images.get(row.image);

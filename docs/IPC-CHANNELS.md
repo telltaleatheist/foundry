@@ -237,13 +237,24 @@ closing without the per-tab question ever running).
   a book with nothing held, or a REFUSAL with a sentence and a count when the
   held stack was made at another step or over a reading that has since moved. It
   never adopts silently and never scraps silently.
-- `book:pending-clear` (invoke) deletes it. Two callers, both a person speaking:
-  an Apply, and the closing card's Discard.
+- `book:pending-clear` (invoke) deletes it. Three callers, every one of them a
+  person speaking: an Apply, the closing card's Discard, and — since Owen's
+  2026-08-22 ruling — the unapplied card's Discard.
 - `book:confirm-unapplied` (invoke) is a QUESTION door in
-  `document:confirm-close`'s exact shape — `Asked<UnappliedAnswer>`, three
-  answers (`apply` / `without` / `cancel`), main composing every sentence. It is
-  raised before Export, Translate, Simplify and any host act pressed in this
-  window.
+  `document:confirm-close`'s exact shape — `Asked<UnappliedAnswer>`, main
+  composing every sentence. **Both halves of its payload changed on 2026-08-22**
+  and a keeper mirroring the types has to move with them:
+  - `UnappliedWarning.act` widened from `MakeAct` to `UnappliedAct`, which is
+    `MakeAct` plus `'stand'` — the card now stands in front of a move to another
+    step as well as in front of the four make-acts. `MakeAct` itself is
+    unchanged; a new union was added rather than a fifth member, because half a
+    dozen other tests mean "an act that makes a book" by it.
+  - `UnappliedAnswer` went from `'apply' | 'without' | 'cancel'` to
+    `'apply' | 'discard' | 'cancel'`. `without` ("continue without them") is
+    retired; `discard` DESTROYS the stack — the pane's copy, the parked copy and
+    the sidecar — and then runs the act against the book as recorded. `cancel` is
+    no longer a button: the card offers exactly two, and a dismissal (Escape or
+    the scrim) is what answers `cancel`.
 
 **One payload changed inside a channel that did not.** `document:confirm-close`
 answers the same `Asked<CloseAnswer>` with the same three keys, and its WORDS are
@@ -270,11 +281,11 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `backend:setup-run` | Build the reading environment inside a WSL distro; streams over `backend:setup-log`. |
 | `book:amend` | Amend the tip edit step's ops in place, under the ledger's lock. |
 | `book:apply` | Land the proof sheet's stack of ops as a new edit step. |
-| `book:confirm-unapplied` | Compose the "these changes are not applied yet" card, before Export, Translate, Simplify or a host act runs over a book pane holding a stack. Main owns the sentences. |
+| `book:confirm-unapplied` | Compose the "these changes are not applied yet" card, before Export, Translate, Simplify, a host act or a move to another step runs over a book pane holding a stack. Two answers — Apply changes, Discard changes — plus dismissal. Main owns the sentences. |
 | `book:correct` | A corrected paragraph on a TRANSLATED position — a records correction, never an op. |
 | `book:load` | The book at a project's position, as blocks the renderer draws; may spawn the engine to make it. |
 | `book:load-at` | The same replay resolved to a NAMED step rather than to the pointer — Compare's read-only column. |
-| `book:pending-clear` | Throw the held stack away — the one sanctioned scrap, called by an Apply and by the closing card's Discard and by nothing else. |
+| `book:pending-clear` | Throw the held stack away — the sanctioned scrap, called by an Apply, by the closing card's Discard, by the unapplied card's Discard, and by nothing else. |
 | `book:pending-read` | The held stack back, or a refusal naming the file when it was made at another step or over a reading that has since moved. |
 | `book:pending-save` | The book pane's UNAPPLIED stack, written atomically to the project's sidecar. Not history: no step names it and no replay reads it. |
 | `book:view` | A finished export, exploded and returned read-only. |

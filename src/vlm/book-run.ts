@@ -17,23 +17,43 @@
  * rather than recomputed, which is what lets the seams it could not decide be
  * fixed by hand and stay fixed.
  *
- * NO MODEL, AND NO RASTERISER UNLESS THERE IS A PICTURE AND A PDF TO CUT IT OUT
+ * NO MODEL, AND NO RASTERISER UNLESS THERE IS A PICTURE AND A PAGE TO CUT IT OUT
  * OF. A bank written by this version records the render size and the pixel
  * budget beside every answer, which is the entire frame a box needs; a bank old
  * enough to lack them is REFUSED BY NAME rather than rendered again behind
- * somebody's back. What `--pdf` buys is the one thing arithmetic over the bank
+ * somebody's back. What a source buys is the one thing arithmetic over the bank
  * cannot produce: a Picture block is pixels by definition, and the pixels are in
- * the archived original. Only the pages that carry one are rasterised, so a
- * three-hundred page book with four figures pays for four pages, and a run with
- * no `--pdf` still costs about as long as reading the bank off the disk.
+ * the pages the book was read out of. Only the pages that carry one are opened,
+ * so a three-hundred page book with four figures pays for four pages, and a run
+ * with no source still costs about as long as reading the bank off the disk.
+ *
+ * ── A REFLOW TAKES PAGES TOO — Wave 37, and it is the read's own lesson ──────
+ *
+ * `--pdf` was this command's only way to have any pixels, and the read stopped
+ * believing that in Wave 34: *"a read takes PAGES — a PDF is one way to have
+ * some pages, not the only way"* (907dc59). The reflow never learned it, and the
+ * asymmetry was the whole of a defect Owen hit exporting a captured book — its
+ * archive is a folder of page photographs, so its reflow ran with no source, cut
+ * nothing, and every Picture block in it refused at export while the pixels sat
+ * in the archive one directory away. So `--pages <dir>` stands beside `--pdf`
+ * here exactly as it does there, over the same `VlmSource`, ordered by the same
+ * `pagesInDirectory`, and everything downstream of the crop cannot tell which
+ * face it was handed.
  */
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { ensureDir } from '../fsdirs.js';
-import { bookFile, figureName, formatBookFile, type BookRow, type BookSource } from './book-file.js';
-import { cropPageRenders } from './bridge.js';
+import {
+  bookFile,
+  figureName,
+  formatBookFile,
+  type BookFigures,
+  type BookRow,
+  type BookSource,
+} from './book-file.js';
+import { cropPageRenders, pagesInDirectory, sourceName, type VlmSource } from './bridge.js';
 import { DotsPageError, parseDotsPage, type DotsBlock, type DotsParsedPage } from './dots.js';
 import { openPageImages, reflowBook, type DotsCrop } from './dots-book.js';
 import { VLM_DPI } from './read.js';
@@ -55,8 +75,21 @@ export interface BookRunOptions {
    * The archived original, for the figure crops and for NOTHING else — it is
    * opened, never written, and a run without it writes a book with no images in
    * it and says so.
+   *
+   * EXACTLY ONE OF THIS AND `pagesDir`, or neither. See `figureSource`.
    */
   pdfPath?: string;
+  /**
+   * The archived PAGES, for the same one purpose — the photographs a capture
+   * project made, which are the book's leaves themselves.
+   *
+   * A SECOND FIELD RATHER THAN A SECOND MEANING FOR `pdfPath`, which is the
+   * app's own rule at the other end of this call (`bookAtPosition` keeps `pdf`
+   * and `pages` apart for the same reason): they are opened by different code,
+   * they are named by different things in the manifest, and a caller that
+   * conflated them would hand a directory to something that opens documents.
+   */
+  pagesDir?: string;
   /** The interpreter with PyMuPDF in it, where the crops need one. */
   python?: string;
   log: (line: string) => void;
@@ -113,7 +146,67 @@ function imagesDir(readingsPath: string): string {
   return `${resolved.replace(/\.jsonl$/i, '')}.images`;
 }
 
+/**
+ * The pages the figures will be cut out of, or null where the run was given
+ * none — and a refusal where it was given two.
+ *
+ * BOTH IS AS WRONG AS ONE IS RIGHT, and it is refused rather than resolved by a
+ * precedence rule, which is `sourceFor`'s ruling in src/vlm/read.ts and holds
+ * here for the same reason: there is no reading of "--pdf and --pages" that is
+ * obviously right, and a script that passes both would otherwise have its
+ * figures cut out of whichever one this file happened to test first.
+ *
+ * NEITHER IS NOT AN ERROR, and that is the difference from the read. A read with
+ * no pages has nothing to do at all; a reflow with no pages has a whole book to
+ * write and only its pictures to leave out — which it does, out loud, in
+ * `cutFigures`.
+ *
+ * THE ORDER OF THE PAGES IS `pagesInDirectory`'s AND IS NEVER RE-DERIVED HERE.
+ * That is the one rule that makes a figure land on the page it was printed on:
+ * the read banked its answer for page N against `pagesInDirectory(dir)[N - 1]`,
+ * and page N of this bank has to mean that same file or a crop comes off the
+ * next leaf. One function, called twice, is the only way that stays true when
+ * somebody's filenames are `IMG_2.jpg` through `IMG_130.jpg`.
+ */
+function figureSource(opts: BookRunOptions): VlmSource | null {
+  if (opts.pdfPath !== undefined && opts.pagesDir !== undefined) {
+    throw new BookRunError(
+      '--pdf and --pages are two different things to cut this book\'s figures out of: a document to '
+      + 'rasterise, and the photographs of the pages themselves. Pass one, or neither and no figure '
+      + 'is cut.',
+    );
+  }
+  if (opts.pdfPath !== undefined) {
+    const pdfPath = path.resolve(opts.pdfPath);
+    if (!fs.existsSync(pdfPath)) throw new BookRunError(`no such PDF: ${pdfPath}`);
+    return { kind: 'pdf', path: pdfPath };
+  }
+  if (opts.pagesDir === undefined) return null;
+  const dir = path.resolve(opts.pagesDir);
+  if (!fs.existsSync(dir)) {
+    throw new BookRunError(
+      `no such directory: ${dir}. The figures are cut out of the pages this book was read from, and `
+      + 'they are not there.',
+    );
+  }
+  const paths = pagesInDirectory(dir);
+  if (paths.length === 0) {
+    throw new BookRunError(
+      `${dir} holds no page images, so there is nothing to cut a figure out of. It is the folder the `
+      + 'pages of this book were read from; a reflow pointed at an empty one would write a book '
+      + 'whose pictures are silently missing.',
+    );
+  }
+  return { kind: 'pages', paths };
+}
+
 export async function buildBookFile(opts: BookRunOptions): Promise<BookRunReport> {
+  /*
+   * THE SOURCE IS SETTLED BEFORE THE BANK IS OPENED, so a run given two of them
+   * — or one that is not there — is answered in a second rather than after three
+   * hundred pages have been parsed and reflowed for nothing.
+   */
+  const cutFrom = figureSource(opts);
   const readingsPath = path.resolve(opts.readingsPath);
   if (!fs.existsSync(readingsPath)) {
     throw new BookRunError(
@@ -227,7 +320,7 @@ export async function buildBookFile(opts: BookRunOptions): Promise<BookRunReport
     );
   }
 
-  const images = await cutFigures(rows, readingsPath, opts);
+  const images = await cutFigures(rows, readingsPath, cutFrom, opts);
 
   /*
    * WRITTEN ATOMICALLY: a temp file beside the target, then a rename (§2 of the
@@ -239,7 +332,21 @@ export async function buildBookFile(opts: BookRunOptions): Promise<BookRunReport
   const resolved = path.resolve(opts.outPath);
   ensureDir(path.dirname(resolved));
   const pending = `${resolved}.tmp`;
-  fs.writeFileSync(pending, formatBookFile(book), 'utf8');
+  /*
+   * THE FIGURES MARKER IS ADDED HERE AND NOT IN `bookFile`, because it is a fact
+   * about a stage that runs after the rows are minted: `cutFigures` is what knows
+   * whether there was anything to cut from and whether the pixels landed. The
+   * whole argument for the field is in `BookFigures`; the short version is that
+   * a book made with nothing to cut from used to be indistinguishable on disk
+   * from a book with no pictures, and that silence is what let Owen's captured
+   * book sit unexportable for a month.
+   */
+  const figures: BookFigures = {
+    blocks: rows.filter((row) => row.category === 'Picture' && row.shelf === undefined).length,
+    cut: images.length,
+    from: cutFrom === null ? null : cutFrom.kind,
+  };
+  fs.writeFileSync(pending, formatBookFile({ ...book, figures }), 'utf8');
   fs.renameSync(pending, resolved);
 
   opts.log(
@@ -386,15 +493,24 @@ async function clearStaleCrops(cropsDir: string, log: (line: string) => void): P
  * coordinate the row was minted at, and every later reader — the renderer, an
  * export, whatever comes after them — opens the same PNG.
  *
- * ONLY THE PAGES THAT CARRY A PICTURE ARE RASTERISED. The crop mode of
- * `vlm_page.py` opens the PDF and takes a pixmap per named box, so a book with
- * four figures rasterises four pages however long it is — which is what makes
- * this affordable in a command whose whole promise is that it is instant.
+ * ONLY THE PAGES THAT CARRY A PICTURE ARE OPENED. The crop mode of
+ * `vlm_page.py` takes a pixmap per named box — rasterising that leaf of the PDF,
+ * or decoding that one photograph — so a book with four figures pays for four
+ * pages however long it is, which is what makes this affordable in a command
+ * whose whole promise is that it is instant.
  *
- * WITHOUT A PDF IT CUTS NOTHING AND SAYS SO, once, in a sentence that names the
- * reason. There is no fallback available and none would be wanted: the pixels
- * are in the original or they are nowhere, and an imported EPUB has no pages to
- * cut at all. A row simply has no `image`, which is a fact a reader can act on.
+ * EITHER FACE, AND THE ROWS CANNOT TELL. `--pdf` is a document to rasterise and
+ * `--pages` is the photographs a capture project made; the box means the frame
+ * of the page render either way (that is what the bank records), so the crop is
+ * the same rectangle of the same page and lands under the same name. The helper
+ * carries the geometry of both, side by side, in `run_crop`.
+ *
+ * WITH NO SOURCE IT CUTS NOTHING AND SAYS SO, once, in a sentence that names the
+ * reason and both flags. There is no fallback available and none would be wanted:
+ * the pixels are in the pages or they are nowhere, and an imported EPUB has no
+ * pages to cut at all. A row simply has no `image` — and since Wave 37 the
+ * HEADER says so too, because a row that lacks a field is not evidence anybody
+ * downstream could act on (`BookFigures`).
  *
  * THE DIRECTORY IS MADE FRESH. It is derived, regenerable and swept with the
  * book file, and a regeneration after the join rule improved must not leave the
@@ -407,24 +523,24 @@ async function clearStaleCrops(cropsDir: string, log: (line: string) => void): P
 async function cutFigures(
   rows: readonly BookRow[],
   readingsPath: string,
+  source: VlmSource | null,
   opts: BookRunOptions,
 ): Promise<string[]> {
   // A shelved row is not in the book, and the shelf holds no pictures anyway —
   // furniture is a header or a footer and a suppressed head is a heading.
   const pictures = rows.filter((row) => row.category === 'Picture' && row.shelf === undefined);
-  if (opts.pdfPath === undefined) {
+  if (source === null) {
     if (pictures.length > 0) {
       opts.log(
-        `vlm-book: ${pictures.length} figure(s) were NOT cut — no --pdf was named, and a figure is `
-        + 'pixels out of the page it was printed on, which only the archived original has. The rows '
-        + 'name no image; pass --pdf and they are cut in seconds.',
+        `vlm-book: ${pictures.length} figure(s) were NOT cut — this run was given no pages, and a `
+        + 'figure is pixels out of the page it was printed on. The rows name no image; pass --pdf '
+        + 'for a scanned document or --pages for the photographs the book was read from, and they '
+        + 'are cut in seconds.',
       );
     }
     return [];
   }
 
-  const pdfPath = path.resolve(opts.pdfPath);
-  if (!fs.existsSync(pdfPath)) throw new BookRunError(`no such PDF: ${pdfPath}`);
   const cropsDir = imagesDir(readingsPath);
   await clearStaleCrops(cropsDir, opts.log);
   ensureDir(cropsDir);
@@ -446,7 +562,7 @@ async function cutFigures(
    * place a run stops being pure.
    */
   const images = openPageImages((crops) => cropPageRenders({
-    pdfPath,
+    source,
     dpi: VLM_DPI,
     cropsDir,
     requests: crops.map((crop) => ({ page: crop.page, box: crop.box, name: crop.name })),
@@ -463,6 +579,8 @@ async function cutFigures(
   // that pointed at a figure a failed crop never wrote would be a document
   // making a promise about a file, and the file is the promise.
   for (const [index, row] of pictures.entries()) row.image = requests[index]!.name;
-  opts.log(`vlm-book: ${cropped.length} figure(s) cut into ${cropsDir}`);
+  opts.log(
+    `vlm-book: ${cropped.length} figure(s) cut into ${cropsDir}, out of ${sourceName(source)}`,
+  );
   return requests.map((request) => request.name);
 }

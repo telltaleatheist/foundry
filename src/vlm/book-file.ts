@@ -354,6 +354,56 @@ export interface BookSource {
   bankSha: string;
 }
 
+/**
+ * WHAT BECAME OF THIS BOOK'S PICTURES WHEN IT WAS MADE — the header's one
+ * backward-looking field, and it exists because of a book that could not be
+ * exported.
+ *
+ * ── The defect it answers ───────────────────────────────────────────────────
+ *
+ * A Picture row is pixels or it is a refusal (`compile.ts`), and the pixels are
+ * cut once, here, when the book is made. A reflow that was given no source cuts
+ * none, writes rows that name no image, and produces a book file that is
+ * perfectly valid and quietly cannot be exported — which is what Owen met on
+ * 2026-08-22, months after the reading, on a captured book whose reflow had had
+ * nothing to cut from because this program only knew how to cut from a PDF.
+ *
+ * Nothing on the disk could distinguish that book from one whose pictures had
+ * all been cut successfully — the ONLY evidence was rows lacking a field, which
+ * is also what a book with no pictures at all looks like. So the ensure step
+ * that opens a book had no way to know it should be made again, and never did.
+ * These three numbers are that evidence, said out loud:
+ *
+ *   `blocks` how many pictures the book has, so "none were cut" can be told
+ *            from "there were none to cut".
+ *   `cut`    how many of them have a file on the disk.
+ *   `from`   WHAT THE RUN WAS GIVEN, and it is the load-bearing one. It records
+ *            an OFFER rather than an outcome, which is exactly what makes the
+ *            app's auto-heal terminate: a book remade with a source says so
+ *            forever after, so the condition "was made with nothing to cut from"
+ *            can never be true twice for the same book.
+ *
+ * ── Absent is a legal state and means "an older engine wrote this" ──────────
+ *
+ * Every book file written before this field existed has none, and none of them
+ * is going to be rewritten to add one. A reader that finds it missing knows
+ * nothing about the figures and must go and look at the rows (a Picture row with
+ * no `image` is a picture that was not cut) — which is what the app does, once,
+ * for a book made before the marker; the remake it may then order writes the
+ * marker, so a project passes through that state exactly once in its life.
+ */
+export interface BookFigures {
+  /** Picture rows in the book, the shelf excluded — it holds no pictures. */
+  blocks: number;
+  /** How many of them name a crop that is on the disk. */
+  cut: number;
+  /**
+   * The face this run was handed to cut from, or null where it was handed none.
+   * `epub` is the copy route, where the figures are files somebody already made.
+   */
+  from: 'pdf' | 'pages' | 'epub' | null;
+}
+
 /** One printed reference to a note: where in the body its number stands. */
 export interface BookRef {
   /** The body row whose text carries the marker. Never a `Footnote` row. */
@@ -410,6 +460,15 @@ export interface BookFile {
   /** The read's declared language. Declared, never detected. */
   language: string;
   source: BookSource;
+  /**
+   * What became of the pictures — see `BookFigures`. OPTIONAL, and absent means
+   * an engine that predates the field wrote this file, never "there were none".
+   *
+   * It is not `bookFile`'s to fill in: this value is a fact about a stage that
+   * runs AFTER the rows are minted (the crops are cut against a finished book),
+   * so the run that cuts them is the one that says so. See `buildBookFile`.
+   */
+  figures?: BookFigures;
   rows: BookRow[];
   chapters: BookChapter[];
   typography: TypographyReport | null;
@@ -1136,6 +1195,12 @@ export function formatBookFile(book: BookFile): string {
     engine: book.engine,
     language: book.language,
     source: book.source,
+    // Beside the receipt it is about, and DROPPED WHEN ABSENT rather than
+    // written as null: `JSON.stringify` omits an undefined field, so a route
+    // that has nothing to say about figures writes exactly the header it always
+    // wrote. The app's derived writer places it here too (app/shared/book.ts),
+    // because a file written on either side has to be the same bytes.
+    ...(book.figures !== undefined ? { figures: book.figures } : {}),
     chapters: book.chapters,
     typography: book.typography,
     seams: book.seams,
@@ -1242,7 +1307,8 @@ export function parseBookFile(text: string): BookFile {
       `it declares book format ${String(version)} and this program writes ${BOOK_FILE_VERSION}`,
     );
   }
-  const { engine, language, source, chapters, typography, seams, loose } = header as Partial<BookFile>;
+  const { engine, language, source, figures, chapters, typography, seams, loose } =
+    header as Partial<BookFile>;
   /*
    * The header is checked as hard as a row is, and for the row check's reason:
    * it stopped being decoration at version 2. A file whose seed or whose linking
@@ -1294,6 +1360,31 @@ export function parseBookFile(text: string): BookFile {
     throw new BookFileError(
       'its header carries no linking flags, and version 3 always writes both lists — empty where '
       + 'every marker found its note, never absent',
+    );
+  }
+  /*
+   * THE FIGURES MARKER IS THE ONE FIELD THAT MAY BE MISSING, and this is the
+   * "lenient about what is extra" rule pointed the other way for one field only.
+   * Absent means an engine older than the marker wrote the file (see
+   * `BookFigures`) and is a state this build must keep working over, because
+   * every book anybody already has is in it.
+   *
+   * PRESENT AND MALFORMED IS STILL A REFUSAL. Once a file claims to know what
+   * became of its pictures, a reader acts on the claim — the app remakes a book
+   * on the strength of it — and a half-written claim would be acted on as if it
+   * meant something. Absent says "ask the rows"; nonsense says nothing at all.
+   */
+  if (
+    figures !== undefined
+    && (typeof figures.blocks !== 'number'
+      || typeof figures.cut !== 'number'
+      || !(figures.from === null || figures.from === 'pdf' || figures.from === 'pages'
+        || figures.from === 'epub'))
+  ) {
+    throw new BookFileError(
+      'its header says what became of the book\'s pictures and does not say it in the shape this '
+      + 'format has: figures.blocks and figures.cut are counts, and figures.from is pdf, pages, '
+      + 'epub or null',
     );
   }
 
@@ -1351,7 +1442,19 @@ export function parseBookFile(text: string): BookFile {
     }
     rows.push(row as BookRow);
   }
-  return { engine, language, source, rows, chapters, typography, seams, loose };
+  return {
+    engine,
+    language,
+    source,
+    // Carried only where the file carried one, so that a book read and written
+    // again by this build keeps the header it arrived with, byte for byte.
+    ...(figures !== undefined ? { figures } : {}),
+    rows,
+    chapters,
+    typography,
+    seams,
+    loose,
+  };
 }
 
 /**

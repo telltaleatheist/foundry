@@ -2851,8 +2851,9 @@ type BookAtPosition = Awaited<ReturnType<typeof bookAtPosition>>;
  * the row it landed — a read is not retained beside you (`RETAINED_BESIDE_YOU`),
  * and a replace swaps into the step it re-ran and stands there too — so
  * `bookAtPosition` reads back exactly the reading this job just made: its bank,
- * the language it was asked in, and the archived original the figures are cut
- * out of. That is one source for four facts that would otherwise be composed
+ * the language it was asked in, and the archived pages the figures are cut out
+ * of — a document or a folder of photographs. That is one source for facts that
+ * would otherwise be composed
  * here from a request and a filename.
  *
  * AND IT IS CHECKED, because `recordReading` NEVER THROWS. A catalogue it could
@@ -2911,11 +2912,17 @@ async function landReadProducts(bankPath: string, readFrom: string): Promise<voi
  * refusal into a book somebody can read, and the log line is the announcement §2
  * asks for.
  *
- * THE FIGURES COME WITH IT AND ARE NOT THIS SIDE'S BUSINESS. `--pdf` is passed
- * whenever the archive is one, and the engine sweeps `readings/<key>.images/` and
- * re-cuts only the pages that carry Picture blocks (src/vlm/book-run.ts). A
- * project whose original is an EPUB has no pages to cut and the engine says so —
- * an ordinary answer, not a hole.
+ * THE FIGURES COME WITH IT AND ARE NOT THIS SIDE'S BUSINESS. The pages are passed
+ * in whichever shape this project's archive holds them — `--pdf` for a scanned
+ * document, `--pages` for the photographs a capture made — and the engine sweeps
+ * `readings/<key>.images/` and re-cuts only the pages that carry Picture blocks
+ * (src/vlm/book-run.ts). A project whose original is an EPUB has no pages to cut
+ * and the engine says so — an ordinary answer, not a hole.
+ *
+ * THE PAGES FACE IS WAVE 37 AND IT WAS A REAL HOLE. This call passed `--pdf` or
+ * nothing, so a captured project — whose archive is a folder — landed its reading
+ * and reflowed with no source at all, cutting none of its figures; the book was
+ * valid, opened fine, and refused every picture at export months later.
  *
  * A REFUSAL IS THE ENGINE'S OWN WORDS TO THE TERMINAL AND NOTHING ELSE. The bank
  * is real, it is complete, and it is what those hours bought; reporting the
@@ -2927,9 +2934,13 @@ async function landReadProducts(bankPath: string, readFrom: string): Promise<voi
 async function remakeBookFile(at: BookAtPosition): Promise<void> {
   console.log(
     `[job] the reading landed, so ${at.book} is being remade from ${at.bank}`
-    + `${at.pdf === null ? ' (no archived PDF, so no figures are cut)' : ''}.`,
+    + `${at.pdf === null && at.pages === null ? ' (nothing archived to cut figures from)' : ''}.`,
   );
-  const made = await writeBookFile(at.bank, at.book, { pdfPath: at.pdf, language: at.language });
+  const made = await writeBookFile(at.bank, at.book, {
+    pdfPath: at.pdf,
+    pagesPath: at.pages,
+    language: at.language,
+  });
   if (!made.ok) {
     console.error(
       `[job] ${at.bank} could not be reflowed into ${at.book}: ${made.reason ?? ''}\n`

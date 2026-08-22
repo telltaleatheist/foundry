@@ -449,13 +449,161 @@ async function openBookAtPosition(
 }
 
 /**
+ * THE BOOKS THIS PROCESS HAS ALREADY TRIED TO GIVE ITS FIGURES BACK TO.
+ *
+ * ── The loop this closes ────────────────────────────────────────────────────
+ *
+ * `figuresMissing` is answered from the file on the disk, so a remake that
+ * SUCCEEDS answers it "no" forever after: the new header records the source it
+ * was given, and `from === null` can never be true again for that book. That is
+ * the real guard and it is a property of the marker rather than of this set
+ * (`BookFigures`, shared/book.ts).
+ *
+ * What this set covers is the other ending — a remake that FAILS. The engine
+ * writes atomically, so a refusal leaves the old figure-less book exactly where
+ * it was, `figuresMissing` still says yes, and every open of that pane would
+ * spawn another engine that fails the same way. Once per book per process is
+ * enough to learn that; the person's next launch tries again, which is right,
+ * because what was wrong with it may have been fixed in between.
+ *
+ * FOLDED WHOLE PATHS, never basenames — `oneWriterOf`'s rule (electron/engine.ts)
+ * for its reason: two projects both have a `readings/…book.jsonl`.
+ */
+const figuresHealed = new Set<string>();
+
+/**
+ * WAS THIS BOOK MADE WITH NOTHING TO CUT ITS PICTURES FROM?
+ *
+ * ── Why the question is asked of the file rather than remembered ────────────
+ *
+ * Owen exported a captured book on 2026-08-22 and the engine refused: *"is a
+ * picture and this book never had its figures cut"*. It was right, and nothing
+ * in the app was ever going to fix it — the reflow had run months earlier with
+ * no source (its archive is a folder of photographs, and `vlm-book` took only
+ * `--pdf` until Wave 37), the book file it wrote is perfectly valid, and the
+ * ensure step below sees a valid book file and stops. The one thing that had
+ * changed was the ENGINE's ability to cut from those photographs, and a person
+ * has no way to ask for a reflow.
+ *
+ * So the ensure step asks one more question than it used to. This is not a
+ * fallback and not a repair pass: it is the same "is the file on the disk the
+ * one this project should have" the function has always asked, with a fact in
+ * it that only became knowable when the engine learned to record it.
+ *
+ * ── Two answers, and the second one is a migration ──────────────────────────
+ *
+ * THE HEADER SAYS SO, for anything a current engine wrote: `from === null` means
+ * the run was offered no pages at all, and `blocks > cut` means there were
+ * pictures it therefore did not cut. Both, or this book is as good as it can be.
+ * Note `from` records the OFFER: a book remade WITH pages says `pages` even if
+ * something went wrong afterwards, which is exactly why this terminates.
+ *
+ * THE ROWS SAY SO, for anything older, and every book file in anybody's library
+ * today is older. There is no marker, so the honest reading is "unknown" and the
+ * evidence is the rows themselves: a Picture row with no `image` is a picture
+ * with no file. That costs one read of a file the caller is about to read again,
+ * and it costs it ONCE IN THE LIFE OF THE PROJECT — the remake writes a marker,
+ * and every open after that takes the branch above.
+ *
+ * A FILE THAT WILL NOT PARSE IS NOT THIS FUNCTION'S PROBLEM. It answers false and
+ * the load a few lines later refuses it by name, in the parser's own sentence,
+ * which is a far better sentence than anything this could say about it.
+ */
+async function figuresMissing(bookPath: string): Promise<boolean> {
+  let text: string;
+  try {
+    text = await fsp.readFile(bookPath, 'utf8');
+  } catch {
+    return false;
+  }
+  const head = text.slice(0, text.indexOf('\n') === -1 ? text.length : text.indexOf('\n'));
+  let header: unknown;
+  try {
+    header = JSON.parse(head);
+  } catch {
+    return false;
+  }
+  const figures = (header as { figures?: { blocks?: unknown; cut?: unknown; from?: unknown } })
+    .figures;
+  if (figures !== undefined && figures !== null) {
+    return figures.from === null
+      && typeof figures.blocks === 'number' && typeof figures.cut === 'number'
+      && figures.blocks > figures.cut;
+  }
+  /*
+   * The rows, for a book made before the marker. Read as JSON per line rather
+   * than pattern-matched over the text: `"category":"Picture"` also occurs inside
+   * a paragraph that happens to quote it, and a book that says its own format's
+   * words in its prose must not be remade every time it is opened.
+   */
+  for (const line of text.split('\n')) {
+    if (line.trim().length === 0) continue;
+    let row: unknown;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      return false;
+    }
+    const one = row as { category?: unknown; image?: unknown; shelf?: unknown };
+    if (one.category === 'Picture' && one.shelf === undefined && one.image === undefined) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * The reading's own reflow, made if nothing has made it — the module header's
  * "ENSURING THE FILE IS ALSO THE MIGRATION", unchanged and now named.
  */
 async function ensureReadingBook(
   at: Awaited<ReturnType<typeof bookAtPosition>>,
 ): Promise<{ ok: true; path: string } | { ok: false; reason: string }> {
-  if (await exists(at.book)) return { ok: true, path: at.book };
+  if (await exists(at.book)) {
+    /*
+     * ── THE BOOK IS THERE AND ITS FIGURES ARE NOT ──────────────────────────────
+     *
+     * ONE CONDITION, and it is the ensure step doing its job with information it
+     * did not have before: this project HAS pages now (a scan, or the photographs
+     * a capture made), and the book beside it was made by a run that was given
+     * none. Every other book takes the same `return` it always took, on the same
+     * line, having done nothing.
+     *
+     * IT COSTS SECONDS AND IT CHANGES NO ID. A book file is a pure function of
+     * the bank and re-running the reflow over the same bank mints the same names
+     * for the same blocks (docs/BOOK-FILE.md §2), so the ops keyed to them still
+     * name what they named. What changes is that the Picture rows come back with
+     * their crops on the disk, which is the whole difference between a book that
+     * exports and one that refuses.
+     *
+     * A REFUSAL IS LOGGED AND THE OLD BOOK IS OPENED, which is the posture the
+     * branch below argues for at length: the engine writes atomically, so a
+     * failed remake leaves the book that was already there intact, and refusing
+     * to draw it would take a working position down over a picture.
+     */
+    const source = at.pdf ?? at.pages;
+    const key = path.resolve(at.book).toLowerCase();
+    if (source !== null && !figuresHealed.has(key) && await figuresMissing(at.book)) {
+      figuresHealed.add(key);
+      console.warn(
+        `[book] ${at.book} was made without the pages its figures are cut from, and ${source} is `
+        + 'there now, so the book is being made again. Same bank, same block ids; the pictures come '
+        + 'back with it.',
+      );
+      const healed = await writeBookFile(at.bank, at.book, {
+        pdfPath: at.pdf,
+        pagesPath: at.pages,
+        language: at.language,
+      });
+      if (!healed.ok) {
+        console.error(
+          `[book] ${at.book} could not be made again with its figures: ${healed.reason ?? ''}\n`
+          + 'The book already on the disk is what is being shown; its pictures are still uncut.',
+        );
+      }
+    }
+    return { ok: true, path: at.book };
+  }
   /*
    * ── A PROJECT THAT ARRIVED AS A BOOK IS EXPLODED, NOT READ ─────────────────
    *
@@ -501,7 +649,17 @@ async function ensureReadingBook(
         + 'first and the book is made from them.',
     };
   }
-  const made = await writeBookFile(at.bank, at.book, { pdfPath: at.pdf, language: at.language });
+  /*
+   * THE PAGES, WHICHEVER SHAPE THIS PROJECT'S ARE. A manifest names one archive
+   * and `bookAtPosition` splits it into the two facts a caller can act on, so at
+   * most one of these is ever non-null — a scanned document to rasterise, or the
+   * folder of photographs a capture project made, which ARE the pages.
+   */
+  const made = await writeBookFile(at.bank, at.book, {
+    pdfPath: at.pdf,
+    pagesPath: at.pages,
+    language: at.language,
+  });
   if (!made.ok) {
     // The engine's own words to the terminal, with the paths that make them
     // actionable; the sentence the person reads says what happened to the book.
@@ -595,7 +753,42 @@ async function ensureTranslationBook(
   }
   const recordsFile = path.join(at.dir, ...records.split('/'));
   const book = translationBookFileFor(recordsFile);
-  if (await exists(book)) return { ok: true, path: book };
+  if (await exists(book)) {
+    /*
+     * ── THE SAME ONE CONDITION, ONE TRANSFORM ALONG ────────────────────────────
+     *
+     * A derived book's Picture rows name the READING's crops (nothing about a
+     * translation moves a pixel), so a translation materialised over a book whose
+     * figures were never cut carries the same hole — and exporting from a
+     * translated position meets the same refusal. Remaking it costs no engine and
+     * no model at all: it is the parent book plus the ops plus the records,
+     * replayed, and `writeTranslationBook` opens that parent through
+     * `openBookAtPosition`, which runs `ensureReadingBook` — so the reading's own
+     * figures are cut on the way past and this file is written over pictures that
+     * now exist.
+     *
+     * ONE ATTEMPT PER FILE PER PROCESS, from the same set and for the same reason:
+     * the marker the remake carries down from the parent is what makes a
+     * SUCCESSFUL heal permanent, and the set is what stops a failing one repeating
+     * on every open.
+     */
+    const source = at.pdf ?? at.pages;
+    const key = path.resolve(book).toLowerCase();
+    if (source !== null && !figuresHealed.has(key) && await figuresMissing(book)) {
+      figuresHealed.add(key);
+      console.warn(
+        `[book] ${book} was derived from a book whose figures were never cut, and ${source} is there `
+        + 'now, so the translated book is being made again over the pictures.',
+      );
+      const remade = await writeTranslationBook(at.dir, ledger, transform);
+      if (remade.ok) return remade;
+      console.error(
+        `[book] ${book} could not be made again with its figures: ${remade.reason}\n`
+        + 'The translated book already on the disk is what is being shown.',
+      );
+    }
+    return { ok: true, path: book };
+  }
   console.warn(
     `[book] ${book} is not there and ${recordsFile} is, so the translated book is being made now — `
     + 'this translation landed before Foundry materialised one beside its answers.',

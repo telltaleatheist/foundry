@@ -338,31 +338,86 @@ class ImagePages(object):
 
 
 def run_crop(config):
-    """Cut boxes out of pages, straight from the PDF at the pinned dpi.
+    """Cut boxes out of pages -- from the one source this run was given.
 
-    Re-rendered rather than cut out of the page PNG: the crop is a picture that
-    goes into somebody's book, the PDF still has it at full fidelity, and a
-    second decode of a lossless render to get the same pixels is work for
-    nothing.
+    A CROP TAKES PAGES TOO, and it learned that a face later than the read did.
+    The read has taken either a document or a folder of photographs since Owen's
+    ruling above; this mode took a PDF and only a PDF, so a captured book -- whose
+    archive IS its pages -- reflowed with nothing to cut and every Picture block
+    in it refused at export ("this book never had its figures cut"). The bank was
+    perfect and the pixels were sitting right there in the archive, one directory
+    away, in the very files the model had been shown.
+
+    ── THE BOX MEANS THE SAME THING IN BOTH FACES ──────────────────────────────
+
+    A banked box is in THE PAGE RENDER'S PIXEL FRAME: the model answers in the
+    resized frame the processor gave it and the TypeScript side scales that back
+    up to the render (`renderScale`, src/vlm/dots.ts). What "the render" IS is the
+    only thing that differs, and it differs exactly as it does for the read:
+
+      pdf     nothing was a picture until this program made one, so the frame is
+              the raster at the pinned dpi. The box goes back to POINTS
+              (x * 72/dpi), is clipped against the page, and that patch is drawn
+              AGAIN at the same dpi -- full fidelity, because a PDF has no
+              resolution of its own to lose by being asked twice.
+
+      pages   the page IS a photograph, and `ImagePages.render` hands back its
+              pixels untouched -- so the render's frame is the image file's own
+              pixel grid and the box is ALREADY in it. No dpi, no rasteriser, no
+              second opinion about a measurement somebody else took: the
+              rectangle is rounded outward to whole pixels, intersected with the
+              image, and those pixels are copied out at 1:1.
+
+    Both come out as a PNG of the same region at about the same size, which is
+    what lets everything downstream -- the crops directory, the row's `image`, the
+    compile -- stay one route with no idea which face made it.
+
+    PAGE N IS THE PAGE THE READ CALLED N, and that is a property of the list this
+    was handed rather than of anything decided here. `pagesInDirectory`
+    (src/vlm/bridge.ts) is the ONE ordering rule in the program and both the read
+    and the reflow go through it, so `pages[N - 1]` is the same file for both. A
+    second spelling of that order is how page 12's figure gets cut from page 13.
     """
     fitz = import_fitz()
-    pdf_path = config['pdf']
+    pdf_path = config.get('pdf')
+    page_files = config.get('pages')
+    if (pdf_path is None) == (page_files is None):
+        fail('a crop is cut out of exactly one source: "pdf" or "pages"')
     dpi = config['dpi']
     crops_dir = config['cropsDir']
     os.makedirs(crops_dir, exist_ok=True)
 
-    doc = fitz.open(pdf_path)
+    source = PdfPages(fitz, pdf_path) if pdf_path is not None else ImagePages(fitz, page_files)
     scale = 72.0 / dpi
+    # ONE PAGE HELD AT A TIME on the pages face, because the crops arrive in row
+    # order and row order is page order: two figures on one leaf decode that
+    # photograph once. Holding all of them would be a whole book of full-size
+    # images in memory to save a decode nobody is waiting on.
+    held_index = -1
+    held = None
     for crop in config['crops']:
         number = crop['page']
-        if number < 1 or number > doc.page_count:
-            fail('a crop names page %d of a %d-page document' % (number, doc.page_count))
-        page = doc[number - 1]
+        if number < 1 or number > source.count:
+            fail('a crop names page %d of a source with %d page(s)' % (number, source.count))
         x1, y1, x2, y2 = crop['box']
-        rect = fitz.Rect(x1 * scale, y1 * scale, x2 * scale, y2 * scale) & page.rect
-        if rect.is_empty:
-            fail('the crop for %s on page %d lies outside the page' % (crop['name'], number))
-        pixmap = page.get_pixmap(dpi=dpi, clip=rect)
+        if pdf_path is not None:
+            page = source.doc[number - 1]
+            rect = fitz.Rect(x1 * scale, y1 * scale, x2 * scale, y2 * scale) & page.rect
+            if rect.is_empty:
+                fail('the crop for %s on page %d lies outside the page' % (crop['name'], number))
+            pixmap = page.get_pixmap(dpi=dpi, clip=rect)
+        else:
+            if number - 1 != held_index:
+                held = source.render(number - 1, dpi)
+                held_index = number - 1
+            box = fitz.Rect(x1, y1, x2, y2).irect & held.irect
+            if box.is_empty:
+                fail('the crop for %s on page %d lies outside the page' % (crop['name'], number))
+            # A scaled copy at the SAME scale, limited to the box: PyMuPDF's
+            # `Pixmap(src, width, height, clip)`. The width and height handed in
+            # are the source's own, so nothing is resampled -- this is a copy of
+            # those pixels and not a rendering of them.
+            pixmap = fitz.Pixmap(held, held.width, held.height, box)
         if pixmap.width == 0 or pixmap.height == 0:
             fail('the crop for %s on page %d rendered to a %dx%d image'
                  % (crop['name'], number, pixmap.width, pixmap.height))

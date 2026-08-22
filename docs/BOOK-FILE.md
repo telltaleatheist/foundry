@@ -88,6 +88,7 @@ field — so a reorder op is a move, not a renumbering.
  "language": "en",                        // the read's declared language
  "source": {"pages": 17, "unreadable": [{"page": 9, "reason": "…"}],
             "generation": "<uuid>", "bankSha": "<16 hex>"},
+ "figures": {"blocks": 4, "cut": 4, "from": "pdf"|"pages"|"epub"|null},  // OPTIONAL — see §6
  "chapters": [{"id": "b5-1", "title": "…", "kind": "chapter"?}, …],  // the SEED; ownership is ops'
  "typography": {"bodyPx": 36.0, "categories": {"Footnote": {…}}} | null,
  "seams": [{"after": "b8-3", "before": "b9-1"}, …],   // page turns f declined to join — block ids, not pages
@@ -220,11 +221,32 @@ like everything else. Renderers do not draw shelved rows in the flow.
 At creation, figure crops are cut ONCE into `readings/<key>.images/`, named
 deterministically by source coordinate (`p<page>-<order>.png`). Rows reference
 by name; the renderer, every export, and every future feature reuse the same
-files instead of re-cropping per cast. Cutting requires the page renders, so
-`vlm-book` takes `--pdf` (the archived original) and rasterizes ONLY the pages
-that carry Picture blocks; without `--pdf` it writes no images and says so
-(the imported-EPUB route has no pages to cut). The directory is regenerable
-and swept with the book file.
+files instead of re-cropping per cast. Cutting requires the pages, so `vlm-book`
+takes them — **`--pdf` for a scanned document or `--pages` for a directory of
+page photographs, never both** — and opens ONLY the pages that carry Picture
+blocks; with neither it writes no images and says so (the imported-EPUB route
+has no pages to cut). The directory is regenerable and swept with the book file.
+
+**The two faces are the read's two faces** (`VlmSource`, `src/vlm/bridge.ts`), and
+the box means the same thing in both because the bank records the box in the PAGE
+RENDER's frame: for a PDF the render is the raster at the pinned dpi, so the box
+goes back to points and that patch is drawn again at the same dpi; for a page
+image the render IS the photograph, so the box is already in its pixel grid and
+those pixels are copied out at 1:1. **Page N is `pagesInDirectory(dir)[N - 1]`**,
+the single ordering rule the read banked its answers under — a second spelling of
+it is how page 12's figure gets cut from page 13.
+
+**The header records what became of the pictures** — `figures`, optional. Three
+facts: `blocks` (Picture rows, shelf excluded), `cut` (how many have a file), and
+`from` (**what the run was given**: `pdf`, `pages`, `epub`, or `null` for none).
+`from` records an OFFER, not an outcome, and that is what makes the app's
+auto-heal terminate: a book remade with a source says so forever, so "was made
+with nothing to cut from" can never be true twice for the same book. **Absent is
+legal and means an engine older than the field wrote the file** — a reader that
+finds it missing learns nothing about the figures and must look at the rows (a
+Picture row with no `image` was not cut). No version bump: the field is additive,
+old readers ignore it, and every existing book file passes through the unknown
+state exactly once, because the remake it may trigger writes the marker.
 
 **On the EPUB route the figures are COPIED, not cut** — into the same directory,
 which the engine derives from `--out` (`<stem>.book.jsonl` → `<stem>.images/`),

@@ -1386,7 +1386,21 @@ export async function explodeEpub(opts: EpubExplodeOptions): Promise<EpubExplode
   const resolved = path.resolve(opts.outPath);
   ensureDir(path.dirname(resolved));
   const pending = `${resolved}.tmp`;
-  fs.writeFileSync(pending, formatBookFile(made.book), 'utf8');
+  /*
+   * WHAT BECAME OF THE PICTURES, SAID IN THE HEADER — the same marker the reflow
+   * writes (`BookFigures`, book-file.ts), because a reader asking "were this
+   * book's figures ever made" must not have to know which route wrote it. Here
+   * the answer is always the whole of them: a publisher's figure is a file that
+   * already exists, `copyFigures` copies every one a row names, and a row whose
+   * href resolves to nothing has already been reported and carries no `image`.
+   */
+  const figures = {
+    blocks: made.book.rows.filter((row) => row.category === 'Picture' && row.shelf === undefined)
+      .length,
+    cut: images.length,
+    from: 'epub' as const,
+  };
+  fs.writeFileSync(pending, formatBookFile({ ...made.book, figures }), 'utf8');
   fs.renameSync(pending, resolved);
 
   const flow = made.book.rows.length;

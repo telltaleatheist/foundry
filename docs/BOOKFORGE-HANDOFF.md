@@ -215,7 +215,7 @@ line-buffered. The commands an integrator needs:
 | Command | What |
 |---|---|
 | `vlm-read` / `vlm-convert` | read pages with the vision model / render products from a bank (`--reuse-readings` spends no GPU) |
-| `vlm-book` | receipt → book file: `--readings <bank>` or `--epub <file>`, `--out`, `--pdf` (cut figures), `--language` |
+| `vlm-book` | receipt → book file: `--readings <bank>` or `--epub <file>`, `--out`, `--pdf` or `--pages <dir>` (cut figures), `--language` |
 | `vlm-compile` | book file → EPUB/txt: `--book`, `--out`, `--images`, `--title`, `--author` |
 | `translate` | book file → records: `--book`, language flags, endpoint config |
 | `doctor --json` | environment/report probe |

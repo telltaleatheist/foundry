@@ -553,9 +553,18 @@ export interface VlmCropResult {
  * in the most portable part of the program, and this mode ALREADY requires a
  * Python with PyMuPDF in it. The boxes are not known until the pages have been
  * parsed, which is why it cannot be folded into the read pass.
+ *
+ * IT TAKES A `VlmSource`, THE SAME ONE A READ TAKES, and that is the whole of
+ * what Wave 37 changed here. A crop is pixels out of a page, a page is either a
+ * leaf of a document or a photograph somebody took, and this had only ever
+ * believed the first — so a captured book, whose archive IS its pages, reflowed
+ * with nothing to cut and refused every one of its figures at export. The helper
+ * decides nothing new either: it builds the same `PdfPages`/`ImagePages` the read
+ * builds, out of the same field names, so the pixels a crop is taken from are the
+ * pixels the model was shown.
  */
 export async function cropPageRenders(opts: {
-  pdfPath: string;
+  source: VlmSource;
   dpi: number;
   cropsDir: string;
   requests: readonly VlmCropRequest[];
@@ -568,7 +577,11 @@ export async function cropPageRenders(opts: {
 
   const config = JSON.stringify({
     mode: 'crop',
-    pdf: path.resolve(opts.pdfPath),
+    // Exactly one of them, spelled the way the read spells it — the helper
+    // refuses both and neither in one line rather than picking a winner.
+    ...(opts.source.kind === 'pdf'
+      ? { pdf: path.resolve(opts.source.path) }
+      : { pages: opts.source.paths.map((page) => path.resolve(page)) }),
     dpi: opts.dpi,
     cropsDir,
     crops: opts.requests.map((r) => ({

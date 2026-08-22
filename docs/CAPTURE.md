@@ -2404,10 +2404,16 @@ visible connection to the mint:
 
 #### What this wave does NOT do, said out loud
 
-- **No figure crops for a captured book.** `vlm-book` cuts a Picture row's image
-  out of a PDF page (`bookAtPosition.pdf`), and there is no PDF. It answers null
-  through the test that was already there, and the engine "cuts nothing and says
-  so". Real capability, lost until `vlm-book --pages` exists.
+- ~~**No figure crops for a captured book.**~~ **CLOSED IN WAVE 37**, and it cost
+  what a named gap costs when nothing is watching it: Owen met it months later as
+  a refusal at EXPORT — *"is a picture and this book never had its figures cut"* —
+  on a book whose pixels had been in its archive the whole time. `vlm-book` now
+  takes `--pages <dir>` beside `--pdf`, over the same `VlmSource` and the same
+  `pagesInDirectory` order the read uses, and cuts a Picture row's crop straight
+  out of the page's own image file (docs/BOOK-FILE.md §6). Both callers pass
+  `bookAtPosition.pages` for a captured project, and a book already reflowed
+  without its figures is REMADE by the ensure step — once, on the strength of the
+  header marker the engine now writes.
 - **No image PDF until somebody builds the export.** Owen's ruling promises one
   on demand; this wave does not build the demand.
 - **No page-image viewer.** Home's row opens the light table, which is the

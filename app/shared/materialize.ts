@@ -310,6 +310,17 @@ export function materialize(book: BookFile, ops: readonly BookOp[]): Materialize
         // The receipt this book is a pure function of, verbatim — including its
         // sha, which still identifies the bank underneath every id in the file.
         source: book.header.source,
+        /*
+         * AND WHAT BECAME OF THE PICTURES, VERBATIM TOO. A derived book's Picture
+         * rows name the parent's crops, in the parent's own images directory,
+         * because replaying an op moved no pixels. So the parent's marker is a
+         * true statement about this file, and DROPPING it would say something
+         * false in the other direction: absent means "an engine older than the
+         * marker wrote this" (`BookFigures`, shared/book.ts), which would send the
+         * ensure step off to read the rows of a book it could not have healed
+         * anyway. Absent in the parent stays absent here.
+         */
+        ...(book.header.figures !== undefined ? { figures: book.header.figures } : {}),
         chapters: rehungChapters(replayed.chapters, replayed.rows, held),
         typography: book.header.typography,
         /*
@@ -543,6 +554,9 @@ export function translated(
         // a loader standing at this position checks that sha against that bank,
         // which is exactly the check that should still pass here.
         source: book.header.source,
+        // And the figures are the parent's crops under the parent's names, for
+        // the same reason and with the same consequence — see `materialize`.
+        ...(book.header.figures !== undefined ? { figures: book.header.figures } : {}),
         chapters,
         // Measured off the boxes, and the boxes are the parent's: this says what
         // size the type was set in on the page, which translating did not change.

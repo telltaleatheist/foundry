@@ -162,6 +162,30 @@ export interface BookSource {
 }
 
 /**
+ * WHAT BECAME OF THE BOOK'S PICTURES WHEN IT WAS MADE — the engine's marker,
+ * read here and acted on by the ensure step.
+ *
+ * The whole argument is in the engine's own copy (`BookFigures`,
+ * src/vlm/book-file.ts), which is the writer of the format; the fact this side
+ * needs is the one it was added for. A Picture row is pixels or it is a refusal
+ * at export, the pixels are cut once when the book is made, and a reflow given
+ * nothing to cut from produced a book that was valid, openable, and quietly
+ * impossible to export — indistinguishable on disk from a book with no pictures
+ * at all. `from` is what ends that silence: it names WHAT THE RUN WAS OFFERED,
+ * so `from === null` with `blocks > 0` is "this book's figures were never cut,
+ * and nothing was ever going to cut them", which is a condition the app can act
+ * on exactly once (`figuresMissing`, electron/book.ts).
+ */
+export interface BookFigures {
+  /** Picture rows in the book, the shelf excluded. */
+  blocks: number;
+  /** How many of them name a crop on the disk. */
+  cut: number;
+  /** The face the run was handed, or null where it was handed none. */
+  from: 'pdf' | 'pages' | 'epub' | null;
+}
+
+/**
  * One block of the finished book — one row of the file.
  *
  * A PARAGRAPH, A HEADING, A NOTE OR A FIGURE, whole. Never half of one, never
@@ -308,6 +332,13 @@ export interface BookHeader {
   /** The read's declared language. Declared, never detected. */
   language: string;
   source: BookSource;
+  /**
+   * What became of this book's pictures when it was made — see `BookFigures`.
+   *
+   * OPTIONAL, and absent means an engine older than the field wrote the file,
+   * never "there were none". Every book anybody already has is in that state.
+   */
+  figures?: BookFigures;
   chapters: BookChapter[];
   typography: BookTypography | null;
   seams: BookSeam[];
@@ -609,6 +640,7 @@ function headerOf(line: string): BookHeader {
     );
   }
   const source = sourceOf(row['source']);
+  const figures = figuresOf(row['figures']);
 
   const rawChapters = row['chapters'];
   if (!Array.isArray(rawChapters)) throw new BookFileError('the book\'s header carries no chapter list.');
@@ -671,7 +703,50 @@ function headerOf(line: string): BookHeader {
     notes.push(candidate);
   }
 
-  return { engine, language, source, chapters, typography, seams, loose: { markers, notes } };
+  return {
+    engine,
+    language,
+    source,
+    // Carried only where the file carried one, so a book read and written again
+    // keeps the header it arrived with, byte for byte.
+    ...(figures !== undefined ? { figures } : {}),
+    chapters,
+    typography,
+    seams,
+    loose: { markers, notes },
+  };
+}
+
+/**
+ * The figures marker, or nothing — the ONE header field that may be missing.
+ *
+ * ABSENT IS LEGAL AND MEANS "AN OLDER ENGINE WROTE THIS", which is the state
+ * every book file made before the field exists is in, including all of the ones
+ * on this machine right now. A reader that finds it missing has learned nothing
+ * about the figures and must go and look at the rows.
+ *
+ * PRESENT AND MALFORMED IS A REFUSAL, for the reason every other field in here
+ * is checked: once a file claims to know what became of its pictures, this app
+ * ACTS on the claim — it remakes a book on the strength of it — and a half-
+ * written claim would be acted on as though it meant something. Absent says "ask
+ * the rows"; nonsense says nothing at all, and must not be mistaken for either.
+ */
+function figuresOf(value: unknown): BookFigures | undefined {
+  if (value === undefined) return undefined;
+  const row = objectOf(value);
+  const blocks = row === null ? null : countOf(row['blocks']);
+  const cut = row === null ? null : countOf(row['cut']);
+  const from = row === null ? undefined : row['from'];
+  if (
+    row === null || blocks === null || cut === null
+    || !(from === null || from === 'pdf' || from === 'pages' || from === 'epub')
+  ) {
+    throw new BookFileError(
+      'the book\'s header says what became of its pictures and does not say it in a shape this app '
+      + 'knows, so nothing here can tell whether its figures were ever made.',
+    );
+  }
+  return { blocks, cut, from };
 }
 
 /** The bank's identity block, or the sentence saying the header lost it. */
@@ -905,6 +980,17 @@ export function formatBookFile(book: BookFile): string {
     engine: book.header.engine,
     language: book.header.language,
     source: book.header.source,
+    /*
+     * CARRIED VERBATIM, LIKE `source`, AND FOR THE SAME REASON. A derived book
+     * is this book with a chain of ops replayed into it: the bank underneath did
+     * not move and neither did the crops, so the pictures a translation names are
+     * the pictures the reading cut, in the same directory, under the same names.
+     * Dropping the marker here would tell the ensure step that a translated book
+     * came from an engine that predates it — and it would go and look at the rows
+     * of a file whose Picture rows are the reading's own. Absent stays absent
+     * (`JSON.stringify` omits it), which is the same true statement one hop down.
+     */
+    ...(book.header.figures !== undefined ? { figures: book.header.figures } : {}),
     chapters: book.header.chapters,
     typography: book.header.typography,
     seams: book.header.seams,

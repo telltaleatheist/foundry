@@ -1979,17 +1979,81 @@ Owen's first real walk of the Wave 25 passes, arriving as rulings:
   DIR for a captured, read project — the same face the OCR dialog
   accepts, resolved by `importDocument`'s own inside-a-project rule
   (`projectDirOf` resolves the dir to itself; verified before use).
-- **IN FLIGHT: the unapplied question, Owen's refinement of Wave 29.**
-  Verbatim: *"any action they take, whether it's switching to a
-  different step or narrating or anything at all, should ask if they
+- **BUILT (this commit): the unapplied question, Owen's refinement of
+  Wave 29.** Verbatim: *"any action they take, whether it's switching to
+  a different step or narrating or anything at all, should ask if they
   want to apply changes in a modal. discard/apply changes."* The card's
-  three answers become TWO — **Discard** (drop the stack, then run the
-  chosen act on the step as recorded) and **Apply changes** (apply,
-  then run) — plus dismissal as cancel. The gate widens from the
-  make-acts to EVERY act leaving the position, position moves included.
-  Export must never GRAY on unapplied changes — the card is the gate.
-  And Apply gets a second, obvious home: *"the button on the side of
-  the workbench works but it isnt obvious."*
+  three answers are now TWO — **Apply changes** (apply, then run) and
+  **Discard changes** (drop the stack, then run the chosen act on the
+  step as recorded, wearing the error colour and aimed at, on the
+  closing card's precedent) — plus dismissal (Escape or the scrim) as
+  cancel, said in the card's own words because a way out nobody is told
+  about is not one. `without` is retired with a gravestone in
+  `UnappliedAnswer`; `MakeAct` is untouched and the seam now carries
+  `UnappliedAct = MakeAct | 'stand'`, because half a dozen tests mean
+  "an act that makes a book" by the old name.
+  - **Gated:** the five make-act presses that already were, plus the
+    tree's step/root click and the tree footer's `read` — both through
+    `stand`, which is the ONE person-initiated position move in the
+    window (`LedgerService.go` has exactly one caller). A make-act press
+    that stands on its row first passes `asked` so the card is raised
+    once per press, by whichever half of the press costs something.
+  - **Deliberately NOT gated:** `PositionSyncService`, which REACTS to a
+    pointer main has already moved (a landed job, another window, the
+    move an Apply causes) — a card there would ask permission for
+    something already true. Compare's second column, which loads at a
+    step without moving the pointer. Re-clicking the row already stood
+    on, which is not a move. And `exportEpubFromStep`, Wave 29's named
+    limit, still unreachable from a window.
+  - **Discard reaches all three holders** through
+    `BookStacksService.discardUnapplied`: the live viewer's own signals
+    (new `BookStack.discard`, which returns `pending` to `landedOps` —
+    the RECORDED book, not an empty one — and drops the live editor
+    uncommitted), the parked copy, and the sidecar. The pane is the one
+    the closing card never had to empty, because there the tab is going.
+  - **Nothing greys**: verified that no act predicate in the action menu,
+    the tree footer or `shared/stages.ts` reads the stack at all.
+  - **The obvious Apply** is at the HEAD of the book pane — the one
+    accent-filled control on the surface, drawn only while `waiting() > 0`
+    (absent, not disabled), in the edition as well as the bench, wearing
+    the tray's own label so there is one wording. The side tray's button
+    is unchanged and stays disabled-at-zero, so the affordance can still
+    be learnt before there is anything to press it with.
+  - **Unchanged named cost:** the gate looks at book PANES, so unapplied
+    work whose tab has been closed is not asked about — the sidecar's
+    identity guard still refuses it out loud at the new step.
+
+### Wave 37 — the reflow learns the pages face, and figures heal (Owen, 2026-08-22) — LANDED (this commit)
+
+Star Gods refused to export: *"b28-9 is a picture and this book never
+had its figures cut."* The read learned pages at Wave 21; the REFLOW
+never did — `vlm-book` cut figures only from `--pdf`, and a captured
+archive is a folder. Now: `--pages <dir>` beside `--pdf` (mutually
+exclusive, refused together by name), crops cut 1:1 from the page's
+own pixels through THE READ'S OWN ordering rule (`pagesInDirectory`,
+one function, so page N cannot drift), verified on a synthetic book on
+both faces. The header gains `figures: {blocks, cut, from}` — the
+OFFER recorded, not the outcome, which is the loop guard — and both
+ensure doors REMAKE a book whose figures are missing when a source now
+exists (absent marker = older engine, resolved by reading the rows
+once; a failing remake caps at one attempt per launch). The refusal's
+advice no longer implies the original must be a PDF. Also landed
+beside it: the PDF viewer's selection stops re-inking the hidden text
+layer white (`color: transparent` on the layer's own ::selection — the
+global rule was winning the color per-property).
+
+### Wave 38 — the Home intake workspace (Owen, 2026-08-22) — RULED, NEXT
+
+Owen, verbatim intent: the OCR… button leaves Home; the drop zone
+accepts images (HEIC/PNG/JPG) as well as PDFs; dropped images land in
+a WORKSPACE accordion in the sidebar (the inspector's accordion idiom;
+each open book becomes an accordion with ✕ and collapse); select
+images → right-click → *Create new book* → a naming modal → a capture
+project with those pages MOVED in, opening as Photograph-a-book does;
+closing the workspace clears the unassigned (re-upload to recover) —
+the assigned are already safe in their projects. Mixed drops: PDFs
+keep today's behaviour, images go to the workspace. Assigned to an
+agent on the clean tree after this commit.
 
 ### Wave 35 — the queue as a slot board (Owen, 2026-08-22) — RULED, NEEDS A CONTRACT
 

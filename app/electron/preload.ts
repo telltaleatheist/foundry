@@ -119,8 +119,12 @@ const api: FoundryApi = {
    * AND THE THIRD, whose safe answer is `cancel` for the pair's reason exactly: a
    * question nobody drew is a question nobody agreed to, and a yes here spends
    * hours making a book without the changes on the page in front of somebody.
-   * `without` would be a defensible default for a person who pressed the button;
-   * it is not defensible for a card that was never shown.
+   *
+   * IT IS THE ONLY SAFE DEFAULT NOW, WHERE IT USED TO BE THE SAFEST OF THREE. The
+   * retired `without` was at least defensible for a person who had pressed the
+   * button; the two answers left are apply (which writes a step nobody asked for)
+   * and discard (which destroys work), and neither is a thing to do on behalf of
+   * somebody who was never shown a card.
    */
   confirmUnapplied: (warning) =>
     ask<UnappliedAnswer>('book:confirm-unapplied', warning, 'cancel'),

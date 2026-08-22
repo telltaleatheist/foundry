@@ -371,6 +371,24 @@ const BOOK_PDF: OptionSpec = {
   describe: 'The archived original, for cutting the figures out of. Read, never written.',
 };
 
+/**
+ * The other shape the same pixels come in — and the reason this option exists at
+ * all is that it did not.
+ *
+ * A capture project's archive is a FOLDER OF PAGE PHOTOGRAPHS: the read has taken
+ * `--pages` since Wave 34 because the pages are the pages, and the reflow had
+ * never been told. So a captured book's figures were never cut, and every Picture
+ * block in it refused at export with the pixels sitting in the archive. Same
+ * purpose as `--pdf`, same crops, same names; the two are exclusive because there
+ * is no sensible reading of a run that names both.
+ */
+const BOOK_PAGES: OptionSpec = {
+  name: 'pages',
+  type: 'string',
+  placeholder: '<dir>',
+  describe: 'The archived page images, for cutting the figures out of instead of a PDF. Read only.',
+};
+
 const BOOK_LANGUAGE: OptionSpec = {
   name: 'language',
   type: 'string',
@@ -1168,6 +1186,13 @@ async function runVlmBlocks(args: ParsedArgs): Promise<void> {
 
 async function runVlmBook(args: ParsedArgs): Promise<void> {
   const pdfPath = optionalString(args, 'pdf');
+  /*
+   * THE FIGURES' OTHER FACE. Carried, not judged: `buildBookFile` refuses a run
+   * that names both — one refusal, met by every caller of the engine and not
+   * only by the ones that came through argv — exactly as `vlmRead` owns the same
+   * refusal for the read's two flags.
+   */
+  const pagesDir = optionalString(args, 'pages');
   const python = optionalString(args, 'python');
   /*
    * ── WHICH SOURCE, and exactly one of them ──────────────────────────────────
@@ -1218,6 +1243,7 @@ async function runVlmBook(args: ParsedArgs): Promise<void> {
     // Passed only where they were asked for, so a run with no figures to cut
     // hands the engine the options object it has always been handed.
     ...(pdfPath !== undefined ? { pdfPath } : {}),
+    ...(pagesDir !== undefined ? { pagesDir } : {}),
     ...(python !== undefined ? { python } : {}),
     log,
   });
@@ -2228,7 +2254,7 @@ export const COMMANDS: readonly Command[] = [
   {
     name: 'vlm-book',
     summary: 'Reflow a readings bank into the book file: hyphens fused, page turns joined, ids minted.',
-    usage: '--readings <file.jsonl> | --epub <file.epub>  --out <book.jsonl> [--pdf <file.pdf>] [--language <bcp47>]',
+    usage: '--readings <file.jsonl> | --epub <file.epub>  --out <book.jsonl> [--pdf <file.pdf> | --pages <dir>] [--language <bcp47>]',
     detail: [
       'THE BANK IS NOT THE BOOK. A bank is one row per PAGE holding the answer the',
       'model gave for it, and it knows nothing about a paragraph: a word the',
@@ -2302,12 +2328,22 @@ export const COMMANDS: readonly Command[] = [
       'bank, which is what lets a later reader know the receipt has not moved',
       'under the names it is holding.',
       '',
-      'GIVE IT --pdf AND THE FIGURES ARE CUT ONCE. A Picture block is pixels by',
-      'definition and no bank holds any, so the boxes are cropped out of the',
-      'archived original into readings/<key>.images/, named after the coordinate',
-      'the row was minted at, and every row that has one names its file. Only the',
-      'pages carrying a picture are rasterised. Without --pdf nothing is cut, no',
-      'row names an image, and the run says so rather than leaving you to notice.',
+      'GIVE IT THE PAGES AND THE FIGURES ARE CUT ONCE. A Picture block is pixels',
+      'by definition and no bank holds any, so the boxes are cropped out of the',
+      'pages the book was read from into readings/<key>.images/, named after the',
+      'coordinate the row was minted at, and every row that has one names its',
+      'file. Only the pages carrying a picture are opened.',
+      '',
+      'TWO FLAGS FOR THAT, AND NEVER BOTH: --pdf for a scanned document, whose',
+      'leaf is rasterised at the pinned dpi and the box turned back into points;',
+      '--pages for a directory of page photographs, which a capture project makes',
+      'and which ARE the pages, where the box is already in the image\'s own pixel',
+      'grid and those pixels are copied out at 1:1. Page N is whatever page N of',
+      'the reading was — the same one ordering rule the read uses, numerically on',
+      'the first run of digits in the name. With neither, nothing is cut, no row',
+      'names an image, the header records that the run was given no pages, and the',
+      'run says so rather than leaving you to notice at export time.',
+      '',
       '--language is declared and never detected, the same as vlm-convert, and it',
       'defaults to en.',
       '',
@@ -2330,10 +2366,10 @@ export const COMMANDS: readonly Command[] = [
       'rectangle, no typography report — because nothing page-shaped exists to',
       'measure and this format has never addressed anything by a page anyway. No',
       'facsimile is made from one. On this route --language OVERRIDES the',
-      'package\'s own dc:language rather than defaulting over it, and --pdf has',
-      'nothing to cut.',
+      'package\'s own dc:language rather than defaulting over it, and neither',
+      '--pdf nor --pages has anything to cut.',
     ].join('\n'),
-    options: [BOOK_READINGS, BOOK_EPUB, BOOK_OUT, BOOK_PDF, BOOK_LANGUAGE, BOOK_PYTHON],
+    options: [BOOK_READINGS, BOOK_EPUB, BOOK_OUT, BOOK_PDF, BOOK_PAGES, BOOK_LANGUAGE, BOOK_PYTHON],
     run: runVlmBook,
   },
   {
