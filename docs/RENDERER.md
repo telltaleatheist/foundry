@@ -173,6 +173,15 @@ payload (truth), the derived file is a materialization.
 Translation records re-key from `page:order[:part]` to block ids; the book
 file's `src` column is the mechanical mapping (that is why it exists).
 
+**The header's chapter names are materialized too** (Wave 44 — *"everything
+should be translated"*). A division whose title is a provable copy of a heading
+in its span takes the translated heading's own words, for nothing and by
+construction, so the spine and the chapter head cannot disagree. Everything else
+— a name a person typed with a `chapter` op, a part divider's composed label —
+is asked of the model during the run and comes back as a `chapter:<id>` row in
+the same records file. The source title is the last resort and is reported by id
+when it happens.
+
 ## 5. The renderer (app)
 
 **Angular-native. No iframe, no sandbox, no postMessage, no injected script.**

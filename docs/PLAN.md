@@ -2146,6 +2146,67 @@ again over the accordion that draws it.
   with the pre-existing budget WARNING at **757.63 kB** (746.57 at the
   last landing).
 
+### Wave 43 — a BookForge-shaped queue: bar, dropdown, page (Owen, 2026-08-22) — BUILT (this commit)
+
+*"looks like we didnt implement a bookforge-style queue. can you make
+the queue shelf a bar along the top right that i can click and look at,
+and put a button in it for 'more info' thatll take me to a queue page
+that looks like bookforge's queue page? this is just ui work mostly,
+not changing the way it works on an engine level."*
+
+UI ONLY, and the last sentence was the fence: the scheduler
+(`electron/job-queue.ts`), the slot table (`shared/queue-board.ts`),
+QueueService's doors, the drain contract and the held/Start semantics
+are untouched. The same facts moved into new chrome.
+
+- **The shelf was modelled on the wrong BookForge component.** It was
+  built after `setup-download-dock` — which is BookForge's first-run
+  DOWNLOAD dock, not its queue. Its actual queue is a chip in the title
+  bar (`features/queue/components/queue-chip`), a dropdown tray under it
+  (`queue-tray`), and a page behind that (`features/queue/queue.component`).
+  Wave 43 is the shelf finally being modelled on the thing it was always
+  meant to resemble. `QueueShelfComponent` is DELETED with a gravestone
+  at the head of `queue-bar` naming where each of its behaviours went —
+  headline, aggregate bar, the two-meaning ✕, Start-with-count, the
+  export-done unroll, the focus hand-off, the sr-only live region, the
+  hosted gate. Not one died.
+- **One description of the queue, read by both surfaces.**
+  `core/queue-view.service.ts` holds the board, the lanes, the headline,
+  the row sentences and the three row actions. BookForge's own page
+  header is the argument: before it had a shared service its two queue
+  surfaces *"spoke different dialects"*. Copying the shelf's methods
+  into two components would have been a drift machine with a two-week
+  fuse.
+- **The page adds the BENCH** — one card per slot, always all three,
+  occupied or free — which is a reading of `SLOTS`, not a new fact. A
+  lane's running rows are dealt into its slots in queue order; main
+  never says which slot is which and the page does not pretend to know.
+- **Route `/queue`, standalone-only by `canMatch`** rather than
+  `canActivate`: a refused match falls through to the wildcard and lands
+  on the workspace, where a refused activation would leave a window
+  restoring a saved URL having arrived nowhere. Owen's 2026-08-21 hosted
+  ruling now covers three surfaces instead of one.
+- **The toast tray anchors at `bottom: 16px` in BOTH worlds.** Its 424px
+  standalone offset was arithmetic about the shelf's height; the shelf is
+  gone, so the gap held space for a case that cannot occur. The hosted
+  override and its `hosted` injection are deleted with it, and the
+  `max-height` followed the anchor down. The anti-motion argument the old
+  clause rested on is kept in the docblock — a tray that READ queue state
+  and moved is still forbidden.
+- **Renamed off dead furniture**: `shelfExpanded` → `queueOpen`,
+  `shelfSaid` → `queueSaid`, `focusShelfAt` → `focusStartAt`,
+  `summonShelf` → `summonQueue`, plus the four dialogs' call sites and
+  two user-facing strings that said *"It is in the queue shelf."*
+
+DEFERRED OUT LOUD: no per-book Start on the page (`queue.start()`
+releases the whole held batch — a per-book button would silently start
+four other books, and the gap is named in the page's header rather than
+papered over); no Retry on a failed row (nothing in main re-runs a
+settled job); no ETA, covers, temperatures or per-stage bars, which
+BookForge's page carries and Foundry's queue knows nothing about. The
+queue still has no persistence — a held read is still lost on restart,
+unchanged since Wave 16.
+
 ### Wave 35 — the queue as a slot board (Owen, 2026-08-22) — BUILT (this commit)
 
 *"the queue shelf should probably look a bit more like the bookforge
@@ -2468,6 +2529,52 @@ command. Awaiting Owen's word; the immediate gap is closed operationally
 (fresh 0.9.2 artifact built at 98031b0, component refresh in front of
 Owen).
 
+### Wave 44 — the spine is translated too (Owen, 2026-08-22) — BUILT
+
+> "when i translate, does it translate the chapters in the spine as well?
+> the chapter names on the green dotted lines? if not, id like it to.
+> everything should be translated."
+
+It did not. `translated()` re-titles a chapter from its heading row's
+translated text, but ONLY where the title is provably a copy of that
+heading's source text (`titledFrom`). A division a person renamed is a
+keyless human string no row of the book says, and a part divider's label
+is composed by the page classifier out of two blocks — neither can be
+proved to be a copy of anything, so both carried into the translated
+book VERBATIM. A book whose paragraphs were all English under a contents
+page still in German.
+
+**A TITLES PASS IN THE RUN, and the whole of it rides machinery that
+already existed.** `bookTitlePlan` (src/translate/bookrows.ts) reads the
+divisions out of the book file the app ALREADY hands over — the position
+materialised, renames replayed in — and returns the ones no heading
+answers for. They become `PendingBlock`s like any other: same text-level
+masking with the round trip checked, same chunking (batched as one
+numbered-lines request; a book's worth of titles is one request beside
+the two thousand a book costs), same verification, same retries, same
+refusal discipline, same records file and therefore the same cost cache
+and the same resume. Their answers are appended as records keyed
+`chapter:<division id>` — a third spelling of a position in a field that
+already carries two, argued at `chapterPosition` (src/translate/records.ts).
+
+**Nothing new crosses the app/engine boundary, and that is deliberate.**
+The plan asked for the titles to be computed app-side and passed in;
+they are already in the file on `--book`, which is `materializeBook`'s
+output with the chain replayed. Respelling them on the command line
+would have been two spellings of one fact — the thing this codebase
+refuses about `--epub` and `--book` in the same command's own refusals.
+So the app-side change is confined to reading the new rows.
+
+**The order at materialization is the correctness**: copy-derivation
+first (free, and the only order under which the spine and the chapter
+head cannot disagree — `relabelNav`'s measured failure), the title record
+second, the source text third and named. A records file with no title
+rows in it — every translation already on disk — lands on exactly the
+old behaviour, which is what makes the format change safe in both
+directions.
+
+Also closed by this: the part-divider cost in §7.
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the
@@ -2599,12 +2706,35 @@ supposed to be, and it exists so the same failure is visible next time.
   week got a second agent over its diff. This one's was killed by the
   wrap-up. Named here so it is a known debt, not an assumption of
   parity.
-- **A part-divider's composed label stays in the source language** under
-  records materialization (e.g. `PART III — RESISTANCE`). Nav labels and
-  headings translate, because they are read off the substituted heading;
-  a part divider's label is composed by the page classifier before any
-  substitution exists. Found and recorded by D1 rather than papered over;
-  a fix belongs with whoever owns `partVerdict`.
+- ~~**A part-divider's composed label stays in the source language**~~ —
+  **CLOSED AT WAVE 44**, on the route every export now takes, and the
+  closing is worth stating precisely because the cost was recorded about
+  a route that has since stopped being reachable.
+
+  What was true: `vlm-convert --records` mints the nav from `body.label`
+  at compile, read off the substituted heading, and a part divider's
+  label is composed by the page classifier out of two blocks before any
+  substitution exists (`sectionName`, src/vlm/dots-book.ts). That
+  sentence is still true OF THAT COMMAND and is left standing in its own
+  docblock. It is no longer true of the app: `compiles` is
+  `epub || txt`, so every EPUB and every plain-text export materialises
+  the position's book and compiles THAT (`planExport` → `vlm-compile
+  --book`), and there the chapter names come from the book file's header
+  and nowhere else — *"THE HEADER IS THE ANSWER AND THERE IS NO SECOND
+  OPINION"* (`spansOf`, src/vlm/compile.ts). A composed part label is a
+  `header.chapters[].title` that no heading is a provable copy of, which
+  is exactly the population Wave 44's titles pass asks the model about
+  (`bookTitlePlan`, src/translate/bookrows.ts). Verified end to end
+  against a book file carrying `TEIL III: WIDERSTAND` over a heading
+  reading `TEIL III`.
+
+  **The residue, named rather than left implied**: a title that IS a
+  provable copy of a heading the model then REFUSED. The proof held, so
+  no title was asked; the heading came back in the source language, so
+  nothing derives; the title carries and `Translated.untitled` says
+  which. Closing it would mean planning the titles after the work, which
+  puts a growing denominator in `block N/M` — the one number the app's
+  progress bar is drawn from.
 - **Hosted, the held bench is reachable while documents remain open**
   (8b). Closing the shown document lands on the quiet bench even when
   other documents are still open — before the single viewer, the strip

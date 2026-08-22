@@ -904,12 +904,26 @@ one JSON object per line:
 {"key":"<sha256 hex>","parts":"12:3 13:0","generation":"g7","text":"…"}
 {"key":"…","parts":"9:3#1","text":"…"}
 {"parts":"9:3#1","text":"a person's correction","author":"user"}
+{"key":"…","parts":"chapter:b12-3","text":"Part III: Resistance"}
 ```
 
 - `parts` (required) — `data-bf-src` verbatim: `page:order`,
   `page:order:part`, space-joined for a reflow-joined paragraph, plus
   `#<ordinal>` for one note. Materialization looks up by this; **newest
   row wins**.
+
+  THREE SPELLINGS, ONE FIELD. A run over a book file (`--book`) writes
+  the ROW'S OWN ID instead (`b12-3`, `b12-3#1`, `b2-3/1`), which is what
+  lets the derived book keep the parent's ids verbatim. And since Wave 44
+  a `chapter:<division id>` row is a translated CHAPTER TITLE — the
+  divisions no heading of the book is a provable copy of, which is a name
+  a person typed and a part divider's composed label. The three cannot
+  collide (a block id holds no colon; a cast coordinate is digits and
+  colons; `chapter:` is neither), and a title row is a PREFIX on an
+  existing field rather than a new one precisely so that a reader written
+  before it parses the line and files it as a position it has no block
+  at — a case every reader already handles by name. Old files have no
+  such row and materialise exactly as they always did.
 - `key` (required on machine rows) — `bankKey` over
   `foundry-translate-bank-2 ∥ model ∥ to ∥ from ∥ instructions ∥
   maskedText`. The cost cache. A keyless row is remembered by position

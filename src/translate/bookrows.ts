@@ -36,6 +36,22 @@
  * there is no cell-by-cell path here, and handing a model `<tr>` and `<td>` and
  * asking it not to touch them is the failure that whole design exists to refuse.
  *
+ * ── AND THE SPINE, WHICH IS NOT MADE OF ROWS ────────────────────────────────
+ *
+ * Owen's ruling, 2026-08-22, verbatim: *"when i translate, does it translate the
+ * chapters in the spine as well? the chapter names on the green dotted lines? if
+ * not, id like it to. everything should be translated."*
+ *
+ * A book file's header carries where the book divides and what each division is
+ * called (`chapters`), and those names are what `vlm-compile` puts in the spine,
+ * in the nav and at the head of every document — *"THE HEADER IS THE ANSWER AND
+ * THERE IS NO SECOND OPINION"* (`spansOf`, src/vlm/compile.ts). They are not
+ * rows, so `bookRowPlan` above has never seen one, and until this a translated
+ * book came out with English paragraphs under a German contents page.
+ *
+ * `bookTitlePlan` is the other half of the plan and it is deliberately SMALL:
+ * see its own comment for why most titles must not be asked at all.
+ *
  * A SHELVED ROW IS NOT SKIPPED — it is not in the book. Furniture and suppressed
  * running heads are rows of a book file so that nothing the model answered is
  * silently gone (docs/BOOK-FILE.md §5), and `vlm-compile` filters them out for
@@ -44,7 +60,8 @@
  * which is why the two furniture categories are translatable here and are not in
  * `blocks.ts`, where they could never appear.
  */
-import { parseBookFile, type BookFile, type BookRow } from '../vlm/book-file.js';
+import { parseBookFile, type BookChapter, type BookFile, type BookRow } from '../vlm/book-file.js';
+import { headingLabel } from '../vlm/dots-book.js';
 import type { GroupKind } from './blocks.js';
 
 /** A book file this command will not translate. Always says what is wrong. */
@@ -220,4 +237,96 @@ export function bookRowPlan(book: BookFile, where: string): BookRowPlan {
   }
 
   return { groups, skipped, kept };
+}
+
+/** One division whose name has to be asked of the model. See `bookTitlePlan`. */
+export interface BookTitle {
+  /** The division's id — the block it sits above, and the record's position. */
+  id: string;
+  /** The one line the contents gets, exactly as the book file holds it. */
+  title: string;
+}
+
+/**
+ * Which row a division's title was taken from, when it can be PROVED.
+ *
+ * The mirror of `titledFrom` (app/shared/materialize.ts), which is itself the
+ * mirror of `relabelNav`'s rule (`run.ts`) one format over, and the three of them
+ * have to agree about one string or this asks for titles the app is going to
+ * throw away and the app carries titles this never asked for.
+ *
+ * The seed's own rule is what makes the proof available: a division's title is
+ * `sectionName`'s answer over its span (src/vlm/dots-book.ts) — the page
+ * classifier's composed label if there is one, otherwise the FIRST Title or
+ * Section-header in the span, folded by `headingLabel`. So this looks in the same
+ * place, folds with the same function — the original, imported, rather than a
+ * fourth copy of it — and compares the same string. The first heading decides:
+ * finding a LATER heading that happens to match would be proving the title is a
+ * copy of a row the seed never read it off.
+ */
+function titledFrom(
+  chapter: BookChapter,
+  rows: readonly BookRow[],
+  from: number | undefined,
+  to: number,
+): BookRow | null {
+  if (from === undefined) return null;
+  for (const row of rows.slice(from, to)) {
+    if (row.category !== 'Title' && row.category !== 'Section-header') continue;
+    return headingLabel(row.text) === chapter.title ? row : null;
+  }
+  return null;
+}
+
+/**
+ * The divisions whose names this run has to ask about — and it is the SHORT list.
+ *
+ * ── WHY MOST TITLES ARE NOT IN IT, WHICH IS THE WHOLE OF THE DESIGN ─────────
+ *
+ * An ordinary chapter's title is a COPY of the heading printed at the top of it.
+ * That heading is a row, this run translates it like any other paragraph, and
+ * materialization reads the title straight off the translated heading for
+ * nothing (`translated`, app/shared/materialize.ts). Asking the model for the
+ * title as well would be asking one question twice and shipping both answers —
+ * a contents page reading "The Coming Struggle" over a chapter headed "The
+ * Struggle to Come", which is `relabelNav`'s own measured failure and the reason
+ * that function proves a copy rather than translating a label.
+ *
+ * WHAT IS LEFT IS EXACTLY WHAT NOTHING ELSE CAN ANSWER FOR:
+ *
+ *  - A DIVISION SOMEBODY RENAMED. `{op:'chapter', set|rename, title}` puts a
+ *    person's own words in the header (app/shared/ops.ts) and no row of the book
+ *    says them, so no proof is available and none is possible.
+ *  - A PART DIVIDER. Its label is composed by the page classifier out of two
+ *    blocks — "PART III" on one line and "RESISTANCE" on the next, which only
+ *    `partVerdict` knows belong together — so it is not any single heading's
+ *    text and cannot be a copy of one.
+ *
+ * ── AND THE ONE THING IT DOES NOT COVER, NAMED RATHER THAN HIDDEN ───────────
+ *
+ * A title that IS a provable copy of a heading THE MODEL THEN REFUSED. The proof
+ * holds, so nothing is asked here; the heading comes back in the source language,
+ * so there is no translated heading to derive from; and the title carries. That
+ * is exactly what happened before this existed, it is reported by name at
+ * materialization (`Translated.untitled`), and closing it would mean planning the
+ * titles after the work — which would leave the run's own progress denominator
+ * growing halfway through, a bar reporting a quantity nobody asked about. The
+ * partial is honest and the alternative bends something that is load-bearing.
+ */
+export function bookTitlePlan(book: BookFile): BookTitle[] {
+  const at = new Map<string, number>();
+  for (const [index, row] of book.rows.entries()) at.set(row.id, index);
+
+  const asked: BookTitle[] = [];
+  for (const [which, chapter] of book.chapters.entries()) {
+    // A division with no name has nothing to translate. The book file's own
+    // parser accepts one (a person may want a rule across the page and no
+    // words on it), so this is a real state and not a defensive test.
+    if (chapter.title.trim().length === 0) continue;
+    const next = book.chapters[which + 1];
+    const to = next === undefined ? book.rows.length : at.get(next.id) ?? book.rows.length;
+    if (titledFrom(chapter, book.rows, at.get(chapter.id), to) !== null) continue;
+    asked.push({ id: chapter.id, title: chapter.title });
+  }
+  return asked;
 }

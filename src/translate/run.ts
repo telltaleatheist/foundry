@@ -161,7 +161,7 @@ import { writeZip, zipText, type ZipEntry } from '../export/zip.js';
 import { bankKey, openTranslationBank, swapPendingBankIntoPlace } from './bank.js';
 import { findBlocks, retagLanguage, spliceAll, type BlockSite, type GroupKind } from './blocks.js';
 import { languageRange, navLabels, readFoundryBook, resolveHref, type FoundryBook } from './book.js';
-import { bookRowPlan, readBookFile } from './bookrows.js';
+import { bookRowPlan, bookTitlePlan, readBookFile } from './bookrows.js';
 import { flowTextOf } from './flowtext.js';
 import { readLanguage, type NamedLanguage } from './languages.js';
 import {
@@ -170,7 +170,7 @@ import {
 } from './markers.js';
 import { chat, fetchTransport, requireModel, unloadModel, type Transport } from './ollama.js';
 import {
-  openTranslationRecords, swapPendingRecordsIntoPlace, TranslationRecords,
+  chapterPosition, openTranslationRecords, swapPendingRecordsIntoPlace, TranslationRecords,
 } from './records.js';
 import { maskText, restoreText, roundTrips } from './textmask.js';
 
@@ -264,7 +264,14 @@ export const CHUNK_CHARS = 2000;
  */
 export type ChunkShape =
   | { kind: 'single' }
-  | { kind: 'lines'; count: number; of: 'list' | 'quote' }
+  /**
+   * `titles` is the third of these and it is not a container at all — it is the
+   * book's own chapter names, sent together because they are short and because a
+   * book's titles read as a set (`bookTitlePlan`, `bookrows.ts`). The read-back
+   * contract is the list's, byte for byte: numbered lines, same count, same
+   * order, and a renumbered answer is refused rather than repaired.
+   */
+  | { kind: 'lines'; count: number; of: 'list' | 'quote' | 'titles' }
   | {
     kind: 'table';
     rows: number;
@@ -482,6 +489,17 @@ export interface TranslateReport {
    */
   blocks: number;
   /**
+   * Chapter titles asked of the model — the divisions whose names no heading of
+   * the book answers for, on the book-file route in records mode (see the titles
+   * pass in `runTranslation`). NOT part of `blocks`, which counts the book's own
+   * paragraphs and headings and means exactly what it always did.
+   *
+   * Zero on every other route by construction: a run that writes an EPUB
+   * relabels its contents page from the headings it translated (`relabelNav`)
+   * and has no header to carry names in.
+   */
+  titles: number;
+  /**
    * Requests the plan was cut into: one per standalone block, one per list,
    * quotation or table that fitted the budget, and one per run of consecutive
    * parts where it did not. Rejected answers and per-part fallbacks are extra
@@ -586,7 +604,7 @@ interface Chunk {
   /** How the payload is rendered and how the answer is read back. */
   kind: 'single' | 'lines' | 'table';
   /** What the parts came out of — the word that appears in the log line. */
-  of: 'block' | 'list' | 'quote' | 'table';
+  of: 'block' | 'list' | 'quote' | 'table' | 'titles';
   documentPath: string;
   /** 1-based over the whole book. Assigned once the plan is complete. */
   ordinal: number;
@@ -832,14 +850,28 @@ function rewriteCharter(mode: RewriteMode, language: string): string[] {
 export function shapeRules(shape: ChunkShape): string[] {
   if (shape.kind === 'single') return [];
   if (shape.kind === 'lines') {
-    const what = shape.of === 'list'
-      ? 'consecutive items of one list'
-      : 'consecutive paragraphs of one quotation';
+    /*
+     * THE TITLES GET ONE EXTRA SENTENCE AND NOTHING ELSE. A chapter name is two
+     * or three words with no sentence around them, and a model handed a bare
+     * line of display type will helpfully explain it, expand it into a phrase,
+     * or answer the question it thinks the words are asking. Saying what they
+     * ARE is the cheapest guard against all three; the length checks
+     * (`checkAnswer`) catch what survives it.
+     */
+    const what = shape.of === 'titles'
+      ? 'the names of chapters and sections of one book, in the order the book reads'
+      : shape.of === 'list'
+        ? 'consecutive items of one list'
+        : 'consecutive paragraphs of one quotation';
     return [
       '',
       `SHAPE: You are given ${shape.count} numbered lines, which are ${what}. Return exactly`
       + ` ${shape.count} lines, numbered the same way, in the same order. Translate each line.`
       + ' Return nothing else.',
+      ...(shape.of === 'titles'
+        ? ['Each line is a title, not a sentence: translate it as a heading would be set on a page,'
+          + ' and never explain, expand or comment on one.']
+        : []),
     ];
   }
   const rules = [
@@ -1125,7 +1157,8 @@ function inventoryOf(parts: readonly PendingBlock[]): MarkerInventory {
 function shapeOf(chunk: Chunk): ChunkShape {
   if (chunk.kind === 'single') return { kind: 'single' };
   if (chunk.kind === 'lines') {
-    return { kind: 'lines', count: chunk.parts.length, of: chunk.of === 'quote' ? 'quote' : 'list' };
+    const of = chunk.of === 'quote' || chunk.of === 'titles' ? chunk.of : 'list';
+    return { kind: 'lines', count: chunk.parts.length, of };
   }
   return { kind: 'table', rows: chunk.rowSizes.length, header: chunk.header };
 }
@@ -1178,7 +1211,14 @@ function planChunks(
    * handing this function an empty `parts` list to satisfy a shape would be a
    * value that lies about itself.
    */
-  groupKind: GroupKind,
+  /*
+   * `titles` is not one of `blocks.ts`'s container kinds and never will be: it
+   * is not a thing found in a document at all, it is the book's own chapter
+   * names (`bookTitlePlan`, `bookrows.ts`). It is spelled here rather than added
+   * to `GroupKind` for exactly that reason — widening that type would put a
+   * value into `findBlocks`' vocabulary that it can never produce.
+   */
+  groupKind: GroupKind | 'titles',
   rowSizes: number[],
   parts: PendingBlock[],
   log: (message: string) => void,
@@ -1515,6 +1555,16 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
   const kept: string[] = [];
   /** Blocks whose source text came out of the parent records file. */
   let chained = 0;
+  /**
+   * How many of `pending` are chapter TITLES rather than blocks of the book.
+   *
+   * They are in the same list because they go through the same machinery (see
+   * the titles pass below), and they are counted apart because `blocks` in the
+   * report means what it has always meant — paragraphs, headings, list items,
+   * table cells — and a number that quietly grew to mean something else is the
+   * defect docs/PLAN.md §1 names about every figure in this project.
+   */
+  let titleCount = 0;
 
   /**
    * WHERE A BLOCK LIVES, in the one spelling this program has for a position.
@@ -1626,6 +1676,79 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
       });
       chunks.push(...planChunks(group.kind, [], parts, opts.log));
     }
+
+    /*
+     * ── AND THE SPINE — Owen's ruling, and what it costs ──────────────────────
+     *
+     * *"when i translate, does it translate the chapters in the spine as well?
+     * the chapter names on the green dotted lines? if not, id like it to.
+     * everything should be translated."* (2026-08-22, verbatim.)
+     *
+     * The book file's header says where the book divides and what each division
+     * is called, and those names are the spine, the nav and the head of every
+     * document (`spansOf`, src/vlm/compile.ts). Most of them are already answered
+     * by the rows above — a chapter title is normally a copy of the heading
+     * printed at the top of it, and materialization reads the translated title
+     * off the translated heading for nothing. `bookTitlePlan` is the ones that
+     * are not, and its comment carries the whole argument for why the list is
+     * short and why asking for a title that CAN be derived would be the
+     * two-answers failure `relabelNav` was written to refuse.
+     *
+     * THEY GO THROUGH EVERYTHING THE BLOCKS GO THROUGH, which is the point of
+     * putting them in `pending` rather than giving them a pass of their own: the
+     * same masking and the same checked round trip, the same chunking, the same
+     * verification and retries, the same refusal discipline, the same records
+     * file and therefore the same cost cache, and the same progress line. A
+     * title is one short line, so a whole book's worth of them is one request
+     * beside the two thousand a book costs.
+     */
+    const titles = bookTitlePlan(bookFile);
+    const counter: MarkerCounter = { paired: 0, atomic: 0 };
+    const titleParts: PendingBlock[] = [];
+    for (const one of titles) {
+      let masked: MaskedBlock;
+      try {
+        masked = maskText(one.title, counter);
+        const trouble = roundTrips(one.title, masked);
+        if (trouble !== null) throw new MarkerError(trouble);
+      } catch (error) {
+        /*
+         * A NAME THIS STAGE CANNOT MASK STAYS IN THE SOURCE LANGUAGE, on the
+         * same mercy every group above gets and for the same reason: it is a
+         * fact about ONE division, and a book file with a ⟦ in a chapter name
+         * must not cost somebody the whole run. It carries into the translated
+         * book exactly as it did before this pass existed.
+         */
+        if (!(error instanceof MarkerError)) throw error;
+        const name = `${where} the division above ${one.id}`;
+        kept.push(`${name} — ${error.message}`);
+        opts.log(
+          `translate: ${name} LEFT IN THE SOURCE LANGUAGE — its name carries the characters this `
+          + `stage sends markers in, so it never travelled: ${error.message}`,
+        );
+        continue;
+      }
+      const block: PendingBlock = {
+        documentPath: where,
+        ordinal: pending.length + 1,
+        site: null,
+        // Not a dots category — no row was involved — and the one word that says
+        // what a person would have to go and look at to see this string.
+        category: 'chapter title',
+        where: `the division above block ${one.id}`,
+        masked,
+        // THE POSITION IS THE DIVISION'S, in the one spelling this format has
+        // for one (`chapterPosition`, records.ts). It is deliberately not the
+        // anchor row's own id: the row is a paragraph of the book and has its
+        // own record, and two different strings cannot share one position.
+        parts: chapterPosition(one.id),
+        wordless: stripMarkers(masked.text).length === 0 && masked.markers.length === 0,
+      };
+      pending.push(block);
+      titleParts.push(block);
+    }
+    titleCount = titleParts.length;
+    if (titleParts.length > 0) chunks.push(...planChunks('titles', [], titleParts, opts.log));
   }
 
   for (const document of book?.documents ?? []) {
@@ -1835,7 +1958,13 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
   // documents would be cut if anything were writing documents. Nothing is.
   const documents = bookFile === null ? perDocument.size : 1;
   opts.log(
-    `translate: ${pending.length} blocks in ${chunks.length} `
+    `translate: ${pending.length - titleCount} blocks`
+    // Said apart from the block count, because a chapter title is not a block of
+    // the book and a person reading this line is being told what it will cost.
+    + (titleCount === 0
+      ? ''
+      : ` and ${titleCount} chapter title${titleCount === 1 ? '' : 's'} no heading answers for`)
+    + ` in ${chunks.length} `
     + `request${chunks.length === 1 ? '' : 's'} across ${documents} `
     + `document${documents === 1 ? '' : 's'}${skippedNote}`,
   );
@@ -2381,6 +2510,21 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
         : `, and ${recordsHumanKept} position(s) were left exactly as a person corrected them.`),
     );
   }
+  /*
+   * WHAT THE SPINE COST, SAID ON ITS OWN LINE. The number that matters to a
+   * person reading this is not how many titles were asked but how many were NOT
+   * — every ordinary chapter takes its name from its own translated heading when
+   * the book is materialised, and a run that said nothing here would look like a
+   * run that translated the paragraphs and left the contents page alone.
+   */
+  if (titleCount > 0) {
+    opts.log(
+      `translate: ${titleCount} chapter title(s) travelled with the blocks — the divisions of this `
+      + 'book that no heading answers for, which is a name somebody typed or a part divider the page '
+      + 'classifier composed. Every other title in the spine is read off its own translated heading '
+      + 'when the book is made, and costs nothing.',
+    );
+  }
 
   /*
    * A TRANSLATION THAT TRANSLATED NOTHING IS NOT ONE.
@@ -2437,7 +2581,8 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
       );
     }
     return {
-      blocks: pending.length,
+      blocks: pending.length - titleCount,
+      titles: titleCount,
       chunks: chunks.length,
       documents,
       skipped,
@@ -2581,6 +2726,10 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
   const seconds = (Date.now() - started) / 1000;
   return {
     blocks: pending.length,
+    // An EPUB has no chapter header to carry names in — its contents page is
+    // relabelled from the headings this run translated (`relabelNav`) — so this
+    // route never asks for one and says so rather than omitting the field.
+    titles: 0,
     chunks: chunks.length,
     documents,
     skipped,

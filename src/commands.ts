@@ -1523,10 +1523,17 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
       + (report.recordsHumanKept === 0
         ? ''
         : ` and ${report.recordsHumanKept} left as a person corrected them`);
+  // The spine, on the same line and counted apart from the blocks. A chapter
+  // title is not a paragraph of the book and the rate above is a rate over
+  // paragraphs; what a person wants to know here is that the contents page came
+  // out in the language they asked for (`bookTitlePlan`, src/translate/bookrows.ts).
+  const spine = report.titles === 0
+    ? ''
+    : `, ${report.titles} chapter title(s) no heading answers for`;
   log(
     `translate: ${report.blocks} blocks${sent} in ${report.seconds.toFixed(1)}s `
     + `(${(report.blocks / Math.max(report.seconds, 0.001)).toFixed(2)} a second, ${report.model})`
-    + `${banked}${rows}${struck}${asked}${kept}${echoed}${stuck}`,
+    + `${spine}${banked}${rows}${struck}${asked}${kept}${echoed}${stuck}`,
   );
   if (report.navUnmapped > 0) {
     log(

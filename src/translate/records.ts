@@ -36,6 +36,9 @@
  *    position is a string, last row wins, and the reader that has a book in hand
  *    is where the two are told apart (`shared/records.ts`, which bridges the old
  *    spelling through the book file's own `src` column).
+ *    A CHAPTER TITLE'S POSITION IS `chapter:<division id>` — the third spelling,
+ *    added by the titles pass (`bookTitlePlan`, `bookrows.ts`) and argued in
+ *    full at `chapterPosition` below.
  *  - `key` is WHAT WAS ASKED: `bankKey` over the masked source text, the model,
  *    the two languages and the instructions (`bank.ts`). It is what makes this
  *    file its own cost cache — an unchanged block has an unchanged key, and a
@@ -85,6 +88,56 @@ export class TranslateRecordsError extends Error {
     super(message);
     this.name = 'TranslateRecordsError';
   }
+}
+
+/**
+ * ── A CHAPTER TITLE'S POSITION, AND WHY IT IS A POSITION AT ALL ─────────────
+ *
+ * Owen's ruling, 2026-08-22, verbatim: *"when i translate, does it translate
+ * the chapters in the spine as well? the chapter names on the green dotted
+ * lines? if not, id like it to. everything should be translated."*
+ *
+ * Most chapter titles need no row here and never get one. A title is usually a
+ * COPY of the heading printed at the top of the chapter, so the translated
+ * heading is already the right answer and materialization derives the title
+ * from it for nothing (`titledFrom`, app/shared/materialize.ts) — the same
+ * proof `relabelNav` makes about a contents entry one format over, and the same
+ * refusal to ask one question twice and ship two answers to it.
+ *
+ * WHAT HAS NO HEADING TO BE A COPY OF is the population this spelling exists
+ * for: a division a PERSON renamed on the proof sheet (`{op:'chapter', rename}`,
+ * app/shared/ops.ts — a keyless human string that no row of the book says), and
+ * a part divider whose label the page classifier composed out of two blocks
+ * ("PART III — RESISTANCE": the number and the name are two blocks and only
+ * `partVerdict` knows they belong together). Neither can be proved to be a copy
+ * of anything, so before this both carried into the translated book VERBATIM —
+ * a book whose paragraphs are all in English and whose spine is still in German.
+ *
+ * SO IT IS A POSITION LIKE ANY OTHER, and everything the format already does
+ * comes free: the cost cache never asks the same title twice, an interrupted
+ * run resumes with the titles it already paid for, a person may correct one by
+ * hand and a later run will not overwrite them, and the newest row wins.
+ *
+ * IT CANNOT COLLIDE WITH EITHER OTHER SPELLING, which is what makes one field
+ * able to carry three. A book file's ids are `b<page>-<order>[-<part>]` with
+ * `#<note>` and `/<n>` suffixes (`blockId`, src/vlm/book-file.ts) and hold no
+ * colon at all; a cast coordinate is `page:order[:part]`, digits and colons.
+ * `chapter:` is neither, and it is a prefix rather than a new FIELD so that a
+ * reader written before this — including every `TranslationRecords` on disk —
+ * parses the line, files it under a position nothing in its book answers to,
+ * and ignores it. A new row type that an old reader can read and safely drop is
+ * the only kind this format may grow.
+ */
+const CHAPTER_POSITION = 'chapter:';
+
+/** The position a title record for this division wears. See `CHAPTER_POSITION`. */
+export function chapterPosition(id: string): string {
+  return `${CHAPTER_POSITION}${id}`;
+}
+
+/** The division a title record is about, or null where this is an ordinary block. */
+export function chapterOfPosition(parts: string): string | null {
+  return parts.startsWith(CHAPTER_POSITION) ? parts.slice(CHAPTER_POSITION.length) : null;
 }
 
 /** Who wrote a row. Absent means the model, through a run of this command. */
