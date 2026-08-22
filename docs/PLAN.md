@@ -2455,6 +2455,19 @@ ORIGINAL, and from that moment a captured project is an ORDINARY project.
   docs/IPC-CHANNELS.md is regenerated — including the correction that its own
   count had been reading 71 against a source measuring 85.
 
+### Wave 42 — the version floor (proposed at the vendor, 2026-08-22) — RULED-PENDING
+
+Found by BookForge at the f5af135a vendor and CONFIRMED here from source:
+the engine a hosted read spawns is whatever binary is installed, the
+app's version probe feeds the settings screen and nothing else, and a
+70-commit-stale engine RUNS QUIETLY under an app that expects ten of
+those commits' behaviours. A fallback wearing a version number. The
+proposed floor: the app refuses an engine older than the version it was
+built against, with a sentence naming both versions and the rebuild
+command. Awaiting Owen's word; the immediate gap is closed operationally
+(fresh 0.9.2 artifact built at 98031b0, component refresh in front of
+Owen).
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the
