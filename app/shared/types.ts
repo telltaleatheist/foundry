@@ -17,17 +17,23 @@
  * `epub` is the only thing the engine casts. `env-install` is not a conversion
  * at all — it is the app fetching a prebuilt Python — but it shares the queue on
  * purpose: it is long, it is cancellable, and a conversion that needs the
- * environment must wait BEHIND it rather than race it. One serial queue gives
- * that for free.
+ * environment must wait BEHIND it rather than race it. One serial queue gave
+ * that for free; a board of lanes has to say it, and does (an install is
+ * `exclusive`, shared/queue-board.ts).
  *
  * `translate` is a conversion whose INPUT is an EPUB and whose output is
  * another one. It is not in `ConversionKind` and that is deliberate: a
  * conversion kind doubles as the output's file extension (see below), and a
  * file called `book.translate` is not a thing. Its output is named by
  * `planTranslation` instead, which knows the language tag belongs in the
- * middle. It shares the serial queue for the same reason an install does — it
- * holds a GPU for hours and two at once is two runs that each take twice as
- * long.
+ * middle. It shares the GPU lane with a reading for the reason that lane holds
+ * one job — it keeps a model resident for hours, and two at once is two runs
+ * that each take twice as long.
+ *
+ * WHICH RESOURCE EACH OF THESE NEEDS IS DECLARED ONCE, in shared/queue-board.ts,
+ * and both the scheduler and the shelf read it there. A kind added here without
+ * a row there fails the typecheck, which is the whole reason that table is a
+ * `Record` over this union.
  */
 /**
  * The things the queue can be holding.
@@ -50,10 +56,10 @@
  * sentence above about the engine is the reason it needs saying here. A mint is
  * the capture stage assembling a PDF out of photographs (docs/CAPTURE.md): the
  * pixels are rectified in the RENDERER, one page at a time, so the row exists to
- * be seen and cancelled rather than to be run. It must never occupy the queue's
- * serial engine slot — an interactive mint sitting in it would hold a reading
- * behind it for minutes — and `env-install` is the precedent for a row the pump
- * hands to something other than `executeJob`.
+ * be seen and cancelled rather than to be run. It must never occupy a slot on
+ * the board — an interactive mint sitting in one would hold a reading behind it
+ * for minutes — and `env-install` is the precedent for a row the pump hands to
+ * something other than `executeJob`.
  */
 export type JobKind = ConversionKind | 'read' | 'env-install' | 'translate' | 'mint';
 

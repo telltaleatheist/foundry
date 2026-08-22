@@ -869,7 +869,7 @@ export interface FoundryApi {
   queue: {
     list(): Promise<Job[]>;
     enqueue(request: JobRequest): Promise<Job>;
-    /** The same serial queue, a different command. See `TranslateRequest`. */
+    /** The same queue and the same GPU lane, a different command. See `TranslateRequest`. */
     enqueueTranslate(request: TranslateRequest): Promise<Job>;
     /**
      * Release everything currently HELD, in order. Answers with how many.

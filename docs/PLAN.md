@@ -2123,16 +2123,63 @@ again over the accordion that draws it.
   with the pre-existing budget WARNING at **757.63 kB** (746.57 at the
   last landing).
 
-### Wave 35 — the queue as a slot board (Owen, 2026-08-22) — RULED, NEEDS A CONTRACT
+### Wave 35 — the queue as a slot board (Owen, 2026-08-22) — BUILT (this commit)
 
 *"the queue shelf should probably look a bit more like the bookforge
 queue, where it has two cpu slots and one gpu slot, and i can see
 details about the step thats taking place."* NOT a coat of paint: the
-standalone queue is deliberately ONE serial slot (the pump), so lanes
+standalone queue was deliberately ONE serial slot (the pump), so lanes
 are a scheduler change with resource declarations, not a shelf
-restyle. Wants a contract before code, and the Wave 16 lesson applies
-— one machine's GPU wants one owner, so the lanes must not let a CPU
-export and a GPU read fight the card's feeding.
+restyle. Contract first, in `docs/QUEUE-BOARD.md`, and the Wave 16
+lesson applies — one machine's GPU wants one owner, so the lanes must
+not let a CPU export and a GPU read fight the card's feeding.
+
+- **The table lives in `app/shared/queue-board.ts`** —
+  `Readonly<Record<JobKind, JobResource>>` plus `SLOTS = {gpu: 1, cpu:
+  2}` — read by the scheduler AND by the shelf, so the lane a row waits
+  in and the lane it runs in cannot disagree. A new kind fails the
+  typecheck; there is no default, because a default resource is a
+  fallback.
+- **Two of the contract's own rows were wrong and were corrected in the
+  file first** (it is written to be corrected). `env-install` is
+  `exclusive`, not "outside the slots": 16e is about ROUTING, and an
+  install has always taken the serial slot on purpose — a downloader
+  running beside the lanes would let a read start against the Python it
+  is replacing. A queued install is also a BARRIER, or cheap CPU rows
+  would step over it forever. `mint` is `unscheduled`, not `cpu`: it is
+  born running and the pump never sees it.
+- **`slots` replaces `running` AND `starting`.** The slot is taken at
+  the moment of choosing, before any await, so the window the flag
+  existed to cover is closed by the occupancy every later pump reads.
+  The slot outlives the child (released at the end of the whole run,
+  not at the child's exit), which is what the single slot did and what
+  keeps a landing from being raced by the next row's rotation.
+- **Drain is the same three facts, counted across lanes**: nothing on
+  the board, nothing queued, no live detached run. Measured firing once
+  at the end of a three-job board (`keepServerWarmMinutes` defaults to
+  0, so an early drain STOPS the reading server — treated as
+  correctness, not tidying).
+- **The shelf draws lanes only when the board holds two kinds of work**;
+  one lonely job still draws the flat list it always did. The running
+  row grew a second line carrying the engine's own last sentence — the
+  step Owen asked to see — instead of it being crammed onto the count
+  line at 80 characters.
+- **The landing arms were walked** for serial assumptions and the walk
+  found the ledger already defended: every catalogue write is
+  `withManifest` (a promise chain per project), every book file write is
+  `oneWriterOf` (per target path), `landReadProducts` PROVES which
+  reading the position names rather than assuming, and
+  `materializeTranslation` resolves its own step by payload rather than
+  by the pointer. ONE newly reachable race, reported and not fixed:
+  `rotateGenerated` / `rotateFinal` refuse when `archived-<stamp>`
+  already exists, and two rotations in ONE project inside one
+  millisecond would now be possible (before, never). It fails loudly
+  before the engine starts, moves nothing and loses nothing; the fix if
+  it is ever seen is a free-name suffix in `stampedArchive`.
+
+DEFERRED OUT LOUD, unchanged from Wave 16: the queue still has no
+persistence, so a held read is still lost on restart, and the lanes do
+not make that better or worse.
 
 ### Wave 30 — the glance obeys the click (Owen, 2026-08-22) — BUILT (this commit)
 
