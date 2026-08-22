@@ -11,7 +11,7 @@ import { QueueService } from '../../core/queue.service';
 import { OpenDocumentsService } from '../../core/documents.service';
 import { StageService } from '../../core/stage.service';
 import { UiService } from '../../core/ui.service';
-import { api } from '../../core/foundry';
+import { api, hosted } from '../../core/foundry';
 
 /**
  * OCR — read the pages, and stop there.
@@ -666,8 +666,16 @@ export class OcrDialogComponent {
        * shelf's live region — a sentence that is read out rather than one that
        * is silently replaced by a closing card.
        */
-      this.ui.announce(
-        `Added ${this.nameFor(input)} to be read. Press Start on the queue to run it.`);
+      /*
+       * The sentence is this dialog's; WHERE it lands is `confirmQueued`'s
+       * (standalone: the shelf's live region; hosted: the notice bar, because
+       * there is no shelf and the host's queue chrome is in its own window).
+       * Hosted the clause about Start goes too — a routed read is queued on
+       * arrival and runs when the device frees, nobody presses anything.
+       */
+      this.ui.confirmQueued(hosted()
+        ? `Added ${this.nameFor(input)} to be read. It is in the queue and runs on its own.`
+        : `Added ${this.nameFor(input)} to be read. Press Start on the queue to run it.`);
       /*
        * One door for the unroll-and-focus, because the hosted rule lives in it:
        * hosted there is no shelf to summon (Owen's ruling — the host's queue

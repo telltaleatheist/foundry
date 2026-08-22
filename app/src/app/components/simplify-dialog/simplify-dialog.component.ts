@@ -476,6 +476,7 @@ export class SimplifyDialogComponent {
       // there. Closing onto a collapsed shelf would leave a night of GPU
       // configured, idle and out of sight.
       this.ui.summonShelf(false); // hosted: no shelf to summon, and the call is deliberately nothing
+      this.ui.confirmQueued('Simplify queued — it lands in the tree when it finishes.');
       this.ui.closeSimplify();
     } catch (err) {
       this.problem.set(err instanceof Error ? err.message : String(err));

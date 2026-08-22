@@ -1,6 +1,7 @@
-import { Injectable, signal } from '@angular/core';
+import { Injectable, inject, signal } from '@angular/core';
 
 import { hosted } from './foundry';
+import { NoticeService } from './notice.service';
 
 /**
  * WHICH HOST ACT IS BEING CONFIGURED, AND WHAT IT WOULD RUN AGAINST.
@@ -34,6 +35,9 @@ export interface HostOpRequest {
  */
 @Injectable({ providedIn: 'root' })
 export class UiService {
+  /** The one reader `confirmQueued` routes to hosted — see there. */
+  private readonly notices = inject(NoticeService);
+
   /** The OCR dialog — read the pages, and nothing else. */
   readonly ocrOpen = signal(false);
   /**
@@ -185,6 +189,30 @@ export class UiService {
     if (hosted()) return;
     this.shelfExpanded.set(true);
     if (focus) this.focusShelfAt.update((count) => count + 1);
+  }
+
+  /**
+   * "DID THAT WORK?" HAS AN ANSWER IN BOTH WORLDS — the confirmation a dialog
+   * owes the person after Add, routed to whichever surface this window has.
+   *
+   * The gap this closes was made by two right decisions crossing (found by the
+   * host side, 2026-08-22, before anybody hit it): hosted there is no shelf —
+   * so no live region, its <p> went with the component — and the host's own
+   * queue chrome lives in its main window, not in this pane. So a hosted Add
+   * closed the dialog into silence, and the job started minutes later on a
+   * card the person cannot see from here. The old undismissable panel was
+   * wrong in the other direction, but it did answer the question.
+   *
+   * HOSTED, THE NOTICE BAR IS THE SURFACE — this app's own idiom for "a
+   * sentence about what just happened", already in every window and gated by
+   * nothing. STANDALONE, the sentence goes to the shelf's live region exactly
+   * as before; the shelf the caller also summons is the visible half there.
+   * One door rather than a hosted() branch in four dialogs, because four
+   * copies of one routing rule is the drift shape this repo keeps refusing.
+   */
+  confirmQueued(said: string): void {
+    if (hosted()) this.notices.notice.set(said);
+    else this.announce(said);
   }
 
   /**

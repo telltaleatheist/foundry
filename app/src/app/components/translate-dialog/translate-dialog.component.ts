@@ -651,6 +651,7 @@ export class TranslateDialogComponent {
        * to queue without going and opening it.
        */
       this.ui.summonShelf(false); // hosted: no shelf to summon, and the call is deliberately nothing
+      this.ui.confirmQueued('Translation queued — it lands in the tree when it finishes.');
       this.ui.closeTranslate();
     } catch (err) {
       this.problem.set(err instanceof Error ? err.message : String(err));

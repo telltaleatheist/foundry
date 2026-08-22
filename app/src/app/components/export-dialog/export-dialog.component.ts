@@ -721,6 +721,7 @@ export class ExportDialogComponent {
         return;
       }
       this.ui.summonShelf(false); // hosted: no shelf to summon, and the call is deliberately nothing
+      this.ui.confirmQueued('Export queued — it lands under its step when it finishes.');
       /*
        * ONE SENTENCE NOW, AND IT SAYS THE JOB IS MOVING. A translated export used
        * to be HELD — it ran the translator as its second stage, which can spend
