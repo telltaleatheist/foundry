@@ -12,6 +12,7 @@ import {
   input,
   signal,
   untracked,
+  viewChild,
 } from '@angular/core';
 
 import { PDF_BLOCK_CATEGORIES, pdfCategoryColour, pdfCategoryLabel } from '@shared/categories';
@@ -326,16 +327,37 @@ const SCROLL_SETTLE_MS = 400;
 /*
  * ── The glance ──────────────────────────────────────────────────────────────
  *
- * HOW LONG A POINTER MUST STOP before the original's page appears beside the
- * block. Long enough that sweeping down a column of forty paragraphs opens
- * nothing — the whole reason the trigger is rest and not enter — and short
- * enough that a person who has stopped to look does not wonder whether they
- * have to click. It is the same order as a tooltip because it is answering the
- * same kind of question.
+ * GRAVESTONE — `GLANCE_REST_MS`, 180 ms, Wave 23's pointer-rest delay, removed
+ * in Wave 30 along with the hover it measured.
+ *
+ * NOTHING ABOUT THE ARGUMENT WAS WRONG, and it is written down here so nobody
+ * re-derives it as new: FOR A HOVER TRIGGER, rest beats enter. A pane of prose
+ * is a thing people sweep a pointer across on the way somewhere else, and a
+ * card that opened on every crossing would flash a dozen times down one page,
+ * each flash costing a PDF page render. The delay was also what made the
+ * NO-PAPER sentence bearable — a sentence that appears when somebody stopped
+ * and waited to find out, rather than one that strobes past a reader.
+ *
+ * WHAT WENT IS THE HOVER, NOT THE REASONING. The card now answers a CLICK, and
+ * a click cannot be swept through: there is exactly one per gesture, it is
+ * already the gesture that selects the block, and there is nothing left for a
+ * delay to protect against. So the timer is DELETED rather than set to zero —
+ * a zero-length rest is a hover trigger wearing a constant's clothes, and the
+ * next reader would have had to prove that before touching it.
  */
-const GLANCE_REST_MS = 180;
+
 /** The least the card may sit from the top of the paper. */
 const GLANCE_GAP = 12;
+/**
+ * The air either side of the card when it stands OUTSIDE the paper — between
+ * the sheet's edge and the card, and between the card and the pane's own edge.
+ *
+ * Both, and the same number for both, because what it buys is the same thing in
+ * both places: the card has to read as a separate object sitting in the bench's
+ * dead space, and a card flush against the paper reads as part of it while a
+ * card flush against the pane reads as clipped.
+ */
+const GLANCE_MARGIN = 12;
 
 @Component({
   selector: 'app-book-view',
@@ -817,7 +839,7 @@ const GLANCE_GAP = 12;
           (dblclick)="edit($event)"
           (keydown.delete)="cancel($event)"
           (keydown.backspace)="cancel($event)"
-          (keydown.escape)="dismissPeek()"
+          (keydown.escape)="dismissCards()"
           (keydown.control.j)="joinChosen($event)"
           (keydown.meta.j)="joinChosen($event)"
         >
@@ -990,7 +1012,7 @@ const GLANCE_GAP = 12;
               [class.spanned]="spans(line)"
               [class.twin]="twinned() === line.row.id"
               [class.drop-target]="draggingRule()?.over === line.row.id"
-              (pointerenter)="lightRow(line, $event)"
+              (pointerenter)="lightRow(line)"
               (pointerleave)="dim()"
               (contextmenu)="blockMenu($event, line)"
             >
@@ -1131,30 +1153,49 @@ const GLANCE_GAP = 12;
             </aside>
           }
           <!--
-            THE ORIGINAL PAGE, BESIDE THE BLOCK THE POINTER IS RESTING ON.
-            *"i want to hover over a block and see that page of the original
-            beside it."* Placed here, beside the note peek, because the two are
-            the same idiom on the same paper — and kept as separate state
-            because they are different gestures: a peek is asked for and stays,
-            a glance follows the pointer and goes. Both may be open at once and
-            neither has an opinion about the other. See ./page-glance.
+            THE ORIGINAL PAGE, BESIDE THE BLOCK THAT WAS CLICKED. *"i want to
+            hover over a block and see that page of the original beside it"*
+            asked for the card; *"it should only appear when a block is actually
+            clicked"* decided the gesture. Placed here, beside the note peek,
+            because the two are the same idiom on the same paper — and kept as
+            separate state because they are still different questions: a peek
+            answers "what does the other half of this apparatus say", a glance
+            answers "what did this paragraph look like on the printed page".
+            Both may be open at once and neither has an opinion about the other.
+            See ./page-glance.
 
             IT IS MOUNTED ONCE AND TOLD TO SHOW NOTHING, never put up and taken
             down, and that is not a style preference — it is the difference
             between the card the component's header describes and the one that
             was running. This was \`@if (glanceAt())\`, so the component was
-            DESTROYED on every pointerleave, and with it the pdf.js worker it
-            promises to build "once and keep", the open document, and the
-            twelve-page bitmap cache that is supposed to make the second glance
-            at a page free. MEASURED: a walk of ten rests down one book built
-            TEN workers and terminated none, and every glance re-read the whole
-            scan over IPC and re-parsed it — 0.7-1.0s each, a cost that never
-            fell because nothing survived to make it fall. The component draws
-            nothing when its row is null and hides itself, so this can simply
-            stay.
+            DESTROYED every time the card went away, and with it the pdf.js
+            worker it promises to build "once and keep", the open document, and
+            the twelve-page bitmap cache that is supposed to make the second
+            glance at a page free. MEASURED: a walk of ten glances down one book
+            built TEN workers and terminated none, and every glance re-read the
+            whole scan over IPC and re-parsed it — 0.7-1.0s each, a cost that
+            never fell because nothing survived to make it fall. The component
+            draws nothing when its row is null and hides itself, so this can
+            simply stay.
+
+            AND THE MOUNT IS WHAT MAKES THE CARD MEASURABLE, which Wave 30 needs
+            and Wave 23 did not: \`glanceLeft\` is decided against this card's
+            REAL WIDTH, read off this element, rather than against a number this
+            file keeps about a width declared in another one. \`#glance\` is that
+            reading. See \`beside\`.
+
+            ONE INLINE \`left\` DECIDES BOTH PLACEMENTS. Null is today's card —
+            the component's own stylesheet pins it to the paper's right margin
+            (\`right\`, ./page-glance) and nothing here overrides that. A number
+            is the card standing in the bench beside the paper: an absolutely
+            positioned box given a width, a left AND a right is over-constrained,
+            and CSS resolves that by ignoring the right in a left-to-right
+            document — so setting the one property is the whole of the move.
           -->
           <app-page-glance
+            #glance
             [style.top.px]="glanceAt() ?? 0"
+            [style.left.px]="glanceLeft()"
             [original]="original()"
             [originalPages]="originalPages()"
             [row]="glanced()"
@@ -2347,23 +2388,39 @@ export class BookViewComponent {
   /** The note whose apparatus is under the pointer — it and its markers light together. */
   protected readonly lit = signal<string | null>(null);
   /**
-   * ── The glance: the original's page, beside the block resting under the hand
+   * ── The glance: the original's page, beside the block that was clicked ─────
    *
-   * `glanced` is the ROW and `glanceAt` is where its card goes, kept apart
-   * deliberately: the card re-renders a PDF page when the row changes and only
-   * moves when the place changes, so a single signal holding both would make
-   * every reposition a re-render. ./page-glance's one effect reads the first and
-   * not the second, which is what that split is for.
+   * `glanced` is the ROW and `glanceAt`/`glanceLeft` are where its card goes,
+   * kept apart deliberately: the card re-renders a PDF page when the row
+   * changes and only MOVES when the place changes, so a single signal holding
+   * both would make every reposition a re-render. ./page-glance's one effect
+   * reads the first and not the others, which is what that split is for — and
+   * it is what makes the resize recompute below free.
    *
-   * BOTH GO NULL ON LEAVE AND THE CARD STAYS MOUNTED. A null row is how this
-   * pane says "show nothing" — see the mount above for what putting the card
-   * up and taking it down cost, and why saving a re-render meant nothing while
-   * the whole component was being rebuilt between glances.
+   * ALL THREE GO NULL ON DISMISSAL AND THE CARD STAYS MOUNTED. A null row is
+   * how this pane says "show nothing" — see the mount above for what putting
+   * the card up and taking it down cost, and why saving a re-render meant
+   * nothing while the whole component was being rebuilt between glances.
+   *
+   * `glanceLeft` IS THE SIDE OF THE PAPER THE CARD STANDS ON: a number of
+   * sheet-pixels when it fits in the bench beside the paper, null when it does
+   * not and the card falls back to the right margin it has always used. See
+   * `beside` for the arithmetic and the mount for how one property does both.
    */
   protected readonly glanced = signal<BookRow | null>(null);
   protected readonly glanceAt = signal<number | null>(null);
-  /** The rest timer. Null between glances, which is nearly always. */
-  private resting: ReturnType<typeof setTimeout> | null = null;
+  protected readonly glanceLeft = signal<number | null>(null);
+  /**
+   * The card itself, for its WIDTH and for the paper it is a child of.
+   *
+   * MEASURED AND NEVER MIRRORED, which is the one lesson Wave 23 paid for twice.
+   * The card's width is declared once, in rem, in the file that draws it; the
+   * first attempt at placing it beside a block kept a `px` copy of that width
+   * over here, the app's root font is 13px, so the copy said 256 about a box
+   * that renders at 195 — and the card landed on the paragraph being read. A
+   * reading of the element cannot disagree with the element.
+   */
+  private readonly glanceCard = viewChild<ElementRef<HTMLElement>>('glance');
   /**
    * THE SCAN THIS BOOK WAS READ OFF, or null for a book with no paper behind it.
    * Read straight off the load rather than resolved here — `BookLoad.originalPath`
@@ -2720,6 +2777,29 @@ export class BookViewComponent {
      * this book says — there is nothing to keep in step, because there is only one
      * of it.
      */
+    /*
+     * ── MORE THAN ONE BLOCK CHOSEN PUTS THE CARD DOWN ─────────────────────────
+     *
+     * *"if multiple blocks are selected, it should not show at all."* `release`
+     * already refuses to SUMMON the card from a selection-building click, and
+     * this is the backstop for every other door into a many-block selection: the
+     * marquee (which sets `chosen` on the way and never reaches `release`'s
+     * branches), a split that hands back both halves, a join, a panel reaching in
+     * through the stack. There are a dozen writers of `chosen` and there will be
+     * more; there is one reader of it here.
+     *
+     * IT CLEARS RATHER THAN MASKS, and that asymmetry is the ruling and not an
+     * oversight. A computed that hid the card while the count was high would
+     * bring it back the moment the count fell — so undoing a marquee would
+     * resurrect a card aimed at a paragraph the reader clicked ten gestures ago,
+     * out of nowhere, with nothing having been clicked. The card answers a click.
+     * Only a click puts it up.
+     */
+    effect(() => {
+      const many = this.chosen().size > 1;
+      untracked(() => { if (many) this.dismissGlance(); });
+    });
+
     const stacks = this.stacks;
     const stack: BookStack = {
       pending: () => this.waiting(),
@@ -2821,6 +2901,21 @@ export class BookViewComponent {
       const watch = new ResizeObserver((entries) => {
         const box = entries[0]?.contentRect;
         if (box !== undefined) this.wide.set(box.width);
+        /*
+         * AND THE GLANCE IS RE-PLACED HERE RATHER THAN ON `window:resize`, for
+         * the same reason this observer exists at all: the dead space beside the
+         * paper is a fact about THIS PANE, and it changes when the left nav or
+         * the inspector opens without the window moving a pixel. A card that
+         * fitted outside the paper and no longer does has to come back in, and a
+         * window listener would have watched the wrong box.
+         *
+         * Nothing happens when no card is up, which is nearly always — and when
+         * one is, only the two placement signals are written. The ROW is
+         * untouched, so ./page-glance's one effect does not run and no page is
+         * re-rendered by dragging a window edge.
+         */
+        const at = untracked(() => this.glanced());
+        if (at !== null) this.placeGlance(at.id);
       });
       watch.observe(this.host.nativeElement);
       destroy.onDestroy(() => watch.disconnect());
@@ -2934,7 +3029,9 @@ export class BookViewComponent {
     this.editingId.set(null);
     this.renaming.set(null);
     this.menu.set(null);
-    this.peek.set(null);
+    // Both cards, for one reason: they are about a paragraph in the book being
+    // replaced, and there is no honest way to carry either into another one.
+    this.dismissCards();
     /*
      * THE STACK GOES WITH THE LOAD, and it is said out loud when it held anything.
      *
@@ -3527,7 +3624,8 @@ export class BookViewComponent {
      */
     if (register === 'edition') this.alignment.set('alone');
     // A card is a glance at the bench's book; neither register keeps one up.
-    this.peek.set(null);
+    // The edition has no instrument at all, and the flip back is a fresh page.
+    this.dismissCards();
     // An export view has one register: the file is finished, and a workbench
     // over it would draw instruments nothing here can honour.
     if (this.viewing()) return;
@@ -3614,74 +3712,120 @@ export class BookViewComponent {
 
   /**
    * A note row under the pointer lights its own markers. Anything else lights
-   * nothing — and either way, the glance timer starts.
+   * nothing.
    *
-   * THE GLANCE IS ARMED HERE RATHER THAN SHOWN HERE, which is the whole of
-   * rest-not-enter: a pointer crossing this block on its way somewhere else
-   * fires this and then fires `dim` a few milliseconds later, and the timer is
-   * cleared before it ever runs. Only a pointer that STOPS gets a card. See
-   * `GLANCE_REST_MS` and ./page-glance.
+   * THE GLANCE IS NO LONGER ARMED HERE, and that is Wave 30 in one line. This
+   * used to start a 180 ms rest timer, because a hover trigger has to tell a
+   * pointer that stopped from one that swept past. The trigger is a click now
+   * (`release`), so a pointer crossing this block does exactly what it looks
+   * like it does: it lights a note and nothing else.
    */
-  protected lightRow(line: Line, event?: PointerEvent): void {
+  protected lightRow(line: Line): void {
     this.lit.set(line.ordinal === null ? null : line.row.id);
     this.twin(line.row.id);
-    if (event !== undefined) this.armGlance(line.row, event);
   }
 
   /**
-   * Wait for the pointer to settle, then put the original's page beside it.
+   * Aim the card at a block — the row to draw, and where its card stands.
    *
-   * THE GEOMETRY IS TAKEN NOW AND NOT WHEN THE TIMER FIRES. The block's rect is
-   * read at the moment of entry, while the pointer is demonstrably over it; a
-   * measurement taken `GLANCE_REST_MS` later would be of a sheet that may have
-   * scrolled under a wheel that never left the block, and the card would open
-   * beside where the block USED to be. It is the same sheet-coordinate frame
-   * `peekAt` works in, for the same reason: the card rides the scroll as ink on
-   * the paper rather than as furniture over it.
+   * CALLED FROM THE CLICK THAT ALREADY SELECTED THE BLOCK (`release`), and from
+   * nowhere else. There is no second gesture here: the press-and-let-go that
+   * makes a block THE selected block is the same press-and-let-go that puts its
+   * printed page beside it, so a reader who wants the page does what they were
+   * already doing to act on the paragraph.
    *
-   * ── ONLY THE VERTICAL IS COMPUTED, AND THAT IS THE FIX ─────────────────────
-   *
-   * This first placed the card BESIDE the block horizontally — to the right
-   * where the paper had room, to the left where it did not, which is `peekAt`'s
-   * rule. MEASURED, IT PUT THE CARD OVER THE PROSE: the flip needed the card's
-   * own width, that width was a `px` constant here mirroring a `rem` width
-   * declared in the component, AND THE APP'S ROOT FONT IS 13px — so the constant
-   * said 256 about a card that renders at 195, the fit test failed where it
-   * would have fitted, and the card landed on the paragraph being read.
-   *
-   * That is a two-spellings defect and the repair is to stop needing the number.
-   * The card now pins itself to the right margin in its own stylesheet
-   * (`right`, ./page-glance) and this decides only WHICH LINE it sits on. A
-   * width declared once, in the file that draws it, cannot disagree with itself
-   * — and a glance that always arrives in the same column is easier to read
-   * than one that jumps sides, which is a second reason to prefer it.
-   *
-   * The note peek still flips, and should: it is opened by a CLICK, so covering
-   * text is something the reader asked for and can undo. This one appears under
-   * a pointer that never asked, and may not.
+   * A ROW THE BOOK NO LONGER HAS DISMISSES rather than draws. `lines()` is the
+   * book as replayed at this instant, and an id that is not in it is a block a
+   * join or a cut has taken out from under the click — the same answer `peeked`
+   * gives for the same reason.
    */
-  private armGlance(row: BookRow, event: PointerEvent): void {
-    this.disarmGlance();
-    const block = event.currentTarget;
-    if (!(block instanceof HTMLElement)) return;
-    const sheet = block.closest('.sheet');
-    if (!(sheet instanceof HTMLElement)) return;
-    const y = Math.max(GLANCE_GAP, block.getBoundingClientRect().top - sheet.getBoundingClientRect().top);
-    this.resting = setTimeout(() => {
-      this.resting = null;
-      this.glanced.set(row);
-      this.glanceAt.set(y);
-    }, GLANCE_REST_MS);
+  private aimGlance(id: string): void {
+    const line = this.lines().find((one) => one.row.id === id);
+    if (line === undefined) {
+      this.dismissGlance();
+      return;
+    }
+    this.glanced.set(line.row);
+    this.placeGlance(id);
   }
 
-  /** The timer goes and the card with it. Safe to call when neither exists. */
-  private disarmGlance(): void {
-    if (this.resting !== null) {
-      clearTimeout(this.resting);
-      this.resting = null;
-    }
+  /**
+   * Where the card stands, in the paper's own coordinates.
+   *
+   * THE FRAME IS THE SHEET AND NOT THE WINDOW, which is the same choice `peekAt`
+   * makes and for the same reason: the card is ink on the paper, so it rides a
+   * scroll instead of being chased down one. Nothing here runs on scroll, and
+   * nothing needs to — a card measured against the paper is still beside its
+   * block after the wheel has turned a hundred lines.
+   *
+   * WHICH IS ALSO WHY THERE IS NO BOTTOM CLAMP. A clamp against the viewport
+   * would be a promise this frame cannot keep past the next wheel click, and the
+   * bench scrolls to whatever the card needs. The top clamp is not a clamp
+   * against the window either — it keeps the card off the paper's own head
+   * margin when the block clicked is the first one on the sheet.
+   */
+  private placeGlance(id: string): void {
+    const card = this.glanceCard()?.nativeElement;
+    const sheet = card?.closest('.sheet');
+    if (card === undefined || !(sheet instanceof HTMLElement)) return;
+    const block = sheet.querySelector(`[data-id="${CSS.escape(id)}"]`);
+    if (!(block instanceof HTMLElement)) return;
+    const paper = sheet.getBoundingClientRect();
+    this.glanceAt.set(Math.max(GLANCE_GAP, block.getBoundingClientRect().top - paper.top));
+    this.glanceLeft.set(this.beside(card, sheet, paper));
+  }
+
+  /**
+   * The card's left edge when it fits in the bench BESIDE the paper — or null
+   * when it does not, which is the fallback to where it has always sat.
+   *
+   * ── WHY OUTSIDE THE PAPER IS THE ANSWER ────────────────────────────────────
+   *
+   * *"it should show up to the right of the page, outside of the visible paper
+   * area — unless it won't fit, then it can show where it does now."* The card
+   * pinned to the paper's right margin covers prose, and it covers the prose of
+   * the very paragraph the reader just clicked, because the block it is aimed at
+   * is the one it lands on. The bench shows a wide margin of dead workbench
+   * either side of the sheet on any ordinary window, and a card standing in that
+   * dead space covers nothing at all.
+   *
+   * ── THE FIT, AND WHAT EACH NUMBER IS A MEASUREMENT OF ──────────────────────
+   *
+   * `pane.clientWidth` and NOT the pane's border box: the bench carries an 8px
+   * scrollbar on the very edge the card would run into, and a fit computed to
+   * the outside of it would put the card half under the thumb. The pane is the
+   * `.bench` column — in the aligned pair that is HALF the surface, which is
+   * exactly right: the second column is not dead space, it is the source text.
+   *
+   * `card.getBoundingClientRect().width` and NOT a constant. See `glanceCard`
+   * for what a constant cost the first time, and note that this reading is only
+   * possible because the card is hidden with `visibility` rather than `display`
+   * — ./page-glance's `:host(.idle)` carries that half of the bargain.
+   *
+   * MEASURED ON THE ORDINARY WINDOW: root font 13px, so the sheet is
+   * min(46rem, 92%) = 598px and the card is 15rem = 195px. A 1280px bench leaves
+   * (1280 - 598) / 2 = 341px of workbench each side; the card wants
+   * 195 + 12 + 12 = 219px of it, so it fits with 122px to spare and the card
+   * stands outside. Below about 1038px of bench the 92% rule takes over, dead
+   * space collapses to 4% a side, and every window narrower than that gets
+   * today's placement — as does the aligned pair, whose columns are half as
+   * wide as that. The fallback is not an edge case; it is what a laptop sees.
+   */
+  private beside(card: HTMLElement, sheet: HTMLElement, paper: DOMRect): number | null {
+    const pane = sheet.closest('.bench');
+    if (!(pane instanceof HTMLElement)) return null;
+    const width = card.getBoundingClientRect().width;
+    if (width <= 0) return null;
+    const edge = pane.getBoundingClientRect().left + pane.clientWidth;
+    if (paper.right + GLANCE_MARGIN + width + GLANCE_MARGIN > edge) return null;
+    return paper.width + GLANCE_MARGIN;
+  }
+
+  /** The card goes. Safe to call when there is none. */
+  private dismissGlance(): void {
     this.glanced.set(null);
     this.glanceAt.set(null);
+    this.glanceLeft.set(null);
   }
 
   /**
@@ -3702,11 +3846,18 @@ export class BookViewComponent {
     this.twinned.set(this.aligned() ? id : null);
   }
 
-  /** The pointer left a block: the note goes out, its twin with it, the glance too. */
+  /**
+   * The pointer left a block: the note goes out and its twin with it.
+   *
+   * AND THE GLANCE STAYS, which is the other half of making it a click. A card
+   * somebody asked for does not leave because the hand moved — that was the
+   * behaviour of a card the hand had put there without being asked. It goes when
+   * it is dismissed: Escape, a click on no block, or another block's click
+   * taking it.
+   */
   protected dim(): void {
     this.lit.set(null);
     this.twinned.set(null);
-    this.disarmGlance();
   }
 
   protected haunt(page: number | null): void {
@@ -3940,8 +4091,18 @@ export class BookViewComponent {
     this.scrollTo(id);
   }
 
-  protected dismissPeek(): void {
+  /**
+   * Escape puts down every card on the paper — the peek and the glance both.
+   *
+   * ONE KEY FOR BOTH, because from the reader's side there is one thing on
+   * screen to be rid of and no way to tell which of two handlers they are
+   * addressing. The peek is dismissed by clicking its own marker again and the
+   * glance by clicking off every block, so the precise gestures still exist for
+   * anybody who wants to keep one card and drop the other.
+   */
+  protected dismissCards(): void {
     this.peek.set(null);
+    this.dismissGlance();
   }
 
   /**
@@ -4199,6 +4360,13 @@ export class BookViewComponent {
       // A press on the paper itself, off every block: the ordinary "let go of
       // what I had", which is how a selection is dropped everywhere in this app.
       if (!from.extend) this.chosen.set(new Set());
+      /*
+       * AND THE CARD GOES WITH IT, extend or not. The glance answers a question
+       * asked about ONE block, and a click that landed on no block is the plain
+       * form of "I am done with that" — it is the same dismissal the peek takes
+       * from `press`, one gesture up.
+       */
+      this.dismissGlance();
       return;
     }
     const id = from.id;
@@ -4210,6 +4378,24 @@ export class BookViewComponent {
      * the block itself is the editor), and a gesture that sometimes edited and
      * sometimes selected three hundred rows would be two meanings on one motion.
      */
+    /*
+     * ── WHICH CLICKS SUMMON THE GLANCE, AND WHICH ONLY PUT IT DOWN ────────────
+     *
+     * *"if multiple blocks are selected, it should not show at all."* A card
+     * showing one page over a selection of forty is answering a question nobody
+     * asked, and picking WHICH of the forty to show would be this surface
+     * guessing.
+     *
+     * So the two selection-BUILDING clicks below — Alt for the whole category,
+     * Ctrl/Shift for one more or one fewer — dismiss the card and never summon
+     * it, even in the arithmetic where Ctrl happens to land back on a single
+     * block. THE RULE IS ABOUT THE GESTURE, NOT THE COUNT: a click whose whole
+     * meaning is "and this one too" is not a click that asked about a page. The
+     * effect in the constructor is the backstop for every other way a selection
+     * grows, and it is deliberately one-way — a selection falling back to one
+     * block does NOT bring the card back, because the card answers a click and
+     * nothing has been clicked.
+     */
     if (from.similar) {
       const line = this.lines().find((one) => one.row.id === id);
       if (line !== undefined) {
@@ -4220,14 +4406,24 @@ export class BookViewComponent {
             .map((one) => one.row.id),
         ));
       }
+      this.dismissGlance();
       return;
     }
     if (from.extend) {
       const taken = new Set(from.base);
       if (!taken.delete(id)) taken.add(id);
       this.chosen.set(taken);
+      this.dismissGlance();
     } else {
       this.chosen.set(new Set([id]));
+      /*
+       * THE ONE CLICK THAT SUMMONS IT, and it is the click that was already
+       * here. Nothing above this line changed: the same press-and-let-go on a
+       * block still makes it THE selection. It now also aims the card, which is
+       * why clicking the next paragraph re-aims rather than opening a second
+       * one — there is one card because there is one selection.
+       */
+      this.aimGlance(id);
     }
     // A note peeks the other way: the paragraph its number is printed in comes
     // to the card, with that number lit inside it.
