@@ -283,6 +283,123 @@ import { ActionMenuComponent } from '../action-menu/action-menu.component';
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <!--
+      THE ICONS, DEFINED ONCE AND USED BY REFERENCE.
+
+      Stroke icons in a symbol sheet rather than the typographic glyphs this
+      panel used to draw (▤ ▦ ✎ ⇄). Those were chosen when a row was twelve
+      pixels of text and they were honest about it; in a card with a tinted
+      square to put a mark in, a font glyph is whatever the platform happens to
+      have — ⇄ is a different weight on every machine and ⓘ is a different SIZE
+      — and the one thing a set of marks has to be is a set.
+
+      INLINE AND NOT A FILE, because the renderer's CSP is "default-src 'self'"
+      with no fetching of anything, and because an svg use against a symbol in
+      the same document is the one form that costs no request at all. The ids
+      carry an "ft-" prefix: they are global to the document, and hosted, this
+      page is Foundry's own — but the habit is cheap and the collision is not.
+
+      ── AND IT SITS OUTSIDE THE COLLAPSE BRANCH, WHICH IS NEW ────────────────
+
+      The sheet lived INSIDE the panel while the panel was the only thing that
+      drew from it. The action menu at the foot draws from it now, and that menu
+      is outside the branch on purpose — collapsing the library must not take
+      Settings off the screen — so a sheet that went away with the panel would
+      blank every mark in the menu at exactly the width where the marks are the
+      whole of it. The ids are global to the DOCUMENT, so one definition in one
+      always-rendered place is both the cheapest form and the only correct one:
+      two components each defining "#ft-scan" would be two answers to one id.
+    -->
+    <svg class="sheet" aria-hidden="true" focusable="false">
+      <defs>
+        <symbol id="ft-check" viewBox="0 0 24 24">
+          <path d="M4 12.5l5 5L20 6.5" fill="none" stroke="currentColor" stroke-width="3.4"
+                stroke-linecap="round" stroke-linejoin="round" />
+        </symbol>
+        <symbol id="ft-cross" viewBox="0 0 24 24">
+          <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="3.2"
+                stroke-linecap="round" />
+        </symbol>
+        <!-- A camera: photographs before they are pages. Beside ft-scan, which is
+             a scanned SHEET and the thing a light table is not yet. -->
+        <symbol id="ft-capture" viewBox="0 0 24 24">
+          <path d="M4 8h3l2-2h6l2 2h3v11H4z M12 16.5a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4z"
+                fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"
+                stroke-linecap="round" />
+        </symbol>
+        <symbol id="ft-scan" viewBox="0 0 24 24">
+          <path d="M7 3h8l4 4v14H7z M15 3v4h4 M10 12h6 M10 16h6" fill="none" stroke="currentColor"
+                stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" />
+        </symbol>
+        <symbol id="ft-book" viewBox="0 0 24 24">
+          <path d="M4 4.5h6a2.5 2.5 0 012.5 2.5v13a2 2 0 00-2-2H4z M20 4.5h-6A2.5 2.5 0 0011.5 7v13a2 2 0 012-2H20z"
+                fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+        </symbol>
+        <symbol id="ft-pen" viewBox="0 0 24 24">
+          <path d="M4 20l1-4L16.5 4.5a2.1 2.1 0 013 3L8 19l-4 1z M14 6l3 3" fill="none"
+                stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" />
+        </symbol>
+        <symbol id="ft-globe" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8" />
+          <path d="M3.5 12h17 M12 3.5c3 2.6 3 14.4 0 17 M12 3.5c-3 2.6-3 14.4 0 17" fill="none"
+                stroke="currentColor" stroke-width="1.6" />
+        </symbol>
+        <symbol id="ft-spark" viewBox="0 0 24 24">
+          <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z M18.5 15.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z"
+                fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+        </symbol>
+        <symbol id="ft-tag" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8" />
+          <path d="M12 11v6 M12 7.4v.2" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" />
+        </symbol>
+        <symbol id="ft-out" viewBox="0 0 24 24">
+          <path d="M12 15V4 M8 8l4-4 4 4 M5 15v4h14v-4" fill="none" stroke="currentColor"
+                stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+        </symbol>
+        <symbol id="ft-page" viewBox="0 0 24 24">
+          <path d="M6 3h8l4 4v14H6z M14 3v4h4" fill="none" stroke="currentColor" stroke-width="1.8"
+                stroke-linejoin="round" />
+        </symbol>
+        <symbol id="ft-mic" viewBox="0 0 24 24">
+          <rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.8" />
+          <path d="M5.5 11.5a6.5 6.5 0 0013 0 M12 18v3.5" fill="none" stroke="currentColor"
+                stroke-width="1.8" stroke-linecap="round" />
+        </symbol>
+        <symbol id="ft-wave" viewBox="0 0 24 24">
+          <path d="M3 12h2.5 M8 5.5v13 M12 8.5v7 M16 4.5v15 M20.5 10v4" fill="none"
+                stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+        </symbol>
+        <symbol id="ft-disc" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8" />
+          <circle cx="12" cy="12" r="2.6" fill="currentColor" />
+        </symbol>
+        <!--
+          ── THREE MARKS THE ACTION MENU NEEDED AND THE TREE NEVER DID ─────────
+
+          A tree of cards names steps and files; a menu names WHERE YOU GO, and
+          nothing in this sheet had a mark for that. Home, the document list and
+          Settings are drawn to the same recipe as everything above them — a
+          24-unit box, no fills, 1.8 of stroke, round joins — because the whole
+          argument for a sheet is that the marks are one set, and three icons
+          borrowed from somewhere else's line weight would undo it.
+        -->
+        <symbol id="ft-home" viewBox="0 0 24 24">
+          <path d="M3.5 11 12 3.5l8.5 7.5 M6 10v10h12V10" fill="none" stroke="currentColor"
+                stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+        </symbol>
+        <symbol id="ft-list" viewBox="0 0 24 24">
+          <path d="M4 6.5h16 M4 12h16 M4 17.5h16" fill="none" stroke="currentColor"
+                stroke-width="1.8" stroke-linecap="round" />
+        </symbol>
+        <symbol id="ft-gear" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8" />
+          <path d="M12 2.5v3 M12 18.5v3 M2.5 12h3 M18.5 12h3 M5.2 5.2l2.1 2.1 M16.7 16.7l2.1 2.1 M18.8 5.2l-2.1 2.1 M7.3 16.7l-2.1 2.1"
+                fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+        </symbol>
+      </defs>
+    </svg>
+
+    <!--
       PUT AWAY, THE PANEL IS A STUB AND NOT NOTHING. The button that collapses it
       has to be the button that brings it back, and it has to be in the same
       place — the top-left corner of the window — or collapsing the list is a
@@ -309,89 +426,6 @@ import { ActionMenuComponent } from '../action-menu/action-menu.component';
       </div>
     } @else {
     <div class="panel">
-      <!--
-        THE ICONS, DEFINED ONCE AND USED BY REFERENCE.
-
-        Stroke icons in a symbol sheet rather than the typographic glyphs this
-        panel used to draw (▤ ▦ ✎ ⇄). Those were chosen when a row was twelve
-        pixels of text and they were honest about it; in a card with a tinted
-        square to put a mark in, a font glyph is whatever the platform happens to
-        have — ⇄ is a different weight on every machine and ⓘ is a different SIZE
-        — and the one thing a set of marks has to be is a set.
-
-        INLINE AND NOT A FILE, because the renderer's CSP is "default-src 'self'"
-        with no fetching of anything, and because an svg use against a symbol in
-        the same document is the one form that costs no request at all. The ids
-        carry an "ft-" prefix: they are global to the document, and hosted, this
-        page is Foundry's own — but the habit is cheap and the collision is not.
-      -->
-      <svg class="sheet" aria-hidden="true" focusable="false">
-        <defs>
-          <symbol id="ft-check" viewBox="0 0 24 24">
-            <path d="M4 12.5l5 5L20 6.5" fill="none" stroke="currentColor" stroke-width="3.4"
-                  stroke-linecap="round" stroke-linejoin="round" />
-          </symbol>
-          <symbol id="ft-cross" viewBox="0 0 24 24">
-            <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="3.2"
-                  stroke-linecap="round" />
-          </symbol>
-          <!-- A camera: photographs before they are pages. Beside ft-scan, which is
-               a scanned SHEET and the thing a light table is not yet. -->
-          <symbol id="ft-capture" viewBox="0 0 24 24">
-            <path d="M4 8h3l2-2h6l2 2h3v11H4z M12 16.5a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4z"
-                  fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"
-                  stroke-linecap="round" />
-          </symbol>
-          <symbol id="ft-scan" viewBox="0 0 24 24">
-            <path d="M7 3h8l4 4v14H7z M15 3v4h4 M10 12h6 M10 16h6" fill="none" stroke="currentColor"
-                  stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" />
-          </symbol>
-          <symbol id="ft-book" viewBox="0 0 24 24">
-            <path d="M4 4.5h6a2.5 2.5 0 012.5 2.5v13a2 2 0 00-2-2H4z M20 4.5h-6A2.5 2.5 0 0011.5 7v13a2 2 0 012-2H20z"
-                  fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
-          </symbol>
-          <symbol id="ft-pen" viewBox="0 0 24 24">
-            <path d="M4 20l1-4L16.5 4.5a2.1 2.1 0 013 3L8 19l-4 1z M14 6l3 3" fill="none"
-                  stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" />
-          </symbol>
-          <symbol id="ft-globe" viewBox="0 0 24 24">
-            <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8" />
-            <path d="M3.5 12h17 M12 3.5c3 2.6 3 14.4 0 17 M12 3.5c-3 2.6-3 14.4 0 17" fill="none"
-                  stroke="currentColor" stroke-width="1.6" />
-          </symbol>
-          <symbol id="ft-spark" viewBox="0 0 24 24">
-            <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z M18.5 15.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z"
-                  fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
-          </symbol>
-          <symbol id="ft-tag" viewBox="0 0 24 24">
-            <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8" />
-            <path d="M12 11v6 M12 7.4v.2" fill="none" stroke="currentColor" stroke-width="2"
-                  stroke-linecap="round" />
-          </symbol>
-          <symbol id="ft-out" viewBox="0 0 24 24">
-            <path d="M12 15V4 M8 8l4-4 4 4 M5 15v4h14v-4" fill="none" stroke="currentColor"
-                  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-          </symbol>
-          <symbol id="ft-page" viewBox="0 0 24 24">
-            <path d="M6 3h8l4 4v14H6z M14 3v4h4" fill="none" stroke="currentColor" stroke-width="1.8"
-                  stroke-linejoin="round" />
-          </symbol>
-          <symbol id="ft-mic" viewBox="0 0 24 24">
-            <rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.8" />
-            <path d="M5.5 11.5a6.5 6.5 0 0013 0 M12 18v3.5" fill="none" stroke="currentColor"
-                  stroke-width="1.8" stroke-linecap="round" />
-          </symbol>
-          <symbol id="ft-wave" viewBox="0 0 24 24">
-            <path d="M3 12h2.5 M8 5.5v13 M12 8.5v7 M16 4.5v15 M20.5 10v4" fill="none"
-                  stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-          </symbol>
-          <symbol id="ft-disc" viewBox="0 0 24 24">
-            <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8" />
-            <circle cx="12" cy="12" r="2.6" fill="currentColor" />
-          </symbol>
-        </defs>
-      </svg>
-
       <header class="head">
         <button class="collapse" title="Hide the library (Ctrl+B)" (click)="ui.toggleDocuments()">«</button>
         <!-- "Open documents" was the name of a list of files. This is the books
@@ -902,7 +936,9 @@ import { ActionMenuComponent } from '../action-menu/action-menu.component';
 
     /* Present so the symbols resolve; never drawn. Not display:none — a hidden
        subtree still defines its <defs>, but zero-sized is the form every icon
-       sheet uses and the one browsers agree about. */
+       sheet uses and the one browsers agree about. Absolute is what keeps it out
+       of the host's flex column now that it is a child of the host rather than
+       of the panel: a zero-height flex item would still take a gap. */
     .sheet { position: absolute; width: 0; height: 0; overflow: hidden; }
 
     .head {
