@@ -826,7 +826,7 @@ const OP_GESTURE: Gesture = { kind: 'op' };
         >Original</button>
       </div>
     }
-    <div class="pair" [class.aligned]="aligned()">
+    <div class="pair" [class.aligned]="aligned()" [class.original]="originalOpen()">
       @if (aligned()) {
         <!--
           ITS OWN SCROLLER, which is the whole mechanism: two scrollable boxes are
@@ -1595,6 +1595,25 @@ const OP_GESTURE: Gesture = { kind: 'op' };
      * of both sheets, which is the gap between them.
      */
     .pair.aligned .sheet, .pair.aligned .tray { width: min(38rem, 92%); }
+    /*
+     * ── THE ORIGINAL OPEN: paper and scan stand together, centred ────────────
+     *
+     * Owen (2026-08-23): *"they should be side-by-side with a small margin
+     * between them and the two should be centered on screen."* With the bench
+     * at width:100% the sheet centred itself in the leftover and the panel
+     * hugged the pane's far edge — two objects with a field of gray between
+     * them. So while the panel is up, the bench stops stretching: its basis is
+     * just over the sheet's own 46rem, the sheet's auto margins shrink to the
+     * small gap that basis leaves, and the pair centres the two columns as ONE
+     * group. Pure flex — no measurement, no listener, and closing the panel
+     * puts every rule back exactly as it was.
+     *
+     * :not(.aligned) on the bench override because the aligned pair already
+     * divides its width between two columns of one book, and a 48rem basis
+     * jammed into that split would fight the lead's own measure above.
+     */
+    .pair.original { justify-content: center; }
+    .pair.original:not(.aligned) .bench { flex: 0 1 48rem; }
     /*
      * THE CONTEXT SHEET IS THE PAPER WITHOUT THE INSTRUMENT. Same ground, same
      * serif, same measured sizes — it has to be, or the two columns would set the

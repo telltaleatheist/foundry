@@ -153,6 +153,8 @@ import {
   mintedFromPhotographs,
   mintedStep,
   orphanedBanks,
+  documentOriginOf,
+  healReadParents,
   originOf,
   originStep,
   parseLedger,
@@ -570,7 +572,12 @@ export async function readManifest(dir: string): Promise<ProjectManifest> {
 function readLedger(stored: unknown, manifest: ProjectManifest, file: string): ProjectLedger {
   if (stored === undefined) return migrateLedger(manifest);
   try {
-    return parseLedger(stored);
+    // The reparenting heal rides the same read: a captured project whose
+    // reads were recorded against the photographs (the pre-2026-08-23
+    // recorder) comes back telling the truth — see `healReadParents` — and
+    // the correction reaches disk the next time anything edits the project,
+    // exactly as this function's own header promises for every other heal.
+    return healReadParents(parseLedger(stored));
   } catch (err) {
     throw new ProjectError(
       `${file} holds a step ledger this app cannot read: ${(err as Error).message}. The ledger is `
@@ -3686,7 +3693,10 @@ async function stepStandingFor(
   absolutePath: string,
 ): Promise<string | null> {
   const ledger = ledgerOf(manifest);
-  const origin = originOf(ledger);
+  // The DOCUMENT origin: the step whose payload is the archive. On a captured
+  // project that is the mint — the capture root's payload is the recipe, and
+  // a person focusing the book's PDF is standing on the step that minted it.
+  const origin = documentOriginOf(ledger);
   if (origin === null) return null;
 
   const root = fold(path.resolve(dir));
@@ -4090,7 +4100,9 @@ export async function bankForReading(dir: string, asked: ReadAsk): Promise<Plann
   const ledger = ledgerOf(manifest);
   const target = reRunTarget(ledger, {
     action: 'read',
-    parent: originOf(ledger)?.id ?? null,
+    // The DOCUMENT origin, which for a captured project is the mint and not
+    // the photographs — see `documentOriginOf` for the ruling this obeys.
+    parent: documentOriginOf(ledger)?.id ?? null,
     params: askedOf(asked),
   });
   if (target !== null) {
@@ -5039,7 +5051,10 @@ export async function recordReading(
        */
       const landing = await landStep(manifest, {
         action: 'read',
-        parent: originOf(ledgerOf(manifest))?.id ?? null,
+        // The DOCUMENT origin — the mint, on a captured project. A read
+        // parented at the photographs was the tree's recorded lie
+        // (`healReadParents` carries the ruling and repairs the old ones).
+        parent: documentOriginOf(ledgerOf(manifest))?.id ?? null,
         /*
          * WHERE THE ENGINE ACTUALLY WROTE, and not a path composed from the key.
          *

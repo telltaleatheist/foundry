@@ -2698,6 +2698,32 @@ landed the three that were deferred above, later the same day:
   the file just written), and `dc:` edits do not repaint the proof
   sheet.
 
+And the evening's two corrections, caught by Owen on the running app:
+
+- **Side by side, centred** — with the original panel open the sheet
+  centred itself in the leftover and the panel hugged the far edge. Now
+  `.pair.original` centres the two as one group: the bench's basis drops
+  to just over the sheet's own 46rem and the pair justifies centre —
+  pure flex, nothing measured, closing the panel restores every rule.
+  (Two of this codebase's own recorded pitfalls were re-paid on the way:
+  a backtick inside the styles literal, and — new to the list — a CSS
+  comment closed with the HTML `-->`, which legally ate every rule from
+  `:host` to mid-`.frame` and no gate can see it. Found over CDP.)
+- **The work tree told a lie about captured books** — Owen: *"if we're
+  deriving the bank from the pdf rather than the original images then
+  the work tree is deceptive."* The read step was parented at the
+  CAPTURE root while `planReading` reads the minted PDF. Fixed at the
+  rule (`documentOriginOf`: the newest mint owns the document; used by
+  the plan, the landing, the re-read preview and step-standing), healed
+  in every existing ledger on read (`healReadParents` — reparent to the
+  newest mint at or before the read; heal-on-read, persist-on-write,
+  readLedger's own pattern), and re-worded where the tree draws: the
+  root of a captured book is *"the photographs it all started from"*,
+  the mint card is **The scan** (it opens the PDF; "The pages" was Wave
+  41's leftover from when a mint wrote loose images), and the book row
+  reads *from The scan* — which is the true chain: photographs → scan →
+  book.
+
 Still deferred OUT LOUD from that walk:
 
 - **The cover** — a separate build-time wave centred on
