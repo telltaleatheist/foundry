@@ -354,6 +354,7 @@ export async function buildBookFile(opts: BookRunOptions): Promise<BookRunReport
     + `${joinedPages.length} paragraph(s) joined across a page turn, `
     + `${flow.reflowed.length} reflowed out of print lines, `
     + `${flow.mergedHeadings.length} heading(s) merged out of two boxes, `
+    + `${flow.adoptedNotes.length} list item(s) adopted as footnotes, `
     + `${flow.suppressedHeads.length} running head(s) dropped`
     + (unreadable.length === 0 ? '' : `, ${unreadable.length} page(s) UNREADABLE`),
   );

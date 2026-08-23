@@ -29,12 +29,31 @@
  * ── WHAT IS NOT TRANSLATED, AND IT IS `blocks.ts`'s LIST ────────────────────
  *
  * `formula` is notation and `picture` is a crop; both are skipped and counted,
- * for the reasons that file states in full. A `table`'s text is the vision
- * model's own HTML — a grid whose meaning is which cell sits under which header —
- * and it is LEFT IN THE SOURCE LANGUAGE and named, which is the decision the
- * records mode already made about tables (`run.ts`, "A TABLE HAS NO RECORD"):
- * there is no cell-by-cell path here, and handing a model `<tr>` and `<td>` and
- * asking it not to touch them is the failure that whole design exists to refuse.
+ * for the reasons that file states in full.
+ *
+ * ── A TABLE IS TRANSLATED NOW, AND THE OLD REFUSAL IS WHY IT CAN BE ─────────
+ *
+ * This file used to leave every `table` in the source language and name it, on
+ * an argument that is still correct and is still obeyed: *a table's text is the
+ * vision model's own HTML, so translating it means handing a model `<tr>`,
+ * `<td>` and every attribute in them and asking it not to touch any of it, and a
+ * table whose columns quietly swapped is worse than a table nobody translated,
+ * because it looks fine.*
+ *
+ * What that argument refuses is sending the GRID. It says nothing against
+ * sending the CELLS, and a printed table of contents — which is what the dots
+ * model hands back for a contents page — is a table whose every left-hand cell
+ * is a chapter title somebody expects to read in their own language. So the
+ * grid is taken apart by `tablecells.ts` and each cell of words becomes its own
+ * part of one `table` group, travelling in the wire format `run.ts` already
+ * sends a cast EPUB's cells in; the tags never leave this process, and the
+ * answers are spliced back into the source string's own ranges. A table whose
+ * shape this stage cannot read, or whose cells hold markup rather than words, is
+ * still left whole and still named — that path did not go away, it stopped being
+ * the only one.
+ *
+ * A FOLIO IS NOT ASKED ABOUT. `VII`, `48`, an empty cell: carried, counted, and
+ * never sent — `cellIsCarried` carries the argument.
  *
  * ── AND THE SPINE, WHICH IS NOT MADE OF ROWS ────────────────────────────────
  *
@@ -63,6 +82,7 @@
 import { parseBookFile, type BookChapter, type BookFile, type BookRow } from '../vlm/book-file.js';
 import { headingLabel } from '../vlm/dots-book.js';
 import type { GroupKind } from './blocks.js';
+import { askableCells, readTableGrid, type TableGrid } from './tablecells.js';
 
 /** A book file this command will not translate. Always says what is wrong. */
 export class BookRowsError extends Error {
@@ -89,7 +109,18 @@ const SKIPPED: ReadonlySet<string> = new Set(['Formula', 'Picture']);
 
 /** One row to translate: its words, and the name a record about it is keyed by. */
 export interface BookBlock {
-  /** The row's own id — `b12-3`, `b12-3#1`, `b2-3/1`. The record's position. */
+  /**
+   * The row's own id — `b12-3`, `b12-3#1`, `b2-3/1`. The record's position.
+   *
+   * EVERY CELL OF A TABLE WEARS THE ROW'S OWN ID, unsuffixed, and that is not an
+   * oversight. A cell is not a block of the book and has no name of its own in
+   * any format this project has; what a record about a Table row holds is the
+   * whole grid, reassembled here out of the cells' answers, because a Table
+   * ROW's text is the whole grid and a record's text stands in place of a row's
+   * (`records.ts`). Inventing a `#c3` position instead would put a row in the
+   * file that the reader on the other side has no block for — it would be
+   * reported as stale, correctly, and the table would come out in German.
+   */
   id: string;
   /** The dots category, engine spelling, for the log and for the group rule. */
   category: string;
@@ -97,6 +128,12 @@ export interface BookBlock {
   text: string;
   /** The page it started on, for naming it in a refusal. */
   page: number;
+  /**
+   * `table` parts only: which cell of `BookRowGroup.grid` these words came out
+   * of. It is how the answer finds its way back into the source string's own
+   * range, and it is an index rather than a name for the reason `id` states.
+   */
+  cell?: number;
 }
 
 /** Rows that travel in one request, on `blocks.ts`'s own definition of a group. */
@@ -104,6 +141,17 @@ export interface BookRowGroup {
   kind: GroupKind;
   /** Never empty. In reading order, which is the order they are rendered in. */
   parts: BookBlock[];
+  /**
+   * `table` only: cells per row of the PAYLOAD, summing to `parts.length` —
+   * `planChunks`' second argument, and the shape the answer is read back
+   * against. Empty for every other kind, which is what those kinds send.
+   */
+  rowSizes: number[];
+  /**
+   * `table` only: the grid these parts are the words of, for the splice that
+   * puts the answers back. Absent for every other kind.
+   */
+  grid?: TableGrid;
 }
 
 export interface BookRowPlan {
@@ -112,11 +160,32 @@ export interface BookRowPlan {
   skipped: Map<string, number>;
   /**
    * Rows left in the source language before anything was asked, each as a
-   * sentence — the tables. They reach the completion line with everything else
-   * the run could not do, because a count with no name behind it is a number
-   * nobody can act on (ARCHITECTURE §8).
+   * sentence — a table whose grid this stage cannot read. They reach the
+   * completion line with everything else the run could not do, because a count
+   * with no name behind it is a number nobody can act on (ARCHITECTURE §8).
    */
   kept: string[];
+  /**
+   * Decisions that changed what the run is about to do without leaving anything
+   * untranslated — a table of nothing but folios, which is a real page of a real
+   * book and is not a failure. `findBlocks`' `notes`, said in the same place and
+   * for the same reason: the log is where a decision goes when it is neither a
+   * refusal nor silence.
+   */
+  notes: string[];
+  /**
+   * Cells this plan decided not to ask about — blanks, numbers and folios,
+   * across every table it could read (`cellIsCarried`, tablecells.ts).
+   *
+   * HOW MANY TABLES AND HOW MANY CELLS ARE COUNTED BY THE CALLER, one step
+   * later, and deliberately not here: a table can still drop out after this
+   * function has approved it — its words may carry the characters this stage
+   * sends markers in — and a figure saying "3 tables translated" has to be
+   * counted where the third one's fate is actually known. This one is a fact
+   * about the BOOK rather than about the run, which is why it can be stated
+   * here: a folio is a folio whatever happens to the grid around it.
+   */
+  tableCarried: number;
 }
 
 /** Read a book file, or say exactly what about it is not one. */
@@ -162,7 +231,9 @@ function listKind(row: BookRow): string {
 export function bookRowPlan(book: BookFile, where: string): BookRowPlan {
   const skipped = new Map<string, number>();
   const kept: string[] = [];
+  const notes: string[] = [];
   const groups: BookRowGroup[] = [];
+  let tableCarried = 0;
   /** The open list's tag, or null when the last row was not a list item. */
   let openList: string | null = null;
 
@@ -178,23 +249,64 @@ export function bookRowPlan(book: BookFile, where: string): BookRowPlan {
     }
     if (row.category === 'Table') {
       /*
-       * A TABLE'S TEXT IS THE VISION MODEL'S OWN HTML, and there is no cell to
-       * key a record to — `run.ts`'s records mode reaches the same conclusion by
-       * a different road (its cells are not banked blocks) and leaves the table
-       * in the source language, counted and named. The same answer here, for the
-       * sharper version of the reason: a book file row IS the grid, as one
-       * string, so translating it means handing a model `<tr>`, `<td>` and every
-       * attribute in them and asking it not to touch any of it. A table whose
-       * columns quietly swapped is worse than a table nobody translated, because
-       * it looks fine.
+       * A TABLE IS TAKEN APART INTO CELLS, AND THE MODEL NEVER SEES THE GRID.
+       *
+       * The old refusal here was right about one thing and wrong about what
+       * followed from it. A book file row IS the grid, as one string, so sending
+       * the row's text would hand a model `<tr>`, `<td>` and every attribute in
+       * them and ask it not to touch any of it — and a table whose columns
+       * quietly swapped is worse than a table nobody translated, because it
+       * looks fine. All of that stands. What did not follow is "so leave it in
+       * German": the cells are separable, `tablecells.ts` separates them with
+       * the parser this project already has, and each cell travels as a plain
+       * string with no markup in it at all. The grid is put back together by
+       * splicing the answers into the source string's own ranges, so the tags,
+       * the attributes and the cell order are untouched BY CONSTRUCTION rather
+       * than by asking a model nicely.
+       *
+       * The old outcome is still here and is still exactly the old outcome — a
+       * grid this stage cannot read is left whole, counted and named. It is now
+       * the exception rather than the rule, which is what a printed table of
+       * contents coming back as a Table row made necessary: every chapter title
+       * in the book, sitting in the one category that was never translated.
        */
-      skipped.set('Table', (skipped.get('Table') ?? 0) + 1);
-      kept.push(
-        `${where} block ${row.id} (Table, page ${row.page}) — a table's text is the vision model's `
-        + 'own HTML, and there is no way to translate the words in it without handing the model the '
-        + 'grid to rearrange',
-      );
       openList = null;
+      const read = readTableGrid(row.text);
+      if ('complaint' in read) {
+        skipped.set('Table', (skipped.get('Table') ?? 0) + 1);
+        kept.push(`${where} block ${row.id} (Table, page ${row.page}) — ${read.complaint}`);
+        continue;
+      }
+      const ask = askableCells(read.grid);
+      tableCarried += ask.carried;
+      if (ask.ask.length === 0) {
+        /*
+         * A TABLE OF NOTHING BUT NUMBERS IS NOT A FAILURE and must not reach
+         * `kept`, which is the list a run prints under "LEFT IN THE SOURCE
+         * LANGUAGE — the model could not translate them". Nothing was asked
+         * because there was nothing to ask; the cells are in the book exactly as
+         * they were printed, which is the correct rendering of a page of folios.
+         * It is a NOTE — said out loud, and not counted as a defeat.
+         */
+        notes.push(
+          `${where} block ${row.id} (Table, page ${row.page}) holds ${ask.carried} cell(s) and not `
+          + 'one of them has words in it — numbers, folios and blanks — so nothing was asked and the '
+          + 'grid is in the book exactly as it was printed',
+        );
+        continue;
+      }
+      groups.push({
+        kind: 'table',
+        parts: ask.ask.map((index) => ({
+          id: row.id,
+          category: row.category,
+          text: read.grid.cells[index]!.text,
+          page: row.page,
+          cell: index,
+        })),
+        rowSizes: ask.rowSizes,
+        grid: read.grid,
+      });
       continue;
     }
     if (!TRANSLATED.has(row.category)) {
@@ -223,7 +335,7 @@ export function bookRowPlan(book: BookFile, where: string): BookRowPlan {
     };
     if (row.category !== 'List-item') {
       openList = null;
-      groups.push({ kind: 'single', parts: [block] });
+      groups.push({ kind: 'single', parts: [block], rowSizes: [] });
       continue;
     }
     const tag = listKind(row);
@@ -233,10 +345,10 @@ export function bookRowPlan(book: BookFile, where: string): BookRowPlan {
       continue;
     }
     openList = tag;
-    groups.push({ kind: 'list', parts: [block] });
+    groups.push({ kind: 'list', parts: [block], rowSizes: [] });
   }
 
-  return { groups, skipped, kept };
+  return { groups, skipped, kept, notes, tableCarried };
 }
 
 /** One division whose name has to be asked of the model. See `bookTitlePlan`. */

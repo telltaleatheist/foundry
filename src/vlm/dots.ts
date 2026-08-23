@@ -311,7 +311,7 @@ export function parseDotsPage(answer: string, opts: DotsParseOptions): DotsParse
     rawExtent.x = Math.max(rawExtent.x, raw.x2);
     rawExtent.y = Math.max(rawExtent.y, raw.y2);
     const box = { x1: raw.x1 * scale, y1: raw.y1 * scale, x2: raw.x2 * scale, y2: raw.y2 * scale };
-    const text = typeof el['text'] === 'string' ? el['text'].trim() : '';
+    const text = typeof el['text'] === 'string' ? foldSupTags(el['text'].trim()) : '';
     if (text.length === 0 && category !== 'Picture') {
       // A Picture has no text by contract. Anything else with none is an empty
       // box, which carries nothing into a book and is not worth a stop.
@@ -455,6 +455,29 @@ function stripIllegalXml(text: string): string {
  */
 const SUPERSCRIPT_DIGITS = '⁰¹²³⁴⁵⁶⁷⁸⁹';
 export const SUPERSCRIPT_RUN = /[⁰¹²³⁴⁵⁶⁷⁸⁹]+/g;
+
+/**
+ * A reference number the model spelled as an HTML tag instead of superscript
+ * codepoints: `Reichsbischof<sup>34</sup>`.
+ *
+ * ONE SPELLING BEFORE ANYTHING READS THE TEXT. Everything downstream keys note
+ * numbers on the dedicated codepoints — the marker scan, the note splitter, the
+ * translator's source text, the emitter — and a tag slipping past all of them
+ * is not a hypothetical: measured on evangelische-kirche, ten blocks carried
+ * literal `<sup>` tags, their markers matched nothing, and the translation
+ * model handed the digits back welded to the word ("Reich Bishop34;"). Folded
+ * HERE, where a banked answer becomes a block, so a rebuild from the bank heals
+ * a book that was read before this existed. Digits only, one to three of them —
+ * the same bounds `ASCII_NOTE_LEAD` argues for — because `<sup>` around
+ * anything else is not a reference number and this is not an HTML parser.
+ */
+const SUP_TAG_RUN = /<sup>\s*(\d{1,3})\s*<\/sup>/gi;
+function foldSupTags(text: string): string {
+  return text.replace(
+    SUP_TAG_RUN,
+    (_, digits: string) => [...digits].map((d) => SUPERSCRIPT_DIGITS[Number(d)]!).join(''),
+  );
+}
 
 export interface DotsInlineOptions {
   /**
@@ -933,7 +956,13 @@ const PART_HEADING = new RegExp(
   + '([ivxlcdm]+|\\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\\b',
   'i',
 );
-const ROMAN_NUMERAL = /^(?=[ivxlcdm])m{0,3}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3})\.?$/i;
+/**
+ * Exported because ONE canonical-numeral rule is what this project may have.
+ * `tablecells.ts` asks the same question of a table cell — is this a folio
+ * rather than words? — and a second regex spelled slightly differently would be
+ * two rules about roman numerals that agree until the day they do not.
+ */
+export const ROMAN_NUMERAL = /^(?=[ivxlcdm])m{0,3}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3})\.?$/i;
 const PART_BLOCKS = 6;
 const PART_TITLE_WORDS = 8;
 

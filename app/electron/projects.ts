@@ -351,6 +351,39 @@ export function isArchived(filePath: string): boolean {
 }
 
 /**
+ * THE PROJECT WHOSE FINAL TRAY HOLDS THIS FILE — `<project>/final/<name>` — or
+ * null for everything else.
+ *
+ * ── One rule, because three doors were spelling it out for themselves ───────
+ *
+ * An export is the one document in this app that was never OPENED: it is a file
+ * this program wrote into a project's tray, and the renderer names it off a row
+ * in the history rather than off the allow-list, so `admitted` — which answers
+ * for things that came in through `openDocument` — says no to every one of them.
+ * Membership in a tray is the claim those doors are actually exercising, and it
+ * was written out longhand at each of them (`export:save-copy`, `viewExportedBook`,
+ * and now the EPUB metadata pair). Three copies of an authorization test is three
+ * chances for one of them to learn a rule the others do not.
+ *
+ * TWO SEGMENTS EXACTLY, and the depth is the gate rather than a tidiness. A
+ * `startsWith('final')` would claim `final-drafts/`, and an unbounded depth would
+ * claim anything a future tray subfolder came to hold — including, if one is ever
+ * nested there, a path composed from a name this app did not choose.
+ *
+ * IT ANSWERS THE PROJECT AND NOT A BOOLEAN, because every caller needs the
+ * directory next: to read the manifest, to file a step, to say which book this is.
+ * A predicate would make each of them ask `projectDirOf` a second time and get a
+ * second answer to a question already settled here.
+ */
+export function exportInTray(filePath: string): string | null {
+  const resolved = path.resolve(filePath);
+  const dir = projectDirOf(resolved);
+  if (dir === null) return null;
+  const inside = path.relative(dir, resolved).split(path.sep);
+  return inside.length === 2 && inside[0] === FINAL ? dir : null;
+}
+
+/**
  * A DIRECTORY name a filesystem, a URL and a person can all live with.
  *
  * The real test document is `Working Towards The Fuhrer. Kershaw, Ian. (1993).pdf`

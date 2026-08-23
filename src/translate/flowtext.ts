@@ -50,9 +50,12 @@
  * WHAT IS DELIBERATELY NOT HERE: `<table>` and everything under it. A Table
  * block's text is the vision model's own HTML (`checkTableHtml` in `dots.ts`)
  * and the emitter writes it into the document verbatim — there is no dialect to
- * undo, and taking a grid apart into words is exactly what the EPUB→EPUB mode
- * already does through `blocks.ts`. Records mode refuses tables whole and says
- * so, which is `run.ts`'s existing behaviour for a table it cannot mask.
+ * undo, and taking a grid apart into words is a job for something that knows
+ * about grids. THREE THINGS NOW DO, and none of them is this: `blocks.ts` for
+ * the EPUB→EPUB mode, `tablecells.ts` for the book-file route's records, and
+ * the cast route's records mode, which still refuses tables whole and names the
+ * wiring it would need (`run.ts`). What none of them wants is a fourth answer
+ * arrived at by flattening a grid into a sentence.
  */
 import { decodeEntities, parseXml, type XmlElement } from '../epub/xml.js';
 import { MarkerError } from './markers.js';

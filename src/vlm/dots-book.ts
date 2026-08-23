@@ -109,6 +109,7 @@ import {
   dotsInline,
   leadingWord,
   plainText,
+  SUPERSCRIPT_RUN,
   topFraction,
   trailingHyphenWord,
   type BodyColumn,
@@ -137,6 +138,7 @@ import {
   deriveTypography,
   measureTypeSizes,
   typeSize,
+  typeSizeIsMeasured,
   type TypographyReport,
 } from './typography.js';
 
@@ -1680,13 +1682,20 @@ function printedNumber(run: string): number {
 }
 
 /**
- * An ASCII note number at the head of a line: one to three digits, then a
- * space. See `noteLeadOf` for why plain digits are admitted here at all, and
- * `splitNotes` for the sequence guard that keeps them from cutting prose.
- * Three digits because no real apparatus runs to a thousand and a four-digit
- * lead is a year — "1942 was the last…" must never read as note 1942.
+ * An ASCII note number at the head of a line: one to three digits, an optional
+ * period, then a space. See `noteLeadOf` for why plain digits are admitted here
+ * at all, and `splitNotes` for the sequence guard that keeps them from cutting
+ * prose. Three digits because no real apparatus runs to a thousand and a
+ * four-digit lead is a year — "1942 was the last…" must never read as note 1942.
+ *
+ * THE PERIOD IS A SPELLING OF THE SAME INK, and refusing it cost a book its
+ * apparatus: evangelische-kirche prints "1. Die Bezeichnung…" — digit, period,
+ * space — and a lead that demanded a bare space matched none of those notes, so
+ * every one of them stood orphaned while its marker sat in the loose list. The
+ * period rides in the capture so a caller slicing `run` off the head takes it
+ * too; `parseInt` stops at it, so the printed value never sees it.
  */
-const ASCII_NOTE_LEAD = /^(\d{1,3})[ \t]/;
+const ASCII_NOTE_LEAD = /^(\d{1,3}\.?)[ \t]/;
 
 /** A note's printed number as the page set it: the characters, and the value. */
 export interface NoteLead {
@@ -2052,12 +2061,20 @@ export function buildChapterBody(
         /*
          * `flow.text` AND NOT `words`, and this is the one category where that
          * is deliberate. A Table block's text is the vision model's own HTML —
-         * the whole grid as one string — and there is no such thing as a record
-         * about it: `translate --records` refuses tables whole and says so,
-         * because the cells are not banked blocks and have no position a record
-         * could be keyed to. Reading a record here could therefore only find one
-         * this program did not write, and writing a stranger's HTML into a
-         * `<div class="tablewrap">` is not something to do on a maybe.
+         * the whole grid as one string — and no record this route can look up is
+         * ever about one.
+         *
+         * TABLES ARE TRANSLATED NOW, and that does not change this line. The
+         * cell route is the BOOK-FILE one (`tablecells.ts`): it takes the grid
+         * apart, asks about the cells, puts the grid back together and writes it
+         * as one record at the ROW's own id — `b9-2`, a name this route has
+         * never heard of, since the positions here are `page:order[:part]`. The
+         * cast route's own tables are still refused whole, by the branch in
+         * `translate --epub --records` that says exactly why and exactly what
+         * wiring it would take. So a record found at one of THESE positions
+         * could still only be one this program did not write, and writing a
+         * stranger's HTML into a `<div class="tablewrap">` is not something to
+         * do on a maybe.
          */
         out.push(blockElement(
           'Table',
@@ -2321,6 +2338,126 @@ export function splitNotes(text: string): string[] {
   }
   if (current.length > 0) parts.push(current.join('\n').trim());
   return parts.filter((p) => p.length > 0);
+}
+
+/**
+ * A block is footnote-sized when its measured type sits under this fraction of
+ * the body's. The two populations it separates are not close: measured on
+ * evangelische-kirche, the footnote median is 0.73 of body and a genuine body
+ * list is set in the body's own type at 1.0, so 0.9 stands in the gap with
+ * margin on both sides rather than against either population.
+ */
+const NOTE_SIZE_CUT = 0.9;
+
+/** The printed number of the LAST note in a footnote block's text, or null. */
+function lastPrintedNote(text: string): number | null {
+  const notes = splitNotes(text);
+  const last = notes[notes.length - 1];
+  return last === undefined ? null : noteLeadOf(last)?.printed ?? null;
+}
+
+/**
+ * The footnotes the model filed as list items, taken back into the apparatus.
+ *
+ * ── THE FAULT THIS ANSWERS, MEASURED ────────────────────────────────────────
+ *
+ * The model sometimes tags a whole footnote area `List-item` — same foot of the
+ * page, same small type, each note leading with its own number — and everything
+ * downstream believes it: the rows flow as body lists, the translator renders
+ * them as lists, and the marker match never sees them, so their reference
+ * numbers all land in the loose list. On evangelische-kirche that was 216 notes
+ * beside the 310 the model tagged honestly — two fifths of the apparatus filed
+ * as prose.
+ *
+ * ── THE EVIDENCE, AND WHY EACH PIECE IS REQUIRED ────────────────────────────
+ *
+ * A list item is adopted as a footnote only when THREE things agree, because
+ * the failure this pass could introduce — a genuine numbered list quietly
+ * removed from the prose and appended to a chapter's notes — is exactly the
+ * kind of invisible wrong answer this codebase refuses everywhere else:
+ *
+ *  - IT LEADS WITH A NOTE NUMBER (`noteLeadOf` — the one reading of that
+ *    question, superscript or ASCII, period or bare).
+ *  - IT IS NOT SET IN BODY TYPE — a veto, not a requirement. Where the type
+ *    was actually MEASURED (`typeSizeIsMeasured`), a body-sized block is a
+ *    real list and is refused whatever its head says. Where the model
+ *    reflowed the block's lines away the size is `lineHeight`'s 40 px guess,
+ *    which reads small type as body type every time — so an estimate neither
+ *    convicts nor acquits, and the apparatus evidence below stands alone.
+ *    Measured on evangelische-kirche: the model kept newlines in only a
+ *    fraction of the mis-filed areas, and a gate that trusted the estimate
+ *    left 57 of the 88 adoptable blocks standing as lists.
+ *  - THE APPARATUS VOUCHES FOR IT: either its lead number is PRINTED as a
+ *    superscript somewhere in the page's prose (or the page before — the
+ *    mirror of `linkMarkers`' one-page grace), or it CONTINUES the page's note
+ *    sequence, one past the last note of the block above it — the same
+ *    consecutive-numbering fact `splitNotes` keys its own ASCII guard on.
+ *    The second arm exists because the first has a known hole: the model
+ *    drops the odd superscript from the prose, and the note whose marker was
+ *    never transcribed is still sitting between note 9 and note 11 in small
+ *    type with a 10 at its head.
+ *
+ * MUTATES CATEGORY IN PLACE, like every pass here, and runs BEFORE
+ * `flowBlocks`: a Footnote block gets the early exit out of paragraph joining,
+ * and `bookRow` asserts a footnote block is one banked answer — an adoption
+ * after the join could not keep that promise. It also runs before
+ * `deriveTypography`, so the adopted blocks' measurements count toward the
+ * Footnote median they in fact are.
+ */
+function adoptListItemNotes(
+  pages: readonly DotsParsedPage[],
+  measured: ReadonlyMap<DotsBlock, number>,
+): DotsBlock[] {
+  const blocks = pages.flatMap((p) => p.blocks);
+  const bodyPx = bodyTypeSize(blocks, (block) => measured.get(block));
+  if (bodyPx === null) return [];
+
+  /** Every reference number printed in the book's prose, by page. */
+  const cited = new Map<number, Set<number>>();
+  for (const block of blocks) {
+    if (block.category === 'Footnote' || block.category === 'List-item') continue;
+    for (const match of block.text.matchAll(SUPERSCRIPT_RUN)) {
+      const set = cited.get(block.page) ?? new Set<number>();
+      set.add(printedNumber(match[0]));
+      cited.set(block.page, set);
+    }
+  }
+
+  const adopted: DotsBlock[] = [];
+  for (const page of pages) {
+    /** The last printed number of this page's apparatus so far, or null. */
+    let previous: number | null = null;
+    for (const block of page.blocks) {
+      if (block.category === 'Footnote') {
+        previous = lastPrintedNote(block.text) ?? previous;
+        continue;
+      }
+      if (block.category !== 'List-item') continue;
+      const lead = noteLeadOf(block.text);
+      const px = measured.get(block);
+      const bodySized = typeSizeIsMeasured(block)
+        && px !== undefined && px >= bodyPx * NOTE_SIZE_CUT;
+      if (lead === null || bodySized) {
+        // Not a note by its own head, or measurably set in the body's own
+        // type — and it BREAKS the sequence, because a genuine list standing
+        // between two notes is not something a page prints and the chain must
+        // not reach across it.
+        previous = null;
+        continue;
+      }
+      const referenced = cited.get(block.page)?.has(lead.printed) === true
+        || cited.get(block.page - 1)?.has(lead.printed) === true;
+      const continues = previous !== null && lead.printed === previous + 1;
+      if (!referenced && !continues) {
+        previous = null;
+        continue;
+      }
+      block.category = 'Footnote';
+      adopted.push(block);
+      previous = lastPrintedNote(block.text) ?? lead.printed;
+    }
+  }
+  return adopted;
 }
 
 
@@ -2705,6 +2842,12 @@ export interface FlowBook {
   mergedHeadings: DotsHeadingMerge[];
   /** The blocks whose print line breaks were reflowed back into prose. */
   reflowed: DotsBlock[];
+  /**
+   * The List-item blocks the reflow adopted as footnotes — the model's own
+   * mis-filing, corrected on measured evidence (`adoptListItemNotes`) and
+   * counted here so the run can say the number out loud.
+   */
+  adoptedNotes: DotsBlock[];
   column: BodyColumn;
   lexicon: BookLexicon;
   typography: TypographyReport | null;
@@ -2819,6 +2962,7 @@ export function reflowBook(opts: FlowBookOptions): FlowBook {
       suppressedHeads,
       mergedHeadings,
       reflowed: [],
+      adoptedNotes: [],
       column: { x1: 0, x2: 0 },
       lexicon: new BookLexicon([]),
       typography: null,
@@ -2826,6 +2970,12 @@ export function reflowBook(opts: FlowBookOptions): FlowBook {
     };
   }
   const measured = measureTypeSizes(sourceBlocks);
+
+  // The footnotes the model filed as list items, adopted while the evidence
+  // is all still standing: the type measurements above, and the note leads and
+  // superscript markers the rewriting passes below leave alone. Before
+  // `flowBlocks`, necessarily — see `adoptListItemNotes`.
+  const adoptedNotes = adoptListItemNotes(opts.pages, measured);
 
   // The lexicon is built from the text as the model wrote it, hyphens and all:
   // a compound that appears mid-line anywhere in the book is the evidence that
@@ -2910,6 +3060,7 @@ export function reflowBook(opts: FlowBookOptions): FlowBook {
     suppressedHeads,
     mergedHeadings,
     reflowed,
+    adoptedNotes,
     column,
     lexicon,
     typography,
@@ -3354,6 +3505,8 @@ export interface DotsBookResult {
   typography: TypographyReport | null;
   /** Text blocks whose print line breaks were reflowed back into prose. */
   reflowedBlocks: number;
+  /** List-item blocks adopted as footnotes on measured evidence. */
+  adoptedNotes: number;
   lexiconWords: number;
   xhtmlSeconds: number;
   zipSeconds: number;
@@ -3542,6 +3695,7 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
     mergedHeadings: flow.mergedHeadings,
     typography,
     reflowedBlocks: flow.reflowed.length,
+    adoptedNotes: flow.adoptedNotes.length,
     lexiconWords: flow.lexicon.size,
     xhtmlSeconds,
     zipSeconds: packaged.zipSeconds,

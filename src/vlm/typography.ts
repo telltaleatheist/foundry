@@ -195,6 +195,22 @@ export function typeSize(block: DotsBlock): number {
 }
 
 /**
+ * Whether `typeSize` MEASURED this block or estimated it.
+ *
+ * The first two branches above are measurements — a box divided by lines the
+ * model kept, or a box that IS its one line. The third is `lineHeight`'s 40 px
+ * guess, which assumes body type: a small-type block the model reflowed comes
+ * back body-sized from it, every time, because the guess divides by too few
+ * lines. A caller using size as EVIDENCE — `adoptListItemNotes` asking whether
+ * a list item is set in note type — must not read the estimate as an answer,
+ * in either direction. In a median the error is one voice; as a verdict about
+ * one block it is the whole verdict.
+ */
+export function typeSizeIsMeasured(block: DotsBlock): boolean {
+  return block.text.includes('\n') || block.text.length <= PRINTED_LINE_CHARS;
+}
+
+/**
  * Every block's type size, measured NOW.
  *
  * WHEN THIS RUNS IS THE WHOLE OF ITS CORRECTNESS. `typeSize` counts a block's

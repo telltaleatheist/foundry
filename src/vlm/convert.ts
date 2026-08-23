@@ -889,6 +889,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
         + `${joinedPages.length} paragraph(s) joined across a page turn, `
         + `${built.reflowedBlocks} paragraph(s) reflowed out of print lines, `
         + `${built.mergedHeadings.length} heading(s) merged out of two boxes, `
+        + `${built.adoptedNotes} list item(s) adopted as footnotes, `
         + `${footnotes} footnote(s), ${pictures} picture(s)`,
       );
       /*

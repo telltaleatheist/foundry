@@ -140,6 +140,11 @@ by block id only:
 {"op":"merge","id":"b8-1","into":"b7-9"}     — into keeps its id, absorbs text
 {"op":"split","id":"b2-3","at":214}          — mints b2-3/1, b2-3/2
 {"op":"move","id":"b4-2","before":"b4-6"}    — reading-order repair
+{"op":"insert","id":"u1","before":"b4-6","category":"Section-header","text":"…"}
+                                             — a block the reading missed (also
+                                               "after"; id minted at the gesture,
+                                               u<n>; text never empty; added
+                                               2026-08-23 for missed chapter titles)
 {"op":"chapter","set":"b5-1","title":"…"}    — also move/remove/rename/reset
 {"op":"link","block":"b2-3","at":214,"len":1,"note":"b2-4#0"}
 {"op":"restore-furniture","id":"b3-0"}       — un-drop a shelved row (keyed by id

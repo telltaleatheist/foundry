@@ -2616,6 +2616,100 @@ cuts on top of that refusal. (4) The seam's both-sides-whitespace clause keeps
 a NEWLINE over a space where the two meet, since a line break inside a block
 is structure a person can see.
 
+### Wave 46 — the apparatus survives the scan's spellings (Owen, 2026-08-23) — BUILT (this commit)
+
+Diagnosed on evangelische-kirche, the first book through the capture →
+mint → read path: 72 loose markers and 31 orphaned notes, and every one
+of them traced to the SCAN's spelling of a fact the engine already
+handles — not to the translation that made them visible. Three engine
+fixes, two bench fixes, all landed together:
+
+- **A note lead may wear a period.** `ASCII_NOTE_LEAD` admits
+  `1. Die Bezeichnung…` beside `1 Die…` (dots-book.ts); the period rides
+  in `run` so every caller that slices the lead takes it too. Four notes
+  on the user's own page 11 stood orphaned on this alone.
+- **A `<sup>34</sup>` the model wrote as HTML becomes the codepoints**
+  at the parse (`foldSupTags`, dots.ts), so a rebuild from the bank
+  heals a book read before the fix — ten blocks carried literal tags,
+  and the translator welded their digits to the prose ("Reich Bishop34").
+- **A footnote the model filed as `List-item` is adopted back**
+  (`adoptListItemNotes`, dots-book.ts): note lead + not measurably
+  body-sized + (its number cited as a superscript on its page or the
+  page before, OR it continues the page's note sequence). 73 adopted on
+  evangelische-kirche; the genuine numbered lists on pp. 33/36 refused.
+  `typeSizeIsMeasured` (typography.ts) is the new honesty seam: the
+  40 px `lineHeight` estimate reads small type as body type, so an
+  estimate neither convicts nor acquits.
+- Rebuild verified against the real bank: 382 markers linked, ONE loose
+  marker (its note never transcribed), ONE orphaned note (the `*`
+  asterisk-note, which has no number) — from 72 and 31.
+- **The sienna ordinal counts the page's notes** (book-view `linesOf`),
+  not `row.note` — which is "which note of its BLOCK" and wore "1" on
+  every note once the model answered each note as its own block.
+- **A chip pressed inside a multi-selection recategorises the whole
+  selection** — the chip carries the count, the list says the plural
+  before it happens, one push so the gesture is one thing.
+
+The same walk's second half — Owen: *"go ahead and fix everything"* —
+landed the three that were deferred above, later the same day:
+
+- **The original panel** (BUILT) — and the name is Owen's correction:
+  *"shouldnt be facsimile comparison, it should be pdf comparison.
+  facsimile is created after dots runs… i want the original pdf
+  comparison, so i know what im looking at and how to correct it if
+  dots makes a mistake."* The page-glance card retired into
+  `./original-panel` — a full-height column docked at the pair's right
+  edge, toggled by "Original" in the head row, drawing
+  `BookLoad.originalPath` (never the facsimile). It follows the reading
+  — the click that selects a block and the bench's own scroll both aim
+  it (`followOriginal`, signal written only when the topmost block
+  CHANGES) — with a vertical nudge putting the aimed block's printed
+  box a quarter down the panel. Steppers page freely (parked), ⌖ and
+  any new aim come home. "Original" and never "compare" in the names:
+  compare is the app's word for standing two STEPS side by side. The
+  card's placement arithmetic died with the card; gravestones at the
+  old mount and over `GLANCE_GAP` carry the succession.
+- **Tables translate, cell by cell** (BUILT — book-rows route) — the
+  fix that un-Germans the printed TOC. `src/translate/tablecells.ts`
+  reads a Table row's grid with the engine's own XML parser and
+  splices translated cell text back right-to-left; the model never
+  sees a tag, which honours the old refusal's whole argument. One
+  record per Table ROW at the row's own id, holding the reassembled
+  grid (a `#c<n>` key would match no row and be dropped as stale).
+  Folio cells — no letters, or a canonical Roman numeral — are carried
+  untranslated and counted; `DC` is knowingly carried as though it
+  were 600 (the status-quo direction; the cell beside it translates).
+  A partial grid is written KEYLESS so the next run asks again instead
+  of freezing a bad evening's refusals into the file. THE CAST ROUTE
+  (`--epub --records`) STILL REFUSES TABLES WHOLE — its docblock now
+  names the three pieces the wiring needs (positionOf on the stamped
+  wrapper, findBlocks handing back the inner range, a document-source
+  splice) so nobody rediscovers them.
+- **The EPUB metadata door** (BUILT) — `meta:read-epub`/`meta:write-epub`
+  IPC beside the PDF pair; `canEditMetadata` admits an export view
+  (`isExportView`: a `book` tab, viewOnly, `.epub` in `final/` — there
+  is no EPUB tab kind, and the ONLY editable EPUB is a finished
+  export); the dialog's EPUB arm unblocked, saving through the same
+  ledger-step/payload path as the PDF arm with `kind: 'epub'`.
+  `writeEpubMetadata` was never callable as audited (it passed no
+  `--out`, the engine's directory form) — re-aimed at the file through
+  a `.meta-tmp` side file and one rename. Known and accepted: the
+  export tab is not marked modified after a save (the file on screen IS
+  the file just written), and `dc:` edits do not repaint the proof
+  sheet.
+
+Still deferred OUT LOUD from that walk:
+
+- **The cover** — a separate build-time wave centred on
+  `packageVlmEpub`: a STATED image (Owen's ruling forbids inferring
+  one, not stating one), zipped in with `properties="cover-image"` plus
+  the EPUB-2 `<meta name="cover">`, chosen in the metadata dialog and
+  carried as a metadata-step payload; a cover cannot ride the
+  `epub-meta` stamp, which splices text and cannot add a file to the
+  container.
+- **Tables on the cast route** — see above; wire it when a cast
+  translation matters again.
+
 ### Then — the user's
 
 - **Phase G — the hand-test.** Import → read → strike and join on the

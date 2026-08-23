@@ -1492,6 +1492,17 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
   const echoed = report.markerNotes === 0
     ? ''
     : `, ${report.markerNotes} answer(s) came back missing inline markup and were kept anyway`;
+  // The tables, on the line somebody actually reads. A printed contents page
+  // comes back from the vision model as a Table, so "tables" here is very often
+  // "every chapter title in the book" — and the carried figure is what stops the
+  // cell count reading as a shortfall: a folio was never going to be asked
+  // about (`cellIsCarried`, src/translate/tablecells.ts).
+  const grids = report.tables === 0
+    ? ''
+    : `, ${report.tables} table(s) translated cell by cell (${report.tableCells} cell(s) asked`
+      + (report.tableCarried === 0
+        ? ')'
+        : `, ${report.tableCarried} carried as printed — blanks, numbers and folios)`);
   // The blocks the model could not do at all. On the completion line for the
   // same reason the skipped tables are: this is the line somebody reads when
   // they come back to a run that took four hours, and a book with untranslated
@@ -1533,7 +1544,7 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
   log(
     `translate: ${report.blocks} blocks${sent} in ${report.seconds.toFixed(1)}s `
     + `(${(report.blocks / Math.max(report.seconds, 0.001)).toFixed(2)} a second, ${report.model})`
-    + `${spine}${banked}${rows}${struck}${asked}${kept}${echoed}${stuck}`,
+    + `${spine}${grids}${banked}${rows}${struck}${asked}${kept}${echoed}${stuck}`,
   );
   if (report.navUnmapped > 0) {
     log(

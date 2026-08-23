@@ -172,6 +172,7 @@ import { chat, fetchTransport, requireModel, unloadModel, type Transport } from 
 import {
   chapterPosition, openTranslationRecords, swapPendingRecordsIntoPlace, TranslationRecords,
 } from './records.js';
+import { readTableGrid, spliceTableGrid, type TableGrid } from './tablecells.js';
 import { maskText, restoreText, roundTrips } from './textmask.js';
 
 /** The run could not produce a book. Names every block that refused. */
@@ -523,6 +524,26 @@ export interface TranslateReport {
   /** Blocks that carried no prose at all and were kept exactly as written. */
   wordless: number;
   /**
+   * Tables taken apart and translated CELL BY CELL, and what that came to.
+   *
+   * Reported as three numbers because no one of them says anything on its own.
+   * `tables` is how many grids this run put back together; `tableCells` is how
+   * many cells of them carried words and were therefore asked about; and
+   * `tableCarried` is how many were kept exactly as the book printed them —
+   * blanks, numbers and folios, which are never sent because a page number
+   * "translated" is an invitation to invent (`cellIsCarried`, tablecells.ts).
+   *
+   * A table this stage could NOT take apart is not in any of them: it is in
+   * `skipped` under `Table` and named in `keptUntranslated`, exactly as every
+   * table was before the cell route existed.
+   *
+   * Zero on the cast route, where tables are still refused whole — see the
+   * records-mode table branch in `runTranslation` for what wiring it would need.
+   */
+  tables: number;
+  tableCells: number;
+  tableCarried: number;
+  /**
    * Answers kept even though the model gave back fewer markers than it was
    * sent. The words are all there; an <em> or a noteref is not.
    */
@@ -597,6 +618,78 @@ interface PendingBlock {
    * the alignment is positional and a missing line IS a misalignment.
    */
   wordless: boolean;
+  /**
+   * BOOK-FILE ROUTE, TABLE CELLS ONLY: which grid these words came out of, and
+   * which cell of it. Absent on everything else, which is everything that is a
+   * block of the book in its own right.
+   *
+   * A cell is NOT one. `parts` above is the Table ROW's position and every cell
+   * of the grid carries the same one, because what gets written at that position
+   * is the whole grid put back together — see `PendingTable`.
+   */
+  cell?: { table: PendingTable; index: number };
+}
+
+/**
+ * ── ONE GRID, ASKED AS CELLS AND WRITTEN AS A ROW ───────────────────────────
+ *
+ * A Table row's text is the vision model's HTML for the whole grid, and a
+ * record's text stands in place of a row's text (`records.ts`) — so a record
+ * about a table is the whole grid, in the target language, and there is exactly
+ * one of them however many cells it took to get there. That is why this object
+ * exists: the cells settle independently, in whatever order the network answers
+ * in, and the row is written once, when the last of them has a verdict.
+ *
+ * WHY NOT A RECORD PER CELL. Because a cell has no name. The reader on the other
+ * side resolves a record's position against the rows of the book (`translationWords`,
+ * app/shared/records.ts), a `b7-1#c3` matches no row, and a position nothing
+ * claims is reported as stale and dropped — correctly. A per-cell record would
+ * therefore be a file full of answers that no book can find, plus a warning
+ * naming every one of them, plus a table still in German.
+ *
+ * WHY THE KEY IS THE WHOLE GRID'S QUESTION. `key` answers "has this been asked",
+ * and the thing that was asked here is *these cells, this model, these two
+ * languages, these instructions*. So it is `bankKey` over the masked cell texts
+ * joined — one question with one answer, matching the one row that gets written.
+ * A run that finds it already answered reads the cells back OUT of the stored
+ * grid (`banked`), through the same reader that took the source apart, and asks
+ * the model nothing at all. Change one cell of the source and the key changes
+ * and the whole table is asked again: a table is a handful of short strings, and
+ * the alternative is per-cell bookkeeping in a format that has no place to put
+ * it.
+ *
+ * A PARTIAL TABLE IS WRITTEN, AND IT IS WRITTEN KEYLESS. Some cells came back
+ * and some did not — the model refused one, the run was killed, a cell held
+ * characters this stage sends markers in. The grid still goes in the file,
+ * because a table that is nine tenths English is nine tenths better than one
+ * that is none of it, and the cells with no answer keep their source bytes so a
+ * reader can SEE which ones. But it is not an answer to the question, so it does
+ * not carry the question's key: the next run finds no key it recognises, asks
+ * again, and appends a better row above this one. Claiming the key would freeze
+ * a bad evening's refusals into the file forever, which is the mistake `refuse`
+ * already refuses to make about the bank.
+ */
+interface PendingTable {
+  /** The Table ROW's own position — the one place a record about this is written. */
+  parts: string;
+  /** How this table is named in a log line. */
+  where: string;
+  /** The grid as the vision model wrote it, and where each cell's words sit in it. */
+  grid: TableGrid;
+  /** The question the whole grid answers. See this interface's comment. */
+  key: string;
+  /** How many cells were asked about at all. Carried cells are not among them. */
+  asked: number;
+  /** How many of those have not been settled yet. */
+  outstanding: number;
+  /** Cell index → the words this run has for it, as they land. */
+  words: Map<number, string>;
+  /**
+   * Cell index → the words the records file ALREADY holds for it, read back out
+   * of the stored grid because its key says it answers this very question.
+   * Empty where the file has nothing, or where its grid is a different shape.
+   */
+  banked: Map<number, string>;
 }
 
 /** One request: what goes out, and which element each piece of the answer belongs to. */
@@ -1556,6 +1649,15 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
   /** Blocks whose source text came out of the parent records file. */
   let chained = 0;
   /**
+   * The three figures a translated table is reported by — see `TranslateReport`.
+   * Filled during the plan, because all three are decided before anything is
+   * asked: which grids came apart, which of their cells hold words, and which
+   * are folios that are carried rather than sent.
+   */
+  let tables = 0;
+  let tableCells = 0;
+  let tableCarried = 0;
+  /**
    * How many of `pending` are chapter TITLES rather than blocks of the book.
    *
    * They are in the same list because they go through the same machinery (see
@@ -1629,6 +1731,10 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
       kept.push(one);
       opts.log(`translate: LEFT IN THE SOURCE LANGUAGE — ${one}`);
     }
+    // Decisions that left nothing untranslated — a grid of nothing but folios.
+    // Said before the work, because they change what the run is about to do.
+    for (const one of plan.notes) opts.log(`translate: ${one}`);
+    tableCarried += plan.tableCarried;
 
     for (const group of plan.groups) {
       /*
@@ -1648,13 +1754,77 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
         if (!(error instanceof MarkerError)) throw error;
         const category = group.parts[0]!.category;
         skipped.set(category, (skipped.get(category) ?? 0) + 1);
-        const name = `${where} ${group.parts.map((part) => part.id).join(', ')} (${category})`;
+        /*
+         * A TABLE IS NAMED BY ITS ROW AND NOT BY ITS CELLS. Every cell of one
+         * grid carries the row's id (see `BookBlock.id`), so joining them would
+         * print `b7-1, b7-1, b7-1` fifteen times for one table. It is one fact
+         * about one row of the book, and it is said once.
+         */
+        const name = group.kind === 'table'
+          ? `${where} ${group.parts[0]!.id} (${category}, ${group.parts.length} cell(s) with words)`
+          : `${where} ${group.parts.map((part) => part.id).join(', ')} (${category})`;
         kept.push(`${name} — ${error.message}`);
         opts.log(
           `translate: ${name} LEFT IN THE SOURCE LANGUAGE — its words carry the characters this `
           + `stage sends markers in, so they never travelled: ${error.message}`,
         );
         continue;
+      }
+
+      /*
+       * ── A TABLE GROUP GETS ONE `PendingTable`, AND EVERY CELL POINTS AT IT ──
+       *
+       * The cells settle one at a time and the ROW is written once, when the
+       * last of them has a verdict — `PendingTable` carries the whole argument
+       * for why that is the shape, and `settleTableCell` below is where a cell's
+       * answer turns into a grid.
+       *
+       * THE KEY IS COMPUTED HERE, off the MASKED cell texts, because that is
+       * what `keyOf` hashes for every other block and the two must mean the same
+       * thing about the same words. And it is computed BEFORE anything is asked,
+       * so the file can be consulted for an answer to this exact question — see
+       * `banked`, which reads the stored grid apart with the same function that
+       * read the source apart and hands this run every cell for free.
+       */
+      let table: PendingTable | null = null;
+      if (group.kind === 'table' && group.grid !== undefined) {
+        const row = group.parts[0]!;
+        table = {
+          parts: row.id,
+          where: `${where} block ${row.id} (Table, page ${row.page})`,
+          grid: group.grid,
+          key: bankKey({
+            text: masked.map((one) => one.text).join('\n'),
+            model,
+            to: to.tag,
+            from: from === null ? null : from.tag,
+            instructions: opts.instructions,
+            masking: 'text',
+          }),
+          asked: group.parts.length,
+          outstanding: group.parts.length,
+          words: new Map(),
+          banked: new Map(),
+        };
+        tables += 1;
+        tableCells += group.parts.length;
+        /*
+         * THE FILE'S OWN ANSWER, READ BACK AS CELLS. `questionFor` rather than
+         * the newest row's key, for `recordRow`'s reason: the newest row may be
+         * a person's correction, which carries no key at all, and the question
+         * this position last answered is still on record above it. If that
+         * question is this one, the grid in the file is an answer to it — so the
+         * cells come out of it through `readTableGrid`, and a shape that does
+         * not match cell for cell is not used at all rather than aligned by
+         * guesswork.
+         */
+        if (records !== null && records.records.questionFor(row.id) === table.key) {
+          const stored = records.records.textFor(row.id);
+          const back = stored === undefined ? { complaint: 'nothing' } : readTableGrid(stored);
+          if (!('complaint' in back) && back.grid.cells.length === group.grid.cells.length) {
+            for (const [index, cell] of back.grid.cells.entries()) table.banked.set(index, cell.text);
+          }
+        }
       }
 
       const parts = group.parts.map((part, i) => {
@@ -1667,14 +1837,18 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
           masked: masked[i]!,
           // THE POSITION IS THE ROW'S OWN ID, which is the whole point of this
           // route: a record keyed by the name the block already has, on both
-          // sides of the translation (docs/RENDERER.md §4).
+          // sides of the translation (docs/RENDERER.md §4). A table's cells all
+          // wear their ROW's id, and what gets written there is the whole grid.
           parts: part.id,
           wordless: stripMarkers(masked[i]!.text).length === 0 && masked[i]!.markers.length === 0,
+          ...(table !== null && part.cell !== undefined
+            ? { cell: { table, index: part.cell } }
+            : {}),
         };
         pending.push(block);
         return block;
       });
-      chunks.push(...planChunks(group.kind, [], parts, opts.log));
+      chunks.push(...planChunks(group.kind, group.rowSizes, parts, opts.log));
     }
 
     /*
@@ -1768,27 +1942,43 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
 
     for (const group of found.groups) {
       /*
-       * A TABLE HAS NO RECORD, AND THE REFUSAL IS THE WHOLE GROUP'S.
+       * A TABLE READ OUT OF A CAST STILL HAS NO RECORD — AND THAT IS NOW A GAP
+       * RATHER THAN A PRINCIPLE.
        *
        * The EPUB→EPUB mode translates a table cell by cell: the cells are
        * elements of the document, each has its own range, and each answer is
-       * spliced into the cell it came from. A record cannot work that way. A
-       * Table block's TEXT is the vision model's own HTML — the whole grid, as
-       * one string, which is what `checkTableHtml` writes into the file and what
-       * materialization would substitute — and the cells are not banked blocks,
-       * carry no `data-bf-src`, and have no position a record could be keyed to.
+       * spliced into the cell it came from. A record could not work that way,
+       * because a cell of a cast is not a banked block and has no position a
+       * record could be keyed to — so this branch left the table in the source
+       * language, counted, named, and reaching the completion line.
        *
-       * Translating the grid as one string is the option that exists and is
-       * refused: it would hand a model `<tr>`, `<td>` and every attribute in
-       * them and ask it not to touch any of it, which is exactly the failure
-       * `markers.ts`'s header measured — a table whose columns quietly swapped
-       * is worse than a table nobody translated, because it looks fine.
+       * ── WHAT CHANGED, AND WHY IT IS NOT WIRED HERE ──────────────────────────
        *
-       * So the table is left in the source language, counted where the skipped
-       * figures are counted, said at the moment it happens, and put in
-       * `keptUntranslated` so it reaches the completion line. Exactly what this
-       * run already does for a table it cannot mask, arrived at one step
-       * earlier.
+       * The BOOK-FILE route now translates tables cell by cell and writes ONE
+       * record holding the reassembled grid, at the Table ROW's own position
+       * (`tablecells.ts`, and `PendingTable` above). Its cells need no position
+       * of their own because the grid is put back together before anything is
+       * written — which is an answer this branch could have too, and does not.
+       *
+       * What it would take, stated so nobody has to rediscover it: the cells of
+       * a cast table are the group's parts and all of them descend from ONE
+       * stamped `<div class="tablewrap">`, whose `data-bf-src` is the Table
+       * block's position — so `positionOf` on that ancestor is the row this grid
+       * belongs to, `findBlocks` would have to hand back the wrapper's inner
+       * range beside the group, and the reassembly would splice into the
+       * DOCUMENT's source rather than into a book file row's text. Two of those
+       * three are new fields on `BlockGroup`.
+       *
+       * It is not done because it is not the route the app runs. The app
+       * translates the BOOK FILE and materialises a derived one (`--book
+       * --records`, docs/RENDERER.md §4); this branch is reached only by
+       * `translate --epub --records`, a cast EPUB translated into records, and
+       * wiring a second reassembly against a different source string to serve it
+       * would be two implementations of one idea before either had been run
+       * twice. Half-wiring both was the alternative and it is worse.
+       *
+       * So: still left in the source language, still counted, still named — and
+       * the reason it says is the true one.
        */
       if (records !== null && group.kind === 'table') {
         skipped.set('table', (skipped.get('table') ?? 0) + 1);
@@ -2055,9 +2245,34 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
   /**
    * The answer already on disk for this question, out of whichever file this
    * run is caching in. Null in both means every block is asked.
+   *
+   * ── A TABLE CELL ANSWERS OUT OF ITS OWN GRID ────────────────────────────────
+   *
+   * A cell is never written to the file on its own (see `PendingTable`), so the
+   * key index has nothing under it. What the file has is the whole grid, at the
+   * row's position, keyed by the question the whole grid answers — and the cells
+   * were read back out of it during the plan. So a re-run over an unchanged
+   * table costs nothing, exactly as it does for every paragraph, arrived at
+   * through the record that actually exists.
+   *
+   * ONLY WHERE THE MASKING IS THE IDENTITY, and that restriction is exact rather
+   * than cautious. What the file holds is the RESTORED text — emphasis put back
+   * as the flowing dialect writes it — and what this function must return is an
+   * ANSWER, in masked space, for `accept` to check markers against and restore.
+   * For a cell with no markers those two strings are the same string
+   * (`restoreText` with an empty table is the identity, and `leading`/`trailing`
+   * are always empty in this dialect). For a cell with markers they are not, and
+   * inventing the inverse of a restoration is the kind of guess that hands a
+   * paragraph an answer to a different question. So a cell carrying emphasis is
+   * asked again — a rare cell of a rare block — and nothing is reconstructed.
    */
-  const cached = (block: PendingBlock): string | undefined =>
-    (records !== null ? records.records.get(keyOf(block)) : bank?.bank.get(keyOf(block)));
+  const cached = (block: PendingBlock): string | undefined => {
+    if (block.cell !== undefined) {
+      if (block.masked.markers.length > 0) return undefined;
+      return block.cell.table.banked.get(block.cell.index);
+    }
+    return records !== null ? records.records.get(keyOf(block)) : bank?.bank.get(keyOf(block));
+  };
 
   /**
    * An accepted answer, with the book's own markup put back around it.
@@ -2157,10 +2372,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
    * row is still in the file, above the new one, which is the whole reason this
    * format appends.
    */
-  const recordRow = (block: PendingBlock, answer: string): void => {
-    const key = keyOf(block);
-    const parts = block.parts!;
-    const text = restoreText(block.masked, answer);
+  const appendRecord = (parts: string, key: string, text: string): void => {
     const newest = records!.records.rowFor(parts);
     if (newest !== undefined && newest.text === text && newest.key === key) return;
     if (newest?.author === 'user') {
@@ -2188,6 +2400,76 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     recordsWritten += 1;
   };
 
+  /**
+   * One cell of a grid has a verdict — words, or nothing at all.
+   *
+   * NOTHING IS WRITTEN UNTIL THE LAST CELL LANDS, and then exactly one row is.
+   * `PendingTable` carries the whole argument for that shape; this is the four
+   * lines of it that run. A cell with no words for it — refused, wordless, or
+   * carried because it is a folio and was never asked — simply has no entry in
+   * `words`, and `spliceTableGrid` leaves its source bytes exactly where they
+   * are. That is what a partially translated table IS: the same grid, the same
+   * columns, some cells in the target language and some in the book's own, and a
+   * run that says which is which.
+   *
+   * A GRID THAT CAME BACK MISSHAPEN IS NOT WRITTEN AT ALL. `spliceTableGrid`
+   * reads its own output back and compares the shape; if the rows no longer
+   * match the source's, no record goes in the file and the table stays exactly
+   * as the book wrote it, named on the completion line. That is the failure this
+   * whole route was built to make impossible, so it is proved rather than
+   * assumed — and a proof with nowhere to report to would be no proof.
+   */
+  const settleTableCell = (
+    cell: { table: PendingTable; index: number },
+    words: string | null,
+  ): void => {
+    const table = cell.table;
+    if (words !== null) table.words.set(cell.index, words);
+    table.outstanding -= 1;
+    if (table.outstanding > 0) return;
+
+    const done = table.words.size;
+    const grid = spliceTableGrid(table.grid, table.words);
+    if ('complaint' in grid) {
+      kept.push(`${table.where} — ${grid.complaint}`);
+      opts.log(`translate: ${table.where} LEFT IN THE SOURCE LANGUAGE — ${grid.complaint}`);
+      return;
+    }
+    if (done === 0) {
+      // Every cell refused. There is nothing to write that is not the source
+      // grid itself, and a record holding the source text is a longer way of
+      // saying nothing — the wordless rule, said about a whole table.
+      opts.log(
+        `translate: ${table.where} — not one of its ${table.asked} cell(s) came back, so the grid is `
+        + 'in the book exactly as it was read',
+      );
+      return;
+    }
+    // A PARTIAL GRID IS NOT AN ANSWER TO THE QUESTION, so it does not carry the
+    // question's key and the next run asks again. See `PendingTable`.
+    appendRecord(table.parts, done === table.asked ? table.key : '', grid.text);
+    opts.log(
+      `translate: ${table.where} — ${done} of ${table.asked} cell(s) with words came back`
+      + (done === table.asked
+        ? ', and the grid is written whole'
+        : `; the other ${table.asked - done} are in the grid exactly as the book printed them, and `
+          + 'the next run asks about this table again'),
+    );
+  };
+
+  /**
+   * One accepted answer, filed where this route files answers.
+   *
+   * A block of the book gets a record at its own position. A table CELL gets no
+   * record — it is not a block, it has no position, and what is written is the
+   * grid it belongs to once every cell of it has landed.
+   */
+  const recordRow = (block: PendingBlock, answer: string): void => {
+    const text = restoreText(block.masked, answer);
+    if (block.cell !== undefined) { settleTableCell(block.cell, text); return; }
+    appendRecord(block.parts!, keyOf(block), text);
+  };
+
   /*
    * A BLOCK THE MODEL CANNOT DO DOES NOT KILL THE RUN.
    *
@@ -2213,6 +2495,15 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
   const refuse = (block: PendingBlock, complaint: string): void => {
     kept.push(`${describe(block, block.masked.text)} — ${complaint}`);
     settled += 1;
+    /*
+     * A REFUSED CELL IS STILL A SETTLED CELL. Its grid is waiting on a verdict
+     * for every cell before it writes anything, and a verdict of "no" is one —
+     * without this the table would hang on the refusal and the fourteen cells
+     * that DID come back would never reach the file. The cell keeps its source
+     * bytes, which is the same outcome the paragraph above gets and looks the
+     * same in the grid: untranslated, visibly, beside the ones that are not.
+     */
+    if (block.cell !== undefined) settleTableCell(block.cell, null);
     opts.log(
       `translate: block ${block.ordinal} LEFT IN THE SOURCE LANGUAGE after ${ATTEMPTS} attempts `
       + `— ${describe(block, block.masked.text)} — ${complaint}`,
@@ -2390,6 +2681,11 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
       if (records === null) {
         translated.set(part, part.masked.leading + part.masked.text + part.masked.trailing);
       }
+      // And the same for a cell of a grid, for `refuse`'s reason: its table is
+      // waiting on a verdict from every cell, and "there was nothing to ask" is
+      // one. `askableCells` already carries the blank and numeric cells, so this
+      // is the rarer case — a cell whose whole content masked away to a marker.
+      if (part.cell !== undefined) settleTableCell(part.cell, null);
       wordless += 1;
       settled += 1;
     }
@@ -2590,6 +2886,9 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
       fromBank,
       retries,
       wordless,
+      tables,
+      tableCells,
+      tableCarried,
       markerNotes,
       keptUntranslated: kept,
       // A records run relabels no contents page and retags no document: both of
@@ -2737,6 +3036,9 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     fromBank,
     retries,
     wordless,
+    tables,
+    tableCells,
+    tableCarried,
     markerNotes,
     keptUntranslated: kept,
     navRelabelled: nav?.relabelled ?? 0,
