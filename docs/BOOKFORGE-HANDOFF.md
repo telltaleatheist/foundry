@@ -430,6 +430,14 @@ your own narrate. What disappears hosted is the WAITING: the row is born
 **ONLY WHAT A PERSON PRESSED IN THE HOSTED WINDOW ROUTES.** The `queue:*` IPC
 doors route to your `enqueue`. Work you ordered through the mount seam does not —
 specifically `exportEpubFromStep`, which enqueues on Foundry's internal queue.
+**Corrected 2026-08-23: the Export dialog no longer routes either.** Owen ruled
+that only long or resource-heavy work belongs in a queue; an export pressed in
+the dialog runs at the press (`queue:run` → `runNow` → `runJob`, detached), the
+dialog reports the settled row itself, and the row leaves Foundry's list at the
+settle. You still hear `onExport` when it files — the landing path is
+`executeJob`'s and did not move — but no export from that dialog will reach your
+`enqueue` or appear as a row of yours. Readings and translations route exactly
+as written above.
 **This is the rule that keeps your scheduler from being re-entered from inside a
 call it is awaiting**: by calling us you have already made the scheduling
 decision, and routing that enqueue would file the export into the very queue that

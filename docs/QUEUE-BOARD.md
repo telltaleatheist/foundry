@@ -19,6 +19,21 @@ says so.
   job is still lost on restart, and that stays SAID (this file is where
   it is said) until its own wave.
 
+## 0b. Corrected 2026-08-23 — an export from the Export dialog never enters the board
+
+Owen's ruling: *"only things that take a long time or use lots of
+resources go to the queue. epubs can be processed right there on the
+spot, in the modal that spawned the job."* So the CPU lane's rows below
+are what they always were for work that arrives through `enqueue` — but
+the Export dialog no longer arrives through `enqueue` at all. It calls
+`queue:run` → `runNow` → `runJob`: the job runs DETACHED the moment it is
+pressed (an export is seconds of offline arithmetic somebody is watching
+a spinner for), the dialog reports the settled outcome, and the row
+leaves the list at the settle so the shelf never holds it as history. The
+row exists for the length of the run — guards, ✕, drain hold, landings
+all unchanged — and readings, translations and host-ordered exports keep
+the board exactly as written below.
+
 ## 1. The resource is a fact about the job's kind
 
 One table, in `shared/`, read by the scheduler and by the shelf so the
