@@ -26,6 +26,7 @@ import {
   optionalString,
   parseArgs,
   requireString,
+  stringList,
   UsageError,
   type OptionSpec,
   type ParsedArgs,
@@ -730,20 +731,46 @@ const EM_OUT: OptionSpec = {
  * removed cannot leave a flag behind that silently does nothing.
  */
 const EM_FIELD_HELP: Record<EpubMetaField, string> = {
-  title: "The book's name. Not translated, not derived from the filename, and it does not rename a file.",
-  creator: 'The author, as the book itself gives the name.',
+  title: "The book's MAIN name. Not translated, not derived from the filename, and it does not rename a file.",
+  creator: 'An author, as the book itself gives the name. REPEATABLE, and the whole list replaces the book\'s.',
   language: 'dc:language, as a BCP-47 tag — en, de, pt-BR. Refused if it is not one.',
   publisher: 'The publisher of this edition.',
-  date: 'The edition date. Written verbatim; EPUB wants ISO 8601 but does not enforce it.',
+  date: 'The edition date, written verbatim — a bare year (1934) is as valid as a full ISO 8601 date.',
   identifier: 'The text of the dc:identifier the package names in unique-identifier. Its id is never touched.',
 };
 
+/**
+ * `--creator` REPEATS and the others do not, and that difference is the whole
+ * of the multi-value design.
+ *
+ * A book has one title, one language, one publisher and one identifier, and a
+ * flag given twice for any of them is a command meaning two things at once —
+ * which `parseArgs` refuses by name. A book has as many authors as it has, so
+ * the flag that states them has to be able to say all of them; `EPUB_META_FIELDS`
+ * argues why the honest form of that is a list that REPLACES the set.
+ */
 const EM_FIELDS: readonly OptionSpec[] = EPUB_META_FIELDS.map((field): OptionSpec => ({
   name: field,
   type: 'string',
   placeholder: '<text>',
   describe: EM_FIELD_HELP[field],
+  ...(field === 'creator' ? { multiple: true } : {}),
 }));
+
+const EM_CREATOR_FILE_AS: OptionSpec = {
+  name: 'creator-file-as',
+  type: 'string',
+  placeholder: '<Last, First>',
+  multiple: true,
+  describe: 'How the matching --creator SORTS. Paired by position; more of these than --creator is refused.',
+};
+
+const EM_SUBTITLE: OptionSpec = {
+  name: 'subtitle',
+  type: 'string',
+  placeholder: '<text>',
+  describe: 'The subtitle, as a second dc:title refined title-type=subtitle. Empty removes it. EPUB 3 only.',
+};
 
 // ── pdf-meta ─────────────────────────────────────────────────────────────────
 
@@ -1766,16 +1793,33 @@ async function runEpubMeta(args: ParsedArgs): Promise<void> {
     );
   }
 
+  /*
+   * `--creator` IS READ AS A LIST AND THE REST AS SINGLE VALUES, which is the
+   * one place in this command where the argv shape and the field table differ.
+   * `optionalString` refuses an option that repeated, so a repeatable field read
+   * through it would fail the moment somebody named two authors; `stringList`
+   * gives back one value, two, or none, and the engine takes the whole list as
+   * the book's complete set.
+   */
   const set: Partial<Record<EpubMetaField, string>> = {};
   for (const field of EPUB_META_FIELDS) {
+    if (field === 'creator') continue;
     const value = optionalString(args, field);
     if (value !== undefined) set[field] = value;
   }
+  const creators = stringList(args, 'creator');
+  const creatorFileAs = stringList(args, 'creator-file-as');
+  // `''` is a VALUE here and not an absence: `--subtitle ""` is how a book stops
+  // having one, and it is the only blank this command accepts.
+  const subtitle = optionalString(args, 'subtitle');
 
   const report = await epubMeta({
     epubPath,
     ...(outPath !== undefined ? { outPath } : {}),
     set,
+    creators,
+    creatorFileAs,
+    ...(subtitle !== undefined ? { subtitle } : {}),
     log,
   });
 
@@ -1783,11 +1827,22 @@ async function runEpubMeta(args: ParsedArgs): Promise<void> {
   // is said in a different sentence from updated: a field that was not there is
   // a gap being filled, and a field that was is an answer being corrected.
   for (const change of report.changes) {
+    const which = change.ordinal === null ? '' : ` #${change.ordinal}`;
     log(
       change.created
-        ? `epub-meta: <${change.element}> CREATED — "${change.to}"`
-        : `epub-meta: <${change.element}> "${change.from}" → "${change.to}"`,
+        ? `epub-meta: <${change.element}>${which} CREATED — "${change.to}"`
+        : `epub-meta: <${change.element}>${which} "${change.from}" → "${change.to}"`,
     );
+  }
+  /*
+   * WHAT LEFT THE BOOK, WITH THE REASON. An author dropped because the new
+   * --creator list is shorter, and every refinement that pointed at them, is the
+   * one outcome of this command that a person could be surprised by — so it is
+   * said in full rather than counted. Nothing else in foundry removes metadata
+   * at all.
+   */
+  for (const gone of report.removed) {
+    log(`epub-meta: <${gone.element}> REMOVED — "${gone.was}" — ${gone.why}`);
   }
   if (report.unchanged.length > 0) {
     log(
@@ -1800,16 +1855,20 @@ async function runEpubMeta(args: ParsedArgs): Promise<void> {
    * edited: `file-as` for "Ian Kershaw" is "Kershaw, Ian", and no rule derives
    * one from the other for a name with a particle, a patronymic or one word in
    * it. A library sort key this program guessed at would be wrong invisibly, in
-   * the one field whose whole job is to be read by a machine.
+   * the one field whose whole job is to be read by a machine. (`--creator-file-as`
+   * is how a person states the sort name instead of leaving it to be guessed.)
    */
   for (const stale of report.stale) {
+    const which = stale.ordinal === null ? '' : ` #${stale.ordinal}`;
+    const subject = stale.field === 'subtitle' ? 'the subtitle' : `dc:${stale.field}${which}`;
     log(
-      `epub-meta: dc:${stale.field} carries a <meta property="${stale.property}"> refinement `
+      `epub-meta: ${subject} carries a <meta property="${stale.property}"> refinement `
       + `reading "${stale.value}", which still describes the OLD text. foundry does not derive one `
       + 'from the other and has left it exactly as it was.',
     );
   }
-  if (report.changes.length === 0 && Object.keys(set).length > 0) {
+  const asked = Object.keys(set).length > 0 || creators.length > 0 || subtitle !== undefined;
+  if (report.changes.length === 0 && report.removed.length === 0 && asked) {
     log('epub-meta: nothing changed — every field given already said what it was asked to say');
   }
 
@@ -1826,11 +1885,13 @@ async function runEpubMeta(args: ParsedArgs): Promise<void> {
       path: report.outPath,
       opf: report.opfPath,
       uniqueIdentifier: report.uniqueIdentifier,
+      packageVersion: report.packageVersion,
       inPlace: report.inPlace,
       written: report.written,
       fields: report.metadata,
       counts: report.counts,
       changes: report.changes,
+      removed: report.removed,
       stale: report.stale,
     }, null, 2)}\n`);
     return;
@@ -1843,8 +1904,28 @@ async function runEpubMeta(args: ParsedArgs): Promise<void> {
     return;
   }
 
-  // A read. The metadata IS the result, so it is what goes to stdout.
-  const lines = EPUB_META_FIELDS.map((field) => metaLine(`dc:${field}`, report.metadata[field]));
+  /*
+   * A read. The metadata IS the result, so it is what goes to stdout.
+   *
+   * NOT a loop over the field table any more, because two of the answers are not
+   * one line each. The subtitle gets its own row rather than being glued to the
+   * title, which is the whole reason it is stored as a second element; and the
+   * authors get one row apiece with the sort name beside the name, because a
+   * book with three authors printed as one line would be a report that agrees
+   * with the dialog and disagrees with the file.
+   */
+  const lines = [
+    metaLine('dc:title', report.metadata.title),
+    metaLine('subtitle', report.metadata.subtitle),
+    ...(report.metadata.creators.length === 0
+      ? [metaLine('dc:creator', null)]
+      : report.metadata.creators.map((creator) => metaLine(
+        'dc:creator',
+        creator.fileAs === null ? creator.name : `${creator.name}  (file-as: ${creator.fileAs})`,
+      ))),
+    ...(['language', 'publisher', 'date', 'identifier'] as const)
+      .map((field) => metaLine(`dc:${field}`, report.metadata[field])),
+  ];
   process.stdout.write(`${lines.join('\n')}\n`);
 }
 
@@ -3012,14 +3093,16 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'epub-meta',
-    summary: "Read or correct a book's Dublin Core metadata: title, creator, language, publisher, date, identifier.",
-    usage: '--epub <book.epub|dir> [--out <book.epub>] [--json] [--title <text>] [--creator <text>]'
-      + ' [--language <bcp47>] [--publisher <text>] [--date <text>] [--identifier <text>]',
+    summary: "Read or correct a book's Dublin Core metadata: title, subtitle, creators, language, publisher, date, identifier.",
+    usage: '--epub <book.epub|dir> [--out <book.epub>] [--json] [--title <text>] [--subtitle <text>]'
+      + ' [--creator <text>]... [--creator-file-as <Last, First>]... [--language <bcp47>]'
+      + ' [--publisher <text>] [--date <text>] [--identifier <text>]',
     detail: [
-      "Six strings in the package document. A cast book's metadata is whatever",
-      'vlm-convert was told, which for a scan is usually the PDF\'s filename and',
-      'nothing else; an imported publisher\'s EPUB has real metadata and may still',
-      'have it wrong. This reads it, and writes the fields it is given.',
+      "The package document's own record of the book. A cast book's metadata is",
+      'whatever vlm-convert was told, which for a scan is usually the PDF\'s',
+      'filename and nothing else; an imported publisher\'s EPUB has real metadata',
+      'and may still have it wrong. This reads it, and writes the fields it is',
+      'given.',
       '',
       'WITH NO SETTERS IT ONLY READS. --json prints the package\'s metadata as',
       'versioned JSON on stdout — which is how the app populates its dialog — and',
@@ -3064,13 +3147,49 @@ export const COMMANDS: readonly Command[] = [
       'no id and so would not be the book\'s identifier however it was spelled.',
       '',
       'EPUB 3 REFINEMENTS ARE NEVER ORPHANED. <meta refines="#id"> elements point',
-      'at metadata ids, and nothing here writes, removes or renumbers an id —',
-      'updates do not touch a start tag and insertions carry no id at all. What a',
-      'refinement CAN become is stale: correct a dc:creator and its file-as still',
-      'sorts the book under the old name. Those are NAMED IN THE RUN and left',
-      'alone, because "Kershaw, Ian" is not derivable from "Ian Kershaw" in the',
-      'general case and a sort key this program guessed at would be wrong',
-      'invisibly.',
+      'at metadata ids. An id here is only ever ADDED to an element that had none',
+      '— never changed, never renumbered — so nothing in the package can come to',
+      'point somewhere else. The one way to orphan a refinement is to remove its',
+      'subject, which --creator and --subtitle can do, and every removal takes the',
+      'refinements of the removed element with it and names each one in the run.',
+      'What a surviving refinement CAN become is stale: correct a dc:creator and',
+      'its file-as still sorts the book under the old name. Those are NAMED IN THE',
+      'RUN and left alone, because "Kershaw, Ian" is not derivable from "Ian',
+      'Kershaw" in the general case and a sort key this program guessed at would',
+      'be wrong invisibly. --creator-file-as is how you state it instead.',
+      '',
+      '--CREATOR REPEATS, AND THE LIST IS THE WHOLE ANSWER. Every --creator in a',
+      'run is one author, in order, and together they REPLACE the dc:creator',
+      'elements the book carries: --creator "Ian Kershaw" --creator "Richard',
+      'Evans" means the book has exactly those two. An author the new list does',
+      'not reach is removed and SAID — with the count that justified it — because',
+      'a list that quietly truncated would be the half-obeyed instruction this',
+      'program exists to refuse. Where the list is one name and the book has one',
+      'author, this is the old single-creator flag byte for byte: the element\'s',
+      'text is corrected and its start tag, its id and its role refinement are',
+      'untouched.',
+      '',
+      '--creator-file-as pairs with --creator BY POSITION and says how that author',
+      'sorts. Fewer sort names than authors is fine — the rest get none. More is',
+      'refused by name, since the extra belongs to an author nobody wrote down.',
+      'The spelling follows the PACKAGE: an EPUB 3 <meta property="file-as">',
+      'refinement, or the EPUB 2 opf:file-as attribute where the file already uses',
+      'one or declares itself version 2. Writing the wrong one is invisible — each',
+      'reading system ignores the other — and the book just sorts under the',
+      "author's first name in somebody's library forever.",
+      '',
+      '--SUBTITLE IS A SECOND dc:title, NOT HALF OF THE FIRST. "Der Staat: Eine',
+      'Geschichte" in one element is what a cataloguer types when the format gives',
+      'them nowhere else to put it, and every reader then shows, sorts and reads',
+      'aloud the whole string as the name of the book. So the subtitle is written',
+      'as its own dc:title with <meta property="title-type">subtitle</meta>, and',
+      'the main title GAINS title-type=main so no reading system has to guess',
+      'which of two untyped titles it is looking at. --subtitle replaces the one',
+      'that is there rather than adding a second; an EMPTY --subtitle removes it,',
+      'along with everything refining it and the now-pointless main refinement.',
+      'It is refused for an EPUB 2 package, which has no title-type and would show',
+      'the subtitle as a second title. --title always means the MAIN title, and a',
+      'book with two titles that no refinement distinguishes is still refused.',
       '',
       'A DIRECTORY IS EDITED IN PLACE and a FILE IS NOT — epub-stamp\'s rule, for',
       'epub-stamp\'s reason. The directory form is the app\'s working tree, the copy',
@@ -3088,13 +3207,17 @@ export const COMMANDS: readonly Command[] = [
       'WHAT IS REFUSED, BY NAME: an input that cannot be read; a package with no',
       '<metadata> element, or an empty one; a --language that is not a BCP-47 tag',
       '(the same refusal translate --to gives, from the same table); an empty',
-      'value for any field, because blanking dc:title is not a correction; a field',
-      'the package declares MORE THAN ONCE, since --creator says nothing about',
-      'which of two authors is being corrected and the wrong one rewritten reads',
-      'exactly like the right one; a file input with no --out when a field is',
-      'being set; an --out equal to --epub; and --out on a directory input.',
+      'value for any field but --subtitle, because blanking dc:title is not a',
+      'correction; a single-valued field the package declares MORE THAN ONCE,',
+      'since --publisher says nothing about which of two to rewrite and the wrong',
+      'one rewritten reads exactly like the right one; two dc:title elements that',
+      'no title-type tells apart; more --creator-file-as than --creator; a',
+      '--creator-file-as with no --creator at all; --subtitle against an EPUB 2',
+      'package, or against a package that declares no dc:title to refine; a file',
+      'input with no --out when a field is being set; an --out equal to --epub;',
+      'and --out on a directory input.',
     ].join('\n'),
-    options: [EM_EPUB_IN, EM_OUT, META_JSON, ...EM_FIELDS],
+    options: [EM_EPUB_IN, EM_OUT, META_JSON, ...EM_FIELDS, EM_CREATOR_FILE_AS, EM_SUBTITLE],
     run: runEpubMeta,
   },
   {

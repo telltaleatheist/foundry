@@ -1496,6 +1496,27 @@ export class ActionMenuComponent {
   }
 
   protected metadata(): void {
+    /*
+     * AN EPUB EXPORT GETS THE MINT DIALOG — Owen's ruling (2026-08-24): the
+     * tile over a finished book opens the same card the mint asked with, and
+     * Save stamps the very file on screen. The PDF keeps the older dialog,
+     * whose Info-dictionary fields are a different document's different
+     * questions.
+     */
+    const tab = this.stage.activeDocument();
+    if (tab !== null && tab.kind === 'book' && isExportView(tab)) {
+      const project = this.projects.projectFor(tab.path);
+      if (project !== null) {
+        void this.router.navigateByUrl('/');
+        this.ui.openMintMeta({
+          mode: 'edit',
+          projectDir: project.dir,
+          path: tab.path,
+          file: tab.path.split(/[\\/]/).pop() ?? tab.path,
+        });
+        return;
+      }
+    }
     void this.router.navigateByUrl('/');
     this.ui.openMetadata();
   }

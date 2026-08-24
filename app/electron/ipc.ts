@@ -51,6 +51,7 @@ import { admit, admitted, openDocument, promptForDocument } from './documents';
 import {
   engineInfo,
   readEpubMetadata,
+  stampMintMetadata,
   readPdfMetadata,
   runDoctor,
   writeEpubMetadata,
@@ -85,8 +86,10 @@ import {
   onProjectsChanged,
   positionStepId,
   projectDirOf,
+  readManifest,
   readStepLedger,
   recordMetadata,
+  recordMintMeta,
   standForDocument,
 } from './projects';
 import {
@@ -119,6 +122,7 @@ import type {
   JobRequest,
   MetadataPatch,
   MetadataWriteOutcome,
+  MintMeta,
   StepLedgerView,
   ProjectDocument,
   ProjectFacsimile,
@@ -1649,6 +1653,33 @@ export function registerIpc(): void {
       return landed === undefined ? outcome : { ...outcome, landed };
     },
   );
+  /*
+   * ── The mint metadata — who the book says it is, per project ──────────────
+   *
+   * The block the mint modal edits (shared/mint-meta.ts carries the shape and
+   * Owen's ruling). READ answers null rather than a seed: the SEEDING is the
+   * dialog's decision — it composes a first guess out of the manifest title,
+   * the scan's Info author and the position's language, three facts the
+   * renderer already holds — and main inventing one here would be two seeders
+   * with two opinions. WRITE replaces the whole block; the directory is proved
+   * the way every project door proves it, by reading the manifest of the
+   * folder named and nothing else.
+   */
+  ipcMain.handle('meta:mint-read', async (_event, projectDir: string) =>
+    (await readManifest(projectDir)).meta ?? null);
+  ipcMain.handle('meta:mint-write', async (_event, projectDir: string, meta: MintMeta) => {
+    await recordMintMeta(projectDir, meta);
+  });
+  /*
+   * The whole block onto ONE finished export, in place — the metadata tile's
+   * Save over an EPUB somebody is looking at. Gated exactly as the flat
+   * writer above (`exportedBook`): only a file this app filed answers, and
+   * the language written is the FORM'S here, deliberately — an edit of a
+   * finished file is a person correcting that file's record, not a mint
+   * whose chain outranks them.
+   */
+  ipcMain.handle('meta:mint-stamp', (_event, filePath: string, meta: MintMeta) =>
+    stampMintMetadata(exportedBook(filePath), meta, undefined));
 
   // ── The step ledger ──────────────────────────────────────────────────────
   /*

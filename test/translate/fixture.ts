@@ -494,7 +494,14 @@ export const METADATA_OPF_ODD = [
   '',
 ].join('\n');
 
-/** Two authors — the case `--creator` cannot mean anything about. */
+/**
+ * Two authors — the case `--creator` states a whole new list for.
+ *
+ * It used to be the case `--creator` could not mean anything about, and the
+ * refusal it provoked is why this package exists. The flag repeats now, and the
+ * list it builds REPLACES the set, so this package is what a run that names one
+ * author has to remove the second one from — and say so.
+ */
 export const METADATA_OPF_TWO_CREATORS = METADATA_OPF.replace(
   '    <dc:creator id="creator1">Ein Verfasser</dc:creator>\n',
   '    <dc:creator id="creator1">Ein Verfasser</dc:creator>\n'

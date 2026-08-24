@@ -2739,7 +2739,28 @@ tree row presses, where the row says which lineage was meant. BookForge's
 half (their sweep learning `stepId` from the tray; the auto-export guard)
 is theirs.
 
-**DESIGNED, AWAITING OWEN — the mint-time metadata modal.** His ask:
+**BUILT (2026-08-24, approved: "go ahead and build the metadata modal
+with the fields outlined by bookforge") — with two doors and one stamp:**
+the Export dialog's EPUB press opens the mint card (fields below,
+filename live in BookForge's convention, Export runs the whole mint from
+the card); the dock's Metadata tile over a finished EPUB opens the same
+card in edit mode and Save stamps the file in place — `epub-meta`'s OPF
+splice, a side file and one rename, near instant. `project.json` gains
+`meta` (the inheritance; carried explicitly through `readManifest`'s
+rebuild — the validator-that-rebuilds trap); `JobRequest.mintMeta` rides
+the request so the settle stamps and announces out of one block;
+`ExportLanding.metadata` is FROZEN in shared/types.ts as agreed with
+BookForge (plain primary subtag); host mints (`exportEpubFromStep`)
+attach the stored block with no modal. The engine grew `--subtitle`
+(EPUB3 title-type refinement, empty removes), repeatable `--creator`
+paired positionally with `--creator-file-as` (replaces the SET, loudly —
+note: a single `--creator` against a multi-creator book used to refuse
+and now replaces), and `--date 1934` verified verbatim. Deferred out
+loud from the build: the COVER picker (rides the packageVlmEpub cover
+wave, the field exists in `MintMeta`), and 2b's narrate-confirmation
+card in the host-op dialog.
+
+The design as approved:
 *"just tell foundry to design this modal and make sure it has the options
 that bookforge contains."* The design, mirrored field-for-field on
 BookForge's metadata editor and naming pass:
