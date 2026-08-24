@@ -2773,8 +2773,12 @@ BookForge's metadata editor and naming pass:
   the project's stored preference is.
 - THE LANDING CARRIES IT: `ExportLanding.metadata? { title, subtitle?,
   contributors[], year?, language?, filename }` so BookForge's variant
-  records inherit the mint's own declaration (their ask; shape proposed
-  to them, pending this design's approval).
+  records inherit the mint's own declaration (their ask; shape agreed
+  with their session, pending this design's approval). `language` is the
+  PLAIN PRIMARY SUBTAG (en, de, fr…), BookForge's amendment: their
+  selects and e2a key on the two-letter form, and a 'de-DE' arriving
+  where 'de' is expected would be a quiet mismatch — the same class of
+  silent wrong-language failure this whole wave exists to end.
 - 2b — THE NARRATE CONFIRMATION: the host-op dialog gains a target card —
   the file's name, title, authors, year and LANGUAGE (tinted as a warning
   when it differs from the project's newest translation) — so the wrong
