@@ -77,8 +77,12 @@ code where it lives.)*
 4. **The preview never lies.** A row quotes its sentence with the span
    drawn in the proofreader's cancel when cut (the same red the workbench
    strikes with) and held in the amber flag when kept. Hovering a row
-   widens the quotation to the block's fuller text. What the row shows cut
-   is exactly what the landed op removes, seam and all.
+   shows the block's fuller text — as a floating glance beside the row,
+   never by swapping it into the row, because a row that grows under the
+   pointer moves the verdict a hand is travelling toward (user ruling,
+   2026-08-24: *"lets make it so the keep/cut lines dont change sizes
+   when i hover… the button keeps moving around"*). What the row shows
+   cut is exactly what the landed op removes, seam and all.
 5. **The seam is sewn, locally.** Removing a span must not leave the
    sentence bleeding: at each cut point, if whitespace stands on both
    sides, one survives; if whitespace stands to the left and a closing
