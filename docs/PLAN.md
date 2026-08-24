@@ -2724,6 +2724,62 @@ And the evening's two corrections, caught by Owen on the running app:
   reads *from The scan* — which is the true chain: photographs → scan →
   book.
 
+### Wave 47 — the press names a file, and the mint asks who the book is (Owen, 2026-08-24)
+
+**Ruled and BUILT — the dock names the file.** Owen, after the German
+narration of an English book: *"yes, it should name the file im actually
+exporting. not generically."* The dock's book-currency branch no longer
+speaks the position: it names the export being VIEWED when the focused
+tab is one of this project's finished EPUBs, else the one finished EPUB,
+else a pick-in-the-tree sentence; with no export at all the make-one path
+survives only from a position that names itself — an arrival-parked
+position gets a sentence instead of `hostActPositionFrom`'s silent hop
+onto the reading (the hop that chose German). The mapping survives for
+tree row presses, where the row says which lineage was meant. BookForge's
+half (their sweep learning `stepId` from the tray; the auto-export guard)
+is theirs.
+
+**DESIGNED, AWAITING OWEN — the mint-time metadata modal.** His ask:
+*"just tell foundry to design this modal and make sure it has the options
+that bookforge contains."* The design, mirrored field-for-field on
+BookForge's metadata editor and naming pass:
+
+- THE EXPORT DIALOG GROWS THE FORM — one surface already stands before
+  every mint, and a second modal stacked on it would be two doors to one
+  decision. Fields: title; subtitle; AUTHORS as an array of {first, last}
+  with add/remove (combined display "First Last, First Last"; a comma in
+  an ingested single string means it is ALREADY "Last, First" — Owen's
+  2026-08-16 rule, never re-invert); year; LANGUAGE as a select
+  (en/es/fr/de/it/pt/ja/zh) PRE-FILLED FROM THE POSITION — a translate
+  step's `to`, else the read's language — which is the load-bearing field
+  this whole incident was about; cover picker with true-aspect preview
+  (EPUB embedding rides the deferred packageVlmEpub cover wave; until it
+  lands the cover is stored and announced, not embedded).
+- INHERITANCE: `project.json` gains a `meta` block the modal reads and
+  writes — seeded once from the manifest title, the archive's Info
+  author, and the position's language; every later mint pre-fills from it.
+- THE FILENAME, BookForge's convention exactly (their
+  computeDescriptiveFilename + generatedFilename): `Title[ - Subtitle].
+  Authors. (Year).ext`, year at the end, each segment owning its own
+  leading ". "; authors as "Last, First" / "A and B" / "first et al.";
+  collapse double dots in the base, collapse whitespace runs; the ON-DISK
+  name ASCII-folded (diacritics stripped, ß→ss) with <>:"/\|?* → _ while
+  embedded metadata keeps real Unicode. Live-generated; a manual edit
+  stops regeneration; focusing the empty field seeds it with the
+  generated name. One shared implementation in app/shared.
+- HOST MINTS (`exportEpubFromStep`) show no modal: metadata comes from
+  the stored `meta` — except LANGUAGE, which always follows the step's
+  own chain, because an auto-export of a German step must say de whatever
+  the project's stored preference is.
+- THE LANDING CARRIES IT: `ExportLanding.metadata? { title, subtitle?,
+  contributors[], year?, language?, filename }` so BookForge's variant
+  records inherit the mint's own declaration (their ask; shape proposed
+  to them, pending this design's approval).
+- 2b — THE NARRATE CONFIRMATION: the host-op dialog gains a target card —
+  the file's name, title, authors, year and LANGUAGE (tinted as a warning
+  when it differs from the project's newest translation) — so the wrong
+  text can never queue unseen.
+
 Still deferred OUT LOUD from that walk:
 
 - **The cover** — a separate build-time wave centred on
