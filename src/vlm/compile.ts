@@ -61,8 +61,9 @@
  * edited. The same digits appear five times on a page of a book with fifty notes,
  * so matching by TEXT would land on whichever occurrence came first. This writer
  * therefore links the Nth superscript run of a block to the note whose ref names
- * that exact run, and any run no note claims stays the plain `<sup>` the emitter
- * gives an unmatched marker: no link beats a wrong one.
+ * that exact run — and any run no note claims is REMOVED from the output, which
+ * is Owen's 2026-08-24 ruling over the older "stays the plain <sup>" posture;
+ * `chapterBody`'s `worded` carries the whole argument, translated books included.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -115,6 +116,11 @@ import {
 } from './epub.js';
 import { packageVlmText } from './text-out.js';
 
+/** dots.ts's own superscript alphabet, for reading a printed value off a SLICE
+ *  of a fused run — the whole-run value arrives from `dotsInline`, but a tiled
+ *  run's parts each carry their own. */
+const SUP_DIGITS = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+
 export class CompileError extends Error {
   constructor(message: string) {
     super(message);
@@ -157,6 +163,8 @@ export interface CompileReport {
   linked: number;
   /** Refs the prose does not carry as a superscript run — see `chapterBody`. */
   unresolved: number;
+  /** Superscript numbers no note answered for, removed — Owen's TTS ruling. */
+  stripped: number;
   bytes: number;
 }
 
@@ -366,6 +374,8 @@ interface CompiledBody {
   linked: number;
   /** Refs naming characters the prose does not print as a superscript run. */
   unresolved: number;
+  /** Superscript numbers no note answered for, removed from the output. */
+  stripped: number;
   pictures: number;
 }
 
@@ -419,10 +429,13 @@ function chapterBody(
     out.push(blockElement(
       'Title',
       { outer: ` data-bf-cat="${categoryAttribute('Title')}"` },
-      dotsInline(heading, { noteref: () => null }),
+      // The empty string strips a marker from a duplicated heading too —
+      // the same ruling `worded` carries, one door over.
+      dotsInline(heading, { noteref: () => '' }),
     ));
   }
   let linked = 0;
+  let stripped = 0;
   let pictures = 0;
   let openList: 'ol' | 'ul' | null = null;
 
@@ -448,7 +461,8 @@ function chapterBody(
   for (const claims of refsIn.values()) claims.sort((one, other) => one.at - other.at);
 
   /**
-   * The words of one row, with its reference numbers linked to their notes.
+   * The words of one row, with its reference numbers linked to their notes —
+   * AND THE NUMBERS NO NOTE ANSWERS FOR, REMOVED.
    *
    * ── WHY THE RUNS ARE COUNTED RATHER THAN THE TEXT CUT ──────────────────────
    *
@@ -462,22 +476,73 @@ function chapterBody(
    * escaping nor the emphasis rules can add, remove or reorder one. The nth
    * replacement is therefore the nth run of the row's own text, and its offset is
    * known exactly.
+   *
+   * ── AN UNMATCHED NUMBER IS REMOVED, NOT DEMOTED — Owen's ruling ────────────
+   *
+   * (2026-08-24, over three screenshots of his own translated book): *"if they
+   * arent linked to a footnote, they should be removed. if theyre linked to a
+   * footnote that's removed, they should go, too. footnote reference numbers
+   * that are unlinked to a footnote are clutter and nightmarish for tts."*
+   *
+   * This used to answer `null` here and let `dotsInline` write the bare
+   * `<sup>` — "no link beats a wrong one" — and on a book in its own language
+   * that was nearly free, because materialize had already cut the loose
+   * markers and the struck notes' numbers out of the TEXT. A TRANSLATED book
+   * is where the old answer collapsed: the words come from the records, no
+   * offset in them is a fact anybody holds, so every ref is dropped
+   * (materialize's own docblock) and EVERY number the model carried across
+   * rendered bare — hundreds of them, superscripts to nowhere, each one a
+   * syllable a narrator speaks. The empty string is dotsInline's removal (its
+   * `??` fires only on null), so the run vanishes from the finished document
+   * exactly as `--strip-note-markers` would take it, and the count is said in
+   * the run's log rather than the numbers quietly thinning.
+   *
+   * A ref recorded where the prose prints NO run at all is still `unresolved`
+   * below — the opposite direction, and still a flag rather than a removal,
+   * because there is nothing in the output to remove.
    */
   const worded = (row: BookRow): string => {
     const claims = refsIn.get(row.id) ?? [];
     const runs = [...row.text.matchAll(SUPERSCRIPT_RUN)];
     let which = -1;
     return dotsInline(row.text, {
-      noteref: (printed) => {
+      noteref: () => {
         which += 1;
         const run = runs[which];
         if (run === undefined) return null;
-        const claim = claims.find((ref) => ref.at === run.index && ref.len === run[0].length);
-        if (claim === undefined) return null;
-        const first = claim.note.refId === null;
-        if (first) claim.note.refId = noteRefId(claim.note.seq);
-        linked += 1;
-        return noteRefAnchor(claim.note.seq, printed, first ? claim.note.refId : null);
+        /*
+         * EVERY CLAIM INSIDE THIS RUN, AND THEY MUST TILE IT. One claim over
+         * the whole run is the ordinary marker. SEVERAL, edge to edge, are a
+         * FUSED run — the model wrote `⁹` and `¹⁰` as `⁹¹⁰`, and the
+         * translation recovery split the claim back into its markers
+         * (`landedMarkers`, app/shared/materialize.ts, Owen's bracket rule) —
+         * so each slice becomes its own anchor and the reader gets both
+         * notes where the page fused their numbers. A run the claims cover
+         * only partly proves nothing about the rest, and the whole run goes
+         * the way of any unproven number: out.
+         */
+        const start = run.index;
+        const end = start + run[0].length;
+        const inside = claims
+          .filter((ref) => ref.at >= start && ref.at + ref.len <= end)
+          .sort((one, other) => one.at - other.at);
+        let cursor = start;
+        for (const ref of inside) {
+          if (ref.at !== cursor) break;
+          cursor = ref.at + ref.len;
+        }
+        if (inside.length === 0 || cursor !== end) {
+          stripped += 1;
+          return '';
+        }
+        return inside.map((ref) => {
+          const digits = run[0].slice(ref.at - start, ref.at - start + ref.len);
+          const printed = Number([...digits].map((c) => String(SUP_DIGITS.indexOf(c))).join(''));
+          const first = ref.note.refId === null;
+          if (first) ref.note.refId = noteRefId(ref.note.seq);
+          linked += 1;
+          return noteRefAnchor(ref.note.seq, printed, first ? ref.note.refId : null);
+        }).join('');
       },
     });
   };
@@ -726,7 +791,7 @@ function chapterBody(
   }
 
   const wanted = [...refsIn.values()].reduce((sum, claims) => sum + claims.length, 0);
-  return { xhtml: out.join('\n'), headings, linked, unresolved: wanted - linked, pictures };
+  return { xhtml: out.join('\n'), headings, linked, unresolved: wanted - linked, stripped, pictures };
 }
 
 /**
@@ -809,6 +874,7 @@ export function compileBook(opts: CompileOptions): CompileReport {
   let pictures = 0;
   let linked = 0;
   let unresolved = 0;
+  let strippedMarkers = 0;
 
   for (const [index, span] of spans.entries()) {
     const rows = flow.slice(span.from, span.to);
@@ -827,6 +893,7 @@ export function compileBook(opts: CompileOptions): CompileReport {
     const body = chapterBody(rows, apparatus, column, images, format, span.heading);
     linked += body.linked;
     unresolved += body.unresolved;
+    strippedMarkers += body.stripped;
     pictures += body.pictures;
 
     const n = String(index + 1).padStart(4, '0');
@@ -899,6 +966,9 @@ export function compileBook(opts: CompileOptions): CompileReport {
   opts.log(
     `vlm-compile: ${flow.length - notes} block(s) and ${notes} note(s) in ${documents.length} `
     + `document(s), ${pictures} figure(s), ${linked} reference number(s) linked`
+    + (strippedMarkers === 0
+      ? ''
+      : `, ${strippedMarkers} number(s) no note answers for REMOVED from the prose`)
     + (unresolved === 0
       ? ''
       : `, ${unresolved} recorded reference(s) the prose does not print as a superscript`),
@@ -913,6 +983,7 @@ export function compileBook(opts: CompileOptions): CompileReport {
     pictures,
     linked,
     unresolved,
+    stripped: strippedMarkers,
     bytes: packaged.bytes.length,
   };
 }
