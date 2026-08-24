@@ -1350,7 +1350,18 @@ export function registerIpc(): void {
      */
     const filed = await findExport(filePath);
     if (filed !== null) {
-      refuseBusyJob(await inspectProject(filed.project.dir));
+      /*
+       * THE BUSY PROOF COSTS A QUEUE LOOKUP, NOT AN INVENTORY. This line paid
+       * `inspectProject` for years of habit — a recursive byte-measure of the
+       * whole project plus a line-count of every bank — to hand a function
+       * that reads `{dir, title}` against the QUEUE. On a captured project
+       * that walk is hundreds of files including a shoot's worth of
+       * photographs, and through a cold antivirus it is tens of milliseconds
+       * a stat: Owen pressed Delete on one EPUB and watched nothing happen
+       * for thirty seconds (2026-08-23). The summary in hand already carries
+       * both fields.
+       */
+      refuseBusyJob(filed.project);
       const removed = await deleteDocument(filePath);
       forgetRecentsUnder(filePath);
       return removed.wasMissing
@@ -1376,7 +1387,8 @@ export function registerIpc(): void {
      */
     const reprint = await findFacsimile(filePath);
     if (reprint !== null) {
-      refuseBusyJob(await inspectProject(reprint.project.dir));
+      // The cheap busy proof, for the export branch's measured reason.
+      refuseBusyJob(reprint.project);
       const removed = await deleteDocument(filePath);
       forgetRecentsUnder(filePath);
       return removed.wasMissing
@@ -1385,10 +1397,12 @@ export function registerIpc(): void {
     }
 
     const { project, document } = await findDocument(filePath);
-    const inventory = await inspectProject(project.dir);
     // Proven again, not trusted from the describe: a job can be queued between
     // the question and the answer, and this is the call that unlinks something.
-    refuseBusyJob(inventory);
+    // The proof reads the queue, so it is handed the summary and not an
+    // inventory — the export branch above carries the thirty seconds that
+    // distinction was measured to cost.
+    refuseBusyJob(project);
 
     if (isBook(project.documents, document.path, project.dir)) {
       throw new Error(
