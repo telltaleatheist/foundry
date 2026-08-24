@@ -1,6 +1,6 @@
 {
   "name": "foundry",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "private": true,
   "description": "Recast poorly scanned PDFs into clean EPUBs. A document vision model (dots-ocr by default) reads each page whole — locally via MLX, or against any OpenAI-compatible server such as vLLM.",
   "type": "module",
