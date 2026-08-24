@@ -2991,6 +2991,41 @@ supposed to be, and it exists so the same failure is visible next time.
   bench also says the tree is one click away, which is true and is the
   way back a hosted user actually uses.
 
+### Wave 48 — the marker the model spelled plain (Owen, 2026-08-24) — BUILT
+
+Found on Gerlach's *And the Witnesses Were Silent*, the first TTS-bound
+mint after v0.9.8: five footnote reference numbers survived the strip,
+all on page 114 — `Finkenwalde.32`, `thrown away.”33` — because the
+reading wrote THOSE markers as plain ASCII digits where every other page
+got superscripts. The superscript strip (`worded`, and the claimless
+branch beside it) matches `SUPERSCRIPT_RUN`; a plain `32` jammed after a
+period is prose as far as it can see. Wave 46's `foldSupTags` healed the
+`<sup>34</sup>` spelling; this is the third spelling of the same fact.
+
+- **`PLAIN_MARKER` (compile.ts): a word of two or more letters, then
+  sentence punctuation and/or closing quotes with NO space, then one to
+  three digits, then whitespace or the end.** The discriminator was
+  measured on the whole Gerlach book: every legitimate digit-after-punct
+  has a DIGIT on the punctuation's left (`4,505`, `6.6`, `23:7`); every
+  true marker has a letter or closing quote. `CITATION_WORDS` guards the
+  one honest family wearing the marker's own shape (`vol.2`, `no.7`,
+  `ibid.32`, `Kap.3` — English and German both), and the single-letter
+  word (`p.113`) never reaches the question. Applied to the FINISHED
+  body string in both branches, counted into the same `stripped` ledger
+  and said in the same log sentence.
+- **Verified as an identity**: the pre-fix book compiled under the new
+  strip is byte-identical to the hand-fixed book compiled under the old
+  one — five taken, nothing legitimate touched. 418/418.
+- **The Gerlach book itself was fixed at the source**: two corrective
+  `text` ops appended to the tip edit step (amend semantics — tip had no
+  children), ledger count moved 1067 → 1069, and the fixed chapter
+  swapped into both shipped EPUBs (library `output/` and project
+  `final/`) with the stamped metadata kept. Backups beside both.
+- **Deferred out loud**: scan-time recovery of plain-digit markers into
+  real `refs` (so they could LINK, not just vanish) — that is a reading
+  concern, it does not move the book-file format, and the strip makes it
+  cosmetic for struck-note books.
+
 ---
 
 ## 8. Session hygiene

@@ -121,6 +121,49 @@ import { packageVlmText } from './text-out.js';
  *  run's parts each carry their own. */
 const SUP_DIGITS = '⁰¹²³⁴⁵⁶⁷⁸⁹';
 
+/**
+ * A REFERENCE NUMBER THE MODEL SPELLED IN PLAIN DIGITS — the marker the
+ * superscript strip cannot see, found in the wild on Gerlach page 114
+ * (2026-08-24): `Finkenwalde.32`, `thrown away.”33`, five of them in one
+ * paragraph, ASCII digits jammed against the end of a phrase where the
+ * printer set superscripts and the reading happened to write them plain.
+ * Nothing downstream could tell them from prose, so a book whose every glyph
+ * marker was faithfully stripped shipped with five bare numbers for a
+ * narrator to read out — the exact clutter Owen's ruling names
+ * (*"footnote reference numbers that are unlinked to a footnote are clutter
+ * and nightmarish for tts"*).
+ *
+ * ── WHAT SEPARATES A MARKER FROM A NUMBER THE PROSE MEANS ───────────────────
+ *
+ * Measured across the whole of that book, every legitimate digit-after-punct
+ * had a DIGIT on the punctuation's left: thousands separators (`4,505`),
+ * decimals and section numbers (`6.6`, `0.3`), verse citations (`23:7`,
+ * `74:8`). Every true marker had a LETTER or a closing quote there and
+ * whitespace after. So the expression demands a word of two or more letters,
+ * then sentence punctuation and/or closing quotes with no space, then one to
+ * three digits, then whitespace or the end — and the word is held against
+ * `CITATION_WORDS` below, because `vol.2`, `no.7`, `ibid.32`, `Kap.3` are the
+ * one family of honest prose that wears exactly this shape.
+ *
+ * A number this expression takes is counted into the SAME ledger as a struck
+ * superscript (`stripped`) and said in the run's log — a removal that is not
+ * said out loud is the numbers quietly thinning.
+ */
+const PLAIN_MARKER = /([A-Za-zÀ-ɏ]{2,})([.!?,]["”’']*|["”’']+)(\d{1,3})(?=\s|$)/g;
+
+/**
+ * The abbreviations that honestly precede a jammed number — citation shorthand,
+ * English and German both (this pipeline reads German scans; `Kap.`, `Anm.`,
+ * `Bd.` are how their apparatus talks). A word of ONE letter never reaches the
+ * question: `PLAIN_MARKER` demands two, which is what spares `p.113`.
+ */
+const CITATION_WORDS = new Set([
+  'no', 'nos', 'ch', 'chs', 'chap', 'chaps', 'vol', 'vols', 'pt', 'pts', 'pp',
+  'op', 'opp', 'ps', 'fig', 'figs', 'sec', 'secs', 'art', 'arts', 'col', 'cols',
+  'par', 'pars', 'para', 'paras', 'ibid', 'cf', 'ff', 'fol', 'fols',
+  'kap', 'anm', 'abs', 'vgl', 'bd', 'bde', 'nr', 'hs',
+]);
+
 export class CompileError extends Error {
   constructor(message: string) {
     super(message);
@@ -439,6 +482,23 @@ function chapterBody(
   let pictures = 0;
   let openList: 'ol' | 'ul' | null = null;
 
+  /**
+   * The plain-digit markers taken out of a rendered body — `PLAIN_MARKER`'s
+   * ruling, applied AFTER the markup is built and safely so: an anchor's
+   * visible number sits behind `>`, an attribute's digits are followed by `"`,
+   * and the expression demands a letter before and whitespace after, which
+   * neither can show it. Runs on the finished string rather than the row's
+   * text because the claims (`refsIn`) hold character offsets into that text,
+   * and cutting characters ahead of a claimed run would shift every offset
+   * the linker is about to honour.
+   */
+  const unclaimedDigits = (body: string): string =>
+    body.replace(PLAIN_MARKER, (whole, word: string, punct: string) => {
+      if (CITATION_WORDS.has(word.toLowerCase())) return whole;
+      stripped += 1;
+      return word + punct;
+    });
+
   /*
    * WHICH CHARACTERS OF WHICH BLOCK CARRY A NUMBER, inverted out of the notes.
    *
@@ -505,7 +565,7 @@ function chapterBody(
     const claims = refsIn.get(row.id) ?? [];
     const runs = [...row.text.matchAll(SUPERSCRIPT_RUN)];
     let which = -1;
-    return dotsInline(row.text, {
+    return unclaimedDigits(dotsInline(row.text, {
       noteref: () => {
         which += 1;
         const run = runs[which];
@@ -544,7 +604,7 @@ function chapterBody(
           return noteRefAnchor(ref.note.seq, printed, first ? ref.note.refId : null);
         }).join('');
       },
-    });
+    }));
   };
 
   /**
@@ -762,7 +822,7 @@ function chapterBody(
               },
             }));
           }
-          body = written.join('');
+          body = unclaimedDigits(written.join(''));
         } else {
           body = row.parts.map((part) => marker(part.page)).join('') + worded(row);
         }
