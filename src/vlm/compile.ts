@@ -740,10 +740,27 @@ function chapterBody(
           // Rendered whole and then divided would put a marker inside an escaped
           // entity, so each part is rendered as its own string — the inline rules
           // are per-part here, which is what `buildChapterBody` does too.
+          /*
+           * AND THE STRIP REACHES THIS BRANCH TOO — the hole Owen's second
+           * screenshot found (2026-08-24, hours after the first fix): a row
+           * with NO claims at all never went through `worded`, so a book
+           * whose notes were ALL struck — precisely the flow that motivated
+           * the ruling — rendered every one of its numbers bare while the
+           * strip stood guard over the other branch. Measured on his own
+           * mint: 375 bare superscripts through a compile that logged four
+           * removals. A run in a claimless row is by definition a number no
+           * note answers for, so it goes the way they all go now: out,
+           * counted.
+           */
           const written: string[] = [];
           for (const part of row.parts) {
             written.push(marker(part.page));
-            written.push(dotsInline(row.text.slice(part.chars[0], part.chars[1])));
+            written.push(dotsInline(row.text.slice(part.chars[0], part.chars[1]), {
+              noteref: () => {
+                stripped += 1;
+                return '';
+              },
+            }));
           }
           body = written.join('');
         } else {
