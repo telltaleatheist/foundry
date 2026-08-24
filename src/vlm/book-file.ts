@@ -1247,8 +1247,22 @@ export class BookFileError extends Error {
  * build has never had to mean anything by. An older build that meets one refuses
  * it with the id-grammar sentence below, which is the correct answer from a build
  * that cannot draw a book it has no explode for.
+ *
+ * ── AND `u<n>`, THE BLOCK A PERSON ADDED THAT THE READING NEVER PRODUCED ────
+ *
+ * The app's `insert` op is for the block the model missed outright — Owen's
+ * case was chapter titles that never came over (2026-08-23) — and it descends
+ * from nothing, so there is no page, no banked answer and no spine ordinal to
+ * derive a name from. The sheet mints `u<n>`, the first free ordinal over the
+ * replayed rows, and the op records it (InsertOp, app/shared/ops.ts). The
+ * fourth family is accepted here for exactly `/<n>`'s reason: it is minted by
+ * the editor and never by this file's own writers, and a parser that refused it
+ * would refuse to compile every book anybody had repaired a missing title into
+ * — which is how this line was found: the first inserted block to reach
+ * vlm-compile was refused by name (2026-08-24). The riders mean what they mean
+ * on any family: a person can split an added block too.
  */
-const ROW_ID = /^(?:b\d+-\d+(?:-\d+)?|e-\d+)(?:#\d+)?(?:\/\d+)*$/;
+const ROW_ID = /^(?:b\d+-\d+(?:-\d+)?|e-\d+|u\d+)(?:#\d+)?(?:\/\d+)*$/;
 
 /**
  * Read one back, or say exactly what about it is not a book.
@@ -1404,9 +1418,9 @@ export function parseBookFile(text: string): BookFile {
     if (!ROW_ID.test(row.id)) {
       throw new BookFileError(
         `block ${at + 1} is called "${row.id}", which is not a name this format mints: they are `
-        + 'b<page>-<order> for a block read off a page, optionally -<part> for a cut answer, or '
-        + 'e-<n> for a block exploded out of an imported EPUB, with #<ordinal> for a note and /<n> '
-        + 'for a block somebody split',
+        + 'b<page>-<order> for a block read off a page, optionally -<part> for a cut answer, '
+        + 'e-<n> for a block exploded out of an imported EPUB, or u<n> for a block a person added, '
+        + 'with #<ordinal> for a note and /<n> for a block somebody split',
       );
     }
     // Two blocks of one name is the failure every op in the project would

@@ -179,6 +179,14 @@ that was never printed is the one claim page provenance exists to make truthfull
   publisher's own, and it does not move when the explode improves — which is the
   only property an id has to have. `#` and `/` ride on it exactly as they ride on
   a banked name.
+- **`u<n>` for a block a person added** — the `insert` op's mint
+  (app/shared/ops.ts), for the block the reading never produced at all: it
+  descends from nothing, so there is no page, no banked answer and no spine
+  ordinal to derive a name from. The sheet mints the first free ordinal over
+  the replayed rows and the op records it. Admitted for `e-<n>`'s reason
+  exactly (below), found the hard way: the first inserted block to reach
+  `vlm-compile` was refused by name (2026-08-24). `#` and `/` ride on it as on
+  the other families.
 - User splits (ops, not `f`) mint `b2-3/1`, `b2-3/2` — and `e-7/1`, `e-7/2` —
   derived, deterministic, collision-free with both minters' names. The book
   file's parser accepts the grammar; only replay mints them.
