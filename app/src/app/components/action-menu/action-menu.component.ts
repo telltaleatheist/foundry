@@ -404,6 +404,35 @@ import { UnappliedService } from '../../core/unapplied.service';
         </button>
 
         <!--
+          ANALYSIS, BESIDE TRANSLATE AND SIMPLIFY because it is the same shape of
+          act aimed at the same book: the model reads every sentence and lands a
+          step of its own. What differs is that this one makes no new state of the
+          book at all -- it makes a REPORT about it, drawn in a column beside the
+          paper (docs/ANALYSIS.md §8), which is why the tile opens a dialog and
+          the result opens a panel.
+
+          GRAYED HOSTED, and it is the only tile here whose gate mentions the host
+          for a reason other than a missing surface. A hosted window's queue is the
+          host's, it takes the two request shapes its vendored snapshot declares,
+          and an analysis is a third -- so ordering one there could only start an
+          hour of GPU with no row anybody in either window can see. The door
+          refuses the same way (\`queue:enqueue-analysis\`, electron/ipc.ts); this is
+          the half a person meets before they press.
+        -->
+        <button
+          class="menu-item"
+          [class.active]="ui.analysisOpen()"
+          [disabled]="!canAnalyse()"
+          [title]="hosted()
+            ? 'Analysis runs in Foundry itself — open this book there to read it against the categories'
+            : 'Read this book against the categories and list what it finds beside the page'"
+          (click)="analyse()"
+        >
+          <svg class="menu-icon" aria-hidden="true"><use href="#ft-glass" /></svg>
+          <span class="menu-label">Analysis</span>
+        </button>
+
+        <!--
           ── AND THE HOST'S OWN ACTS, RIGHT HERE, WHICH IS OWEN'S PLACEMENT ───
 
           *"there should be a narration button in the options sidebar menu,
@@ -1397,6 +1426,47 @@ export class ActionMenuComponent {
     void this.router.navigateByUrl('/');
     if (!await this.unapplied.clearedHere('simplify')) return;
     this.ui.openSimplify();
+  }
+
+  /**
+   * LIT WHERE A TRANSLATION WOULD BE, AND NEVER HOSTED.
+   *
+   * The first half asks the same predicate the two tiles above it ask, and that
+   * is not borrowing — it is Owen's own rule that the offer and the possibility
+   * are one fact. An analysis reads exactly what a translation reads (the
+   * position's materialised book file, every op replayed in), so "is there a book
+   * at this position" has one answer and one function.
+   *
+   * The second half is this tile's own, and it is a refusal rather than a
+   * capability: a hosted window's queue belongs to the host, whose vendored copy
+   * of the API declares two request shapes and not this third one. A row it cannot
+   * label, lane or spell a command line for is worse than no row, and Foundry's
+   * own queue is invisible in a hosted window — so the act is not offered there.
+   * It reaches BookForge by the normal re-vendor (docs/ANALYSIS.md §9).
+   */
+  protected canAnalyse(): boolean {
+    if (hosted()) return false;
+    const tab = this.stage.activeDocument();
+    if (tab === null) return false;
+    const project = this.projects.projectFor(tab.path);
+    return canTranslateFrom(project, project === null ? null : this.ledger.standingIn(project.dir));
+  }
+
+  /**
+   * NO `clearedHere` IN FRONT OF THIS ONE, which puts it with the sweep rather
+   * than with Translate and Simplify.
+   *
+   * The guard protects acts that CONSUME a rendering or MOVE the position — acts
+   * that would otherwise run against a book missing the pending ops somebody is
+   * looking at. This one reads the position's book file, with every pending edit
+   * already replayed into it by main, and writes a report beside it: it consumes
+   * no rendering and the pointer does not follow the landing
+   * (\`RETAINED_BESIDE_YOU\`). docs/ANALYSIS.md §7 decides this explicitly, on the
+   * sweep's own rule.
+   */
+  protected analyse(): void {
+    void this.router.navigateByUrl('/');
+    this.ui.openAnalysis();
   }
 
   /**

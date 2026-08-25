@@ -730,6 +730,14 @@ export class QueuePageComponent {
       case 'txt': return 'Plain text';
       case 'mint': return 'Assembling the photographs';
       case 'env-install': return 'Installing the environment';
+      /*
+       * "Reading against the categories" and not "Analysing", because the word
+       * alone says nothing about what is being done to somebody's book — and this
+       * column is the one place a person scanning a queue of expensive rows finds
+       * out what each of them is FOR. It is the book being read a second time,
+       * against a checklist (docs/ANALYSIS.md §1), which is exactly the sentence.
+       */
+      case 'analysis': return 'Reading against the categories';
     }
   }
 

@@ -108,6 +108,22 @@ export class UiService {
    * before making more of the same kind is a card that has misread its own act.
    */
   readonly sweepOpen = signal(false);
+  /**
+   * The Analysis dialog — read this book against the categories (docs/ANALYSIS.md).
+   *
+   * IT IS ONE OF THE FIVE THAT CONFIGURE AN ACT AGAINST THE POSITION, so it looks
+   * like Translate and behaves like it: a checklist, a model, an endpoint, and a
+   * held job at the end of it. WHAT IT DOES NOT HAVE is a sensitivity control, and
+   * that is a ruling rather than an omission (Owen, 2026-08-25): the run captures
+   * once at the widest calibrated net and strictness is three buttons on the PANEL,
+   * so changing your mind costs a click and never an hour.
+   *
+   * AND IT TAKES NO `clearedHere`, which puts it with the sweep rather than with
+   * the other four. The guard protects acts that CONSUME a rendering; this run
+   * reads the book file and writes a report beside it, consuming no rendering and
+   * moving no pointer (docs/ANALYSIS.md §7, decided explicitly).
+   */
+  readonly analysisOpen = signal(false);
 
   /** Naming a book before photographing it. See CaptureNewDialogComponent. */
   readonly captureNewOpen = signal(false);
@@ -320,6 +336,7 @@ export class UiService {
     this.metadataOpen,
     this.captureNewOpen,
     this.sweepOpen,
+    this.analysisOpen,
     this.confirmOpen,
   ] as const;
 
@@ -435,6 +452,14 @@ export class UiService {
 
   closeSweep(): void {
     this.sweepOpen.set(false);
+  }
+
+  openAnalysis(): void {
+    this.only(this.analysisOpen);
+  }
+
+  closeAnalysis(): void {
+    this.analysisOpen.set(false);
   }
 
   /*

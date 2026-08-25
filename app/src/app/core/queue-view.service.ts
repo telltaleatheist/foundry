@@ -322,6 +322,23 @@ export class QueueViewService {
     if (p.phase === 'translate') {
       return `Translating ${p.page.toLocaleString()} / ${p.total.toLocaleString()} blocks`;
     }
+    /*
+     * AN ANALYSIS COUNTS TWO DIFFERENT THINGS AND THIS LINE NAMES NEITHER OF
+     * THEM, which is the one wording that is true of both halves of the run.
+     *
+     * It ranks every sentence in the book and then verifies every passage that
+     * survived the floor (docs/ANALYSIS.md §2), and those totals are unrelated —
+     * 141 sentences becoming 20 verify calls is an ordinary book. Which of the two
+     * is running does not reach `JobProgress`, because the engine says it on the
+     * COUNTING line and a count clears `Job.note` by construction (see that
+     * field). So the fraction stands alone, the bar fills twice, and the noun that
+     * must never appear here is `pages`: a sentence is not a page and a passage is
+     * not a page. The row's own log line carries the stage and the category, in
+     * the engine's words, which is where a person looking for them will find them.
+     */
+    if (p.phase === 'analyze') {
+      return `Analysing ${p.page.toLocaleString()} / ${p.total.toLocaleString()}`;
+    }
     const verb = p.phase === 'render' ? 'Rendering' : 'Reading';
     return `${verb} ${p.page} / ${p.total} pages`;
   }
@@ -416,6 +433,14 @@ export class QueueViewService {
   made(job: Job): string {
     if (job.kind === 'epub' && !this.filed(job)) return 'the book';
     if (job.kind === 'epub' || job.kind === 'pdf' || job.kind === 'txt') return typeLabel(job.kind);
+    /*
+     * AN ANALYSIS MADE A REPORT AND SAYS SO, where a reading and a translation
+     * say "done" — and the difference is that those two are followed by something
+     * a person opens (the book follows from a bank; a book is cast from records),
+     * so their rows would be claiming the wrong product. A report is the whole of
+     * what an analysis makes, and it is on its step waiting to be read.
+     */
+    if (job.kind === 'analysis') return 'the report';
     return 'done';
   }
 

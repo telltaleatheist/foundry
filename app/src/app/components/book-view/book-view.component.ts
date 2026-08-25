@@ -28,6 +28,9 @@ import { replayOps, struckNotes, unwritten, type BookOp, type ReplayedRow } from
 
 import { api } from '../../core/foundry';
 import { LedgerService } from '../../core/ledger.service';
+import { AnalysisViewService } from '../../core/analysis-view.service';
+import type { LitRange } from '../../core/analysis';
+import { AnalysisPickerComponent } from '../analysis-panel/analysis-picker.component';
 import { ComparePickerComponent } from '../compare/compare-picker.component';
 import { BookStacksService, type BookStack } from '../../core/book-stacks.service';
 import { type Tab } from '../../core/documents.service';
@@ -193,6 +196,22 @@ interface Piece {
    */
   strong: boolean;
   italic: boolean;
+  /**
+   * WHETHER AN ANALYSIS LIT THESE CHARACTERS, and how brightly.
+   *
+   * `null` on every run of every book with no report open over it, which is
+   * nearly all of them — and `'lit'` or `'ghost'` where a finding covers the run.
+   * Ghost is a passage the VERIFIER REJECTED, shown only under the loosest tier
+   * and drawn the shown-but-inert way a struck row is drawn (docs/ANALYSIS.md §8).
+   *
+   * ONE FIELD AND NOT A CATEGORY, deliberately. The paper carries ONE highlight
+   * ink — *"the page must not turn into confetti"* — and the category is named in
+   * the panel beside it, where there is room for words. A per-category colour here
+   * would make a page with four categories on it unreadable in exactly the way
+   * this sheet's own header warns about (the block inks are rails, tints and chips
+   * only, at the alphas shared/categories.ts insists on).
+   */
+  hit: 'lit' | 'ghost' | null;
 }
 
 /** One block, with everything the sheet has to know to draw it. */
@@ -370,7 +389,7 @@ const OP_GESTURE: Gesture = { kind: 'op' };
 
 @Component({
   selector: 'app-book-view',
-  imports: [NgTemplateOutlet, ComparePickerComponent, OriginalPanelComponent],
+  imports: [NgTemplateOutlet, AnalysisPickerComponent, ComparePickerComponent, OriginalPanelComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <!--
@@ -442,10 +461,23 @@ const OP_GESTURE: Gesture = { kind: 'op' };
             >{{ piece.text }}</span>
           }
         } @else {
+          <!--
+            THE ANALYSIS'S LIGHT IS A CLASS ON THE RUN and nothing else — no extra
+            element, no \`innerHTML\`, no layer over the page. \`cut()\` already
+            closed the run wherever the light changes, so a lit stretch IS a run
+            and wearing the class is the whole of drawing it.
+
+            \`ghost\` IS A PASSAGE THE VERIFIER THREW BACK, drawn only under the
+            loosest tier and drawn faint: docs/ANALYSIS.md §8 asks for the net's
+            whole contents, told honestly which of it was rejected, in the same
+            shown-but-inert register a struck row wears.
+          -->
           <span
             class="run"
             [class.bold]="piece.strong"
             [class.italic]="piece.italic"
+            [class.hit]="piece.hit !== null"
+            [class.hit-ghost]="piece.hit === 'ghost'"
           >{{ piece.text }}</span>
         }
       }
@@ -750,6 +782,16 @@ const OP_GESTURE: Gesture = { kind: 'op' };
           cannot appear inside the very column it opens.
         -->
         <app-compare-picker />
+        <!--
+          AND THE ANALYSIS, BESIDE IT, because the two open the same slot: one
+          puts another step there and the other puts a report there, and the stage
+          holds one or the other by construction. It draws only where this book
+          HAS an analysis (the picker refuses to be a button with an empty menu),
+          and only on the live column for compare's own reason — the head is
+          hidden entirely while \`viewing()\`, so neither control can appear inside
+          the column it opens.
+        -->
+        <app-analysis-picker />
         <div class="segments" role="group" aria-label="How this book is shown">
           <button
             type="button"
@@ -1500,6 +1542,28 @@ const OP_GESTURE: Gesture = { kind: 'op' };
       --ink-note:     #8a5a2b;
       --ink-flag:     #b98a1c;
       --ink-edit:     #2f7d4f;
+      /*
+        THE ANALYSIS'S ONE HIGHLIGHT INK, chosen for THIS paper and for no other
+        surface — the same rule every token above it obeys.
+
+        ONE, AND NEVER ONE PER CATEGORY. docs/ANALYSIS.md §8: *"One highlight ink
+        on the paper — the page must not turn into confetti — with the category
+        named in the gutter chip and the panel."* Twelve categories is twelve inks
+        on cream, most of which would have to be mixed away from their own
+        meanings to stay legible, and a page of a Project 2025 chapter would come
+        out striped. The category is a WORD, and it is said where there is room for
+        words.
+
+        AN AMBER RATHER THAN THE FLAG'S AMBER OR THE STRIKE'S RED. Red is the
+        strike — a decision to remove — and a highlight over struck text would be
+        two marks arguing about one paragraph (which is also why a struck block is
+        never lit at all). \`--ink-flag\` is the unlinked-apparatus warning and
+        means "this needs fixing", which a flagged passage does not. This is a
+        marker pen: warmer and lighter than the flag, sitting on the paper rather
+        than in it, laid at 20% so the words underneath stay black on cream and
+        the run reads as EMPHASIS rather than as a coloured word.
+      */
+      --ink-hit:      #d9a441;
 
       --gutter:       3.25rem;
       --rail-w:       3px;
@@ -2332,6 +2396,54 @@ const OP_GESTURE: Gesture = { kind: 'op' };
       transition: opacity var(--t-med) var(--ease);
     }
 
+    /*
+      ── THE ANALYSIS'S HIGHLIGHT — a run wearing a class, and nothing else ────
+
+      docs/ANALYSIS.md §8. It is a background on the RUN because \`cut()\` already
+      closed the run wherever the light changes: no extra element, no
+      \`innerHTML\` and no absolutely-positioned layer — an overlay would eat the
+      gestures this surface is made of and turn a flagged paragraph into the one
+      paragraph nobody can select, edit or strike.
+
+      IT DRAWS ONLY WHILE THE PANEL IS OPEN, and that is not enforced here: the
+      class arrives on a piece only when \`AnalysisViewService.lit\` has a range
+      for the block, and that computed answers empty the moment the second column
+      stops being an analysis. The paper is a workbench; a report is an apparatus
+      somebody summons, not a permanent recolouring of the book.
+
+      TWENTY PER CENT, ON THE PAPER'S OWN CREAM. The words stay black-on-warm and
+      the ink reads as a marker pen laid over them, which is what keeps a paragraph
+      with three findings in it READABLE — the thing a highlight exists to help
+      with, and the thing a saturated one destroys.
+    */
+    .run.hit {
+      border-radius: 2px;
+      padding: 0 0.05em;
+      background: color-mix(in srgb, var(--ink-hit) 20%, transparent);
+      transition: background var(--t-fast) var(--ease);
+    }
+    /*
+      AND THE VERIFIER'S REJECTIONS, FAINTER. Loose shows the passages the
+      verifier threw back — reported speech, quotation, argument against — and
+      they are the net's contents rather than findings, so they wear the same
+      shown-but-inert treatment a struck row does: present, legible, and visibly
+      not a claim about the author. A dotted underline rather than a second colour,
+      because a second colour is the confetti this design refuses.
+    */
+    .run.hit-ghost {
+      background: color-mix(in srgb, var(--ink-hit) 8%, transparent);
+      text-decoration: underline dotted color-mix(in srgb, var(--ink-muted) 55%, transparent);
+      text-underline-offset: 0.22em;
+    }
+    /* A struck block is never lit at the source (\`litRanges\` skips it), so this
+       says the same thing twice on purpose: a strike is a decision to remove and a
+       highlight is an observation, and two marks arguing about one paragraph is
+       the outcome neither of them is worth. */
+    .block.struck .run.hit, .block.struck .run.hit-ghost {
+      background: transparent;
+      text-decoration: none;
+    }
+
     /* ── The one verb on this surface, on the bench beside the paper ──────── */
 
     .tray {
@@ -2581,7 +2693,7 @@ const OP_GESTURE: Gesture = { kind: 'op' };
          INHERITING THE INTENT. \`figure::after\` is the struck picture's mark and
          is the newest of them; it is listed once, on the rule that declares the
          transition, so both of its states are covered. */
-      .body, .rail, .marker, .flag .pill, .seam, .sheet,
+      .body, .rail, .marker, .flag .pill, .seam, .sheet, .run.hit,
       .block.struck .body, .marker.struck, figure::after { transition-duration: 0ms; }
     }
   `],
@@ -2608,6 +2720,12 @@ export class BookViewComponent {
 
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly stacks = inject(BookStacksService);
+  /**
+   * The open analysis, read for ONE thing: which characters of which blocks the
+   * paper lights. See `lit` below — nothing else on this component touches it,
+   * and this viewer never writes to it.
+   */
+  private readonly analysis = inject(AnalysisViewService);
   private readonly notices = inject(NoticeService);
   private readonly ledger = inject(LedgerService);
   /** For `afterNextRender` from an event handler — see `edit`. */
@@ -3649,6 +3767,30 @@ export class BookViewComponent {
    * page's group of them and so carries the hairline. A template asking those
    * questions per block would ask them again on every repaint.
    */
+  /**
+   * WHICH CHARACTERS THE OPEN ANALYSIS LIGHTS, by block — empty when none is.
+   *
+   * NAMED `hitLight` AND NOT `lit`, because `lit` on this class is already the
+   * note-marker coupling — which note number the pointer is resting on — and two
+   * different lights on one component is exactly the collision a shorter name
+   * would have hidden behind a compile error somebody fixed by renaming the
+   * wrong one.
+   *
+   * A COMPUTED READ AND NOT A COPY, which is what keeps the paper and the panel
+   * one thing: `AnalysisViewService.lit` is derived from one load of the report,
+   * one placement over these very rows, and the tier the panel's buttons set, so
+   * pressing Strict repaints the page and the list in one change-detection pass.
+   *
+   * IT IS NULL-SAFE BY CONSTRUCTION rather than by a guard here. The service
+   * validates the open analysis against `StageService`, whose second column is a
+   * union with the three clearing rules already in it — the document closed, the
+   * project changed, the step deleted — so there is no state in this component
+   * that could go stale and nothing here to clear.
+   */
+  private readonly hitLight = computed<ReadonlyMap<string, readonly LitRange[]>>(
+    () => this.analysis.lit(),
+  );
+
   protected readonly lines = computed<Line[]>(() => {
     const book = this.book();
     const replayed = this.view();
@@ -3689,6 +3831,20 @@ export class BookViewComponent {
       seams,
       orphans,
       chrome: true,
+      /*
+       * THE ANALYSIS'S LIGHT, FROM THE SAME PLACE THE PANEL'S ROWS COME FROM.
+       * `AnalysisViewService` holds one load, one placement and one tier, and both
+       * surfaces read computeds off them (docs/ANALYSIS.md §8) — so a highlighted
+       * paragraph always has a row beside it and a row always has its paragraph
+       * lit. It answers an empty map whenever no analysis is open, which is what
+       * makes the highlights an apparatus rather than a recolouring.
+       *
+       * ONLY THE LIVE COLUMN, and that falls out rather than being asked for: this
+       * computed is the live sheet's, and a compare column cannot be up at the
+       * same time as the panel because the stage holds one second column
+       * (`SecondColumn`, core/stage.service.ts).
+       */
+      lit: this.hitLight(),
     });
   });
 
@@ -3765,6 +3921,15 @@ export class BookViewComponent {
       seams: new Map(),
       orphans: new Set(),
       chrome: false,
+      /*
+       * NOTHING IS LIT ON THE CONTEXT SHEET, on the same rule that switches every
+       * other instrument off here: *"chrome only on the live column"*. A report is
+       * measured against the position's own book and its offsets are that book's;
+       * the left column is the SOURCE those words were translated from, a
+       * different file with different sentences at different offsets, and lighting
+       * it from this report would put the marker pen on words nobody measured.
+       */
+      lit: new Map(),
     });
   });
 
@@ -6111,6 +6276,16 @@ function linesOf(
     seams: ReadonlyMap<string, string>;
     orphans: ReadonlySet<string>;
     chrome: boolean;
+    /*
+     * WHICH CHARACTERS THE ANALYSIS LIT, by block — empty for every book with no
+     * report open over it, which is nearly always.
+     *
+     * It rides in `marks` beside the note markers rather than being looked up
+     * inside `cut`, because this function is the ONE place a row's per-block facts
+     * are gathered and `cut` is a pure walk over a string and two lists. The
+     * source column passes an empty map and gets the walk it has always had.
+     */
+    lit: ReadonlyMap<string, readonly LitRange[]>;
   },
 ): Line[] {
   const out: Line[] = [];
@@ -6150,7 +6325,7 @@ function linesOf(
     }
     out.push({
       row,
-      pieces: cut(row.text, markers),
+      pieces: cut(row.text, markers, marks.lit.get(row.id) ?? NO_LIT),
       /*
        * READ ONCE, HERE, AND NEVER FROM THE TEMPLATE. Parsing a fragment is a
        * `DOMParser` document per call, and a template expression is re-evaluated
@@ -6249,11 +6424,32 @@ function sizeOf(book: BookLoad, category: string): number {
  * arithmetic a split is made from (`caretOffsetIn`) counts that string and not
  * this one. An edit therefore still commits exactly the characters the bank
  * holds, and the effect comes back the moment the editor closes.
+ *
+ * ── AND THE ANALYSIS'S HIGHLIGHTS ARE THE THIRD THING IN THE SAME WALK ──────
+ *
+ * *"Highlights are runs, not overlays"* (docs/ANALYSIS.md §8), and this is where
+ * that ruling is kept. A report's findings are `[start, end)` spans into a
+ * block's text — the same kind of offset as a marker's, into the same string — so
+ * they join the cursor below and a run closes when the LIGHT changes exactly as
+ * it closes when a marker or an emphasis does.
+ *
+ * THE TWO ALTERNATIVES WERE BOTH REFUSED BEFORE THIS WAS WRITTEN. `innerHTML` is
+ * banned on this surface outright (the class docblock: a book is somebody else's
+ * words arriving through a model's answer, and the one thing this app will not do
+ * is hand them to a parser that can execute). An absolutely-positioned overlay
+ * eats gestures, which is the pointer-events ruling the struck-figure X is
+ * written under a hundred lines down — and it would make a flagged paragraph the
+ * one paragraph nobody can select, edit or strike, which is the exact opposite of
+ * what a report is for.
+ *
+ * THE RANGES ARRIVE MERGED AND NON-OVERLAPPING (`litRanges`, core/analysis.ts),
+ * so this walk has nothing to decide at a character two findings both claimed.
+ * That decision belongs where the findings are, and it is made there.
  */
-function cut(text: string, markers: readonly Marker[]): Piece[] {
+function cut(text: string, markers: readonly Marker[], lit: readonly LitRange[]): Piece[] {
   const codes = inlineEmphasis(text);
-  if (markers.length === 0 && codes === null) {
-    return [{ text, marker: null, strong: false, italic: false }];
+  if (markers.length === 0 && codes === null && lit.length === 0) {
+    return [{ text, marker: null, strong: false, italic: false, hit: null }];
   }
 
   const pieces: Piece[] = [];
@@ -6273,10 +6469,15 @@ function cut(text: string, markers: readonly Marker[]): Piece[] {
   let runStrong = false;
   let runItalic = false;
   let runMarker: Marker | null = null;
+  let runHit: Piece['hit'] = null;
   const close = (end: number): void => {
     if (end > start) {
       pieces.push({
-        text: text.slice(start, end), marker: runMarker, strong: runStrong, italic: runItalic,
+        text: text.slice(start, end),
+        marker: runMarker,
+        strong: runStrong,
+        italic: runItalic,
+        hit: runHit,
       });
     }
     start = end;
@@ -6284,10 +6485,24 @@ function cut(text: string, markers: readonly Marker[]): Piece[] {
 
   /** Which marker covers this character, or null — the markers arrive sorted. */
   let next = 0;
+  /*
+   * AND WHICH LIT RANGE DOES, on the identical cursor. `litRanges`
+   * (core/analysis.ts) merged the findings into non-overlapping runs in the book's
+   * own order before they got here, so this is the marker walk again over a second
+   * sorted list — one cursor, one comparison, and nothing to decide at a character
+   * two findings both claimed, because that decision was made where the findings
+   * were.
+   */
+  let nextLit = 0;
   for (let i = 0; i < text.length; i += 1) {
     while (next < markers.length && markers[next]!.at + markers[next]!.len <= i) next += 1;
     const over = markers[next];
     const marker = over !== undefined && over.at <= i ? over : null;
+    while (nextLit < lit.length && lit[nextLit]!.end <= i) nextLit += 1;
+    const range = lit[nextLit];
+    const hit: Piece['hit'] = range !== undefined && range.start <= i
+      ? (range.solid ? 'lit' : 'ghost')
+      : null;
     const code = codes?.[i] ?? 0;
     /*
      * THE FOUR ASTERISKS OF A MATCHED PAIR ARE NOT ON THE PAGE. They are still
@@ -6304,13 +6519,17 @@ function cut(text: string, markers: readonly Marker[]): Piece[] {
     }
     const strong = (code & INLINE_STRONG) !== 0;
     const italic = (code & INLINE_ITALIC) !== 0;
-    if (marker !== runMarker || strong !== runStrong || italic !== runItalic) {
+    if (marker !== runMarker || strong !== runStrong || italic !== runItalic || hit !== runHit) {
       close(i);
       runMarker = marker;
       runStrong = strong;
       runItalic = italic;
+      runHit = hit;
     }
   }
   close(text.length);
   return pieces;
 }
+
+/** No report open over this book, which is nearly every book, nearly always. */
+const NO_LIT: readonly LitRange[] = [];

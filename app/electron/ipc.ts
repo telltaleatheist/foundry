@@ -86,6 +86,7 @@ import {
   onProjectsChanged,
   positionStepId,
   projectDirOf,
+  readAnalysisReport,
   readManifest,
   readStepLedger,
   recordMetadata,
@@ -101,9 +102,10 @@ import {
 import { readSettings, writeSettings } from './settings';
 import * as vllm from './vllm-server';
 import { answerLetGo, broadcast, foundryWindow } from './window';
-import { planExport, planReading, planSimplification, planTranslation } from './workspace';
+import { planAnalysis, planExport, planReading, planSimplification, planTranslation } from './workspace';
 import { detectEnvTooling, listDistros } from './wsl';
 import { fold, isBook } from '../shared/original';
+import { ANALYSIS_CATEGORY_IDS } from '../shared/analysis-categories';
 import type { ReadAsk } from '../shared/ledger';
 import type { BookOp, PendingStack } from '../shared/ops';
 import { RE_READ_CANCEL, RE_READ_PROCEED } from '../shared/reread';
@@ -134,6 +136,7 @@ import type {
   RewriteMode,
   SetupRequest,
   TranslateRequest,
+  AnalyzeRequest,
   UnappliedAnswer,
   UnappliedWarning,
 } from '../shared/types';
@@ -856,6 +859,64 @@ export function registerIpc(): void {
     const plan = await planSimplification(source, mode);
     return { ...plan, inputPath: plan.sourcePath };
   });
+
+  /*
+   * AN ANALYSIS IS ADMITTED THE SAME WAY A TRANSLATION IS, and for the identical
+   * reason: it is asked ABOUT a file the renderer already has open, and the plan
+   * materialises that position's book to hand to the engine. Without the check
+   * this handler would resolve — and then plan against — any path a compromised
+   * renderer named.
+   *
+   * THE CATEGORIES ARE NOT PATHS AND ARE STILL NOT TAKEN ON TRUST. Every name is
+   * checked against `ANALYSIS_CATEGORY_IDS` before it reaches the ledger, so what
+   * a step records and what the engine is asked for is always a member of a
+   * closed set — no free text ever reaches a hypothesis, a prompt or a filename.
+   * A request naming something this build has never heard of is refused by name
+   * rather than quietly dropped, because a silently narrowed checklist is a
+   * report that is missing a category nobody can see was missing.
+   */
+  ipcMain.handle('workspace:plan-analysis', async (_event, inputPath: string, categories: string[]) => {
+    const source = admitted(inputPath);
+    if (source === null) throw new Error(`${inputPath} was never opened in this app.`);
+    const asked = Array.isArray(categories) ? categories : [];
+    const unknown = asked.filter((one) => !ANALYSIS_CATEGORY_IDS.includes(one));
+    if (unknown.length > 0) {
+      throw new Error(
+        `This build does not know a category called “${unknown[0]}”, so it cannot analyse against it.`,
+      );
+    }
+    /*
+     * IN PLAN ORDER, ALWAYS, and normalised here rather than trusted from the
+     * window. The list is the step's own QUESTION (`PARAMS_OF.analysis`) and
+     * `identityOf` compares it as JSON — so two spellings of one checklist would
+     * be two questions, and a re-analysis would branch beside the row it meant to
+     * refresh. One order, decided in one place, on the engine's own ordering.
+     */
+    const ordered = ANALYSIS_CATEGORY_IDS.filter((one) => asked.includes(one));
+    if (ordered.length === 0) {
+      throw new Error('Pick at least one category — an analysis with nothing to look for finds nothing.');
+    }
+    const plan = await planAnalysis(source, ordered);
+    return { ...plan, inputPath: plan.sourcePath };
+  });
+
+  /**
+   * ONE ANALYSIS STEP'S REPORT, for the panel that draws it.
+   *
+   * THE RENDERER STAYS FILE-FREE, which is this whole family's rule: it names a
+   * project directory and a step id, main proves the directory is one of Home's
+   * before it opens anything, and what comes back is the header, the findings and
+   * one sentence about staleness. The cache rows — one per sentence in the book —
+   * never cross (`readAnalysisReport`, electron/projects.ts).
+   *
+   * A REFUSAL IS A SENTENCE INSIDE THE ANSWER RATHER THAN A REJECTION, on
+   * `BookOutcome`'s rule: "that step was deleted" and "the report is not on the
+   * disk" are ordinary states a person should meet as a line on a panel, not as a
+   * console error and an empty column. The one thing that still rejects is the
+   * directory gate, which refuses before a byte is read.
+   */
+  ipcMain.handle('workspace:read-analysis', (_event, projectDir: string, stepId: string) =>
+    readAnalysisReport(projectDir, stepId));
 
   /** Home's primary listing: one row per book, expanding to what is in it. */
   ipcMain.handle('projects:list', () => listProjects());
@@ -2318,6 +2379,43 @@ export function registerIpc(): void {
     // resolved from the project that file belongs to, exactly as it used to be
     // resolved from the project the output EPUB belonged to.
     return queue.enqueueTranslate(request, await parentStepFor(request.recordsPath));
+  });
+  /*
+   * AN ANALYSIS IS QUEUED THE SAME WAY AND REFUSED HOSTED, which is the one place
+   * this door differs from the one above it.
+   *
+   * `enqueueAnalysis` does not route (electron/job-queue.ts carries the argument
+   * in full): the host's queue takes the two request shapes its vendored copy of
+   * `shared/api.ts` declares, and this is a third.
+   *
+   * SO THE TEST IS `hosted()` AND NOT "is a host queue registered", which is the
+   * one thing about this refusal worth reading twice. Owen's ruling, 2026-08-21:
+   * *"when im in bookforge, the shelf shouldnt appear at all."* A hosted window
+   * has no Foundry queue surface whether or not the host registered a queue of
+   * its own — so falling back to Foundry's own scheduler would start an hour of
+   * GPU with no row anybody in either window can see, cancel or start. The tile
+   * is gated off there as well; a refusal met before a press is worth more than
+   * the same refusal after, and this is the half that makes the rule true
+   * whatever route reached it.
+   */
+  ipcMain.handle('queue:enqueue-analysis', async (_event, request: AnalyzeRequest) => {
+    if (hosted()) {
+      throw new Error(
+        'Analysis is not available in this window yet — the app Foundry is running inside keeps its '
+        + 'own queue, and it has not learned about analysis runs. Open the book in Foundry itself to '
+        + 'analyse it.',
+      );
+    }
+    // The input again, because a request can arrive with any `inputPath` at all
+    // — `workspace:plan-analysis` checked the one it was given, not the one that
+    // ends up here.
+    if (admitted(request.inputPath) === null) {
+      throw new Error(`${request.inputPath} was never opened in this app.`);
+    }
+    // The REPORT, which is what an analysis writes: the position is resolved from
+    // the project that file belongs to, exactly as a translation's is from its
+    // records.
+    return queue.enqueueAnalysis(request, await parentStepFor(request.outputPath));
   });
   /*
    * AN EXPORT RUNS AT THE PRESS AND THE ANSWER IS THE SETTLED ROW — the whole of

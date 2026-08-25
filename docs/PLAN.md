@@ -3103,16 +3103,76 @@ not the model. Two build units:
   `VERIFICATION_EMPHASIS` ladder deliberately not ported. Proved end to end
   against a real book (Flashpoint of Revival, 60 rows): 141 sentences → 11
   passages → 20 verify calls, 6 flagged / 5 rejected, and a second run paid
-  for none of them. Two things the builder flagged for a ruling rather than
-  deciding alone: the merged-window word cap lets a run of very short rows
-  (a scanned library slip in the front matter) chain into one 12-block
-  finding, and a degraded verify call is recorded as a skip but deliberately
-  NOT cached, so a re-run asks again.
+  for none of them. Verified and committed by the lead (`d3d063d`), with
+  rulings on the three questions the builder escalated: (1) the
+  merged-window chain over very short rows (a scanned library slip became
+  one 12-block finding) STANDS AS PORTED for now — a per-finding block cap
+  is a constant nobody has measured, the verifier is the working defence
+  against junk passages, and the right rule (if the first real audits
+  demand one) will come from those audits, not from a guess; watch item.
+  (2) A degraded verify call recorded as a skip but NOT cached is correct
+  and stays — an outage must not exonerate a passage forever. (3) The
+  threshold in the rank-cache key is harmless as a format tag and stays as
+  written.
 - **Unit AN-2, app**: `analysis` step action + gpu job kind + `analyze`
   progress phase; plan door `workspace:plan-analysis`; launch dialog; hits
   panel in compare's slot behind a `secondColumn` union; highlights as
-  `cut()` runs, one ink, no overlays; travel via `reveal`. — QUEUED (after
-  AN-1: it consumes the report format and the command line)
+  `cut()` runs, one ink, no overlays; travel via `reveal`. — **BUILT**,
+  awaiting the lead's verification. Three doors
+  (`workspace:plan-analysis`, `workspace:read-analysis`,
+  `queue:enqueue-analysis`), `docs/IPC-CHANNELS.md` regenerated in the same
+  unit (94 handles, 94 names, zero `ipcMain.on`). The `StageService` union
+  landed as specced: `secondColumn` is the one signal, `compare` and
+  `analysis` are NARROWINGS of it, so compare's three clearing rules are
+  unchanged and shared rather than duplicated.
+
+  **Six deviations, each with its reason:**
+
+  1. **Hosted is REFUSED, not routed.** `FoundryHostQueue.enqueue` takes the
+     two request shapes BookForge's sealed vendored snapshot declares, and
+     `AnalyzeRequest` is a third — a row the host could not label, lane or
+     spell a command line for. So `enqueueAnalysis` never routes, the door
+     rejects on `hosted()` with a sentence, and the tile is gray there. This
+     is the brief's own escape hatch ("gate the tile off there and say so in
+     a comment rather than half-wiring it"), and it reaches BookForge by the
+     normal re-vendor.
+  2. **Staleness is decided in MAIN, not the renderer.** ANALYSIS.md §8 asks
+     the renderer to compare the header's `bankSha` against the book's;
+     `BookLoad` does not carry the book file's `source` block, and widening
+     it for one panel would put a provenance field on every viewer. Main has
+     both facts at the read, so it composes the SENTENCE
+     (`AnalysisReading.stale`) and the panel draws it. A stale report is
+     still drawn, with the caveat.
+  3. **The category cannot ride `Job.note`.** The engine names the stage and
+     the category ON the counting line (`verify 3/20 (hate)`), and a count
+     CLEARS the note by contract — that is what makes a note mean "since the
+     count last moved". So the shelf's line is `Analysing n / m` with no
+     noun (never "pages"), the bar fills twice, and the row's own log line
+     carries the stage in the engine's words.
+  4. **The tree does not open the panel; the head row does.** Compare is
+     offered from `app-compare-picker` in the book view's head row (not from
+     the tree), so `app-analysis-picker` mirrors it exactly, filtered to
+     `action === 'analysis'`, newest first. Wiring the tree's "from here"
+     footer would have raced: every act there goes through `stand()`, which
+     moves the pointer but does not await a tab being on screen, and
+     `startAnalysis` derives its project from the document that IS on screen.
+  5. **A single-category filter is not built** (ANALYSIS.md §8's *"a panel
+     filter lights one category at a time when asked"* — the clause says
+     when asked). The panel groups by category with counts; the one ink and
+     the three tiers are built.
+  6. **The bundle figure moved**: 801.07 kB → 863.99 kB against the 500 kB
+     budget. Still a WARNING and not an ERROR; the growth is the panel, the
+     picker and the dialog.
+
+  Also ruled by the builder rather than by the docs: `categories` is the
+  step's QUESTION and `model` its ANSWER (`PARAMS_OF` / `MINTED_BY_THE_RUN`),
+  so a changed checklist BRANCHES beside the row it did not match and a
+  better verifier REFRESHES the row you have — the alternative would destroy
+  an hour of verdicts about one set of claims to file a report about another
+  under its name. `labelFor` gained an explicit `analysis` case because the
+  `default` branch there is TRANSLATE (the trap `capture` hit), and
+  `deleteCost` gained one because `WHY_MODEL_PASS` says "a model read every
+  page of it", which is false about a report.
 
 Deferred out loud (ANALYSIS.md §9): no discovery fallback; no severity or
 generated rationales; no shipped NLI env yet (hand-named interpreter via

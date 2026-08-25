@@ -14,6 +14,7 @@ import { MetadataDialogComponent } from './components/metadata-dialog/metadata-d
 import { MintMetaDialogComponent } from './components/mint-meta-dialog/mint-meta-dialog.component';
 import { SimplifyDialogComponent } from './components/simplify-dialog/simplify-dialog.component';
 import { SweepDialogComponent } from './components/sweep-dialog/sweep-dialog.component';
+import { AnalysisDialogComponent } from './components/analysis-dialog/analysis-dialog.component';
 import { TranslateDialogComponent } from './components/translate-dialog/translate-dialog.component';
 import { CaptureNewDialogComponent } from './components/capture-new-dialog/capture-new-dialog.component';
 import { CaptureProgressComponent } from './components/capture-progress/capture-progress.component';
@@ -113,6 +114,7 @@ const IS_MAC = navigator.platform.toUpperCase().includes('MAC');
     QueueBarComponent, ToastTrayComponent,
     OcrDialogComponent, ExportDialogComponent, TranslateDialogComponent,
     SimplifyDialogComponent, MetadataDialogComponent, MintMetaDialogComponent, SweepDialogComponent,
+    AnalysisDialogComponent,
     ConfirmDialogComponent, HostOpDialogComponent, HostStatusComponent,
     CaptureNewDialogComponent, CaptureProgressComponent,
   ],
@@ -242,6 +244,18 @@ const IS_MAC = navigator.platform.toUpperCase().includes('MAC');
       -->
       @if (ui.sweepOpen()) {
         <app-sweep-dialog />
+      }
+
+      <!--
+        THE ANALYSIS DIALOG, mounted with the acts above it because it IS one of
+        them: it configures a run against the position, enqueues it held, and asks
+        nothing about the pane in front of anybody. What it produces is not a state
+        of the book but a report ABOUT it, which is why the thing that draws its
+        result is a COLUMN and not another modal — see the workspace's second
+        column, and docs/ANALYSIS.md §8.
+      -->
+      @if (ui.analysisOpen()) {
+        <app-analysis-dialog />
       }
 
       <!--

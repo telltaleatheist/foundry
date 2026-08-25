@@ -1,0 +1,494 @@
+import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
+
+import { ANALYSIS_CATEGORIES } from '@shared/analysis-categories';
+import { fold } from '@shared/original';
+import { canTranslateFrom } from '@shared/stages';
+import {
+  DEFAULT_OLLAMA_ENDPOINT as DEFAULT_OLLAMA,
+  DEFAULT_TRANSLATE_MODEL as DEFAULT_MODEL,
+} from '@shared/pipeline';
+import type { AnalyzeRequest } from '@shared/types';
+
+import { LedgerService } from '../../core/ledger.service';
+import { ProjectsService } from '../../core/projects.service';
+import { QueueService } from '../../core/queue.service';
+import { OpenDocumentsService } from '../../core/documents.service';
+import { StageService } from '../../core/stage.service';
+import { UiService } from '../../core/ui.service';
+import { api } from '../../core/foundry';
+
+/*
+ * THE TWO DEFAULTS ARE IMPORTED AND NEVER COPIED, exactly as the Translate dialog
+ * imports them and for the same reason spelled there: they are the engine's own
+ * defaults, they are what a person is shown before they change them, and a model
+ * id written down twice is a bump that applies to one of two places.
+ *
+ * `DEFAULT_TRANSLATE_MODEL` IS THE RIGHT CONSTANT DESPITE ITS NAME, and the name
+ * is worth one sentence rather than a second constant beside it. It is Owen's
+ * standing ruling about which model this program asks — *"27b is the standard
+ * we'll use for every task"* — and the verifier is one of those tasks
+ * (docs/ANALYSIS.md §2 names the same value). A second constant holding the same
+ * string would be the drift this import exists to prevent, arriving under a
+ * better name.
+ */
+
+/**
+ * Analysis — configure ONE reading of this book against the categories, and put
+ * it in the queue.
+ *
+ * The Translate dialog's shape, deliberately (docs/ANALYSIS.md §7): it enqueues
+ * and nothing else, the run belongs to main, and dismissing this does not touch a
+ * job that is already moving. Three things differ, and all three are rulings.
+ *
+ *   **THE CHECKLIST IS THE QUESTION.** Which categories to look for is the whole
+ *   of what makes this analysis this one — it decides what the report contains,
+ *   and therefore whether a second run refreshes the row you have or files a new
+ *   one beside it (`PARAMS_OF.analysis`, shared/ledger.ts). So it is a list of
+ *   checkboxes rather than a free-text box: every name that leaves here is one the
+ *   engine has a calibrated or a first-draft hypothesis for, and nothing somebody
+ *   typed ever reaches a hypothesis, a prompt or a filename.
+ *
+ *   **THERE IS NO SENSITIVITY CONTROL.** Owen, 2026-08-25: *"it flags absolutely
+ *   anything that could possibly match and then we have a button that displays
+ *   things that match strictly (only turn up a few options), a moderate filter, or
+ *   a very loose filter."* The run captures ONCE at the widest calibrated net;
+ *   strictness is three buttons on the panel, over stored scores, so changing your
+ *   mind costs a click and never another hour. A knob here would be a knob whose
+ *   good value is known, which is the shape this app keeps refusing.
+ *
+ *   **IT SAYS HOW LONG IT WILL TAKE, BEFORE THE BUTTON.** Ranking is minutes and
+ *   verifying is one model call per surviving passage, which is an hour on a hot
+ *   book. That is the fact somebody deciding whether to tick all twelve boxes
+ *   actually needs, and a number met after the press is a number met too late.
+ */
+@Component({
+  selector: 'app-analysis-dialog',
+  imports: [FormsModule],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `
+    <div class="scrim" (click)="ui.closeAnalysis()"></div>
+
+    <div class="card" role="dialog" aria-modal="true" aria-label="Analyse this book">
+      <header class="head">
+        <span class="title">Analysis</span>
+        <button class="x" (click)="ui.closeAnalysis()" title="Close">✕</button>
+      </header>
+
+      @if (source(); as input) {
+        <div class="body">
+          <!--
+            THE BOOK'S NAME AND NOT ITS PATH, the Translate dialog's own rule: the
+            book's title is what the tab, the tree and the window already call it,
+            and a workspace path in a narrow box is a string nobody can read half
+            of. The path is on the tooltip for the one person who wants it.
+          -->
+          <label class="field">
+            <span class="label">Book</span>
+            <input type="text" [value]="name()" readonly [title]="input">
+          </label>
+
+          <div class="field">
+            <span class="label">Look for <em>every ticked category is measured over every sentence</em></span>
+            <div class="checklist">
+              @for (one of categories; track one.id) {
+                <label class="check" [class.on]="picked().has(one.id)">
+                  <input
+                    type="checkbox"
+                    [checked]="picked().has(one.id)"
+                    (change)="flip(one.id)">
+                  <span class="check-name">{{ one.name }}</span>
+                  <!--
+                    UNTUNED SAID QUIETLY AND BEFORE THE RUN. docs/ANALYSIS.md §5:
+                    these two have no calibrated hypothesis yet, so they may turn
+                    up too much or too little, and the report names them as
+                    untuned. The person deciding whether to spend an hour is the
+                    person who wants to know which half of this list has been
+                    measured — which is why it is here and not only afterwards.
+                  -->
+                  @if (!one.tuned) {
+                    <span class="check-note" title="No calibrated hypothesis yet — a first draft">draft</span>
+                  }
+                </label>
+              }
+            </div>
+          </div>
+          <div class="picks">
+            <button class="ghost small" (click)="pickAll()">All</button>
+            <button class="ghost small" (click)="pickNone()">None</button>
+            <span class="tally">{{ picked().size }} of {{ categories.length }}</span>
+          </div>
+
+          <label class="field">
+            <span class="label">Model <em>the verifier, not the ranker</em></span>
+            <input type="text" [ngModel]="model()" (ngModelChange)="model.set($event)" name="model">
+          </label>
+          <!--
+            THE TWO STAGES, NAMED, because the field above only governs one of
+            them and a person changing it should know which. The ranking is done
+            by an entailment model this app does not offer a choice about; what
+            this names is the model that answers the one question the ranker
+            cannot — is the author asserting this, or reporting it.
+          -->
+          <p class="note">
+            Every sentence is scored by an entailment model first — that pass is
+            fixed and takes minutes. This model answers the question that decides a
+            flag: <strong>is the author asserting this claim, or quoting, questioning
+            or arguing against it?</strong> One call per surviving passage, which is
+            what makes a hot book an hour.
+          </p>
+
+          <label class="field">
+            <span class="label">Ollama <em>used, never started</em></span>
+            <input type="text" [ngModel]="ollama()" (ngModelChange)="ollama.set($event)" name="ollama">
+          </label>
+
+          <p class="note">
+            The report is filed as a step under the one you are standing on, and nothing about the
+            book changes. How strict to be is decided afterwards, in the panel — the run finds
+            everything it possibly can, once, and three buttons narrow it.
+          </p>
+
+          @if (problem(); as reason) {
+            <p class="problem">{{ reason }}</p>
+          }
+        </div>
+
+        <footer class="foot">
+          <button class="ghost" (click)="ui.closeAnalysis()">Cancel</button>
+          <button
+            class="primary"
+            [disabled]="busy() || picked().size === 0"
+            (click)="add()"
+          >
+            {{ busy() ? 'Working…' : 'Add to queue' }}
+          </button>
+        </footer>
+      } @else {
+        <!--
+          THE EMPTY STATE NAMES THE TWO WAYS TO GET HERE, the Translate dialog's
+          own reasoning: no book made yet, or deliberately standing back on the
+          import. They want different things from the person reading it.
+        -->
+        <div class="body empty">
+          <p>
+            There is no book here to analyse. An analysis reads the blocks Foundry made when it
+            read the pages, so the pages have to be read first — and standing on the import row is
+            standing before the book: step onto the reading or an edit to analyse what is there.
+          </p>
+        </div>
+        <footer class="foot">
+          <button class="ghost" (click)="ui.closeAnalysis()">Close</button>
+          <button class="primary" (click)="openDocument()">Open a book…</button>
+        </footer>
+      }
+    </div>
+  `,
+  styles: [`
+    /*
+     * THE HOST IS INERT AND ONLY ITS CHILDREN ARE NOT -- confirm-dialog's rule,
+     * kept verbatim across every card in this app. 1200 is the dialog layer; the
+     * confirmation keeps 1300 so the guard can still draw over this.
+     */
+    :host { position: fixed; inset: 0; z-index: 1200; display: block; pointer-events: none; }
+
+    .scrim {
+      pointer-events: auto;
+      position: absolute; inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(4px);
+      animation: fade 120ms cubic-bezier(0, 0, 0.2, 1);
+    }
+
+    .card {
+      pointer-events: auto;
+      position: relative;
+      margin: 8vh auto 0;
+      width: 460px;
+      max-width: calc(100vw - 32px);
+      max-height: 82vh;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-lg);
+      box-shadow:
+        0 10px 15px -3px rgba(0, 0, 0, 0.2),
+        0 20px 40px -10px rgba(0, 0, 0, 0.35);
+      overflow: hidden;
+      animation: rise 140ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes rise {
+      from { opacity: 0; transform: scale(0.94); }
+      to { opacity: 1; transform: scale(1); }
+    }
+
+    .head {
+      display: flex; align-items: center; gap: 8px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .title { flex: 1; font-family: var(--font-display); font-weight: 600; font-size: 16px; }
+    .x {
+      background: transparent; border: none; cursor: pointer;
+      color: var(--text-tertiary); font-size: 13px;
+      padding: 3px 5px; border-radius: var(--radius-sm);
+      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .x:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+    .body { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+    .body.empty { color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
+    .body.empty p { margin: 0; }
+
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .label {
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--text-tertiary);
+    }
+    .label em { text-transform: none; letter-spacing: 0; font-style: normal; font-weight: 400; opacity: 0.75; }
+
+    /*
+      TWO COLUMNS, BECAUSE TWELVE ROWS IN ONE COLUMN IS A SCROLLER. The checklist
+      is the one decision on this card that is read as a WHOLE — "am I looking for
+      everything, or these three" — and a list that cannot be seen at once is a
+      list somebody ticks by memory.
+    */
+    .checklist {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2px 10px;
+    }
+    .check {
+      display: flex; align-items: center; gap: 6px;
+      padding: 4px 6px;
+      border-radius: var(--radius-sm);
+      font-size: 12px; color: var(--text-secondary);
+      cursor: pointer;
+      user-select: none;
+    }
+    .check:hover { background: var(--bg-hover); }
+    .check.on { color: var(--text-primary); }
+    .check-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* A word and not a colour: an untuned category is not a WARNING, it is a fact
+       about how much has been measured, and an amber pip beside four rows of a
+       checklist would read as something being wrong with them. */
+    .check-note {
+      flex: 0 0 auto;
+      font-family: var(--font-mono);
+      font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--text-tertiary);
+    }
+
+    .picks { display: flex; align-items: center; gap: 8px; }
+    .tally {
+      margin-left: auto;
+      font-size: 11px; color: var(--text-tertiary);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .note { margin: 0; font-size: 11px; color: var(--text-tertiary); line-height: 1.5; }
+    .note strong { color: var(--text-secondary); font-weight: 600; }
+    .problem { margin: 0; font-size: 12px; color: var(--warn); }
+
+    .foot {
+      display: flex; justify-content: flex-end; gap: 8px;
+      padding: 12px 16px 16px;
+      border-top: 1px solid var(--border-subtle);
+    }
+    .primary, .ghost {
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 32px; padding: 0 16px;
+      border-radius: var(--radius-md);
+      font-size: 13px; font-weight: 500; line-height: 1;
+      cursor: pointer;
+      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  border-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  transform 100ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .ghost.small { height: 24px; padding: 0 10px; font-size: 11px; }
+    .primary {
+      border: none;
+      background: var(--accent); color: var(--text-inverse);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    }
+    .primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .primary:active:not(:disabled) { background: var(--accent-active); transform: scale(0.98); }
+    .primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .ghost {
+      background: var(--bg-input);
+      border: 1px solid var(--border-default);
+      color: var(--text-primary);
+    }
+    .ghost:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+    .ghost:active { background: var(--bg-active); transform: scale(0.98); }
+  `],
+})
+export class AnalysisDialogComponent {
+  protected readonly ui = inject(UiService);
+  private readonly stage = inject(StageService);
+  private readonly documents = inject(OpenDocumentsService);
+  private readonly queue = inject(QueueService);
+  private readonly projects = inject(ProjectsService);
+  private readonly ledger = inject(LedgerService);
+
+  /**
+   * The book this analysis is OF — a PROJECT WITH A BOOK IN IT, named by its
+   * original document.
+   *
+   * `canTranslateFrom` AND NOT A PREDICATE OF ITS OWN, which is worth arguing
+   * because it looks like borrowing. The question both acts ask is identical: is
+   * there a BOOK at this position — a reading has landed, or the book arrived as
+   * one — and are we standing somewhere other than the untouched import. An
+   * analysis reads exactly what a translation reads (the position's materialised
+   * book file), refuses exactly where a translation refuses, and is offered from
+   * exactly the same rows.
+   *
+   * Owen's ruling is that the offer and the possibility are one fact (*"The only
+   * options that exist are the ones that are possible for that stage"*), and one
+   * fact wants ONE function — the four copies of this test that existed before
+   * `shared/stages.ts` are the argument. A fifth copy that happened to agree today
+   * is a fifth chance for a button to offer what a card then refuses.
+   */
+  protected readonly source = computed(() => {
+    const tab = this.stage.activeDocument();
+    if (tab === null) return null;
+    const project = this.projects.projectFor(tab.path);
+    if (project === null) return null;
+    if (!canTranslateFrom(project, this.ledger.standingIn(project.dir))) return null;
+    return this.projects.originalOf(project)?.path ?? null;
+  });
+
+  /** What that book is CALLED. The Translate dialog's `name`, for its reasons. */
+  protected readonly name = computed(() => {
+    const input = this.source();
+    if (input === null) return '';
+    const at = fold(input);
+    const showing = this.documents.tabs().find((tab) => fold(tab.path) === at);
+    return showing?.title ?? this.projects.nameFor(input);
+  });
+
+  /** The checklist, from the one table. See shared/analysis-categories.ts. */
+  protected readonly categories = ANALYSIS_CATEGORIES;
+
+  /**
+   * WHICH BOXES ARE TICKED — every one of them, to begin with.
+   *
+   * THE DEFAULT IS EVERYTHING, and that is the same ruling the sensitivity knob
+   * lost to: the run is meant to find anything it possibly can, once, and the
+   * narrowing happens afterwards. Somebody who knows they only care about two
+   * categories can say so and pay for two; somebody who does not know yet should
+   * not have to guess before the machine has looked.
+   */
+  protected readonly picked = signal<ReadonlySet<string>>(
+    new Set(ANALYSIS_CATEGORIES.map((one) => one.id)),
+  );
+
+  protected readonly model = signal(DEFAULT_MODEL);
+  protected readonly ollama = signal(DEFAULT_OLLAMA);
+  protected readonly problem = signal<string | null>(null);
+  /** The plan hashes the whole book to key it, and materialises one. Not instant. */
+  protected readonly busy = signal(false);
+
+  constructor() {
+    // The Translate dialog's rule: a complaint about the last book is cleared when
+    // the book changes, and nothing else resets. The checklist in particular is
+    // the user's careful answer and survives switching tabs.
+    effect(() => {
+      this.source();
+      this.problem.set(null);
+    });
+  }
+
+  protected flip(id: string): void {
+    this.picked.update((held) => {
+      const next = new Set(held);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }
+
+  protected pickAll(): void {
+    this.picked.set(new Set(ANALYSIS_CATEGORIES.map((one) => one.id)));
+  }
+
+  protected pickNone(): void {
+    this.picked.set(new Set());
+  }
+
+  protected openDocument(): void {
+    void this.documents.openViaDialog();
+  }
+
+  protected async add(): Promise<void> {
+    const input = this.source();
+    if (input === null || !api) return;
+    const ticked = this.picked();
+    if (ticked.size === 0) return;
+
+    this.busy.set(true);
+    this.problem.set(null);
+    try {
+      /*
+       * IN THE TABLE'S ORDER, which is the engine's plan order — and main
+       * re-orders it again for itself, because that list is the step's own
+       * QUESTION and two spellings of one checklist would be two questions
+       * (`workspace:plan-analysis`, electron/ipc.ts). Sending it ordered here as
+       * well is not belt and braces: it is what makes the request legible to
+       * anybody reading it, and it costs one filter.
+       */
+      const asked = ANALYSIS_CATEGORIES.filter((one) => ticked.has(one.id)).map((one) => one.id);
+      // Main names the report, mints the step and materialises the book the run
+      // reads — every path in the answer is main's composition. See `AnalysisPlan`.
+      const plan = await api.workspace.planAnalysis(input, asked);
+      const request: AnalyzeRequest = {
+        kind: 'analysis',
+        inputPath: plan.inputPath,
+        bookPath: plan.bookPath,
+        outputPath: plan.outputPath,
+        /*
+         * THE WHOLE SET, WITH THE UNTICKED ONES MARKED rather than a shorter
+         * array. It is the spelling `buildPlan` documents itself as accepting from
+         * this app (src/analyze/plan.ts), and the reason is that a list composed
+         * by DROPPING names is indistinguishable from a list of the only
+         * categories this build has heard of — so the day the engine grows a
+         * thirteenth, a shortened list would silently turn it off.
+         */
+        categories: ANALYSIS_CATEGORIES.map((one) => ({ name: one.id, enabled: ticked.has(one.id) })),
+        model: this.model().trim() || DEFAULT_MODEL,
+        ollama: this.ollama().trim() || DEFAULT_OLLAMA,
+        // Main's answer travelling back to main: the step the report is named
+        // after, minted at the plan so the file and the row agree hours later.
+        stepId: plan.stepId,
+      };
+
+      /*
+       * A REFUSAL IS NOT A SUCCESS, the Translate dialog's own hard-won line: main
+       * dedupes on the report path and answers with the row that already exists,
+       * so a second press would otherwise announce an analysis it had not queued
+       * and close over the evidence.
+       */
+      if (await this.queue.enqueueAnalysis(request) === 'already') {
+        this.problem.set(
+          'This analysis is already queued for this book — nothing was added. It is in the queue.',
+        );
+        return;
+      }
+      /*
+       * The queue panel, opened, and it matters for the reason it matters after a
+       * translation: the job is HELD, so nothing happens until Start is pressed
+       * and that button is inside it. Closing this dialog onto a shut panel would
+       * leave an analysis configured, idle and out of sight.
+       */
+      this.ui.summonQueue(false);
+      this.ui.confirmQueued('Analysis queued — the report lands on its own step when it finishes.');
+      this.ui.closeAnalysis();
+    } catch (err) {
+      this.problem.set(err instanceof Error ? err.message : String(err));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+}

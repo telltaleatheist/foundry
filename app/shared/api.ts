@@ -13,6 +13,9 @@ import type { ReadAsk } from './ledger';
 import type { BookOp, PendingOutcome, PendingStack } from './ops';
 import type { ReReadPrompt } from './reread';
 import type {
+  AnalysisPlan,
+  AnalysisReading,
+  AnalyzeRequest,
   AppQuestion,
   BackendSettingsPatch,
   CaptureCreated,
@@ -447,6 +450,43 @@ export interface FoundryApi {
       inputPath: string,
       mode: RewriteMode,
     ): Promise<TranslationPlan & { inputPath: string }>;
+    /**
+     * Where this book's ANALYSIS goes — the report a run would write, and the step
+     * it would be filed as (docs/ANALYSIS.md §7).
+     *
+     * THE CATEGORIES TRAVEL AS IDS AND COME BACK AS NOTHING. Main checks every
+     * name against the closed set this build knows, refuses an unknown one by
+     * name, and re-orders the survivors into the engine's own plan order before it
+     * asks the ledger which step this run belongs to — because that list is the
+     * step's QUESTION, and two spellings of one checklist would be two questions.
+     * So the caller sends what was ticked and does not have to be right about the
+     * order.
+     *
+     * THE PLAN'S `inputPath` IS THE ADMITTED ONE, as it is for a translation:
+     * main admitted it, the queue re-checks it, and the settle names it. Use it
+     * verbatim; it is not a path this window may compose.
+     */
+    planAnalysis(
+      inputPath: string,
+      categories: readonly string[],
+    ): Promise<AnalysisPlan & { inputPath: string }>;
+    /**
+     * ONE ANALYSIS STEP'S REPORT — the header, the findings, and one sentence
+     * about whether it is still about this book.
+     *
+     * THE RENDERER STAYS FILE-FREE. It names a project directory and a step id;
+     * main proves the directory is one of Home's, opens the payload the step
+     * records, and drops the cache rows — one per sentence in the book — that no
+     * surface draws.
+     *
+     * A REFUSAL COMES BACK AS `{ok: false, reason}` RATHER THAN AS A REJECTION,
+     * on `BookOutcome`'s rule: "that step was deleted" and "the report is not on
+     * the disk" are ordinary states a panel says in a sentence.
+     */
+    readAnalysis(
+      projectDir: string,
+      stepId: string,
+    ): Promise<{ ok: true; reading: AnalysisReading } | { ok: false; reason: string }>;
   };
 
   /**
@@ -905,6 +945,19 @@ export interface FoundryApi {
     enqueue(request: JobRequest): Promise<Job>;
     /** The same queue and the same GPU lane, a different command. See `TranslateRequest`. */
     enqueueTranslate(request: TranslateRequest): Promise<Job>;
+    /**
+     * The same queue and the same GPU lane again, a third command. See
+     * `AnalyzeRequest`.
+     *
+     * IT REJECTS HOSTED, which is the one thing about this door that is not the
+     * one above it. A hosted window has no Foundry queue surface at all, and the
+     * host's own queue takes the two request shapes its vendored copy of this file
+     * declares — so an analysis ordered there would start an hour of GPU with no
+     * row anybody can see. The rejection is a sentence, and the tile that would
+     * raise it is gated off in the same window (electron/ipc.ts carries the whole
+     * argument). It reaches BookForge by the normal re-vendor.
+     */
+    enqueueAnalysis(request: AnalyzeRequest): Promise<Job>;
     /**
      * Run an EXPORT now, and answer when it is over — the Export dialog's door.
      *

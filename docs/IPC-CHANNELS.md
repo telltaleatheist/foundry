@@ -1,7 +1,18 @@
 # Foundry's IPC channels — the whole list, for the collision audit
 
 Every channel name this app owns, enumerated from `app/electron` rather than
-from memory, regenerated on 2026-08-24 for **Wave 47's mint metadata** —
+from memory, regenerated on 2026-08-25 for **Wave 50's analysis** — three doors:
+`workspace:plan-analysis` (mint the step and the report path, materialise the
+book the run reads), `workspace:read-analysis` (one analysis step's report, for
+the hits panel — the header, the findings and one sentence about staleness; the
+cache rows never cross) and `queue:enqueue-analysis` (the held GPU job, which
+REJECTS hosted: the host's queue takes the two request shapes its vendored copy
+of `shared/api.ts` declares and this is a third). Counted by script:
+**94 `ipcMain.handle` call sites, 94 distinct channel names, zero `ipcMain.on`**
+in `app/electron/ipc.ts`. Each in the same commit as its handler, which is the
+standing rule below.
+
+Before that, regenerated on 2026-08-24 for **Wave 47's mint metadata** —
 `meta:mint-read`, `meta:mint-write`, `meta:mint-stamp` and (2026-08-24, the
 inheritance ruling) `meta:mint-host` — the per-project block the mint modal
 edits, the in-place stamp its Save performs, and the host's seed underneath —
@@ -404,6 +415,7 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `queue:cancel` | Cancel one job. Forwarded to the host's queue where one is registered. |
 | `queue:clear-finished` | Clear the settled rows out of the shelf. Forwarded to the host's queue as well, where one is registered. |
 | `queue:enqueue` | Queue a reading or a rendering; captures the project's position as the parent step. Filed in the host's queue instead, where one is registered — this door is a person pressing something. |
+| `queue:enqueue-analysis` | Queue an analysis: the book read against the categories, held on the GPU lane. Never routed, and REFUSED outright hosted — the host's queue does not know this request shape, and Foundry's own queue is invisible in a hosted window. |
 | `queue:enqueue-translate` | Queue a translation or a simplification. Routed like `queue:enqueue`. |
 | `queue:list` | The queue, for the renderer's mirror — the host's rows where a host queue is registered, Foundry's own otherwise. |
 | `queue:remove` | Remove a held or settled row. Forwarded to the host's queue where one is registered. |
@@ -423,10 +435,12 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `vllm:stop` | Stop it. |
 | `window:close` | Close the window — the ✕, pressed by the page. Hosted, running out of tabs. |
 | `window:let-go` | The renderer's one answer to `window:closing`. |
+| `workspace:plan-analysis` | Plan an analysis: which report file it writes, which step it will be filed as, and the position's book materialised for the engine to read. Checks every category name against the closed set this build knows. |
 | `workspace:plan-export` | Plan a rendering that lands in the project's `final/` tray. |
 | `workspace:plan-reading` | Plan an OCR read: which bank it fills. |
 | `workspace:plan-simplify` | Plan a rewrite in one of three modes. |
 | `workspace:plan-translation` | Plan a translation of an open document. |
+| `workspace:read-analysis` | One analysis step's report — the header, the findings, and one sentence about whether it is still about this book. The cache rows (one per sentence) are dropped at the parse. |
 | `wsl:facts` | The distros on this machine. |
 | `wsl:tooling` | What one of them actually has installed. |
 

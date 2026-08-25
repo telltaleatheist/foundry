@@ -154,6 +154,10 @@ const api: FoundryApi = {
       ipcRenderer.invoke('workspace:plan-translation', inputPath, targetLanguage),
     planSimplification: (inputPath, mode) =>
       ipcRenderer.invoke('workspace:plan-simplify', inputPath, mode),
+    planAnalysis: (inputPath, categories) =>
+      ipcRenderer.invoke('workspace:plan-analysis', inputPath, categories),
+    readAnalysis: (projectDir, stepId) =>
+      ipcRenderer.invoke('workspace:read-analysis', projectDir, stepId),
   },
 
   ledger: {
@@ -210,6 +214,7 @@ const api: FoundryApi = {
     list: () => ipcRenderer.invoke('queue:list'),
     enqueue: (request) => ipcRenderer.invoke('queue:enqueue', request),
     enqueueTranslate: (request) => ipcRenderer.invoke('queue:enqueue-translate', request),
+    enqueueAnalysis: (request) => ipcRenderer.invoke('queue:enqueue-analysis', request),
     run: (request) => ipcRenderer.invoke('queue:run', request),
     start: () => ipcRenderer.invoke('queue:start'),
     remove: (id) => ipcRenderer.invoke('queue:remove', id),
