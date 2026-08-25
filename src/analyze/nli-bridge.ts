@@ -289,6 +289,36 @@ interface WorkerResponse {
   model?: string;
   scores?: number[][];
   error?: string;
+  /** The worker's traceback tail when `error` is set — see the worker's except. */
+  trace?: string;
+}
+
+/**
+ * A text the tokenizer will accept, with every offset into it still true.
+ *
+ * A SCANNED BOOK CARRIES BROKEN CHARACTERS, and one of them is a hard stop
+ * three layers down. Flashpoint of Revival (2026-08-25): the reading pipeline
+ * mangled a close-quote (`”`, three UTF-8 bytes) into U+FFFD followed by a
+ * LONE LOW SURROGATE — a code unit that is legal in a JS string and in a JSON
+ * escape and in a Python str, and unencodable as UTF-8. `JSON.stringify`
+ * carries it to the worker intact (well-formed stringify escapes it as
+ * `\udc9d`), `json.loads` rebuilds it, and the Rust tokenizer under
+ * transformers refuses the string at the PyO3 boundary with the five words
+ * that cost this project an evening: `TextInputSequence must be str`. Every
+ * plainer probe passes — the sentence LOOKS like a string from every side but
+ * the one the scorer stands on.
+ *
+ * So each unpaired surrogate becomes U+FFFD here, at the seam, before the
+ * wire. ONE CODE UNIT FOR ONE CODE UNIT — the substitution never moves an
+ * offset, so the `[start, end)` a finding carries into the report still names
+ * the same characters of the row the book file holds. Scoring-only: nothing
+ * this function touches is ever written anywhere.
+ */
+export function scorableText(text: string): string {
+  return text.replace(
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
+    '�',
+  );
 }
 
 /**
@@ -491,7 +521,10 @@ export class NliWorker {
     clearTimeout(entry.timer);
     this.pending.delete(message.id as number);
     if (typeof message.error === 'string') {
-      entry.reject(new NliRequestError(message.error));
+      const trace = typeof message.trace === 'string' && message.trace.trim().length > 0
+        ? `\n${message.trace.trim().split('\n').map((l) => `  ${l}`).join('\n')}`
+        : '';
+      entry.reject(new NliRequestError(message.error + trace));
       return;
     }
     entry.resolve(message.scores ?? []);
@@ -527,6 +560,7 @@ export class NliWorker {
     if (child === null) throw new NliWorkerError('the analysis worker is not running');
     if (texts.length === 0 || hypotheses.length === 0) return [];
 
+    const sane = texts.map(scorableText);
     const id = this.nextId++;
     return new Promise<number[][]>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -538,7 +572,7 @@ export class NliWorker {
       }, SCORE_TIMEOUT_MS);
       this.pending.set(id, { resolve, reject, timer });
       try {
-        child.stdin.write(`${JSON.stringify({ id, texts, hypotheses })}\n`);
+        child.stdin.write(`${JSON.stringify({ id, texts: sane, hypotheses })}\n`);
       } catch (error) {
         clearTimeout(timer);
         this.pending.delete(id);

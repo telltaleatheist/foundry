@@ -92,6 +92,14 @@ import time
 _protocol = os.fdopen(os.dup(sys.stdout.fileno()), 'w', encoding='utf-8')
 os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
 
+# The config arrives as UTF-8 and is decoded as UTF-8, whatever this machine's
+# locale says. On Windows a piped stdin defaults to the ANSI code page with
+# surrogateescape, which reads a non-ASCII byte sequence as mojibake instead of
+# refusing it — the analysis worker was bitten first (nli_worker.py carries the
+# incident in full, 2026-08-25) and this seam has the identical shape: it only
+# never fired here because this config is ASCII on the machines that ran it.
+sys.stdin.reconfigure(encoding='utf-8', errors='strict')
+
 
 def fail(message):
     """Die the way foundry dies: one line naming the thing, nonzero exit."""

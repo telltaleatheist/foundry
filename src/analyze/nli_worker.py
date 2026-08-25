@@ -58,6 +58,18 @@ import sys
 _protocol = os.fdopen(os.dup(sys.stdout.fileno()), 'w', encoding='utf-8')
 os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
 
+# STDIN IS UTF-8 BY DECLARATION, NOT BY LUCK. The host writes UTF-8; on Windows
+# a piped stdin defaults to the ANSI code page with surrogateescape, and under
+# cp1252 that read every curly quote in the book as mojibake ('â€™' scored in
+# place of an apostrophe) and turned the close-quote's final byte — 0x9d,
+# undefined in cp1252 — into the lone surrogate \udc9d, which the Rust
+# tokenizer under transformers refuses as "TextInputSequence must be str"
+# (Flashpoint of Revival, 2026-08-25: one evening of bisecting, because every
+# probe that read the FILES saw clean text and only the PIPE was lying).
+# `strict`, not surrogateescape: a byte that is not UTF-8 is a protocol
+# violation to be named at the line it arrived on, never smuggled into a score.
+sys.stdin.reconfigure(encoding='utf-8', errors='strict')
+
 # The model this worker is. It is a CONSTANT rather than a request field
 # because the host writes it into the report header as provenance, and a header
 # that named one model while another had been loaded would be a false claim
@@ -201,7 +213,19 @@ def main():
                 continue
             emit({'id': request_id, 'scores': score(classifier, texts, hypotheses)})
         except Exception as error:  # noqa: BLE001 - one bad request must not end the worker
-            emit({'id': request_id, 'error': '%s: %s' % (type(error).__name__, error)})
+            # The traceback rides IN the response rather than on stderr, because
+            # the host echoes stderr only while the model is loading; an error
+            # whose only explanation went to a swallowed channel cost an evening
+            # of bisecting (2026-08-25, the lone-surrogate hunt) before anyone
+            # could see which line of library code had refused. The tail is
+            # enough: the deepest frames are where the refusal is named.
+            import traceback
+            trace = traceback.format_exc()
+            emit({
+                'id': request_id,
+                'error': '%s: %s' % (type(error).__name__, error),
+                'trace': trace[-1200:],
+            })
 
     # EOF on stdin is the documented shutdown. Returning normally is the whole
     # of it; the host's SIGKILL exists only for an interpreter that has wedged.
