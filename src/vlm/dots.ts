@@ -906,27 +906,91 @@ const COPYRIGHT_MARKS: ReadonlyArray<readonly [string, (text: string) => boolean
  * times running.
  */
 const CONTENTS_HEADING = /^(table of )?contents$/i;
-const CONTENTS_ENTRIES = 3;
+/**
+ * How many numbered lines make a list rather than a coincidence.
+ *
+ * Exported because a SECOND reader now needs the identical threshold:
+ * `promoteListedHeadings` (dots-book.ts) accepts the second leaf of a two-page
+ * contents on entry shape alone, and a continuation judged by a looser count
+ * than the page it continues would be a different rule wearing the same name.
+ */
+export const CONTENTS_ENTRIES = 3;
 const CONTENTS_ENTRY_CHARS = 100;
 /** `The Weimar Years, 18` — anything, then a page number, then the line ends. */
 const CONTENTS_ENTRY = /[^\d\s]\s*[,.]?\s*\d{1,4}[.,]?$/;
+/** The same tail, on its own, so the folio can be taken OFF an entry. */
+const CONTENTS_ENTRY_TAIL = /[,.]?\s*\d{1,4}[.,]?$/;
 
-function contentsVerdict(blocks: readonly DotsBlock[]): DotsPageVerdict | null {
+/**
+ * Every line on this page shaped like a contents entry: words, then a page
+ * number, then the end of the line.
+ *
+ * SHAPE ONLY — nothing here says the page is a contents page, and that is the
+ * point of it being separate. `contentsEntryLines` below adds the heading and
+ * is the test for a contents page; `promoteListedHeadings` (dots-book.ts) asks
+ * this one bare, of the page AFTER a contents page, because a contents set over
+ * two leaves does not always carry its heading onto the second one and a
+ * printer who did not repeat it is not evidence of anything.
+ *
+ * `except` drops the heading block itself, so `CONTENTS 4` running as a line of
+ * the heading's own box cannot count towards the list it introduces.
+ */
+export function entryShapedLines(
+  blocks: readonly DotsBlock[],
+  except?: DotsBlock,
+): string[] {
+  const lines: string[] = [];
+  for (const block of blocks) {
+    if (block === except) continue;
+    for (const line of unemphasise(block.text).split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0 || trimmed.length > CONTENTS_ENTRY_CHARS) continue;
+      if (CONTENTS_ENTRY.test(trimmed)) lines.push(trimmed);
+    }
+  }
+  return lines;
+}
+
+/**
+ * The book's own list of its chapters, as lines — or null when this page is not
+ * a contents page.
+ *
+ * The heading and the count, exactly as `contentsVerdict` has always demanded
+ * them; what is new is that the LINES come back rather than a tally of them.
+ * They are evidence about the rest of the book — Owen's ruling, 2026-08-25 —
+ * and a rule downstream cannot use a number.
+ */
+export function contentsEntryLines(blocks: readonly DotsBlock[]): string[] | null {
   const heading = blocks.find(
     (b) => DISPLAY.has(b.category) && CONTENTS_HEADING.test(unemphasise(b.text)),
   );
   if (heading === undefined) return null;
-  let entries = 0;
-  for (const block of blocks) {
-    if (block === heading) continue;
-    for (const line of unemphasise(block.text).split('\n')) {
-      const trimmed = line.trim();
-      if (trimmed.length === 0 || trimmed.length > CONTENTS_ENTRY_CHARS) continue;
-      if (CONTENTS_ENTRY.test(trimmed)) entries += 1;
-    }
-  }
-  if (entries < CONTENTS_ENTRIES) return null;
-  return { kind: 'contents', why: ['contents-heading', `${entries}-numbered-entries`], label: null };
+  const entries = entryShapedLines(blocks, heading);
+  return entries.length < CONTENTS_ENTRIES ? null : entries;
+}
+
+/**
+ * An entry with its folio taken off: `The Weimar Years, 18` → `The Weimar
+ * Years`.
+ *
+ * The number is the one part of the line that is about the PRINTING and not
+ * about the chapter — it is different in every edition of the same book, and it
+ * is exactly what a heading on the body side never carries. Stripping it here,
+ * beside the regex that found it, is what stops a second spelling of the same
+ * tail existing in the file that does the matching.
+ */
+export function contentsEntryTitle(line: string): string {
+  return line.replace(CONTENTS_ENTRY_TAIL, '').trim();
+}
+
+function contentsVerdict(blocks: readonly DotsBlock[]): DotsPageVerdict | null {
+  const entries = contentsEntryLines(blocks);
+  if (entries === null) return null;
+  return {
+    kind: 'contents',
+    why: ['contents-heading', `${entries.length}-numbered-entries`],
+    label: null,
+  };
 }
 
 /**

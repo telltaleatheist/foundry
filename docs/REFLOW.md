@@ -127,19 +127,61 @@ Today's sequence in `buildDotsBook` (`2137`-`2196`), which the pass adopts:
 
 1. `suppressRunningHeads` (`416`)
 2. `mergeAdjacentHeadings` (`1032`)
-3. flatten pages to blocks (`2153`) — **pagination stops being structure here**
-4. `measureTypeSizes` (`2171`)
-5. dehyphenate each block against `BookLexicon` (`2176-2179`)
-6. `reflowWrappedProse` (`2180`)
-7. typography / body column (`2184-2186`)
-8. `proposeSections` (`2187`)
-9. leading span, `foldDuplicateSections` (`2191-2219`)
+3. `readContentsList` + `promoteListedHeadings` — **added 2026-08-25**
+4. flatten pages to blocks (`2153`) — **pagination stops being structure here**
+5. `measureTypeSizes` (`2171`)
+6. dehyphenate each block against `BookLexicon` (`2176-2179`)
+7. `reflowWrappedProse` (`2180`)
+8. typography / body column (`2184-2186`)
+9. `proposeSections` (`2187`)
+10. leading span, `foldDuplicateSections` (`2191-2219`)
 
-**Steps 1 and 2 must precede 5 and 6.** `suppressRunningHeads` reads type
+**Steps 1 and 2 must precede 6 and 7.** `suppressRunningHeads` reads type
 sizes and line heights, and `lineHeight` (`src/vlm/dots.ts:667`) counts
 newlines — which dehyphenation and reflow rewrite. The existing code argues
 this at `dots-book.ts:424-434` and `test/vlm/typography.test.ts` asserts it.
 Do not reorder for tidiness.
+
+**Step 3 must sit exactly where it sits, between 2 and 4** — Owen's ruling,
+2026-08-25: *the book's own table of contents is evidence about the book.*
+dots tags a chapter opening `Title` on one page and `Section-header` on the
+next, of the same book, and `Section-header` is also what it correctly calls
+the hundreds of sub-headings inside a chapter — so the picker's list is right
+and unusable, and every one has to be opened by hand to decide a question the
+book already answered on page v. A `Section-header` that opens its page and
+matches a contents entry becomes a `Title`.
+
+- **After 2**, because `II` over `The Price of Judgment` is two blocks until
+  `mergeAdjacentHeadings` makes it one, and the contents lists it as one
+  thing. Asked earlier, the pass matches a bare numeral against nothing and
+  misses every numbered opening in the book.
+- **Before 4**, because *first block on its page* is a fact about a page, and
+  step 4 is where a page stops existing.
+- **Which listed headings are chapters** is decided on the BODY side, not by
+  the words: a publisher's contents lists sub-sections too, and what separates
+  them is that a chapter opens its page (first block, top 45%, under 80 chars)
+  while a listed sub-section sits mid-page under the prose above it.
+- **Strictly additive.** It never demotes: an unlisted heading loses nothing
+  and reaches `proposeChapters` on whatever evidence it always had. §2's
+  asymmetry holds — a false negative costs a chapter nobody can get back, a
+  false positive costs a click — and a contents read as a *closed* list would
+  invert it on the first book whose contents omits its own preface.
+- **A recorded category wins** (`categoryDecisionFor`): layer 3 of
+  `resolveCategory` is on top by construction, and a machine pass does not
+  out-vote somebody who looked at the page.
+- **A two-leaf contents is read.** The page immediately after a contents page,
+  carrying ≥3 entry-shaped lines and no body prose (`carriesBodyProse`), is a
+  continuation — printers do not always repeat the word *Contents* on the
+  second leaf, and a book whose list runs over a leaf is exactly the book with
+  the most chapters to find. The chain continues to a third and fourth leaf.
+- The key set also reaches `proposeSections` → `proposeChapters`, which pushes
+  `toc-listed` into `why`. Mostly reporting honesty — a promoted block already
+  carries `title-class` — but it also lets a listed heading with no other
+  evidence clear the `why.length > 0` bar.
+- **Deterministic from the bank plus recorded decisions**, so it runs whether
+  or not a spine was laid out and the book stays byte-stable across spine
+  layout. `proposeSections`' early return still gives a laid-out spine
+  supremacy over where sections START; that is untouched.
 
 **The cross-page join is new work in this pass**, because today it happens
 during emission (`1602-1620`) rather than in the prologue. ~~It runs after
@@ -217,6 +259,12 @@ behaviour change is invisible unless it is reported. So:
 - For a caseless-script book this number will be enormous, which is exactly
   the case `DERIVED-BOOK.md` §2 says must read as a known cost rather than a
   defect. Word it so it does.
+- **(2026-08-25)** The contents-page promotions are counted the same way, on
+  the same line as the merges and the suppressions — `vlm-convert` names each
+  one with the contents entry that justified it, `vlm-book` gives the count.
+  This pass neither deletes a block nor writes copy: it changes what a block
+  IS, which is invisible in the finished file and decides its whole shape, so
+  it is the one that most needs saying out loud.
 
 ## 7. Wiring the consumers
 

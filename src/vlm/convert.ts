@@ -45,6 +45,7 @@ import { parsePage } from './dialect.js';
 import { DotsPageError, parseDotsPage, renderScale, smartResize, type DotsParsedPage } from './dots.js';
 import {
   buildDotsBook,
+  headingLabel,
   openPageImages,
   type DotsChapterProposal,
   type DotsCrop,
@@ -52,6 +53,7 @@ import {
   type DotsFold,
   type DotsHeadingMerge,
   type FurnitureEvidence,
+  type PromotedHeading,
 } from './dots-book.js';
 import {
   buildVlmEpub,
@@ -239,6 +241,12 @@ export interface VlmConvertReport {
    * this run WROTE, so they are named the loudest of the three.
    */
   mergedHeadings: DotsHeadingMerge[];
+  /**
+   * Headings the book's own contents page lists, promoted from a sub-heading to
+   * a chapter opening. Nothing was added or removed — a CLAIM was made about
+   * what a block is, so each one is named with the contents line that made it.
+   */
+  promotedHeadings: PromotedHeading[];
   timings: {
     loadSeconds: number;
     renderSeconds: number;
@@ -659,6 +667,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     let suppressedHeads: { page: number; text: string; why: FurnitureEvidence }[] = [];
     let foldedSections: DotsFold[] = [];
     let mergedHeadings: DotsHeadingMerge[] = [];
+    let promotedHeadings: PromotedHeading[] = [];
     /** Set on the PDF route only, and what its phase line is made of. */
     let typeset: { pages: number; lines: number } | null = null;
 
@@ -953,6 +962,29 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
         );
       }
       /*
+       * The headings the book's own contents page lists, promoted to chapter
+       * openings.
+       *
+       * Said out loud for the reason the three lines above are, and it is the
+       * least visible of the four: nothing was deleted, no document stopped
+       * existing and no copy was written — a Section-header became a Title, and
+       * the only place that shows is the shape of the finished book. Each
+       * promotion is printed with the contents line that justified it, because
+       * the entire claim of this pass is that those two are the same chapter,
+       * and a person who disagrees can say so in select mode and be obeyed
+       * (`promoteListedHeadings` stops at a recorded category).
+       */
+      promotedHeadings = built.promotedHeadings;
+      if (promotedHeadings.length > 0) {
+        opts.log(
+          `vlm-convert: ${promotedHeadings.length} heading(s) the contents page lists, promoted to `
+          + 'chapter openings — '
+          + promotedHeadings
+            .map((p) => `${JSON.stringify(headingLabel(p.text))} p${p.page} (${p.entry})`)
+            .join(', '),
+        );
+      }
+      /*
        * What the book's own type measures.
        *
        * The stylesheet this run wrote is not the stylesheet the last one wrote:
@@ -1135,6 +1167,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       suppressedHeads,
       foldedSections,
       mergedHeadings,
+      promotedHeadings,
       timings: {
         loadSeconds: run.loadSeconds,
         renderSeconds: run.renderSeconds,

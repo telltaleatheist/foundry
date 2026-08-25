@@ -663,6 +663,33 @@ export function joinDecisionFor(overlay: Overlay, block: DotsBlock): boolean | u
 }
 
 /**
+ * Did a PERSON state what this block is? — and undefined, which is the answer
+ * for every block in a book but a handful.
+ *
+ * ── Why asking the block is not the same question ───────────────────────────
+ *
+ * `applyOverlay` writes a stated category onto the block at the parse, so by the
+ * time the reflow runs `block.category` IS the person's answer and is
+ * indistinguishable from the model's. That is right for everything that RENDERS
+ * the block and wrong for anything that would CHANGE it: a machine pass reading
+ * `block.category === 'Section-header'` cannot tell the model's guess from a
+ * person who looked at the page and said so, and would overwrite the second one
+ * as happily as the first.
+ *
+ * So this reaches past the block to the file and asks whether the decision is
+ * recorded there. `promoteListedHeadings` (dots-book.ts) is the reader: layer 3
+ * of `resolveCategory` is "always on top, and not by tie-break", and a rule
+ * inferring from a contents page is an argument several rungs below somebody
+ * reading the page. It stops where the person has spoken.
+ */
+export function categoryDecisionFor(
+  overlay: Overlay,
+  block: DotsBlock,
+): DotsCategory | undefined {
+  return decide(overlay, block).category;
+}
+
+/**
  * IS THIS NOTE STRUCK? — the one reader of the `note` dimension, asked once per
  * `<aside>` as the book is written.
  *

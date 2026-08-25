@@ -3026,6 +3026,57 @@ period is prose as far as it can see. Wave 46's `foldSupTags` healed the
   concern, it does not move the book-file format, and the strip makes it
   cosmetic for struck-note books.
 
+### Wave 49 — the book's own contents is evidence about the book (Owen, 2026-08-25) — BUILT
+
+**Nothing about chapter detection was indexed in this file before today.**
+Recorded as a gap rather than backfilled: the rule has been curated by hand
+since it was written, and the cost of that was never written down anywhere.
+It is Owen's, in his words: he must review every `Section-header` by hand to
+decide which are really chapters. dots tags a chapter opening `Title` on one
+page and `Section-header` on the next, of the same book, and `Section-header`
+is also what it correctly calls the hundreds of sub-headings inside a chapter
+— so the proposal list is right and unusable.
+
+The ruling: **a `Section-header` that opens a page and matches an entry of
+the book's own detected contents page is flipped to `Title` — a chapter
+opening. Sub-headings that the contents also lists are NOT flipped, and the
+operational test for top-level is body-side position: a chapter opens its
+page, a listed sub-section sits mid-page.**
+
+- **`promoteListedHeadings` + `readContentsList` (`dots-book.ts`)**, a new
+  reflow pass sitting between `mergeAdjacentHeadings` and the flatten —
+  `REFLOW.md` §4 argues both fences. Gates, all of them: first block on its
+  page; page strictly after the last contents leaf; `topFraction ≤ 0.45`;
+  `text.length < 80`; a `listingKeys` match with a letter in it; and no
+  recorded category decision (`categoryDecisionFor`, new in `overlay.ts` —
+  `applyOverlay` writes a stated category onto the block at the parse, so by
+  reflow time the block cannot tell a person's answer from the model's).
+- **`contentsEntryLines` / `entryShapedLines` / `contentsEntryTitle` exported
+  from `dots.ts`**, with `contentsVerdict` refactored to share them — the
+  contents regexes stay in one file.
+- **A two-leaf contents is read**: the page after a contents page, with ≥3
+  entry-shaped lines and no body prose, is a continuation. Printers do not
+  always repeat the word on the second leaf, and a contents long enough to run
+  over one is the detailed contents this pass is for.
+- **`listingKeys`**: a heading is matched whole AND with its chapter number
+  stripped, on both sides, because `mergeAdjacentHeadings` hands over `II The
+  Price of Judgment` while the contents very often lists the title alone.
+  `ROMAN_NUMERAL` does the numeral test rather than a character class, so
+  `CIVIL` and `MILD` keep their first word.
+- **Strictly additive**: nothing is ever demoted. The standing asymmetry holds
+  — a false negative costs a chapter nobody can get back, a false positive
+  costs a click — and a contents read as a *closed* list would invert it on
+  the first book whose contents omits its own preface.
+- **Counted out loud** in `vlm-convert` (each promotion with the contents line
+  that justified it) and on `vlm-book`'s summary line.
+- **Deferred out loud**: (1) no fuzzy or partial matching — a heading whose
+  reading differs from its contents entry by a word is not promoted, and the
+  person still curates it, which is the status quo and costs nothing new;
+  (2) the contents page is not used to NAME a chapter, only to find one — the
+  nav label still comes from what the page prints, and `overlay.chapters` is
+  still the only way to say a chapter is called something else; (3) no test
+  was written, per the standing rule.
+
 ---
 
 ## 8. Session hygiene

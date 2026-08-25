@@ -57,6 +57,17 @@
  *    joins them before any of that happens, on three guards that are pure
  *    arithmetic on the boxes, and reports every join: it is the only pass here
  *    that WRITES copy rather than moving or dropping it.
+ *  - **THE BOOK'S OWN CONTENTS PAGE IS EVIDENCE ABOUT THE BOOK.** dots calls a
+ *    chapter opening a Title on one page and a Section-header on the next, of
+ *    the same book, and Section-header is also what it correctly calls the
+ *    hundreds of sub-headings inside a chapter — so the proposal list is right
+ *    and unusable, and a person has to open every one of them to decide a
+ *    question the book answered on page v. `promoteListedHeadings` flips a
+ *    Section-header to a Title when it opens its page AND the detected contents
+ *    lists it; sub-headings the contents also lists are not flipped, because
+ *    what tells them apart is not the words — they are in the same list — but
+ *    that a chapter opens a page and a sub-section sits in the middle of one.
+ *    It never demotes anything, which keeps the asymmetry below intact.
  *  - **Chapters are PROPOSED, not decided.** The rule is deterministic and
  *    written out beside the book as data: a Title or Section-header, first on
  *    its page, in the top 45%, short, and either chapter-ish or centered. It
@@ -105,10 +116,15 @@ import {
   centerOffset,
   checkTableHtml,
   classifyPage,
+  contentsEntryLines,
+  contentsEntryTitle,
   continuesTextually,
+  CONTENTS_ENTRIES,
   dotsInline,
+  entryShapedLines,
   leadingWord,
   plainText,
+  ROMAN_NUMERAL,
   SUPERSCRIPT_RUN,
   topFraction,
   trailingHyphenWord,
@@ -131,7 +147,14 @@ import {
   type VlmNavItem,
   type VlmResource,
 } from './epub.js';
-import { chapterStarts, emptyOverlay, joinDecisionFor, noteStruck, type Overlay } from './overlay.js';
+import {
+  categoryDecisionFor,
+  chapterStarts,
+  emptyOverlay,
+  joinDecisionFor,
+  noteStruck,
+  type Overlay,
+} from './overlay.js';
 import { packageVlmText, type VlmOutputFormat } from './text-out.js';
 import {
   bodyTypeSize,
@@ -506,6 +529,26 @@ const CHAPTERISH = new RegExp(
 const BARE_NUMBER = /^(\d{1,3})\.?$/;
 
 /**
+ * WHERE ON ITS PAGE A CHAPTER OPENS, and how long its name may be.
+ *
+ * Two numbers `proposeChapters` used to spell inline, named because a second
+ * pass now enforces the identical pair: `promoteListedHeadings` flips a heading
+ * to a chapter opening, and a promotion the proposal rule would then refuse for
+ * sitting too low or running too long is a category change with no consequence
+ * and no explanation. One constant each, so the two rules cannot drift apart.
+ *
+ * 45% down the page is the body-side test for TOP-LEVEL, and it is the whole of
+ * Owen's ruling (2026-08-25) about which listed headings are chapters: a
+ * publisher's contents lists sub-sections too, and what separates them from the
+ * chapters is not the words — the words are in the same list — but the fact that
+ * a chapter OPENS ITS PAGE and a listed sub-section sits in the middle of one,
+ * under the prose that precedes it.
+ */
+const CHAPTER_TOP_FRACTION = 0.45;
+/** A chapter's name is short. 80 characters is long for one and short for prose. */
+const CHAPTER_CHARS = 80;
+
+/**
  * Does this book number its CHAPTERS in arabic, or its sections?
  *
  * `CHAPTERISH` accepts a bare number, and it has to: a novel whose chapters are
@@ -567,10 +610,20 @@ export interface DotsChapterProposal {
  * `spokenFor` is the pages the classifier has already named. A title page is a
  * page of centered display type and would be proposed as a chapter by every
  * rule below; it is not one, and the page has already said so.
+ *
+ * `listed` is the book's OWN list of its chapters, keyed (`readContentsList`).
+ * It adds no gate and takes none away — it adds a line to `why`. Two things
+ * follow from that and only two. A candidate the contents page names says so in
+ * the report, which is what makes `promoteListedHeadings`' work readable
+ * downstream instead of arriving as an unexplained `title-class`; and a heading
+ * with NO other evidence — not chapter-ish, not centered, not a Title — clears
+ * the `why.length > 0` bar on the strength of being in the book's own list,
+ * which is better evidence than any of the three shapes above it.
  */
 export function proposeChapters(
   blocks: readonly DotsBlock[],
   spokenFor: ReadonlySet<number> = new Set(),
+  listed: ReadonlySet<string> = new Set(),
 ): DotsChapterProposal[] {
   const firstIndexOnPage = new Map<number, number>();
   for (const [index, block] of blocks.entries()) {
@@ -587,14 +640,15 @@ export function proposeChapters(
     if (block.category !== 'Title' && block.category !== 'Section-header') continue;
     if (claimed.has(block.page)) continue;
     if (firstIndexOnPage.get(block.page) !== index) continue;
-    if (topFraction(block) > 0.45) continue;
-    if (block.text.length >= 80) continue;
+    if (topFraction(block) > CHAPTER_TOP_FRACTION) continue;
+    if (block.text.length >= CHAPTER_CHARS) continue;
     if (sectionMarks && BARE_NUMBER.test(block.text.trim())) continue;
 
     const why: string[] = [];
     if (CHAPTERISH.test(block.text)) why.push('chapterish-text');
     if (block.category === 'Title') why.push('title-class');
     if (centerOffset(block) < 0.06) why.push('centered');
+    if (listingKeys(block.text).some((key) => listed.has(key))) why.push('toc-listed');
     if (why.length === 0) continue;
 
     claimed.add(block.page);
@@ -612,10 +666,17 @@ export function proposeChapters(
  * chapters — a half-title, a contents page and a part divider are each a short
  * centered heading first on its page. A page that is a title page is not also a
  * chapter.
+ *
+ * `listed` rides straight through to `proposeChapters` — see there for what it
+ * does and, more importantly, for the two things it does not. It is passed in
+ * rather than read here because `reflowBook` already asked the contents page
+ * once, for `promoteListedHeadings`, and one run of one book must not ask "what
+ * does the contents say" twice and risk two answers.
  */
 export function proposeSections(
   pages: readonly DotsParsedPage[],
   overlay: Overlay = emptyOverlay(),
+  listed: ReadonlySet<string> = new Set(),
 ): DotsChapterProposal[] {
   /*
    * A LAID-OUT SPINE SUPERSEDES EVERY RULE BELOW, and it does so by returning
@@ -704,7 +765,7 @@ export function proposeSections(
   }
 
   const flat = pages.flatMap((p) => p.blocks);
-  const chapters = proposeChapters(flat, spokenFor);
+  const chapters = proposeChapters(flat, spokenFor, listed);
   const starts = new Map<number, DotsChapterProposal>();
   for (const close of closes) {
     // An unnamed section, opened only because the named one had to end. It
@@ -1054,6 +1115,239 @@ export function mergeAdjacentHeadings(pages: readonly DotsParsedPage[]): DotsHea
     page.blocks = kept;
   }
   return merges;
+}
+
+// ── the heading the book's own contents lists ───────────────────────────────
+
+/**
+ * What the book's contents page says its chapters are called.
+ *
+ * `entries` maps every `listingKeys` spelling of each listed title to the line
+ * it was read off, so a promotion can be reported with the evidence beside it
+ * rather than as an assertion. `through` is the position in `pages` of the LAST
+ * leaf of the contents, or -1 for a book that has none.
+ */
+export interface ContentsList {
+  entries: Map<string, string>;
+  through: number;
+}
+
+/**
+ * Read the book's own list of its chapters.
+ *
+ * TWO KINDS OF PAGE GO INTO IT, and the second one is not a relaxation of the
+ * first. A contents page proper is `contentsEntryLines` — the heading, and three
+ * or more numbered lines — asked of every page, exactly as `classifyPage` asks
+ * it. A CONTINUATION is the page immediately after one, carrying the same three
+ * numbered lines and NO BODY PROSE, and it is accepted without a heading because
+ * a printer setting a contents over two leaves does not repeat the word
+ * `Contents` on the second one. Refusing it would drop the second half of the
+ * list in precisely the books this pass is for: a book with a contents long
+ * enough to run over a leaf is a book with a detailed contents, which is the
+ * case that has the most chapters to find.
+ *
+ * The chain continues — a continuation is itself a leaf, so a third and fourth
+ * page of the same list are read — and it stops at the first page after it that
+ * either carries prose or has too few numbered lines, which is the page the
+ * front matter goes back to being ordinary on.
+ *
+ * `carriesBodyProse` is the guard that makes the continuation safe. What it
+ * excludes is the page of prose whose lines happen to end in numbers, and the
+ * only real family of those is an index or a bibliography — neither of which
+ * follows a contents page. A page with no paragraph on it and three lines
+ * ending in folios is a list of something, and after a contents page it is the
+ * rest of the contents.
+ *
+ * A KEY WITH NO LETTER IN IT IS DISCARDED, the same guard `suppressRunningHeads`
+ * applies for the same reason: a contents line that is nothing but numbers is a
+ * folio or a stray, `furnitureKey` collapses every digit run to `#`, and a key
+ * of `#` would match every bare-numbered heading in the book at once.
+ */
+export function readContentsList(pages: readonly DotsParsedPage[]): ContentsList {
+  const entries = new Map<string, string>();
+  let through = -1;
+  for (const [position, page] of pages.entries()) {
+    const lines = contentsEntryLines(page.blocks)
+      ?? (through === position - 1 && through >= 0 ? continuationEntries(page.blocks) : null);
+    if (lines === null) continue;
+    through = position;
+    for (const line of lines) {
+      for (const key of listingKeys(contentsEntryTitle(line))) {
+        if (!/[A-Z]/.test(key)) continue;
+        // The earlier line wins. A contents that lists two chapters whose names
+        // reduce to one key is a book where the report cannot say which of them
+        // matched, and the one nearer the top of the list is the better guess.
+        if (!entries.has(key)) entries.set(key, line);
+      }
+    }
+  }
+  return { entries, through };
+}
+
+/**
+ * The words a chapter is ANNOUNCED by, which are not the words it is called.
+ *
+ * `Chapter`, `Part`, `Book`, `Section` — the announcement, when the printer set
+ * one — and then the number. Both are optional and both are stripped, because
+ * the two sides of this match do not agree about either of them: a contents page
+ * prints `II. The Price of Judgment 140` and the chapter's own page prints `II`
+ * over `The Price of Judgment`, or the contents prints the title alone and the
+ * page prints the numeral, or the reverse. The NAME is the part both of them
+ * have, and it is the part being matched.
+ *
+ * The numeral test is `ROMAN_NUMERAL` and not a character class, for the reason
+ * that regex is exported at all: `CIVIL` and `MILD` are made of I, V, X, L, C,
+ * D and M, and a class would strip the first word off two real chapter titles.
+ * Arabic is capped at three digits so that a chapter called `1918` keeps its
+ * name.
+ */
+const LISTING_WORD = /^(chapter|part|book|section)$/i;
+const LISTING_DIGITS = /^\d{1,3}[.:)]?$/;
+
+function withoutListingNumber(text: string): string {
+  const words = text.split(/\s+/).filter((word) => word.length > 0);
+  let at = 0;
+  if (at < words.length && LISTING_WORD.test(words[at].replace(/[.:)]$/, ''))) at += 1;
+  if (at < words.length && (LISTING_DIGITS.test(words[at]) || ROMAN_NUMERAL.test(words[at]))) {
+    at += 1;
+  } else {
+    // `Part Two`, `Book of Judges` — the word was the title's own first word.
+    at = 0;
+  }
+  return words.slice(at).join(' ');
+}
+
+/**
+ * Every key one heading may be listed under, best spelling first.
+ *
+ * The whole of it, and then the same thing with its announcement taken off.
+ * TWO rather than one because the pass runs after `mergeAdjacentHeadings`, which
+ * is the position that makes a two-line opening one string — and that string is
+ * `II The Price of Judgment` while the contents entry is very often the title on
+ * its own. Matching the whole string only would find nothing on exactly the
+ * books whose chapters are numbered, which is most of them.
+ *
+ * Asked of BOTH sides, so the stripping cannot decide the match on its own: an
+ * entry that carries a number and a heading that carries one match on their
+ * full spellings, and one of each matches on the bare name. Keys with no letter
+ * in them are the caller's to discard — see `readContentsList`.
+ */
+function listingKeys(text: string): string[] {
+  const whole = furnitureKey(text);
+  const bare = furnitureKey(withoutListingNumber(text));
+  return bare.length > 0 && bare !== whole ? [whole, bare] : [whole];
+}
+
+/** The second leaf of a contents: the shape and the silence, and no heading. */
+function continuationEntries(blocks: readonly DotsBlock[]): string[] | null {
+  if (blocks.length === 0) return null;
+  if (carriesBodyProse(blocks)) return null;
+  const lines = entryShapedLines(blocks);
+  return lines.length < CONTENTS_ENTRIES ? null : lines;
+}
+
+/**
+ * A heading this pass promoted, and the line of the contents that promoted it.
+ *
+ * Reported for the reason every pass in this file reports: it CHANGES WHAT A
+ * BLOCK IS, and a category that quietly became something else is a category
+ * nobody can argue with. The entry is carried beside the heading because the
+ * whole claim is that these two are the same chapter, and a report that stated
+ * only the conclusion would be the one thing a person could not check.
+ */
+export interface PromotedHeading {
+  page: number;
+  /** The heading as the book prints it — newlines and all, if it was merged. */
+  text: string;
+  /** The contents line that matched it, folio included. */
+  entry: string;
+}
+
+/**
+ * THE BOOK'S OWN CONTENTS PAGE IS EVIDENCE ABOUT THE BOOK — Owen's ruling,
+ * 2026-08-25 — and this is the pass that spends it.
+ *
+ * The problem it exists for: dots tags a chapter opening `Title` on some pages
+ * and `Section-header` on others, of the same book, for no reason a person can
+ * see from the page. `Section-header` is also what it correctly calls the
+ * sub-headings INSIDE a chapter, of which a work of history has hundreds. So
+ * the picker's list is right and unusable — every Section-header has to be
+ * opened and judged by hand, one at a time, and the person doing it is deciding
+ * a question the book already answered on page v.
+ *
+ * WHAT THIS PASS DOES NOT DO IS THE ARGUMENT FOR IT. It never demotes: a
+ * heading the contents does not list loses NOTHING, keeps its category, and
+ * still reaches `proposeChapters` on whatever evidence it always had. That is
+ * this file's standing asymmetry (see the header, and `proposeChapters`) — a
+ * false negative costs a chapter nobody can get back, a false positive costs a
+ * click — and a rule that read a contents page as a closed list would invert it
+ * on the first book whose contents omits its own preface.
+ *
+ * WHICH LISTED HEADINGS ARE CHAPTERS, given that a publisher's contents lists
+ * sub-sections too: the test is POSITION ON THE BODY-SIDE PAGE, not the words.
+ * A chapter opens its page — it is the first block on it, in the top 45%
+ * (`CHAPTER_TOP_FRACTION`) — and a listed sub-section sits in the middle of a
+ * page under the prose that precedes it. The contents page cannot tell the two
+ * apart, because it prints them in the same list; the body page tells them
+ * apart every time, and it is the body page this asks.
+ *
+ * So a Section-header becomes a Title when ALL of these hold, and the promotion
+ * is the whole of the change:
+ *
+ *  - it is the FIRST BLOCK ON ITS PAGE, and its page is strictly after the last
+ *    leaf of the contents. Before that line the block is inside the contents
+ *    itself, where every line matches a contents entry by construction;
+ *  - `topFraction` is at or under `CHAPTER_TOP_FRACTION` and its text is under
+ *    `CHAPTER_CHARS` — `proposeChapters`' own gates, enforced here so that a
+ *    promotion always survives into a proposal rather than changing a category
+ *    for nothing;
+ *  - one of its `listingKeys` is in the contents' key set and has a letter in
+ *    it — the heading whole, or the heading with its chapter number taken off;
+ *  - NO PERSON HAS STATED A CATEGORY FOR IT (`categoryDecisionFor`). Layer 3 of
+ *    `resolveCategory` is on top by construction and a machine pass does not get
+ *    to out-vote it — somebody who looked at the page and called this a
+ *    Section-header has better evidence than a match against a list.
+ *
+ * `Title` rather than a flag, because `Title` is what the rest of the program
+ * already means by "a chapter opens here": `proposeChapters` reads it as
+ * `title-class`, and `DERIVED_RULES` renders it `h1` instead of `h2`. Both
+ * consequences are intended — a chapter opening set as a sub-heading is exactly
+ * as wrong in the finished book as it is in the picker.
+ *
+ * IT RUNS WHETHER OR NOT THE SPINE WAS LAID OUT, and that is deliberate. This is
+ * a deterministic function of the bank and the recorded category decisions, so
+ * the book a person laid a spine over is byte-for-byte the book they laid it
+ * over yesterday. It does not touch the spine's supremacy over where sections
+ * START — `proposeSections` returns a listed spine before any rule of its own
+ * runs, and that is untouched here.
+ *
+ * Mutates the blocks in place, like `suppressRunningHeads` and
+ * `mergeAdjacentHeadings` above: the type measurements are keyed by block
+ * identity, so nothing here may copy one.
+ */
+export function promoteListedHeadings(
+  pages: readonly DotsParsedPage[],
+  overlay: Overlay = emptyOverlay(),
+  contents: ContentsList = readContentsList(pages),
+): PromotedHeading[] {
+  const promoted: PromotedHeading[] = [];
+  if (contents.entries.size === 0) return promoted;
+  for (const [position, page] of pages.entries()) {
+    if (position <= contents.through) continue;
+    const first = page.blocks[0];
+    if (first === undefined || first.category !== 'Section-header') continue;
+    if (topFraction(first) > CHAPTER_TOP_FRACTION) continue;
+    if (first.text.length >= CHAPTER_CHARS) continue;
+    const entry = listingKeys(first.text)
+      .filter((key) => /[A-Z]/.test(key))
+      .map((key) => contents.entries.get(key))
+      .find((hit) => hit !== undefined);
+    if (entry === undefined) continue;
+    if (categoryDecisionFor(overlay, first) !== undefined) continue;
+    first.category = 'Title';
+    promoted.push({ page: first.page, text: first.text, entry });
+  }
+  return promoted;
 }
 
 // ── the nav ─────────────────────────────────────────────────────────────────
@@ -2840,6 +3134,12 @@ export interface FlowBook {
   folded: DotsFold[];
   suppressedHeads: SuppressedHead[];
   mergedHeadings: DotsHeadingMerge[];
+  /**
+   * The Section-headers the book's own contents page named, promoted to chapter
+   * openings by `promoteListedHeadings` — with the entry that named each one,
+   * because a category this run changed is a claim and not a reading.
+   */
+  promotedHeadings: PromotedHeading[];
   /** The blocks whose print line breaks were reflowed back into prose. */
   reflowed: DotsBlock[];
   /**
@@ -2933,8 +3233,23 @@ export interface FlowBookOptions {
  * something went wrong.
  */
 export function reflowBook(opts: FlowBookOptions): FlowBook {
+  const overlay = opts.overlay ?? emptyOverlay();
   const suppressedHeads = suppressRunningHeads(opts.pages);
   const mergedHeadings = mergeAdjacentHeadings(opts.pages);
+  /*
+   * The book's own contents, read once and spent twice — and it must run HERE,
+   * after the merge and before the flatten.
+   *
+   * After the merge because a heading the page printed as `II` over `The Price
+   * of Judgment` is two blocks until `mergeAdjacentHeadings` makes it one, and
+   * the contents lists it as one thing: asked before the merge, this pass would
+   * match a bare numeral against nothing and miss every two-line opening in the
+   * book. Before the flatten because "first block on its page" is a fact about a
+   * page, and a page is what stops existing on the next line.
+   */
+  const contents = readContentsList(opts.pages);
+  const promotedHeadings = promoteListedHeadings(opts.pages, overlay, contents);
+  const listed: ReadonlySet<string> = new Set(contents.entries.keys());
 
   // PAGINATION STOPS BEING STRUCTURE HERE. From this line on a page number is
   // a fact about where a block came from, and nothing about where it goes.
@@ -2961,6 +3276,7 @@ export function reflowBook(opts: FlowBookOptions): FlowBook {
       folded: [],
       suppressedHeads,
       mergedHeadings,
+      promotedHeadings,
       reflowed: [],
       adoptedNotes: [],
       column: { x1: 0, x2: 0 },
@@ -2991,7 +3307,7 @@ export function reflowBook(opts: FlowBookOptions): FlowBook {
   const typography = deriveTypography(sourceBlocks, measured);
   const column = bodyColumn(sourceBlocks, sourceBlocks[0].pageWidth);
 
-  const proposals = proposeSections(opts.pages, opts.overlay ?? emptyOverlay());
+  const proposals = proposeSections(opts.pages, overlay, listed);
 
   // The leading span, when the book does not open on a section start. It has no
   // proposal behind it and therefore no kind: nothing said what it is.
@@ -3059,6 +3375,7 @@ export function reflowBook(opts: FlowBookOptions): FlowBook {
     folded,
     suppressedHeads,
     mergedHeadings,
+    promotedHeadings,
     reflowed,
     adoptedNotes,
     column,
@@ -3495,6 +3812,14 @@ export interface DotsBookResult {
    */
   mergedHeadings: DotsHeadingMerge[];
   /**
+   * The Section-headers the book's own contents page lists, promoted to chapter
+   * openings by `promoteListedHeadings`. The same promise a third time, on the
+   * one pass that neither removes a block nor writes copy: it changes what a
+   * block IS, which is invisible in the finished book and decides its whole
+   * shape.
+   */
+  promotedHeadings: PromotedHeading[];
+  /**
    * What this book's own type measures — `typography.ts`, and null for a book
    * with no body prose in it to measure against.
    *
@@ -3693,6 +4018,7 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
     suppressedHeads: flow.suppressedHeads.map((b) => ({ page: b.page, text: b.text, why: b.why })),
     foldedSections: flow.folded,
     mergedHeadings: flow.mergedHeadings,
+    promotedHeadings: flow.promotedHeadings,
     typography,
     reflowedBlocks: flow.reflowed.length,
     adoptedNotes: flow.adoptedNotes.length,
