@@ -39,6 +39,7 @@ import { pdfMeta, PDF_META_FIELDS, type PdfMetaField } from './pdf/meta.js';
 import { probeEndpoint, probeLocalPython, probeVllmLocal, probeWslVllm } from './backend/probe.js';
 import { loadSettings, settingsPath, type FoundrySettings } from './backend/settings.js';
 import { dumpBlocks } from './vlm/blocks-dump.js';
+import { analyzeBook } from './analyze/run.js';
 import { buildBookFile } from './vlm/book-run.js';
 import { compileBook } from './vlm/compile.js';
 import { vlmConvert } from './vlm/convert.js';
@@ -808,6 +809,78 @@ const META_JSON: OptionSpec = {
   describe: 'Print the metadata as versioned JSON on stdout — before and after any change.',
 };
 
+// ── vlm-analyze ─────────────────────────────────────────────────────────────
+
+const AN_BOOK: OptionSpec = {
+  name: 'book',
+  type: 'string',
+  placeholder: '<book.jsonl>',
+  describe: 'The book file to read against the categories. Never written to.',
+};
+
+/**
+ * Where the report goes, and it is REQUIRED like every other `--out` here.
+ *
+ * A default of `<book>.analysis.jsonl` was considered and refused for the house
+ * rule `OUT_PATH` states: foundry never invents a name. It matters more on this
+ * command than on most, because the app owns the payload's name (main mints
+ * `analysis/<stepId>.jsonl`, docs/ANALYSIS.md §6) and a default would be a
+ * second place that decides what a step's file is called.
+ */
+const AN_OUT: OptionSpec = {
+  name: 'out',
+  type: 'string',
+  placeholder: '<report.jsonl>',
+  describe: 'Where the report is written. Required; foundry never invents a name.',
+};
+
+const AN_CATEGORIES: OptionSpec = {
+  name: 'categories',
+  type: 'string',
+  placeholder: '<cats.json>',
+  describe: 'A JSON list of categories, replacing the built-in set. Default: all of them.',
+};
+
+const AN_MODEL: OptionSpec = {
+  name: 'model',
+  type: 'string',
+  placeholder: '<name>',
+  describe: `The Ollama model that answers the verdicts. Default ${DEFAULT_TRANSLATE_MODEL}.`,
+};
+
+const AN_OLLAMA: OptionSpec = {
+  name: 'ollama',
+  type: 'string',
+  placeholder: '<url>',
+  describe: `Where Ollama is. Default ${DEFAULT_OLLAMA_ENDPOINT}. foundry never starts one.`,
+};
+
+const AN_NLI_PYTHON: OptionSpec = {
+  name: 'nli-python',
+  type: 'string',
+  placeholder: '<path>',
+  describe: 'The interpreter with torch and transformers in it. Also FOUNDRY_NLI_PYTHON.',
+};
+
+const AN_NLI_HOME: OptionSpec = {
+  name: 'nli-home',
+  type: 'string',
+  placeholder: '<dir>',
+  describe: 'Where the entailment model\'s weights live (HF_HOME). Also FOUNDRY_NLI_HOME.',
+};
+
+const AN_FETCH: OptionSpec = {
+  name: 'fetch-nli-model',
+  type: 'boolean',
+  describe: 'Let the worker download the entailment model this once. Also FOUNDRY_NLI_FETCH=1.',
+};
+
+const AN_FRESH: OptionSpec = {
+  name: 'fresh',
+  type: 'boolean',
+  describe: 'Ask every sentence and every passage again, into a file that replaces the report.',
+};
+
 export interface Command {
   name: string;
   /** One line, shown in the top-level command list. */
@@ -1298,6 +1371,49 @@ async function runVlmCompile(args: ParsedArgs): Promise<void> {
     ...(author !== undefined ? { author } : {}),
     log,
   });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// vlm-analyze
+// ═════════════════════════════════════════════════════════════════════════════
+
+async function runVlmAnalyze(args: ParsedArgs): Promise<void> {
+  const bookPath = requireString(args, 'book', 'the book file to analyse');
+  const outPath = requireString(args, 'out', 'where the report is written');
+  const categoriesPath = optionalString(args, 'categories');
+  const nliPython = optionalString(args, 'nli-python');
+  const nliHome = optionalString(args, 'nli-home');
+  /*
+   * The fetch hatch takes a flag OR an environment variable, because the two
+   * callers are different people: a person at a terminal pulling the weights
+   * once types the flag, and a machine being provisioned sets the variable in
+   * the same place it sets every other path this program reads.
+   */
+  const fetch = flag(args, 'fetch-nli-model') || process.env['FOUNDRY_NLI_FETCH'] === '1';
+
+  const result = await analyzeBook({
+    bookPath,
+    outPath,
+    ...(categoriesPath !== undefined ? { categoriesPath } : {}),
+    model: optionalString(args, 'model') ?? DEFAULT_TRANSLATE_MODEL,
+    endpoint: optionalString(args, 'ollama') ?? DEFAULT_OLLAMA_ENDPOINT,
+    nli: {
+      ...(nliPython !== undefined ? { python: nliPython } : {}),
+      ...(nliHome !== undefined ? { home: nliHome } : {}),
+      ...(fetch ? { fetch: true } : {}),
+    },
+    fresh: flag(args, 'fresh'),
+    log,
+  });
+
+  log(
+    `vlm-analyze: ${result.sentences} sentence(s), ${result.passages} candidate passage(s), `
+    + `${result.asked} verify call(s) paid for, ${result.flagged} flagged and ${result.skipped} `
+    + 'rejected.',
+  );
+  // The result is the path, and it is the last line on stdout. Everything above
+  // was progress and went to stderr.
+  process.stdout.write(`${result.outPath}\n`);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -2648,6 +2764,92 @@ export const COMMANDS: readonly Command[] = [
     ].join('\n'),
     options: [VB_READINGS, VB_PDF_IN, VLM_MODEL, VLM_PYTHON, VLM_ENDPOINT],
     run: runVlmBlocks,
+  },
+  {
+    name: 'vlm-analyze',
+    summary: 'Read a book against the categories: entailment ranks it, an Ollama model judges stance.',
+    usage: '--book <book.jsonl> --out <report.jsonl> [--categories <cats.json>] [--model <name>]'
+      + ' [--ollama <url>] [--nli-python <path>] [--nli-home <dir>] [--fresh]',
+    detail: [
+      'THE BOOK, READ AGAINST THE CATEGORIES. Every sentence of every prose block',
+      'is scored against every category\'s stance hypotheses by a zero-shot',
+      'entailment model; the sentences that survive are grown into',
+      'paragraph-sized passages; and each passage is put to an Ollama model with',
+      'exactly one question — is the AUTHOR asserting this claim as their own',
+      'position, or reporting, quoting, questioning or arguing against it?',
+      '',
+      'THAT LAST STAGE IS THE POINT. "These people are vermin" and "he called',
+      'them vermin, which is monstrous" score identically on the same hypothesis,',
+      'because both passages are about the same proposition. Nothing upstream can',
+      'tell them apart, and without the question a history of propaganda is',
+      'flagged as propaganda.',
+      '',
+      'NOTHING MATCHES A QUOTATION TO ANYTHING. Every finding is a block name and',
+      'a pair of character offsets into that block\'s own text, measured from the',
+      'book file. No model ever emits a location, and a report is only meaningful',
+      'against the bank that minted the names, which the header records.',
+      '',
+      'THE VERDICT IS THE WHOLE ANSWER. There is no generated explanation and no',
+      'severity: the passage IS the finding, and a rationale invented for it',
+      'would be a fabrication. The ranker\'s score is the only ordering.',
+      '',
+      'THERE IS NO SENSITIVITY DIAL, and that is a decision rather than an',
+      'omission. The run captures once at the widest calibrated net — anything',
+      'that could possibly match — and every candidate is verified and every',
+      'verdict stored, the rejections included. Strictness is a filter applied',
+      'when the report is READ, so changing your mind about it costs a click',
+      'rather than an hour.',
+      '',
+      'WHAT IT NEEDS. An Ollama server at --ollama (default',
+      'http://localhost:11434) holding --model, which foundry never starts,',
+      'stops or pulls; and a Python with torch, transformers and the',
+      'MoritzLaurer/deberta-v3-base-zeroshot-v2.0 weights, named with',
+      '--nli-python or FOUNDRY_NLI_PYTHON. There is no PATH search: a miss prints',
+      'every path that was tried. The weights live under --nli-home (or',
+      'FOUNDRY_NLI_HOME, or an HF_HOME you have already set, or foundry\'s own',
+      'config directory), and the worker runs OFFLINE — an analysis never blocks',
+      'on a network fetch, so a missing model refuses in a second rather than an',
+      'hour in. Pass --fetch-nli-model ONCE to let it download them; every run',
+      'after that is offline again.',
+      '',
+      'WHICH ROWS. The flowing prose: text, title, section-header, quote,',
+      'footnote, caption and list-item. Shelved rows are out — a running head is',
+      'not in the book the reader sees — and so are figures, formulae and tables,',
+      'which have no sentences in them.',
+      '',
+      'WHICH CATEGORIES. Ten tuned against reference material, plus two book',
+      'categories that are FIRST DRAFTS and say so: anti-evolution and',
+      'authoritarian-blueprint. The report names every untuned category in its',
+      'header, because their counts may be high or low and a reader deciding what',
+      'to trust needs to know which is which. `misinformation` is refused',
+      'outright and the refusal explains itself: whether an assertion is FALSE is',
+      'world knowledge, which an entailment model does not have.',
+      '',
+      '--categories takes a JSON list that REPLACES the built-in set:',
+      '[{"name":"hate"},{"name":"my-topic","description":"…","hypotheses":["The',
+      'author asserts that …"]}]. A hypothesis is a PROPOSITION a sentence can',
+      'entail, never an instruction to a reader and never a list of words to',
+      'match. A field this program does not read is an error rather than',
+      'something ignored.',
+      '',
+      'IT REMEMBERS WHAT IT PAID FOR. The report is its own cost cache: every',
+      'score and every verdict is filed under a hash of the question that',
+      'produced it, appended and fsynced as it lands, so a run that is killed',
+      'keeps everything but the call in flight and a re-run against an edited',
+      'book pays only for the edited blocks. The findings are replaced whole at',
+      'the end, by a rename, so nothing anybody paid for is destroyed until its',
+      'replacement is on the disk. --fresh asks everything again into a file that',
+      'takes the report\'s place only when the run finishes.',
+      '',
+      'RUNTIME HONESTY: ranking is minutes and verification can be an hour on a',
+      'hot book. Passages are verified STRONGEST FIRST, so a run you interrupt',
+      'has already finished the findings most worth trusting.',
+    ].join('\n'),
+    options: [
+      AN_BOOK, AN_OUT, AN_CATEGORIES, AN_MODEL, AN_OLLAMA,
+      AN_NLI_PYTHON, AN_NLI_HOME, AN_FETCH, AN_FRESH,
+    ],
+    run: runVlmAnalyze,
   },
   {
     name: 'translate',

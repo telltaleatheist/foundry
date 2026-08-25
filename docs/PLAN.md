@@ -3077,6 +3077,51 @@ page, a listed sub-section sits mid-page.**
   still the only way to say a chapter is called something else; (3) no test
   was written, per the standing rule.
 
+### Wave 50 — analysis: the book read against the categories (Owen, 2026-08-25) — IN FLIGHT
+
+The feature in Owen's words: *"it goes through a book and flags all the
+psychotic stuff… it should light up/highlight text that matches the
+categories, and have a list of hits in blocks on the right side, where
+compare would normally be… the analysis can probably live as another step
+under the step it was run against."* The design is argued in full in
+**`docs/ANALYSIS.md`** — this row is the index and the status.
+
+The method is briefcase's measured three-stage pipeline (NLI rank → window →
+schema-constrained Ollama verify), ported with its constants and its
+tried-and-rejected lessons. BookForge's old analysis is deprecated and is
+not the model. Two build units:
+
+- **Unit AN-1, engine (`vlm-analyze`)**: sentence segmenter (the project's
+  first), resident NLI worker (`nli_worker.py`, reimplemented from the wire
+  contract — the original was never committed anywhere), rank/window/verify
+  port, report as a `records.ts`-disciplined JSONL keyed by block id +
+  offsets with `bankSha` in the header. — BUILT (`src/analyze/`), awaiting
+  the lead's verification. **Owen's mid-build ruling landed with it**: no
+  `--sensitivity`, capture once at 0.2 / rescue 0.15, every candidate
+  verified and every verdict stored (`verdict` rides each finding row),
+  verification in descending window score, and briefcase's
+  `VERIFICATION_EMPHASIS` ladder deliberately not ported. Proved end to end
+  against a real book (Flashpoint of Revival, 60 rows): 141 sentences → 11
+  passages → 20 verify calls, 6 flagged / 5 rejected, and a second run paid
+  for none of them. Two things the builder flagged for a ruling rather than
+  deciding alone: the merged-window word cap lets a run of very short rows
+  (a scanned library slip in the front matter) chain into one 12-block
+  finding, and a degraded verify call is recorded as a skip but deliberately
+  NOT cached, so a re-run asks again.
+- **Unit AN-2, app**: `analysis` step action + gpu job kind + `analyze`
+  progress phase; plan door `workspace:plan-analysis`; launch dialog; hits
+  panel in compare's slot behind a `secondColumn` union; highlights as
+  `cut()` runs, one ink, no overlays; travel via `reveal`. — QUEUED (after
+  AN-1: it consumes the report format and the command line)
+
+Deferred out loud (ANALYSIS.md §9): no discovery fallback; no severity or
+generated rationales; no shipped NLI env yet (hand-named interpreter via
+`--nli-python` / `FOUNDRY_NLI_PYTHON`; the env-catalog target + doctor tier
+are follow-up); no misinformation category (measured out); book-category
+hypothesis tuning (anti-evolution, Project 2025 family) awaits reference
+books; BookForge re-vendor later. **The engine release that carries this is
+1.0.0** (Owen's standing ruling).
+
 ---
 
 ## 8. Session hygiene
