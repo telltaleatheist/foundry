@@ -90,6 +90,23 @@ MODEL_ID = 'MoritzLaurer/deberta-v3-base-zeroshot-v2.0'
 # request is one response, so the chunking is invisible on the wire.
 CHUNK = 32
 
+# How many (text, hypothesis) PAIRS the model reads per forward pass.
+#
+# This is a different number from CHUNK and the one that actually feeds the
+# GPU. The transformers pipeline defaults to batch_size=1 — every pair is its
+# own forward pass — which starves a GPU into spending its time on launch
+# overhead: a book is CHUNK texts x 25 hypotheses = 800 pairs per pipeline
+# call, and at batch 1 the first real run was pacing toward 45 minutes of rank
+# on a card that was mostly waiting (Owen, 2026-08-25: "i would have expected
+# it to take less time than that"). The pairs are short — a sentence and a
+# one-line hypothesis — so 64 of them padded together is still a small tensor
+# for a base-size encoder. Every sequence keeps its own attention mask and the
+# padding is masked out, so the answers are the same TO FLOAT PRECISION —
+# measured: the worst |batch-64 minus batch-1| over a probe matrix was 1.2e-4,
+# reduction-order noise, three orders of magnitude under the smallest gap any
+# threshold in this pipeline cares about (rescue floor 0.15 to capture 0.2).
+PAIR_BATCH = 64
+
 
 def fail(message):
     """Die the way foundry dies: one line naming the thing, nonzero exit."""
@@ -182,6 +199,7 @@ def score(classifier, texts, hypotheses, request_id):
             candidate_labels=hypotheses,
             multi_label=True,
             hypothesis_template='{}',
+            batch_size=PAIR_BATCH,
         )
         # A one-element list still comes back as a list from this pipeline, but
         # a bare dict is what it returns for a bare string — handled so a future
