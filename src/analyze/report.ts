@@ -132,6 +132,17 @@ export interface AnalysisHeader {
    */
   names: Record<string, string>;
 }
+/*
+ * THIS HEADER IS A CROSS-REPO CONTRACT ONCE 1.0.0 IS IN THE WORLD. BookForge
+ * reads `bankSha`, `hypotheses`, `verify`, `nli`, `capture`, `categories`,
+ * `untuned`, `hues` and `names` off it directly, REFUSES a report missing a
+ * required field rather than substituting (their side's no-fallbacks rule,
+ * 2026-08-26 — correct while no old report exists to be compatible with), and
+ * asked for the word on any header change shipped after release so they can
+ * gate by version instead of meeting it as a refusal. Same standing agreement
+ * as vtt-book's decode recipe: announce before shipping, land in the release
+ * they follow.
+ */
 
 /**
  * One row of the report — one block's share of one candidate window.
