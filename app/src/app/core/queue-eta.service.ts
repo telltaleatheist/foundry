@@ -219,13 +219,22 @@ function advance(
     const last = held?.samples[held.samples.length - 1];
     /*
      * A NEW CLOCK, on any of three tells. The phase changed (render → read,
-     * rank → verify); the total changed (the same two boundaries, seen from the
-     * other side — `analyze` reports both its stages under one phase name, so
-     * 141 becoming 20 is the only thing that says the run moved on); or the
-     * count went BACKWARDS, which is that same boundary again for a run whose
-     * two stages happen to have the same total. Any of them means the samples
-     * behind it describe different work, and a rate across the seam would
-     * forecast the new work at the old work's speed.
+     * rank → verify); the total changed (the same boundaries, seen from the
+     * other side — 141 sentences becoming 20 passages); or the count went
+     * BACKWARDS, which is that same boundary again for a run whose two stages
+     * happen to have the same total. Any of them means the samples behind it
+     * describe different work, and a rate across the seam would forecast the new
+     * work at the old work's speed.
+     *
+     * THE FIRST TELL NOW CATCHES THE ANALYSIS BOUNDARY ON ITS OWN, and it used
+     * not to: the two stages of an analysis reported under one phase name
+     * (`analyze`), so 141 becoming 20 was the only thing that said the run had
+     * moved on, and a book whose two stages happened to share a total was left
+     * leaning on the third tell. `rank` and `verify` are two phases now
+     * (`JobProgress.phase`), so the seam is declared rather than inferred and the
+     * estimate visibly restarts on it — which is exactly what rule 2 in the class
+     * note has always promised. Nothing in this file changed to gain that; the
+     * other two tells stay because they are about the other runs.
      */
     if (held === undefined || last === undefined
       || held.phase !== p.phase || held.total !== p.total || p.page < last.page) {

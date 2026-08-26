@@ -134,22 +134,31 @@ export interface JobProgress {
    * pages. The field is still `page` because it is the same quantity to every
    * bar that draws it — a count of finished things out of a known total.
    *
-   * `analyze` COUNTS TWO DIFFERENT THINGS UNDER ONE NAME, and the honest
-   * consequence is written here rather than papered over. The run ranks every
-   * sentence and then verifies every surviving passage (docs/ANALYSIS.md §2),
-   * and the two totals are unrelated — 141 sentences becoming 20 verify calls is
-   * an ordinary book — so the bar fills, resets and fills again, exactly as the
-   * endpoint route's rasterise-then-read pair does.
+   * `rank` AND `verify` ARE ONE RUN'S TWO STAGES, and they are two members here
+   * rather than one because they count two unrelated things. An analysis ranks
+   * every sentence in the book with the small entailment model and then verifies
+   * every surviving passage against the large one (docs/ANALYSIS.md §2) — 141
+   * sentences becoming 20 verify calls is an ordinary book.
    *
-   * WHICH OF THE TWO IS RUNNING DOES NOT REACH THIS FIELD, and the reason is
-   * `Job.note`'s own contract: the engine names the stage and the category ON
-   * the counting line (`analyze: verify 3/20 (hate)`), and a count CLEARS
-   * the note by construction — that is what makes a note mean "since the count
-   * last moved". So the shelf's line says the fraction and no noun at all, which
-   * is the one wording that is true of both halves. What must never happen is
-   * the noun `pages`: sentences are not pages and a passage is not a page.
+   * ── Why the stage reaches this field, when it used not to ───────────────────
+   *
+   * It was one member, `analyze`, on the argument that the engine names the stage
+   * on the counting line and `Job.note` would carry it. That argument was about a
+   * SENTENCE and this field is read by a BAR. Owen, 2026-08-25: *"right now it
+   * looks like it does the first pass, 1-100, and the same progress bar starts
+   * over for the 27b run at 0% and goes to 100%."* One bar filling twice reads as
+   * a glitch, and no wording under it repairs that — the surface has to be able
+   * to draw the two stages as two things, which means knowing which one is
+   * counting. The note argument still holds for everything it was actually about:
+   * the CATEGORY on a verify line (`analyze: verify 3/20 (hate)`) is not lifted
+   * out, because a count clears the note by construction and that is what makes a
+   * note mean "since the count last moved".
+   *
+   * WHAT MUST NEVER APPEAR BESIDE EITHER OF THEM IS THE NOUN `pages`: a sentence
+   * is not a page and a passage is not a page. The two nouns are declared once,
+   * beside the two labels, in `QueueViewService`.
    */
-  phase: 'render' | 'read' | 'translate' | 'analyze';
+  phase: 'render' | 'read' | 'translate' | 'rank' | 'verify';
 }
 
 /**

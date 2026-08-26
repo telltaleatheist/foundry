@@ -267,17 +267,27 @@ export function parseProgressLine(line: string): JobProgress | null {
    * entirely. Naming `rank` and `verify` means only the engine's own two counting
    * lines are counts.
    *
-   * ONE PHASE FOR BOTH STAGES, and the consequence is written at
-   * `JobProgress.phase`: the bar fills, resets and fills again, because 141
-   * sentences becoming 20 verify calls is one run measuring two unrelated things.
-   * The parenthesised category is deliberately NOT lifted out — it rides on a
-   * COUNTING line, and a count clears `Job.note` by construction, which is what
-   * makes a note mean "since the count last moved". The row's own log line
-   * carries it, in the engine's words.
+   * A PHASE EACH, and the stage word is what says which. It was one phase for
+   * both — `analyze` — and the bar that drew it filled, reset and filled again,
+   * because 141 sentences becoming 20 verify calls is one run measuring two
+   * unrelated things. Owen read that as a glitch, which it looks exactly like, so
+   * the word the engine already prints is now CAPTURED rather than merely matched
+   * on, and the two stages are two members of the phase union
+   * (`JobProgress.phase`, where the whole argument lives). The surfaces draw a bar
+   * apiece; nothing else about this line changed.
+   *
+   * The parenthesised category is still deliberately NOT lifted out — it rides on
+   * a COUNTING line, and a count clears `Job.note` by construction, which is what
+   * makes a note mean "since the count last moved". The row's own log line carries
+   * it, in the engine's words.
    */
-  const analyzing = /^analyze:\s+(?:rank|verify)\s+(\d+)\/(\d+)\b/.exec(trimmed);
+  const analyzing = /^analyze:\s+(rank|verify)\s+(\d+)\/(\d+)\b/.exec(trimmed);
   if (analyzing) {
-    return { phase: 'analyze', page: Number(analyzing[1]), total: Number(analyzing[2]) };
+    return {
+      phase: analyzing[1] === 'rank' ? 'rank' : 'verify',
+      page: Number(analyzing[2]),
+      total: Number(analyzing[3]),
+    };
   }
 
   /*

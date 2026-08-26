@@ -268,9 +268,15 @@ lesson, not the corpse).
 
 - `'analysis'` joins `STEP_ACTIONS` (one array, union derived — the capture
   lesson), `JobKind`, and `JOB_RESOURCE` as **gpu** (Ollama holds the card,
-  translate's reason). Lane wording added to the shelf. New progress phase
-  `analyze` in `JobProgress` and `parseProgressLine` — pattern order there
-  is load-bearing, insert carefully.
+  translate's reason). Lane wording added to the shelf. Two new progress
+  phases — `rank` and `verify` — in `JobProgress` and `parseProgressLine`,
+  where pattern order is load-bearing (insert carefully) and the stage word
+  the pattern already matched on is CAPTURED. It was one phase, `analyze`,
+  and the one bar drawn over both stages filled to the end and started
+  again; Owen read that as a fault, which is what it looks like. The queue's
+  two bar-drawing surfaces stack a small bar per stage
+  (`QueueViewService.stageBars`); the chip's hairline stays one bar,
+  measuring the stage that is running.
 - A plan door `workspace:plan-analysis` mints the step id and the payload
   path (main owns names), `family:verb`, `ipcMain.handle`, and
   `docs/IPC-CHANNELS.md` regenerated in the same commit.

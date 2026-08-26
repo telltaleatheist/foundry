@@ -3148,7 +3148,12 @@ not the model. Two build units:
      CLEARS the note by contract — that is what makes a note mean "since the
      count last moved". So the shelf's line is `Analysing n / m` with no
      noun (never "pages"), the bar fills twice, and the row's own log line
-     carries the stage in the engine's words.
+     carries the stage in the engine's words. **The second half of this was
+     REVERSED the same day — see "Two bars, because there are two passes"
+     below.** The category still cannot ride the note and does not; what was
+     wrong was concluding from that that the STAGE could not reach
+     `JobProgress` either. The note's contract is about a sentence; a bar is
+     not a sentence.
   4. **The tree does not open the panel; the head row does.** Compare is
      offered from `app-compare-picker` in the book view's head row (not from
      the tree), so `app-analysis-picker` mirrors it exactly, filtered to
@@ -3199,6 +3204,29 @@ not the model. Two build units:
   queue page's slot cards, and next to the book's name in the chip (the one
   part of the queue on screen without a click). Bundle 863.99 → 866.63 kB,
   still a WARNING.
+
+- **Two bars, because there are two passes** — LANDED. Owen, watching the
+  same run: *"right now it looks like it does the first pass, 1-100, and the
+  same progress bar starts over for the 27b run at 0% and goes to 100%. could
+  be good to have two different smaller progress bars, after the bookforge
+  queue model."* `JobProgress.phase`'s `analyze` member SPLIT into `rank` and
+  `verify` — `parseProgressLine` captures the stage word it was already
+  matching on, and the two phase-keyed tables the compiler led to are
+  `stepLine` (now "Ranking 141 / 141 sentences" / "Verifying 3 / 20
+  passages" — stage-true, and still never "pages") and the new `STAGE_LABEL` /
+  `STAGE_NOUN` beside it. The dropdown's running row and the queue page's slot
+  cards draw `QueueViewService.stageBars`: two small labelled bars, the
+  counting one live and the other dimmed, with bar 1 drawn FULL under a verify
+  count — arithmetic, not a stored fact, because verification cannot start
+  until ranking has finished. The count and the estimate ride the counting
+  stage's own line, so nothing is labelled twice. The chip's hairline stays
+  ONE bar showing the running stage, argued at the markup: two one-pixel rules
+  in a 2px edge is a new unreadable thing, not a fix. `QueueEtaService` needed
+  no change at all and gains from it — the rank → verify seam is now the
+  ordinary phase-change tell rather than something inferred from the total
+  moving, which is what its own honesty rule 2 has always promised. Nothing
+  touched the wire, the queue or a `Job`. Bundle 866.63 → 869.86 kB, still a
+  WARNING.
 
 Deferred out loud (ANALYSIS.md §9): no discovery fallback; no severity or
 generated rationales; no shipped NLI env yet (hand-named interpreter via

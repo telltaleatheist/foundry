@@ -182,6 +182,15 @@ import { hosted } from '../../core/foundry';
                       away when the count stops — so this corner is a percentage
                       alone for the first stretch of every run, and again the
                       moment a run goes quiet.
+
+                      ON A RUN WITH TWO STAGES BOTH NUMBERS ARE THE STAGE THAT
+                      IS COUNTING, which is the one thing they could honestly be:
+                      ranking sentences and verifying passages are unrelated
+                      quantities (the estimate drops its clock at the boundary
+                      for exactly that reason), so a combined percentage would be
+                      an average of two things that do not average. The corner
+                      therefore agrees with whichever of the two bars below is
+                      moving.
                     -->
                     <div class="right">
                       <div class="pct">{{ view.percent(busy) }}%</div>
@@ -192,20 +201,47 @@ import { hosted } from '../../core/foundry';
                   }
                 </div>
 
-                <div class="bar" [class.indeterminate]="!view.determinate(busy)">
-                  <i [style.width.%]="view.percent(busy)"></i>
-                </div>
+                @if (view.stageBars(busy); as stages) {
+                  <!--
+                    TWO STAGES, TWO BARS — Owen's ruling, and the argument is in
+                    \`stageBars\`: an analysis ranks every sentence and then
+                    verifies the survivors, and one bar over both filled to the
+                    end and started again, which reads as a fault rather than as
+                    a second pass. The stage that has not started is drawn dimmed
+                    rather than left out, because an empty bar with a name on it
+                    is how the run says there is another pass coming.
 
-                <!--
-                  THE FULL PROGRESS SENTENCE, both halves of it. The count says
-                  how far; the line under it is whatever the engine last said
-                  that was NOT a count — the retry, the fallback, the block it is
-                  chewing on. A count alone cannot tell working from wedged, and
-                  a person who believes a job is hung kills it: an hour of GPU
-                  thrown away by the progress display. The page has room, so it
-                  spends more of the sentence than the dropdown can.
-                -->
-                <p class="step">{{ view.stepLine(busy) }}</p>
+                    The count rides the stage it belongs to and the sentence
+                    below is dropped for these rows: it would say the same words
+                    the moving stage's own line already says.
+                  -->
+                  <div class="stages">
+                    @for (stage of stages; track stage.key) {
+                      <div class="stage" [class.idle]="!stage.active && !stage.done">
+                        <span class="stage-name">{{ stage.label }}</span>
+                        <div class="bar"><i [style.width.%]="stage.percent"></i></div>
+                        @if (stage.count) {
+                          <span class="stage-count">{{ stage.count }}</span>
+                        }
+                      </div>
+                    }
+                  </div>
+                } @else {
+                  <div class="bar" [class.indeterminate]="!view.determinate(busy)">
+                    <i [style.width.%]="view.percent(busy)"></i>
+                  </div>
+
+                  <!--
+                    THE FULL PROGRESS SENTENCE, both halves of it. The count says
+                    how far; the line under it is whatever the engine last said
+                    that was NOT a count — the retry, the fallback, the block it is
+                    chewing on. A count alone cannot tell working from wedged, and
+                    a person who believes a job is hung kills it: an hour of GPU
+                    thrown away by the progress display. The page has room, so it
+                    spends more of the sentence than the dropdown can.
+                  -->
+                  <p class="step">{{ view.stepLine(busy) }}</p>
+                }
                 @if (view.stepDetail(busy, 400); as detail) {
                   <p class="note-line" [title]="busy.note ?? busy.message ?? ''">{{ detail }}</p>
                 }
@@ -585,6 +621,40 @@ import { hosted } from '../../core/foundry';
       0% { transform: translateX(-100%); }
       100% { transform: translateX(320%); }
     }
+
+    /*
+      ── THE TWO STAGES OF AN ANALYSIS ────────────────────────────────────────
+
+      The slot card has the width the dropdown's row does not, so the stack is
+      the same three columns with more room in them: the name is legible at the
+      card's own size and the count sits at the right edge where the eye already
+      goes for the percentage. Same shape in both surfaces on purpose — a person
+      who has learned to read the pair in the dropdown should not have to learn
+      it again here.
+    */
+    .stages { display: flex; flex-direction: column; gap: 7px; margin-top: 10px; }
+    .stage {
+      display: grid;
+      grid-template-columns: 68px minmax(0, 1fr) max-content;
+      align-items: center;
+      gap: 10px;
+    }
+    /* The stack's gap does the spacing, so the bars inside it carry none — and
+       they are a pixel thinner than the single bar, so two of them read as two
+       smaller measurements rather than as twice the one they replace. */
+    .stage .bar { height: 4px; margin-top: 0; }
+    .stage-name { font-size: 11px; color: var(--text-tertiary); white-space: nowrap; }
+    .stage-count {
+      font-size: 11.5px;
+      color: var(--text-tertiary);
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    /* Not started: quieter in both parts, so the eye lands on the stage that is
+       moving. Never hidden — an empty bar with a name on it is the run saying
+       there is another pass coming. */
+    .stage.idle .stage-name { color: var(--text-muted); }
+    .stage.idle .bar { opacity: 0.55; }
 
     .step { margin: 9px 0 0; font-size: 12px; color: var(--text-secondary); }
     .note-line {
