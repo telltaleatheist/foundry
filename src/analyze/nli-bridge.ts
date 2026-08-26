@@ -93,13 +93,15 @@ export class NliRequestError extends Error {
 const READY_TIMEOUT_MS = 180_000;
 
 /**
- * How long to wait for one scoring response.
+ * How long the worker may go SILENT on a request before it is presumed hung.
  *
- * briefcase's 600 s, kept, and it is a per-REQUEST budget rather than a
- * per-sentence one: a request is the whole sentence pass or the whole window
- * pass of a book. briefcase measured one pass over a 60-minute transcript (801
- * sentences) at about 45 s on MPS; a three-hundred-page book is an order of
- * magnitude more text, which is what the order-of-magnitude headroom is for.
+ * briefcase's 600 s number, kept, but the meaning changed with the progress
+ * lines: the worker reports each chunk it finishes and every report re-arms
+ * this deadline (`score()`), so it now measures silence rather than the length
+ * of the book. As a flat per-request budget it was quietly a cap on book size —
+ * a slow card honestly working a long pass would have been killed as hung at
+ * the ten-minute mark with its progress still arriving. Ten silent minutes on
+ * a 32-text chunk, by contrast, is not a slow card; it is a wedged one.
  */
 const SCORE_TIMEOUT_MS = 600_000;
 
@@ -291,6 +293,8 @@ interface WorkerResponse {
   error?: string;
   /** The worker's traceback tail when `error` is set — see the worker's except. */
   trace?: string;
+  /** Texts scored so far in the named request — one line per worker chunk. */
+  progress?: number;
 }
 
 /**
@@ -335,7 +339,13 @@ export class NliWorker {
   private nextId = 1;
   private readonly pending = new Map<
     number,
-    { resolve: (scores: number[][]) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
+    {
+      resolve: (scores: number[][]) => void;
+      reject: (error: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+      /** A progress line for this request: re-arms `timer`, then tells the caller. */
+      progress: (done: number) => void;
+    }
   >();
   /** Set the moment the process is gone. Every later call refuses with it. */
   private dead: string | null = null;
@@ -518,6 +528,12 @@ export class NliWorker {
     }
     const entry = typeof message.id === 'number' ? this.pending.get(message.id) : undefined;
     if (entry === undefined) return;
+    // A progress line is not an answer: the request stays pending, its
+    // deadline moves, and the caller's bar moves with it.
+    if (typeof message.progress === 'number') {
+      entry.progress(message.progress);
+      return;
+    }
     clearTimeout(entry.timer);
     this.pending.delete(message.id as number);
     if (typeof message.error === 'string') {
@@ -553,8 +569,19 @@ export class NliWorker {
    * A per-request refusal from the worker arrives as `NliRequestError`; a dead
    * worker as `NliWorkerError`. See the header for why the caller must be able
    * to tell them apart.
+   *
+   * `onProgress` is called with the count of texts the worker has scored so far
+   * IN THIS REQUEST, once per worker chunk. Each such line also RE-ARMS the
+   * response timeout: the deadline measures SILENCE, not the length of the
+   * book. Without that the timeout was a cap on how big a request could be —
+   * a slow card working honestly through a long pass would have been killed as
+   * hung at the ten-minute mark while its progress lines were still arriving.
    */
-  async score(texts: readonly string[], hypotheses: readonly string[]): Promise<number[][]> {
+  async score(
+    texts: readonly string[],
+    hypotheses: readonly string[],
+    onProgress?: (done: number) => void,
+  ): Promise<number[][]> {
     if (this.dead !== null) throw new NliWorkerError(this.dead);
     const child = this.child;
     if (child === null) throw new NliWorkerError('the analysis worker is not running');
@@ -563,18 +590,28 @@ export class NliWorker {
     const sane = texts.map(scorableText);
     const id = this.nextId++;
     return new Promise<number[][]>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const expire = (): void => {
         this.pending.delete(id);
         reject(new NliWorkerError(
-          `the analysis worker did not answer a ${texts.length}-text request within `
-          + `${SCORE_TIMEOUT_MS / 1000}s`,
+          `the analysis worker went ${SCORE_TIMEOUT_MS / 1000}s without answering or reporting `
+          + `progress on a ${texts.length}-text request`,
         ));
-      }, SCORE_TIMEOUT_MS);
-      this.pending.set(id, { resolve, reject, timer });
+      };
+      const entry = {
+        resolve,
+        reject,
+        timer: setTimeout(expire, SCORE_TIMEOUT_MS),
+        progress: (done: number): void => {
+          clearTimeout(entry.timer);
+          entry.timer = setTimeout(expire, SCORE_TIMEOUT_MS);
+          onProgress?.(done);
+        },
+      };
+      this.pending.set(id, entry);
       try {
         child.stdin.write(`${JSON.stringify({ id, texts: sane, hypotheses })}\n`);
       } catch (error) {
-        clearTimeout(timer);
+        clearTimeout(entry.timer);
         this.pending.delete(id);
         reject(new NliWorkerError(`could not write to the analysis worker: ${(error as Error).message}`));
       }

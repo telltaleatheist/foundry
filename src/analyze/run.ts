@@ -278,7 +278,15 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
       const misses = [...wanted.entries()];
       for (let at = 0; at < misses.length; at += SCORE_BATCH) {
         const batch = misses.slice(at, at + SCORE_BATCH);
-        const raw = await (await ensureWorker()).score(batch.map(([, text]) => text), flat.texts);
+        // The worker reports each chunk it finishes, so the bar moves every few
+        // seconds rather than once per batch — `finished` itself only advances
+        // when the batch's scores are banked, which keeps the count honest if
+        // the request dies partway.
+        const raw = await (await ensureWorker()).score(
+          batch.map(([, text]) => text),
+          flat.texts,
+          (done) => log(`analyze: rank ${Math.min(total, finished + done)}/${total} sentences`),
+        );
         if (raw.length !== batch.length) {
           throw new AnalyzeError(
             `the analysis worker was asked to score ${batch.length} text(s) and answered for `

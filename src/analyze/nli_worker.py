@@ -6,12 +6,14 @@ subprocess in foundry: `vlm_page.py` is a batch worker (config in, pages out,
 stdin closed at the start), and this one keeps stdin open because the model
 costs ten to ninety seconds to load and a book is scored in several passes.
 
-THE WIRE, and it is briefcase's verbatim so its measurements transfer:
+THE WIRE, and it is briefcase's so its measurements transfer, plus one line
+briefcase never had (`progress`, foundry's — see `score()`):
 
     worker -> {"ready": true, "device": "cuda|mps|cpu", "model": "..."}
     host   -> {"id": 1, "texts": ["..."], "hypotheses": ["..."]}
+    worker -> {"id": 1, "progress": 32}          (texts scored so far, per chunk)
     worker -> {"id": 1, "scores": [[0.91, 0.02], ...]}
-    worker -> {"id": 1, "error": "..."}          (this request only; still alive)
+    worker -> {"id": 1, "error": "...", "trace": "..."}   (this request only; still alive)
 
 `scores` is ROW-MAJOR texts x hypotheses, raw per-hypothesis probabilities.
 `multi_label=True`, so a row does NOT sum to 1 — each hypothesis is scored
@@ -149,13 +151,21 @@ def load(device):
         )
 
 
-def score(classifier, texts, hypotheses):
+def score(classifier, texts, hypotheses, request_id):
     """One request's matrix: len(texts) rows, len(hypotheses) columns.
 
     The re-map is the whole of this function's risk — see the module docstring.
     Duplicates are refused here rather than deduplicated, because a caller that
     sent the same hypothesis twice believes it is asking two questions and would
     be handed one answer twice with nothing saying so.
+
+    A PROGRESS LINE PER CHUNK, because one request is a whole pass of a book
+    and a pass is minutes. The host draws its bar from these — without them the
+    queue showed one number at the start of a pass and one at the end, and a
+    person watching several minutes of stillness kills a job that is working
+    (Owen, 2026-08-25: "anything at all to indicate its actually working").
+    They also tell the host the worker is ALIVE, which is what lets its
+    response timeout measure silence rather than the length of the book.
     """
     if len(set(hypotheses)) != len(hypotheses):
         raise ValueError('two hypotheses in this request are the same string, so their scores '
@@ -181,6 +191,7 @@ def score(classifier, texts, hypotheses):
         for result in results:
             by_label = dict(zip(result['labels'], result['scores']))
             rows.append([float(by_label[hypothesis]) for hypothesis in hypotheses])
+        emit({'id': request_id, 'progress': min(start + CHUNK, len(texts))})
     return rows
 
 
@@ -211,7 +222,7 @@ def main():
             if len(texts) == 0 or len(hypotheses) == 0:
                 emit({'id': request_id, 'scores': []})
                 continue
-            emit({'id': request_id, 'scores': score(classifier, texts, hypotheses)})
+            emit({'id': request_id, 'scores': score(classifier, texts, hypotheses, request_id)})
         except Exception as error:  # noqa: BLE001 - one bad request must not end the worker
             # The traceback rides IN the response rather than on stderr, because
             # the host echoes stderr only while the model is loading; an error

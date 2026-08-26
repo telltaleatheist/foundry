@@ -129,9 +129,16 @@ Wire contract (briefcase's, kept verbatim so measurements transfer):
 - worker → `{"ready": true, "device": "cuda|mps|cpu"}` once the model is
   loaded; ready timeout 180 s.
 - host → `{"id": n, "texts": [...], "hypotheses": [...]}`
+- worker → `{"id": n, "progress": k}` per internal chunk — foundry's one
+  addition to briefcase's wire: it moves the queue bar every few seconds and
+  re-arms the response timeout, which therefore measures SILENCE rather than
+  the length of the book (a flat per-request deadline was quietly a cap on
+  book size).
 - worker → `{"id": n, "scores": [[...], ...]}` — row-major texts ×
   hypotheses, raw per-hypothesis probabilities (`multi_label`, rows do not
-  sum to 1); or `{"id": n, "error": "..."}`
+  sum to 1); or `{"id": n, "error": "...", "trace": "..."}` — the traceback
+  rides in the response because the host echoes worker stderr only during
+  the model load.
 - **The transformers pipeline returns labels sorted by score; the worker
   must re-map to input hypothesis order before emitting.** This is the one
   place a reimplementation silently breaks, so it is said here and in the
