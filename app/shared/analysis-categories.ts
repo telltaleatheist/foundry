@@ -173,6 +173,10 @@ export function analysisCategoryName(id: string): string {
  * and nothing here needs the category to still exist to draw it.
  */
 export function analysisCategoryHue(id: string): number {
+  // The hue values and this fallback are MIRRORED in src/analyze/plan.ts
+  // (`categoryHue`), which stamps them into every report's `hues` header so
+  // the artifact owns its colours on devices that carry neither table. A
+  // change here that does not move there is two answers about one colour.
   const known = ANALYSIS_CATEGORIES.find((one) => one.id === id);
   if (known !== undefined) return known.hue;
   // FNV-1a, 32-bit, spelled out rather than imported: it is four lines, it is

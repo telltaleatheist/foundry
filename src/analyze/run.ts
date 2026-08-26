@@ -45,6 +45,7 @@ import {
   buildPlan,
   hypothesisSetVersion,
   parseCategoriesJson,
+  planHues,
   untunedNames,
   type CategoryRequest,
   type RankPlan,
@@ -469,6 +470,7 @@ async function verifyStage(args: {
       capture: { threshold: CAPTURE_THRESHOLD, rescue: RESCUE_FLOOR },
       categories: args.plan.map((one) => one.category),
       untuned: untunedNames(args.plan),
+      hues: planHues(args.plan),
     }),
     rows,
   );

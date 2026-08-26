@@ -116,6 +116,14 @@ export interface AnalysisHeader {
    * first drafts (docs/ANALYSIS.md §5).
    */
   untuned: string[];
+  /**
+   * Each category's display hue (0–359), keyed by category — the report owning
+   * its own colours, so a reader on any device (BookForge's phone player asked)
+   * draws a category exactly the colour the desktop drew it without carrying a
+   * copy of the table. `categoryHue` in plan.ts is the authority and the app's
+   * shared table is its mirror.
+   */
+  hues: Record<string, number>;
 }
 
 /**

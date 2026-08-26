@@ -499,3 +499,53 @@ export function hypothesisSetVersion(plan: readonly RankPlan[]): string {
 export function untunedNames(plan: readonly RankPlan[]): string[] {
   return plan.filter((entry) => !entry.tuned).map((entry) => entry.category);
 }
+
+/**
+ * THE HUE EACH CATEGORY IS DRAWN IN, carried in the report so the artifact
+ * owns its own colours.
+ *
+ * The values are `app/shared/analysis-categories.ts`'s, MIRRORED — that file
+ * names this one and this one names it, the same discipline the category ids
+ * already keep — and the report's `hues` header field exists because a reader
+ * with no access to either table (BookForge's bookshelf player was the ask,
+ * 2026-08-26: *"the player draws a category by colour and I won't keep a
+ * second hue table"*) must still draw a category the same colour the desktop
+ * drew it. A category outside the table (a described one, or one from a
+ * newer build's list) hashes to its hue: FNV-1a, 32-bit, spelled out rather
+ * than imported — the identical four lines the app's copy spells, because a
+ * hash whose exact arithmetic decides a colour is a thing to be able to read
+ * at the point of use, and two implementations that could drift would be two
+ * answers about one category's colour.
+ */
+const CATEGORY_HUES: Record<string, number> = {
+  'political-demonization': 352,
+  'hate': 130,
+  'conspiracy': 264,
+  'dehumanization': 68,
+  'violence': 210,
+  'false-prophecy': 20,
+  'christian-nationalism': 158,
+  'prosperity-gospel': 300,
+  'extremism': 96,
+  'political-violence': 236,
+  'anti-evolution': 44,
+  'authoritarian-blueprint': 186,
+};
+
+export function categoryHue(category: string): number {
+  const known = CATEGORY_HUES[category];
+  if (known !== undefined) return known;
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < category.length; i += 1) {
+    hash ^= category.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash % 360;
+}
+
+/** Every plan category's hue, in plan order — the report header's `hues`. */
+export function planHues(plan: readonly RankPlan[]): Record<string, number> {
+  const hues: Record<string, number> = {};
+  for (const entry of plan) hues[entry.category] = categoryHue(entry.category);
+  return hues;
+}
