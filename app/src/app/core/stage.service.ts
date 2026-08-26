@@ -269,6 +269,24 @@ export class StageService {
     this.close('analysis');
   }
 
+  /**
+   * The same wish, from a caller that KNOWS the project — the tree's analysis
+   * card.
+   *
+   * `open` reads the project off the document on screen because the head-row
+   * picker can honestly name nothing else. The tree can: its row carries the
+   * project directory the ledger row belongs to, and deriving from the screen
+   * instead would put the click in a race the tree already lost once — its acts
+   * go through `stand()`, which moves the pointer without awaiting a tab, so
+   * "what is on screen" at click time may be yesterday's document or nothing.
+   * The wish is set with the row's own facts and the validated computed does
+   * what it exists to do: the column appears the moment the person is looking
+   * at that project's document, and never over anybody else's.
+   */
+  startAnalysisAt(projectDir: string, stepId: string): void {
+    this.second.set({ kind: 'analysis', projectDir, stepId });
+  }
+
   private open(kind: SecondColumn['kind'], stepId: string): void {
     const tab = this.activeDocument();
     if (tab === null) return;

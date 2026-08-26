@@ -2831,6 +2831,25 @@ export class OpenDocumentsComponent {
       this.picked.set(row.key);
       return;
     }
+    /*
+     * AN ANALYSIS CARD OPENS ITS REPORT, AND MOVES NOTHING. A report is not a
+     * place to stand: nothing is ever made from one, it has no rendering for
+     * the bench to draw, and the landing deliberately left the pointer beside
+     * it — so standing here would move the position onto a row whose only
+     * answer to the screen is silence, which is exactly what the first person
+     * to press one got (Owen, 2026-08-25: *"clicking it does nothing"*). What
+     * the click means on this card is "show me what the analysis found", and
+     * that is the hits panel, aimed at this step by the row's own project and
+     * id (`startAnalysisAt` — the tree must not derive the project from the
+     * screen, for the race its docblock names). The panel draws beside the
+     * book the person is reading; if no document of this project is up, the
+     * wish waits for one, which is the validated column's ordinary contract.
+     */
+    if (row.kind === 'step' && row.step !== null && row.step.action === 'analysis') {
+      this.picked.set(row.key);
+      if (row.dir !== null) this.stage.startAnalysisAt(row.dir, row.step.id);
+      return;
+    }
     if (row.kind === 'root' || row.kind === 'step') {
       this.picked.set(row.key);
       void this.stand(row);
@@ -4299,6 +4318,18 @@ function titleForStep(step: LedgerStep): string {
       return 'Applied changes';
     case 'metadata':
       return metadataSentence(step.params);
+    /*
+     * A NOUN, "The scan"'s precedent again: what a person wants off this card
+     * is the report drawn beside their book, and pressing it does exactly that
+     * (`pickRow`). And WITHOUT this case the `default` below calls the card
+     * "Translated" — the third table to fall into the exact trap the `capture`
+     * comment above warns about, and the second action to actually fall in it
+     * (Owen, 2026-08-25: *"it came out as 'translated' rather than
+     * analysis"*). The default stays a default because translate params
+     * genuinely vary; every action that is not a translation must say so here.
+     */
+    case 'analysis':
+      return 'The analysis';
     default:
       return translateSentence(step.params);
   }
