@@ -45,6 +45,7 @@ import { compileBook } from './vlm/compile.js';
 import { vlmConvert } from './vlm/convert.js';
 import { explodeEpub } from './vlm/epub-explode.js';
 import { replaysCompletedBank, vlmRead } from './vlm/read.js';
+import { mintVttBook } from './vlm/vtt-book.js';
 import { DEFAULT_VLM_CONCURRENCY } from './vlm/endpoint.js';
 import { DEFAULT_VLM_MODEL_ID, VLM_MODELS } from './vlm/models.js';
 import { parsePageList } from './vlm/pages.js';
@@ -403,6 +404,45 @@ const BOOK_PYTHON: OptionSpec = {
   type: 'string',
   placeholder: '<path>',
   describe: 'The interpreter with PyMuPDF in it, for the figure crops. Also FOUNDRY_VLM_PYTHON.',
+};
+
+// ── vtt-book ─────────────────────────────────────────────────────────────────
+
+/**
+ * THE THIRD SOURCE A BOOK CAN BE MADE OF — an audiobook's own transcript.
+ *
+ * IT IS A COMMAND OF ITS OWN AND NOT A FOURTH FLAG ON `vlm-book`, which is the
+ * one judgement in this seam that could reasonably have gone the other way.
+ * `--readings` and `--epub` sit together because they are two shapes of one act:
+ * a document somebody scanned or somebody published, put through the reflow's
+ * rules, with figures to cut and chapters to seed and a `--pdf`/`--pages` pair
+ * that only means anything there. A transcript shares none of that. It has no
+ * figures, no divisions, no typography, no page to be an estimate of and nothing
+ * for the four other flags on that command to do — and `vlm-book`'s help is
+ * already eighty lines explaining a reflow this route does not run. A separate
+ * name is also the honest thing for the caller: BookForge shells `vtt-book` and
+ * then `analyze`, and a command called `vlm-book` would be telling them there is
+ * a vision model in a path that never touches one.
+ */
+const VTT_IN: OptionSpec = {
+  name: 'vtt',
+  type: 'string',
+  placeholder: '<transcript.vtt>',
+  describe: 'The audiobook transcript to mint from. Read, never written.',
+};
+
+const VTT_OUT: OptionSpec = {
+  name: 'out',
+  type: 'string',
+  placeholder: '<book.jsonl>',
+  describe: 'Where the book file is written. One row per cue, in the transcript\'s order.',
+};
+
+const VTT_LANGUAGE: OptionSpec = {
+  name: 'language',
+  type: 'string',
+  placeholder: '<bcp47>',
+  describe: 'The recording\'s language, as a BCP-47 tag. Declared, not detected. Defaults to en.',
 };
 
 // ── vlm-compile ──────────────────────────────────────────────────────────────
@@ -1347,6 +1387,38 @@ async function runVlmBook(args: ParsedArgs): Promise<void> {
     ...(python !== undefined ? { python } : {}),
     log,
   });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// vtt-book
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * `vtt-book` — an audiobook's transcript in, a book file out.
+ *
+ * THREE FLAGS AND NO FOURTH, and the missing one is the interesting one: there
+ * is no `--bank-sha`. The identity of the source is minted HERE, off the parsed
+ * cues (`cueDigest`, vtt-book.ts), because an identity a caller passes in is an
+ * identity a caller can get wrong — and getting it wrong is not a visible
+ * failure, it is a report that silently refuses or silently does not refuse a
+ * year later. The recipe is in the help so the caller can reproduce it for a
+ * cross-check; nothing requires them to.
+ */
+async function runVttBook(args: ParsedArgs): Promise<void> {
+  const report = mintVttBook({
+    vttPath: requireString(args, 'vtt', 'the audiobook transcript to mint a book from'),
+    outPath: requireString(args, 'out', 'where the book file is written'),
+    // The same default and the same word as vlm-convert's and vlm-book's:
+    // declared, never detected, and one spelling of the default across every
+    // command that writes a language into a document.
+    language: optionalString(args, 'language') ?? 'en',
+    log,
+  });
+  // The result is the path, and it is the last line on stdout. Everything above
+  // was progress and went to stderr — `analyze`'s contract exactly, because
+  // BookForge shells the two of them back to back and must not have to know
+  // which one it is reading.
+  process.stdout.write(`${report.outPath}\n`);
 }
 
 /**
@@ -2586,6 +2658,98 @@ export const COMMANDS: readonly Command[] = [
     ].join('\n'),
     options: [BOOK_READINGS, BOOK_EPUB, BOOK_OUT, BOOK_PDF, BOOK_PAGES, BOOK_LANGUAGE, BOOK_PYTHON],
     run: runVlmBook,
+  },
+  {
+    name: 'vtt-book',
+    summary: 'Mint a book file from an audiobook transcript: one row per cue, identity off the cues.',
+    usage: '--vtt <transcript.vtt> --out <book.jsonl> [--language <bcp47>]',
+    detail: [
+      'AN AUDIOBOOK IS A BOOK, AND analyze READS ONE THING. This command turns a',
+      'WebVTT transcript into the same book file a bank or an imported EPUB',
+      'becomes, so an audiobook — including one with no text source anywhere,',
+      'just a recording and a transcript of it — can be read against the',
+      'categories like anything else. There is no model here, no bank and no',
+      'rasteriser; it takes about as long as reading the file.',
+      '',
+      'ONE CUE IS ONE ROW, ALWAYS. A cue holding two sentences stays ONE row, and',
+      'that is the contract rather than a shortcut: a finding is a row name and a',
+      'pair of character offsets into that row\'s own text, and the caller turns',
+      'those back into a moment in the audio by taking the row to its cue and the',
+      'offsets to a fraction of that cue\'s span. Splitting a cue would measure',
+      'every offset from a string with no timestamp on it. Nothing is lost —',
+      'analyze cuts sentences INSIDE a row, so a two-sentence cue is scored as two',
+      'sentences either way.',
+      '',
+      'THE NAMES ARE e-<n>, n counted from 1 in the transcript\'s own order. It is',
+      'the bank-less id family, the one an imported EPUB already uses, and for the',
+      'same reason: there is no page and no banked answer to derive a name from,',
+      'and what the source does supply is a TOTAL ORDER — the spine there, the',
+      'tape here. Row n is cue n, for every n, with no gaps: a malformed cue stops',
+      'the run rather than being skipped, because a skipped cue would move every',
+      'name after it.',
+      '',
+      'THERE IS NO --bank-sha, AND THAT IS THE POINT OF THE COMMAND. Every book',
+      'file records the identity of the source it is a pure function of, so a',
+      'reader holding names can tell whether the thing that minted them has moved.',
+      'foundry mints that identity here rather than taking one, because an',
+      'identity a caller passes in is an identity a caller can get wrong, and a',
+      'wrong one fails silently a year later. The recipe, so it can be reproduced',
+      'for a cross-check:',
+      '',
+      '  sha-256 over the NUL-joined sequence of, for each cue in transcript',
+      '  order: the 1-based cue index, the start in whole milliseconds, the end in',
+      '  whole milliseconds, and the cue\'s decoded text — four fields per cue, all',
+      '  joined by one NUL, as decimal strings and the text as it is written into',
+      '  the row. The first 16 hex of the digest is the identity.',
+      '',
+      'IT IS TAKEN OVER THE CUES AND NOT OVER THE FILE, which is what makes it',
+      'useful. A transcript re-exported with different line endings, renumbered cue',
+      'identifiers, added comments or reordered cue settings is the SAME',
+      'transcript and mints the SAME book, so re-exporting one does not orphan an',
+      'hour of verdicts. Change any cue\'s words or its timing and the identity',
+      'moves, so a report filed against the old transcript refuses by construction',
+      'downstream, with nobody having to remember to check.',
+      '',
+      'NOTE BLOCKS ARE METADATA. A NOTE is a comment: it is never a row and it is',
+      'never part of the identity, because a transcript that gains a comment is the',
+      'same transcript. They are COUNTED, and the count is on the summary line —',
+      'a transcript tagged NOTE asr-fallback throughout is a book whose text is a',
+      'machine\'s guess at what was said, and that is worth seeing in the run log',
+      'before reading a report about it.',
+      '',
+      'THE TEXT IS THE CUE\'S, VERBATIM, decoded and not rewritten. Well-formed',
+      'inline tags come out (<i>, <v Speaker>, <c.loud>, timestamp tags), and',
+      '&amp; &lt; &gt; are then decoded — in that order, so a transcript that',
+      'escaped an angle bracket keeps the words it escaped it for. Nothing is',
+      'trimmed, collapsed or reflowed: the offsets are the contract.',
+      '',
+      'THE ROWS CARRY NO PAGE AND NO BOX — page 0, a zero rectangle, no typography',
+      'report, no chapter seed, no figures — for the imported EPUB\'s reason. A',
+      'recording has no pages to estimate, nothing to measure a type size from, and',
+      'declares no divisions; detecting chapters from the words would be an',
+      'invention rather than a reading. Every row is Text.',
+      '',
+      'A TRANSCRIPT WITH NO CUES IS REFUSED BY NAME rather than minted. analyze',
+      'would refuse the book anyway — there is no prose in it — but it would refuse',
+      'it one command later, about a file this one had declared good.',
+      '',
+      'THE FILE IS CHECKED BEFORE IT IS PUT IN PLACE. It is written beside --out,',
+      'read back through this program\'s own book-file reader, and only then',
+      'renamed over. A minter that can emit a file its own parser refuses must fail',
+      'loudly rather than hand one on, and the swap means a failure leaves the old',
+      'book or none, never half of one.',
+      '',
+      '--language is declared and never detected, the same as vlm-book, and it',
+      'defaults to en.',
+      '',
+      'EXIT AND OUTPUT. Exit 2 is a bad command line and nothing ran; exit 1 is a',
+      'failure after work began, and --out is untouched. On success the absolute',
+      'path of the book file is the LAST line on stdout; everything else — the cue',
+      'count, the NOTE count, the language and the minted identity — is progress on',
+      'stderr, each line prefixed vtt-book:.',
+    ].join('\n'),
+    options: [VTT_IN, VTT_OUT, VTT_LANGUAGE],
+    run: runVttBook,
   },
   {
     name: 'vlm-compile',

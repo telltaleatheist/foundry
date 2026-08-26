@@ -95,6 +95,108 @@ changed, replaced only via pending-swap. A run killed at 400/456 keeps 399.
 
 ---
 
+## 2b. `vtt-book` — an audiobook, made analysable (Wave 50, BUILT)
+
+`analyze` reads exactly one thing, the book file. An audiobook is a
+recording and a transcript, and for an audio-only book there is no other
+text anywhere — so something has to turn the transcript into a book file.
+**That something is Foundry**, by the standing cross-repo ruling: *Foundry
+owns all text processing*, BookForge never writes this format, and the
+worker.py divergence is what a foreign hand-rolled writer of a measured
+format ends as. BookForge shells `vtt-book` and then `analyze`.
+
+```
+foundry vtt-book --vtt <transcript.vtt> --out <book.jsonl>
+                 [--language <bcp47>]        # declared, never detected; en
+```
+
+It is `src/vlm/vtt-book.ts` — the third `f`, beside `book-run.ts`'s
+`f(bank)` and `epub-explode.ts`'s `f(epub)`, all three producing a
+`BookFile` through the one `formatBookFile`. No model, no bank, no
+rasteriser; it costs a read of the file.
+
+- **One cue is one row, always.** A cue holding two sentences stays ONE
+  row. A finding is a row id plus `[start, end)` into that row's own text
+  (§6), and BookForge turns that into a moment in the audio by taking the
+  row back to its cue and the offsets to a fraction of that cue's span.
+  Splitting a cue would measure every offset from a string with no
+  timestamp on it. Nothing is lost: §3's segmenter cuts sentences INSIDE a
+  row, so a two-sentence cue is scored as two sentences either way.
+- **Ids are `e-<n>`**, n the 1-based cue index in transcript order — the
+  bank-less family (docs/BOOK-FILE.md §4), used for the reason an imported
+  EPUB uses it: no page and no banked answer to derive a name from, and a
+  total order the source itself supplies (the spine there, the tape here).
+  Row n is cue n with no gaps, which is why a malformed cue **stops the
+  run** rather than being named and skipped the way a bad page is: skipping
+  one would move every name after it.
+- **Category `Text`** on every row, and the no-page frame throughout —
+  `page: 0`, `pages: [0]`, a zero box and page size, one part covering the
+  whole text, `typography: null`, no chapter seed, `figures: {blocks: 0,
+  cut: 0, from: null}`. A recording has no pages to estimate and nothing to
+  measure type from; detecting chapters from the words would be an
+  invention rather than a reading.
+- **The text is the cue's, verbatim.** Well-formed inline tags are stripped
+  (`<i>`, `<v Speaker>`, `<c.loud>`, timestamp tags), and `&amp; &lt; &gt;`
+  are decoded **after** that — in that order, so a transcript that escaped
+  an angle bracket keeps the words it escaped it for. Nothing is trimmed,
+  collapsed or reflowed. Multi-line cue text joins with a newline.
+- **`NOTE` blocks are metadata**, `NOTE asr-fallback` among them: never a
+  row, never part of the identity — a transcript that gains a comment is
+  the same transcript — but **counted**, and the count is on the summary
+  line, because a wholly-ASR transcript is a book whose text is a machine's
+  guess at what was said and that belongs in the run log.
+
+**There is no `--bank-sha`, and that is the point.** Foundry mints the
+identity itself, because an identity a caller passes in is one a caller can
+get wrong, silently, and the failure shows up a year later as a report that
+refuses (or fails to refuse) for no visible reason. The recipe, documented
+here and in the command's `--help` so BookForge can reproduce it for a
+cross-check:
+
+> sha-256 over the NUL-joined sequence of, for each cue in transcript
+> order: the 1-based cue index, the start in whole milliseconds, the end in
+> whole milliseconds, and the cue's decoded text — four fields per cue,
+> decimal strings and the row's own text, one NUL between every field.
+> `bankSha` is the first 16 hex of the digest.
+
+Taken over the **cues** and not over the file, which is what makes it
+useful in both directions. A transcript re-exported with different line
+endings, renumbered cue identifiers, added comments, dropped cue settings
+or different inline markup is the SAME transcript and mints the SAME book,
+so re-exporting does not orphan an hour of verdicts. Change any cue's words
+or its timing and the identity moves, so a **re-transcribe refuses by
+construction** downstream (§7's staleness sentence), with nobody having to
+remember to check. Measured on the fixtures: the canonical file and a
+CRLF/renumbered/`<i>`→`<b>` re-export produced byte-identical book files;
+one word changed in one cue moved the digest.
+
+**Refusals, and where.** A transcript with no cues is refused by name here
+rather than one command later — `analyze` would refuse the proseless book
+anyway, but about a file this command had declared good. A malformed cue
+timing names the line. Exit 2 is a bad command line and nothing ran; exit 1
+is a failure after work began and `--out` is untouched; on success the
+absolute path is the last line on stdout and the progress lines
+(`vtt-book:` cue count, NOTE count, language, minted identity) are on
+stderr — `analyze`'s own contract, because the caller shells them back to
+back and must not have to know which one it is reading.
+
+**The file is checked before it is put in place**: written beside `--out`,
+read back through `parseBookFile`, and only then renamed over. A minter
+that can emit a file its own parser refuses must fail loudly rather than
+hand a dud to another repository that by ruling knows nothing about this
+format.
+
+`analyze` needed **zero changes** for any of this — verified from source
+before the command was offered and again after it was built: it never
+touches a bank, staleness is digest-based, the rank and verdict caches are
+text-keyed so a re-transcribe re-pays only the changed cues, and `Text` is
+in its prose set. Proved end to end: a five-cue fixture minted, then
+`analyze --book` over it read 5 rows / 5 prose / **8 sentences** (the
+two-sentence cue cut inside its row, as promised) before failing at the
+Ollama preflight it was pointed at a dead port for.
+
+---
+
 ## 3. Sentences — the first segmenter in the project
 
 Nothing in `src/` splits sentences today; translate's unit is the block, on

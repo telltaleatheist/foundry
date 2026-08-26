@@ -3343,19 +3343,62 @@ hypothesis tuning (anti-evolution, Project 2025 family) awaits reference
 books; BookForge re-vendor later. **The engine release that carries this is
 1.0.0** (Owen's standing ruling).
 
-Cross-repo seams booked with bookforge-pc-2 (2026-08-26), neither built yet:
+Cross-repo seams booked with bookforge-pc-2 (2026-08-26):
 
-- **`vtt-book` — offered, awaiting Owen's authorization.** A small engine
-  command minting a book file from an audiobook VTT (one row per cue, id
-  `e-<n>` — the bank-less family's own argument — cue text verbatim,
-  `bankSha` = digest of the canonical cue set), so BookForge can run
-  `analyze` on any audiobook without ever writing this repo's book-file
-  format by hand. Verified from source before offering: `analyze` needs
-  zero changes — it never touches a bank, staleness is digest-based (a
-  re-transcribe refuses by construction), and the rank/verdict cache is
-  text-keyed so re-transcribes re-pay only changed cues. The minter lives
-  HERE because "Foundry owns all text processing" and the worker.py
-  divergence is what a hand-rolled foreign writer of this format ends as.
+- **`vtt-book` — BUILT** (Owen green-lit it, 2026-08-25), awaiting the
+  lead's verification. A small engine command minting a book file from an
+  audiobook VTT (one row per cue, id `e-<n>` — the bank-less family's own
+  argument — cue text verbatim, `bankSha` = digest of the canonical cue
+  set), so BookForge can run `analyze` on any audiobook, including an
+  audio-only one, without ever writing this repo's book-file format by
+  hand. The minter lives HERE because "Foundry owns all text processing"
+  and the worker.py divergence is what a hand-rolled foreign writer of this
+  format ends as. `src/vlm/vtt-book.ts` + the command in `src/commands.ts`;
+  argued in full in **`docs/ANALYSIS.md` §2b**. Verified from source before
+  offering AND after building: `analyze` needed zero changes — it never
+  touches a bank, staleness is digest-based (a re-transcribe refuses by
+  construction), the rank/verdict cache is text-keyed so re-transcribes
+  re-pay only changed cues, and `Text` is in its prose set.
+
+  **The four decisions BookForge builds against, all as offered:**
+
+  1. `foundry vtt-book --vtt <transcript.vtt> --out <book.jsonl>
+     [--language <bcp47>]` and **no `--bank-sha`** — Foundry mints the
+     identity, because one a caller passes in is one a caller can get
+     wrong silently. sha-256 over the NUL-joined `index`, `startMs`,
+     `endMs`, `text` of each cue in order, first 16 hex; the recipe is in
+     the `--help` so it can be cross-checked, though it never needs to be.
+     Taken over the CUES and not the bytes, so a re-export mints the same
+     book and a re-transcribe mints a different one.
+  2. **One cue is one row, always** — a two-sentence cue stays one row,
+     because the offsets in a finding are cue-relative and that is what the
+     time-anchoring is measured from. Ids are `e-<n>`, n the 1-based cue
+     index, no gaps; a malformed cue stops the run rather than moving every
+     name after it.
+  3. `NOTE` blocks (`asr-fallback` among them) are metadata: skipped, never
+     rows, never in the digest — and COUNTED on the summary line, so an
+     all-ASR transcript is visible in the run log.
+  4. Exit 2 = bad command line, nothing ran; exit 1 = failure after work
+     began, `--out` untouched (write-beside-then-rename); exit 0 = the
+     absolute path as the LAST line on stdout, progress on stderr under a
+     `vtt-book:` prefix. Before the swap the file is read back through
+     `parseBookFile` — a minter that can emit what its own parser refuses
+     must fail loudly rather than hand a dud across a repo boundary.
+
+  **Ruled by the builder** (none of it contradicts the brief, all of it was
+  underdetermined by it): a separate command rather than a fourth flag on
+  `vlm-book` (a transcript shares none of that command's reflow, figures,
+  chapters or `--pdf`/`--pages`, and the name would promise a vision model
+  where there is none); tags are stripped BEFORE entities are decoded, so
+  an escaped `&lt;i&gt;` keeps the words it was escaped for; a cue with no
+  words is a refusal, since it can neither be dropped without moving every
+  name after it nor kept without a blank paragraph; cue identifiers and cue
+  settings are read and discarded (they are not content, which is what
+  keeps a re-export stable); cue order and overlap are NOT checked, because
+  the rows follow the file's order whatever the clock says; no cue timing
+  is carried into a row — the format has no field for one and inventing
+  one would be a field two documents could disagree about, so BookForge
+  maps `e-<n>` back through its own VTT.
 - **Hosted analysis** stays gray until BookForge's FoundryHostQueue accepts
   `AnalyzeRequest` (their booked task, after 1.0.0 + re-vendor — they asked
   for the word when the release lands).
