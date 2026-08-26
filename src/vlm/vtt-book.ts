@@ -172,6 +172,17 @@ const CUE_TAG = /<\/?(?:[A-Za-z]+(?:\.[^\s.>]+)*(?:[ \t][^>]*)?|(?:\d+:)?\d{1,2}
  * because a scan's whitespace is an artefact of the printing; a cue's text is
  * what the transcriber wrote, and offsets into it are what BookForge anchors
  * time with, so the string this returns is the string the row carries.
+ *
+ * THIS RECIPE IS A CROSS-REPO CONTRACT, NOT AN IMPLEMENTATION DETAIL. BookForge
+ * reimplements it (`analysisText` on its cues), verifies every run row-by-row
+ * against the book file this program actually wrote, and FAILS its run on a
+ * mismatch — deliberately, so a drifted recipe mis-anchors nothing and breaks
+ * loudly instead (their keeper pins 16 cases). The standing agreement
+ * (2026-08-26): any change to the tag stripping, the entity decoding or the
+ * no-trim rule is ANNOUNCED to the BookForge side before it ships and lands in
+ * the same release they follow it in. Changing this function quietly does not
+ * break foundry; it breaks the next audiobook analysis on every machine that
+ * kept its word.
  */
 export function decodeCueText(raw: string): string {
   return raw
