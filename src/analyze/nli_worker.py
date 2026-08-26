@@ -31,12 +31,19 @@ by label text before it is emitted, and duplicate hypotheses are refused rather
 than collapsed (two identical labels are one entry in that map, and the second
 category would silently inherit the first's score).
 
-THE HYPOTHESIS TEMPLATE IS "{}" AND THAT IS LOAD-BEARING. The pipeline's
-default is "This example is {}." — written for one-word labels. Every
-hypothesis here is a complete sentence ("The author asserts that ..."), and
-wrapping one in that template produces "This example is The author asserts
-that ...", which is not a proposition and scores like noise. The measured
-numbers quoted in plan.ts were taken against the bare hypothesis.
+THE HYPOTHESIS TEMPLATE IS THE PIPELINE'S DEFAULT ("This example is {}."),
+AND THAT IS THE CALIBRATION, NOT AN OVERSIGHT. This port first shipped with
+the bare template ('{}') on the reasoning that wrapping a full-sentence
+hypothesis reads as broken English — which is precisely the "clean-up" the
+real briefcase worker's header forbids in as many words: "MEASURED CHOICES
+(do not 'clean these up') … the pipeline's DEFAULT hypothesis_template …
+is the exact configuration the threshold 0.7 was calibrated against;
+changing the template silently moves the threshold." The model was trained
+on pairs in that wrapper; how a hypothesis reads to a person is not evidence
+about how it scores. Corrected 2026-08-25 against the worker on the Mac (the
+file was never committed, which is how the divergence slipped in), and the
+rank cache key was bumped the same day so no bare-template score is ever
+reused as if it answered this configuration's question.
 
 STDOUT IS THE PROTOCOL AND NOTHING ELSE MAY REACH IT. File descriptor 1 is
 duplicated into a private handle and then pointed at stderr, exactly as
@@ -192,13 +199,13 @@ def score(classifier, texts, hypotheses, request_id):
     for start in range(0, len(texts), CHUNK):
         chunk = texts[start:start + CHUNK]
         # `multi_label=True`: each hypothesis is scored on its own against the
-        # text, so the row does not sum to 1. `hypothesis_template='{}'`: the
-        # hypothesis IS the sentence and must not be wrapped.
+        # text, so the row does not sum to 1. No hypothesis_template argument:
+        # the pipeline's default wrapper is the calibrated configuration — the
+        # module docstring carries the incident.
         results = classifier(
             chunk,
             candidate_labels=hypotheses,
             multi_label=True,
-            hypothesis_template='{}',
             batch_size=PAIR_BATCH,
         )
         # A one-element list still comes back as a list from this pipeline, but

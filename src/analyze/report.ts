@@ -167,8 +167,12 @@ interface VerdictRow {
  * sentence and reported as evidence.
  */
 export function rankKey(text: string, nliModel: string, hypothesisVersion: string, threshold: number): string {
+  // -2: the hypothesis template changed from bare to the pipeline default
+  // (nli_worker.py's docstring carries the incident, 2026-08-25). A score is an
+  // answer to a configuration, and every -1 score answered a question this
+  // worker no longer asks; reusing one would file the wrong number as evidence.
   return createHash('sha256')
-    .update(['foundry-analysis-rank-1', nliModel, hypothesisVersion, threshold.toFixed(4), text].join(NUL), 'utf8')
+    .update(['foundry-analysis-rank-2', nliModel, hypothesisVersion, threshold.toFixed(4), text].join(NUL), 'utf8')
     .digest('hex');
 }
 

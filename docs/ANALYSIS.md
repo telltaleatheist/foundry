@@ -178,6 +178,13 @@ lesson, not the corpse).
   **christian-nationalism** (3 hypotheses), prosperity-gospel, extremism,
   political-violence. `misinformation` stays excluded — measured 19/20
   verified false positives; entailment cannot rank it.
+- **The hypothesis template is the pipeline's default** ("This example is
+  {}."), because that is the configuration every ported threshold was
+  calibrated against — briefcase's own worker marks it "do not clean this
+  up; changing the template silently moves the threshold." The port briefly
+  shipped the bare template on readability reasoning and was corrected
+  against the real worker on the Mac (2026-08-25); the rank cache key was
+  bumped so no bare-template score survives as an answer.
 - Owen's book categories that have no tuned hypothesis yet — **anti-evolution
   / science denial** (the JW material), and the Project 2025 /
   authoritarian-blueprint family — enter as description-backed categories
