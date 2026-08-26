@@ -809,7 +809,7 @@ const META_JSON: OptionSpec = {
   describe: 'Print the metadata as versioned JSON on stdout — before and after any change.',
 };
 
-// ── vlm-analyze ─────────────────────────────────────────────────────────────
+// ── analyze ─────────────────────────────────────────────────────────────
 
 const AN_BOOK: OptionSpec = {
   name: 'book',
@@ -1374,7 +1374,7 @@ async function runVlmCompile(args: ParsedArgs): Promise<void> {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// vlm-analyze
+// analyze
 // ═════════════════════════════════════════════════════════════════════════════
 
 async function runVlmAnalyze(args: ParsedArgs): Promise<void> {
@@ -1407,7 +1407,7 @@ async function runVlmAnalyze(args: ParsedArgs): Promise<void> {
   });
 
   log(
-    `vlm-analyze: ${result.sentences} sentence(s), ${result.passages} candidate passage(s), `
+    `analyze: ${result.sentences} sentence(s), ${result.passages} candidate passage(s), `
     + `${result.asked} verify call(s) paid for, ${result.flagged} flagged and ${result.skipped} `
     + 'rejected.',
   );
@@ -2766,7 +2766,7 @@ export const COMMANDS: readonly Command[] = [
     run: runVlmBlocks,
   },
   {
-    name: 'vlm-analyze',
+    name: 'analyze',
     summary: 'Read a book against the categories: entailment ranks it, an Ollama model judges stance.',
     usage: '--book <book.jsonl> --out <report.jsonl> [--categories <cats.json>] [--model <name>]'
       + ' [--ollama <url>] [--nli-python <path>] [--nli-home <dir>] [--fresh]',

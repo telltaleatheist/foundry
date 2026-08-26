@@ -3091,7 +3091,7 @@ schema-constrained Ollama verify), ported with its constants and its
 tried-and-rejected lessons. BookForge's old analysis is deprecated and is
 not the model. Two build units:
 
-- **Unit AN-1, engine (`vlm-analyze`)**: sentence segmenter (the project's
+- **Unit AN-1, engine (`analyze`)**: sentence segmenter (the project's
   first), resident NLI worker (`nli_worker.py`, reimplemented from the wire
   contract — the original was never committed anywhere), rank/window/verify
   port, report as a `records.ts`-disciplined JSONL keyed by block id +

@@ -414,10 +414,10 @@ export function openAnalysisReport(request: {
       report,
       pendingPath: pending,
       sentence: report.size === 0
-        ? `vlm-analyze: a fresh analysis was asked for, so every sentence and every passage is asked `
+        ? `analyze: a fresh analysis was asked for, so every sentence and every passage is asked `
           + `again — whatever is in ${outPath} is left exactly as it is, and the new answers go to `
           + `${pending}, which replaces it only when this run finishes.`
-        : `vlm-analyze: a fresh analysis was asked for and one was already begun — ${report.size} `
+        : `analyze: a fresh analysis was asked for and one was already begun — ${report.size} `
           + `answer(s) are in ${pending} (${report.verdictCount} of them verdicts), nothing whose `
           + `exact question is in there is asked again, and it replaces ${outPath} only when this run `
           + 'finishes.',
@@ -435,9 +435,9 @@ export function openAnalysisReport(request: {
     report,
     pendingPath: null,
     sentence: report.size === 0
-      ? `vlm-analyze: nothing is answered in ${outPath}, so every sentence is scored and every passage `
+      ? `analyze: nothing is answered in ${outPath}, so every sentence is scored and every passage `
         + 'is verified, and each answer is recorded there as it lands.'
-      : `vlm-analyze: ${report.size} answer(s) are already in ${outPath}, ${report.verdictCount} of `
+      : `analyze: ${report.size} answer(s) are already in ${outPath}, ${report.verdictCount} of `
         + 'them verdicts — nothing whose exact question is in there is asked again, and every new '
         + `answer is added to it.${banked}`,
   };

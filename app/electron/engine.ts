@@ -221,7 +221,7 @@ function killTree(child: ChildProcess | null): void {
  *   `vlm-convert: … page 5/317`   the local route.
  *
  * Two more commands have their own prefixes and their own nouns since —
- * `translate: block n/m` and `vlm-analyze: rank|verify n/m` — and both are
+ * `translate: block n/m` and `analyze: rank|verify n/m` — and both are
  * matched above the prefix gate, with the reason written at each of them.
  */
 export function parseProgressLine(line: string): JobProgress | null {
@@ -248,7 +248,7 @@ export function parseProgressLine(line: string): JobProgress | null {
   }
 
   /*
-   * `vlm-analyze: rank 141/141 sentences` and `vlm-analyze: verify 3/20 (hate)`.
+   * `analyze: rank 141/141 sentences` and `analyze: verify 3/20 (hate)`.
    *
    * ── WHERE THIS SITS IN THE ORDER, WHICH IS THE LOAD-BEARING PART ───────────
    *
@@ -261,7 +261,7 @@ export function parseProgressLine(line: string): JobProgress | null {
    * that somebody will add a pattern to it in a hurry.
    *
    * MATCHED ON THE TWO STAGE WORDS SPECIFICALLY, which is `block`'s own
-   * discipline: `vlm-analyze` says a great many things with numbers in them —
+   * discipline: `analyze` says a great many things with numbers in them —
    * how many answers were reused, how many candidates survived the floor — and a
    * bar that read one of those as progress would report the wrong quantity
    * entirely. Naming `rank` and `verify` means only the engine's own two counting
@@ -275,7 +275,7 @@ export function parseProgressLine(line: string): JobProgress | null {
    * makes a note mean "since the count last moved". The row's own log line
    * carries it, in the engine's words.
    */
-  const analyzing = /^vlm-analyze:\s+(?:rank|verify)\s+(\d+)\/(\d+)\b/.exec(trimmed);
+  const analyzing = /^analyze:\s+(?:rank|verify)\s+(\d+)\/(\d+)\b/.exec(trimmed);
   if (analyzing) {
     return { phase: 'analyze', page: Number(analyzing[1]), total: Number(analyzing[2]) };
   }

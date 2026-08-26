@@ -402,7 +402,7 @@ async function scoreSentenceLevel(
   }
 
   log(
-    `vlm-analyze: sentence pass — ${sentences.length} sentence(s) x ${plan.length} categor(ies) at `
+    `analyze: sentence pass — ${sentences.length} sentence(s) x ${plan.length} categor(ies) at `
     + `${CAPTURE_THRESHOLD} gave ${candidates.length} candidate(s); ${rescuedSentences} sentence(s) `
     + `were rescued on ${RESCUE_MIN_CATEGORIES}+ corroborating categories at or above ${RESCUE_FLOOR}`,
   );
@@ -485,7 +485,7 @@ async function scoreWindowLevel(
 
   kept.sort((a, b) => a.spanFrom - b.spanFrom);
   log(
-    `vlm-analyze: window pass — ${texts.length} sliding ${size}-sentence window(s) gave ${raw.length} `
+    `analyze: window pass — ${texts.length} sliding ${size}-sentence window(s) gave ${raw.length} `
     + `raw hit(s) and ${kept.length} new candidate(s); ${raw.length - kept.length} were the sentence `
     + 'pass or a stronger overlapping window saying the same thing',
   );
@@ -663,7 +663,7 @@ export async function rankWindows(
 
   const calls = windows.reduce((total, window) => total + window.categories.length, 0);
   log(
-    `vlm-analyze: ${candidates.length} candidate(s) (${sentenceLevel.length} sentence + `
+    `analyze: ${candidates.length} candidate(s) (${sentenceLevel.length} sentence + `
     + `${windowLevel.length} window) became ${windows.length} passage(s) and ${calls} verify call(s) `
     + `— one call per candidate would have been ${candidates.length}`,
   );

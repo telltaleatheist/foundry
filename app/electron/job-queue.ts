@@ -1590,7 +1590,7 @@ function argsFor(
     /*
      * ── READING THE BOOK AGAINST THE CATEGORIES ───────────────────────────────
      *
-     * `foundry vlm-analyze --book X --out Y [--categories C] [--model M]
+     * `foundry analyze --book X --out Y [--categories C] [--model M]
      * [--ollama U]`. It writes a report and no document at all — a header, one
      * row per candidate passage, and its own question-keyed cache of every rank
      * score and every verdict it paid for (docs/ANALYSIS.md §6).
@@ -1613,7 +1613,7 @@ function argsFor(
      * whose answer is in there is worth exactly what it cost.
      */
     const args = [
-      'vlm-analyze',
+      'analyze',
       /*
        * THE POSITION'S OWN BOOK, materialised by main with every op on the way to
        * it replayed in (`planAnalysis`, electron/workspace.ts). A struck row is

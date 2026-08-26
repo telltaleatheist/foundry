@@ -172,7 +172,7 @@ function readSentences(bookPath: string, log: (line: string) => void): {
     }
   }
   log(
-    `vlm-analyze: ${book.rows.length} row(s) in the book, ${rows} of them prose in the flow, cut into `
+    `analyze: ${book.rows.length} row(s) in the book, ${rows} of them prose in the flow, cut into `
     + `${sentences.length} sentence(s)`,
   );
   if (sentences.length === 0) {
@@ -196,7 +196,7 @@ function readPlan(categoriesPath: string | null | undefined, log: (line: string)
   const plan = buildPlan(requested, log);
   const untuned = untunedNames(plan);
   log(
-    `vlm-analyze: ${plan.length} categor(ies) — ${plan.map((one) => one.category).join(', ')}`
+    `analyze: ${plan.length} categor(ies) — ${plan.map((one) => one.category).join(', ')}`
     + (untuned.length > 0
       ? `. Nothing has calibrated ${untuned.join(', ')}, so their counts may be high or low and the `
         + 'report says so in its header.'
@@ -264,7 +264,7 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
     const total = sentences.length + slidingWindows;
     let finished = 0;
     log(
-      `vlm-analyze: ${sentences.length} sentence(s) and ${slidingWindows} sliding window(s) are scored `
+      `analyze: ${sentences.length} sentence(s) and ${slidingWindows} sliding window(s) are scored `
       + `against ${flat.texts.length} hypothes(es) — the rank progress line counts all ${total} of `
       + 'them, because each is one text the model has to read',
     );
@@ -290,14 +290,14 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
           report.addRank(key, collapseRow(raw[offset]!, flat.owner, plan.length));
         }
         finished = Math.min(total, finished + batch.length);
-        log(`vlm-analyze: rank ${finished}/${total} sentences`);
+        log(`analyze: rank ${finished}/${total} sentences`);
       }
       // Cached texts finished the moment they were looked up; the counter says
       // so rather than jumping at the end of the pass.
       const free = texts.length - misses.length;
       if (free > 0) {
         finished = Math.min(total, finished + free);
-        log(`vlm-analyze: rank ${finished}/${total} sentences`);
+        log(`analyze: rank ${finished}/${total} sentences`);
       }
       return keys.map((key) => report.rank(key) ?? new Array<number>(plan.length).fill(0));
     };
@@ -317,8 +317,8 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
      */
     const freed = await unloadModel(transport, endpoint, opts.model);
     log(freed
-      ? `vlm-analyze: asked ollama to unload "${opts.model}" — the card is free for the next job.`
-      : `vlm-analyze: ollama did not acknowledge unloading "${opts.model}". If it is still resident it `
+      ? `analyze: asked ollama to unload "${opts.model}" — the card is free for the next job.`
+      : `analyze: ollama did not acknowledge unloading "${opts.model}". If it is still resident it `
         + 'will fall out on its own idle timer.');
   }
   return result;
@@ -384,7 +384,7 @@ async function verifyStage(args: {
   const numCtx = stageNumCtx(jobs.map((job) => job.prompt), args.model);
   const cached = jobs.filter((job) => report.verdict(job.key) !== undefined).length;
   log(
-    `vlm-analyze: ${windows.length} passage(s) and ${jobs.length} verify call(s) at num_ctx ${numCtx} `
+    `analyze: ${windows.length} passage(s) and ${jobs.length} verify call(s) at num_ctx ${numCtx} `
     + `on ${args.model}; ${cached} of them are already answered and cost nothing.`,
   );
 
@@ -410,7 +410,7 @@ async function verifyStage(args: {
          */
         degraded += 1;
         log(
-          `vlm-analyze: no verdict for ${job.category.category} at ${sentences[job.window.firedFrom]!.row}`
+          `analyze: no verdict for ${job.category.category} at ${sentences[job.window.firedFrom]!.row}`
           + ` — ${outcome.degraded}; this passage is recorded as a skip`,
         );
         verdict = 'skip';
@@ -424,7 +424,7 @@ async function verifyStage(args: {
       if (list) list.push(job.category);
       else flaggedByWindow.set(job.window, [job.category]);
     }
-    log(`vlm-analyze: verify ${index + 1}/${jobs.length} (${job.category.category})`);
+    log(`analyze: verify ${index + 1}/${jobs.length} (${job.category.category})`);
   }
 
   /*
@@ -467,7 +467,7 @@ async function verifyStage(args: {
 
   const flagged = findings.filter((one) => one.finding.verdict === 'flag').length;
   log(
-    `vlm-analyze: ${flagged} passage(s) flagged and ${findings.length - flagged} rejected, written as `
+    `analyze: ${flagged} passage(s) flagged and ${findings.length - flagged} rejected, written as `
     + `${rows.length} row(s) across the blocks they touch`
     + (degraded > 0 ? `; ${degraded} call(s) produced no usable answer and were recorded as skips` : ''),
   );

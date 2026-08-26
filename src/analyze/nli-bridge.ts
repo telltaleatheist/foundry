@@ -375,7 +375,7 @@ export class NliWorker {
       : { HF_HUB_OFFLINE: '1', TRANSFORMERS_OFFLINE: '1' };
     if (options.fetch === true) {
       options.log(
-        `vlm-analyze: --fetch-nli-model — the worker may download ${NLI_MODEL_ID} into ${home} this `
+        `analyze: --fetch-nli-model — the worker may download ${NLI_MODEL_ID} into ${home} this `
         + 'once. Every run without the flag is offline and refuses rather than fetching.',
       );
     }
@@ -416,7 +416,7 @@ export class NliWorker {
            * If it does, something below Python is writing to the protocol
            * channel, and the line is reported rather than parsed as a score.
            */
-          this.log(`vlm-analyze: the analysis worker sent a line that is not JSON: ${line.slice(0, 200)}`);
+          this.log(`analyze: the analysis worker sent a line that is not JSON: ${line.slice(0, 200)}`);
           continue;
         }
         this.deliver(message);
@@ -441,7 +441,7 @@ export class NliWorker {
          * draws a progress bar per batch and echoing them would bury the run's
          * own progress lines under thousands of carriage returns.
          */
-        if (!this.ready && line.trim().length > 0) this.log(`vlm-analyze: [nli] ${line.trim()}`);
+        if (!this.ready && line.trim().length > 0) this.log(`analyze: [nli] ${line.trim()}`);
       }
     });
 
@@ -498,7 +498,7 @@ export class NliWorker {
     });
 
     this.log(
-      `vlm-analyze: ${NLI_MODEL_ID} is loaded on ${this.device} (${this.python})`
+      `analyze: ${NLI_MODEL_ID} is loaded on ${this.device} (${this.python})`
       + (this.device === 'cpu'
         ? ' — no GPU was offered to it, so ranking will take minutes rather than seconds'
         : ''),

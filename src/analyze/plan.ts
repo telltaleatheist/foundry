@@ -310,7 +310,7 @@ export function buildPlan(requested: readonly CategoryRequest[] | null, log: (li
     if (request.enabled === false) continue;
 
     if (name === EXCLUDED_CATEGORY) {
-      log(`vlm-analyze: the category "${EXCLUDED_CATEGORY}" is not ranked — ${MISINFORMATION_EXCLUSION}`);
+      log(`analyze: the category "${EXCLUDED_CATEGORY}" is not ranked — ${MISINFORMATION_EXCLUSION}`);
       continue;
     }
 

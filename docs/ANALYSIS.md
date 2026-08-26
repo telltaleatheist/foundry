@@ -49,14 +49,14 @@ fabrication; briefcase measured this and Foundry keeps the ruling.
 
 ---
 
-## 2. The engine: `vlm-analyze`
+## 2. The engine: `analyze`
 
 A new command in the house shape (`src/commands.ts` conventions: shared
 `OptionSpec`s, stderr = progress, stdout = the result path, exit 2 before
 work, exit 1 after):
 
 ```
-foundry vlm-analyze --book <key.book.jsonl> --out <report.jsonl>
+foundry analyze --book <key.book.jsonl> --out <report.jsonl>
                     [--categories <cats.json>]
                     [--model <name>] [--ollama <url>]
                     [--nli-python <path>] [--fresh]
@@ -84,7 +84,7 @@ known (ARCHITECTURE.md §5) — the good value is "everything, once".
   `qwen3.8:27b` / `http://localhost:11434` (*"27b is the standard we'll use
   for every task"*).
 - Progress on stderr, counting finished, monotonic:
-  `vlm-analyze: rank <n>/<m> sentences`, `vlm-analyze: verify <n>/<m>
+  `analyze: rank <n>/<m> sentences`, `analyze: verify <n>/<m>
   (<category>)`. The result path is the last line on stdout.
 
 **Runtime honesty:** ranking a book is minutes; verification is one Ollama

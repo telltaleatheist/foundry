@@ -143,7 +143,7 @@ export interface JobProgress {
    *
    * WHICH OF THE TWO IS RUNNING DOES NOT REACH THIS FIELD, and the reason is
    * `Job.note`'s own contract: the engine names the stage and the category ON
-   * the counting line (`vlm-analyze: verify 3/20 (hate)`), and a count CLEARS
+   * the counting line (`analyze: verify 3/20 (hate)`), and a count CLEARS
    * the note by construction — that is what makes a note mean "since the count
    * last moved". So the shelf's line says the fraction and no noun at all, which
    * is the one wording that is true of both halves. What must never happen is
