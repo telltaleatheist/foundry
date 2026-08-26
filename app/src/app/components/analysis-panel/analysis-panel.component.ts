@@ -240,6 +240,8 @@ import type { AnalysisHit, AnalysisTier } from '../../core/analysis';
           [class.rejected]="card.found.verdict === 'skip'"
           [class.on]="analysis.selected() === card.key"
           [style.--card-ink]="card.ink"
+          [style.--card-rest]="card.washRest"
+          [style.--card-deep]="card.washDeep"
           [attr.data-key]="card.key"
           (click)="travel(card.found)"
         >
@@ -531,13 +533,32 @@ import type { AnalysisHit, AnalysisTier } from '../../core/analysis';
       ink too, steadily: the moving part is the wash, the standing part says
       which card is selected even mid-breath.
     */
+    /*
+      THE PAPER'S OWN MECHANISM, COPIED EXACTLY, because the paper's breath works
+      and this one's did not. The first cut mixed the two ends in the keyframes
+      (\`color-mix\` over \`var()\`), and the engine refused to interpolate
+      between them — the card snapped instead of breathing (Owen, 2026-08-26:
+      *"the analysis block isnt pulsing, its blinking. can you make it pulse in
+      sync with the highlight on the page"*). The paper never blinked, and the
+      difference was mechanism, not taste: a plain colour bound per element,
+      the resting value as the underlying style, ONE midpoint keyframe. So:
+      \`--card-rest\` is the selected card's standing background, the keyframe
+      names only \`--card-deep\`, and the browser draws the breath between them.
+
+      IN SYNC WITH THE PAGE BY CONSTRUCTION: same 1900ms, same easing curve
+      (the literal below IS book-view's \`--ease\` — that token lives on the
+      paper's host and cannot be read from here, so the number is copied and
+      this sentence is the tether), and both sides' \`.on\` flip on the same
+      signal in the same change-detection pass, so the two animations start on
+      the same frame and never drift.
+    */
     .card.on {
       border-color: color-mix(in srgb, var(--card-ink) 55%, var(--border-strong));
-      animation: card-breathe 1900ms cubic-bezier(0.4, 0, 0.6, 1) infinite;
+      background: var(--card-rest);
+      animation: card-breathe 1900ms cubic-bezier(0.2, 0.7, 0.3, 1) infinite;
     }
     @keyframes card-breathe {
-      0%, 100% { background: color-mix(in srgb, var(--card-ink) 6%, var(--bg-elevated)); }
-      50% { background: color-mix(in srgb, var(--card-ink) 18%, var(--bg-elevated)); }
+      50% { background-color: var(--card-deep); }
     }
     /*
       AND IT HOLDS STILL WHERE MOTION IS UNWELCOME, at the breath's own midpoint.
@@ -548,7 +569,7 @@ import type { AnalysisHit, AnalysisTier } from '../../core/analysis';
     @media (prefers-reduced-motion: reduce) {
       .card.on {
         animation: none;
-        background: color-mix(in srgb, var(--card-ink) 18%, var(--bg-elevated));
+        background: var(--card-deep);
       }
     }
 
@@ -811,6 +832,8 @@ export class AnalysisPanelComponent {
     key: found.key,
     category: analysisCategoryName(found.category),
     ink: this.ink(found.category),
+    washRest: this.wash(found.category, false),
+    washDeep: this.wash(found.category, true),
     page: found.spans[0]?.page ?? 0,
     score: found.score.toFixed(2),
     also: listed(found.also.map(analysisCategoryName)),
@@ -872,6 +895,24 @@ export class AnalysisPanelComponent {
    */
   protected ink(category: string): string {
     return `hsl(${analysisCategoryHue(category)} 55% 62%)`;
+  }
+
+  /**
+   * The two ends of a selected card's breath — dark, OPAQUE tones of the
+   * category's own hue, computed here and not mixed in CSS.
+   *
+   * They used to be `color-mix()` expressions in the keyframes, and the card
+   * BLINKED: the engine would not interpolate between them and snapped at the
+   * midpoint (Owen, 2026-08-26: *"the analysis block isnt pulsing, its
+   * blinking"*). The paper's breath never blinked, and the difference was the
+   * mechanism — a plain colour bound per element, one midpoint keyframe, the
+   * underlying value as both ends. So the card now does exactly what the paper
+   * does, and the two sides breathe on the same 1.9s clock with the same
+   * easing, which is what makes one selection read as one thing seen from two
+   * places.
+   */
+  protected wash(category: string, deep: boolean): string {
+    return `hsl(${analysisCategoryHue(category)} ${deep ? 48 : 34}% ${deep ? 33 : 24}%)`;
   }
 
   /** How many findings a tier would show — the number under each button. */
