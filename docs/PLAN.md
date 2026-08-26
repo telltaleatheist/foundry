@@ -3343,6 +3343,28 @@ hypothesis tuning (anti-evolution, Project 2025 family) awaits reference
 books; BookForge re-vendor later. **The engine release that carries this is
 1.0.0** (Owen's standing ruling).
 
+Cross-repo seams booked with bookforge-pc-2 (2026-08-26), neither built yet:
+
+- **`vtt-book` — offered, awaiting Owen's authorization.** A small engine
+  command minting a book file from an audiobook VTT (one row per cue, id
+  `e-<n>` — the bank-less family's own argument — cue text verbatim,
+  `bankSha` = digest of the canonical cue set), so BookForge can run
+  `analyze` on any audiobook without ever writing this repo's book-file
+  format by hand. Verified from source before offering: `analyze` needs
+  zero changes — it never touches a bank, staleness is digest-based (a
+  re-transcribe refuses by construction), and the rank/verdict cache is
+  text-keyed so re-transcribes re-pay only changed cues. The minter lives
+  HERE because "Foundry owns all text processing" and the worker.py
+  divergence is what a hand-rolled foreign writer of this format ends as.
+- **Hosted analysis** stays gray until BookForge's FoundryHostQueue accepts
+  `AnalyzeRequest` (their booked task, after 1.0.0 + re-vendor — they asked
+  for the word when the release lands).
+- **The audiobook flag overlay bridge** (BookForge kept its bookshelf/iOS
+  overlay on Owen's ruling): text-anchored findings → cue-anchored display
+  is the `vtt-book` path for audio-only books; the book-analysis-reuse
+  optimization (offsets → sentence → cue for epub-aligned audiobooks) is
+  theirs, later.
+
 ---
 
 ## 8. Session hygiene
