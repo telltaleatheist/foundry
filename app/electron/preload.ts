@@ -192,6 +192,11 @@ const api: FoundryApi = {
     set: (dir) => ipcRenderer.invoke('library:set', dir),
   },
 
+  analysis: {
+    readCategories: () => ipcRenderer.invoke('analysis:read-categories'),
+    writeCategories: (categories) => ipcRenderer.invoke('analysis:write-categories', categories),
+  },
+
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
     onChanged: (listener) => subscribe<null>('projects:changed', listener),

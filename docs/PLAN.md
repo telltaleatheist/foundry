@@ -3164,10 +3164,117 @@ not the model. Two build units:
   5. **A single-category filter is not built** (ANALYSIS.md §8's *"a panel
      filter lights one category at a time when asked"* — the clause says
      when asked). The panel groups by category with counts; the one ink and
-     the three tiers are built.
+     the three tiers are built. — **REVERSED by the rework below**: it was
+     asked for, and the legend is it.
   6. **The bundle figure moved**: 801.07 kB → 863.99 kB against the 500 kB
      budget. Still a WARNING and not an ERROR; the growth is the panel, the
      picker and the dialog.
+
+- **Unit AN-3, the hits panel reworked** (Owen, 2026-08-25, after reading it):
+  *"lets rework it a bit so each item is in its own block, in the order in
+  which it appears. maybe each category has its own color or something. and
+  maybe the user can add more categories - even one-sentence descriptive ones.
+  and they check off which ones they want to search for in this document.
+  also, im not sure what the items next to the quotes mean. b151-5? b159-2?
+  those arent necessary for a human to see. the tool tips are just repeating
+  whats already on screen - unnecessary. and they shouldnt be highlighted
+  inside the analysis, they should be highlighted inside the document viewer
+  (as they are). as i scroll/click highlighted text, it should jump to that
+  spot in the analysis."* — **BUILT**, awaiting the lead's verification. Argued
+  in full in **`docs/ANALYSIS.md` §8a**; the short of it:
+
+  - The grouping is gone: one card per finding, in the book's own reading
+    order, whole card is the travel button.
+  - A hue per category, in ONE table beside the names
+    (`ANALYSIS_CATEGORIES.hue`), used as the card's left rail and the legend's
+    dot. Arbitrary by design — §1 says there is no severity, and a cool-to-hot
+    table would smuggle one in through the paint. A user's own category hashes
+    its id into the wheel (FNV-1a): stable, storage-free, context-free.
+  - The legend is the filter, which DELIVERS deviation 5 above. Counts taken
+    before the filter so a switched-off row keeps its own number.
+  - Block-id chips, the `+2` tooltip, the verdict tooltip and the in-panel
+    highlight ink: gone. The hover glance is gone too — a judgement, argued in
+    §8a: it showed more than the row did and still lost, because the sync
+    below makes the book itself the better widening.
+  - Two-way sync. CLICK: `LitRange` carries the earliest covering finding's
+    key, the run wears it as `data-hit`, and `press` reads it exactly as it
+    reads `data-id`. The guard is structural — no panel, no attribute — and
+    block selection is untouched. SCROLL: **an IntersectionObserver over the
+    runs is the wrong instrument and this is the measurement**: the runs sit
+    inside the `content-visibility: auto` wrapper, so an off-screen run has no
+    box and its rect reads as zeros at the viewport origin, which would make
+    the furthest finding look like the nearest. The tracking is therefore a
+    rect walk over BLOCKS (which always have boxes — the containment is on the
+    wrapper, never on the block), on the existing native scroll listener,
+    writing only when the answer changes. Auto-follow pauses while the pointer
+    is over the panel and for 4s after the panel is scrolled by hand.
+  - **User-written categories.** Name + one sentence; the sentence IS the
+    hypothesis (`describedHypothesis` — the door the two untuned built-ins
+    already came through). Persisted APP-LEVEL in `app-settings.json`
+    (`AppSettings.analysisCategories`) because they are the reader's, not one
+    project's; ticking is per run and never remembered. Two doors,
+    `analysis:read-categories` / `analysis:write-categories`, IPC-CHANNELS.md
+    regenerated in the same unit (96 handles, 96 names, zero `ipcMain.on`).
+    `workspace:plan-analysis` now admits built-ins PLUS the ids that settings
+    file holds, so free text still cannot reach a hypothesis except through a
+    deliberate save. The categories file gains `description` — and is built
+    field by field, because `parseCategoriesJson` refuses an entry carrying a
+    field it does not read. Removing a category harms no report: the report
+    carries its own category list and the panel says an unknown id aloud.
+  **Three amendments, from Owen watching it hot-reload** (*"looking much
+  better"*), folded into the same unit:
+
+  1. **`--ink-hit` IS DEAD; THE PAPER TAKES THE CATEGORY'S COLOUR.** *"Maybe
+     make the text's highlighted color the same color as the analysis block"*,
+     then — the first attempt came back too solid — *"the text shouldn't be a
+     different color, just a light highlight color difference."* This
+     OVERRULES the one-ink / confetti ruling, and the ruling was right about a
+     page with no key beside it: what changed is that a legend now sits two
+     inches away and every card wears the same hue on its rail, so the tint and
+     the card are one fact drawn twice. The token and its argument are replaced
+     by a gravestone at the declaration. **The alpha discipline survives
+     whole**: nothing colours a glyph, ever — `tintOf` (book-view) returns a
+     BACKGROUND only, a pastel at `hsl(H 75% 68% / .32)` for a flag and `/ .14`
+     for a rejection, and there is no glyph-colour rule for a hit run anywhere
+     on the sheet. One hue source, two ground-appropriate treatments, so the
+     panel and the paper cannot disagree about which category is which colour.
+     `LitRange` gained `category` to carry it; the legend's toggle still
+     governs which tints draw, because it governs `hits()`.
+  2. **SELECTION REPLACES THE FLASH, AND PULSES ON BOTH SIDES.** *"When i click
+     a highlighted block, the corresponding analysis block only blinks for
+     about 1/4 of a second. can we make it pulse? on either side. have it pulse
+     as long as it's selected. if i click the block, the text block pulses
+     until i click somewhere else or scroll offscreen."* A blink announces and
+     is gone; a pulse is a state, which is what a gesture whose whole point is
+     to look at the other end of the room actually needs.
+     `AnalysisViewService.selected` is one nullable hit key both surfaces draw,
+     breathing at the same 1.9s. Cleared by a click that is not on it (paper:
+     in `release`, so a right-click, a marquee, a marker peek and a gutter chip
+     are all untouched; panel: one list listener with `closest('.card')` as the
+     test, tiers and legend outside it), by a click that selects another, or by
+     the passage scrolling off the bench — **an IntersectionObserver, on the
+     BLOCK and rooted on the bench**, which is the one place in this unit an
+     observer is the right instrument (the block always has a box, and "is it
+     still on screen" is genuinely a threshold). It waits to see the block
+     ARRIVE before it will let go, or it would cancel the selection a panel
+     click had just made.
+  3. **THE PULSE RIDES ON TOP AND IS NEVER A HUE** — a ring in the paper's own
+     `--ink` and in the panel's `--accent`, so it is visible over all twelve
+     category tints and cannot be read as a thirteenth category. Reduced motion
+     holds the ring still at the breath's midpoint rather than dropping the
+     emphasis (the glide's precedent: skip the movement, keep the destination).
+
+  - **Ruled by the builder**: (1) a custom category's DESCRIPTION is not part
+    of the step's question — `PARAMS_OF.analysis` records category NAMES, so
+    editing a description would refresh rather than branch. There is no edit
+    affordance (remove and re-add), which keeps that from being reachable by
+    accident; if editing is ever added, the description has to join the
+    question. (2) The score keeps a tooltip — it is the only thing on a card
+    that can be misread as a severity, and §1 spends a section refusing one.
+    (3) The tier tooltips keep theirs: the button says "Strict" and the
+    sentence says what strict MEANS, which is not a repeat.
+  - **The bundle figure moved again**: 863.99 kB → 880.36 kB against the
+    500 kB budget. Still a WARNING and not an ERROR.
 
   Also ruled by the builder rather than by the docs: `categories` is the
   step's QUESTION and `model` its ANSWER (`PARAMS_OF` / `MINTED_BY_THE_RUN`),

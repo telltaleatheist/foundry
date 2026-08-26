@@ -1,7 +1,7 @@
 import type { ReplayedRow } from '@shared/ops';
 import type { AnalysisFindingRow } from '@shared/types';
 
-import { BLOCK_REACH, SENTENCE_REACH, quoteAround, type SweepQuote } from './sweep';
+import { SENTENCE_REACH, quoteAround, type SweepQuote } from './sweep';
 
 /**
  * THE ANALYSIS'S ARITHMETIC — a stored report, laid over the book on the paper.
@@ -354,29 +354,74 @@ export function tiered(hits: readonly AnalysisHit[], tier: AnalysisTier): readon
 }
 
 /**
- * The block's fuller text around a finding — the widening a hover asks for.
+ * THE WIDENED QUOTATION DIED HERE (2026-08-25), and the gravestone is the point.
  *
- * COMPUTED ON DEMAND AND NOT CARRIED ON EVERY HIT, `sweep.widen`'s rule and its
- * reason: a second quotation four times the length of the first, held for every
- * finding and drawn for one, is memory kept so that a pointer can rest somewhere.
+ * `widen(rows, hit)` handed the panel a four-times-longer quotation to float in a
+ * hover glance. Owen killed the glance with the rest of the panel's repetition:
+ * *"the tool tips are just repeating whats already on screen - unnecessary."* The
+ * glance was the one tooltip on that surface that did NOT merely repeat — it
+ * showed more — and it went anyway, because the rework gives its job to something
+ * better. Clicking a card now travels to the passage on the paper AND the paper
+ * scrolls the panel back, so the fuller passage is not a rectangle that appears
+ * under the pointer for as long as the hand holds still: it is the book, in the
+ * column beside the list, with the words lit in place. A hover preview of a
+ * paragraph you are one click from reading is a worse copy of the reading.
  *
- * IT WIDENS THE FIRST SPAN, which is the one the row already quotes. A passage
- * crossing a paragraph break has no single string to widen — the two blocks are
- * two paragraphs with a break between them, and splicing them into one quotation
- * would draw a sentence that is not in the book.
+ * `sweep.widen` is untouched and is still the sweep's — that card is a modal over
+ * the page and has no book beside it to travel to, which is the difference.
  */
-export function widen(rows: readonly ReplayedRow[], hit: AnalysisHit): AnalysisQuote | null {
-  const span = hit.spans[0];
-  if (span === undefined) return null;
-  const row = rows.find((candidate) => candidate.id === span.id);
-  if (row === undefined) return null;
-  return quoteAround(row.text, span.start, span.end, BLOCK_REACH);
-}
 
 /** One stretch of a block's text that the paper draws lit. */
 export interface LitRange {
   start: number;
   end: number;
+  /**
+   * WHICH FINDING THIS STRETCH BELONGS TO — the first one covering it, by hit
+   * key, so the paper can say which card a click on these words means.
+   *
+   * Owen, 2026-08-25: *"as i scroll/click highlighted text, it should jump to
+   * that spot in the analysis."* The paper's runs had no idea which finding they
+   * were drawn for — merging (below) deliberately threw that away, because what a
+   * CHARACTER needs to know is only whether it is lit — so the key rides the
+   * merged range instead, where it costs one string per run rather than one per
+   * character and changes nothing about how the ink is decided.
+   *
+   * THE FIRST COVERING FINDING AND NOT "THE STRONGEST", and the reason is that
+   * there is no strongest: docs/ANALYSIS.md §1 rules that there is no severity,
+   * so a stretch two findings share has no ranking to break the tie with. What it
+   * does have is an ORDER — the hits arrive in the book's own reading order — and
+   * the first of them is the card nearest the top of the panel, which is the one
+   * a person clicking those words is most likely looking at. Both cards are one
+   * scroll apart in a list that is in the book's order; picking the earlier is a
+   * rule, not a guess.
+   */
+  key: string;
+  /**
+   * THE CATEGORY THAT STRETCH IS FLAGGED UNDER — the same finding's, so the
+   * paper can tint it the colour its card wears.
+   *
+   * ── THE ONE-INK RULING WAS OVERRULED, 2026-08-25, AND BY THE RIGHT PERSON ──
+   *
+   * docs/ANALYSIS.md §8 said *"the page must not turn into confetti"* and this
+   * module said it twice. Owen, reading the reworked panel against the paper:
+   * *"maybe make the text's highlighted color the same color as the analysis
+   * block."* That is the overriding word, and it is a better answer than the one
+   * it replaces — the confetti fear was about a page speaking a code nobody can
+   * decode, and the legend beside the page is exactly the decoder that was
+   * missing when the ruling was made. A tint that AGREES with the card two inches
+   * away is one fact drawn twice, not two facts competing.
+   *
+   * WHAT SURVIVES OF THE OLD RULING IS THE ALPHA DISCIPLINE, which is where the
+   * real risk always was (`shared/categories.ts`'s header: *"applied as an
+   * outline and a tint, never as text colour: this is a book, and recolouring its
+   * words makes it unreadable"*). The words stay black on cream; what changes is
+   * the wash behind them.
+   *
+   * It rides the merged range beside the key, and it needs no separate
+   * agreement test when runs join: a key names one finding and a finding has one
+   * primary category, so two neighbours agreeing about the key agree about this.
+   */
+  category: string;
   /**
    * False where every finding covering this stretch is a verdict the verifier
    * REJECTED — drawn as the ghosted variant, the same shown-but-inert treatment a
@@ -420,13 +465,19 @@ const NO_LIT: ReadonlyMap<string, readonly LitRange[]> = new Map();
  */
 export function litRanges(hits: readonly AnalysisHit[]): ReadonlyMap<string, readonly LitRange[]> {
   if (hits.length === 0) return NO_LIT;
-  const raw = new Map<string, { start: number; end: number; solid: boolean }[]>();
+  const raw = new Map<string, LitRange[]>();
   for (const hit of hits) {
     const solid = hit.verdict === 'flag';
     for (const span of hit.spans) {
       if (span.struck) continue;
       const held = raw.get(span.id);
-      const one = { start: span.start, end: span.end, solid };
+      const one = {
+        start: span.start,
+        end: span.end,
+        solid,
+        key: hit.key,
+        category: hit.category,
+      };
       if (held === undefined) raw.set(span.id, [one]);
       else held.push(one);
     }
@@ -448,8 +499,14 @@ export function litRanges(hits: readonly AnalysisHit[]): ReadonlyMap<string, rea
  * "is anything covering this" and one to "is any of it solid". Segments nothing
  * covers are dropped and neighbours that agree are joined, which is what keeps
  * the walk in `cut()` closing a run only where the paper actually changes.
+ *
+ * THE KEY IS THE FIRST COVERING SPAN'S, and it joins `solid` as a thing two
+ * neighbours must AGREE ABOUT before they merge — see `LitRange.key`. That makes
+ * the runs slightly finer than they were: two findings that abut inside one block
+ * used to become one run and are now two, which is one more `<span>` on one
+ * paragraph and the price of a click knowing what it clicked.
  */
-function mergeLit(spans: readonly { start: number; end: number; solid: boolean }[]): LitRange[] {
+function mergeLit(spans: readonly LitRange[]): LitRange[] {
   const edges = new Set<number>();
   for (const span of spans) {
     edges.add(span.start);
@@ -460,40 +517,93 @@ function mergeLit(spans: readonly { start: number; end: number; solid: boolean }
   for (let i = 0; i + 1 < points.length; i += 1) {
     const from = points[i]!;
     const to = points[i + 1]!;
-    let covered = false;
     let solid = false;
+    let owner: LitRange | null = null;
     for (const span of spans) {
       if (span.start <= from && span.end >= to) {
-        covered = true;
         if (span.solid) solid = true;
+        // The spans arrive in the hits' own order, which is the book's, so the
+        // first one to claim this segment is the earliest finding covering it.
+        owner ??= span;
       }
     }
-    if (!covered) continue;
+    if (owner === null) continue;
     const last = out[out.length - 1];
-    if (last !== undefined && last.end === from && last.solid === solid) last.end = to;
-    else out.push({ start: from, end: to, solid });
+    if (last !== undefined && last.end === from && last.solid === solid && last.key === owner.key) {
+      last.end = to;
+    } else {
+      out.push({ start: from, end: to, solid, key: owner.key, category: owner.category });
+    }
   }
   return out;
 }
 
+/** One row of the panel's legend: a category present in this report, and how much. */
+export interface AnalysisLegendEntry {
+  category: string;
+  /** How many findings the tier lets through carry this as their primary. */
+  count: number;
+}
+
 /**
- * The findings, grouped by category and counted — the panel's own list.
+ * THE LEGEND — every category the visible findings name, counted.
+ *
+ * ── What replaced the grouping, and why ─────────────────────────────────────
+ *
+ * The panel used to be sections: a category heading, then its findings, then the
+ * next heading. Owen, 2026-08-25: *"lets rework it a bit so each item is in its
+ * own block, in the order in which it appears."* Reading order is the only order
+ * a list beside a book can be in — a reader scrolling page 90 wants the card for
+ * page 90, and a grouped list scatters that page's findings down five sections —
+ * so the grouping is gone and what it carried is here instead: the category names
+ * and their counts, in one header, each one a switch.
+ *
+ * IT IS COUNTED OVER THE TIER'S FINDINGS AND NOT OVER THE WHOLE REPORT, because
+ * the number beside a switch has to mean "this many cards below" — a legend
+ * saying 14 over a list holding 3 would be counting a set the buttons above it
+ * have already excluded.
+ *
+ * AND IT IS COUNTED BEFORE THE CATEGORY FILTER ITSELF (see `onlyCategories`), so
+ * that switching one off leaves its own count legible. A row whose count went to
+ * zero the moment you pressed it would be a switch that erased the label telling
+ * you what pressing it again would bring back.
  *
  * IN THE ORDER THE CATEGORIES FIRST APPEAR IN THE BOOK, which is the order the
  * hits arrive in and therefore needs no comparator. The alternative considered
  * was strongest-first, and it is the wrong order for the same reason the hits
- * themselves are in reading order: a panel beside a book is read against the
- * book, and a group that jumps to the top because one passage in it scored well
- * moves under the reader between one tier and the next.
+ * themselves are in reading order: a list beside a book is read against the book,
+ * and a row that jumps to the top because one passage in it scored well moves
+ * under the reader between one tier and the next.
  */
-export function byCategory(
-  hits: readonly AnalysisHit[],
-): readonly { category: string; hits: readonly AnalysisHit[] }[] {
-  const groups = new Map<string, AnalysisHit[]>();
+export function legendOf(hits: readonly AnalysisHit[]): readonly AnalysisLegendEntry[] {
+  const counts = new Map<string, number>();
   for (const hit of hits) {
-    const held = groups.get(hit.category);
-    if (held === undefined) groups.set(hit.category, [hit]);
-    else held.push(hit);
+    counts.set(hit.category, (counts.get(hit.category) ?? 0) + 1);
   }
-  return [...groups].map(([category, held]) => ({ category, hits: held }));
+  return [...counts].map(([category, count]) => ({ category, count }));
+}
+
+/**
+ * The findings whose category is not switched off — the legend's own filter.
+ *
+ * This is the clause docs/ANALYSIS.md §8 promised and Unit AN-2 deferred out loud
+ * (*"a panel filter lights one category at a time when asked"*, deviation 5 in
+ * the PLAN.md row). It is a SET OF THE HIDDEN rather than a set of the shown, and
+ * that is the difference between a filter and a mode: everything is on until
+ * somebody turns something off, a report that grows a category it has never seen
+ * shows it, and there is no state that could mean "nothing selected, so nothing
+ * is drawn" — the failure a shown-set makes possible on its first empty.
+ *
+ * ONLY THE PRIMARY CATEGORY IS TESTED, never `also`. A finding's primary is what
+ * its card says, what its rail is coloured by and what the legend counted it
+ * under; hiding "hate" and keeping a card whose rail is hate-coloured because it
+ * ALSO matched something else would be the filter disagreeing with the paint.
+ */
+export function onlyCategories(
+  hits: readonly AnalysisHit[],
+  hidden: ReadonlySet<string>,
+): readonly AnalysisHit[] {
+  if (hidden.size === 0) return hits;
+  const kept = hits.filter((one) => !hidden.has(one.category));
+  return kept.length === 0 ? NO_HITS : kept;
 }

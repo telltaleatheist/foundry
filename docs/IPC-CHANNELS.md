@@ -1,7 +1,18 @@
 # Foundry's IPC channels — the whole list, for the collision audit
 
 Every channel name this app owns, enumerated from `app/electron` rather than
-from memory, regenerated on 2026-08-25 for **Wave 50's analysis** — three doors:
+from memory, regenerated on 2026-08-25 for **Wave 50's hits-panel rework** —
+two doors: `analysis:read-categories` and `analysis:write-categories`, the
+categories a person writes themselves (name + the one sentence that becomes the
+category's only hypothesis), kept app-level in `app-settings.json` beside the
+library folder because they are the USER'S and not one project's. The write
+takes the whole list and answers with the list as main stored it — every id
+re-derived from its name, every field capped, every collision dropped — so the
+window never holds an id the file does not. Counted by script: **96 `ipcMain.handle`
+call sites, 96 distinct channel names, zero `ipcMain.on`** in
+`app/electron/ipc.ts`.
+
+Before that, regenerated on 2026-08-25 for **Wave 50's analysis** — three doors:
 `workspace:plan-analysis` (mint the step and the report path, materialise the
 book the run reads), `workspace:read-analysis` (one analysis step's report, for
 the hits panel — the header, the findings and one sentence about staleness; the
@@ -349,6 +360,8 @@ cannot report a failure. They are registered in one function, `registerIpc`
 
 | Channel | What it does |
 | --- | --- |
+| `analysis:read-categories` | The analysis categories this user wrote themselves, from `app-settings.json`. App-level: they are the reader's, not one project's. |
+| `analysis:write-categories` | Replace that list, and answer with it as stored — ids re-derived from names, fields capped, collisions with a built-in or with each other dropped. |
 | `app:hosted` | Whether another app mounted Foundry, so the renderer can drop the controls the host already answers. |
 | `backend:setup-cancel` | Stop the WSL environment build that is running. |
 | `backend:setup-run` | Build the reading environment inside a WSL distro; streams over `backend:setup-log`. |

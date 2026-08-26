@@ -21,6 +21,13 @@ import { app } from 'electron';
 
 import { hostedLibraryDir } from './host';
 import { readJson } from '../shared/json';
+import {
+  ANALYSIS_CATEGORY_IDS,
+  CUSTOM_CATEGORY_DESCRIPTION_MAX,
+  CUSTOM_CATEGORY_NAME_MAX,
+  customCategoryId,
+  type CustomAnalysisCategory,
+} from '../shared/analysis-categories';
 
 export interface AppSettings {
   /**
@@ -46,9 +53,33 @@ export interface AppSettings {
    * somebody's back.
    */
   libraryDir: string;
+  /**
+   * THE CATEGORIES THIS PERSON WROTE — added in the analysis dialog, kept for
+   * every book they ever analyse.
+   *
+   * Owen, 2026-08-25: *"maybe the user can add more categories - even
+   * one-sentence descriptive ones. and they check off which ones they want to
+   * search for in this document."* Two different questions, and they are stored
+   * in two different places on purpose. WHAT CATEGORIES EXIST is a fact about
+   * the reader — somebody who has decided a claim is worth hunting for wants it
+   * on the checklist of the next book too — so it lives here, app-level, beside
+   * the library folder. WHICH ONES ARE TICKED is a fact about one run, decided
+   * in the dialog each time and travelling to the engine in that run's own
+   * categories file; nothing about a tick is remembered here, because a
+   * remembered tick is a run somebody paid an hour for without choosing to.
+   *
+   * IT IS NOT A MIRROR OF THE BUILT-INS. `ANALYSIS_CATEGORIES`
+   * (shared/analysis-categories.ts) is the engine's own list and is never
+   * written here; this holds only the additions, so an engine that grows a
+   * thirteenth built-in does not have to reconcile itself with a file.
+   */
+  analysisCategories: CustomAnalysisCategory[];
 }
 
 export const KEEP_WARM_MAX_MINUTES = 240;
+
+/** How many a person may keep. A ceiling so "a list" cannot become a corpus. */
+export const CUSTOM_CATEGORY_MAX = 40;
 
 /** `~/Documents/Foundry`. Created on demand, never at startup. */
 export function defaultLibraryDir(): string {
@@ -126,11 +157,63 @@ export function clampLibraryDir(value: unknown, fallback = defaultLibraryDir()):
  * is in the file stays the standalone app's own answer, waiting unharmed for the
  * next time Foundry is run on its own.
  */
+/**
+ * The user's own categories, cleaned rather than refused.
+ *
+ * ── CLAMPING AND NOT VALIDATING, which is THIS file's philosophy ────────────
+ *
+ * The engine's settings.json refuses a write it cannot understand, because that
+ * file has other writers whose intent could be destroyed. This one has exactly
+ * one writer and no schema anybody else depends on, so the module header's rule
+ * applies: *"out-of-range values clamp to something legal rather than
+ * throwing"*. An entry with no name or no description is DROPPED rather than
+ * throwing the whole list away — a hand-edited file with one bad row should cost
+ * that row, not every category the person ever wrote.
+ *
+ * THREE THINGS ARE ENFORCED AND EACH IS LOAD-BEARING:
+ *
+ *   * The id is RE-DERIVED from the name and never taken from the file. It is
+ *     what the engine is handed and what a report row will say for as long as
+ *     the report exists, so it has to be the spelling `customCategoryId`
+ *     produces and not whatever a hand edit left there.
+ *   * A collision with a BUILT-IN is dropped. `buildPlan` refuses a name asked
+ *     for twice (src/analyze/plan.ts) — two plans for one name would score it
+ *     twice and file it twice — and a custom "hate" would reach the engine as
+ *     exactly that, an hour into a run.
+ *   * A collision with an EARLIER CUSTOM one is dropped, first writing wins, for
+ *     the same reason and one more: the panel's legend keys off the id, and two
+ *     rows sharing one would toggle each other.
+ */
+export function clampAnalysisCategories(value: unknown): CustomAnalysisCategory[] {
+  if (!Array.isArray(value)) return [];
+  const built = new Set(ANALYSIS_CATEGORY_IDS);
+  const seen = new Set<string>();
+  const out: CustomAnalysisCategory[] = [];
+  for (const raw of value) {
+    if (out.length >= CUSTOM_CATEGORY_MAX) break;
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue;
+    const entry = raw as Record<string, unknown>;
+    const name = typeof entry['name'] === 'string'
+      ? entry['name'].replace(/\s+/g, ' ').trim().slice(0, CUSTOM_CATEGORY_NAME_MAX)
+      : '';
+    const description = typeof entry['description'] === 'string'
+      ? entry['description'].replace(/\s+/g, ' ').trim().slice(0, CUSTOM_CATEGORY_DESCRIPTION_MAX)
+      : '';
+    if (name.length === 0 || description.length === 0) continue;
+    const id = customCategoryId(name);
+    if (id.length === 0 || built.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, name, description });
+  }
+  return out;
+}
+
 export function readAppSettings(): AppSettings {
   const raw = readRaw();
   return {
     keepServerWarmMinutes: clampKeepWarm(raw?.['keepServerWarmMinutes']),
     libraryDir: clampLibraryDir(hostedLibraryDir() ?? raw?.['libraryDir']),
+    analysisCategories: clampAnalysisCategories(raw?.['analysisCategories']),
   };
 }
 
@@ -141,6 +224,9 @@ export function writeAppSettings(patch: Partial<AppSettings>): AppSettings {
   }
   if (patch.libraryDir !== undefined) {
     root['libraryDir'] = clampLibraryDir(patch.libraryDir);
+  }
+  if (patch.analysisCategories !== undefined) {
+    root['analysisCategories'] = clampAnalysisCategories(patch.analysisCategories);
   }
   const file = settingsFile();
   fs.mkdirSync(path.dirname(file), { recursive: true });

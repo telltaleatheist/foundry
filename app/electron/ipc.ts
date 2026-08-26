@@ -105,7 +105,10 @@ import { answerLetGo, broadcast, foundryWindow } from './window';
 import { planAnalysis, planExport, planReading, planSimplification, planTranslation } from './workspace';
 import { detectEnvTooling, listDistros } from './wsl';
 import { fold, isBook } from '../shared/original';
-import { ANALYSIS_CATEGORY_IDS } from '../shared/analysis-categories';
+import {
+  ANALYSIS_CATEGORY_IDS,
+  type CustomAnalysisCategory,
+} from '../shared/analysis-categories';
 import type { ReadAsk } from '../shared/ledger';
 import type { BookOp, PendingStack } from '../shared/ops';
 import { RE_READ_CANCEL, RE_READ_PROCEED } from '../shared/reread';
@@ -868,18 +871,33 @@ export function registerIpc(): void {
    * renderer named.
    *
    * THE CATEGORIES ARE NOT PATHS AND ARE STILL NOT TAKEN ON TRUST. Every name is
-   * checked against `ANALYSIS_CATEGORY_IDS` before it reaches the ledger, so what
-   * a step records and what the engine is asked for is always a member of a
-   * closed set — no free text ever reaches a hypothesis, a prompt or a filename.
-   * A request naming something this build has never heard of is refused by name
-   * rather than quietly dropped, because a silently narrowed checklist is a
-   * report that is missing a category nobody can see was missing.
+   * checked against the CLOSED SET this app can name — the engine's built-ins
+   * (`ANALYSIS_CATEGORY_IDS`) plus the ids of the categories this user has
+   * written down (`app-settings.json`) — before it reaches the ledger. A request
+   * naming something outside that set is refused by name rather than quietly
+   * dropped, because a silently narrowed checklist is a report that is missing a
+   * category nobody can see was missing.
+   *
+   * ── THE SET IS WIDER THAN IT WAS, AND IT IS STILL CLOSED ──────────────────
+   *
+   * Owen's *"maybe the user can add more categories"* means free text now DOES
+   * become a category name, so the sentence this comment used to carry — no free
+   * text ever reaches a hypothesis — needed a new true form rather than a quiet
+   * deletion. It is this: free text becomes a category ONLY by being written
+   * into the user's own settings file through the door below, where it is
+   * slugged into `customCategoryId`'s shape, length-capped and collision-checked
+   * (`clampAnalysisCategories`); and this handler admits a name only if that file
+   * already holds it. So the path from a text box to a prompt runs through a
+   * deliberate act of saving, and the string that arrives here is always one main
+   * itself minted.
    */
   ipcMain.handle('workspace:plan-analysis', async (_event, inputPath: string, categories: string[]) => {
     const source = admitted(inputPath);
     if (source === null) throw new Error(`${inputPath} was never opened in this app.`);
     const asked = Array.isArray(categories) ? categories : [];
-    const unknown = asked.filter((one) => !ANALYSIS_CATEGORY_IDS.includes(one));
+    const mine = readAppSettings().analysisCategories.map((one) => one.id);
+    const known = [...ANALYSIS_CATEGORY_IDS, ...mine];
+    const unknown = asked.filter((one) => !known.includes(one));
     if (unknown.length > 0) {
       throw new Error(
         `This build does not know a category called “${unknown[0]}”, so it cannot analyse against it.`,
@@ -890,9 +908,11 @@ export function registerIpc(): void {
      * window. The list is the step's own QUESTION (`PARAMS_OF.analysis`) and
      * `identityOf` compares it as JSON — so two spellings of one checklist would
      * be two questions, and a re-analysis would branch beside the row it meant to
-     * refresh. One order, decided in one place, on the engine's own ordering.
+     * refresh. One order, decided in one place, on the engine's own ordering —
+     * with the user's own categories after the built-ins, in the order their
+     * settings file holds them, which is the order they added them.
      */
-    const ordered = ANALYSIS_CATEGORY_IDS.filter((one) => asked.includes(one));
+    const ordered = known.filter((one) => asked.includes(one));
     if (ordered.length === 0) {
       throw new Error('Pick at least one category — an analysis with nothing to look for finds nothing.');
     }
@@ -2297,6 +2317,36 @@ export function registerIpc(): void {
       + 'the rest of its own data. Move them from there, not from here.',
     );
   };
+  /*
+   * ── THE USER'S OWN ANALYSIS CATEGORIES ────────────────────────────────────
+   *
+   * Owen, 2026-08-25: *"maybe the user can add more categories - even
+   * one-sentence descriptive ones."* They are the USER'S and not one project's,
+   * so they live in `app-settings.json` beside the library folder and reach every
+   * book that machine ever opens (`AppSettings.analysisCategories`).
+   *
+   * TWO DOORS AND NOT ONE, and the write takes the WHOLE LIST rather than a
+   * single add or remove. A per-item door would need an id from the renderer to
+   * say which item, and ids here are DERIVED from names by main — so "remove the
+   * one called X" would be main re-deriving a name the renderer had already
+   * derived, and the two derivations would be the thing that had to agree. The
+   * whole list is one fact with one owner, and `clampAnalysisCategories` re-mints
+   * every id on the way in, so what the file holds is always main's own spelling
+   * whatever the window sent.
+   *
+   * IT IS NOT REFUSED WHEN HOSTED. A library move is refused there because the
+   * books belong to the host; a list of claims somebody wants hunted for belongs
+   * to the person, and BookForge has no opinion about it.
+   */
+  ipcMain.handle('analysis:read-categories', () => readAppSettings().analysisCategories);
+  ipcMain.handle(
+    'analysis:write-categories',
+    (_event, categories: CustomAnalysisCategory[]) =>
+      writeAppSettings({
+        analysisCategories: Array.isArray(categories) ? categories : [],
+      }).analysisCategories,
+  );
+
   ipcMain.handle('library:dir', () => readAppSettings().libraryDir);
   ipcMain.handle('library:set', (_event, dir: string) => {
     refuseHostedLibraryMove();

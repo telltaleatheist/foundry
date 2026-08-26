@@ -2559,16 +2559,30 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
    * engine refuses the run by name, which is the honest outcome and lands in the
    * row's error where somebody will read it; a console line says which write
    * failed so the cause is not a mystery.
+   *
+   * THE ENTRY IS REBUILT FIELD BY FIELD rather than spread, and that is the one
+   * detail this write cannot get wrong. `parseCategoriesJson` (src/analyze/plan.ts)
+   * REFUSES an entry carrying a field it does not read — deliberately, because a
+   * typo accepted in silence is a hand-written hypothesis that never reached the
+   * model and an hour spent looking fine — so anything this app grows on its own
+   * request shape would end the run the day it was added. Three fields are
+   * spelled here because three are the ones over there: `name`, `enabled`, and
+   * `description` where the category has one (a user's own; a built-in never
+   * does, and an empty one is omitted rather than written as "").
    */
   if (request.kind === 'analysis' && request.categories.length > 0) {
     const where = categoriesFileFor(request);
+    const asked = request.categories.map((one) => {
+      const description = (one.description ?? '').trim();
+      return {
+        name: one.name,
+        enabled: one.enabled,
+        ...(description.length > 0 ? { description } : {}),
+      };
+    });
     try {
       await fsp.mkdir(path.dirname(where), { recursive: true });
-      await fsp.writeFile(
-        where,
-        `${JSON.stringify(request.categories.map((one) => ({ name: one.name, enabled: one.enabled })), null, 2)}\n`,
-        'utf8',
-      );
+      await fsp.writeFile(where, `${JSON.stringify(asked, null, 2)}\n`, 'utf8');
     } catch (err) {
       console.error(`[job] the analysis checklist could not be written to ${where}:`, err);
     }

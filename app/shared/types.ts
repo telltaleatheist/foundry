@@ -739,11 +739,22 @@ export interface AnalyzeRequest {
    * only categories this build has heard of, and the day the engine grows an
    * eleventh the two readings diverge in silence.
    *
-   * Every name here is one of `ANALYSIS_CATEGORIES` (shared/analysis-categories.ts)
-   * — never free text, so nothing a person typed reaches a hypothesis, a prompt or
-   * a filename.
+   * Every name here is one main itself minted: either a built-in
+   * (`ANALYSIS_CATEGORIES`, shared/analysis-categories.ts) or the id of a
+   * category this user saved, slugged and collision-checked on the way into
+   * `app-settings.json` (`clampAnalysisCategories`) and re-checked against that
+   * file by `workspace:plan-analysis`. Nothing typed into a text box reaches a
+   * hypothesis, a prompt or a filename without passing through that saving act.
+   *
+   * `description` RIDES ONLY ON THE USER'S OWN CATEGORIES, and it is what makes
+   * one of them mean anything: the engine has no hypotheses for a name it has
+   * never heard of, so `buildPlan` wraps this sentence into the category's one
+   * hypothesis (`describedHypothesis`, src/analyze/plan.ts) and marks the whole
+   * category untuned. A built-in never carries one — its hypotheses are the
+   * measured ones, and a description beside them would be a second opinion about
+   * a calibrated question.
    */
-  categories: readonly { name: string; enabled: boolean }[];
+  categories: readonly { name: string; enabled: boolean; description?: string }[];
   /** `--model`: the Ollama model the verifier is asked of. */
   model: string;
   /** `--ollama`: the server's URL. Used, never started. */

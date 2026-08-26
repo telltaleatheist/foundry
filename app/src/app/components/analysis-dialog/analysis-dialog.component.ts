@@ -1,7 +1,14 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
-import { ANALYSIS_CATEGORIES } from '@shared/analysis-categories';
+import {
+  ANALYSIS_CATEGORIES,
+  ANALYSIS_CATEGORY_IDS,
+  CUSTOM_CATEGORY_DESCRIPTION_MAX,
+  CUSTOM_CATEGORY_NAME_MAX,
+  customCategoryId,
+  type CustomAnalysisCategory,
+} from '@shared/analysis-categories';
 import { fold } from '@shared/original';
 import { canTranslateFrom } from '@shared/stages';
 import {
@@ -44,10 +51,42 @@ import { api } from '../../core/foundry';
  *   **THE CHECKLIST IS THE QUESTION.** Which categories to look for is the whole
  *   of what makes this analysis this one — it decides what the report contains,
  *   and therefore whether a second run refreshes the row you have or files a new
- *   one beside it (`PARAMS_OF.analysis`, shared/ledger.ts). So it is a list of
- *   checkboxes rather than a free-text box: every name that leaves here is one the
- *   engine has a calibrated or a first-draft hypothesis for, and nothing somebody
- *   typed ever reaches a hypothesis, a prompt or a filename.
+ *   one beside it (`PARAMS_OF.analysis`, shared/ledger.ts). So the run is ordered
+ *   from a list of CHECKBOXES and never from a text field: every name that leaves
+ *   here is one the engine has a calibrated hypothesis, a first-draft hypothesis,
+ *   or a saved description for.
+ *
+ *   **AND THE LIST CAN BE ADDED TO.** Owen, 2026-08-25: *"maybe the user can add
+ *   more categories - even one-sentence descriptive ones. and they check off which
+ *   ones they want to search for in this document."* Engine-side this is not a new
+ *   door: `buildPlan` (src/analyze/plan.ts) has always taken a description-backed
+ *   category and wrapped the sentence into its one hypothesis, and the two
+ *   built-ins Owen named himself — anti-evolution, authoritarian-blueprint — came
+ *   in through exactly that shape. What was missing was a way to say one from the
+ *   app.
+ *
+ *   THE SENTENCE IS THE HYPOTHESIS, WHICH IS WHY THE FIELD ASKS FOR A CLAIM. It
+ *   is scored against every sentence in the book as *"The author's statement
+ *   matches this description: …"*, so "conscription" finds nothing and "the author
+ *   argues that military service should be compulsory" finds something. The dialog
+ *   says so, and every category made this way is marked untuned in the report,
+ *   because nothing has calibrated a sentence somebody typed this afternoon.
+ *
+ *   ADDING ONE IS A SAVE AND NOT A KEYSTROKE, and that is what keeps the old
+ *   sentence about free text true in its new form. A typed name becomes a category
+ *   only by being written into `app-settings.json` through main's own door, where
+ *   it is slugged, capped and collision-checked (`clampAnalysisCategories`); the
+ *   plan door then admits a name only if that file already holds it. So the path
+ *   from a text box to a prompt runs through a deliberate act of saving, and what
+ *   reaches the engine is always a string main itself minted.
+ *
+ *   THEY ARE THE USER'S AND NOT THIS BOOK'S. The list persists app-level, beside
+ *   the library folder, and reaches every book on the machine; what is decided per
+ *   run is which of them are ticked. Removing one is allowed and costs no report:
+ *   a report carries its own category list (`AnalysisReading.categories`) and the
+ *   panel names a category it has never heard of by saying its id aloud
+ *   (`analysisCategoryName`), so an old report goes on rendering in full after the
+ *   category it names has been deleted.
  *
  *   **THERE IS NO SENSITIVITY CONTROL.** Owen, 2026-08-25: *"it flags absolutely
  *   anything that could possibly match and then we have a button that displays
@@ -113,10 +152,95 @@ import { api } from '../../core/foundry';
               }
             </div>
           </div>
+
+          <!--
+            THE USER'S OWN, IN THEIR OWN BLOCK. They are kept apart from the
+            twelve rather than mixed in, and the reason is that they are a
+            different KIND of thing: the built-ins are the engine's list and
+            cannot be removed, these are a list this person keeps and can. One
+            grid with three removable rows scattered through it would make every
+            row look like it might vanish.
+          -->
+          @if (mine().length > 0) {
+            <div class="field">
+              <span class="label">Yours <em>scored from the sentence you wrote</em></span>
+              <div class="checklist mine">
+                @for (one of mine(); track one.id) {
+                  <label class="check own" [class.on]="picked().has(one.id)">
+                    <input
+                      type="checkbox"
+                      [checked]="picked().has(one.id)"
+                      (change)="flip(one.id)">
+                    <span class="check-name">
+                      {{ one.name }}
+                      <em class="check-said">{{ one.description }}</em>
+                    </span>
+                    <!--
+                      REMOVE, AS A BUTTON INSIDE A LABEL, which needs the press
+                      stopped: a click anywhere in a label toggles its checkbox,
+                      so without this the ✕ would tick the category on its way to
+                      deleting it.
+                    -->
+                    <button
+                      type="button"
+                      class="drop"
+                      [attr.aria-label]="'Remove ' + one.name"
+                      (click)="$event.preventDefault(); drop(one.id)"
+                    >✕</button>
+                  </label>
+                }
+              </div>
+            </div>
+          }
+
+          <!--
+            ADDING ONE. Two fields and a button, folded away until asked for: the
+            ordinary visit to this dialog ticks boxes and presses Add to queue,
+            and a form standing open in the middle of it would be a question
+            nobody came here to answer.
+          -->
+          @if (adding()) {
+            <div class="field adder">
+              <input
+                type="text"
+                class="add-name"
+                placeholder="Name — what the legend will call it"
+                [attr.maxlength]="nameMax"
+                [ngModel]="newName()"
+                (ngModelChange)="newName.set($event)"
+                name="newName">
+              <textarea
+                class="add-said"
+                rows="2"
+                placeholder="One sentence: the claim the author would be making. “The author argues that …”"
+                [attr.maxlength]="saidMax"
+                [ngModel]="newSaid()"
+                (ngModelChange)="newSaid.set($event)"
+                name="newSaid"></textarea>
+              <p class="note">
+                The sentence <strong>is</strong> what gets measured — every sentence in the book is
+                scored against it. A claim finds passages; a topic finds nothing. Nothing has
+                calibrated it, so the report will mark this category as a first draft.
+              </p>
+              @if (addProblem(); as reason) {
+                <p class="problem">{{ reason }}</p>
+              }
+              <div class="picks">
+                <button class="ghost small" (click)="stopAdding()">Cancel</button>
+                <button class="ghost small" [disabled]="saving()" (click)="save()">
+                  {{ saving() ? 'Saving…' : 'Add category' }}
+                </button>
+              </div>
+            </div>
+          }
+
           <div class="picks">
             <button class="ghost small" (click)="pickAll()">All</button>
             <button class="ghost small" (click)="pickNone()">None</button>
-            <span class="tally">{{ picked().size }} of {{ categories.length }}</span>
+            @if (!adding()) {
+              <button class="ghost small" (click)="startAdding()">Add a category…</button>
+            }
+            <span class="tally">{{ picked().size }} of {{ all().length }}</span>
           </div>
 
           <label class="field">
@@ -282,6 +406,40 @@ import { api } from '../../core/foundry';
       color: var(--text-tertiary);
     }
 
+    /*
+      ONE COLUMN FOR THE USER'S OWN, because each of them carries a SENTENCE and
+      a sentence in a half-width cell is three lines of four words. The twelve
+      built-ins are names and fit two abreast; these are not the same shape.
+    */
+    .checklist.mine { grid-template-columns: 1fr; }
+    .check.own { align-items: flex-start; }
+    .check.own input { margin-top: 3px; }
+    .check-said {
+      display: block;
+      font-style: normal;
+      font-size: 10.5px; line-height: 1.4;
+      color: var(--text-tertiary);
+      white-space: normal;
+    }
+    .check.own .check-name { overflow: visible; white-space: normal; }
+    .drop {
+      flex: 0 0 auto;
+      background: transparent; border: none; cursor: pointer;
+      color: var(--text-tertiary); font-size: 10px;
+      padding: 2px 4px; border-radius: var(--radius-sm);
+      transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1),
+                  color 100ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .drop:hover { background: var(--bg-active); color: var(--danger, var(--warn)); }
+
+    .adder {
+      padding: 10px;
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      background: var(--bg-sunken);
+    }
+    .add-said { resize: vertical; min-height: 44px; line-height: 1.45; }
+
     .picks { display: flex; align-items: center; gap: 8px; }
     .tally {
       margin-left: auto;
@@ -374,6 +532,32 @@ export class AnalysisDialogComponent {
   protected readonly categories = ANALYSIS_CATEGORIES;
 
   /**
+   * The categories this person has written, as main holds them.
+   *
+   * SET ONLY FROM MAIN'S ANSWER and never optimistically. Every write comes back
+   * with the list as it was actually stored — ids re-derived from names, fields
+   * trimmed and capped, collisions dropped (`clampAnalysisCategories`) — so
+   * taking the answer is what keeps the window and the file from disagreeing
+   * about an id that a checklist is about to be keyed on.
+   */
+  protected readonly mine = signal<readonly CustomAnalysisCategory[]>([]);
+
+  /** The built-ins and the user's own, in the order the plan will take them. */
+  protected readonly all = computed<readonly { id: string; description?: string }[]>(
+    () => [...ANALYSIS_CATEGORIES, ...this.mine()],
+  );
+
+  protected readonly nameMax = CUSTOM_CATEGORY_NAME_MAX;
+  protected readonly saidMax = CUSTOM_CATEGORY_DESCRIPTION_MAX;
+
+  /** Whether the add form is open, and what is in it. */
+  protected readonly adding = signal(false);
+  protected readonly newName = signal('');
+  protected readonly newSaid = signal('');
+  protected readonly addProblem = signal<string | null>(null);
+  protected readonly saving = signal(false);
+
+  /**
    * WHICH BOXES ARE TICKED — every one of them, to begin with.
    *
    * THE DEFAULT IS EVERYTHING, and that is the same ruling the sensitivity knob
@@ -383,7 +567,7 @@ export class AnalysisDialogComponent {
    * not have to guess before the machine has looked.
    */
   protected readonly picked = signal<ReadonlySet<string>>(
-    new Set(ANALYSIS_CATEGORIES.map((one) => one.id)),
+    new Set(ANALYSIS_CATEGORY_IDS),
   );
 
   protected readonly model = signal(DEFAULT_MODEL);
@@ -400,6 +584,126 @@ export class AnalysisDialogComponent {
       this.source();
       this.problem.set(null);
     });
+    void this.loadMine();
+  }
+
+  /**
+   * The user's own categories, read once when this card is built.
+   *
+   * TICKED ON ARRIVAL, because the default is everything and these are part of
+   * everything — a person who saved a category and then found it unticked would
+   * reasonably conclude the saving had not worked. They are ADDED to whatever is
+   * already ticked rather than replacing it, so a read that lands while somebody
+   * is untickíng boxes does not undo them.
+   *
+   * A FAILURE IS SILENT AND MEANS "NONE". There is no bridge at all in a browser
+   * build, and a person who has never added a category is the ordinary case; a
+   * red sentence about a settings file at the top of a dialog somebody opened to
+   * analyse a book would be an error message about a feature they are not using.
+   */
+  private async loadMine(): Promise<void> {
+    if (!api) return;
+    try {
+      const held = await api.analysis.readCategories();
+      this.mine.set(held);
+      this.picked.update((was) => new Set([...was, ...held.map((one) => one.id)]));
+    } catch {
+      this.mine.set([]);
+    }
+  }
+
+  protected startAdding(): void {
+    this.adding.set(true);
+    this.addProblem.set(null);
+  }
+
+  protected stopAdding(): void {
+    this.adding.set(false);
+    this.addProblem.set(null);
+    this.newName.set('');
+    this.newSaid.set('');
+  }
+
+  /**
+   * SAVE A CATEGORY — and refuse, in words, everything that cannot become one.
+   *
+   * The refusals are checked HERE as well as in main, and that is not belt and
+   * braces: main CLAMPS (it drops what it cannot use, silently, because a
+   * hand-edited file with one bad row should cost that row and not the list), and
+   * a clamp is exactly the wrong answer to a person who has just typed something
+   * and pressed a button. What they are owed is a sentence saying which part of
+   * it was the problem. Main's clamp remains the guarantee about what is on the
+   * disk; this is the conversation.
+   */
+  protected async save(): Promise<void> {
+    if (!api) return;
+    const name = this.newName().replace(/\s+/g, ' ').trim();
+    const description = this.newSaid().replace(/\s+/g, ' ').trim();
+    if (name.length === 0) {
+      this.addProblem.set('Give it a name — that is what the checklist and the legend will say.');
+      return;
+    }
+    if (description.length === 0) {
+      this.addProblem.set(
+        'Write the sentence. It is the whole of what gets measured: without it there is nothing '
+        + 'to score a sentence of the book against.',
+      );
+      return;
+    }
+    const id = customCategoryId(name);
+    if (id.length === 0) {
+      this.addProblem.set('That name is all punctuation, so there is nothing to file it under.');
+      return;
+    }
+    if (ANALYSIS_CATEGORY_IDS.includes(id)) {
+      this.addProblem.set(
+        `Foundry already looks for something it calls “${name}”, with hypotheses that were `
+        + 'measured. It is on the list above.',
+      );
+      return;
+    }
+    if (this.mine().some((one) => one.id === id)) {
+      this.addProblem.set(`You already have a category called “${name}”.`);
+      return;
+    }
+    this.saving.set(true);
+    this.addProblem.set(null);
+    try {
+      const held = await api.analysis.writeCategories([...this.mine(), { id, name, description }]);
+      this.mine.set(held);
+      this.picked.update((was) => new Set([...was, id]));
+      this.stopAdding();
+    } catch (err) {
+      this.addProblem.set(err instanceof Error ? err.message : String(err));
+    } finally {
+      this.saving.set(false);
+    }
+  }
+
+  /**
+   * Remove one of the user's own categories.
+   *
+   * NO CONFIRMATION, and no report is harmed. What is destroyed is a name and a
+   * sentence, both of them one retype away; what is NOT destroyed is any report
+   * that named it, because a report carries its own category list
+   * (`AnalysisReading.categories`) and the panel says an unfamiliar id aloud
+   * rather than refusing to draw it (`analysisCategoryName`). A guard card in
+   * front of a two-field record would be this app's confirmation habit applied
+   * where there is nothing to lose.
+   */
+  protected async drop(id: string): Promise<void> {
+    if (!api) return;
+    try {
+      const held = await api.analysis.writeCategories(this.mine().filter((one) => one.id !== id));
+      this.mine.set(held);
+      this.picked.update((was) => {
+        const next = new Set(was);
+        next.delete(id);
+        return next;
+      });
+    } catch (err) {
+      this.problem.set(err instanceof Error ? err.message : String(err));
+    }
   }
 
   protected flip(id: string): void {
@@ -411,7 +715,7 @@ export class AnalysisDialogComponent {
   }
 
   protected pickAll(): void {
-    this.picked.set(new Set(ANALYSIS_CATEGORIES.map((one) => one.id)));
+    this.picked.set(new Set(this.all().map((one) => one.id)));
   }
 
   protected pickNone(): void {
@@ -439,7 +743,7 @@ export class AnalysisDialogComponent {
        * well is not belt and braces: it is what makes the request legible to
        * anybody reading it, and it costs one filter.
        */
-      const asked = ANALYSIS_CATEGORIES.filter((one) => ticked.has(one.id)).map((one) => one.id);
+      const asked = this.all().filter((one) => ticked.has(one.id)).map((one) => one.id);
       // Main names the report, mints the step and materialises the book the run
       // reads — every path in the answer is main's composition. See `AnalysisPlan`.
       const plan = await api.workspace.planAnalysis(input, asked);
@@ -455,8 +759,19 @@ export class AnalysisDialogComponent {
          * by DROPPING names is indistinguishable from a list of the only
          * categories this build has heard of — so the day the engine grows a
          * thirteenth, a shortened list would silently turn it off.
+         *
+         * THE USER'S OWN CARRY THEIR SENTENCE, and they have to: the engine has no
+         * hypotheses for a name it has never heard of, so `buildPlan` refuses
+         * outright a category given neither a description nor hypotheses of its
+         * own. A built-in never carries one — its hypotheses are the measured
+         * ones, and a description beside them would be a second opinion about a
+         * calibrated question.
          */
-        categories: ANALYSIS_CATEGORIES.map((one) => ({ name: one.id, enabled: ticked.has(one.id) })),
+        categories: this.all().map((one) => ({
+          name: one.id,
+          enabled: ticked.has(one.id),
+          ...(one.description !== undefined ? { description: one.description } : {}),
+        })),
         model: this.model().trim() || DEFAULT_MODEL,
         ollama: this.ollama().trim() || DEFAULT_OLLAMA,
         // Main's answer travelling back to main: the step the report is named

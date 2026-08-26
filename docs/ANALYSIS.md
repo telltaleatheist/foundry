@@ -287,6 +287,42 @@ lesson, not the corpse).
   everything expensive. **No unapplied guard**: the run reads the book file
   and writes a report; it consumes no rendering (the sweep's rule, decided
   explicitly).
+- **The checklist can be added to** (Owen, 2026-08-25: *"maybe the user can
+  add more categories - even one-sentence descriptive ones. and they check off
+  which ones they want to search for in this document."*). A category the user
+  writes is a NAME and ONE SENTENCE; the sentence IS the hypothesis, wrapped by
+  `describedHypothesis` and marked untuned, which is the door
+  description-backed categories have always come through (§5, and the two
+  built-in book categories entered by it). Two facts, two homes: WHAT
+  CATEGORIES EXIST is the reader's and persists app-level in
+  `app-settings.json` (`AppSettings.analysisCategories`, beside the library
+  folder) so it reaches every book on the machine; WHICH ONES ARE TICKED is
+  one run's question and is decided in the dialog each time, never remembered
+  — a remembered tick is an hour somebody paid for without choosing to. Two
+  doors, `analysis:read-categories` / `analysis:write-categories`; the write
+  takes the whole list and answers with it as stored, ids re-derived from
+  names (`customCategoryId`), fields capped, collisions with a built-in or
+  with each other dropped (`clampAnalysisCategories` — this file CLAMPS rather
+  than refusing, which is `app-settings.json`'s own philosophy, and the dialog
+  does the refusing in sentences because a clamp is the wrong answer to
+  somebody who has just typed something).
+- **Free text still never reaches a hypothesis by accident**, and the old
+  sentence needed a new true form rather than a quiet deletion. A typed name
+  becomes a category ONLY by being saved through main's door, where it is
+  slugged and checked; `workspace:plan-analysis` then admits a name only if
+  the settings file already holds it. So the path from a text box to a prompt
+  runs through a deliberate act of saving, and what the ledger records and the
+  engine is handed is always a string main itself minted.
+- **Removing a custom category costs no report.** A report carries its own
+  category list (`AnalysisReading.categories`) and the panel says an
+  unfamiliar id aloud rather than refusing to draw it
+  (`analysisCategoryName`), so a report naming a category that has since been
+  deleted renders in full, colour and all.
+- The categories file main writes beside the report
+  (`<report>.categories.json`) carries `{name, enabled}` and, for a user's own
+  category, `description`. Three fields and no more: `parseCategoriesJson`
+  REFUSES an entry carrying a field it does not read, so anything this app
+  grew on its own request shape would end the run the day it was added.
 - Jobs land via `landStep` under the standing step. Hosted world routes
   through the host queue like everything else.
 
@@ -318,22 +354,191 @@ lesson, not the corpse).
     everything", and honest about which of it the verifier threw back.
   The tier is session display state, not persisted, not a param of the step
   — the report is the same file under every button.
-- The panel copies the sweep's mechanics wholesale: rows grouped by category
-  with counts, one hover listener on the container, the fixed-position
-  `pointer-events: none` glance for the fuller quotation, travel =
-  `pane.reveal(id)` + pulse. Category colour in chrome carries the role,
-  never the paper hex.
 - **Highlights are runs, not overlays**: `cut()` in the book view already
   closes a run when marker coverage changes; analysis spans join the same
   cursor walk and emit a `hit` class on the run. No `innerHTML` (banned on
   this surface), no absolutely-positioned layer (an overlay that ate
-  gestures would make a flagged paragraph the one nobody can select). One
-  highlight ink on the paper — the page must not turn into confetti — with
-  the category named in the gutter chip and the panel; a panel filter lights
-  one category at a time when asked.
+  gestures would make a flagged paragraph the one nobody can select). The
+  panel's legend switches a category's cards and its highlights off together
+  (§8a — the clause that was deferred and is now built).
+- ~~**One highlight ink on the paper** — the page must not turn into
+  confetti.~~ **OVERRULED, 2026-08-25, by Owen**: *"maybe make the text's
+  highlighted color the same color as the analysis block"*, and then, when the
+  first attempt came back too solid, *"the text shouldn't be a different
+  color, just a light highlight color difference."* The paper takes the
+  category's colour. The strikethrough is deliberate — the old ruling was
+  right about a page with no key beside it, and what changed is that there is
+  now a legend two inches away and a card wearing the same hue on its rail, so
+  the tint and the card are one fact drawn twice rather than two facts
+  competing. **What survives intact is the alpha discipline**, which is where
+  the real risk always was (`shared/categories.ts`: *"applied as an outline and
+  a tint, never as text colour: this is a book, and recolouring its words makes
+  it unreadable"*): nothing colours a glyph, ever; the hue appears only as a
+  pale stroke behind the words. One hue source (`analysisCategoryHue`), two
+  treatments — the panel mixes it for charcoal, `tintOf` (book-view) mixes it
+  for cream at `hsl(H 75% 68% / .32)` for a flag and `/ .14` for a rejection —
+  so the two grounds are accommodated where they must be (lightness and alpha)
+  and the identity is shared where it must be (the hue). A shared colour
+  *string* would have had to be legible on both, which nothing is.
 - Highlights draw only when the analysis panel is open. The paper is a
   workbench; a report is an apparatus a reader summons, not a permanent
   recolouring of the book.
+
+### 8a. The panel, as reworked (Owen, 2026-08-25)
+
+The first cut copied the sweep's mechanics wholesale — rows grouped by
+category, one hover listener on the container, a fixed-position glance for the
+fuller quotation, a chip naming the block id. Owen read it and ruled:
+
+> *"lets rework it a bit so each item is in its own block, in the order in
+> which it appears. maybe each category has its own color or something. and
+> maybe the user can add more categories - even one-sentence descriptive ones.
+> and they check off which ones they want to search for in this document.
+> also, im not sure what the items next to the quotes mean. b151-5? b159-2?
+> those arent necessary for a human to see. the tool tips are just repeating
+> whats already on screen - unnecessary. and they shouldnt be highlighted
+> inside the analysis, they should be highlighted inside the document viewer
+> (as they are). as i scroll/click highlighted text, it should jump to that
+> spot in the analysis"*
+
+What that is, clause by clause:
+
+- **ONE CARD PER FINDING, IN THE BOOK'S ORDER.** The grouping is gone. The
+  list is the flat sequence `place()` already returns, which is reading order.
+  A list beside a book is read AGAINST the book, and grouping scatters one
+  page's findings down five sections. Each card: the category name, the page
+  (`≈`, the sheet's own estimate mark), the score, the quotation as the body,
+  the other categories named where there are any, and the verifier's rejection
+  as a sentence where the verdict was a skip.
+- **A HUE PER CATEGORY.** The card's left edge is a rail in
+  the category's colour — the block chrome's gutter-rail idiom — and the same
+  colour is the legend's dot and the card's category name. The hues are one
+  table beside the names (`ANALYSIS_CATEGORIES.hue`,
+  `app/shared/analysis-categories.ts`), hand-checked so the smallest gap is
+  24° and dealt out with a stride so two categories adjacent in the LEGEND are
+  never adjacent on the wheel. **The assignment is deliberately arbitrary**:
+  §1 rules that there is no severity, and a cool-to-hot table would smuggle one
+  back in through the paint. A category the user wrote has no row, so its hue
+  is a 32-bit FNV-1a of its id folded into the wheel — stable across sessions
+  and machines with nothing stored, needing to know nothing about what else is
+  on screen, and allowed to land near a built-in's because every dot and every
+  rail has the category's NAME beside it. The shared table exports a NUMBER
+  rather than a colour, because the hue is a fact about the category and the
+  colour it becomes is a decision about one surface's ground — **and the paper
+  now makes that decision too**, by Owen's overruling of the one-ink rule
+  (§8 above and `tintOf`, book-view.component.ts).
+- **THE LEGEND IS THE FILTER.** Each category present at the current tier gets
+  a chip — dot, name, count — and pressing it switches that category's cards
+  AND its highlights on the paper off, because they are one list (`hits` is
+  what the panel draws and what `litRanges` paints). This is the clause this
+  section promised and Unit AN-2 deferred out loud. It is a set of the HIDDEN
+  and not of the shown, so an empty set means everything and a report that
+  grows an unfamiliar category shows it. Counts are taken BEFORE the filter, so
+  a switched-off row keeps the number telling you what turning it back on
+  would bring. The three tier buttons stay above it.
+- **NO BLOCK IDS.** `b151-5` is a coordinate this program keys ops and travel
+  by and is not a thing a reader has any use for; the no-filenames-in-copy rule
+  is read as covering it. Travel is the WHOLE CARD (a chip-sized target inside
+  a paragraph-sized row is a target you can miss), with a 1px hover raise as
+  the affordance — never a growth, which is the "rows that move under the hand"
+  fault Owen ruled against on the sweep.
+- **NO TOOLTIP THAT REPEATS THE CARD.** The `also` categories are named
+  instead of counted behind a `+2`; the verifier's rejection is a sentence
+  instead of a two-word chip with the sentence hidden on hover. The three that
+  remain each say something the surface does not: what a tier means (×3), and
+  that the score is not a severity.
+- **THE GLANCE IS CUT.** It was the one hover here that showed MORE than the
+  row did, so it passes the "repeats what is on screen" test — and it goes
+  anyway, because the sync below gives its job to something better: a card
+  click travels to the passage AND the paper scrolls the list back, so the
+  fuller passage is the book in the column beside the list rather than a
+  rectangle appearing under a pointer held still — over the very spot the
+  pointer is now aiming a click at. `sweep.widen` is untouched; that card is a
+  modal over the page and has no book beside it to travel to.
+- **THE QUOTATION IN THE PANEL IS PLAIN PROSE.** *"They shouldnt be
+  highlighted inside the analysis, they should be highlighted inside the
+  document viewer (as they are)."* The flagged words keep a little weight and
+  a brighter ink so the eye finds them in the sentence; there is no marker-pen
+  background. Two surfaces painting one highlight makes the panel a second copy
+  of the page instead of an index into it.
+- **DOCUMENT → PANEL, BOTH WAYS.** *"As i scroll/click highlighted text, it
+  should jump to that spot in the analysis."* The paper does the measuring
+  (its DOM) and holds no opinion; the panel does the obeying (its manners).
+  - CLICK: `LitRange` carries the earliest covering finding's `key`, `cut()`
+    closes a run when the key changes, and the run wears it as `data-hit`. The
+    press that already reads `data-id`/`data-note`/`data-jump` off whatever it
+    landed on reads this the same way and calls `AnalysisViewService.select`.
+    **The guard is structural**: there is no `.run.hit[data-hit]` in the DOM
+    unless a panel is open, because the class and the attribute both come from
+    `lit()`. **Block selection is untouched** — the paragraph still becomes the
+    selection, Alt still takes the category, the original panel is still aimed;
+    a flagged paragraph must not be the one paragraph nobody can act on, which
+    is the very failure the no-overlay ruling was written against. The panel
+    scrolls that card into view, always, because a deliberate act that sometimes
+    does nothing is the worst of the three available behaviours; `pointedAt`
+    carries a counter beside `selected` so clicking the same passage twice
+    brings the panel back to it even though the state did not change.
+  - **SELECTION, AND A PULSE THAT LASTS** (Owen, after the first cut: *"when i
+    click a highlighted block, the corresponding analysis block only blinks for
+    about 1/4 of a second. can we make it pulse? on either side. have it pulse
+    as long as it's selected. if i click the block, the text block pulses until
+    i click somewhere else or scroll offscreen."*). A blink ANNOUNCES and is
+    gone; a pulse is a STATE — which is what a two-surface instrument needs,
+    because the whole point of clicking a passage is to then look at the other
+    end of the room, by which time a flash has finished. One nullable hit key
+    (`AnalysisViewService.selected`), both surfaces drawing it: the card
+    breathes in the panel and the passage's lit runs breathe on the paper,
+    whichever end the click came from, at the same 1.9s so the two read as one
+    selection seen twice. **The emphasis is a ring and never a colour** — the
+    tint underneath is already the category's and twelve of those exist, so an
+    emphasis in any hue would read as "a different category" on whichever card
+    shared it; the paper uses its own soft `--ink` and the panel uses
+    `--accent`, neither of which can be mistaken for one of the twelve.
+    **Reduced motion holds the ring still at the breath's midpoint** rather
+    than dropping the emphasis — the book view's glide sets that precedent
+    (skip the movement, keep the destination). Let go of by: a click that is
+    not on the selected finding (paper — in `release`, so it catches only a
+    plain click on the words and never a right-click, a marquee, a marker peek
+    or a gutter chip, each of which returns or never reaches it; panel — one
+    listener on the list with `closest('.card')` as the test, and the tiers and
+    the legend deliberately outside it, because changing what is shown is not
+    the same act as looking away from a finding), a click that selects another,
+    or **the passage scrolling off the page**. That last one IS an
+    IntersectionObserver, and it is the one place one is right here: it watches
+    the selected finding's BLOCK (which always has a box) rooted on the bench
+    (which is the thing that scrolls), and the question is genuinely a threshold
+    rather than a position. It refuses to fire until it has SEEN the block
+    arrive, because an observer reports its element's state on registration and
+    the selection is usually made a frame before the `reveal` that brings the
+    block into view.
+  - SCROLL: **an IntersectionObserver over the lit runs was the obvious shape
+    and is the wrong one, measured.** The runs live inside `.body`, which is
+    under `content-visibility: auto`; a skipped subtree generates no boxes for
+    its descendants, so an off-screen run has no geometry at all — an observer
+    reports it as not intersecting (true and useless) and a rect asked for
+    directly comes back as zeros, which reads as a rectangle at the viewport
+    origin and would make the FURTHEST finding look like the nearest. So the
+    tracking is a rect walk over BLOCKS, which always have boxes (the
+    containment is on a wrapper inside each block, never on the block, so the
+    gutter marks are not clipped). `Line.hitKey` puts the block's first
+    finding on it as `data-hit-key`, and `followAnalysis` — `followOriginal`'s
+    walk, narrowed by that selector to the handful of lit blocks — takes the
+    first at or below the fold, or the last when the reader has scrolled past
+    every finding. It runs on the same native capture-phase scroll listener,
+    outside Angular's scheduling, and writes its signal only when the answer
+    CHANGES.
+  - **THE FOLLOWING MUST NOT FIGHT THE READER.** The pointer resting over the
+    panel pauses it outright (no ambiguity about what a hand on a list is
+    doing); scrolling the panel by hand pauses it for `FOLLOW_REST_MS` = 4s —
+    long enough to read two cards, short enough that going back to the book
+    resumes before the next paragraph. A self-scroll suppression window
+    (`SELF_SCROLL_MS` = 600ms, a smooth scroll's whole animation) stops the
+    following switching itself off on its first success. The panel scrolls by
+    arithmetic on its own list and never by `scrollIntoView`, which would
+    scroll ancestors this component has no business moving, and it does nothing
+    at all when the card is already comfortably in view.
+- Travel is still `pane.reveal(id)` + pulse, and the panel still closes
+  nothing. Category colour in chrome carries the role, never the paper hex.
 
 ---
 

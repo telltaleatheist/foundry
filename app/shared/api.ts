@@ -7,6 +7,7 @@
  * mismatch. So the interface lives here: preload.ts implements it, and the
  * renderer's `window.foundry` is typed as it.
  */
+import type { CustomAnalysisCategory } from './analysis-categories';
 import type { BookOutcome } from './book';
 import type { HostMintMeta, HostNodeAction, HostOffers, HostStatus } from './host-ops';
 import type { ReadAsk } from './ledger';
@@ -837,6 +838,25 @@ export interface FoundryApi {
     /** The directory picker. Chooses without saving; `set` is the commit. */
     choose(current: string): Promise<string | null>;
     set(dir: string): Promise<string>;
+  };
+
+  /**
+   * The categories this person wrote — theirs, not one book's.
+   *
+   * The built-in twelve are a compiled table both sides already hold
+   * (`ANALYSIS_CATEGORIES`, shared/analysis-categories.ts) and never travel here;
+   * this is the ADDITIONS, kept in `app-settings.json` so a claim somebody has
+   * decided to hunt for is on the checklist of the next book too.
+   *
+   * THE WRITE TAKES THE WHOLE LIST and answers with the list as main stored it —
+   * every id re-derived from its name, every field trimmed and capped, every
+   * collision dropped (`clampAnalysisCategories`, electron/app-settings.ts). So
+   * the caller's next state is main's answer and never its own optimistic copy,
+   * which is what stops the window and the file disagreeing about an id.
+   */
+  analysis: {
+    readCategories(): Promise<CustomAnalysisCategory[]>;
+    writeCategories(categories: CustomAnalysisCategory[]): Promise<CustomAnalysisCategory[]>;
   };
 
   /**

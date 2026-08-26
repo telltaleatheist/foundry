@@ -6,7 +6,17 @@ import type { ReplayedRow } from '@shared/ops';
 import { BookStacksService } from './book-stacks.service';
 import { StageService } from './stage.service';
 import { api } from './foundry';
-import { litRanges, place, tiered, type AnalysisHit, type AnalysisTier, type LitRange } from './analysis';
+import {
+  legendOf,
+  litRanges,
+  onlyCategories,
+  place,
+  tiered,
+  type AnalysisHit,
+  type AnalysisLegendEntry,
+  type AnalysisTier,
+  type LitRange,
+} from './analysis';
 
 /**
  * THE ANALYSIS BEING LOOKED AT — the report, the tier, and the one placement both
@@ -56,6 +66,98 @@ export class AnalysisViewService {
 
   /** Which of the three buttons is pressed. See the class docblock. */
   readonly tier = signal<AnalysisTier>('moderate');
+
+  /**
+   * THE CATEGORIES SWITCHED OFF IN THE LEGEND — hidden, never "the shown ones".
+   *
+   * Session state beside the tier and for the tier's own reason: the report is
+   * the same file whatever is switched off, and a filter remembered across
+   * closings would be a report that opens missing findings nobody can see are
+   * missing. It is cleared when the panel moves to another analysis (below),
+   * because a category name switched off in one report may not exist in the next.
+   *
+   * WHY THE HIDDEN AND NOT THE SHOWN is argued at `onlyCategories`
+   * (core/analysis.ts): an empty set has to mean "everything", which is what makes
+   * a report growing an unfamiliar category show it rather than hide it.
+   */
+  readonly hidden = signal<ReadonlySet<string>>(NO_CATEGORIES);
+
+  /**
+   * THE FINDING THAT IS SELECTED — one at a time, or none.
+   *
+   * ── It is STATE, and it was a blink, and the difference is Owen's ─────────
+   *
+   * The first cut of the two-way sync flashed a card for a beat when its passage
+   * was clicked. Owen, watching it: *"when i click a highlighted block, the
+   * corresponding analysis block only blinks for about 1/4 of a second. can we
+   * make it pulse? on either side. have it pulse as long as it's selected. if i
+   * click the block, the text block pulses until i click somewhere else or scroll
+   * offscreen."* A blink is an ANNOUNCEMENT — it says "over here" and is gone; a
+   * pulse is a STATE — it says "this one, still, while you look at the other
+   * side". The second is what a two-surface instrument actually needs, because
+   * the whole point of the gesture is to look away from the thing you clicked.
+   *
+   * SO IT LIVES HERE, in the one place both surfaces already read from, and both
+   * of them draw it: the card pulses in the panel and the passage's lit runs
+   * pulse on the paper, whichever end the click came from. A selection held by
+   * either component would be a selection the other had to be told about.
+   *
+   * IT IS CLEARED BY THREE THINGS and each is a person saying they are done with
+   * it: a click that is not on this finding (either surface), a click that
+   * selects a different one, and the passage scrolling off the page — Owen's own
+   * third condition, watched by the book view because the paper is the thing
+   * being scrolled.
+   */
+  readonly selected = signal<string | null>(null);
+
+  /**
+   * THE FINDING THE PAPER WAS JUST CLICKED ON — a deliberate act, stamped.
+   *
+   * Owen, 2026-08-25: *"as i scroll/click highlighted text, it should jump to
+   * that spot in the analysis."* This is the CLICK half, and it is SEPARATE from
+   * `selected` above even though one gesture writes both. `selected` is a state
+   * and answers "which one is lit"; this is an EVENT and answers "scroll the
+   * panel to it now". Clicking the same passage a second time does not change the
+   * state and must still bring the panel back to it — which a signal holding a
+   * bare key cannot say, because writing the same value is no change at all.
+   */
+  readonly pointedAt = signal<{ key: string; at: number } | null>(null);
+
+  /** The counter behind `pointedAt`. Never read; it exists to be different. */
+  private clicks = 0;
+
+  /**
+   * Select a finding, and ask the panel to bring it into view — the click, from
+   * either surface. `null` deselects and asks for nothing.
+   */
+  select(key: string | null): void {
+    this.selected.set(key);
+    if (key === null) return;
+    this.clicks += 1;
+    this.pointedAt.set({ key, at: this.clicks });
+  }
+
+  /** The selected finding itself, or null — for the surfaces that need its spans. */
+  readonly selectedHit = computed<AnalysisHit | null>(() => {
+    const key = this.selected();
+    if (key === null) return null;
+    return this.hits().find((one) => one.key === key) ?? null;
+  });
+
+  /**
+   * THE FINDING NEAREST THE TOP OF THE PAGE — the SCROLL half of the same wish.
+   *
+   * Written by the book view's scroll listener, and only when the answer CHANGES
+   * (`followAnalysis`, book-view.component.ts): this app is zoneless and an
+   * unconditional write per scroll frame would put a change-detection pass behind
+   * every frame of every drag of a four-hundred-page book.
+   *
+   * The panel decides whether to obey it. Following is the panel's own manners
+   * problem — a list that scrolls itself under a hand reading it is worse than one
+   * that lags — so the rule about when to follow lives there and this is only the
+   * fact.
+   */
+  readonly nearest = signal<string | null>(null);
 
   /**
    * THE REPORT AS MAIN READ IT, together with the step it is about.
@@ -114,8 +216,33 @@ export class AnalysisViewService {
   /** The findings this book has nowhere to put, as sentences. Never a refusal. */
   readonly unplaced = computed<readonly string[]>(() => this.placement().unplaced);
 
-  /** What the tier lets through — the rows on the panel, and the light on the paper. */
-  readonly hits = computed<readonly AnalysisHit[]>(() => tiered(this.placement().hits, this.tier()));
+  /**
+   * What the tier lets through, BEFORE the legend's switches — what the legend
+   * counts, and nothing else reads.
+   *
+   * It is a step of its own so that a category switched off keeps its own count
+   * beside its switch. See `legendOf`.
+   */
+  private readonly atTier = computed<readonly AnalysisHit[]>(
+    () => tiered(this.placement().hits, this.tier()),
+  );
+
+  /** The categories present at this tier, counted — the legend's rows. */
+  readonly legend = computed<readonly AnalysisLegendEntry[]>(() => legendOf(this.atTier()));
+
+  /** What the tier AND the legend let through — the cards, and the light on the paper. */
+  readonly hits = computed<readonly AnalysisHit[]>(
+    () => onlyCategories(this.atTier(), this.hidden()),
+  );
+
+  /** Switch one category's cards — and its highlights — off, or back on. */
+  toggleCategory(category: string): void {
+    this.hidden.update((held) => {
+      const next = new Set(held);
+      if (!next.delete(category)) next.add(category);
+      return next;
+    });
+  }
 
   /**
    * WHICH CHARACTERS THE PAPER LIGHTS, by block — read by the book view and by
@@ -149,6 +276,7 @@ export class AnalysisViewService {
           this.loaded.set(null);
           this.problem.set(null);
           this.loading.set(false);
+          this.forget();
           return;
         }
         if (this.loaded()?.stepId === open.stepId) return;
@@ -157,9 +285,22 @@ export class AnalysisViewService {
         // lying about which analysis it is showing.
         this.loaded.set(null);
         this.problem.set(null);
+        // AND SO IS EVERYTHING KEYED TO THE OLD REPORT. A hidden category may not
+        // exist in the next one, and a hit key certainly does not — `${id}#${start}`
+        // is a passage of a report, and pointing the new panel at one of the old
+        // one's would scroll to a card that is not there.
+        this.forget();
         void this.load(open.projectDir, open.stepId);
       });
     });
+  }
+
+  /** Everything that was true of the report we are leaving, dropped together. */
+  private forget(): void {
+    this.hidden.set(NO_CATEGORIES);
+    this.selected.set(null);
+    this.pointedAt.set(null);
+    this.nearest.set(null);
   }
 
   private async load(projectDir: string, stepId: string): Promise<void> {
@@ -193,3 +334,5 @@ export class AnalysisViewService {
 
 const NO_ROWS: readonly ReplayedRow[] = [];
 const EMPTY = { hits: [] as readonly AnalysisHit[], unplaced: [] as readonly string[] };
+/** Nothing switched off, which is how every report opens. */
+const NO_CATEGORIES: ReadonlySet<string> = new Set<string>();
