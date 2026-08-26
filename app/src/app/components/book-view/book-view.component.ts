@@ -245,6 +245,13 @@ interface Piece {
    */
   hitInk: string | null;
   /**
+   * THE DEEP END OF THE PULSE — `deepTintOf`'s tone for the same category, or
+   * null where the run is not lit. It rides the run as a custom property so the
+   * selection animation can breathe between the two tones of ONE hue; see the
+   * `.run.hit.on` styles for the ruling that put it here.
+   */
+  hitDeep: string | null;
+  /**
    * WHICH FINDING LIT THIS RUN, by the panel's own hit key — null everywhere the
    * run is not lit.
    *
@@ -555,9 +562,10 @@ const OP_GESTURE: Gesture = { kind: 'op' };
             the geometry and the transition; \`tintOf\` decides the wash.
 
             \`on\` IS THE SELECTED FINDING, PULSING. *"Have it pulse as long as
-            it's selected."* It rides ON TOP of whatever tint the category
-            brought — a shadow and an outline, never a colour swap — so the
-            emphasis is visible on every one of the twelve.
+            it's selected."* The emphasis is the tint itself breathing deeper in
+            its own hue — \`--hit-deep\` rides beside the resting wash so the
+            animation has both ends of the breath (Owen's second ruling; the
+            styles carry it in full).
           -->
           <span
             class="run"
@@ -567,6 +575,7 @@ const OP_GESTURE: Gesture = { kind: 'op' };
             [class.hit-ghost]="piece.hit === 'ghost'"
             [class.on]="piece.hitKey !== null && chosenHit() === piece.hitKey"
             [style.background]="piece.hitInk"
+            [style.--hit-deep]="piece.hitDeep"
             [attr.data-hit]="piece.hitKey"
           >{{ piece.text }}</span>
         }
@@ -2557,24 +2566,31 @@ const OP_GESTURE: Gesture = { kind: 'op' };
       needs, because the whole point of clicking a passage is to then look at the
       other side of the room.
 
-      A SHADOW AND NOT A COLOUR. The tint underneath is already the category's,
-      and twelve of those exist; an emphasis painted in any hue would collide with
-      one of them and read as "a different category" on that one. A ring of the
-      paper's own soft black sits on top of every tint equally and cannot be
-      mistaken for one — it is the same reasoning the block's own selection ring
-      is drawn under.
+      THE WASH ITSELF BREATHES, IN ITS OWN HUE — the ring is gone, and by the
+      right person's word twice over. The first cut drew a soft-black ring so
+      the emphasis could never read as a thirteenth category; Owen looked at it
+      on the page and overruled the trade (2026-08-25, over a screenshot):
+      *"its just blinking an ugly outline. can we make it actually pulse darker
+      and lighter for that particular shade?"* So the emphasis is now the tint
+      deepening and easing in place — \`tintOf\` at rest, \`deepTintOf\` at the
+      peak, one hue, carried per run as \`--hit-deep\` because a stylesheet
+      cannot know twelve of them.
 
-      SLOW AND SHALLOW: 1.9s is a breath, not a strobe, and the ring travels one
-      pixel. A mark that is going to sit on the page for as long as somebody reads
-      the panel has to be findable at a glance and ignorable at a paragraph.
+      ONLY THE MIDPOINT IS DECLARED. A keyframe list with no 0%/100% frame
+      interpolates from the element's own underlying value — the inline resting
+      wash — so the breath starts and ends at exactly the tint the run already
+      wears, and this rule never has to restate a colour that
+      \`[style.background]\` owns.
+
+      SLOW AND SHALLOW: 1.9s is a breath, not a strobe. A mark that is going to
+      sit on the page for as long as somebody reads the panel has to be findable
+      at a glance and ignorable at a paragraph.
     */
     .run.hit.on {
-      box-shadow: 0 0 0 2px color-mix(in srgb, var(--ink) 26%, transparent);
       animation: hit-breathe 1900ms var(--ease) infinite;
     }
     @keyframes hit-breathe {
-      0%, 100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--ink) 16%, transparent); }
-      50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--ink) 34%, transparent); }
+      50% { background-color: var(--hit-deep); }
     }
 
     /* ── The one verb on this surface, on the bench beside the paper ──────── */
@@ -2831,14 +2847,17 @@ const OP_GESTURE: Gesture = { kind: 'op' };
       /*
         AND THE SELECTED PASSAGE HOLDS STILL RATHER THAN GOING DARK. The pulse is
         an EMPHASIS and the emphasis is what has to survive; the breathing is only
-        how it draws attention. So the animation stops and the ring stays, at the
-        breath's own midpoint, which is the glide's precedent one screen down
-        (\`matchMedia('(prefers-reduced-motion: reduce)')\` there jumps to the
-        destination rather than refusing to travel).
+        how it draws attention. So the animation stops and the deep wash stays,
+        at the breath's own midpoint, which is the glide's precedent one screen
+        down (\`matchMedia('(prefers-reduced-motion: reduce)')\` there jumps to
+        the destination rather than refusing to travel). \`!important\` because
+        the resting wash is an INLINE style (\`[style.background]\`) and inline
+        beats a stylesheet everywhere an animation is not running — this is the
+        one place a static rule must out-rank it, and it says so.
       */
       .run.hit.on {
         animation: none;
-        box-shadow: 0 0 0 2px color-mix(in srgb, var(--ink) 34%, transparent);
+        background: var(--hit-deep) !important;
       }
     }
   `],
@@ -6836,7 +6855,7 @@ function cut(text: string, markers: readonly Marker[], lit: readonly LitRange[])
   const codes = inlineEmphasis(text);
   if (markers.length === 0 && codes === null && lit.length === 0) {
     return [{
-      text, marker: null, strong: false, italic: false, hit: null, hitInk: null, hitKey: null,
+      text, marker: null, strong: false, italic: false, hit: null, hitInk: null, hitDeep: null, hitKey: null,
     }];
   }
 
@@ -6859,6 +6878,7 @@ function cut(text: string, markers: readonly Marker[], lit: readonly LitRange[])
   let runMarker: Marker | null = null;
   let runHit: Piece['hit'] = null;
   let runHitInk: string | null = null;
+  let runHitDeep: string | null = null;
   let runHitKey: string | null = null;
   const close = (end: number): void => {
     if (end > start) {
@@ -6869,6 +6889,7 @@ function cut(text: string, markers: readonly Marker[], lit: readonly LitRange[])
         italic: runItalic,
         hit: runHit,
         hitInk: runHitInk,
+        hitDeep: runHitDeep,
         hitKey: runHitKey,
       });
     }
@@ -6909,6 +6930,7 @@ function cut(text: string, markers: readonly Marker[], lit: readonly LitRange[])
      * already closed at and nothing new has to be compared.
      */
     const hitInk = covering === null ? null : tintOf(covering.category, covering.solid);
+    const hitDeep = covering === null ? null : deepTintOf(covering.category, covering.solid);
     const code = codes?.[i] ?? 0;
     /*
      * THE FOUR ASTERISKS OF A MATCHED PAIR ARE NOT ON THE PAGE. They are still
@@ -6936,6 +6958,7 @@ function cut(text: string, markers: readonly Marker[], lit: readonly LitRange[])
       runItalic = italic;
       runHit = hit;
       runHitInk = hitInk;
+      runHitDeep = hitDeep;
       runHitKey = hitKey;
     }
   }
@@ -6997,6 +7020,26 @@ function tintOf(category: string, solid: boolean): string {
   const held = TINTS.get(at);
   if (held !== undefined) return held;
   const made = `hsl(${analysisCategoryHue(category)} 75% 68% / ${solid ? 0.32 : 0.14})`;
+  TINTS.set(at, made);
+  return made;
+}
+
+/**
+ * The same hue, breathed IN — the deep end of the selected passage's pulse.
+ *
+ * Owen's second ruling on the emphasis (2026-08-25, over a screenshot): *"its
+ * just blinking an ugly outline. can we make it actually pulse darker and
+ * lighter for that particular shade?"* So the ring is gone and the emphasis is
+ * the wash itself, travelling between `tintOf`'s resting tone and this one —
+ * same hue, lower lightness, more of it. The glyphs stay black throughout;
+ * only the marker stroke behind them deepens, which keeps the one discipline
+ * every ruling here has preserved.
+ */
+function deepTintOf(category: string, solid: boolean): string {
+  const at = `${category}#deep${solid ? 1 : 0}`;
+  const held = TINTS.get(at);
+  if (held !== undefined) return held;
+  const made = `hsl(${analysisCategoryHue(category)} 70% 58% / ${solid ? 0.52 : 0.3})`;
   TINTS.set(at, made);
   return made;
 }

@@ -239,6 +239,7 @@ import type { AnalysisHit, AnalysisTier } from '../../core/analysis';
           [class.ghost]="card.found.struck"
           [class.rejected]="card.found.verdict === 'skip'"
           [class.on]="analysis.selected() === card.key"
+          [style.--card-ink]="card.ink"
           [attr.data-key]="card.key"
           (click)="travel(card.found)"
         >
@@ -515,25 +516,28 @@ import type { AnalysisHit, AnalysisTier } from '../../core/analysis';
       gesture actually needs — the whole point of clicking a passage on the page
       is to then look over here, by which time a flash has finished.
 
-      A RING RATHER THAN A COLOUR, in the ACCENT rather than in the category's own
-      hue. The rail two pixels to the left is already the category's colour, and a
-      selection painted in another hue would read as "a different category" on
-      whichever card happened to share it. The accent is the app's word for "this
-      is the live one" everywhere else and cannot be confused with any of the
-      twelve. It rides ON TOP of the rail rather than replacing it, so a selected
-      card still says which category it is.
-
       1.9 SECONDS, matching the paper's breath exactly. The two marks are one
       selection seen from two sides, and two pulses at different rates would read
       as two different things happening.
     */
+    /*
+      THE CARD BREATHES IN ITS OWN CATEGORY'S SHADE — the accent ring went the
+      way the paper's ring went, and on the same word (Owen, 2026-08-25: *"its
+      just blinking an ugly outline. can we make it actually pulse darker and
+      lighter for that particular shade?"*). The card's hue rides in as
+      \`--card-ink\` (the rail's own colour), and the breath is a wash of it
+      mixed into the card's ground — darker and lighter of the one shade, never
+      a second colour fighting the rail two pixels away. The border takes the
+      ink too, steadily: the moving part is the wash, the standing part says
+      which card is selected even mid-breath.
+    */
     .card.on {
-      border-color: var(--accent-strong);
+      border-color: color-mix(in srgb, var(--card-ink) 55%, var(--border-strong));
       animation: card-breathe 1900ms cubic-bezier(0.4, 0, 0.6, 1) infinite;
     }
     @keyframes card-breathe {
-      0%, 100% { box-shadow: 0 0 0 0 var(--accent-faint); background: var(--bg-elevated); }
-      50% { box-shadow: 0 0 0 3px var(--accent-faint); background: var(--bg-hover); }
+      0%, 100% { background: color-mix(in srgb, var(--card-ink) 6%, var(--bg-elevated)); }
+      50% { background: color-mix(in srgb, var(--card-ink) 18%, var(--bg-elevated)); }
     }
     /*
       AND IT HOLDS STILL WHERE MOTION IS UNWELCOME, at the breath's own midpoint.
@@ -544,8 +548,7 @@ import type { AnalysisHit, AnalysisTier } from '../../core/analysis';
     @media (prefers-reduced-motion: reduce) {
       .card.on {
         animation: none;
-        box-shadow: 0 0 0 3px var(--accent-faint);
-        background: var(--bg-hover);
+        background: color-mix(in srgb, var(--card-ink) 18%, var(--bg-elevated));
       }
     }
 
