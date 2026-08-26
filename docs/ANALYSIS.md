@@ -346,9 +346,12 @@ lesson, not the corpse).
 - Header line first, rows after, **no timestamp anywhere in the body path**
   (same input, same bytes): the header carries the book's `source.bankSha`
   and generation, the NLI model id, the hypothesis-set version, the verify
-  model, the capture floor, and `hues` — each category's display hue, so the
-  report owns its colours on any device (`categoryHue` in plan.ts; the app's
-  shared table is its named mirror). A loader that finds a changed bank refuses by
+  model, the capture floor, and `hues` + `names` — each category's display hue
+  and display name, so the report owns its display facts on any device
+  (`categoryHue`/`CATEGORY_NAMES` in plan.ts; the app's shared table is their
+  named mirror; a custom category's name is the label its author typed).
+  Labels are display-only and deliberately outside `hypothesisSetVersion` —
+  relabelling changes no question a score answered. A loader that finds a changed bank refuses by
   name — a report keyed to `b12-3` is only meaningful against the bank that
   minted it.
 - One row per **candidate** window — verified or not: `{ id, start, end,

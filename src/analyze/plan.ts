@@ -50,6 +50,8 @@ export class AnalysisPlanError extends Error {
 /** One category's plan for a run: what to rank with, what to verify with. */
 export interface RankPlan {
   category: string;
+  /** The display name — `CategoryRequest.label`, a built-in's mirrored name, or the id. */
+  label: string;
   /** One or more stance hypotheses; a category scores as the MAX across them. */
   hypotheses: string[];
   /** The claim the verifier tests, phrased as the thing the author would assert. */
@@ -189,6 +191,7 @@ const PROPOSITIONS: Record<string, string> = {
 const UNTUNED_BOOK_CATEGORIES: readonly RankPlan[] = [
   {
     category: 'anti-evolution',
+    label: 'Anti-evolution and science denial',
     hypotheses: [
       'The author asserts that evolution is false, a lie, or a deception.',
       'The author asserts that living things were created in their present forms rather than evolving from earlier ones.',
@@ -204,6 +207,7 @@ const UNTUNED_BOOK_CATEGORIES: readonly RankPlan[] = [
   },
   {
     category: 'authoritarian-blueprint',
+    label: 'Authoritarian blueprint',
     hypotheses: [
       'The author argues that career civil servants should be removed and replaced with people loyal to the leader.',
       'The author argues that the executive should take direct control of the agencies, the courts, or criminal prosecutions.',
@@ -270,6 +274,15 @@ export interface CategoryRequest {
   description?: string;
   /** Overrides the built-in hypotheses, or supplies them for a new category. */
   hypotheses?: string[];
+  /**
+   * The words a person reads for this category — carried into the report's
+   * `names` header so every device shows the label the asker chose, exactly.
+   * Absent, a built-in gets its mirrored display name and anything else is
+   * shown as its id. Display only: it is deliberately OUTSIDE
+   * `hypothesisSetVersion`, because relabelling a category does not change the
+   * question a single score answered.
+   */
+  label?: string;
 }
 
 /** Every built-in category name, in the order a default run plans them. */
@@ -318,6 +331,7 @@ export function buildPlan(requested: readonly CategoryRequest[] | null, log: (li
     const tunedHypotheses = HYPOTHESES[name];
     const untunedBuiltIn = UNTUNED_BOOK_CATEGORIES.find((one) => one.category === name);
     const description = (request.description ?? '').replace(/\s+/g, ' ').trim();
+    const label = (request.label ?? '').trim() || CATEGORY_NAMES[name] || name;
 
     if (asked !== undefined && asked.length > 0) {
       /*
@@ -328,6 +342,7 @@ export function buildPlan(requested: readonly CategoryRequest[] | null, log: (li
        */
       plan.push({
         category: name,
+        label,
         hypotheses: asked,
         proposition: description.length > 0
           ? description
@@ -340,6 +355,7 @@ export function buildPlan(requested: readonly CategoryRequest[] | null, log: (li
     if (tunedHypotheses !== undefined) {
       plan.push({
         category: name,
+        label,
         hypotheses: Array.isArray(tunedHypotheses) ? tunedHypotheses : [tunedHypotheses],
         proposition: PROPOSITIONS[name]!,
         tuned: true,
@@ -348,7 +364,7 @@ export function buildPlan(requested: readonly CategoryRequest[] | null, log: (li
     }
 
     if (untunedBuiltIn !== undefined) {
-      plan.push({ ...untunedBuiltIn, hypotheses: [...untunedBuiltIn.hypotheses] });
+      plan.push({ ...untunedBuiltIn, hypotheses: [...untunedBuiltIn.hypotheses], label });
       continue;
     }
 
@@ -362,6 +378,7 @@ export function buildPlan(requested: readonly CategoryRequest[] | null, log: (li
     }
     plan.push({
       category: name,
+      label,
       hypotheses: [describedHypothesis(description)],
       proposition: description,
       tuned: false,
@@ -424,7 +441,7 @@ export function parseCategoriesJson(text: string, where: string): CategoryReques
       + 'categories: [{"name":"hate"}, {"name":"my-topic","description":"…"}]',
     );
   }
-  const known = new Set(['name', 'enabled', 'description', 'hypotheses']);
+  const known = new Set(['name', 'enabled', 'description', 'hypotheses', 'label']);
   const out: CategoryRequest[] = [];
   for (const [index, raw] of parsed.entries()) {
     const at = `${where}, category ${index + 1}`;
@@ -449,6 +466,9 @@ export function parseCategoriesJson(text: string, where: string): CategoryReques
     if (entry['description'] !== undefined && typeof entry['description'] !== 'string') {
       throw new AnalysisPlanError(`${at}: "description" is a string`);
     }
+    if (entry['label'] !== undefined && typeof entry['label'] !== 'string') {
+      throw new AnalysisPlanError(`${at}: "label" is a string — the display name a reader sees`);
+    }
     const hypotheses = entry['hypotheses'];
     if (hypotheses !== undefined) {
       if (!Array.isArray(hypotheses) || hypotheses.some((one) => typeof one !== 'string')) {
@@ -460,6 +480,7 @@ export function parseCategoriesJson(text: string, where: string): CategoryReques
       ...(entry['enabled'] !== undefined ? { enabled: entry['enabled'] as boolean } : {}),
       ...(entry['description'] !== undefined ? { description: entry['description'] as string } : {}),
       ...(hypotheses !== undefined ? { hypotheses: hypotheses as string[] } : {}),
+      ...(entry['label'] !== undefined ? { label: entry['label'] as string } : {}),
     });
   }
   return out;
@@ -517,6 +538,31 @@ export function untunedNames(plan: readonly RankPlan[]): string[] {
  * at the point of use, and two implementations that could drift would be two
  * answers about one category's colour.
  */
+/**
+ * The words a reader sees for each built-in, MIRRORED from
+ * `app/shared/analysis-categories.ts` exactly as the hues below are — and
+ * stamped into every report's `names` header for the hues' own reason: a
+ * device that carries neither table (BookForge's player) must show
+ * "Anti-evolution and science denial" where the desktop shows it, not a
+ * re-humanised id that happens to be shorter. A custom category's label is the
+ * asker's (`CategoryRequest.label`), so the phone shows the words the person
+ * actually typed.
+ */
+const CATEGORY_NAMES: Record<string, string> = {
+  'political-demonization': 'Political demonization',
+  'hate': 'Hate',
+  'conspiracy': 'Conspiracy',
+  'dehumanization': 'Dehumanization',
+  'violence': 'Violence',
+  'false-prophecy': 'False prophecy',
+  'christian-nationalism': 'Christian nationalism',
+  'prosperity-gospel': 'Prosperity gospel',
+  'extremism': 'Extremism',
+  'political-violence': 'Political violence',
+  'anti-evolution': 'Anti-evolution and science denial',
+  'authoritarian-blueprint': 'Authoritarian blueprint',
+};
+
 const CATEGORY_HUES: Record<string, number> = {
   'political-demonization': 352,
   'hate': 130,
@@ -548,4 +594,11 @@ export function planHues(plan: readonly RankPlan[]): Record<string, number> {
   const hues: Record<string, number> = {};
   for (const entry of plan) hues[entry.category] = categoryHue(entry.category);
   return hues;
+}
+
+/** Every plan category's display name, in plan order — the header's `names`. */
+export function planNames(plan: readonly RankPlan[]): Record<string, string> {
+  const names: Record<string, string> = {};
+  for (const entry of plan) names[entry.category] = entry.label;
+  return names;
 }

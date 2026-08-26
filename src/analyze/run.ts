@@ -46,6 +46,7 @@ import {
   hypothesisSetVersion,
   parseCategoriesJson,
   planHues,
+  planNames,
   untunedNames,
   type CategoryRequest,
   type RankPlan,
@@ -471,6 +472,7 @@ async function verifyStage(args: {
       categories: args.plan.map((one) => one.category),
       untuned: untunedNames(args.plan),
       hues: planHues(args.plan),
+      names: planNames(args.plan),
     }),
     rows,
   );

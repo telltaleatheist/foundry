@@ -543,7 +543,7 @@ export class AnalysisDialogComponent {
   protected readonly mine = signal<readonly CustomAnalysisCategory[]>([]);
 
   /** The built-ins and the user's own, in the order the plan will take them. */
-  protected readonly all = computed<readonly { id: string; description?: string }[]>(
+  protected readonly all = computed<readonly { id: string; name: string; description?: string }[]>(
     () => [...ANALYSIS_CATEGORIES, ...this.mine()],
   );
 
@@ -771,6 +771,10 @@ export class AnalysisDialogComponent {
           name: one.id,
           enabled: ticked.has(one.id),
           ...(one.description !== undefined ? { description: one.description } : {}),
+          // The display name rides with the id so the report's `names` header
+          // shows every device — the phone included — the words this dialog
+          // shows, a custom category's exactly as its author typed them.
+          label: one.name,
         })),
         model: this.model().trim() || DEFAULT_MODEL,
         ollama: this.ollama().trim() || DEFAULT_OLLAMA,

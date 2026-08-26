@@ -754,7 +754,7 @@ export interface AnalyzeRequest {
    * measured ones, and a description beside them would be a second opinion about
    * a calibrated question.
    */
-  categories: readonly { name: string; enabled: boolean; description?: string }[];
+  categories: readonly { name: string; enabled: boolean; description?: string; label?: string }[];
   /** `--model`: the Ollama model the verifier is asked of. */
   model: string;
   /** `--ollama`: the server's URL. Used, never started. */

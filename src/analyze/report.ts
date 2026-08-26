@@ -124,6 +124,13 @@ export interface AnalysisHeader {
    * shared table is its mirror.
    */
   hues: Record<string, number>;
+  /**
+   * Each category's display name, keyed by category — the mirrored built-in
+   * name, or the label the asker gave a custom one. Here for `hues`' reason: a
+   * reader on a device with no category table shows the same words the desktop
+   * shows, not a re-humanised id.
+   */
+  names: Record<string, string>;
 }
 
 /**

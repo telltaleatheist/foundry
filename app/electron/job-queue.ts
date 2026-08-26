@@ -2574,10 +2574,15 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
     const where = categoriesFileFor(request);
     const asked = request.categories.map((one) => {
       const description = (one.description ?? '').trim();
+      const label = (one.label ?? '').trim();
       return {
         name: one.name,
         enabled: one.enabled,
         ...(description.length > 0 ? { description } : {}),
+        // The words the person reads for this category, carried so the report's
+        // `names` header shows every device the label the desktop shows —
+        // including a custom category exactly as its author typed it.
+        ...(label.length > 0 ? { label } : {}),
       };
     });
     try {
