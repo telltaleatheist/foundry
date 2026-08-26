@@ -255,7 +255,19 @@ import { hosted } from '../../core/foundry';
                   <div class="bar" [class.indeterminate]="!view.determinate(job)">
                     <i [style.width.%]="view.percent(job)"></i>
                   </div>
-                  <span class="sub">{{ view.stepLine(job) }}</span>
+                  <!--
+                    THE COUNT, AND HOW MUCH LONGER — one line, because they are
+                    one thought and a row here has three lines to spend in total.
+                    The estimate is the quieter of the two on purpose: the
+                    fraction is a measurement of what has happened and this is a
+                    forecast of what has not, and a row that drew them at the
+                    same weight would be inviting the guess to be read as the
+                    fact. Absent for most of a job's life — see
+                    \`QueueEtaService\`, which will not say a number until it has
+                    watched the count move, drops the clock at every phase
+                    boundary, and takes the estimate away when the count stops.
+                  -->
+                  <span class="sub">{{ view.stepLine(job) }}@if (view.timeLeft(job); as left) {<span class="eta"> · {{ left }}</span>}</span>
                   <!--
                     THE STEP TAKING PLACE, which is the thing Owen could not see.
                     The count says how far; this says what the engine is actually
@@ -581,6 +593,9 @@ import { hosted } from '../../core/foundry';
     }
     .sub.ok { color: var(--ok); }
     .sub.bad { color: var(--error); white-space: normal; }
+    /* The forecast, dimmer than the count it follows and on the same line. See
+       the comment at the markup for why it is the quieter of the two. */
+    .eta { color: var(--text-muted); font-variant-numeric: tabular-nums; }
     /*
       THE STEP, WRAPPED TO TWO LINES AND NO MORE. The engine's sentences run
       long — a rejected answer names the block and the attempt — and the whole of

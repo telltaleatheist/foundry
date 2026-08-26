@@ -167,7 +167,28 @@ import { hosted } from '../../core/foundry';
                     <div class="sub" [title]="view.paths(busy)">{{ kindLine(busy) }}</div>
                   </div>
                   @if (view.determinate(busy)) {
-                    <div class="right"><div class="pct">{{ view.percent(busy) }}%</div></div>
+                    <!--
+                      HOW FAR, AND HOW MUCH LONGER, stacked in the same corner
+                      because they are two readings of one thing and the page has
+                      the width to give them both. The percentage is the
+                      measurement and stays the big number; the estimate sits
+                      under it small and grey, which is the weighting the two
+                      deserve — one is what has happened, the other is a forecast
+                      of what has not.
+
+                      It is drawn only when there is one. \`QueueEtaService\`
+                      says nothing until it has watched the count move, starts a
+                      new clock at every phase boundary, and takes the estimate
+                      away when the count stops — so this corner is a percentage
+                      alone for the first stretch of every run, and again the
+                      moment a run goes quiet.
+                    -->
+                    <div class="right">
+                      <div class="pct">{{ view.percent(busy) }}%</div>
+                      @if (view.timeLeft(busy); as left) {
+                        <div class="eta">{{ left }}</div>
+                      }
+                    </div>
                   }
                 </div>
 
@@ -538,6 +559,10 @@ import { hosted } from '../../core/foundry';
     }
     .right { flex: none; text-align: right; font-variant-numeric: tabular-nums; }
     .pct { font-size: 17px; font-weight: 600; color: var(--accent); }
+    /* The forecast, under the measurement and a good deal quieter than it —
+       the argument is at the markup. It never wraps, because "~1h 10m left" is
+       the longest thing it says and a slot card must not reflow around it. */
+    .eta { margin-top: 2px; font-size: 11px; color: var(--text-tertiary); white-space: nowrap; }
 
     .bar {
       height: 5px;
@@ -777,10 +802,24 @@ export class QueuePageComponent {
     return parts.join(' · ');
   }
 
-  /** One waiting row's state, for the off-lane sections that have no chain. */
+  /**
+   * One waiting row's state, for the off-lane sections that have no chain.
+   *
+   * THE ESTIMATE IS ON THIS LINE TOO, and it is not a special case: these
+   * sections hold the install and the mint, and a mint counts photographs being
+   * rectified in this very window (`noteMintPage`) — which is a count like any
+   * other and the one job in the app whose progress is nobody's process to ask.
+   * An install has no fraction at all (it counts megabytes in a field of its
+   * own) so it simply never has one to draw, which is the same silence every
+   * other row gets before its count has moved.
+   */
   protected stateLine(job: Job): string {
     if (job.state === 'held') return 'Waiting for Start';
-    if (job.state === 'running') return this.view.stepLine(job);
+    if (job.state === 'running') {
+      const left = this.view.timeLeft(job);
+      const line = this.view.stepLine(job);
+      return left === '' ? line : `${line} · ${left}`;
+    }
     if (job.state === 'queued') return job.message ?? 'Queued';
     return this.outcome(job);
   }

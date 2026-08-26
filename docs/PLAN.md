@@ -3174,6 +3174,32 @@ not the model. Two build units:
   `deleteCost` gained one because `WHY_MODEL_PASS` says "a model read every
   page of it", which is false about a report.
 
+- **The queue says how much longer** — LANDED. Owen, watching an analysis
+  run: *"can you give me some kind of progress bar or something in the
+  queue? anything at all to indicate its actually working"*, then
+  *"preferably with an ETA"*. Two halves, both in. The BAR half was the
+  engine (`f583834`): `analyze` had been printing a count every few
+  minutes, so a run that was working was indistinguishable from a run that
+  was wedged. The ETA half is RENDERER-DERIVED and adds nothing to the wire
+  — `app/src/app/core/queue-eta.service.ts` keeps a per-job sample history
+  off the `queue:changed` snapshots (arrival time + page + total + phase),
+  takes a plain rate over a sliding window (20 movements or 3 minutes,
+  whichever bites first, floor of two), and forecasts `remaining / rate`.
+  So every phase that counts anything — render, read, translate, both
+  halves of analyze, and the mint — got an ETA the day it got a count, and
+  none of them had to be told. Nothing is persisted and nothing is written
+  back to a `Job`: the renderer still never edits one. Three honesty rules
+  carry it: no estimate until the count has MOVED under this window's eye;
+  a phase or total change (or a count going backwards) drops the clock and
+  starts a new one, so render → read and rank → verify visibly restart
+  rather than blending; and a count that has not moved for longer than the
+  window shows no estimate rather than a frozen lie — which needs a slow
+  heartbeat, because the app is zoneless and silence publishes nothing. It
+  is drawn beside the count in the dropdown, under the percentage on the
+  queue page's slot cards, and next to the book's name in the chip (the one
+  part of the queue on screen without a click). Bundle 863.99 → 866.63 kB,
+  still a WARNING.
+
 Deferred out loud (ANALYSIS.md §9): no discovery fallback; no severity or
 generated rationales; no shipped NLI env yet (hand-named interpreter via
 `--nli-python` / `FOUNDRY_NLI_PYTHON`; the env-catalog target + doctor tier

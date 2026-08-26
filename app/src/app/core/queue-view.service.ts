@@ -8,6 +8,7 @@ import type { Job } from '@shared/types';
 import { OpenDocumentsService } from './documents.service';
 import { NoticeService } from './notice.service';
 import { ProjectsService } from './projects.service';
+import { QueueEtaService } from './queue-eta.service';
 import { QueueService } from './queue.service';
 import { api } from './foundry';
 
@@ -56,6 +57,15 @@ export class QueueViewService {
   private readonly notices = inject(NoticeService);
   /** Only ever asked what a book is called, and what it filed. See `label`. */
   private readonly projects = inject(ProjectsService);
+  /**
+   * HOW MUCH LONGER, measured in this window from the counts as they arrive.
+   *
+   * It is injected here rather than into the two surfaces for this file's whole
+   * reason: the queue is drawn in two places, and an estimate they worked out
+   * separately would be two forecasts about one job that a person has to choose
+   * between. One measurement, one wording, read by both.
+   */
+  private readonly eta = inject(QueueEtaService);
 
   /**
    * WHAT THE CHIP MEASURES — the GPU lane's run, or the first one going.
@@ -89,12 +99,29 @@ export class QueueViewService {
     const held = this.queue.held().length;
     if (active) {
       const name = this.label(active);
+      /*
+       * THE ESTIMATE RIDES IN THE CHIP, next to the name, and it is the one
+       * number this line carries. Owen asked for the ETA in the queue and the
+       * chip is the only part of the queue that is on screen without being
+       * clicked — an estimate a person has to open a panel to see would answer
+       * "is it actually working" only for somebody who already went looking.
+       *
+       * It is not the count and never becomes one: the count and the bar are
+       * what the panel is for, and a fraction here would be the furniture the
+       * chip's own note (queue-bar.component.ts) argues against. Absent for most
+       * of a job's life, by design — see QueueEtaService's honesty rules — so
+       * this list is built the same way the one below it is, out of the parts
+       * that have something to say.
+       */
+      const left = this.eta.forJob(active);
       const behind = [
         alsoRunning > 0 ? `${alsoRunning} more running` : null,
         waiting > 0 ? `${waiting} queued` : null,
         held > 0 ? `${held} held` : null,
       ].filter((part) => part !== null);
-      return behind.length > 0 ? `${name} · ${behind.join(', ')}` : name;
+      const tail = behind.length > 0 ? behind.join(', ') : null;
+      const parts = [name, left, tail].filter((part) => part !== null);
+      return parts.join(' · ');
     }
     /*
      * A HELD BATCH IS THE HEADLINE WHEN NOTHING IS RUNNING, and it outranks the
@@ -341,6 +368,27 @@ export class QueueViewService {
     }
     const verb = p.phase === 'render' ? 'Rendering' : 'Reading';
     return `${verb} ${p.page} / ${p.total} pages`;
+  }
+
+  /**
+   * HOW MUCH LONGER — "~3m left", or the empty string when nothing true can be
+   * said about it yet.
+   *
+   * THE MEASUREMENT IS `QueueEtaService`'s and the whole argument lives there:
+   * a rate over a sliding window of the counts as they arrived, restarted at
+   * every phase boundary, retired when the count stops moving. This is the one
+   * line the surfaces call, and the empty string is what lets them draw it with
+   * `@if` and nothing else — a row that has no estimate draws no estimate, and
+   * neither surface has to know why.
+   *
+   * IT IS BESIDE THE COUNT AND NEVER INSTEAD OF IT. The fraction is a
+   * measurement of what has happened; this is a forecast of what has not, and
+   * the tilde is the whole of the difference a person needs. An estimate that
+   * replaced the count would be this app trading the fact it knows for the guess
+   * it made.
+   */
+  timeLeft(job: Job): string {
+    return this.eta.forJob(job) ?? '';
   }
 
   /**
