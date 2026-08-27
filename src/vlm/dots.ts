@@ -694,6 +694,34 @@ export function lineHeight(block: DotsBlock): number {
 }
 
 /**
+ * The inline emphasis the model wrote around the words, at the one place a
+ * character test has to look past it: the two ends of a block.
+ *
+ * dots marks emphasis in markdown, and an emphasis run that the PAGE TURN cut in
+ * half comes back as two balanced runs — the model closes what it can see and
+ * opens it again on the next page. Measured on the Pokemon book (Arms, 2000):
+ * page 80 ends `Voldemort's *trans*` and page 81 opens `*mogrification*`; page
+ * 44 ends `…its adherents that` and page 45 opens `**forces** can be exercised`.
+ * Every test below is about a LETTER — is this one lowercase, is that one a full
+ * stop, is there a hyphen where the column broke a word — and an asterisk sitting
+ * in front of the letter answers all three wrongly. `dotsInline` consumes these
+ * characters before a reader ever sees them; the seam has to read what the reader
+ * will read.
+ */
+const EMPHASIS_HEAD = /^[*_]+/;
+const EMPHASIS_TAIL = /[*_]+$/;
+
+/** The block's last characters, with the model's emphasis markers out of the way. */
+export function seamTail(text: string): string {
+  return text.trimEnd().replace(EMPHASIS_TAIL, '');
+}
+
+/** The block's first characters, the same. */
+export function seamHead(text: string): string {
+  return text.replace(EMPHASIS_HEAD, '');
+}
+
+/**
  * Does this text look like it continues the previous paragraph?
  *
  * The whole of the machine's cross-page join: the previous block did not end
@@ -702,11 +730,20 @@ export function lineHeight(block: DotsBlock): number {
  * test is dead (`dots-book.ts`, `DotsPageImages`). When this says no, the seam
  * stays split until a person joins it with a recorded decision
  * (`OverlayAmendment.join`), which is the deal that killed the ink.
+ *
+ * A CLOSING QUOTE ENDS A SENTENCE ONLY WHEN THE SENTENCE IT CLOSES DID. `…he
+ * said.”` ends one; `…produce the “vain deceit”` does not, because the quotation
+ * marks are around two words in the middle of a clause. This rule used to read
+ * the quote itself as terminal, and page 89 of the Pokemon book ends on exactly
+ * that phrase — the sentence carried on over the leaf, the join was refused, and
+ * the paragraph break reached the audiobook as a stop in the middle of a
+ * sentence. So the quote is peeled off and the question is put to what it closes.
  */
 export function continuesTextually(previous: string, next: string): boolean {
   if (previous.length === 0 || next.length === 0) return false;
-  if (/[.!?:"”]$/.test(previous.trimEnd())) return false;
-  const first = next.charAt(0);
+  if (/[.!?:]$/.test(seamTail(previous).replace(/["”]+$/, ''))) return false;
+  const first = seamHead(next).charAt(0);
+  if (first === '') return false;
   return first !== first.toUpperCase();
 }
 

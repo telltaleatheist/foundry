@@ -1478,6 +1478,20 @@ function joinedText(join: ParagraphJoin): string {
   return join.opening + join.separator + (join.fused ?? '') + join.rest;
 }
 
+/**
+ * `…the more pow-*` → `…the more* pow-`: an emphasis run the model closed AFTER
+ * the hyphen the column broke a word on, closed before it instead.
+ *
+ * See the call in `flowBlocks` for the measured case and for why the marker
+ * moves rather than goes. Anchored at the end and nowhere else — this is about
+ * the one character where a page ended, and a hyphen anywhere else in the block
+ * was fused by the lexicon long before this runs.
+ */
+const BREAK_BEHIND_EMPHASIS = /(\s)([A-Za-zÀ-ÿ]+-)([*_]+)$/;
+export function closeEmphasisBeforeBreak(text: string): string {
+  return text.replace(BREAK_BEHIND_EMPHASIS, '$3$1$2');
+}
+
 // ── one chapter's XHTML ─────────────────────────────────────────────────────
 
 const CATEGORY_ATTRIBUTE: Record<string, string> = {
@@ -2250,6 +2264,66 @@ export function buildChapterBody(
     return pageBreak(block.page);
   };
 
+  /**
+   * A block that may be SEVERAL banked answers, written out part by part — the
+   * whole of what is left of the page-turn join here.
+   *
+   * THE PAGE MARKER GOES INSIDE THE ELEMENT, at the seam, which is exactly where
+   * the EPUB convention puts it and is the reason it is a span rather than an
+   * attribute on the block. Its position is `parts`: the page turned where one
+   * part ended and the next began, so the provenance list is not a lookup for
+   * this, it IS this. And when a word was broken across the turn, the marker goes
+   * BEFORE the whole word — a reader cannot be given half a word on either side
+   * of a marker that stands for the paper it was printed on.
+   *
+   * ── A SUBSTITUTED PARAGRAPH HAS NO SEAM, so its markers go to the front ─────
+   *
+   * The loop writes the words part by part precisely so the page marker can sit
+   * at the seam — the exact character where one page ended and the next began. A
+   * RECORD HAS NO SUCH CHARACTER. It is one translation of the whole paragraph;
+   * the words that were on page 48 and the words that were on page 49 are not
+   * separable in it, and any position this file picked inside it would be a claim
+   * about the paper that the sentence cannot support. Splitting the record by the
+   * source's part lengths would be exactly that claim with arithmetic in front of
+   * it.
+   *
+   * So the markers every part still owes are written together, in page order, at
+   * the head — the same place part 0's marker has always gone — and the paragraph
+   * that swallowed a page turn says "pages 48 and 49 begin here". That is one
+   * element early for the second of them and it is the honest reading: the `pb-N`
+   * anchors all exist, they are unique, they stay in ascending document order,
+   * and nothing downstream (`epub-final`'s cut machinery, a citation, a reader's
+   * page-list) is given a position the translation cannot back up.
+   *
+   * `joinedPages` is counted from the SOURCE either way, because it is a report
+   * about what the reflow did and the reflow ran on the bank.
+   *
+   * TWO CATEGORIES ASK FOR THIS NOW, which is why it is a function. Text always
+   * could be several answers; Quote became able to the day a block quote running
+   * over a leaf was allowed to join (`JOINABLE`), and a Quote written from
+   * `flow.text` with one marker in front of it would silently owe the turned page
+   * its only `pb-N` anchor in the book.
+   */
+  const partwise = (flow: FlowBlock, words: string, block: DotsBlock): string => {
+    const written: string[] = [];
+    const substituted = words !== flow.text;
+    for (const [n, part] of flow.parts.entries()) {
+      if (!substituted) {
+        if (part.join === 'space') written.push(' ');
+      }
+      written.push(marker(part.block));
+      if (!substituted) {
+        if (part.fused !== null) written.push(inline(part.fused, part.page));
+        written.push(inline(part.text, part.page));
+      }
+      // A TURN, not merely a part: two blocks the printer set one under the
+      // other on one page are joined here too, and no page was turned.
+      if (n > 0 && part.page !== flow.parts[n - 1]!.page) joinedPages.push(part.page);
+    }
+    if (substituted) written.push(inline(words, block.page));
+    return written.join('');
+  };
+
   for (const [index, flow] of blocks.entries()) {
     /*
      * The block the ELEMENT is about: the first of the parts, and for every
@@ -2343,7 +2417,11 @@ export function buildChapterBody(
           // a decision about either is a decision about the same banked answer.
           // The two calls are two element numbers, which is the counter's rule.
           { outer: stamp(block, src), inner: stamp(block, src) },
-          `${marker(block)}${inline(words, block.page)}`,
+          // Part by part, because a block quote can run over a leaf and come
+          // back as a second banked answer (`JOINABLE`). Written whole, the page
+          // it turned onto would owe this document a `pb-N` anchor nothing else
+          // is going to write.
+          partwise(flow, words, block),
         ));
         break;
       case 'Footnote':
@@ -2403,69 +2481,20 @@ export function buildChapterBody(
         break;
       default: {
         /*
-         * Text — the one kind that can be several banked blocks, and the whole
-         * of what is left of the page-turn join here: writing down, in order,
-         * the pieces `reflowBook` resolved.
-         *
-         * THE PAGE MARKER GOES INSIDE THE PARAGRAPH, at the seam, which is
-         * exactly where the EPUB convention puts it and is the reason it is a
-         * span rather than an attribute on the block. Its position is
-         * `parts`: the page turned where one part ended and the next began, so
-         * the provenance list is not a lookup for this, it IS this. And when a
-         * word was broken across the turn, the marker goes BEFORE the whole
-         * word — a reader cannot be given half a word on either side of a
-         * marker that stands for the paper it was printed on.
+         * Text — the kind that has always been able to be several banked blocks,
+         * written by `partwise` above, which is the whole of what is left of the
+         * page-turn join here: writing down, in order, the pieces `reflowBook`
+         * resolved.
          *
          * The size and the alignment are written once, from the block that
          * OPENED the paragraph: a paragraph broken over a page turn is one
          * paragraph, and one paragraph is one size.
          */
         const align = alignmentClass(block.box, opts.column);
-        const written: string[] = [];
-        /*
-         * ── A SUBSTITUTED PARAGRAPH HAS NO SEAM, so its markers go to the front ─
-         *
-         * The loop below writes the paragraph part by part precisely so the page
-         * marker can sit at the seam — the exact character where one page ended
-         * and the next began. A RECORD HAS NO SUCH CHARACTER. It is one
-         * translation of the whole paragraph; the words that were on page 48 and
-         * the words that were on page 49 are not separable in it, and any
-         * position this file picked inside it would be a claim about the paper
-         * that the sentence cannot support. Splitting the record by the source's
-         * part lengths would be exactly that claim with arithmetic in front of
-         * it.
-         *
-         * So the markers every part still owes are written together, in page
-         * order, at the head of the paragraph — the same place part 0's marker
-         * has always gone — and the paragraph that swallowed a page turn says
-         * "pages 48 and 49 begin here". That is one element early for the second
-         * of them and it is the honest reading: the `pb-N` anchors all exist,
-         * they are unique, they stay in ascending document order, and nothing
-         * downstream (`epub-final`'s cut machinery, a citation, a reader's
-         * page-list) is given a position the translation cannot back up.
-         *
-         * `joinedPages` is counted from the SOURCE either way, because it is a
-         * report about what the reflow did and the reflow ran on the bank.
-         */
-        const substituted = words !== flow.text;
-        for (const [n, part] of flow.parts.entries()) {
-          if (!substituted) {
-            if (part.join === 'space') written.push(' ');
-          }
-          written.push(marker(part.block));
-          if (!substituted) {
-            if (part.fused !== null) written.push(inline(part.fused, part.page));
-            written.push(inline(part.text, part.page));
-          }
-          // A TURN, not merely a part: two blocks the printer set one under the
-          // other on one page are joined here too, and no page was turned.
-          if (n > 0 && part.page !== flow.parts[n - 1].page) joinedPages.push(part.page);
-        }
-        if (substituted) written.push(inline(words, block.page));
         out.push(blockElement(
           flow.category,
           { outer: `${classOf(align)}${stamp(block, src)}` },
-          written.join(''),
+          partwise(flow, words, block),
         ));
       }
     }
@@ -3509,8 +3538,32 @@ export function flowBlocks(
     }
 
     if (joined && open !== null) {
-      const join = resolveJoin(open.text, block.text, lexicon);
+      /*
+       * THE EMPHASIS THE MODEL CLOSED ON THE WRONG SIDE OF THE BROKEN WORD.
+       *
+       * dots ends page 37 of the Pokemon book (Arms, 2000) with `…evolve into
+       * the more pow-*` — the whole Pokédex blurb is italic, so the run closes
+       * after the hyphen the column broke `powerful` on. That asterisk is the
+       * last character of the paragraph, `trailingHyphenWord` finds no hyphen
+       * behind it, and the join it does not recognise as a broken word is made
+       * with a space instead: `pow- erful`, which is what reached the audiobook.
+       *
+       * The marker moves to the other side of the broken word and nothing else
+       * changes: `…the more* pow-`. It has to move rather than be deleted,
+       * because each PART is rendered by its own `dotsInline` call — an emphasis
+       * run can never span the seam, so a marker dropped here would leave its
+       * partner unbalanced and print a literal asterisk. Applied to both strings
+       * with one anchored pattern, so the paragraph's text and its last part get
+       * the identical edit at the identical character.
+       */
       const last = open.parts[open.parts.length - 1];
+      open.text = closeEmphasisBeforeBreak(open.text);
+      last.text = closeEmphasisBeforeBreak(last.text);
+      const join = resolveJoin(open.text, block.text, lexicon);
+      // What `opening` took off the end of the paragraph came off the end of
+      // its LAST part — the broken word was there, and so was any space after
+      // it. Taking it off the part rather than off the whole is what lets the
+      // emitter render each part on its own and still write the fused word once.
       // What `opening` took off the end of the paragraph came off the end of
       // its LAST part — the broken word was there, and so was any space after
       // it. Taking it off the part rather than off the whole is what lets the
@@ -3544,9 +3597,27 @@ export function flowBlocks(
  * categories, which reach a book only when a person reclassified a block into
  * one (`overlay.ts` accepts every category the model has a name for). Nothing
  * else can continue a paragraph, and everything else closes the one before it.
+ *
+ * AND QUOTE, WHICH IS NOT FURNITURE AND IS HERE ON EVIDENCE. A displayed
+ * quotation is marked `> ` by the model on the page where it can see the
+ * quotation start, and NOT on the page it runs onto — the continuation comes
+ * back as an ordinary Text block, because from the top of that leaf there is
+ * nothing to see. Four of the seven seams the Pokemon book (Arms, 2000) got
+ * wrong are exactly this: page 103 ends `…that they may serve other gods: so`
+ * inside a block quote and page 104 opens `will the anger of the Lord…` as Text.
+ * The words said join on every one of them; the category said the paragraph had
+ * already been closed, and the audiobook read a Deuteronomy passage as two.
+ *
+ * A join takes the OPEN block's category, so the continuation lands inside the
+ * blockquote where the printer set it — and both writers of a book walk the
+ * parts of a Quote now, because a Quote can be several banked answers (see
+ * `buildChapterBody` and `vlm-compile`). Nothing else changes: a Quote still has
+ * to sit at column width, still has to adjoin, and the words still have to carry
+ * over, which is what keeps the ordinary `…as follows:` lead-in — a colon, and
+ * therefore terminal — from swallowing the quotation it introduces.
  */
 const JOINABLE: ReadonlySet<DotsCategory> =
-  new Set<DotsCategory>(['Text', 'Page-header', 'Page-footer']);
+  new Set<DotsCategory>(['Text', 'Quote', 'Page-header', 'Page-footer']);
 
 /**
  * Every note in the book, in the order the pages carried them.

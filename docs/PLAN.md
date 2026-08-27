@@ -3649,6 +3649,66 @@ and landed after them.)
   into a bar is separate work.
 - **No new tests**, per the standing rule.
 
+### Wave 54 — the page turn the audiobook read as a full stop (Owen, 2026-08-26) — BUILT
+
+Found in the ear, not in the tree: the m4b of *Pokemon and Harry Potter: A
+Fatal Attraction* (Arms, 2000) stops in the middle of four sentences, and
+reads `pow- erful` out as two words. Fourteen page turns in that EPUB came out
+as two paragraphs; seven of them survive into this engine, and every one is a
+seam the model's own answer says is one paragraph. The rules are argued where
+they live (`src/vlm/dots.ts` `continuesTextually`, `src/vlm/dots-book.ts`
+`JOINABLE` and `flowBlocks`) and the contract is amended in **docs/REFLOW.md
+§4**. This row is the index.
+
+**Built.** Three corrections, each an observation about the bank:
+
+- **A `Quote` may be continued** (`JOINABLE`). dots marks a block quote `> `
+  on the page where the quotation starts and not on the page it runs onto, so
+  the continuation arrives as plain Text and the category closed a paragraph
+  the words said was open. Four of the seven. Both writers of a book walk a
+  Quote's `parts` now — written whole, the turned page would owe the document
+  its only `pb-N` anchor.
+- **The seam tests read words, not markdown.** `seamTail`/`seamHead` look past
+  the inline emphasis that sits at exactly the two characters these tests are
+  about (`**forces** can be exercised` opens page 45); `closeEmphasisBeforeBreak`
+  moves a run the model closed after the broken word (`…the more pow-*`) to
+  the other side of it, so the hyphen carry can see the hyphen and the fused
+  word comes out whole.
+- **A closing quote is terminal only when what it closes is.** `…he said.”`
+  ends a sentence; `…produce the “vain deceit”` does not.
+
+**Measured on the real book,** reassembled from its bank through `vlm-book` +
+`vlm-compile`: joins across a page turn 82 → 89; paragraphs opening lower-case
+8 → 1 (and the 1 is a centred line on a catalogue page, not a turn); hyphens
+left dangling at a seam 2 → 1 (and the 1 is `Self-actualization`, correctly
+fused). The flattened spine differs in exactly the eight defective seams and
+nowhere else — none of the 82 joins that already worked moved.
+
+**Deferred out loud,** measured on *The Church and the Negro* (Lund, 1967),
+the library's worst specimen, which this wave's rule does NOT explain and
+which gains only 2 joins from it:
+
+- **A continuation that opens on a CAPITAL.** 19 of that book's 40 unjoined
+  turns end mid-clause and open on a proper noun or a quotation mark —
+  `…Egyptus, the daughter of` ‖ `Ham, was the progenitor…`. The tail alone is
+  nearly conclusive and is not conclusive: a model that dropped a final full
+  stop would have two real paragraphs welded on the same evidence.
+  `unjoinedTurns` names every one for a person to join with a recorded
+  decision, which is `DERIVED-BOOK.md` §2's deal.
+- **A book set in TWO COLUMNS.** On its parallel-scripture pages the model
+  reads down the left column and then the right — the correct reading order —
+  so a paragraph running from the foot of one page's right column to the head
+  of the next page's right column has a whole column between its halves, and
+  no rule keyed on the ADJACENT block can reach it. 8 pages of that book.
+  Fixing it means the reflow understanding columns.
+- **`Voldemort's *trans*` ‖ `*mogrification*` is joined and NOT fused.** The
+  model ate the hyphen; the bank has no evidence a word was broken, and
+  `theboy`-shaped fusions are what a lexicon-only rule would also make. One
+  paragraph with a space in a word beats two paragraphs mid-sentence, and the
+  space is said here rather than papered over.
+- **No new tests**, per the standing rule; the 423 existing ones pass
+  unchanged, which is the statement that the 82 working joins did not move.
+
 ---
 
 ## 8. Session hygiene

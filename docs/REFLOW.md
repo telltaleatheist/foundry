@@ -216,6 +216,58 @@ Join gate, unchanged in substance from `dots-book.ts:1602`:
 - `continuesTextually(previousText, nextText)` (`dots.ts:681`) **or** the
   hyphen carry (`trailingHyphenWord` + `leadingWord`, `dots.ts:576`/`582`).
 
+> **Amended by Wave 54 (2026-08-26), on the audiobook of the Pokemon book
+> (Arms, 2000).** The gate above is right about WHICH questions are asked and
+> was wrong about what the model's own text says when they are. Fourteen page
+> turns in that book came out as two paragraphs; seven survived to this
+> engine, four of them audible as a stop in the middle of a sentence. Three
+> corrections, each an observation about the bank and none a new heuristic:
+>
+> - **A `Quote` may be continued.** `JOINABLE` held Text and the two furniture
+>   categories only, so a displayed quotation closed the paragraph. dots marks
+>   a block quote `> ` on the page where the quotation STARTS and not on the
+>   page it runs onto — the continuation comes back as plain Text — so four of
+>   the seven were a blockquote and its own second half, refused on category
+>   while the words said join on every one. A join takes the OPEN block's
+>   category, so the continuation lands inside the `<blockquote>`. Both
+>   writers of a book (`buildChapterBody` and `vlm-compile`) walk a Quote's
+>   `parts` now; written whole, the turned page would owe the document its
+>   only `pb-N` anchor.
+> - **The seam tests read WORDS, not markdown.** `continuesTextually` and the
+>   hyphen carry are character tests at the two ends of the model's raw text,
+>   and inline emphasis is exactly what sits there: page 44 ends `…adherents
+>   that` and page 45 opens `**forces** can be exercised`, where the `*` is
+>   caseless and answers the lowercase test wrongly. `seamTail`/`seamHead`
+>   look past the markers; `closeEmphasisBeforeBreak` moves a run the model
+>   closed AFTER the broken word (`…the more pow-*`) to the other side of it,
+>   because parts are rendered by their own `dotsInline` call and a marker
+>   deleted here would print as a literal asterisk.
+> - **A closing quote is terminal only when what it closes is.** `…he said.”`
+>   ends a sentence; `…produce the “vain deceit”` does not. Page 89 ends on
+>   the second, and the audiobook stopped mid-clause.
+>
+> Measured on the whole book: 82 → 89 joins, the flattened spine differs in
+> exactly the eight defective seams and nowhere else.
+
+> **NOT amended, and named so nobody reads the silence as a claim.** Two
+> families this wave measured and did not touch, both on
+> *The Church and the Negro* (Lund, 1967), the library's worst specimen:
+>
+> - **A continuation that opens on a CAPITAL.** 19 of that book's 40 unjoined
+>   turns end mid-clause and open on a proper noun or a quotation mark —
+>   `…Egyptus, the daughter of` ‖ `Ham, was the progenitor…`. The tail alone
+>   is nearly conclusive and it is not conclusive: a model that dropped a
+>   final full stop would have two real paragraphs welded on the same
+>   evidence, which is `DERIVED-BOOK.md` §2's line. `unjoinedTurns` already
+>   names every one of them for a person to join with a recorded decision.
+> - **A book set in TWO COLUMNS.** On its parallel-scripture pages (24–27, and
+>   8 pages in all) the model reads down the left column and then down the
+>   right, which is the correct reading order — so a paragraph running from
+>   the foot of the right column of page 24 to the head of the right column of
+>   page 25 has the whole left column between its halves. No rule keyed on the
+>   ADJACENT block can reach it. Fixing it means the reflow understanding
+>   columns, which is a pass this document does not have.
+
 And then the deletion:
 
 > **`carriesOver` (`dots-book.ts:1142`) is deleted, with its only call site

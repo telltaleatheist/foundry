@@ -630,6 +630,72 @@ function chapterBody(
     openList = null;
   };
 
+  /**
+   * A row that may be SEVERAL banked answers, written out part by part — the
+   * page markers go INSIDE the element at the seams, which is exactly where the
+   * EPUB convention puts them and the reason a marker is a span rather than an
+   * attribute on the block.
+   *
+   * WHERE THE SEAM IS is the row's own `parts`: each one covers a half-open range
+   * of this text and they tile it, so the character a page turned at is a fact in
+   * the file rather than arithmetic. The bank route writes its marker one
+   * character later — after the space the join inserted, before the word the
+   * column broke — because it has the join in hand and this has the division.
+   * Both are inside the element at the turn, and this one is the answer the file
+   * actually carries.
+   *
+   * A ROW WHOSE NUMBERS ARE LINKED IS WRITTEN WHOLE, because the linking counts
+   * superscript runs across the row's own TEXT and a part is not the row. So the
+   * two branches differ in one thing only — where the page markers can stand —
+   * and a paragraph carrying a reference number gets them together at its front,
+   * in page order, which is the same answer the bank route gives a substituted
+   * paragraph and for the same reason: a position inside would be a claim the
+   * writing cannot support.
+   *
+   * THE MARKERS ARE CONSUMED ONCE, WHICH IS WHY THE BRANCH IS TAKEN BEFORE THEY
+   * ARE ASKED FOR. `marker` is a page's ONE anchor in this document and asking
+   * for it spends it; building both bodies and picking one would spend every page
+   * marker on a string that was then thrown away, and the book would come out
+   * missing the pages of every paragraph that has a footnote in it.
+   *
+   * TWO CATEGORIES ASK FOR THIS NOW. Text always could be several answers; Quote
+   * became able to the day a block quote running over a leaf was allowed to join
+   * (`JOINABLE`, dots-book.ts), and a Quote written whole would silently owe the
+   * turned page its only `pb-N` anchor in the book.
+   */
+  const partwise = (row: BookRow): string => {
+    const claims = refsIn.get(row.id) ?? [];
+    if (claims.length > 0) {
+      return row.parts.map((part) => marker(part.page)).join('') + worded(row);
+    }
+    // Rendered whole and then divided would put a marker inside an escaped
+    // entity, so each part is rendered as its own string — the inline rules
+    // are per-part here, which is what `buildChapterBody` does too.
+    /*
+     * AND THE STRIP REACHES THIS BRANCH TOO — the hole Owen's second
+     * screenshot found (2026-08-24, hours after the first fix): a row
+     * with NO claims at all never went through `worded`, so a book
+     * whose notes were ALL struck — precisely the flow that motivated
+     * the ruling — rendered every one of its numbers bare while the
+     * strip stood guard over the other branch. Measured on his own
+     * mint: 375 bare superscripts through a compile that logged four
+     * removals. A run in a claimless row is by definition a number no
+     * note answers for, so it goes the way they all go now: out,
+     * counted.
+     */
+    const written: string[] = [];
+    for (const part of row.parts) {
+      written.push(marker(part.page));
+      written.push(dotsInline(row.text.slice(part.chars[0], part.chars[1]), {
+        noteref: () => {
+          stripped += 1;
+          return '';
+        },
+      }));
+    }
+    return unclaimedDigits(written.join(''));
+  };
+
   for (const [index, row] of span.entries()) {
     // Held back to the end of the chapter, and it writes nothing where it stands
     // — so it does not interrupt the paragraph it sits in the middle of.
@@ -680,7 +746,11 @@ function chapterBody(
         out.push(blockElement(
           'Quote',
           { outer: stampOf(row), inner: stampOf(row) },
-          `${marker(row.page)}${worded(row)}`,
+          // Part by part, because a block quote can run over a leaf and come
+          // back as a second banked answer (`JOINABLE`, dots-book.ts). Written
+          // whole, the page it turned onto would owe this document a `pb-N`
+          // anchor nothing else is going to write.
+          partwise(row),
         ));
         break;
       case 'Table':
@@ -765,68 +835,15 @@ function chapterBody(
         break;
       default: {
         /*
-         * Text — the one kind that can be several banked answers, and the page
-         * markers go INSIDE the paragraph at the seams, which is exactly where the
-         * EPUB convention puts them and the reason a marker is a span rather than
-         * an attribute on the block.
-         *
-         * WHERE THE SEAM IS is the row's own `parts`: each one covers a half-open
-         * range of this text and they tile it, so the character a page turned at is
-         * a fact in the file rather than arithmetic. The bank route writes its
-         * marker one character later — after the space the join inserted, before
-         * the word the column broke — because it has the join in hand and this has
-         * the division. Both are inside the paragraph at the turn, and this one is
-         * the answer the file actually carries.
+         * Text — the kind that has always been able to be several banked
+         * answers, written by `partwise` above: the page markers go INSIDE the
+         * paragraph at the seams the row's own `parts` name.
          */
-        /*
-         * A ROW WHOSE NUMBERS ARE LINKED IS WRITTEN WHOLE, because the linking
-         * counts superscript runs across the row's own TEXT and a part is not the
-         * row. So the two branches differ in one thing only — where the page
-         * markers can stand — and a paragraph carrying a reference number gets
-         * them together at its front, in page order, which is the same answer the
-         * bank route gives a substituted paragraph and for the same reason: a
-         * position inside would be a claim the writing cannot support.
-         *
-         * THE MARKERS ARE CONSUMED ONCE, WHICH IS WHY THE BRANCH IS TAKEN BEFORE
-         * THEY ARE ASKED FOR. `marker` is a page's ONE anchor in this document and
-         * asking for it spends it; building both bodies and picking one would
-         * spend every page marker on a string that was then thrown away, and the
-         * book would come out missing the pages of every paragraph that has a
-         * footnote in it.
-         */
-        const claims = refsIn.get(row.id) ?? [];
-        let body: string;
-        if (claims.length === 0) {
-          // Rendered whole and then divided would put a marker inside an escaped
-          // entity, so each part is rendered as its own string — the inline rules
-          // are per-part here, which is what `buildChapterBody` does too.
-          /*
-           * AND THE STRIP REACHES THIS BRANCH TOO — the hole Owen's second
-           * screenshot found (2026-08-24, hours after the first fix): a row
-           * with NO claims at all never went through `worded`, so a book
-           * whose notes were ALL struck — precisely the flow that motivated
-           * the ruling — rendered every one of its numbers bare while the
-           * strip stood guard over the other branch. Measured on his own
-           * mint: 375 bare superscripts through a compile that logged four
-           * removals. A run in a claimless row is by definition a number no
-           * note answers for, so it goes the way they all go now: out,
-           * counted.
-           */
-          const written: string[] = [];
-          for (const part of row.parts) {
-            written.push(marker(part.page));
-            written.push(dotsInline(row.text.slice(part.chars[0], part.chars[1]), {
-              noteref: () => {
-                stripped += 1;
-                return '';
-              },
-            }));
-          }
-          body = unclaimedDigits(written.join(''));
-        } else {
-          body = row.parts.map((part) => marker(part.page)).join('') + worded(row);
-        }
-        out.push(blockElement(row.category, { outer: `${classOf(align)}${stampOf(row)}` }, body));
+        out.push(blockElement(
+          row.category,
+          { outer: `${classOf(align)}${stampOf(row)}` },
+          partwise(row),
+        ));
       }
     }
   }
